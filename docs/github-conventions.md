@@ -10,6 +10,7 @@
 - 커밋 메시지는 `<type>: <message>` 형식을 사용합니다.
 - Pull Request는 항상 Draft로 먼저 생성하고, 리뷰 준비가 끝난 뒤 `Ready for review`로 전환합니다.
 - 승인된 Pull Request는 Squash Merge합니다.
+- `main`에 변경이 반영되면 해당 커밋의 태그와 GitHub Release를 반드시 갱신합니다.
 
 ## 브랜치 규칙
 
@@ -115,6 +116,32 @@ git switch main
 git pull --ff-only origin main
 ```
 
+## `main` 변경 후 태그와 GitHub Release
+
+`main`에 변경이 반영되면, 그 변경은 태그와 GitHub Release가 갱신되어야 완료됩니다. 이 절차는
+`main`의 실제 최신 커밋만 대상으로 하며, 다른 브랜치나 로컬 HEAD를 릴리스 대상으로 삼지 않습니다.
+
+1. 최종 `main` 변경 범위를 기준으로 새 버전과 릴리스 노트를 확정합니다.
+2. 원격 `main`을 다시 읽어 태그 대상 SHA를 확인합니다.
+3. 그 SHA에 주석 태그 `v<version>`을 생성하고 원격에 푸시합니다.
+4. 같은 태그를 가리키는 GitHub Release를 생성하거나, 이미 있다면 릴리스 노트를 갱신합니다.
+5. 원격 태그의 peeled SHA가 `origin/main` SHA와 같은지, GitHub Release의 태그가 의도한 `v<version>`인지 다시 확인합니다.
+
+```bash
+git fetch origin main --tags
+git rev-parse origin/main
+git tag -a v<version> <main-sha> -m "v<version>"
+git push origin v<version>
+# 새 GitHub Release일 때
+gh release create v<version> --target <main-sha> --title "v<version>" --notes-file <release-notes-file>
+# 이미 GitHub Release가 있을 때
+gh release edit v<version> --title "v<version>" --notes-file <release-notes-file>
+git ls-remote --tags origin refs/tags/v<version> refs/tags/v<version>^{}
+gh release view v<version> --json tagName,targetCommitish,url
+```
+
+태그 푸시와 GitHub Release 생성·수정은 외부 상태 변경이므로, 사용자가 `main` 병합 또는 릴리스를 명시적으로 요청한 작업에서만 실행합니다. 검증 전에는 릴리스 완료를 주장하지 않습니다.
+
 ## 머지 전 체크리스트
 
 - [ ] 현재 브랜치가 의도한 Pull Request의 head 브랜치인지 확인했습니다.
@@ -124,3 +151,4 @@ git pull --ff-only origin main
 - [ ] Pull Request가 Draft 상태로 생성되었고 설명이 실제 변경과 일치합니다.
 - [ ] 비밀 정보와 무관한 변경을 포함하지 않았습니다.
 - [ ] 리뷰 승인 후 Squash Merge할 준비가 되었습니다.
+- [ ] `main` 반영 뒤 새 태그와 GitHub Release가 같은 `main` 커밋을 가리키는지 확인했습니다.
