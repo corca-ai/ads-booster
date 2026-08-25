@@ -1043,6 +1043,17 @@ const testImageApprovalPostsTheDecision = async () => {
 
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
+  const styles = await readFile(join(staticRoot, "workspace.css"), "utf8");
+  assert.ok(markup.includes("<h1>Trace 마케팅</h1>"), "the workspace opens with a short task title");
+  assert.ok(!markup.includes("Trace marketing pipeline"), "the decorative pipeline eyebrow is gone");
+  assert.ok(markup.includes('class="context-detail"'), "full context is progressively disclosed");
+  assert.ok(markup.includes('class="workflow-tools"'), "manual and feedback tools are progressively disclosed");
+  assert.ok(!markup.includes('<details class="context-detail" open'), "context details start collapsed");
+  assert.ok(!markup.includes('<details class="workflow-tools" open'), "advanced tools start collapsed");
+  assert.ok(
+    styles.includes(".candidate-list .candidate-row__caption") && styles.includes(".candidate-list .journey"),
+    "the candidate overview removes duplicate review detail",
+  );
   assert.ok(markup.includes(">검수</button>"), "approval tab is labelled 검수");
   assert.ok(!markup.includes("오늘의 승인"), "the old approval tab label is gone");
   assert.ok(markup.includes("Appium 프롬프트"), "the shooting order field is renamed");
@@ -1077,6 +1088,7 @@ const testMarkupUsesTheAgreedTerminology = async () => {
   assert.ok(markup.includes("부팅 가능한 Simulator를 찾아 Appium"), "dynamic Simulator discovery is explained");
   assert.ok(markup.includes('value="KR" selected>한국 (KR)'), "the form has a safe KR fallback");
   const live = await readFile(join(staticRoot, "workspace-live.js"), "utf8");
+  assert.ok(live.includes('? "팀" : "기본"'), "context provenance uses short Korean labels");
   assert.ok(!live.includes("촬영 주문서"), "no insider shooting-order copy in the live script");
   assert.ok(!live.includes("촬영 전"), "the image placeholder is renamed");
   assert.ok(live.includes("이미지 생성 전"), "the image placeholder explains itself");
