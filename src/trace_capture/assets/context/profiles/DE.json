@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "starter-de-student",
+    "country": "DE",
+    "name": "Studium · Pendeln und Lernen",
+    "persona_id": "de-student-commuter",
+    "audience": "Studierende in Deutschland mit Vorlesungen, Lernblöcken, Pendelweg und Freizeit",
+    "situation": "Ein Wochentag zwischen früher Vorlesung, Bibliothek, Einkauf und Sport",
+    "tone": "Klar, natürlich und zurückhaltend auf Deutsch",
+    "guidance": "Konkrete Uhrzeiten zeigen; keine Stadt, Universität oder Wirkung erfinden.",
+    "reference_ids": ["de-study-commute"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-de-office",
+    "country": "DE",
+    "name": "Beruf · Termine und Alltag",
+    "persona_id": "de-office-errands",
+    "audience": "Berufstätige mit Besprechungen, konzentrierter Arbeit, Terminen und privaten Erledigungen",
+    "situation": "Ein Arbeitstag mit mehreren festen Terminen und einem Weg nach Feierabend",
+    "tone": "Direkt und sachlich, ohne Werbeübertreibung",
+    "guidance": "Den Tagesablauf sprechen lassen und keine beruflichen Details voraussetzen.",
+    "reference_ids": ["de-work-errands"],
+    "is_default": false
+  }
+]

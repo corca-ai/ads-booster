@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "starter-fr-student",
+    "country": "FR",
+    "name": "Études · cours et trajets",
+    "persona_id": "fr-student-commuter",
+    "audience": "Étudiants en France qui coordonnent cours, révisions, trajets, sport et sorties",
+    "situation": "Une journée entre un cours matinal, la bibliothèque, un rendez-vous et une activité le soir",
+    "tone": "Français naturel, bref et conversationnel",
+    "guidance": "Montrer des horaires crédibles sans inventer une ville, une école ou un résultat.",
+    "reference_ids": ["fr-campus-day"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-fr-office",
+    "country": "FR",
+    "name": "Travail · réunions et démarches",
+    "persona_id": "fr-city-worker",
+    "audience": "Actifs qui organisent réunions, travail concentré, rendez-vous et tâches personnelles",
+    "situation": "Une journée de travail avec plusieurs déplacements et une obligation après le bureau",
+    "tone": "Direct et sobre, sans formule publicitaire traduite",
+    "guidance": "Faire comprendre l'usage par la séquence de la journée, sans promesse chiffrée.",
+    "reference_ids": ["fr-city-workday"],
+    "is_default": false
+  }
+]

@@ -25,6 +25,10 @@ from trace_capture.marketing.executors import (
     CandidatePipelineExecutor,
 )
 from trace_capture.marketing.inbox import MarketingInbox
+from trace_capture.marketing.native_capture import (
+    HostedCaptureRoutingExecutor,
+    HostedWorkspaceCaptureExecutor,
+)
 from trace_capture.marketing.service import (
     CredentialProvider,
     MarketingBridgeConfigStore,
@@ -33,6 +37,7 @@ from trace_capture.marketing.service import (
     resolve_bridge_credentials,
 )
 from trace_capture.marketing.simulator import LocalMarketingControlPlane, MarketingAccount
+from trace_capture.service.worker import build_production_runner
 from trace_capture.transport.http import create_http_client
 from trace_capture.workspace import SqliteWorkspaceStore
 
@@ -87,7 +92,7 @@ def bridge(
         typer.Option(
             help=(
                 "simulation, or candidate-pipeline for real provider candidate generation "
-                "and PR #22 image composition; publication stays simulated"
+                "and native Appium capture; publication stays simulated"
             )
         ),
     ] = BridgeExecutor.SIMULATION,
@@ -179,20 +184,27 @@ def bridge_service() -> None:
 def _run_bridge(runtime: BridgeRuntime) -> None:
     root = runtime.agent_home / "marketing-bridge"
     simulation = ArtifactSimulationExecutor(root / "artifacts")
-    active_executor = simulation
-    review_store = None
-    if runtime.executor is BridgeExecutor.CANDIDATE_PIPELINE:
-        settings = AgentSettings.from_environment()
-        store = SqliteWorkspaceStore(runtime.agent_home)
-        review_store = store
-        active_executor = CandidatePipelineExecutor(
-            generator=build_candidate_generator(settings, store),
-            image_runner=build_candidate_image_runner(settings, runtime.agent_home, store),
-            store=store,
-            artifact_root=runtime.agent_home,
-            fallback=simulation,
-        )
     with create_http_client() as http:
+        active_executor = simulation
+        review_store = None
+        if runtime.executor is BridgeExecutor.CANDIDATE_PIPELINE:
+            settings = AgentSettings.from_environment()
+            store = SqliteWorkspaceStore(runtime.agent_home)
+            review_store = store
+            candidate_pipeline = CandidatePipelineExecutor(
+                generator=build_candidate_generator(settings, store),
+                image_runner=build_candidate_image_runner(settings, runtime.agent_home, store),
+                store=store,
+                artifact_root=runtime.agent_home,
+                fallback=simulation,
+            )
+            active_executor = HostedCaptureRoutingExecutor(
+                hosted=HostedWorkspaceCaptureExecutor(
+                    runner=build_production_runner(runtime.agent_home, http),
+                    output_root=runtime.agent_home / "generated",
+                ),
+                fallback=candidate_pipeline,
+            )
         worker = MarketingBridge(
             queue=CloudflareQueueClient(
                 http,

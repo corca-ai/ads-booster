@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Trace 팀의 로컬 게시물 후보 워크스페이스입니다.">
+    <link rel="icon" href="data:,">
     <title>Trace 워크스페이스</title>
     <link rel="stylesheet" href="/static/workspace.css">
     <script src="/static/workspace-navigation.js" defer></script>
@@ -36,15 +37,92 @@
 
       <main class="workspace-main" id="workspace-content" data-workspace-live aria-busy="false" hidden>
         <header class="workspace-toolbar">
-          <div class="filter-tabs" role="tablist" aria-label="워크스페이스 보기">
-            <button class="filter-tab" id="tab-candidates" type="button" role="tab" aria-controls="candidates" aria-selected="true" tabindex="0" data-tab="candidates">후보</button>
-            <button class="filter-tab" id="tab-review" type="button" role="tab" aria-controls="reviews" aria-selected="false" tabindex="-1" data-tab="review">캡션·주제 승인</button>
+          <div class="workspace-title">
+            <p class="eyebrow">Trace marketing pipeline</p>
+            <h1>마케팅 워크벤치</h1>
+            <p>계정별 컨텍스트부터 하루 후보 생성, 검수와 다음 생성 학습까지 한곳에서 진행합니다.</p>
           </div>
           <div class="header-actions">
             <div class="status-line" role="status" aria-live="polite" data-live-status><span class="signal-mark success" aria-hidden="true"></span><span data-notice>준비됨</span></div>
             <button class="button button-secondary" type="button" data-action="open-invite" hidden>팀원 초대</button>
           </div>
         </header>
+
+        <section class="account-console" data-hosted-only hidden aria-labelledby="account-console-title">
+          <div class="account-console__primary">
+            <div>
+              <p class="eyebrow">격리 계정</p>
+              <h2 id="account-console-title">운영 계정</h2>
+            </div>
+            <label class="context-selector account-selector" for="workspace-account">현재 계정
+              <select id="workspace-account" data-account-select aria-describedby="account-selector-help"></select>
+            </label>
+            <p class="context-selector__help" id="account-selector-help">계정을 바꾸면 후보·컨텍스트·피드백도 해당 계정 범위로 함께 바뀝니다.</p>
+            <dl class="account-facts">
+              <div><dt>국가·언어</dt><dd data-account-market>—</dd></div>
+              <div><dt>게시 슬롯</dt><dd data-account-slots>—</dd></div>
+              <div><dt>자동 생성</dt><dd data-account-automation>—</dd></div>
+            </dl>
+          </div>
+          <details class="account-settings" data-account-settings>
+            <summary>계정 설정·추가</summary>
+            <div class="account-settings__body">
+              <form class="stack-form" data-account-edit-form novalidate aria-describedby="account-edit-feedback">
+                <h3>현재 계정 설정</h3>
+                <div class="candidate-fields">
+                  <label for="account-display-name">표시 이름<input id="account-display-name" name="display-name" required maxlength="80" autocomplete="off"></label>
+                  <label for="account-timezone">시간대<input id="account-timezone" name="timezone" required maxlength="80" autocomplete="off" placeholder="Asia/Seoul"></label>
+                  <label for="account-morning-time">오전 게시 시각<input id="account-morning-time" name="morning-time" type="time" required></label>
+                  <label for="account-evening-time">저녁 게시 시각<input id="account-evening-time" name="evening-time" type="time" required></label>
+                  <label class="check-row candidate-fields__wide" for="account-generation-enabled"><input id="account-generation-enabled" name="generation-enabled" type="checkbox"><span>매일 오전 게시 시각에 오전 2개·저녁 2개 후보 자동 생성</span></label>
+                </div>
+                <p class="candidate-feedback" id="account-edit-feedback" data-account-edit-feedback role="alert" hidden></p>
+                <div class="form-actions"><button class="button button-secondary" type="submit">설정 저장</button></div>
+              </form>
+              <details class="advanced-input">
+                <summary>새 격리 계정 추가</summary>
+                <div class="advanced-input__body">
+                  <form class="stack-form" data-account-create-form novalidate aria-describedby="account-create-feedback">
+                    <div class="candidate-fields">
+                      <label for="new-account-id">계정 ID<input id="new-account-id" name="account-id" required maxlength="64" pattern="[a-z0-9][a-z0-9_-]*" autocomplete="off" placeholder="trace_jp_01"></label>
+                      <label for="new-account-name">표시 이름<input id="new-account-name" name="display-name" required maxlength="80" autocomplete="off" placeholder="Trace Japan 01"></label>
+                      <label for="new-account-country">국가<select id="new-account-country" name="country" required></select></label>
+                      <label for="new-account-timezone">시간대<input id="new-account-timezone" name="timezone" required maxlength="80" autocomplete="off" placeholder="Asia/Tokyo"></label>
+                      <label for="new-account-morning-time">오전 게시 시각<input id="new-account-morning-time" name="morning-time" type="time" value="07:30" required></label>
+                      <label for="new-account-evening-time">저녁 게시 시각<input id="new-account-evening-time" name="evening-time" type="time" value="19:30" required></label>
+                      <label class="check-row candidate-fields__wide" for="new-account-generation-enabled"><input id="new-account-generation-enabled" name="generation-enabled" type="checkbox"><span>추가 직후 매일 자동 생성 시작</span></label>
+                    </div>
+                    <p class="candidate-feedback" id="account-create-feedback" data-account-create-feedback role="alert" hidden></p>
+                    <div class="form-actions"><button class="button button-secondary" type="submit">계정 추가</button></div>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </details>
+        </section>
+
+        <section class="pipeline-summary" aria-label="파이프라인 현황">
+          <button class="pipeline-step" type="button" data-action="open-review">
+            <span class="pipeline-step__index">01</span>
+            <span class="pipeline-step__label">캡션·주제 검수</span>
+            <strong data-stat-review>0</strong>
+          </button>
+          <button class="pipeline-step" type="button" data-action="open-review">
+            <span class="pipeline-step__index">02</span>
+            <span class="pipeline-step__label">이미지 단계</span>
+            <strong data-stat-image>0</strong>
+          </button>
+          <button class="pipeline-step" type="button" data-candidate-filter-jump="ready">
+            <span class="pipeline-step__index">03</span>
+            <span class="pipeline-step__label">게시 준비</span>
+            <strong data-stat-ready>0</strong>
+          </button>
+        </section>
+
+        <div class="filter-tabs" role="tablist" aria-label="워크스페이스 보기">
+          <button class="filter-tab" id="tab-candidates" type="button" role="tab" aria-controls="candidates" aria-selected="true" tabindex="0" data-tab="candidates">후보</button>
+          <button class="filter-tab" id="tab-review" type="button" role="tab" aria-controls="reviews" aria-selected="false" tabindex="-1" data-tab="review">검수</button>
+        </div>
 
         <section class="section-card tab-panel" id="candidates" role="tabpanel" tabindex="0" aria-labelledby="tab-candidates" data-panel="candidates">
           <div class="section-heading">
@@ -54,18 +132,75 @@
             </div>
             <span class="mono" role="status" data-candidate-count>입장하면 후보를 불러옵니다</span>
           </div>
-          <div class="entry-block">
-            <h3 class="entry-block__title">새 게시물 만들기</h3>
-            <button class="button button-primary entry-block__action" type="button" data-autogen aria-describedby="autogen-help">🤖 후보 자동 생성</button>
-            <p class="entry-block__help" id="autogen-help">AI가 context/의 원리·레퍼런스를 읽고 후보를 만들어 아래 목록에 등록합니다.</p>
-            <p class="entry-block__status" role="status" data-autogen-feedback hidden></p>
-            <details class="advanced-input" data-manual-entry>
-              <summary>✍️ 수동 등록</summary>
+          <div class="generation-workbench">
+            <section class="context-panel" data-hosted-only hidden aria-labelledby="context-panel-title">
+              <div class="context-panel__heading">
+                <div>
+                  <p class="eyebrow">생성 기준</p>
+                  <h3 id="context-panel-title">국가·페르소나 컨텍스트</h3>
+                </div>
+                <span class="context-source" data-context-source>starter</span>
+              </div>
+              <p class="context-scope">격리 계정 <code data-workspace-account>불러오는 중…</code> · 후보 생성 당시 컨텍스트는 스냅샷으로 보존됩니다.</p>
+              <label class="context-selector" for="workspace-context-profile">사용할 컨텍스트
+                <select id="workspace-context-profile" data-context-select aria-describedby="context-selector-help"></select>
+              </label>
+              <p class="context-selector__help" id="context-selector-help">선택한 값과 연결된 원리·레퍼런스만 AI 생성에 사용합니다.</p>
+              <dl class="context-summary" data-context-summary>
+                <div><dt>대상</dt><dd data-context-audience>불러오는 중…</dd></div>
+                <div><dt>상황</dt><dd data-context-situation>—</dd></div>
+                <div><dt>문체</dt><dd data-context-tone>—</dd></div>
+                <div class="context-summary__wide"><dt>추가 지침</dt><dd data-context-guidance>—</dd></div>
+                <div class="context-summary__wide"><dt>레퍼런스</dt><dd data-context-refs>—</dd></div>
+              </dl>
+              <details class="context-manager" data-context-manager>
+                <summary>컨텍스트 관리</summary>
+                <div class="context-manager__body">
+                  <p class="section-note">기본값은 실제 팀 데이터가 아닌 범용 시작점입니다. 팀의 국가·계정·페르소나 기준에 맞게 추가하거나 수정하세요.</p>
+                  <div class="context-profile-list" data-context-profile-list></div>
+                  <form class="stack-form context-form" data-context-form novalidate aria-describedby="context-feedback">
+                    <h4 data-context-form-title>새 컨텍스트 추가</h4>
+                    <div class="candidate-fields">
+                      <label for="context-name">표시 이름<input id="context-name" name="name" required maxlength="80" autocomplete="off" placeholder="예: KR · 대학생 시험 기간"></label>
+                      <label for="context-persona-id">페르소나 ID<input id="context-persona-id" name="persona-id" required maxlength="80" autocomplete="off" pattern="[a-z0-9][a-z0-9_-]+" placeholder="예: kr_university_exam"></label>
+                      <label for="context-country">국가<select id="context-country" name="country" required><option value="KR" selected>한국 (KR)</option></select></label>
+                      <label for="context-tone">문체<input id="context-tone" name="tone" required maxlength="300" autocomplete="off" placeholder="예: 짧고 현실적인 1인칭"></label>
+                      <label class="candidate-fields__wide" for="context-audience">대상<input id="context-audience" name="audience" required maxlength="500" autocomplete="off" placeholder="누구를 위한 메시지인지 적으세요."></label>
+                      <label class="candidate-fields__wide" for="context-situation">상황<input id="context-situation" name="situation" required maxlength="500" autocomplete="off" placeholder="후보가 다뤄야 할 구체적인 사용 상황을 적으세요."></label>
+                      <label class="candidate-fields__wide" for="context-guidance">추가 지침<textarea id="context-guidance" name="guidance" required rows="4" maxlength="2000" placeholder="반드시 지킬 주장 범위, 훅, 금지 표현 등을 적으세요."></textarea></label>
+                      <label class="candidate-fields__wide" for="context-refs">레퍼런스 ID<input id="context-refs" name="reference-ids" autocomplete="off" placeholder="쉼표로 구분: kr-study-day, ref-b"></label>
+                    </div>
+                    <p class="candidate-feedback" id="context-feedback" data-context-feedback role="alert" hidden></p>
+                    <div class="form-actions">
+                      <button class="button button-secondary" type="submit" data-context-submit>컨텍스트 추가</button>
+                      <button class="button button-quiet" type="button" data-context-cancel hidden>수정 취소</button>
+                    </div>
+                  </form>
+                </div>
+              </details>
+            </section>
+
+            <section class="entry-block" aria-labelledby="new-candidate-title">
+              <div>
+                <p class="eyebrow">새 작업</p>
+                <h3 class="entry-block__title" id="new-candidate-title">게시물 후보 만들기</h3>
+              </div>
+              <p class="entry-block__help" id="autogen-help">AI가 공통 원리·선택 컨텍스트·누적 반려를 읽고 오전 2개와 저녁 2개를 등록합니다.</p>
+              <button class="button button-primary entry-block__action" type="button" data-autogen aria-describedby="autogen-help">오늘 후보 4개 생성</button>
+              <p class="entry-block__status" role="status" data-autogen-feedback hidden></p>
+              <section class="learning-panel" data-hosted-only hidden aria-labelledby="learning-panel-title">
+                <div><p class="eyebrow">피드백 루프</p><h4 id="learning-panel-title">다음 생성에 반영되는 신호</h4></div>
+                <p data-feedback-learning>아직 누적된 반려 신호가 없습니다.</p>
+                <div class="approval-badges" data-feedback-tags></div>
+              </section>
+              <details class="advanced-input" data-manual-entry>
+              <summary data-candidate-form-title>수동 등록</summary>
               <div class="advanced-input__body">
                 <form class="stack-form" data-candidate-form novalidate aria-describedby="candidate-feedback">
                   <div class="candidate-fields">
                     <label class="candidate-fields__wide" for="candidate-topic">주제/컨셉<input id="candidate-topic" name="topic" required maxlength="200" autocomplete="off" placeholder="예: 시험기간 일정 관리 — 잠금화면 데모로 공감 훅"></label>
-                    <label for="candidate-country">국가<select id="candidate-country" name="country" required><option value="KR" selected>한국 (KR)</option><option value="JP">일본 (JP)</option><option value="TW">대만 (TW)</option><option value="US">미국 (US)</option></select></label>
+                    <label for="candidate-country">국가<select id="candidate-country" name="country" required><option value="KR" selected>한국 (KR)</option></select></label>
+                    <label for="candidate-posting-slot">게시 슬롯<select id="candidate-posting-slot" name="posting-slot" required><option value="manual" selected>수동</option><option value="morning">오전</option><option value="evening">저녁</option></select></label>
                     <label for="candidate-hypothesis">가설<input id="candidate-hypothesis" name="hypothesis" required maxlength="2000" autocomplete="off" placeholder="예: 1인칭 감탄이 저장률을 올린다"></label>
                     <label class="candidate-fields__wide" for="candidate-caption">캡션<textarea id="candidate-caption" name="caption" required rows="5" placeholder="게시할 캡션을 그대로 붙여넣으세요."></textarea></label>
                     <label for="candidate-refs">참조 레퍼런스<input id="candidate-refs" name="refs-used" autocomplete="off" placeholder="쉼표로 구분: ref-a, ref-b"></label>
@@ -87,17 +222,32 @@
                     </select></label>
                     <label for="candidate-background-mood">배경 분위기<input id="candidate-background-mood" name="background-mood" required maxlength="40" autocomplete="off" placeholder="예: 늦은 밤 책상 위 스탠드 불빛"></label>
                   </div>
+                  <p class="form-help" data-candidate-edit-note hidden>수정하면 기존 승인과 이미지가 무효화되고 캡션·주제 검수부터 다시 시작합니다.</p>
                   <p class="candidate-feedback" id="candidate-feedback" data-candidate-feedback role="alert" hidden></p>
-                  <button class="button button-secondary" type="submit">후보 등록</button>
+                  <div class="form-actions">
+                    <button class="button button-secondary" type="submit" data-candidate-submit>후보 등록</button>
+                    <button class="button button-quiet" type="button" data-candidate-cancel hidden>수정 취소</button>
+                  </div>
                 </form>
               </div>
             </details>
+            </section>
+          </div>
+          <div class="candidate-list-toolbar">
+            <h3>후보 목록</h3>
+            <div class="candidate-filters" aria-label="후보 상태 필터">
+              <button class="candidate-filter" type="button" aria-pressed="true" data-candidate-filter="all">전체</button>
+              <button class="candidate-filter" type="button" aria-pressed="false" data-candidate-filter="review">검수 대기</button>
+              <button class="candidate-filter" type="button" aria-pressed="false" data-candidate-filter="image">이미지</button>
+              <button class="candidate-filter" type="button" aria-pressed="false" data-candidate-filter="ready">게시 준비</button>
+              <button class="candidate-filter" type="button" aria-pressed="false" data-candidate-filter="rejected">반려</button>
+            </div>
           </div>
           <div class="candidate-list" data-candidate-list></div>
           <div class="empty-surface" data-candidate-empty>
             <p class="eyebrow">아직 없음</p>
-            <h3>등록된 후보가 없습니다</h3>
-            <p>자동 생성으로 후보를 만들거나 수동 등록에 주제와 캡션을 입력하세요. 두 입구 모두 이 목록에 쌓입니다.</p>
+            <h3 data-candidate-empty-title>등록된 후보가 없습니다</h3>
+            <p data-candidate-empty-copy>컨텍스트를 선택하고 오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.</p>
           </div>
         </section>
 
@@ -126,7 +276,8 @@
               </div>
               <span class="mono" role="status" data-image-count></span>
             </div>
-            <p class="section-note">배경은 외부 이미지 검색에서 출처를 확인해 가져오고, 잠금화면 부품은 저장된 오프라인 이미지를 사용합니다. 위에 입력한 일정과 기기 시각은 기록에는 남지만, 네이티브 캡처 환경(Appium/시뮬레이터)을 연결하기 전까지는 이미지에 그려지지 않습니다.</p>
+            <p class="section-note">이미지 생성은 Cloudflare Queue에 등록되고, 연결된 Mac worker가 부팅 가능한 Simulator를 찾아 Appium으로 Trace 부품을 캡처합니다. 최종 PNG는 무결성 검증 후 Cloudflare R2로 돌아와 여기에서 검수됩니다.</p>
+            <div class="capture-boundary" data-hosted-only hidden><strong>현재 이미지 실행</strong><span>Cloudflare Queue → Mac Appium → R2</span><small>Mac worker가 꺼져 있으면 안전하게 대기하고, 실패하면 코드와 재시도 버튼을 표시합니다.</small></div>
             <div class="approval-list" data-image-list></div>
             <div class="empty-surface" data-image-empty>
               <p class="eyebrow">비어 있음</p>

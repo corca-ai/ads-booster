@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "starter-jp-university",
+    "country": "JP",
+    "name": "大学生 · 通学とアルバイト",
+    "persona_id": "jp-university-commuter",
+    "audience": "授業、サークル、課題、アルバイトの予定を一日にまとめる日本の大学生",
+    "situation": "通学から授業、図書館、アルバイトまでが続く平日",
+    "tone": "短く自然な日本語。広告調より本人のひとことを優先",
+    "guidance": "時間と移動が伝わる予定を使い、成果や利用実績は作らない。",
+    "reference_ids": ["jp-campus-commute"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-jp-office",
+    "country": "JP",
+    "name": "会社員 · 仕事と用事",
+    "persona_id": "jp-office-errands",
+    "audience": "会議、集中作業、通院や買い物などを同じ日に管理する会社員",
+    "situation": "出勤、会議、昼休み、仕事後の用事が続く一日",
+    "tone": "落ち着いた自然な日本語。誇張や不要な感嘆符を避ける",
+    "guidance": "具体的な一日の順番を見せ、職種や生活背景を決めつけない。",
+    "reference_ids": ["jp-office-errands"],
+    "is_default": false
+  }
+]

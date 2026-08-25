@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/index.js && node --test test/*.test.js",
+    "build": "node scripts/build-workspace.mjs",
+    "check": "npm run build && node --check src/index.js && node --check src/hosted-workspace.js && node --test test/*.test.js",
     "config": "node scripts/render-config.mjs",
-    "dev": "wrangler dev --config wrangler.generated.jsonc",
-    "deploy": "wrangler deploy --config wrangler.generated.jsonc",
+    "dev": "npm run build && wrangler dev --config wrangler.generated.jsonc",
+    "deploy": "npm run build && wrangler deploy --config wrangler.generated.jsonc",
     "db:migrate:local": "wrangler d1 migrations apply trace-marketing-control --local --config wrangler.generated.jsonc",
     "db:migrate:remote": "wrangler d1 migrations apply trace-marketing-control --remote --config wrangler.generated.jsonc"
   },

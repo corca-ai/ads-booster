@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "starter-tw-university",
+    "country": "TW",
+    "name": "大學生 · 課程與社團",
+    "persona_id": "tw-university-student",
+    "audience": "同時安排課程、報告、社團與聚會的台灣大學生",
+    "situation": "從早課、午餐、分組報告到晚間社團的一天",
+    "tone": "自然精簡的繁體中文，像本人在描述今天",
+    "guidance": "用具體時間與場景呈現，不宣稱未證實的成效。",
+    "reference_ids": ["tw-campus-day"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-tw-office",
+    "country": "TW",
+    "name": "上班族 · 通勤與生活事項",
+    "persona_id": "tw-city-worker",
+    "audience": "安排通勤、會議、工作、運動與生活事項的台灣上班族",
+    "situation": "上班前後都有行程、需要快速確認下一件事的平日",
+    "tone": "口吻直接但不生硬，避免廣告式誇張",
+    "guidance": "不要假設城市或職業，只呈現可信的一日節奏。",
+    "reference_ids": ["tw-city-workday"],
+    "is_default": false
+  }
+]

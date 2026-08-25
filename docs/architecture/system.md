@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Draft
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-26
 
 ## Purpose
 
@@ -26,6 +26,11 @@ layered Trace lock-screen marketing images. It exposes three primary product sur
 - a standalone agent through the `trace-ads` TUI or plain REPL;
 - a local team workspace through `trace-agent serve` and its FastAPI browser/API surface;
 - a deterministic generation pipeline through `trace-agent generate-one` and `trace-run`.
+
+The optional Cloudflare deployment adds a fourth surface: one login-free hosted candidate workspace
+served from the control-plane Worker root. It contains switchable logical account silos and is
+intentionally a public team review surface rather than a replacement for member-private local
+sessions. Account selection scopes data; it does not authorize a visitor.
 
 The surfaces share model-provider, tool, generation, capture, composition, and contract code, but
 they do not share one process lifecycle. Starting the Web service does not start the standalone
@@ -363,7 +368,7 @@ roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
 | `$TRACE_AGENT_HOME/marketing-bridge/artifacts/` | `marketing/` | Digest-backed simulation artifacts or adapter-owned task artifacts |
 | `$TRACE_AGENT_HOME/marketing-simulation/` | `marketing/` | Local control-plane proof, with one separate SQLite memory file per account |
 | `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected workspace and tunnel logs |
-| `<serve workspace>/context/` | `candidate_generation/` | Operator-owned Korean principle, element, voice, fact, and reference documents, read only |
+| `TRACE_AGENT_CONTEXT_DIR`, `<serve workspace>/context/`, or packaged `assets/context/` | `candidate_generation/` | Explicit, workspace-owned, or starter Korean principle, element, voice, fact, and reference documents, read only |
 
 Generation artifacts are separate from service metadata. By default, the standalone
 `generate-one` command writes the job tree, TraceRun journal, and capture output below
@@ -384,6 +389,7 @@ state and capture roots.
 | cloudflared | `tunnel/` | Default live `trycloudflare.com` URL request; failure leaves the loopback service available |
 | Worker supervisor and secret manager | `marketing/service.py` | Portable bridge config plus environment or argv-safe external credential command; no OS-specific store is required |
 | Cloudflare D1, Workflows, Durable Objects, Queues, and R2 | `cloudflare/`, `marketing/` | Dynamic account registry, durable loop, isolated account memory, outbound worker task pull, and context artifacts |
+| Cloudflare Workers AI and Static Assets | `cloudflare/` | Public workspace assets plus context-grounded candidate generation; no local OAuth credential crosses this boundary |
 
 ## Dynamic marketing account loop
 
@@ -396,6 +402,41 @@ checks D1 every minute and claims accounts whose data-driven `next_run_at` is du
 D1 index permits only one non-terminal run per account, so a long approval wait cannot accumulate
 overlapping Cron runs. Approval or task callback expiry moves the D1 run to `failed` with a stable
 timeout code instead of leaving a permanently waiting row.
+
+The same Worker root serves a static copy of the candidate and two-stage review UI. `/api/*` on this
+hosted surface is intentionally login-free; it must not be confused with the token-protected `/v1/*`
+control-plane and callback APIs. `X-Trace-Account-ID` or `account_id` selects an enabled logical silo,
+but every visitor may list and select those accounts. D1 owns hosted account settings, candidates,
+account-scoped country/persona profiles, optimistic revisions, immutable candidate context snapshots,
+structured feedback events, and a per-account generation cooldown. Each account owns its country,
+locale, timezone, morning/evening slots, generation switch, and next generation time. The UI exposes
+account switching and settings, current context, pipeline counts, candidate status filters, and the
+account-scoped feedback summary. Workers AI receives the selected profile, matching packaged country
+context, current account instruction, and repeated account/persona feedback rules. It must return
+four schema-shaped candidates in one batch: two morning and two evening. The Cron Trigger claims due
+enabled accounts and invokes the same generator; failures move that account's retry time 15 minutes
+forward without changing another silo. A manifest maps packaged global and country documents to
+starter profile files, so a new country does not require a Worker source edit. Missing country
+documents fail closed with `409`.
+Missing or incomplete Appium prompt text is rebuilt from the validated image inputs.
+Caption approval creates a revision-scoped hosted capture task in D1 and Cloudflare Queue. The
+portable bridge recognizes that task contract, discovers a booted or available iPhone Simulator at
+execution time, runs the production Appium/XCUITest capture and deterministic composition path, and
+returns the final PNG in its durable callback outbox. The Worker verifies task/run/account/candidate
+scope, callback ID, byte limit, and SHA-256 before storing the PNG in R2. A duplicate identical
+callback is accepted; a changed or stale callback cannot advance the candidate. Offline workers leave
+`capture_state=queued`; verified failures use `capture_state=failed` and remain retryable.
+Image approval ends at `submitted` and performs no outbound publication action. A hosted candidate
+can be edited or deleted from any state with its current optimistic revision. Editing invalidates the
+old review and image, returns the candidate to `awaiting_review`, and removes the old R2 object;
+deletion removes the D1 record and its R2 object. Profile deletion is a soft hide and never changes a
+candidate's stored context snapshot. Approval records a 5-point event. Rejection requires a 1–3
+rating and a taxonomy tag; three matching tag events for one account/persona become a generation
+rule candidate. The packaged KR, JP, TW, US, DE, FR, and BR context plus 16 profiles are generic
+starter material. Existing Appium persona JSON files are test/demo fixtures, not production team
+context, and the earlier generator's `context/` contract pointed to operator-owned local files that
+were not committed to this repository. Team-owned evidence enters through D1 profile CRUD or
+reviewed manifest data rather than being inferred from those fixtures.
 
 For a simulation account without a local `workspace_id`, the Workflow executes each task in
 Cloudflare, stores a labeled digest-backed task artifact in R2, and records the result in D1. This
@@ -416,11 +457,19 @@ task ID, and duplicate callbacks replay the same event only after the stored cal
 match. Pull, acknowledgement, callback, and approval transport failures do not block already-durable
 local work.
 
-Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A qualifying
-Pull Request runs an unprivileged Worker check. A qualifying merge to `main` then installs the
-locked Worker dependencies, reuses that check as a deployment prerequisite, renders the
-environment-specific Wrangler config from GitHub variables, applies D1 migrations, deploys the
-Worker, and requires a successful public `/health` readback. The deployment job
+The login-free hosted workspace uses the same Queue independently of the Workflow account mode for
+native image work. Its task payload contains the immutable candidate/context snapshot but no bridge
+secret. The Mac bridge is outbound-only and stores credentials through the existing environment or
+external-command provider, never macOS Keychain. `TRACE_AGENT_DEVICE_UDID` is an optional override;
+without it the worker chooses a compatible Simulator dynamically.
+
+Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A Pull Request
+that changes the Worker, canonical workspace UI, or packaged context runs an unprivileged Worker
+check. A qualifying merge to `main` then installs the locked Worker dependencies, reuses that check
+as a deployment prerequisite, renders the environment-specific Wrangler config from GitHub
+variables, applies D1 migrations, deploys the Worker and static assets, and requires successful
+public `/health`, root workspace, and public-session readbacks, including a non-empty default context
+profile after D1 migration and reads back the `workspace.borca.ai` custom domain. The deployment job
 is concurrency-serialized and never cancels an in-flight migration/deploy. Runtime control-plane and
 callback secrets stay attached to the Worker in Cloudflare; GitHub receives only the scoped deploy
 credential required by Wrangler.
@@ -435,7 +484,7 @@ capability-gated and is not enabled or claimed. See
 [Dynamic Cloudflare Marketing Loop Contract](../contracts/cloudflare-marketing-loop.md).
 
 The base CLI, TUI, Web shell, and offline composition do not require native capture dependencies.
-Generation that includes Trace component capture requires Xcode, an available Simulator, the Trace
+Generation that includes Trace component capture requires full Xcode, an available Simulator, the Trace
 debug build, Appium, and the XCUITest driver. The agent starts installed but inactive Simulator and
 Appium processes, but does not install the missing Trace build or driver.
 
@@ -448,6 +497,8 @@ Appium processes, but does not install the missing Trace build or driver.
 - Private sessions are scoped by workspace, member, and session identifiers.
 - Access codes and OAuth credentials are not written to ordinary logs.
 - Service binding remains loopback-only unless an explicit tunnel adapter reports a live URL.
+- The hosted Cloudflare workspace is intentionally public and account-scoped; token-protected
+  control-plane and worker callback APIs never inherit that public access.
 - External side effects require an approval boundary or a dedicated worker boundary; the standalone
   TUI's explicit `yolo` mode is the user-selected automatic decision at that boundary.
 - Capture, staging, and composition artifacts remain inside their configured roots and retain digest

@@ -1,6 +1,6 @@
 # Dynamic Cloudflare Marketing Loop Contract
 
-Status: Draft
+Status: Implemented for the pre-publication pipeline; live Threads publication remains disabled.
 
 The control-plane, hosted/local simulation, queue bridge, automatic workspace-review relay, portable
 worker enrollment, and deployment configuration are implemented in this branch. The bridge can opt
@@ -8,6 +8,16 @@ into the installed candidate pipeline added by PR #22: provider generation write
 candidates and the search-based image stage composes only caption-approved candidates. Real Threads
 publication and live metrics readback remain unverified. Simulation output must not be represented
 as a published post.
+
+One login-free hosted review workspace is also implemented at the Worker root. It is deliberately
+public, fixed to the configured public account, and separate from token-protected `/v1` operations.
+Workers AI reads the selected D1 country/persona profile, matching packaged country context, and the
+account instruction. D1 stores profiles, immutable candidate context snapshots, candidates, capture
+tasks, and review revisions. Caption approval dispatches a Queue task to an enrolled Mac; the bridge
+performs native Appium capture and returns a digest-backed PNG for R2. Live publication remains
+outside this hosted surface. Image approval ends at `submitted` without an
+external side effect. Hosted candidates remain editable and deletable in every state; an edit
+invalidates prior approvals and image artifacts before returning to the first review gate.
 
 ## First milestone
 
@@ -38,6 +48,8 @@ content quality. The acceptance path is:
 | artifacts | R2 in cloud, digest-backed local worker files | large payloads do not become workflow state and provenance remains inspectable |
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
 | installed candidate journey | optional local executor selected at bridge startup | the default remains simulation; enabling the installed pipeline does not silently enable publication |
+| hosted review workspace | Worker static assets, Workers AI, D1, Queue, Mac bridge, and R2 | the public URL needs no access ID; context/model/account selection stays data-driven while native capture crosses an explicit replaceable worker boundary |
+| hosted context registry | packaged manifest plus account-scoped D1 profiles | countries extend through reviewed documents/profile data; team profiles change without Worker source edits; candidate snapshots retain provenance |
 
 This combines ideas used by established harnesses: actor isolation from Akka/Orleans-style systems,
 durable workflow steps from Temporal-style systems, inbox/outbox delivery from event-driven systems,
@@ -49,6 +61,8 @@ irreversible action.
 The following changes are data-only:
 
 - add or disable an account;
+- add, edit, or hide a profile for the configured public account;
+- add a packaged country by registering its documents and starter profile JSON in the context manifest;
 - change country, timezone, cadence, or instruction revision;
 - rotate an opaque `credential_ref`;
 - switch an account from live back to simulation; and
@@ -65,6 +79,11 @@ The following changes intentionally require code review and deployment:
 Dynamic does not mean arbitrary code loaded from D1. Account data can select a reviewed adapter, but
 cannot inject executable code into a Worker or local bridge process.
 
+A D1 profile alone cannot enable an unreviewed country. Hosted generation resolves global plus
+country documents from the packaged manifest and fails with `409` when that country is absent. Each
+candidate persists the complete selected profile snapshot; editing or hiding the profile later does
+not rewrite already-generated evidence.
+
 ## Isolation and instructions
 
 - D1 contains account configuration and an opaque credential reference, never the credential value.
@@ -77,6 +96,8 @@ cannot inject executable code into a Worker or local bridge process.
 - Worker Queue and callback credential values are injected by the supervisor or an external secret command. They are not
   included in task payloads, callbacks, artifacts, or logs.
 - A callback is accepted only when task, run, account, and task kind all match the stored task.
+- A hosted capture callback additionally requires the candidate revision, callback ID, PNG type,
+  byte limit, and SHA-256 to match. Changed or stale callbacks cannot advance the candidate.
 
 ## Run and failure states
 
@@ -143,6 +164,8 @@ confirms, against the current official Threads API and the actual account permis
 - operator-visible verification after publication.
 
 The current product does not automatically delete, edit, or retry an ambiguous live publication.
+This restriction is about already-published external content. The hosted D1 candidate and its R2
+image can still be edited or deleted before any separate human publishing action.
 
 Only one non-terminal run may exist for an account. Candidate approval, publication approval, and
 task callback timeouts transition the run to `failed`. Observation settings are absolute minutes
@@ -164,22 +187,26 @@ capture task handlers. Research, publication, and metrics remain explicitly simu
 6. refuses publication unless every selected candidate has reached `submitted` through the existing
    image review gate.
 
-The offline image stage still uses the packaged Trace component fixture. Candidate schedule items and
-device time are recorded but are not rendered until the native Appium capture path replaces that
-fixture.
+Tasks carrying `pipeline=hosted_workspace_capture_v1` are routed ahead of the legacy local-candidate
+handler. The executor discovers a booted or available iPhone Simulator on each compatible Mac,
+builds a typed marketing context from the immutable hosted snapshot, runs the production Appium
+capture/composition path, and places the final PNG plus digest in the durable callback outbox. A
+fixed UDID is optional, not part of enrollment. The legacy local candidate image handler remains an
+offline fixture path for its existing workspace journey and is never represented as native.
 
-## Two-hour operating target
+## First operating target
 
-The honest two-hour target after credentials and Cloudflare resources exist is:
+The first operating target after credentials and Cloudflare resources exist is:
 
 - migrate D1 and deploy the Worker;
-- create secrets and one instruction/account row without a `workspace_id`;
-- start a run, approve it, and observe `completed`; and
-- inspect the R2 context/task snapshots, D1 events, and account-private memory.
+- open the login-free `workspace.borca.ai` workbench and generate four context-grounded candidates;
+- approve a caption, observe Queue → native Mac/Appium → verified R2 PNG, and approve the image;
+- reach `submitted` while confirming no Threads or other publication call occurs; and
+- inspect the D1 capture correlation row and R2 digest metadata.
 
-HTTP pull and a worker bridge are required only when the account opts into a local `workspace_id`.
-The worker may run on any compatible computer; its process supervisor owns restart and its selected
-secret provider owns both bridge tokens.
+HTTP pull and a worker bridge are required for hosted native capture and for any control-plane
+account that opts into a local `workspace_id`. The worker may run on any compatible Mac; its process
+supervisor owns restart and its selected secret provider owns both bridge tokens.
 
 Enabling real Threads publication is a separate target because platform capability and permission
 verification are external facts, not an implementation toggle.
@@ -195,7 +222,10 @@ Cloudflare credentials. After merge, the repository workflow must, in order:
 3. render the ignored Wrangler config from repository variables;
 4. apply all pending D1 migrations;
 5. deploy the merged Worker revision; and
-6. read back `{"ok":true}` from the configured health URL.
+6. read back `{"ok":true}` from the configured health URL; and
+7. verify the root workspace has no access-ID form, `/api/auth/session` identifies the public account,
+   and `/api/context-profiles` returns a default profile after migration; and
+8. read back `https://workspace.borca.ai/health` through the custom domain.
 
 The job is serialized and does not cancel an in-flight deployment. Any failed check, migration,
 deploy, or health readback leaves the GitHub job red and prevents a success claim. Human candidate

@@ -15,6 +15,36 @@
   const candidateEmpty = one("[data-candidate-empty]");
   const candidateFeedback = one("[data-candidate-feedback]");
   const autogenFeedback = one("[data-autogen-feedback]");
+  const candidateForm = one("[data-candidate-form]");
+  const manualEntry = one("[data-manual-entry]");
+  const candidateFormTitle = one("[data-candidate-form-title]");
+  const candidateSubmit = one("[data-candidate-submit]");
+  const candidateCancel = one("[data-candidate-cancel]");
+  const candidateEditNote = one("[data-candidate-edit-note]");
+  const contextSelect = one("[data-context-select]");
+  const contextForm = one("[data-context-form]");
+  const contextFeedback = one("[data-context-feedback]");
+  const contextCancel = one("[data-context-cancel]");
+  const contextSubmit = one("[data-context-submit]");
+  const contextFormTitle = one("[data-context-form-title]");
+  const accountSelect = one("[data-account-select]");
+  const accountEditForm = one("[data-account-edit-form]");
+  const accountCreateForm = one("[data-account-create-form]");
+  const accountEditFeedback = one("[data-account-edit-feedback]");
+  const accountCreateFeedback = one("[data-account-create-feedback]");
+  let hostedCandidateControls = false;
+  let editingCandidate = null;
+  let editingCandidateContextChanged = false;
+  let editingContextProfile = null;
+  let contextProfiles = [];
+  let contextCountries = [];
+  let selectedContextProfileId = "";
+  let candidateRecords = [];
+  let candidateFilter = "all";
+  let hostedAccounts = [];
+  let selectedAccountId = "";
+  let feedbackSignal = null;
+  let capturePoll = null;
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -25,8 +55,8 @@
     "candidate already reviewed": "이미 승인 또는 반려된 후보입니다. 새로고침 후 다시 시도해 주세요.",
   });
   const CANDIDATE_SOURCE_LABELS = Object.freeze({
-    auto: "🤖 자동",
-    manual: "✍️ 수동",
+    auto: "AI 생성",
+    manual: "수동",
   });
   const CANDIDATE_STATUS_LABELS = Object.freeze({
     awaiting_review: "캡션·주제 검수 대기",
@@ -85,7 +115,30 @@
     JP: "ja",
     TW: "zh",
     US: "en",
+    DE: "de",
+    FR: "fr",
+    BR: "pt",
   });
+  const COUNTRY_TIMEZONES = Object.freeze({
+    KR: "Asia/Seoul",
+    JP: "Asia/Tokyo",
+    TW: "Asia/Taipei",
+    US: "America/New_York",
+    DE: "Europe/Berlin",
+    FR: "Europe/Paris",
+    BR: "America/Sao_Paulo",
+  });
+  const REVIEW_TAGS = Object.freeze([
+    "이미지 품질·AI 티",
+    "앱 화면·데이터 오류",
+    "국가·언어 부적합",
+    "계정 페르소나 불일치",
+    "컨셉이 약함",
+    "기존 게시물과 중복",
+    "캡션 부적합",
+    "브랜드·정책 위험",
+    "기타",
+  ]);
   const DEFAULT_LANGUAGE = "en";
   const MAX_TRACE_ITEMS = 8;
 
@@ -93,8 +146,13 @@
 
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   const candidateSourceLabel = (source) => CANDIDATE_SOURCE_LABELS[source] ?? source;
-  const candidateStatusLabel = (status) => CANDIDATE_STATUS_LABELS[status] ?? status;
+  const candidateStatusLabel = (record) => {
+    if (record.capture_state === "queued") return "Mac 캡처 대기·실행 중";
+    if (record.capture_state === "failed") return "Mac 캡처 실패 · 재시도 가능";
+    return CANDIDATE_STATUS_LABELS[record.status] ?? record.status;
+  };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
+  const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
 
   const setNotice = (message) => {
     if (notice) notice.textContent = message;
@@ -107,7 +165,11 @@
   };
 
   const request = async (path, options = {}) => {
-    const response = await fetch(path, { credentials: "same-origin", ...options });
+    const headers = new Headers(options.headers ?? {});
+    if (hostedCandidateControls && selectedAccountId) {
+      headers.set("X-Trace-Account-ID", selectedAccountId);
+    }
+    const response = await fetch(path, { credentials: "same-origin", ...options, headers });
     const payload = response.status === 204 ? null : await response.json();
     if (!response.ok) {
       const validationError = Array.isArray(payload?.detail);
@@ -125,14 +187,19 @@
   };
 
   const markAuthenticated = (member) => {
+    hostedCandidateControls = member.member_id === "public" && String(member.workspace_id).startsWith("cloudflare:");
+    if (hostedCandidateControls && !selectedAccountId) selectedAccountId = member.account_id;
     if (entryScreen) entryScreen.hidden = true;
     if (workspaceLive) workspaceLive.hidden = false;
     if (skipLink) skipLink.setAttribute("href", "#workspace-content");
     if (memberFields) memberFields.hidden = true;
     if (memberConnected) memberConnected.hidden = false;
-    if (memberLabel) memberLabel.textContent = "로컬 연결됨";
+    if (memberLabel) memberLabel.textContent = hostedCandidateControls ? "Cloudflare 연결됨" : "로컬 연결됨";
     if (memberName) memberName.textContent = member.display_name;
+    const workspaceAccount = one("[data-workspace-account]");
+    if (workspaceAccount) workspaceAccount.textContent = selectedAccountId || member.account_id || member.workspace_id;
     if (inviteButton) inviteButton.hidden = member.is_admin !== true;
+    all("[data-hosted-only]").forEach((element) => { element.hidden = !hostedCandidateControls; });
   };
 
   const markSignedOut = () => {
@@ -144,6 +211,7 @@
     if (memberLabel) memberLabel.textContent = "입장 전";
     if (memberName) memberName.textContent = "워크스페이스에 입장";
     if (inviteButton) inviteButton.hidden = true;
+    all("[data-hosted-only]").forEach((element) => { element.hidden = true; });
     inviteDialog?.close();
     clearInviteResult();
   };
@@ -179,6 +247,30 @@
     return element;
   };
 
+  const selectedContextProfile = () =>
+    contextProfiles.find((profile) => profile.profile_id === selectedContextProfileId) ?? null;
+
+  const setContextFeedback = (message) => {
+    if (!contextFeedback) return;
+    contextFeedback.hidden = !message;
+    contextFeedback.textContent = message;
+  };
+
+  const renderSelectedContext = () => {
+    const profile = selectedContextProfile();
+    const value = (selector, text) => {
+      const element = one(selector);
+      if (element) element.textContent = text;
+    };
+    value("[data-context-source]", profile?.source === "custom" ? "team" : "starter");
+    value("[data-context-audience]", profile?.audience ?? "사용할 수 있는 컨텍스트가 없습니다.");
+    value("[data-context-situation]", profile?.situation ?? "—");
+    value("[data-context-tone]", profile?.tone ?? "—");
+    value("[data-context-guidance]", profile?.guidance ?? "—");
+    value("[data-context-refs]", profile?.reference_ids?.join(", ") || "연결된 레퍼런스 없음");
+    if (contextSelect) contextSelect.value = profile?.profile_id ?? "";
+  };
+
   const journeyNode = (record) => {
     const list = document.createElement("ol");
     list.className = "journey";
@@ -207,10 +299,33 @@
     const caption = document.createElement("span"); caption.className = "candidate-row__caption";
     caption.textContent = record.caption.split("\n", 1)[0] || "(캡션 없음)";
     const meta = document.createElement("span"); meta.className = "candidate-row__meta";
-    meta.textContent = `${record.country} · ${candidateDate(record.created_at)}`;
-    content.append(title, caption, meta, journeyNode(record));
+    meta.textContent = `${record.country} · ${postingSlotLabel(record.posting_slot)} 슬롯 · ${candidateDate(record.created_at)}`;
+    content.append(title, caption, meta);
+    if (record.context_profile) {
+      content.append(badge("candidate-context", `Context · ${record.context_profile.name}`));
+    }
+    if (record.review_rating) {
+      content.append(badge("candidate-context", `최근 평가 · ${record.review_rating}점`));
+    }
+    content.append(journeyNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
-    trailing.append(badge(`candidate-status ${record.status}`, candidateStatusLabel(record.status)));
+    trailing.append(badge(
+      `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
+      candidateStatusLabel(record),
+    ));
+    if (hostedCandidateControls) {
+      const edit = document.createElement("button");
+      edit.className = "button button-quiet candidate-row__action";
+      edit.type = "button";
+      edit.textContent = "수정";
+      edit.addEventListener("click", () => beginCandidateEdit(record));
+      const remove = document.createElement("button");
+      remove.className = "button button-quiet candidate-row__action candidate-row__action--danger";
+      remove.type = "button";
+      remove.textContent = "삭제";
+      remove.addEventListener("click", () => deleteCandidate(record, remove));
+      trailing.append(edit, remove);
+    }
     row.append(source, content, trailing);
     return row;
   };
@@ -239,11 +354,100 @@
     return field;
   };
 
+  const reviewControls = (record, stage, approveLabel) => {
+    const actions = document.createElement("div");
+    actions.className = "review-controls";
+    const feedback = document.createElement("p");
+    feedback.className = "candidate-feedback";
+    feedback.setAttribute("role", "alert");
+    feedback.hidden = true;
+
+    const approve = document.createElement("button");
+    approve.className = "button button-primary";
+    approve.type = "button";
+    approve.textContent = approveLabel;
+
+    const rejection = document.createElement("details");
+    rejection.className = "review-rejection";
+    const summary = document.createElement("summary");
+    summary.textContent = "반려 사유 선택";
+    const body = document.createElement("div");
+    body.className = "review-rejection__body";
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "review-tag-grid";
+    const legend = document.createElement("legend");
+    legend.textContent = "이유 태그 · 하나 이상";
+    fieldset.append(legend);
+    const tagInputs = REVIEW_TAGS.map((tag, index) => {
+      const label = document.createElement("label");
+      label.className = "review-tag";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = tag;
+      input.id = `review-${stage}-${record.candidate_id}-${index}`;
+      const text = document.createElement("span");
+      text.textContent = tag;
+      label.append(input, text);
+      fieldset.append(label);
+      return input;
+    });
+    const ratingLabel = document.createElement("label");
+    ratingLabel.className = "review-rating";
+    ratingLabel.textContent = "평점";
+    const rating = document.createElement("select");
+    [[1, "1 · 사용 어려움"], [2, "2 · 큰 수정 필요"], [3, "3 · 보완 필요"]].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = label;
+      option.selected = value === 2;
+      rating.append(option);
+    });
+    ratingLabel.append(rating);
+    const note = document.createElement("textarea");
+    note.className = "approval-card__reason";
+    note.rows = 2;
+    note.maxLength = 2000;
+    note.placeholder = "선택 사항 · 기타를 고르면 상세 이유를 적어 주세요.";
+    note.setAttribute("aria-label", "반려 상세 이유");
+    const reject = document.createElement("button");
+    reject.className = "button button-secondary";
+    reject.type = "button";
+    reject.textContent = "반려 저장";
+    body.append(fieldset, ratingLabel, note, reject);
+    rejection.append(summary, body);
+    actions.append(approve, rejection, feedback);
+
+    const buttons = () => [approve, reject];
+    const submit = stage === "caption" ? reviewCandidate : reviewCandidateImage;
+    approve.addEventListener("click", () => submit(
+      record,
+      true,
+      { rating: 5, tags: [], note: null },
+      approve,
+      feedback,
+      buttons,
+    ));
+    reject.addEventListener("click", () => submit(
+      record,
+      false,
+      {
+        rating: Number(rating.value),
+        tags: tagInputs.filter((input) => input.checked).map((input) => input.value),
+        note: note.value.trim() || null,
+      },
+      reject,
+      feedback,
+      buttons,
+    ));
+    return actions;
+  };
+
   const approvalVisual = (record) => {
     const visual = document.createElement("div"); visual.className = "approval-visual";
     if (record.image_path) {
       const image = document.createElement("img");
-      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image`;
+      const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
+      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image${accountQuery}`;
       image.alt = "합성된 후보 이미지";
       image.loading = "lazy";
       image.addEventListener("error", () => {
@@ -261,7 +465,7 @@
     const header = document.createElement("div"); header.className = "approval-card__header";
     header.append(
       badge("candidate-source", candidateSourceLabel(record.source)),
-      badge("mono", `${record.country} · ${candidateDate(record.created_at)}`),
+      badge("mono", `${record.country} · ${postingSlotLabel(record.posting_slot)} · ${candidateDate(record.created_at)}`),
     );
     const journey = journeyNode(record);
     const body = document.createElement("div"); body.className = "approval-card__body";
@@ -277,6 +481,7 @@
     const facts = document.createElement("div"); facts.className = "approval-card__facts";
     facts.append(
       approvalField("가설", record.hypothesis),
+      approvalField("생성 컨텍스트", record.context_profile?.name || "기록 없음"),
       approvalPrinciples(record),
       approvalField("참조", record.refs_used.length ? record.refs_used.join(", ") : "—"),
       approvalField("AI 검수", record.ai_verdict || "—"),
@@ -286,22 +491,7 @@
     const orderBody = document.createElement("pre"); orderBody.className = "approval-card__order";
     orderBody.textContent = record.shooting_order || "Appium 프롬프트가 비어 있습니다.";
     order.append(summary, orderBody);
-    const actions = document.createElement("div"); actions.className = "approval-card__actions";
-    const reason = document.createElement("input");
-    reason.className = "approval-card__reason";
-    reason.type = "text";
-    reason.maxLength = 2000;
-    reason.placeholder = "반려 사유 (다음 후보 생성에 반영됩니다)";
-    reason.setAttribute("aria-label", "반려 사유");
-    const buttons = [true, false].map((accepted) => {
-      const button = document.createElement("button");
-      button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
-      button.type = "button";
-      button.textContent = accepted ? "✅ 캡션·주제 승인" : "❌ 반려";
-      button.addEventListener("click", () => reviewCandidate(record, accepted, reason, button, () => buttons));
-      return button;
-    });
-    actions.append(reason, ...buttons);
+    const actions = reviewControls(record, "caption", "캡션·주제 승인 · 5점");
     card.append(header, journey, body, facts, order, actions);
     return card;
   };
@@ -323,7 +513,10 @@
     const header = document.createElement("div"); header.className = "approval-card__header";
     header.append(
       badge("candidate-source", candidateSourceLabel(record.source)),
-      badge(`candidate-status ${record.status}`, candidateStatusLabel(record.status)),
+      badge(
+        `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
+        candidateStatusLabel(record),
+      ),
     );
     const body = document.createElement("div"); body.className = "approval-card__body";
     body.append(imageSummary(record), approvalVisual(record));
@@ -333,34 +526,31 @@
     feedback.setAttribute("role", "alert");
     feedback.hidden = true;
     if (record.status === "caption_approved") {
-      const button = document.createElement("button");
-      button.className = "button button-primary";
-      button.type = "button";
-      button.textContent = "🎨 이미지 생성";
-      button.addEventListener("click", () => generateCandidateImage(record, button, feedback));
-      actions.append(button);
+      if (record.capture_state === "queued") {
+        const waiting = document.createElement("p");
+        waiting.className = "candidate-feedback";
+        waiting.textContent = "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다.";
+        actions.append(waiting);
+      } else {
+        const button = document.createElement("button");
+        button.className = "button button-primary";
+        button.type = "button";
+        button.textContent = record.capture_state === "failed" ? "Mac 캡처 다시 시도" : "Mac에서 이미지 생성";
+        button.addEventListener("click", () => generateCandidateImage(record, button, feedback));
+        actions.append(button);
+      }
+      if (record.capture_state === "failed") {
+        const failure = approvalField("캡처 실패 코드", record.capture_error || "native_capture_failed");
+        card.append(header, body, failure, actions, feedback);
+        return card;
+      }
       if (record.review_note) {
         const note = approvalField("직전 반려 사유", record.review_note);
         card.append(header, body, note, actions, feedback);
         return card;
       }
     } else {
-      const reason = document.createElement("input");
-      reason.className = "approval-card__reason";
-      reason.type = "text";
-      reason.maxLength = 2000;
-      reason.placeholder = "반려 사유 (다음 이미지 생성에 반영됩니다)";
-      reason.setAttribute("aria-label", "이미지 반려 사유");
-      const buttons = [true, false].map((accepted) => {
-        const button = document.createElement("button");
-        button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
-        button.type = "button";
-        button.textContent = accepted ? "✅ 승인" : "❌ 반려";
-        button.addEventListener("click", () =>
-          reviewCandidateImage(record, accepted, reason, button, feedback, () => buttons));
-        return button;
-      });
-      actions.append(reason, ...buttons);
+      actions.append(reviewControls(record, "image", "이미지 승인 · 5점"));
     }
     card.append(header, body, actions, feedback);
     return card;
@@ -375,15 +565,15 @@
   const generateCandidateImage = async (record, button, feedback) => {
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = "이미지 생성 중… (1~3분)";
+    button.textContent = "Queue 등록 중…";
     setCardFeedback(feedback, "");
     setBusy(button, true, "잠금화면 이미지를 만드는 중… (1~3분 소요)");
     try {
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/generate-image`, {
         method: "POST",
       });
-      await loadCandidates();
-      setNotice("이미지를 만들었습니다. 이미지 검수를 진행해 주세요.");
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      setNotice("Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
       setNotice(error.message);
@@ -394,8 +584,7 @@
     }
   };
 
-  const reviewCandidateImage = async (record, accepted, reason, target, feedback, siblings) => {
-    const note = String(reason?.value ?? "").trim();
+  const reviewCandidateImage = async (record, accepted, review, target, feedback, siblings) => {
     const disabled = siblings();
     disabled.forEach((button) => { button.disabled = true; });
     setCardFeedback(feedback, "");
@@ -404,9 +593,9 @@
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/review-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accepted, note: note || null, expected_revision: record.revision }),
+        body: JSON.stringify({ accepted, ...review, expected_revision: record.revision }),
       });
-      await loadCandidates();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
       setNotice(accepted ? "제출 준비가 끝났습니다." : "이미지를 반려했습니다. 다시 생성할 수 있습니다.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
@@ -417,20 +606,21 @@
     }
   };
 
-  const reviewCandidate = async (record, accepted, reason, target, siblings) => {
-    const note = String(reason?.value ?? "").trim();
+  const reviewCandidate = async (record, accepted, review, target, feedback, siblings) => {
     const disabled = siblings();
     disabled.forEach((button) => { button.disabled = true; });
+    setCardFeedback(feedback, "");
     setBusy(target, true, "검수 결과를 저장하는 중…");
     try {
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accepted, note: note || null, expected_revision: record.revision }),
+        body: JSON.stringify({ accepted, ...review, expected_revision: record.revision }),
       });
-      await loadCandidates();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
       setNotice(accepted ? "주제와 캡션을 승인했습니다. 이미지 승인 단계로 넘어갑니다." : "후보를 반려했습니다.");
     } catch (error) {
+      setCardFeedback(feedback, error.message);
       setNotice(error.message);
       disabled.forEach((button) => { button.disabled = false; });
     } finally {
@@ -438,12 +628,52 @@
     }
   };
 
+  const candidateMatchesFilter = (record) => {
+    if (candidateFilter === "review") return record.status === "awaiting_review";
+    if (candidateFilter === "image") {
+      return record.status === "caption_approved" || record.status === "image_awaiting_review";
+    }
+    if (candidateFilter === "ready") return record.status === "submitted";
+    if (candidateFilter === "rejected") return record.status === "rejected";
+    return true;
+  };
+
+  const renderCandidateList = () => {
+    const visible = candidateRecords.filter(candidateMatchesFilter);
+    one("[data-candidate-list]")?.replaceChildren(...visible.map(candidateNode));
+    all("[data-candidate-filter]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.candidateFilter === candidateFilter));
+    });
+    const count = one("[data-candidate-count]");
+    if (count) count.textContent = visible.length === candidateRecords.length
+      ? `후보 ${candidateRecords.length}개`
+      : `전체 ${candidateRecords.length}개 · 표시 ${visible.length}개`;
+    if (candidateEmpty) candidateEmpty.hidden = visible.length > 0;
+    const emptyTitle = one("[data-candidate-empty-title]");
+    const emptyCopy = one("[data-candidate-empty-copy]");
+    if (emptyTitle) emptyTitle.textContent = candidateRecords.length ? "이 상태의 후보가 없습니다" : "등록된 후보가 없습니다";
+    if (emptyCopy) emptyCopy.textContent = candidateRecords.length
+      ? "다른 상태 필터를 선택해 전체 흐름을 확인하세요."
+      : "컨텍스트를 선택하고 오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.";
+  };
+
+  const renderPipelineStats = () => {
+    const value = (selector, count) => {
+      const element = one(selector);
+      if (element) element.textContent = String(count);
+    };
+    value("[data-stat-review]", candidateRecords.filter((record) => record.status === "awaiting_review").length);
+    value("[data-stat-image]", candidateRecords.filter(
+      (record) => record.status === "caption_approved" || record.status === "image_awaiting_review",
+    ).length);
+    value("[data-stat-ready]", candidateRecords.filter((record) => record.status === "submitted").length);
+  };
+
   const loadCandidates = async () => {
     const records = await request("/api/candidates");
-    one("[data-candidate-list]")?.replaceChildren(...records.map(candidateNode));
-    const count = one("[data-candidate-count]");
-    if (count) count.textContent = `후보 ${records.length}개`;
-    if (candidateEmpty) candidateEmpty.hidden = records.length > 0;
+    candidateRecords = records;
+    renderCandidateList();
+    renderPipelineStats();
     const pending = records.filter((record) => record.status === "awaiting_review");
     one("[data-approval-list]")?.replaceChildren(...pending.map(approvalNode));
     const approvalEmpty = one("[data-approval-empty]");
@@ -458,18 +688,332 @@
     if (imageEmpty) imageEmpty.hidden = imageStage.length > 0;
     const imageCount = one("[data-image-count]");
     if (imageCount) {
-      const waiting = imageStage.filter((record) => record.status === "image_awaiting_review");
-      imageCount.textContent = `이미지 대기 ${imageStage.length}건 · 검수 대기 ${waiting.length}건`;
+      const generationPending = imageStage.filter((record) => record.status === "caption_approved");
+      const reviewPending = imageStage.filter((record) => record.status === "image_awaiting_review");
+      const queued = generationPending.filter((record) => record.capture_state === "queued").length;
+      const failed = generationPending.filter((record) => record.capture_state === "failed").length;
+      const ready = generationPending.length - queued - failed;
+      imageCount.textContent = `생성 가능 ${ready}건 · Mac 대기·실행 ${queued}건 · 실패 ${failed}건 · 검수 대기 ${reviewPending.length}건`;
+    }
+    if (capturePoll) window.clearTimeout(capturePoll);
+    if (records.some((record) => record.capture_state === "queued")) {
+      capturePoll = window.setTimeout(() => {
+        loadCandidates().catch((error) => setNotice(error.message));
+      }, 5000);
+    }
+  };
+
+  const contextProfileNode = (profile) => {
+    const row = document.createElement("article");
+    row.className = "context-profile-row";
+    const content = document.createElement("div");
+    content.className = "context-profile-row__content";
+    const name = document.createElement("strong");
+    name.textContent = profile.name;
+    const meta = document.createElement("span");
+    meta.textContent = `${profile.country} · ${profile.persona_id} · ${profile.source === "custom" ? "팀 추가" : "기본"}`;
+    content.append(name, meta);
+    const actions = document.createElement("div");
+    actions.className = "context-profile-row__actions";
+    const edit = document.createElement("button");
+    edit.className = "button button-quiet";
+    edit.type = "button";
+    edit.textContent = "수정";
+    edit.addEventListener("click", () => beginContextEdit(profile));
+    const remove = document.createElement("button");
+    remove.className = "button button-quiet candidate-row__action--danger";
+    remove.type = "button";
+    remove.textContent = "숨기기";
+    remove.addEventListener("click", () => deleteContextProfile(profile, remove));
+    actions.append(edit, remove);
+    row.append(content, actions);
+    return row;
+  };
+
+  const renderContextProfiles = () => {
+    if (contextSelect) {
+      const options = contextProfiles.map((profile) => {
+        const option = document.createElement("option");
+        option.value = profile.profile_id;
+        option.textContent = `${profile.name} · ${profile.country}`;
+        return option;
+      });
+      contextSelect.replaceChildren(...options);
+    }
+    one("[data-context-profile-list]")?.replaceChildren(...contextProfiles.map(contextProfileNode));
+    renderSelectedContext();
+  };
+
+  const renderContextCountries = () => {
+    const displayNames = typeof Intl?.DisplayNames === "function"
+      ? new Intl.DisplayNames(["ko"], { type: "region" })
+      : null;
+    const countryOption = ({ country }) => {
+      const option = document.createElement("option");
+      option.value = country;
+      option.textContent = `${displayNames?.of(country) ?? country} (${country})`;
+      return option;
+    };
+    const currentCountry = selectedHostedAccount()?.country;
+    const scopedCountries = currentCountry
+      ? contextCountries.filter(({ country }) => country === currentCountry)
+      : contextCountries;
+    [document.getElementById("context-country"), document.getElementById("candidate-country")]
+      .filter(Boolean)
+      .forEach((select) => select.replaceChildren(...scopedCountries.map(countryOption)));
+    const newAccountCountry = document.getElementById("new-account-country");
+    if (newAccountCountry) {
+      const previous = newAccountCountry.value;
+      newAccountCountry.replaceChildren(...contextCountries.map(countryOption));
+      if (contextCountries.some(({ country }) => country === previous)) newAccountCountry.value = previous;
+      const timezone = document.getElementById("new-account-timezone");
+      if (timezone && !timezone.value) timezone.value = COUNTRY_TIMEZONES[newAccountCountry.value] ?? "UTC";
+    }
+  };
+
+  const selectedHostedAccount = () =>
+    hostedAccounts.find((account) => account.account_id === selectedAccountId) ?? null;
+
+  const setAccountFeedback = (element, message) => {
+    if (!element) return;
+    element.hidden = !message;
+    element.textContent = message;
+  };
+
+  const renderHostedAccounts = () => {
+    const account = selectedHostedAccount();
+    if (accountSelect) {
+      const options = hostedAccounts.map((item) => {
+        const option = document.createElement("option");
+        option.value = item.account_id;
+        option.textContent = `${item.display_name} · ${item.country}`;
+        return option;
+      });
+      accountSelect.replaceChildren(...options);
+      accountSelect.value = account?.account_id ?? "";
+    }
+    const text = (selector, value) => {
+      const element = one(selector);
+      if (element) element.textContent = value;
+    };
+    text("[data-workspace-account]", account?.account_id ?? "—");
+    text("[data-account-market]", account ? `${account.country} · ${account.language} · ${account.timezone}` : "—");
+    text("[data-account-slots]", account ? `오전 ${account.morning_time} · 저녁 ${account.evening_time}` : "—");
+    const next = account?.next_generation_at
+      ? new Intl.DateTimeFormat("ko-KR", {
+        timeZone: account.timezone,
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(account.next_generation_at))
+      : null;
+    text(
+      "[data-account-automation]",
+      account?.generation_enabled ? `사용 · 다음 ${next}` : "중지 · 수동 생성만",
+    );
+    if (account) {
+      const values = {
+        "account-display-name": account.display_name,
+        "account-timezone": account.timezone,
+        "account-morning-time": account.morning_time,
+        "account-evening-time": account.evening_time,
+      };
+      Object.entries(values).forEach(([id, value]) => {
+        const field = document.getElementById(id);
+        if (field) field.value = value;
+      });
+      const enabled = document.getElementById("account-generation-enabled");
+      if (enabled) enabled.checked = account.generation_enabled;
+    }
+    renderContextCountries();
+  };
+
+  const loadHostedAccounts = async () => {
+    if (!hostedCandidateControls) return;
+    hostedAccounts = await request("/api/accounts");
+    let remembered = "";
+    try { remembered = window.localStorage.getItem("trace:hosted-account") ?? ""; } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
+    const preferred = remembered || selectedAccountId;
+    selectedAccountId = hostedAccounts.some((account) => account.account_id === preferred)
+      ? preferred
+      : hostedAccounts[0]?.account_id ?? "";
+    try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
+    renderHostedAccounts();
+  };
+
+  const renderFeedbackSummary = () => {
+    const summary = one("[data-feedback-learning]");
+    const tags = one("[data-feedback-tags]");
+    if (!summary || !tags) return;
+    if (!feedbackSignal || feedbackSignal.rejected_reviews === 0) {
+      summary.textContent = "아직 누적된 반려 신호가 없습니다. 반려 태그는 같은 계정·페르소나의 다음 생성에 사용됩니다.";
+      tags.replaceChildren();
+      return;
+    }
+    summary.textContent = feedbackSignal.rule_candidates.length
+      ? `반복 3회 이상 규칙 ${feedbackSignal.rule_candidates.length}개가 다음 생성에 자동 반영됩니다.`
+      : `반려 ${feedbackSignal.rejected_reviews}건이 누적되었습니다. 같은 태그가 3회 쌓이면 생성 규칙이 됩니다.`;
+    tags.replaceChildren(...feedbackSignal.top_tags.slice(0, 6).map(({ tag, count }) =>
+      badge("approval-badge", `${tag} · ${count}`)));
+  };
+
+  const loadFeedbackSummary = async () => {
+    if (!hostedCandidateControls) return;
+    const profile = selectedContextProfile();
+    const query = profile ? `?context_profile_id=${encodeURIComponent(profile.profile_id)}` : "";
+    feedbackSignal = await request(`/api/feedback-summary${query}`);
+    renderFeedbackSummary();
+  };
+
+  const loadContextProfiles = async () => {
+    if (!hostedCandidateControls) return;
+    const previous = selectedContextProfileId;
+    [contextCountries, contextProfiles] = await Promise.all([
+      request("/api/context-countries"),
+      request("/api/context-profiles"),
+    ]);
+    selectedContextProfileId = contextProfiles.some((profile) => profile.profile_id === previous)
+      ? previous
+      : (contextProfiles.find((profile) => profile.is_default) ?? contextProfiles[0])?.profile_id ?? "";
+    renderContextCountries();
+    renderContextProfiles();
+  };
+
+  const cancelContextEdit = () => {
+    editingContextProfile = null;
+    contextForm?.reset();
+    if (contextFormTitle) contextFormTitle.textContent = "새 컨텍스트 추가";
+    if (contextSubmit) contextSubmit.textContent = "컨텍스트 추가";
+    if (contextCancel) contextCancel.hidden = true;
+    setContextFeedback("");
+  };
+
+  const beginContextEdit = (profile) => {
+    editingContextProfile = profile;
+    const manager = one("[data-context-manager]");
+    if (manager) manager.open = true;
+    if (contextFormTitle) contextFormTitle.textContent = "컨텍스트 수정";
+    if (contextSubmit) contextSubmit.textContent = "수정 저장";
+    if (contextCancel) contextCancel.hidden = false;
+    const values = {
+      "context-name": profile.name,
+      "context-persona-id": profile.persona_id,
+      "context-country": profile.country,
+      "context-tone": profile.tone,
+      "context-audience": profile.audience,
+      "context-situation": profile.situation,
+      "context-guidance": profile.guidance,
+      "context-refs": profile.reference_ids.join(", "),
+    };
+    Object.entries(values).forEach(([id, value]) => {
+      const field = document.getElementById(id);
+      if (field) field.value = value;
+    });
+    setContextFeedback("");
+    document.getElementById("context-name")?.focus({ preventScroll: true });
+  };
+
+  const deleteContextProfile = async (profile, button) => {
+    if (!window.confirm(`“${profile.name}” 컨텍스트를 목록에서 숨길까요? 기존 후보의 생성 기록은 유지됩니다.`)) return;
+    button.disabled = true;
+    setBusy(button, true, "컨텍스트를 숨기는 중…");
+    try {
+      await request(`/api/context-profiles/${encodeURIComponent(profile.profile_id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: profile.revision }),
+      });
+      if (editingContextProfile?.profile_id === profile.profile_id) cancelContextEdit();
+      await loadContextProfiles();
+      setNotice("컨텍스트를 숨겼습니다. 기존 후보의 생성 기록은 유지됩니다.");
+    } catch (error) {
+      setNotice(error.message);
+      button.disabled = false;
+    } finally {
+      setBusy(button, false);
     }
   };
 
   const commaList = (value) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
   const lineList = (value) => String(value ?? "").split("\n").map((item) => item.trim()).filter(Boolean);
 
+  const candidateField = (id) => document.getElementById(id);
+
+  const cancelCandidateEdit = () => {
+    editingCandidate = null;
+    editingCandidateContextChanged = false;
+    candidateForm?.reset();
+    if (candidateFormTitle) candidateFormTitle.textContent = "수동 등록";
+    if (candidateSubmit) candidateSubmit.textContent = "후보 등록";
+    if (candidateCancel) candidateCancel.hidden = true;
+    if (candidateEditNote) candidateEditNote.hidden = true;
+    setCandidateFeedback("");
+    const profile = selectedContextProfile();
+    if (profile) candidateField("candidate-country").value = profile.country;
+  };
+
+  const beginCandidateEdit = (record) => {
+    editingCandidate = record;
+    editingCandidateContextChanged = false;
+    const recordedProfileId = record.context_profile?.profile_id;
+    if (recordedProfileId && contextProfiles.some((profile) => profile.profile_id === recordedProfileId)) {
+      selectedContextProfileId = recordedProfileId;
+      renderSelectedContext();
+    }
+    if (manualEntry) manualEntry.open = true;
+    if (candidateFormTitle) candidateFormTitle.textContent = "후보 수정";
+    if (candidateSubmit) candidateSubmit.textContent = "수정 저장";
+    if (candidateCancel) candidateCancel.hidden = false;
+    if (candidateEditNote) candidateEditNote.hidden = false;
+    candidateField("candidate-topic").value = record.topic;
+    candidateField("candidate-country").value = record.country;
+    candidateField("candidate-posting-slot").value = record.posting_slot || "manual";
+    candidateField("candidate-hypothesis").value = record.hypothesis;
+    candidateField("candidate-caption").value = record.caption;
+    candidateField("candidate-refs").value = record.refs_used.join(", ");
+    candidateField("candidate-principles").value = record.principles_applied.join(", ");
+    candidateField("candidate-shooting-order").value = record.shooting_order || "";
+    candidateField("candidate-schedule").value = record.image_inputs.trace_items.join("\n");
+    candidateField("candidate-device-time").value = record.image_inputs.device_time;
+    candidateField("candidate-background-subject").value = record.image_inputs.background_subject;
+    candidateField("candidate-background-mood").value = record.image_inputs.background_mood;
+    setCandidateFeedback("");
+    manualEntry?.scrollIntoView({ behavior: "smooth", block: "start" });
+    candidateField("candidate-topic")?.focus({ preventScroll: true });
+  };
+
+  const deleteCandidate = async (record, button) => {
+    if (!window.confirm(`“${record.topic}” 후보를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+    button.disabled = true;
+    setBusy(button, true, "후보를 삭제하는 중…");
+    try {
+      await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: record.revision }),
+      });
+      if (editingCandidate?.candidate_id === record.candidate_id) cancelCandidateEdit();
+      await loadCandidates();
+      setNotice("후보를 삭제했습니다.");
+    } catch (error) {
+      setNotice(error.message);
+      button.disabled = false;
+    } finally {
+      setBusy(button, false);
+    }
+  };
+
   const refreshWorkspace = async () => {
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
     try {
-      await loadCandidates();
+      await loadHostedAccounts();
+      await loadContextProfiles();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
     } finally {
       setBusy(workspaceLive, false);
     }
@@ -593,7 +1137,15 @@
     setAutogenFeedback("");
     setBusy(workspaceLive, true, "AI가 후보를 만드는 중… (1~3분 소요)");
     try {
-      const created = await request("/api/candidates/generate", { method: "POST" });
+      const profile = selectedContextProfile();
+      const options = hostedCandidateControls
+        ? {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ context_profile_id: profile?.profile_id ?? null }),
+          }
+        : { method: "POST" };
+      const created = await request("/api/candidates/generate", options);
       await loadCandidates();
       setNotice(`후보 ${created.length}개가 등록되었습니다.`);
     } catch (error) {
@@ -608,6 +1160,130 @@
 
   all("[data-autogen]").forEach((button) =>
     button.addEventListener("click", () => generateCandidates(button)));
+
+  all("[data-candidate-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      candidateFilter = button.dataset.candidateFilter;
+      renderCandidateList();
+    });
+  });
+
+  all("[data-candidate-filter-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      one("[data-tab='candidates']")?.click();
+      candidateFilter = button.dataset.candidateFilterJump;
+      renderCandidateList();
+      one("[data-candidate-list]")?.scrollIntoView({ block: "start" });
+    });
+  });
+
+  accountSelect?.addEventListener("change", async () => {
+    const next = accountSelect.value;
+    if (!hostedAccounts.some((account) => account.account_id === next)) return;
+    selectedAccountId = next;
+    try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
+    cancelCandidateEdit();
+    cancelContextEdit();
+    renderHostedAccounts();
+    setBusy(workspaceLive, true, "운영 계정을 바꾸는 중…");
+    try {
+      await loadContextProfiles();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      setNotice(`${selectedHostedAccount()?.display_name ?? selectedAccountId} 계정으로 전환했습니다.`);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(workspaceLive, false);
+    }
+  });
+
+  accountEditForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    if (!target.checkValidity()) { target.reportValidity(); return; }
+    const account = selectedHostedAccount();
+    if (!account) return;
+    const form = new FormData(target);
+    setAccountFeedback(accountEditFeedback, "");
+    setBusy(target, true, "계정 설정을 저장하는 중…");
+    try {
+      await request(`/api/accounts/${encodeURIComponent(account.account_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_revision: account.revision,
+          display_name: String(form.get("display-name") ?? "").trim(),
+          timezone: String(form.get("timezone") ?? "").trim(),
+          morning_time: String(form.get("morning-time") ?? "").trim(),
+          evening_time: String(form.get("evening-time") ?? "").trim(),
+          generation_enabled: form.get("generation-enabled") === "on",
+        }),
+      });
+      await loadHostedAccounts();
+      setNotice("계정 운영 설정을 저장했습니다.");
+    } catch (error) {
+      setAccountFeedback(accountEditFeedback, error.message);
+      setNotice(error.message);
+    } finally {
+      setBusy(target, false);
+    }
+  });
+
+  document.getElementById("new-account-country")?.addEventListener("change", (event) => {
+    const timezone = document.getElementById("new-account-timezone");
+    if (timezone) timezone.value = COUNTRY_TIMEZONES[event.currentTarget.value] ?? "UTC";
+  });
+
+  accountCreateForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    if (!target.checkValidity()) { target.reportValidity(); return; }
+    const form = new FormData(target);
+    setAccountFeedback(accountCreateFeedback, "");
+    setBusy(target, true, "격리 계정을 추가하는 중…");
+    try {
+      const created = await request("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account_id: String(form.get("account-id") ?? "").trim(),
+          display_name: String(form.get("display-name") ?? "").trim(),
+          country: String(form.get("country") ?? "").trim(),
+          timezone: String(form.get("timezone") ?? "").trim(),
+          morning_time: String(form.get("morning-time") ?? "").trim(),
+          evening_time: String(form.get("evening-time") ?? "").trim(),
+          generation_enabled: form.get("generation-enabled") === "on",
+        }),
+      });
+      selectedAccountId = created.account_id;
+      try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
+        if (!(error instanceof DOMException)) throw error;
+      }
+      target.reset();
+      document.getElementById("new-account-morning-time").value = "07:30";
+      document.getElementById("new-account-evening-time").value = "19:30";
+      await loadHostedAccounts();
+      await loadContextProfiles();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      setNotice("새 격리 계정을 추가하고 전환했습니다.");
+    } catch (error) {
+      setAccountFeedback(accountCreateFeedback, error.message);
+      setNotice(error.message);
+    } finally {
+      setBusy(target, false);
+    }
+  });
+
+  contextSelect?.addEventListener("change", () => {
+    selectedContextProfileId = contextSelect.value;
+    if (editingCandidate) editingCandidateContextChanged = true;
+    renderSelectedContext();
+    const profile = selectedContextProfile();
+    if (profile) candidateField("candidate-country").value = profile.country;
+    void loadFeedbackSummary().catch((error) => setNotice(error.message));
+  });
 
   const candidateProblem = (draft) => {
     if (!draft.topic) return ["candidate-topic", "주제/컨셉을 입력해 주세요."];
@@ -631,13 +1307,82 @@
     return null;
   };
 
-  one("[data-candidate-form]")?.addEventListener("submit", async (event) => {
+  const contextProfileDraft = (form) => ({
+    name: String(form.get("name") ?? "").trim(),
+    persona_id: String(form.get("persona-id") ?? "").trim(),
+    country: String(form.get("country") ?? "").trim().toUpperCase(),
+    tone: String(form.get("tone") ?? "").trim(),
+    audience: String(form.get("audience") ?? "").trim(),
+    situation: String(form.get("situation") ?? "").trim(),
+    guidance: String(form.get("guidance") ?? "").trim(),
+    reference_ids: commaList(form.get("reference-ids")),
+  });
+
+  const contextProblem = (draft) => {
+    if (!draft.name) return ["context-name", "표시 이름을 입력해 주세요."];
+    if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(draft.persona_id)) {
+      return ["context-persona-id", "페르소나 ID는 영문 소문자·숫자로 시작하고 -, _만 사용할 수 있습니다."];
+    }
+    if (!/^[A-Z]{2}$/.test(draft.country)) return ["context-country", "두 자리 국가 코드를 선택해 주세요."];
+    if (!draft.tone) return ["context-tone", "문체를 입력해 주세요."];
+    if (!draft.audience) return ["context-audience", "대상을 입력해 주세요."];
+    if (!draft.situation) return ["context-situation", "사용 상황을 입력해 주세요."];
+    if (!draft.guidance) return ["context-guidance", "추가 지침을 입력해 주세요."];
+    return null;
+  };
+
+  contextCancel?.addEventListener("click", cancelContextEdit);
+
+  contextForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    const draft = contextProfileDraft(new FormData(target));
+    ["context-name", "context-persona-id", "context-country", "context-tone", "context-audience",
+      "context-situation", "context-guidance"]
+      .forEach((id) => document.getElementById(id)?.removeAttribute("aria-invalid"));
+    const problem = contextProblem(draft);
+    if (problem) {
+      const [id, message] = problem;
+      const field = document.getElementById(id);
+      field?.setAttribute("aria-invalid", "true");
+      field?.focus();
+      setContextFeedback(message);
+      return;
+    }
+    const editing = editingContextProfile;
+    setBusy(target, true, editing ? "컨텍스트 수정 내용을 저장하는 중…" : "컨텍스트를 추가하는 중…");
+    setContextFeedback("");
+    try {
+      const saved = await request(
+        editing ? `/api/context-profiles/${encodeURIComponent(editing.profile_id)}` : "/api/context-profiles",
+        {
+          method: editing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editing ? { ...draft, expected_revision: editing.revision } : draft),
+        },
+      );
+      selectedContextProfileId = saved.profile_id;
+      cancelContextEdit();
+      await loadContextProfiles();
+      setNotice(editing ? "컨텍스트를 수정했습니다." : "컨텍스트를 추가하고 생성 기준으로 선택했습니다.");
+    } catch (error) {
+      setContextFeedback(error.message);
+      setNotice(error.message);
+    } finally {
+      setBusy(target, false);
+    }
+  });
+
+  candidateCancel?.addEventListener("click", cancelCandidateEdit);
+
+  candidateForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const target = event.currentTarget;
     const form = new FormData(target);
     const draft = {
       topic: String(form.get("topic") ?? "").trim(),
       country: String(form.get("country") ?? "").trim().toUpperCase(),
+      posting_slot: String(form.get("posting-slot") ?? "manual").trim(),
       caption: String(form.get("caption") ?? "").trim(),
       hypothesis: String(form.get("hypothesis") ?? "").trim(),
       refs_used: commaList(form.get("refs-used")),
@@ -651,6 +1396,10 @@
         language: countryLanguage(String(form.get("country") ?? "").trim().toUpperCase()),
       },
     };
+    const profile = selectedContextProfile();
+    const contextProfileId = hostedCandidateControls && profile?.country === draft.country
+      ? profile.profile_id
+      : null;
     ["candidate-topic", "candidate-country", "candidate-caption", "candidate-hypothesis", "candidate-principles",
       "candidate-schedule", "candidate-device-time", "candidate-background-mood"]
       .forEach((id) => document.getElementById(id)?.removeAttribute("aria-invalid"));
@@ -666,14 +1415,22 @@
     setBusy(target, true, "후보를 등록하는 중…");
     setCandidateFeedback("");
     try {
-      await request("/api/candidates", {
-        method: "POST",
+      const editing = editingCandidate;
+      const requestBody = editing ? { ...draft, expected_revision: editing.revision } : { ...draft };
+      // Omitting the field on ordinary edits keeps the original generation snapshot immutable.
+      if (hostedCandidateControls && (!editing || editingCandidateContextChanged)) {
+        requestBody.context_profile_id = contextProfileId;
+      }
+      await request(
+        editing ? `/api/candidates/${encodeURIComponent(editing.candidate_id)}` : "/api/candidates",
+        {
+        method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(requestBody),
       });
-      target.reset();
+      cancelCandidateEdit();
       await loadCandidates();
-      setNotice("후보를 등록했습니다.");
+      setNotice(editing ? "후보를 수정했습니다. 캡션·주제 검수부터 다시 진행해 주세요." : "후보를 등록했습니다.");
     } catch (error) {
       setCandidateFeedback(error.message);
       setNotice(error.message);

@@ -111,23 +111,28 @@ Compose concrete dependencies at these entry points.
 | `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider and image clients, context directory, and shipped fixture paths for candidate production and the image stage |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
-| `cli/marketing.py` | local simulation, external pull-bridge, and opt-in installed candidate-pipeline dependency composition |
-| `cloudflare/src/index.js` | hosted HTTP API, Workflow, Durable Object, D1, Queue, and R2 composition |
+| `cli/marketing.py` | local simulation, external pull-bridge, and opt-in candidate/native-capture dependency composition |
+| `cloudflare/src/index.js` | hosted control API, public workspace assets/API, Workers AI, Workflow, Durable Object, D1, Queue, and R2 composition |
 
 Do not start new dependencies through global singletons or import side effects. Construct them at
 composition time and give an explicit lifespan or context manager ownership of shutdown.
 
 `marketing/` owns the Cloudflare Queue task contract, durable worker inbox/outboxes, bridge orchestration,
-task-handler port, optional candidate-journey adapter, and local end-to-end control-plane proof. The
+task-handler port, optional candidate-journey adapter, hosted native-capture routing, and local end-to-end control-plane proof. The
 candidate adapter may invoke the provider-neutral ports in `candidate_generation/` and the existing
 workspace review store; Cloudflare response shapes do not enter either package. Channel-specific
 production handlers depend inward on the marketing contract rather than putting their credentials
 or response shapes into `automation/` or `workspace/`.
 
 `cloudflare/` is a separate deployment composition root. Its Worker owns HTTP authorization and D1
-registry APIs; `MarketingWorkflow` owns durable orchestration; `MarketingAccountAgent` owns one
-account's private memory. Pure transition rules stay in `cloudflare/src/state-machine.js` so they can
-be tested outside the Workers runtime.
+registry APIs. `hosted-workspace.js` owns the intentionally public account/context/candidate APIs,
+logical account scoping, daily slot scheduling, context snapshots, structured feedback aggregation,
+Workers AI schema, review transitions, and Queue dispatch contract. `index.js` owns callback
+authorization, hosted capture correlation/digest checks, and the R2 native PNG write. The build
+script copies the existing browser shell, validates the context manifest and profile data, and emits
+one generated Worker module from the canonical packaged source. `MarketingWorkflow` owns durable orchestration;
+`MarketingAccountAgent` owns one account's private memory. Pure run transition rules stay in
+`cloudflare/src/state-machine.js` so they can be tested outside the Workers runtime.
 
 ## Code placement rules
 
@@ -218,6 +223,22 @@ be tested outside the Workers runtime.
   explanatory fast paths, not the concurrency authority.
 - Treat a new account, locale, schedule, instruction revision, or credential reference as data.
 - Require code review for a new adapter, task kind, state edge, or retry rule.
+- Keep login-free hosted workspace routes under `/api/*`; never weaken `/v1/*` control-plane or
+  callback authorization to expose the UI.
+- Treat hosted `account_id` as a logical data scope, never as proof of caller authorization. Public
+  account settings, profiles, candidates, and feedback must all use the same selected scope.
+- Keep the starter context canonical under `trace_capture/assets/context/` and generate the Worker
+  module from it during the Cloudflare build instead of maintaining a second copy.
+- Keep country document/profile membership in the context manifest. D1 may add account-scoped
+  profiles, but a profile cannot generate for a country without reviewed packaged documents.
+- Store the selected profile snapshot on every hosted candidate; later profile edits must not change
+  the candidate's generation provenance.
+- Keep the four-candidate morning/evening batch rule and repeated-feedback threshold in the hosted
+  workspace owner; UI text and Cron scheduling consume that contract rather than duplicating it.
+- Accept hosted capture output only through the worker-token callback, verify its task/candidate
+  scope and digest, and label the R2 PNG source as `native_appium`.
+- Keep Simulator discovery and Appium execution in `marketing/native_capture.py` plus `capture/`;
+  Worker code must not invent native provenance or bind a team member's fixed device UDID.
 
 ## Cross-package rules
 

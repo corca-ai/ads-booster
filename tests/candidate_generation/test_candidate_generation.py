@@ -116,9 +116,23 @@ def _workspace(store: SqliteWorkspaceStore) -> WorkspaceId:
     return store.create_workspace("Trace team").workspace.workspace_id
 
 
-def test_context_directory_defaults_to_the_serve_workspace(tmp_path: Path) -> None:
-    # Given / When / Then
-    assert default_context_directory(tmp_path) == tmp_path / "context"
+def test_context_directory_prefers_the_serve_workspace_when_present(tmp_path: Path) -> None:
+    # Given
+    local = _write_context(tmp_path)
+
+    # When / Then
+    assert default_context_directory(tmp_path) == local
+
+
+def test_context_directory_falls_back_to_complete_packaged_context(tmp_path: Path) -> None:
+    # Given / When
+    directory = default_context_directory(tmp_path)
+    bundle = CandidateContextSource(directory).load()
+
+    # Then
+    assert directory.name == "context"
+    assert tuple(document.relative_path for document in bundle.documents) == REQUIRED_DOCUMENTS
+    assert all(document.text.strip() for document in bundle.documents)
 
 
 def test_context_directory_can_be_pointed_elsewhere(

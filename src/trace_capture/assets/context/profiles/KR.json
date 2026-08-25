@@ -1,0 +1,50 @@
+[
+  {
+    "profile_id": "starter-kr-university",
+    "country": "KR",
+    "name": "대학생 · 일정 밀집형",
+    "persona_id": "kr-university-student",
+    "audience": "강의, 과제, 팀 프로젝트와 개인 일정을 동시에 관리하는 한국 대학생",
+    "situation": "시험 기간, 팀플 마감, 공강과 약속이 한날에 겹치는 장면",
+    "tone": "짧고 자연스러운 해요체, 실제 학생의 혼잣말처럼 작성",
+    "guidance": "과장된 생산성 약속 대신 잠금화면에서 다음 일정을 바로 확인하는 한 장면을 보여준다.",
+    "reference_ids": ["kr-study-day"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-kr-office",
+    "country": "KR",
+    "name": "직장인 · 출퇴근형",
+    "persona_id": "kr-office-worker",
+    "audience": "출퇴근, 회의, 집중 업무와 퇴근 후 약속을 함께 관리하는 한국 직장인",
+    "situation": "출근길부터 회의, 점심, 운동이나 약속까지 이어지는 평일",
+    "tone": "담백하고 구체적인 해요체, 업무 용어보다 하루 장면을 우선",
+    "guidance": "회의 수나 성과를 꾸며내지 말고 시간대와 장소가 보이는 현실적인 일정으로 구성한다.",
+    "reference_ids": ["kr-office-day"],
+    "is_default": false
+  },
+  {
+    "profile_id": "starter-kr-shift",
+    "country": "KR",
+    "name": "교대 근무자 · 변동 일정형",
+    "persona_id": "kr-shift-worker",
+    "audience": "출근 시간이 일정하지 않고 인수인계와 휴식 시간을 함께 챙기는 교대 근무자",
+    "situation": "새벽 출근, 인수인계, 식사와 귀가 시간이 매일 달라지는 장면",
+    "tone": "차분하고 존중하는 해요체, 피로를 과장하거나 불안을 조장하지 않음",
+    "guidance": "근무 환경을 추측하지 말고 변동 시간표를 한눈에 확인하는 장면에 집중한다.",
+    "reference_ids": ["kr-shift-day"],
+    "is_default": false
+  },
+  {
+    "profile_id": "starter-kr-family",
+    "country": "KR",
+    "name": "가족 일정 관리자 · 다인 일정형",
+    "persona_id": "kr-family-coordinator",
+    "audience": "본인 일정과 가족의 등원, 병원, 장보기, 식사 시간을 함께 챙기는 사람",
+    "situation": "여러 사람의 이동과 예약이 하루에 섞이는 평일 또는 주말",
+    "tone": "따뜻하지만 감상적이지 않은 해요체, 가족 형태를 단정하지 않음",
+    "guidance": "가족 구성이나 역할을 고정하지 말고 여러 일정의 순서를 확인하는 장면으로 표현한다.",
+    "reference_ids": ["kr-family-day"],
+    "is_default": false
+  }
+]

@@ -7,6 +7,7 @@ from typing import Final
 
 from trace_capture.candidate_generation.errors import CandidateContextMissingError
 from trace_capture.candidate_generation.models import CandidateContextBundle, CandidateDocument
+from trace_capture.default_assets import default_candidate_context_path
 
 CONTEXT_DIR_ENVIRONMENT: Final = "TRACE_AGENT_CONTEXT_DIR"
 CONTEXT_DIRECTORY_NAME: Final = "context"
@@ -21,11 +22,12 @@ REQUIRED_DOCUMENTS: Final = (
 
 
 def default_context_directory(workspace: Path) -> Path:
-    """Resolve the context directory from the environment or the serve workspace."""
+    """Resolve an explicit, workspace-owned, or packaged candidate context."""
     configured = os.environ.get(CONTEXT_DIR_ENVIRONMENT)
     if configured is not None:
         return Path(configured).expanduser()
-    return workspace / CONTEXT_DIRECTORY_NAME
+    local = workspace / CONTEXT_DIRECTORY_NAME
+    return local if local.is_dir() else default_candidate_context_path()
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,3 +1,5 @@
 node_modules/
 wrangler.generated.jsonc
 .wrangler/
+dist/
+src/generated-workspace-context.js

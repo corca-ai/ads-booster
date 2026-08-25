@@ -1,5 +1,15 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
+import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
+import {
+  MAX_HOSTED_CAPTURE_CALLBACK_BYTES,
+  prepareHostedCaptureResult,
+} from "./hosted-capture-result.js";
+import {
+  WORKSPACE_CONTEXT,
+  WORKSPACE_CONTEXT_PROFILES,
+} from "./generated-workspace-context.js";
+
 import {
   accountName,
   approvalPhase,
@@ -348,6 +358,13 @@ export default {
       if (request.method === "GET" && url.pathname === "/health") {
         return Response.json({ ok: true });
       }
+      const workspaceResponse = await handleHostedWorkspace(
+        request,
+        env,
+        WORKSPACE_CONTEXT,
+        WORKSPACE_CONTEXT_PROFILES,
+      );
+      if (workspaceResponse) return workspaceResponse;
       authorize(
         request,
         ["/v1/task-callbacks", "/v1/review-events"].includes(url.pathname)
@@ -417,7 +434,10 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(startDueRuns(env));
+    ctx.waitUntil(Promise.all([
+      startDueRuns(env),
+      runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
+    ]));
   },
 };
 
@@ -610,7 +630,19 @@ async function receiveCallback(env, callback) {
     throw new HttpError(400, "callback_id must be a non-empty identifier");
   }
   const resultJson = JSON.stringify(callback.result);
-  if (new TextEncoder().encode(resultJson).byteLength > MAX_CALLBACK_RESULT_BYTES) {
+  const resultBytes = new TextEncoder().encode(resultJson).byteLength;
+  if (resultBytes > MAX_HOSTED_CAPTURE_CALLBACK_BYTES) {
+    throw new HttpError(413, `callback result exceeds ${MAX_HOSTED_CAPTURE_CALLBACK_BYTES} bytes`);
+  }
+  const hostedTask = await env.DB.prepare(
+    `SELECT task_id, run_id, account_id, candidate_id, candidate_revision,
+            state, callback_id, result_json
+     FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
+  )
+    .bind(callback.task_id)
+    .first();
+  if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback);
+  if (resultBytes > MAX_CALLBACK_RESULT_BYTES) {
     throw new HttpError(413, `callback result exceeds ${MAX_CALLBACK_RESULT_BYTES} bytes`);
   }
   const task = await env.DB.prepare(
@@ -655,6 +687,117 @@ async function receiveCallback(env, callback) {
     return { accepted: true, duplicate: true };
   }
   await sendTaskCompletion(env, task, callback);
+  return { accepted: true, duplicate: false };
+}
+
+async function receiveHostedCaptureCallback(env, task, callback) {
+  if (
+    task.run_id !== callback.run_id ||
+    task.account_id !== callback.account_id ||
+    callback.kind !== "capture"
+  ) {
+    throw new HttpError(409, "callback scope does not match hosted capture task");
+  }
+  if (callback.callback_id !== `${callback.task_id}:completed`) {
+    throw new HttpError(409, "callback_id does not match hosted capture task");
+  }
+  let prepared;
+  try {
+    prepared = await prepareHostedCaptureResult(callback.result);
+  } catch (error) {
+    throw new HttpError(error.status ?? 400, error.message);
+  }
+  const { status, image, image_digest: imageDigest, stored_result: storedResult } = prepared;
+  let imageKey = null;
+  if (status === "succeeded") {
+    imageKey = `workspace/${task.account_id}/candidates/${task.candidate_id}/${task.task_id}.png`;
+  }
+  const storedResultJson = JSON.stringify(storedResult);
+  if (task.callback_id) {
+    if (task.callback_id !== callback.callback_id) throw new HttpError(409, "conflicting callback");
+    if (task.result_json !== storedResultJson) throw new HttpError(409, "callback result changed");
+    return { accepted: true, duplicate: true };
+  }
+
+  const now = new Date().toISOString();
+  if (status === "succeeded") {
+    await env.ARTIFACTS.put(imageKey, image, {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        sha256: imageDigest,
+        account_id: task.account_id,
+        candidate_id: task.candidate_id,
+        task_id: task.task_id,
+        source: "native_appium",
+      },
+    });
+    const applied = await env.DB.prepare(
+      `UPDATE hosted_workspace_candidates
+       SET status = 'image_awaiting_review', image_key = ?, image_sha256 = ?,
+           capture_state = NULL, capture_error = NULL,
+           revision = revision + 1, updated_at = ?
+       WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved'
+         AND capture_state = 'queued' AND capture_task_id = ? AND revision = ?`,
+    )
+      .bind(
+        imageKey,
+        imageDigest,
+        Date.now() / 1000,
+        task.account_id,
+        task.candidate_id,
+        task.task_id,
+        task.candidate_revision,
+      )
+      .run();
+    if (applied.meta.changes !== 1) {
+      const candidate = await env.DB.prepare(
+        `SELECT image_key, image_sha256 FROM hosted_workspace_candidates
+         WHERE account_id = ? AND candidate_id = ?`,
+      )
+        .bind(task.account_id, task.candidate_id)
+        .first();
+      if (candidate?.image_key !== imageKey || candidate?.image_sha256 !== imageDigest) {
+        await env.ARTIFACTS.delete(imageKey);
+      }
+    }
+  } else {
+    const failureCode = typeof callback.result?.failure_code === "string"
+      ? callback.result.failure_code.slice(0, 200)
+      : "native_capture_failed";
+    await env.DB.prepare(
+      `UPDATE hosted_workspace_candidates
+       SET capture_state = 'failed', capture_error = ?, revision = revision + 1, updated_at = ?
+       WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved'
+         AND capture_state = 'queued' AND capture_task_id = ? AND revision = ?`,
+    )
+      .bind(
+        failureCode,
+        Date.now() / 1000,
+        task.account_id,
+        task.candidate_id,
+        task.task_id,
+        task.candidate_revision,
+      )
+      .run();
+  }
+  const updated = await env.DB.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET state = ?, result_json = ?, callback_id = ?, updated_at = ?
+     WHERE task_id = ? AND callback_id IS NULL`,
+  )
+    .bind(status, storedResultJson, callback.callback_id, now, task.task_id)
+    .run();
+  if (updated.meta.changes !== 1) {
+    const winner = await env.DB.prepare(
+      "SELECT callback_id, result_json FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+    )
+      .bind(task.task_id)
+      .first();
+    if (winner?.callback_id !== callback.callback_id || winner.result_json !== storedResultJson) {
+      throw new HttpError(409, "conflicting hosted capture callback");
+    }
+    return { accepted: true, duplicate: true };
+  }
   return { accepted: true, duplicate: false };
 }
 
