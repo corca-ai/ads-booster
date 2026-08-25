@@ -133,15 +133,19 @@ git pull --ff-only origin main
 
 ## Tag and GitHub Release after `main` changes
 
-A change on `main` is not released until its tag and GitHub Release are updated. Target the actual
-remote `main` commit, not another branch or an arbitrary local HEAD.
+A change on `main` is not released until its tag and GitHub Release are updated. This is a mandatory
+post-merge step, not an optional follow-up. Target the actual remote `main` commit, not another
+branch or an arbitrary local HEAD. Never move or overwrite an existing published tag; choose the
+next version, and update package metadata/lockfiles in an issue-linked commit before tagging when
+the release version changes.
 
-1. Determine the new version and release notes from the final `main` change set.
+1. Determine the next version and release notes from the final `main` change set.
 2. Read remote `main` again and confirm the target SHA.
 3. Create an annotated `v<version>` tag on that SHA and push it.
-4. Create a GitHub Release for the same tag, or update its notes if it already exists.
-5. Confirm that the remote tag's peeled SHA matches `origin/main` and that the GitHub Release uses
-   the intended `v<version>` tag.
+4. Create a GitHub Release for the same new tag.
+5. Confirm that the remote tag's peeled SHA matches the target `origin/main` SHA and that the
+   GitHub Release uses the intended `v<version>` tag.
+6. Only then report the main change as released.
 
 ```bash
 git fetch origin main --tags
