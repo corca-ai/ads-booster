@@ -47,7 +47,8 @@ unrelated changes on one branch.
 
 Every implementation, bug fix, test, or repository-policy change starts from a GitHub Issue. Every
 commit must include its issue reference in the subject using `(#<issue-number>)`; one logical commit
-maps to one issue, and unrelated changes must not share an issue or commit.
+maps to one issue, and each commit subject may contain exactly one issue reference. Never list
+multiple issue numbers in one commit message; split the work into separate logical commits instead.
 
 Examples:
 
