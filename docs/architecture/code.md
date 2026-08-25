@@ -89,7 +89,7 @@ src/trace_capture/
 | `tools/` | Executable tools, registry, approval, workspace paths, and bounded output | Provider loop or TraceRun state transitions |
 | `transport/` | Shared HTTP client and JSON transport types | Provider-specific meaning |
 | `tunnel/` | cloudflared process and emitted public-URL boundary | The full local-service lifecycle |
-| `web/` | FastAPI auth/context/asset/campaign/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
+| `web/` | FastAPI auth/member-invite/context/asset/campaign/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
 | `workspace/` | Workspace/member identity, code hashes/versions, shared context, asset metadata, and private sessions | Automation queue or model calls |
 
 ## Composition root
@@ -146,7 +146,7 @@ composition time and give an explicit lifespan or context manager ownership of s
 
 ### Workspace data
 
-- `workspace/` owns workspace, member, context, asset, and private-session state.
+- `workspace/` owns workspace, member, context, asset, and private-session state; Web admin identity is anchored to the owner ID in `service.json`.
 - `automation/` owns campaign lifecycle, variation numbering, scheduling, leases, runs, and review state.
 - Do not put HTTP cookie or response shapes in database models.
 - Let store methods own SQLite transactions and optimistic revisions.
