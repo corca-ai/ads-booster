@@ -6,6 +6,7 @@ from typing import Protocol
 
 from trace_capture.marketing.cloudflare_queue import CloudflareQueueError
 from trace_capture.marketing.inbox import (
+    CandidateReviewStore,
     InboxConflictError,
     MarketingExecutionError,
     MarketingInbox,
@@ -13,6 +14,7 @@ from trace_capture.marketing.inbox import (
 from trace_capture.marketing.models import (
     MarketingTask,
     QueueLease,
+    ReviewApproval,
     TaskCallback,
     TaskResult,
     TaskStatus,
@@ -33,6 +35,8 @@ class QueueConsumer(Protocol):
 class CallbackSink(Protocol):
     def deliver(self, callback: TaskCallback) -> None: ...
 
+    def deliver_approval(self, approval: ReviewApproval) -> None: ...
+
 
 class TaskExecutor(Protocol):
     def execute(self, task: MarketingTask) -> TaskResult: ...
@@ -44,6 +48,7 @@ class MarketingBridge:
     callbacks: CallbackSink
     inbox: MarketingInbox
     executor: TaskExecutor
+    review_store: CandidateReviewStore | None = None
 
     def recover(self) -> int:
         return self.inbox.recover_running()
@@ -73,7 +78,11 @@ class MarketingBridge:
         if task is not None:
             _ = self.inbox.complete(task, self._execute(task))
         delivered = self._flush_callbacks()
-        return bool(leases or task is not None or delivered)
+        approvals = 0
+        if self.review_store is not None:
+            approvals += self.inbox.sync_review_approvals(self.review_store)
+            approvals += self._flush_approvals()
+        return bool(leases or task is not None or delivered or approvals)
 
     def _execute(self, task: MarketingTask) -> TaskResult:
         try:
@@ -95,5 +104,17 @@ class MarketingBridge:
             except CloudflareQueueError:
                 continue
             self.inbox.mark_callback_delivered(callback.callback_id)
+            delivered += 1
+        return delivered
+
+    def _flush_approvals(self) -> int:
+        delivered = 0
+        for approval in self.inbox.pending_approvals():
+            self.inbox.record_approval_attempt(approval.approval_id)
+            try:
+                self.callbacks.deliver_approval(approval)
+            except CloudflareQueueError:
+                continue
+            self.inbox.mark_approval_delivered(approval.approval_id)
             delivered += 1
         return delivered

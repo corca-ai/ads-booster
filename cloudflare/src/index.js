@@ -350,7 +350,7 @@ export default {
       }
       authorize(
         request,
-        url.pathname === "/v1/task-callbacks"
+        ["/v1/task-callbacks", "/v1/review-events"].includes(url.pathname)
           ? env.WORKER_CALLBACK_TOKEN
           : env.CONTROL_PLANE_TOKEN,
       );
@@ -405,6 +405,9 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/v1/task-callbacks") {
         return Response.json(await receiveCallback(env, await request.json()), { status: 202 });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/review-events") {
+        return Response.json(await receiveReviewEvent(env, await request.json()), { status: 202 });
       }
       return Response.json({ error: "not_found" }, { status: 404 });
     } catch (error) {
@@ -653,6 +656,116 @@ async function receiveCallback(env, callback) {
   }
   await sendTaskCompletion(env, task, callback);
   return { accepted: true, duplicate: false };
+}
+
+async function receiveReviewEvent(env, input) {
+  if (
+    typeof input.approval_id !== "string" ||
+    input.approval_id.length < 1 ||
+    input.approval_id.length > 320
+  ) {
+    throw new HttpError(400, "approval_id must be a non-empty identifier");
+  }
+  if (typeof input.run_id !== "string" || typeof input.account_id !== "string") {
+    throw new HttpError(400, "review event scope is required");
+  }
+  if (!["approved", "rejected"].includes(input.decision)) {
+    throw new HttpError(400, "decision must be approved or rejected");
+  }
+  if (!["candidates", "publication"].includes(input.phase)) {
+    throw new HttpError(400, "review event phase is invalid");
+  }
+  if (input.approval_id !== `${input.run_id}:${input.phase}`) {
+    throw new HttpError(409, "approval_id does not match review event scope");
+  }
+  const run = await env.DB.prepare(
+    "SELECT account_id, state FROM marketing_runs WHERE run_id = ?",
+  )
+    .bind(input.run_id)
+    .first();
+  if (!run) throw new HttpError(404, "run not found");
+  if (run.account_id !== input.account_id) {
+    throw new HttpError(409, "review event account does not match run");
+  }
+  const candidateIds =
+    input.phase === "candidates" && input.decision === "approved"
+      ? normalizeCandidateIds(input.candidate_ids)
+      : [];
+  if (input.phase === "publication" && Array.isArray(input.candidate_ids) && input.candidate_ids.length) {
+    throw new HttpError(400, "publication review does not accept candidate_ids");
+  }
+  const payload = {
+    decision: input.decision,
+    phase: input.phase,
+    ...(candidateIds.length ? { candidate_ids: candidateIds } : {}),
+    source: "workspace_bridge",
+  };
+  const bodyJson = JSON.stringify(payload);
+  const existing = await env.DB.prepare(
+    `SELECT body_json, delivered_at FROM marketing_review_event_receipts
+     WHERE approval_id = ?`,
+  )
+    .bind(input.approval_id)
+    .first();
+  if (existing) {
+    if (existing.body_json !== bodyJson) throw new HttpError(409, "review event changed");
+    if (existing.delivered_at || reviewEventWasApplied(input.phase, run.state)) {
+      if (!existing.delivered_at) {
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `UPDATE marketing_review_event_receipts SET delivered_at = ?, updated_at = ?
+           WHERE approval_id = ?`,
+        )
+          .bind(now, now, input.approval_id)
+          .run();
+      }
+      return { accepted: true, duplicate: true };
+    }
+  } else {
+    try {
+      approvalPhase(run.state, input.phase);
+    } catch (error) {
+      throw new HttpError(409, error.message);
+    }
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO marketing_review_event_receipts
+        (approval_id, run_id, account_id, phase, body_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(input.approval_id, input.run_id, input.account_id, input.phase, bodyJson, now, now)
+      .run();
+  }
+  const instance = await env.MARKETING_WORKFLOW.get(input.run_id);
+  await instance.sendEvent({
+    type: input.phase === "candidates" ? "candidate_approval" : "human_approval",
+    payload,
+  });
+  const deliveredAt = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE marketing_review_event_receipts SET delivered_at = ?, updated_at = ?
+     WHERE approval_id = ?`,
+  )
+    .bind(deliveredAt, deliveredAt, input.approval_id)
+    .run();
+  return { accepted: true, duplicate: false };
+}
+
+function reviewEventWasApplied(phase, state) {
+  if (phase === "candidates") {
+    return !["scheduled", "context_snapshot", "research", "planning", "candidate_generation", "awaiting_candidate_approval"].includes(state);
+  }
+  return [
+    "approved",
+    "rejected",
+    "scheduled_for_publish",
+    "publishing",
+    "published",
+    "observing",
+    "evaluated",
+    "memory_committed",
+    "completed",
+  ].includes(state);
 }
 
 async function sendTaskCompletion(env, task, callback) {

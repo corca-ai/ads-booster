@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -15,8 +16,11 @@ from trace_capture.marketing.executors import (
 )
 from trace_capture.marketing.inbox import MarketingExecutionError, MarketingInbox
 from trace_capture.marketing.models import (
+    ApprovalDecision,
+    ApprovalPhase,
     MarketingTask,
     QueueLease,
+    ReviewApproval,
     TaskCallback,
     TaskKind,
     TaskResult,
@@ -68,9 +72,26 @@ class FakeQueue:
 @dataclass
 class FakeCallbacks:
     delivered: list[TaskCallback] = field(default_factory=list)
+    approvals: list[ReviewApproval] = field(default_factory=list)
 
     def deliver(self, callback: TaskCallback) -> None:
         self.delivered.append(callback)
+
+    def deliver_approval(self, approval: ReviewApproval) -> None:
+        self.approvals.append(approval)
+
+
+@dataclass
+class FlakyApprovalCallbacks(FakeCallbacks):
+    failures_remaining: int = 1
+
+    @override
+    def deliver_approval(self, approval: ReviewApproval) -> None:
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            message = "review endpoint unavailable"
+            raise CloudflareQueueError(message)
+        super().deliver_approval(approval)
 
 
 class FakeExecutor:
@@ -296,3 +317,134 @@ def test_candidate_pipeline_executor_obeys_both_review_gates(tmp_path: Path) -> 
         _ = executor.execute(
             publish.model_copy(update={"payload": {**publish.payload, "adapter_mode": "live"}})
         )
+
+
+def test_bridge_relays_completed_workspace_reviews_without_manual_api_calls(tmp_path: Path) -> None:
+    home = tmp_path / "agent"
+    store = SqliteWorkspaceStore(home)
+    workspace_id = store.create_workspace("Trace team").workspace.workspace_id
+    generator = FakeCandidateGenerator(store)
+    executor = CandidatePipelineExecutor(
+        generator=generator,
+        image_runner=FakeCandidateImageRunner(store, home),
+        store=store,
+        artifact_root=home,
+        fallback=ArtifactSimulationExecutor(home / "marketing-simulation"),
+    )
+    generation = _task().model_copy(
+        update={
+            "kind": TaskKind.GENERATE_CANDIDATES,
+            "payload": {"workspace_id": str(workspace_id)},
+        }
+    )
+    queue = FakeQueue(
+        (QueueLease(message_id="message-1", lease_id="lease-1", attempts=1, task=generation),)
+    )
+    callbacks = FakeCallbacks()
+    bridge = MarketingBridge(
+        queue=queue,
+        callbacks=callbacks,
+        inbox=MarketingInbox(home / "marketing-bridge"),
+        executor=executor,
+        review_store=store,
+    )
+
+    assert bridge.tick()
+    generated_ids = callbacks.delivered[0].result.output["candidate_ids"]
+    assert isinstance(generated_ids, list)
+    candidate_id = CandidateId(str(generated_ids[0]))
+    assert callbacks.approvals == []
+
+    candidate = store.get_candidate(workspace_id, candidate_id)
+    _ = store.review_candidate(
+        workspace_id,
+        candidate_id,
+        accepted=True,
+        note=None,
+        expected_revision=candidate.revision,
+    )
+    assert bridge.tick()
+    assert callbacks.approvals[0].phase is ApprovalPhase.CANDIDATES
+    assert callbacks.approvals[0].decision is ApprovalDecision.APPROVED
+    assert callbacks.approvals[0].candidate_ids == (str(candidate_id),)
+
+    capture = generation.model_copy(
+        update={
+            "task_id": "task-2",
+            "kind": TaskKind.CAPTURE,
+            "payload": {
+                "workspace_id": str(workspace_id),
+                "candidate_ids": [str(candidate_id)],
+            },
+        }
+    )
+    queue.leases = (
+        QueueLease(message_id="message-2", lease_id="lease-2", attempts=1, task=capture),
+    )
+    assert bridge.tick()
+    assert len(callbacks.approvals) == 1
+
+    image = store.get_candidate(workspace_id, candidate_id)
+    _ = store.review_candidate_image(
+        workspace_id,
+        candidate_id,
+        accepted=True,
+        note=None,
+        expected_revision=image.revision,
+    )
+    assert bridge.tick()
+    assert callbacks.approvals[-1].phase is ApprovalPhase.PUBLICATION
+    assert callbacks.approvals[-1].decision is ApprovalDecision.APPROVED
+
+
+def test_rejected_review_event_survives_transport_failure(tmp_path: Path) -> None:
+    home = tmp_path / "agent"
+    store = SqliteWorkspaceStore(home)
+    workspace_id = store.create_workspace("Trace team").workspace.workspace_id
+    generation = _task().model_copy(
+        update={
+            "kind": TaskKind.GENERATE_CANDIDATES,
+            "payload": {"workspace_id": str(workspace_id)},
+        }
+    )
+    callbacks = FlakyApprovalCallbacks()
+    bridge = MarketingBridge(
+        queue=FakeQueue(
+            (
+                QueueLease(
+                    message_id="message-1",
+                    lease_id="lease-1",
+                    attempts=1,
+                    task=generation,
+                ),
+            )
+        ),
+        callbacks=callbacks,
+        inbox=MarketingInbox(home / "marketing-bridge"),
+        executor=CandidatePipelineExecutor(
+            generator=FakeCandidateGenerator(store),
+            image_runner=FakeCandidateImageRunner(store, home),
+            store=store,
+            artifact_root=home,
+            fallback=ArtifactSimulationExecutor(home / "marketing-simulation"),
+        ),
+        review_store=store,
+    )
+    assert bridge.tick()
+    generated_ids = callbacks.delivered[0].result.output["candidate_ids"]
+    assert isinstance(generated_ids, list)
+    candidate_id = CandidateId(str(generated_ids[0]))
+    candidate = store.get_candidate(workspace_id, candidate_id)
+    _ = store.review_candidate(
+        workspace_id,
+        candidate_id,
+        accepted=False,
+        note="다른 방향 필요",
+        expected_revision=candidate.revision,
+    )
+
+    assert bridge.tick()
+    assert callbacks.approvals == []
+    assert bridge.tick()
+    assert callbacks.approvals[0].decision is ApprovalDecision.REJECTED
+    assert callbacks.approvals[0].candidate_ids == ()

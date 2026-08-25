@@ -94,7 +94,7 @@ test("fails closed until a live publication adapter exists", () => {
   assert.throws(() => assertRunnableAdapterMode("unknown"), /must be simulation or live/);
 });
 
-test("routes only workspace-backed work to the Mac bridge", () => {
+test("routes only workspace-backed work to the portable worker bridge", () => {
   assert.equal(
     taskExecutionBoundary({ adapter_mode: "simulation", workspace_id: null }),
     "hosted-simulation",

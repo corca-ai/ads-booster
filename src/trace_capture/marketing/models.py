@@ -26,6 +26,18 @@ class TaskStatus(StrEnum):
     UNKNOWN_SIDE_EFFECT = "unknown_side_effect"
 
 
+@unique
+class ApprovalPhase(StrEnum):
+    CANDIDATES = "candidates"
+    PUBLICATION = "publication"
+
+
+@unique
+class ApprovalDecision(StrEnum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class MarketingModel(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
@@ -87,3 +99,38 @@ class TaskCallback(MarketingModel):
     kind: TaskKind
     result: TaskResult
     completed_at: datetime
+
+
+class ReviewApproval(MarketingModel):
+    """Durable human-review event emitted by the installed workspace bridge."""
+
+    schema_version: Literal["1"] = "1"
+    approval_id: Annotated[str, Field(min_length=1, max_length=320)]
+    run_id: Annotated[str, Field(min_length=1, max_length=128)]
+    account_id: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
+    phase: ApprovalPhase
+    decision: ApprovalDecision
+    candidate_ids: Annotated[tuple[str, ...], Field(max_length=8)] = ()
+    reviewed_at: datetime
+
+    @model_validator(mode="after")
+    def validate_approval(self) -> ReviewApproval:
+        if self.reviewed_at.tzinfo is None or self.reviewed_at.utcoffset() != UTC.utcoffset(
+            self.reviewed_at
+        ):
+            raise PydanticCustomError("non_utc_reviewed_at", "reviewed_at must be UTC")
+        if (
+            self.phase is ApprovalPhase.CANDIDATES
+            and self.decision is ApprovalDecision.APPROVED
+            and not self.candidate_ids
+        ):
+            raise PydanticCustomError(
+                "missing_candidate_ids",
+                "approved candidate review requires candidate_ids",
+            )
+        if self.phase is ApprovalPhase.PUBLICATION and self.candidate_ids:
+            raise PydanticCustomError(
+                "unexpected_candidate_ids",
+                "publication review does not accept candidate_ids",
+            )
+        return self

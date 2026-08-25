@@ -358,10 +358,11 @@ roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
 | `$TRACE_AGENT_HOME/auth.json` | `auth/` | OAuth credential data, protected with file mode `0600` |
 | `$TRACE_AGENT_HOME/sessions/` | `agent/` | Standalone TUI and REPL canonical histories, one protected JSON file per session |
 | `$TRACE_AGENT_HOME/memory.jsonl` | `agent/` | Append-only context-compaction summaries |
-| `$TRACE_AGENT_HOME/marketing-bridge/marketing-bridge.sqlite3` | `marketing/` | Durable remote-task inbox and callback outbox |
+| `$TRACE_AGENT_HOME/marketing-bridge/marketing-bridge.sqlite3` | `marketing/` | Durable remote-task inbox, callback outbox, run/candidate review linkage, and approval outbox |
+| `$TRACE_AGENT_HOME/marketing-bridge/service.json` | `marketing/` | Non-secret bridge endpoint, Queue ID, executor, and polling configuration |
 | `$TRACE_AGENT_HOME/marketing-bridge/artifacts/` | `marketing/` | Digest-backed simulation artifacts or adapter-owned task artifacts |
 | `$TRACE_AGENT_HOME/marketing-simulation/` | `marketing/` | Local control-plane proof, with one separate SQLite memory file per account |
-| `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected service and optional tunnel logs |
+| `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected workspace and tunnel logs |
 | `<serve workspace>/context/` | `candidate_generation/` | Operator-owned Korean principle, element, voice, fact, and reference documents, read only |
 
 Generation artifacts are separate from service metadata. By default, the standalone
@@ -381,8 +382,8 @@ state and capture roots.
 | Browser automation | `tools/browser.py` | External `agent-browser` command with approval for mutating actions |
 | Web and image search | `tools/`, `search/` provider adapters | Normalized source results; generation downloads only approved image-source domains and stores provenance |
 | cloudflared | `tunnel/` | Default live `trycloudflare.com` URL request; failure leaves the loopback service available |
-| launchd | `service/launchd.py` | Per-user service plist and protected log paths |
-| Cloudflare D1, Workflows, Durable Objects, Queues, and R2 | `cloudflare/`, `marketing/` | Dynamic account registry, durable loop, isolated account memory, outbound Mac task pull, and context artifacts |
+| Worker supervisor and secret manager | `marketing/service.py` | Portable bridge config plus environment or argv-safe external credential command; no OS-specific store is required |
+| Cloudflare D1, Workflows, Durable Objects, Queues, and R2 | `cloudflare/`, `marketing/` | Dynamic account registry, durable loop, isolated account memory, outbound worker task pull, and context artifacts |
 
 ## Dynamic marketing account loop
 
@@ -399,14 +400,21 @@ timeout code instead of leaving a permanently waiting row.
 For a simulation account without a local `workspace_id`, the Workflow executes each task in
 Cloudflare, stores a labeled digest-backed task artifact in R2, and records the result in D1. This
 keeps the first durable loop hosted while preserving both human approval waits. When an account has
-a `workspace_id`, the Workflow instead emits versioned tasks to Cloudflare Queue. The Mac runs
+a `workspace_id`, the Workflow instead emits versioned tasks to Cloudflare Queue. An enrolled worker runs
 `trace-marketing bridge`, pulls over the Cloudflare REST API, commits each task to a protected SQLite
 inbox, and only then acknowledges the queue lease. Task completion and its callback are committed to
-a local outbox so a process restart cannot lose the control-plane notification. The bridge initiates
-every connection; the quick `trycloudflare.com` tunnel is not part of this transport. Queue bodies use JSON text for
-HTTP pull compatibility, task completion events include the task ID, and duplicate callbacks replay
-the same event only after the stored callback ID and result match. Pull, acknowledgement, and callback
-transport failures do not block already-durable local work.
+a local outbox so a process restart cannot lose the control-plane notification. Candidate-task
+completion also records the run/workspace/candidate linkage. The bridge polls workspace review
+states and, after every candidate at a gate has a human decision, inserts an approval event into a
+second local outbox before delivery. D1 records the event ID before sending the buffered Workflow
+event and treats an identical delivered retry as a duplicate. `trace-marketing bridge-configure`
+persists only portable non-secret routing, while a supervisor injects environment credentials or an
+external secret command on any enrolled worker. The bridge initiates every connection; the quick
+`trycloudflare.com` tunnel is not part of this
+transport. Queue bodies use JSON text for HTTP pull compatibility, task completion events include the
+task ID, and duplicate callbacks replay the same event only after the stored callback ID and result
+match. Pull, acknowledgement, callback, and approval transport failures do not block already-durable
+local work.
 
 Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A qualifying
 Pull Request runs an unprivileged Worker check. A qualifying merge to `main` then installs the
@@ -448,7 +456,7 @@ Appium processes, but does not install the missing Trace build or driver.
 - Account-private marketing memory is addressed by account ID and is never assembled into another
   account's context snapshot.
 - Simulation accounts without `workspace_id` complete task execution in Cloudflare and retain R2
-  digest provenance; workspace-backed accounts cross the explicit Queue-to-Mac worker boundary.
+  digest provenance; workspace-backed accounts cross the explicit Queue-to-worker boundary.
 - Queue messages are acknowledged only after durable local insertion; callbacks use an independent
   durable outbox.
 - One account can own only one non-terminal hosted run; observation offsets are interpreted as

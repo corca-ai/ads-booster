@@ -729,7 +729,7 @@ escape that directory.
 ## Dynamic Cloudflare marketing loop
 
 This repository includes an optional Cloudflare control plane for data-driven marketing accounts and
-a Mac pull bridge. The first milestone is a durable pipeline, not content quality. Live publication
+a portable pull bridge for workspace-backed execution. The first milestone is a durable pipeline, not content quality. Live publication
 is disabled until the selected channel adapter passes a capability and readback probe.
 
 Run the full contract locally without Cloudflare or external side effects:
@@ -747,11 +747,11 @@ memory, and prints a `completed` run. Omit `--auto-approve` to stop first at
 Simulation accounts without a `workspace_id` execute research, candidate, capture, publication, and
 metrics tasks inside the Cloudflare Workflow. Each task is explicitly labeled as simulated, stored
 as a digest-backed R2 artifact, and indexed as succeeded in D1. The Workflow still pauses at both
-human approval gates. This hosted path needs no always-on Mac process.
+human approval gates. This hosted path needs no always-on worker process.
 
-The external Mac consumer is required only for an account with a `workspace_id`, where provider
-candidate generation and local image composition need the installed Trace workspace. It requires
-these environment variables:
+The external worker is required only for an account with a `workspace_id`, where provider
+candidate generation and local image composition need the installed Trace workspace. For an
+interactive foreground check it reads these environment variables:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=...
@@ -762,8 +762,24 @@ export TRACE_MARKETING_WORKER_TOKEN=...
 trace-marketing bridge
 ```
 
+For a portable worker enrollment, persist only the non-secret routing config, then start the hidden
+service entrypoint under any supervisor (systemd, launchd, a container, or a process manager):
+
+```bash
+trace-marketing bridge-configure --executor candidate-pipeline
+trace-marketing bridge-service
+```
+
+`bridge-configure` stores only account ID, Queue ID, control-plane URL, executor selection, polling
+interval, and credential-provider choice in `$TRACE_AGENT_HOME/marketing-bridge/service.json`.
+Secrets are injected at process start from environment variables by default. A team can instead use
+`--credential-provider command` with repeated `--credential-command` arguments to call its existing
+1Password, Vault, Kubernetes, or other secret adapter without a shell. The command must print one
+JSON object containing `queue_token` and `worker_token`; stderr and secret values are never logged.
+This keeps worker enrollment independent of a particular person, OS credential store, or computer.
+
 The queue token needs Cloudflare Queues read and write permissions because pull consumers must also
-acknowledge messages. Keep credential values in the Mac credential store or environment; D1 account
+acknowledge messages. Keep credential values in the worker supervisor or external secret manager; D1 account
 rows contain only opaque `credential_ref` values. The Worker sends task envelopes as JSON text so
 the HTTP pull response is directly decodable; the bridge also accepts the older base64-encoded JSON
 shape during rollout. A temporary pull, acknowledgement, or callback outage leaves inbox/outbox work
@@ -780,18 +796,24 @@ trace-marketing bridge --executor candidate-pipeline
 
 This mode uses the provider-backed candidate generator and the provenance-checked search/composition
 image stage. It does **not** enable live publication or metrics: those task kinds remain visibly
-simulated. The operator approves captions in the existing workspace before sending candidate
-approval with 1–8 selected IDs, then approves the generated images before publication approval:
+simulated. The operator reviews every generated caption in the existing workspace. When no caption
+is left waiting, the bridge durably sends one candidate approval containing all accepted candidates
+(or one rejection if all were rejected). After capture, approving every selected image similarly
+sends publication approval. No separate API call is part of the normal review flow.
+
+The control-plane approval endpoint remains available for explicit recovery or diagnostics:
 
 ```json
 {"decision":"approved","phase":"candidates","candidate_ids":["<candidate-id>"]}
 {"decision":"approved","phase":"publication"}
 ```
 
-Both bodies are posted to `POST /v1/runs/<run-id>/approval`. Omitting `phase` remains supported: the
-control plane infers it from the run's current waiting state. The offline image stage still uses the
-packaged Trace component fixture, so candidate schedule text and device time are recorded but are not
-rendered until the native Appium capture adapter replaces that fixture.
+Both bodies can be posted to `POST /v1/runs/<run-id>/approval`. Omitting `phase` remains supported:
+the control plane infers it from the run's current waiting state. Normal bridge-originated review
+events instead use the Worker-token-only `/v1/review-events` boundary and a D1 receipt keyed by
+`<run-id>:<phase>` so retrying the same event does not advance the Workflow twice. The offline image
+stage still uses the packaged Trace component fixture, so candidate schedule text and device time are
+recorded but are not rendered until the native Appium capture adapter replaces that fixture.
 
 Cloudflare deployment is under `cloudflare/`:
 
@@ -867,7 +889,7 @@ uv run pytest
 | `src/trace_capture/composition/` | Layer normalization and deterministic PNG composition |
 | `src/trace_capture/contracts/` | Versioned capture, composition, and run contracts |
 | `src/trace_capture/runtime/` | TraceRun state machine, journal, locks, and replay |
-| `src/trace_capture/marketing/` | Cloudflare task contract, durable Mac inbox/outbox, and local loop proof |
+| `src/trace_capture/marketing/` | Cloudflare task contract, durable worker inbox/outboxes, and local loop proof |
 | `src/trace_capture/cli/` | `trace-ads`, `trace-marketing`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
 | `cloudflare/` | Hosted account registry, Workflow, Durable Object, Queue, D1, and R2 deployment |
 | `appium/jobs/composite/` | Runnable sample job, layers, result, and final PNG |

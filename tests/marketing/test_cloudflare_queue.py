@@ -16,7 +16,10 @@ from trace_capture.marketing.cloudflare_queue import (
     ControlPlaneCallbackClient,
 )
 from trace_capture.marketing.models import (
+    ApprovalDecision,
+    ApprovalPhase,
     MarketingTask,
+    ReviewApproval,
     TaskCallback,
     TaskKind,
     TaskResult,
@@ -49,6 +52,7 @@ def _task_body() -> JsonObject:
 class StubHttp:
     response: HttpResponse | None = None
     failure: Exception | None = None
+    requests: list[tuple[str, JsonObject, Mapping[str, str]]] | None = None
 
     def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
         _ = (url, headers)
@@ -61,7 +65,8 @@ class StubHttp:
         payload: JsonObject,
         headers: Mapping[str, str],
     ) -> HttpResponse:
-        _ = (url, payload, headers)
+        if self.requests is not None:
+            self.requests.append((url, payload, headers))
         if self.failure is not None:
             raise self.failure
         assert self.response is not None
@@ -129,3 +134,31 @@ def test_callback_transport_failure_uses_retryable_boundary_error() -> None:
 
     with pytest.raises(CloudflareQueueError, match="transport request failed"):
         client.deliver(callback)
+
+
+def test_review_approval_uses_worker_only_endpoint_and_idempotency_key() -> None:
+    requests: list[tuple[str, JsonObject, Mapping[str, str]]] = []
+    http = StubHttp(
+        response=HttpResponse(202, json.dumps({"accepted": True}).encode(), {}),
+        requests=requests,
+    )
+    client = ControlPlaneCallbackClient(
+        http,
+        control_plane_url="https://worker.example.test",
+        worker_token="fixture",  # noqa: S106 - inert test credential.
+    )
+    approval = ReviewApproval(
+        approval_id="run-1:candidates",
+        run_id="run-1",
+        account_id="trace_kr",
+        phase=ApprovalPhase.CANDIDATES,
+        decision=ApprovalDecision.APPROVED,
+        candidate_ids=("candidate-1",),
+        reviewed_at=datetime.now(UTC),
+    )
+
+    client.deliver_approval(approval)
+
+    assert requests[0][0] == "https://worker.example.test/v1/review-events"
+    assert requests[0][1]["approval_id"] == "run-1:candidates"
+    assert requests[0][2]["idempotency-key"] == "run-1:candidates"

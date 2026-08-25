@@ -84,7 +84,7 @@ src/trace_capture/
 | `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
 | `contracts/` | Versioned capture, composition, generation, run, and model-tool descriptor contracts | File, network, or database access |
-| `marketing/` | Cloudflare task/callback contracts, Mac inbox/outbox, bridge orchestration, task-handler ports, and local account-loop proof | Credential values, HTTP routes, or channel-specific policy |
+| `marketing/` | Cloudflare task/callback contracts, worker inbox/outboxes, bridge orchestration, task-handler ports, and local account-loop proof | Credential values, HTTP routes, or channel-specific policy |
 | `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` and image-search query | Image generation, capture, or persistence |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
@@ -117,7 +117,7 @@ Compose concrete dependencies at these entry points.
 Do not start new dependencies through global singletons or import side effects. Construct them at
 composition time and give an explicit lifespan or context manager ownership of shutdown.
 
-`marketing/` owns the Cloudflare Queue task contract, durable Mac inbox/outbox, bridge orchestration,
+`marketing/` owns the Cloudflare Queue task contract, durable worker inbox/outboxes, bridge orchestration,
 task-handler port, optional candidate-journey adapter, and local end-to-end control-plane proof. The
 candidate adapter may invoke the provider-neutral ports in `candidate_generation/` and the existing
 workspace review store; Cloudflare response shapes do not enter either package. Channel-specific
@@ -203,10 +203,14 @@ be tested outside the Workers runtime.
 
 - Keep the cross-runtime task and callback schema versioned in `marketing/models.py` and mirror it at
   the Worker boundary.
-- Add a Mac task kind through `TaskExecutor`/`TaskHandler`; do not branch on channel credentials in
+- Add a worker task kind through `TaskExecutor`/`TaskHandler`; do not branch on channel credentials in
   the inbox store.
 - Keep queue acknowledgement after durable inbox insertion and callback delivery after durable
   outbox insertion.
+- Let `marketing/inbox.py` own run/candidate review linkage and the approval outbox; the Web review
+  routes continue to own only candidate state transitions.
+- Let `marketing/service.py` own portable non-secret bridge config and environment/external-command
+  credential resolution. Never put Queue or Worker tokens in config, task payloads, or logs.
 - Encode Queue HTTP-pull envelopes as JSON text, keep task completion event types unique per task,
   and normalize transport exceptions at the Cloudflare client boundary.
 - Keep account registry data in D1 and account-private learned memory in the named Durable Object.
@@ -238,7 +242,7 @@ Name files under `tests/` after the production package and user boundary they pr
 - Exercise real FastAPI routes, auth scope, and conflict responses for Web tests.
 - Use isolated state roots for service lifecycle, worker, health, and shutdown tests.
 - Validate artifact paths, digests, provenance, and output files for capture/composition tests.
-- Put Mac bridge, account isolation, and local loop tests in `tests/marketing/`; put pure Worker state
+- Put bridge, account isolation, and local loop tests in `tests/marketing/`; put pure Worker state
   tests in `cloudflare/test/`.
 
 Use mocks at external provider and Appium boundaries. A test that only inspects calls inside a mock

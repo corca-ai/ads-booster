@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 
 from pydantic import TypeAdapter, ValidationError
 
-from trace_capture.marketing.models import MarketingTask, QueueLease, TaskCallback
+from trace_capture.marketing.models import MarketingTask, QueueLease, ReviewApproval, TaskCallback
 from trace_capture.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -121,6 +121,19 @@ class ControlPlaneCallbackClient:
             },
         )
         _ = _response_payload(response, operation="callback")
+
+    def deliver_approval(self, approval: ReviewApproval) -> None:
+        response = _post_json(
+            self.http,
+            f"{self.control_plane_url.rstrip('/')}/v1/review-events",
+            _JSON_OBJECT.validate_json(approval.model_dump_json()),
+            {
+                "authorization": f"Bearer {self.worker_token}",
+                "content-type": "application/json",
+                "idempotency-key": approval.approval_id,
+            },
+        )
+        _ = _response_payload(response, operation="review approval")
 
 
 def _post_json(

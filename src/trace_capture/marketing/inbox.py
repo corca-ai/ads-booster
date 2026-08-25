@@ -4,15 +4,29 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING, Final, cast, override
+from typing import TYPE_CHECKING, Final, Protocol, cast, override
 
-from trace_capture.marketing.models import MarketingTask, TaskCallback, TaskResult
+from pydantic import TypeAdapter, ValidationError
+
+from trace_capture.marketing.models import (
+    ApprovalDecision,
+    ApprovalPhase,
+    MarketingTask,
+    ReviewApproval,
+    TaskCallback,
+    TaskKind,
+    TaskResult,
+    TaskStatus,
+)
+from trace_capture.workspace import CandidateId, CandidateRecord, CandidateStatus, WorkspaceId
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
 _FILENAME: Final = "marketing-bridge.sqlite3"
+_MAX_CANDIDATE_SELECTION: Final = 8
+_CANDIDATE_IDS_ADAPTER = TypeAdapter(list[str])
 _SCHEMA: Final = """
 CREATE TABLE IF NOT EXISTS marketing_inbox (
     task_id TEXT PRIMARY KEY,
@@ -36,7 +50,35 @@ CREATE TABLE IF NOT EXISTS marketing_outbox (
 );
 CREATE INDEX IF NOT EXISTS marketing_outbox_pending
 ON marketing_outbox (delivered_at, created_at);
+CREATE TABLE IF NOT EXISTS marketing_review_runs (
+    run_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK (phase IN ('candidates', 'publication')),
+    candidate_ids_json TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS marketing_approval_outbox (
+    approval_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES marketing_review_runs(run_id),
+    approval_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    delivered_at REAL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS marketing_approval_outbox_pending
+ON marketing_approval_outbox (delivered_at, created_at);
 """
+
+
+class CandidateReviewStore(Protocol):
+    def get_candidate(
+        self,
+        workspace_id: WorkspaceId,
+        candidate_id: CandidateId,
+    ) -> CandidateRecord: ...
 
 
 class InboxConflictError(RuntimeError):
@@ -164,7 +206,161 @@ class MarketingInbox:
                     completed_at.timestamp(),
                 ),
             )
+            self._record_review_run(connection, task, result, completed_at.timestamp())
         return callback
+
+    def sync_review_approvals(self, store: CandidateReviewStore) -> int:
+        """Queue approval events only after every candidate reaches its human-reviewed state."""
+        with self._connect() as connection:
+            rows = _fetchall(
+                connection,
+                """
+                SELECT run_id, account_id, workspace_id, phase, candidate_ids_json
+                FROM marketing_review_runs ORDER BY created_at
+                """,
+            )
+        queued = 0
+        for row in rows:
+            run_id, account_id, workspace_id, phase_value, candidate_ids_json = map(str, row)
+            candidate_ids = _candidate_ids_json(candidate_ids_json)
+            if candidate_ids is None:
+                continue
+            try:
+                records = tuple(
+                    store.get_candidate(WorkspaceId(workspace_id), CandidateId(candidate_id))
+                    for candidate_id in candidate_ids
+                )
+            except Exception:  # noqa: BLE001, S112 - review state must fail closed.
+                continue
+            phase = ApprovalPhase(phase_value)
+            decision = _review_decision(phase, records)
+            if decision is None:
+                continue
+            selected = (
+                tuple(
+                    str(record.candidate_id)
+                    for record in records
+                    if record.status is not CandidateStatus.REJECTED
+                )
+                if phase is ApprovalPhase.CANDIDATES and decision is ApprovalDecision.APPROVED
+                else ()
+            )
+            approval = ReviewApproval(
+                approval_id=f"{run_id}:{phase}",
+                run_id=run_id,
+                account_id=account_id,
+                phase=phase,
+                decision=decision,
+                candidate_ids=selected,
+                reviewed_at=datetime.now(UTC),
+            )
+            if self._enqueue_approval(approval):
+                queued += 1
+        return queued
+
+    def pending_approvals(self, *, limit: int = 20) -> tuple[ReviewApproval, ...]:
+        with self._connect() as connection:
+            rows = _fetchall(
+                connection,
+                """
+                SELECT approval_json FROM marketing_approval_outbox
+                WHERE delivered_at IS NULL ORDER BY created_at LIMIT ?
+                """,
+                (limit,),
+            )
+        return tuple(ReviewApproval.model_validate_json(str(row[0])) for row in rows)
+
+    def record_approval_attempt(self, approval_id: str) -> None:
+        now = datetime.now(UTC).timestamp()
+        with self._connect(write=True) as connection:
+            _ = connection.execute(
+                """
+                UPDATE marketing_approval_outbox
+                SET attempts = attempts + 1, updated_at = ? WHERE approval_id = ?
+                """,
+                (now, approval_id),
+            )
+
+    def mark_approval_delivered(self, approval_id: str) -> None:
+        now = datetime.now(UTC).timestamp()
+        with self._connect(write=True) as connection:
+            result = connection.execute(
+                """
+                UPDATE marketing_approval_outbox SET delivered_at = ?, updated_at = ?
+                WHERE approval_id = ? AND delivered_at IS NULL
+                """,
+                (now, now, approval_id),
+            )
+            if result.rowcount not in (0, 1):
+                raise InboxStateError(f"invalid approval update for {approval_id!r}")
+
+    @staticmethod
+    def _record_review_run(
+        connection: sqlite3.Connection,
+        task: MarketingTask,
+        result: TaskResult,
+        now: float,
+    ) -> None:
+        if result.status is not TaskStatus.SUCCEEDED or task.kind not in {
+            TaskKind.GENERATE_CANDIDATES,
+            TaskKind.CAPTURE,
+        }:
+            return
+        workspace_id = task.payload.get("workspace_id")
+        raw_ids = (
+            result.output.get("candidate_ids")
+            if task.kind is TaskKind.GENERATE_CANDIDATES
+            else task.payload.get("candidate_ids")
+        )
+        candidate_ids = _candidate_ids(raw_ids)
+        if not isinstance(workspace_id, str) or not workspace_id or candidate_ids is None:
+            return
+        phase = (
+            ApprovalPhase.CANDIDATES
+            if task.kind is TaskKind.GENERATE_CANDIDATES
+            else ApprovalPhase.PUBLICATION
+        )
+        _ = connection.execute(
+            """
+            INSERT INTO marketing_review_runs (
+                run_id, account_id, workspace_id, phase, candidate_ids_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                account_id = excluded.account_id,
+                workspace_id = excluded.workspace_id,
+                phase = excluded.phase,
+                candidate_ids_json = excluded.candidate_ids_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                task.run_id,
+                task.account_id,
+                workspace_id,
+                phase,
+                _CANDIDATE_IDS_ADAPTER.dump_json(list(candidate_ids)).decode(),
+                now,
+                now,
+            ),
+        )
+
+    def _enqueue_approval(self, approval: ReviewApproval) -> bool:
+        now = approval.reviewed_at.timestamp()
+        with self._connect(write=True) as connection:
+            result = connection.execute(
+                """
+                INSERT OR IGNORE INTO marketing_approval_outbox (
+                    approval_id, run_id, approval_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    approval.approval_id,
+                    approval.run_id,
+                    approval.model_dump_json(),
+                    now,
+                    now,
+                ),
+            )
+        return result.rowcount == 1
 
     def pending_callbacks(self, *, limit: int = 20) -> tuple[TaskCallback, ...]:
         with self._connect() as connection:
@@ -241,6 +437,40 @@ def _fetchall(
 ) -> list[SqliteRow]:
     cursor = connection.execute(query, parameters)
     return cast("list[SqliteRow]", cursor.fetchall())
+
+
+def _candidate_ids(value: object) -> tuple[str, ...] | None:
+    try:
+        values = _CANDIDATE_IDS_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
+    if not values or len(values) > _MAX_CANDIDATE_SELECTION or any(not item for item in values):
+        return None
+    return tuple(dict.fromkeys(values))
+
+
+def _candidate_ids_json(value: str) -> tuple[str, ...] | None:
+    try:
+        values = _CANDIDATE_IDS_ADAPTER.validate_json(value)
+    except ValidationError:
+        return None
+    return _candidate_ids(values)
+
+
+def _review_decision(
+    phase: ApprovalPhase,
+    records: tuple[CandidateRecord, ...],
+) -> ApprovalDecision | None:
+    if phase is ApprovalPhase.PUBLICATION:
+        return (
+            ApprovalDecision.APPROVED
+            if records and all(record.status is CandidateStatus.SUBMITTED for record in records)
+            else None
+        )
+    if any(record.status is CandidateStatus.AWAITING_REVIEW for record in records):
+        return None
+    accepted = tuple(record for record in records if record.status is not CandidateStatus.REJECTED)
+    return ApprovalDecision.APPROVED if accepted else ApprovalDecision.REJECTED
 
 
 class MarketingExecutionError(RuntimeError):
