@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,7 +49,7 @@ class DdgsImageSearchProvider:
 
     def search(self, query: str, max_results: int) -> ImageSearchResponse:
         count = _validated_count(max_results)
-        command = shutil.which("ddgs")
+        command = _ddgs_command()
         if command is None:
             raise ImageSearchError(_CODE_UNAVAILABLE, _MESSAGE_MISSING)
         with tempfile.TemporaryDirectory(prefix="trace-agent-ddgs-images-") as temp_dir:
@@ -152,6 +153,14 @@ def _validated_count(max_results: int) -> int:
         message = "max_results must be between 1 and 10"
         raise ImageSearchError(_CODE_INVALID_ARGUMENTS, message)
     return max_results
+
+
+def _ddgs_command() -> str | None:
+    command = shutil.which("ddgs")
+    if command is not None:
+        return command
+    sibling = Path(sys.executable).with_name("ddgs")
+    return str(sibling) if sibling.is_file() else None
 
 
 def _response_from_rows(
