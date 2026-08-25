@@ -726,6 +726,56 @@ clean system-UI asset.
 Input and output paths are resolved relative to the job file and may not collide or
 escape that directory.
 
+## Dynamic Cloudflare marketing loop
+
+This repository includes an optional Cloudflare control plane for data-driven marketing accounts and
+a Mac pull bridge. The first milestone is a durable pipeline, not content quality. Live publication
+is disabled until the selected channel adapter passes a capability and readback probe.
+
+Run the full contract locally without Cloudflare or external side effects:
+
+```bash
+trace-marketing simulate --account-id trace-kr --country KR --auto-approve
+```
+
+The command creates a shared registry plus a separate private-memory SQLite file per account, walks
+the approval-gated state machine, simulates six observation samples, evaluates them, commits private
+memory, and prints a `completed` run. Omit `--auto-approve` to stop at
+`awaiting_human_approval`.
+
+The external Mac consumer requires these environment variables:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID=...
+export TRACE_MARKETING_QUEUE_ID=...
+export TRACE_MARKETING_QUEUE_TOKEN=...
+export TRACE_MARKETING_CONTROL_PLANE_URL=https://...
+export TRACE_MARKETING_WORKER_TOKEN=...
+trace-marketing bridge
+```
+
+The queue token needs Cloudflare Queues read and write permissions because pull consumers must also
+acknowledge messages. Keep credential values in the Mac credential store or environment; D1 account
+rows contain only opaque `credential_ref` values.
+
+Cloudflare deployment is under `cloudflare/`:
+
+```bash
+cd cloudflare
+npm install
+CF_D1_DATABASE_ID=<database-id> npm run config
+npm run db:migrate:remote
+npx wrangler secret put CONTROL_PLANE_TOKEN
+npx wrangler secret put WORKER_CALLBACK_TOKEN
+npm run deploy
+npx wrangler queues consumer http add trace-marketing-tasks
+```
+
+Create the D1 database, R2 bucket, and Queue named in `wrangler.template.jsonc` before rendering the
+config. The generated config is ignored because it contains environment-specific resource IDs. See
+[the full loop contract](docs/contracts/cloudflare-marketing-loop.md) for states, extension rules,
+security boundaries, and the honest two-hour acceptance path.
+
 ## Sample asset status
 
 The checked sample final image demonstrates the deterministic three-layer composition pipeline.
@@ -767,7 +817,9 @@ uv run pytest
 | `src/trace_capture/composition/` | Layer normalization and deterministic PNG composition |
 | `src/trace_capture/contracts/` | Versioned capture, composition, and run contracts |
 | `src/trace_capture/runtime/` | TraceRun state machine, journal, locks, and replay |
-| `src/trace_capture/cli/` | `trace-ads`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
+| `src/trace_capture/marketing/` | Cloudflare task contract, durable Mac inbox/outbox, and local loop proof |
+| `src/trace_capture/cli/` | `trace-ads`, `trace-marketing`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
+| `cloudflare/` | Hosted account registry, Workflow, Durable Object, Queue, D1, and R2 deployment |
 | `appium/jobs/composite/` | Runnable sample job, layers, result, and final PNG |
 
 Last reviewed: 2026-08-25

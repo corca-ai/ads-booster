@@ -110,6 +110,7 @@ tests/
 ├── composition/   # Composite worker and image composition
 ├── contracts/     # Capture, composite, and result contracts
 ├── generation/    # Scene planning, searched backgrounds, and one-shot generation
+├── marketing/     # Cloudflare task contracts, bridge durability, account isolation, and loop proof
 ├── providers/     # Model catalog and provider request contracts
 ├── runtime/       # TraceRun execution, replay, store, and capture ports
 ├── search/        # Text/image search tools, providers, and settings
@@ -168,6 +169,7 @@ when the tooling configuration being changed applies to the whole repository.
 | `web/` | Changed router, schema, command, and approval tests | Changed API and browser interaction against a running app, including slash commands and approval state |
 | `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
 | `capture/` | Changed adapter, worker, or provenance tests | Changed capture step with the current Appium, Simulator, and Trace build |
+| `marketing/`, `cloudflare/` | Focused Python marketing tests plus `cd cloudflare && npm run check` | Fresh-installed `trace-marketing simulate`; deployed API/Queue probe only when Cloudflare is in scope |
 | `composition/` | Changed composer and artifact tests | Open the generated image and inspect the changed layer or output |
 | Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
 

@@ -358,6 +358,9 @@ roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
 | `$TRACE_AGENT_HOME/auth.json` | `auth/` | OAuth credential data, protected with file mode `0600` |
 | `$TRACE_AGENT_HOME/sessions/` | `agent/` | Standalone TUI and REPL canonical histories, one protected JSON file per session |
 | `$TRACE_AGENT_HOME/memory.jsonl` | `agent/` | Append-only context-compaction summaries |
+| `$TRACE_AGENT_HOME/marketing-bridge/marketing-bridge.sqlite3` | `marketing/` | Durable remote-task inbox and callback outbox |
+| `$TRACE_AGENT_HOME/marketing-bridge/artifacts/` | `marketing/` | Digest-backed simulation artifacts or adapter-owned task artifacts |
+| `$TRACE_AGENT_HOME/marketing-simulation/` | `marketing/` | Local control-plane proof, with one separate SQLite memory file per account |
 | `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected service and optional tunnel logs |
 | `<serve workspace>/context/` | `candidate_generation/` | Operator-owned Korean principle, element, voice, fact, and reference documents, read only |
 
@@ -379,6 +382,25 @@ state and capture roots.
 | Web and image search | `tools/`, `search/` provider adapters | Normalized source results; generation downloads only approved image-source domains and stores provenance |
 | cloudflared | `tunnel/` | Default live `trycloudflare.com` URL request; failure leaves the loopback service available |
 | launchd | `service/launchd.py` | Per-user service plist and protected log paths |
+| Cloudflare D1, Workflows, Durable Objects, Queues, and R2 | `cloudflare/`, `marketing/` | Dynamic account registry, durable loop, isolated account memory, outbound Mac task pull, and context artifacts |
+
+## Dynamic marketing account loop
+
+The optional hosted control plane is defined under `cloudflare/`. D1 owns versioned shared
+instructions, account configuration, schedules, runs, events, and task indexes. A named Durable
+Object selected by `account_id` owns private learned memory for exactly one marketing account.
+Cloudflare Workflows owns the durable run and its human-approval wait. A Cron Trigger checks D1 every
+minute and claims accounts whose data-driven `next_run_at` is due.
+
+The Workflow emits versioned tasks to Cloudflare Queue. The Mac runs `trace-marketing bridge`, pulls
+over the Cloudflare REST API, commits each task to a protected SQLite inbox, and only then
+acknowledges the queue lease. Task completion and its callback are committed to a local outbox so a
+process restart cannot lose the control-plane notification. The bridge initiates every connection;
+the quick `trycloudflare.com` tunnel is not part of this transport.
+
+Publication remains behind both a human approval event and a channel adapter. The branch implements
+an explicitly labeled simulation executor. Live Threads publication remains capability-gated and is
+not enabled or claimed. See [Dynamic Cloudflare Marketing Loop Contract](../contracts/cloudflare-marketing-loop.md).
 
 The base CLI, TUI, Web shell, and offline composition do not require native capture dependencies.
 Generation that includes Trace component capture requires Xcode, an available Simulator, the Trace
@@ -399,17 +421,21 @@ Appium processes, but does not install the missing Trace build or driver.
 - Capture, staging, and composition artifacts remain inside their configured roots and retain digest
   provenance.
 - Unknown external side effects fail closed and are not retried blindly.
+- Account-private marketing memory is addressed by account ID and is never assembled into another
+  account's context snapshot.
+- Queue messages are acknowledged only after durable local insertion; callbacks use an independent
+  durable outbox.
 - A generated artifact is not ready for delivery until its path and digest are verified and a human
   accepts the review record.
-- No current runtime publishes to Notion, Threads, or another external marketing channel.
+- No current live adapter publishes to Notion, Threads, or another external marketing channel.
 
 ## Current exclusions
 
 The implemented architecture does not currently provide:
 
-- a hosted control plane or remote database;
-- automatic external publication;
-- automatic campaign-feedback learning;
+- a verified production deployment of the hosted control plane;
+- a capability-proven live Threads publication adapter;
+- real channel metrics and production feedback learning;
 - real custom-wallpaper capture from the Simulator.
 
 These are current product boundaries, not commitments about future design.
