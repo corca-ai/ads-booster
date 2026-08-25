@@ -23,6 +23,7 @@ trace-compose = "trace_capture.cli.compose:app"
 trace-run = "trace_capture.cli.trace_run:app"
 trace-agent = "trace_capture.cli.agent:app"
 trace-ads = "trace_capture.cli.agent:app"
+trace-marketing = "trace_capture.cli.marketing:app"
 
 [dependency-groups]
 dev = [
@@ -114,6 +115,8 @@ unfixable = []
 "src/trace_capture/agent/tui_view.py" = ["D107"]
 "src/trace_capture/agent/tui_prompt.py" = ["D107"]
 "src/trace_capture/agent/memory.py" = ["D107"]
+"src/trace_capture/marketing/*.py" = ["D107", "EM101", "EM102", "TC001", "TRY003", "TRY004"]
+"src/trace_capture/cli/marketing.py" = ["EM102", "TRY003"]
 "src/trace_capture/agent/tui_context.py" = ["D107"]
 "src/trace_capture/providers/errors.py" = ["D107"]
 "src/trace_capture/web/app.py" = ["TC003", "PLR0913"]

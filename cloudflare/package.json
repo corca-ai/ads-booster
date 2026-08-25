@@ -1,0 +1,16 @@
+{
+  "name": "trace-marketing-control-plane",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.js && node --test test/*.test.js",
+    "config": "node scripts/render-config.mjs",
+    "dev": "wrangler dev --config wrangler.generated.jsonc",
+    "deploy": "wrangler deploy --config wrangler.generated.jsonc",
+    "db:migrate:local": "wrangler d1 migrations apply trace-marketing-control --local --config wrangler.generated.jsonc",
+    "db:migrate:remote": "wrangler d1 migrations apply trace-marketing-control --remote --config wrangler.generated.jsonc"
+  },
+  "devDependencies": {
+    "wrangler": "^4.32.0"
+  }
+}

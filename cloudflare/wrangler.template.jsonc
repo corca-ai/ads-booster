@@ -1,0 +1,55 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trace-marketing-control",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trace-marketing-control",
+      "database_id": "__D1_DATABASE_ID__",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "trace-marketing-artifacts"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "TASK_QUEUE",
+        "queue": "trace-marketing-tasks"
+      }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ACCOUNT_AGENT",
+        "class_name": "MarketingAccountAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MarketingAccountAgent"]
+    }
+  ],
+  "workflows": [
+    {
+      "name": "trace-marketing-loop",
+      "binding": "MARKETING_WORKFLOW",
+      "class_name": "MarketingWorkflow"
+    }
+  ],
+  "vars": {
+    "OBSERVATION_MINUTES": "5,10,15,20,25,30"
+  }
+}

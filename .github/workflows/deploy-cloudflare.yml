@@ -1,0 +1,107 @@
+name: Deploy Cloudflare marketing control plane
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/deploy-cloudflare.yml
+      - cloudflare/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deploy-cloudflare.yml
+      - cloudflare/**
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-marketing-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudflare
+
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run Worker checks
+        run: npm run check
+
+  deploy:
+    name: Migrate, deploy, and verify
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CF_D1_DATABASE_ID: ${{ vars.CF_D1_DATABASE_ID }}
+      TRACE_MARKETING_HEALTH_URL: ${{ vars.TRACE_MARKETING_HEALTH_URL }}
+
+    steps:
+      - name: Check out the merged revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?missing CLOUDFLARE_API_TOKEN Actions secret}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?missing CLOUDFLARE_ACCOUNT_ID repository variable}"
+          : "${CF_D1_DATABASE_ID:?missing CF_D1_DATABASE_ID repository variable}"
+          : "${TRACE_MARKETING_HEALTH_URL:?missing TRACE_MARKETING_HEALTH_URL repository variable}"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Render production configuration
+        run: npm run config
+
+      - name: Apply D1 migrations
+        run: npm run db:migrate:remote
+
+      - name: Deploy Worker
+        run: npm run deploy
+
+      - name: Verify deployed health
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            "$TRACE_MARKETING_HEALTH_URL")"
+          test "$response" = '{"ok":true}'

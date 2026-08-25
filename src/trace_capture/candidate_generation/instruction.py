@@ -77,12 +77,18 @@ _RETRY: Final = """직전 응답은 형식 검증을 통과하지 못했습니�
 같은 요구사항으로 다시 만들되, 이번에는 JSON 배열만 정확한 형식으로 출력하세요."""
 
 
-def build_instruction(bundle: CandidateContextBundle, *, count: int) -> str:
+def build_instruction(
+    bundle: CandidateContextBundle,
+    *,
+    count: int,
+    run_context: str | None = None,
+) -> str:
     """Assemble the single generation instruction from the loaded context documents."""
     subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
     sections = [
         _ROLE.format(count=count),
         _RULES.format(count=count, subjects=subjects),
+        *(() if run_context is None else (f"[control-plane 실행 컨텍스트]\n{run_context}",)),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"
             for document in bundle.documents

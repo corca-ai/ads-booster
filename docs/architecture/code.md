@@ -59,6 +59,7 @@ src/trace_capture/
 ├── composition/    # deterministic offline image-layer validation and composition
 ├── config/         # environment-backed runtime settings
 ├── contracts/      # versioned cross-boundary Pydantic contracts
+├── marketing/      # Cloudflare task bridge, durable inbox/outbox, and local loop proof
 ├── planning/       # marketing context to scene recipe
 ├── providers/      # model transport, catalog and image generation adapters
 ├── search/         # text/image search contracts and external provider adapters
@@ -83,6 +84,7 @@ src/trace_capture/
 | `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
 | `contracts/` | Versioned capture, composition, generation, run, and model-tool descriptor contracts | File, network, or database access |
+| `marketing/` | Cloudflare task/callback contracts, worker inbox/outboxes, bridge orchestration, task-handler ports, and local account-loop proof | Credential values, HTTP routes, or channel-specific policy |
 | `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` and image-search query | Image generation, capture, or persistence |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
@@ -109,9 +111,23 @@ Compose concrete dependencies at these entry points.
 | `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider and image clients, context directory, and shipped fixture paths for candidate production and the image stage |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
+| `cli/marketing.py` | local simulation, external pull-bridge, and opt-in installed candidate-pipeline dependency composition |
+| `cloudflare/src/index.js` | hosted HTTP API, Workflow, Durable Object, D1, Queue, and R2 composition |
 
 Do not start new dependencies through global singletons or import side effects. Construct them at
 composition time and give an explicit lifespan or context manager ownership of shutdown.
+
+`marketing/` owns the Cloudflare Queue task contract, durable worker inbox/outboxes, bridge orchestration,
+task-handler port, optional candidate-journey adapter, and local end-to-end control-plane proof. The
+candidate adapter may invoke the provider-neutral ports in `candidate_generation/` and the existing
+workspace review store; Cloudflare response shapes do not enter either package. Channel-specific
+production handlers depend inward on the marketing contract rather than putting their credentials
+or response shapes into `automation/` or `workspace/`.
+
+`cloudflare/` is a separate deployment composition root. Its Worker owns HTTP authorization and D1
+registry APIs; `MarketingWorkflow` owns durable orchestration; `MarketingAccountAgent` owns one
+account's private memory. Pure transition rules stay in `cloudflare/src/state-machine.js` so they can
+be tested outside the Workers runtime.
 
 ## Code placement rules
 
@@ -183,6 +199,26 @@ composition time and give an explicit lifespan or context manager ownership of s
 - Keep `create_app()` composable and testable without a worker.
 - Attach production workers explicitly in `service/runtime.py`.
 
+### Hosted marketing loop
+
+- Keep the cross-runtime task and callback schema versioned in `marketing/models.py` and mirror it at
+  the Worker boundary.
+- Add a worker task kind through `TaskExecutor`/`TaskHandler`; do not branch on channel credentials in
+  the inbox store.
+- Keep queue acknowledgement after durable inbox insertion and callback delivery after durable
+  outbox insertion.
+- Let `marketing/inbox.py` own run/candidate review linkage and the approval outbox; the Web review
+  routes continue to own only candidate state transitions.
+- Let `marketing/service.py` own portable non-secret bridge config and environment/external-command
+  credential resolution. Never put Queue or Worker tokens in config, task payloads, or logs.
+- Encode Queue HTTP-pull envelopes as JSON text, keep task completion event types unique per task,
+  and normalize transport exceptions at the Cloudflare client boundary.
+- Keep account registry data in D1 and account-private learned memory in the named Durable Object.
+- Let D1's partial unique index own the one-active-run-per-account invariant; API and Cron checks are
+  explanatory fast paths, not the concurrency authority.
+- Treat a new account, locale, schedule, instruction revision, or credential reference as data.
+- Require code review for a new adapter, task kind, state edge, or retry rule.
+
 ## Cross-package rules
 
 - Do not repeat one business rule across CLI, TUI, and Web routes.
@@ -206,6 +242,8 @@ Name files under `tests/` after the production package and user boundary they pr
 - Exercise real FastAPI routes, auth scope, and conflict responses for Web tests.
 - Use isolated state roots for service lifecycle, worker, health, and shutdown tests.
 - Validate artifact paths, digests, provenance, and output files for capture/composition tests.
+- Put bridge, account isolation, and local loop tests in `tests/marketing/`; put pure Worker state
+  tests in `cloudflare/test/`.
 
 Use mocks at external provider and Appium boundaries. A test that only inspects calls inside a mock
 does not prove the owning boundary.
