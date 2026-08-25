@@ -1,0 +1,143 @@
+[project]
+name = "trace-appium-capture"
+version = "0.1.0"
+description = "Appium worker for deterministic Trace marketing captures"
+readme = "README.md"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "Appium-Python-Client>=5.1.1,<6",
+    "ddgs>=9,<10",
+    "fastapi>=0.116,<1",
+    "httpx2[brotli,http2,zstd]>=0.1",
+    "Pillow>=11,<13",
+    "pydantic>=2.11,<3",
+    "textual>=1.0,<2",
+    "typer>=0.16,<1",
+    "urllib3>=2,<3",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[project.scripts]
+trace-capture = "trace_capture.cli.capture:app"
+trace-compose = "trace_capture.cli.compose:app"
+trace-run = "trace_capture.cli.trace_run:app"
+trace-agent = "trace_capture.cli.agent:app"
+trace-ads = "trace_capture.cli.agent:app"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.31,<2",
+    "pytest>=8,<9",
+    "ruff>=0.12,<1",
+    "types-Pillow>=10,<13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trace_capture"]
+
+[tool.basedpyright]
+typeCheckingMode = "all"
+pythonVersion = "3.14"
+pythonPlatform = "All"
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests"]
+exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
+reportUnusedCallResult = "warning"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedVariable = "error"
+reportMissingParameterType = "error"
+reportPrivateUsage = "error"
+reportCallInDefaultInitializer = "none"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "tests"]
+exclude = [".omo"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "ISC001",
+    "D203",
+    "D213",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "CPY001",
+    "FBT001",
+    "FBT002",
+    "TD002",
+    "TD003",
+    "FIX002",
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "ARG", "PLR2004", "SLF001", "D"]
+"src/trace_capture/capture/appium_adapter.py" = ["S603"]
+"src/trace_capture/capture/app_group_collector.py" = ["S603"]
+"src/trace_capture/cli/compose.py" = ["TC003"]
+"src/trace_capture/cli/trace_run.py" = ["PLR0913", "PLR0917"]
+"src/trace_capture/cli/generate.py" = ["PLR0913", "PLR0917"]
+"src/trace_capture/tools/shell.py" = ["S603", "S607", "PLR0911"]
+"src/trace_capture/tools/browser.py" = ["S603"]
+"src/trace_capture/tools/trace.py" = ["S603", "PLR0911"]
+"src/trace_capture/search/text/providers.py" = ["S603"]
+"src/trace_capture/search/image/providers.py" = ["S603"]
+"src/trace_capture/transport/http.py" = ["D105", "D107"]
+"src/trace_capture/providers/models.py" = ["TC001"]
+"src/trace_capture/contracts/tools.py" = ["TC001"]
+"src/trace_capture/auth/browser.py" = ["D107"]
+"src/trace_capture/auth/codex.py" = ["D107"]
+"src/trace_capture/auth/store.py" = ["D107"]
+"src/trace_capture/providers/codex.py" = ["D107"]
+"src/trace_capture/agent/tui.py" = ["D107"]
+"src/trace_capture/agent/tui_oauth.py" = ["D107"]
+"src/trace_capture/agent/tui_approval.py" = ["D107"]
+"src/trace_capture/agent/tui_styles.py" = ["FLY002"]
+"src/trace_capture/agent/control.py" = ["D107"]
+"src/trace_capture/agent/tui_model.py" = ["D107"]
+"src/trace_capture/agent/tui_view.py" = ["D107"]
+"src/trace_capture/agent/tui_prompt.py" = ["D107"]
+"src/trace_capture/agent/memory.py" = ["D107"]
+"src/trace_capture/agent/tui_context.py" = ["D107"]
+"src/trace_capture/providers/errors.py" = ["D107"]
+"src/trace_capture/web/app.py" = ["TC003"]
+"src/trace_capture/web/contexts.py" = ["C901", "TC001"]
+"src/trace_capture/web/schemas.py" = ["TC001"]
+"src/trace_capture/web/session.py" = ["TC001"]
+"src/trace_capture/web/sessions.py" = ["TC001"]
+"tests/agent/test_agent_shell.py" = ["S105", "S106"]
+"tests/cli/test_cli_auth.py" = ["S105", "S106"]
+"tests/providers/test_provider_models.py" = ["S105", "S106"]
+"tests/generation/test_marketing_generation.py" = ["S106"]
+"tests/cli/test_installer.py" = ["S603"]
+"tests/search/test_web_search_providers.py" = ["FLY002", "Q003"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+filterwarnings = ["error"]
