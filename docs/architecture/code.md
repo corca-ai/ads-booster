@@ -78,20 +78,20 @@ src/trace_capture/
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
 | `candidate_generation/` | Context-document loading, the assembled generation instruction, strict-JSON parsing with one retry, and all-or-nothing candidate writing through a store protocol | HTTP routes, provider transport details, or candidate review transitions |
-| `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, iPhone UI screenshots, Trace component collection, and provenance validation | Scene planning or final composition policy |
+| `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Trace setup entry, component collection, and provenance validation | Scene planning or final composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
-| `composition/` | Offline layer validation, transparency/path constraints, and deterministic PNG composition | Appium navigation or provider calls; context-driven Image Model composition |
+| `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
 | `contracts/` | Versioned capture, composition, generation, run, and model-tool descriptor contracts | File, network, or database access |
-| `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` | Image generation, capture, or persistence |
+| `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` and image-search query | Image generation, capture, or persistence |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
-| `runtime/` | GenerateOne/TraceRun orchestration, capability order, Image Model composition boundary, journals, replay, locks, and artifact validation | CLI output or HTTP routing |
+| `runtime/` | GenerateOne/TraceRun orchestration, capability order, searched background plus clean system UI and deterministic composition boundary, journals, replay, locks, and artifact validation | CLI output or HTTP routing |
 | `service/` | Loopback listener, workspace bootstrap, automation-worker hosting, launchd, and service status | Web schemas or queue transitions |
 | `tools/` | Executable tools, registry, approval, workspace paths, and bounded output | Provider loop or TraceRun state transitions |
 | `transport/` | Shared HTTP client and JSON transport types | Provider-specific meaning |
 | `tunnel/` | cloudflared process and emitted public-URL boundary | The full local-service lifecycle |
-| `web/` | FastAPI auth/context/asset/campaign/candidate/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
+| `web/` | FastAPI auth/member-invite/context/asset/campaign/candidate/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
 | `workspace/` | Workspace/member identity, code hashes/versions, shared context, asset metadata, and private sessions | Automation queue or model calls |
 
 ## Composition root
@@ -158,7 +158,7 @@ composition time and give an explicit lifespan or context manager ownership of s
 
 ### Workspace data
 
-- `workspace/` owns workspace, member, context, asset, and private-session state.
+- `workspace/` owns workspace, member, context, asset, and private-session state; Web admin identity is anchored to the owner ID in `service.json`.
 - `automation/` owns campaign lifecycle, variation numbering, scheduling, leases, runs, and review state.
 - Do not put HTTP cookie or response shapes in database models.
 - Let store methods own SQLite transactions and optimistic revisions.

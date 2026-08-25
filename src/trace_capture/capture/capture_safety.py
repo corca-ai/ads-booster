@@ -9,7 +9,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Protocol, override
+from typing import TYPE_CHECKING, Final, Protocol, override, runtime_checkable
 
 from trace_capture.contracts import ErrorCode
 
@@ -159,6 +159,17 @@ class WebDriverClient(Protocol):
     def unlock(self) -> WebDriverClient | None: ...
     def save_screenshot(self, filename: str) -> bool: ...
     def quit(self) -> WebDriverClient | None: ...
+
+
+@runtime_checkable
+class ElementFindingWebDriver(Protocol):
+    def find_element(self, by: str, value: str) -> WebDriverElement: ...
+
+
+class WebDriverElement(Protocol):
+    def clear(self) -> None: ...
+    def click(self) -> None: ...
+    def send_keys(self, *value: str) -> None: ...
 
 
 def path_has_symlink_component(path: Path) -> bool:

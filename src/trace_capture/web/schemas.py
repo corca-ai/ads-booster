@@ -53,10 +53,26 @@ class LoginRequest(WebModel):
     member_code: str = Field(min_length=1, max_length=256)
 
 
+class MemberLoginRequest(WebModel):
+    workspace_id: WorkspaceId = Field(min_length=1, max_length=128)
+    member_id: MemberId = Field(min_length=1, max_length=128)
+    member_code: str = Field(min_length=1, max_length=256)
+
+
 class AuthenticatedMemberResponse(WebModel):
     workspace_id: WorkspaceId
     workspace_name: str
     member_id: MemberId
+    display_name: str
+    is_admin: bool
+
+
+class MemberInviteRequest(WebModel):
+    display_name: str = Field(min_length=1, max_length=80)
+
+
+class MemberInviteResponse(WebModel):
+    member_access_id: str
     display_name: str
 
 

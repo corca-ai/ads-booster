@@ -109,7 +109,7 @@ tests/
 ├── cli/           # Typer commands, compatibility, installer, and TraceRun CLI paths
 ├── composition/   # Composite worker and image composition
 ├── contracts/     # Capture, composite, and result contracts
-├── generation/    # Scene planning, image generation, and one-shot generation
+├── generation/    # Scene planning, searched backgrounds, and one-shot generation
 ├── providers/     # Model catalog and provider request contracts
 ├── runtime/       # TraceRun execution, replay, store, and capture ports
 ├── search/        # Text/image search tools, providers, and settings

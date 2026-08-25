@@ -42,18 +42,23 @@ unrelated changes on one branch.
 ### Format
 
 ```text
-<type>: <message>
+<type>: <message> (#<issue-number>)
 ```
+
+Every implementation, bug fix, test, or repository-policy change starts from a GitHub Issue. Every
+commit must include its issue reference in the subject using `(#<issue-number>)`; one logical commit
+maps to one issue, and each commit subject may contain exactly one issue reference. Never list
+multiple issue numbers in one commit message; split the work into separate logical commits instead.
 
 Examples:
 
 ```text
-feat: add campaign health check
-fix: handle missing database url
-refactor: simplify database options
-docs: add GitHub conventions
-test: cover health endpoint failure
-chore: update development dependencies
+feat: add campaign health check (#123)
+fix: handle missing database url (#123)
+refactor: simplify database options (#123)
+docs: add GitHub conventions (#123)
+test: cover health endpoint failure (#123)
+chore: update development dependencies (#123)
 ```
 
 ### Types
@@ -69,6 +74,15 @@ Make each commit a meaningful unit with one intent. Before committing, inspect t
 diff, and ensure no passwords, tokens, `.env` files, or other secrets are included.
 
 ## Workflow
+
+### 0. Create or identify the issue
+
+Before implementation or staging, create or identify the GitHub Issue that owns the change and record
+its number. Use the issue number in every related commit subject, for example:
+
+```text
+fix: wait for launchd teardown before workspace restart (#123)
+```
 
 ### 1. Start from current `main`
 
@@ -97,12 +111,21 @@ git push -u origin <branch-name>
 gh pr create --draft --base main --title "<type>: <summary>" --body "<description>"
 ```
 
-Include at least the following in the Pull Request body:
+The PR title is a short change summary; an issue number is optional in the title. Link the owning
+issue(s) in the body instead. The body must be concrete enough for a reviewer to understand the
+user-visible flow and verify the change without reading the commit history. Include:
 
-- the purpose and problem being solved;
-- the main changes;
-- focused verification commands and results; and
-- migration, environment-variable, or deployment notes.
+- `## Issues`: links to the owning issue(s), with one primary issue identified;
+- `## User flow`: the before/after behavior and the exact path a user takes;
+- `## Implementation`: changed contracts, routes, state boundaries, and important file areas;
+- `## Security and limits`: authorization, secret handling, migrations, compatibility, and known
+  limitations;
+- `## Verification`: exact focused commands and observed results;
+- `## Deployment`: environment variables, data migrations, release/tag impact, and rollback notes.
+
+Do not paste a commit hash list or a commit-by-commit diary into the PR body. The commit history
+should remain the atomic implementation record; the PR description explains the delivered behavior,
+evidence, and operational impact.
 
 ### 4. Review and merge
 
@@ -120,15 +143,19 @@ git pull --ff-only origin main
 
 ## Tag and GitHub Release after `main` changes
 
-A change on `main` is not released until its tag and GitHub Release are updated. Target the actual
-remote `main` commit, not another branch or an arbitrary local HEAD.
+A change on `main` is not released until its tag and GitHub Release are updated. This is a mandatory
+post-merge step, not an optional follow-up. Target the actual remote `main` commit, not another
+branch or an arbitrary local HEAD. Never move or overwrite an existing published tag; choose the
+next version, and update package metadata/lockfiles in an issue-linked commit before tagging when
+the release version changes.
 
-1. Determine the new version and release notes from the final `main` change set.
+1. Determine the next version and release notes from the final `main` change set.
 2. Read remote `main` again and confirm the target SHA.
 3. Create an annotated `v<version>` tag on that SHA and push it.
-4. Create a GitHub Release for the same tag, or update its notes if it already exists.
-5. Confirm that the remote tag's peeled SHA matches `origin/main` and that the GitHub Release uses
-   the intended `v<version>` tag.
+4. Create a GitHub Release for the same new tag.
+5. Confirm that the remote tag's peeled SHA matches the target `origin/main` SHA and that the
+   GitHub Release uses the intended `v<version>` tag.
+6. Only then report the main change as released.
 
 ```bash
 git fetch origin main --tags

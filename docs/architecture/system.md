@@ -60,10 +60,10 @@ flowchart LR
 
     subgraph Generation[Generation runtime]
         PLANNER[ScenePlanner]
-        IMAGE[Image generation port]
+        SEARCH[Approved image search and download]
         TRACERUN[TraceRunRunner]
-        CAPTURE[Capture worker and Appium adapter]
-        COMPOSE[Image Model final composition]
+        CAPTURE[Appium Trace setup and native export]
+        COMPOSE[Deterministic three-layer composition]
     end
 
     TUI --> SESSION
@@ -79,11 +79,11 @@ flowchart LR
     API --> SESSION
     QUEUE --> WORKER
     WORKER --> PLANNER
-    WORKER --> IMAGE
+    WORKER --> SEARCH
     WORKER --> TRACERUN
 
     ONE --> PLANNER
-    ONE --> IMAGE
+    ONE --> SEARCH
     ONE --> TRACERUN
     RUN --> TRACERUN
     TRACERUN --> CAPTURE
@@ -155,32 +155,30 @@ live agent state; the current two-tab browser surface does not render those cont
 `GenerateOneRunner` turns one `MarketingContextBundle` into one versioned `TraceRunRequest`.
 
 1. `ScenePlanner` derives a locale, reference date, Trace items, variation direction, and image
-   prompt from the persona and promotion material. Promotion-owned `trace_items` take precedence
+   search query from the persona and promotion material. Promotion-owned `trace_items` take precedence
    over compatibility scene defaults.
-2. The runner resolves frozen reference-image paths inside the configured reference root.
-3. The image-generation adapter verifies each context reference digest and generates the external
-   background from the scene prompt.
-4. The runner stages the configured iPhone system-UI seed. The Appium session overwrites that path
-   with a fresh device screenshot during capture.
-5. The runner creates versioned capture and composition contracts.
-6. `TraceRunRunner` executes the fixed capability sequence:
+2. The search adapter restricts results to approved public-source domains, downloads a readable
+   background, normalizes it to PNG, and records URL and digest provenance.
+3. The runner creates versioned capture and composition contracts.
+4. `TraceRunRunner` executes the fixed capability sequence:
    `capture -> stage_components -> compose`.
-7. The capture port invokes the native capture worker and Appium adapter.
-8. The staging step verifies the captured artifact and its SHA-256 digest before copying it into
+5. The capture port opens a Trace setup session, enters the three planned titles through Appium,
+   saves the native configuration, then opens a request-bound export session.
+6. The staging step verifies the captured artifact and its SHA-256 digest before copying it into
    the composition job.
-9. The final Image Model composition port verifies the background, fresh Trace component export, and
-   Appium iPhone UI screenshot, sends all three as high-fidelity `input_image` references, and writes
-   the expected final output path.
+7. The runner stages the packaged clean iPhone system-UI asset beside the searched background.
+8. The deterministic compositor writes the declared final canvas from the searched background,
+   fresh transparent Trace component export, and sanitized system UI.
 
 TraceRun records transitions in an append-only JSONL journal. A resumed journal that stopped while
 awaiting an external tool moves to `unknown_side_effect` instead of repeating an operation whose
 effect cannot be proven. Run identity, idempotency key, paths, digests, and state transitions are
 validated before completion is reported.
 
-The pipeline captures a fresh Trace component export and a fresh Appium iPhone UI screenshot for
-each run. It does not set a custom Simulator wallpaper or require a physical iPhone. The existing
-deterministic compositor remains available to the lower-level offline `trace-compose` command; the
-context-driven `generate-one` path uses the final Image Model composition boundary.
+The pipeline captures a fresh Trace component export for each run. It does not set a custom
+Simulator wallpaper, call an image-generation model, add Trace branding to the system layer, or
+require a physical iPhone. The deterministic compositor serves both `generate-one` and the
+lower-level offline `trace-compose` command.
 
 ## Team workspace and Web flow
 
@@ -190,7 +188,8 @@ prepares a loopback listener, bootstraps a workspace when needed, requests a
 cloudflared quick tunnel by default, and starts a Uvicorn process with the FastAPI application and
 an explicitly attached automation worker. Readiness requires the loopback service to answer
 `/health` and cloudflared to emit a public URL; it does not perform a second public DNS probe from
-the same host. `--tunnel none` opts out of public access.
+the same host. During launchd replacement, the service waits for the previous job to finish
+unloading before bootstrapping the new plist. `--tunnel none` opts out of public access.
 
 On first start:
 
@@ -199,14 +198,18 @@ On first start:
 3. Only scrypt hashes and code versions are stored in SQLite.
 4. `service.json` stores identifiers and service configuration, not plaintext access codes.
 
-After bootstrap, a local operator can run `trace-agent workspace add-member --name <name>` to
-provision another member. The command is a local administration boundary and prints the invite code
-once; the Web API does not pretend that any authenticated member is an administrator.
+The first owner member recorded in `service.json` is the authenticated Web administrator. The owner
+can use `POST /api/members/invite` from the browser to create a regular member and receive a
+three-part member access ID once. A regular member can redeem that ID through
+`POST /api/auth/member-login`; the existing four-part owner access ID and `/api/auth/login` contract
+remain unchanged. `trace-agent workspace add-member --name <name>` remains a local fallback.
 
-The browser submits workspace and member credentials to the auth route. Successful login creates
-an HMAC-signed cookie containing workspace/member IDs, code versions, and expiry. The signing secret
-is process-local by default, so a service restart invalidates existing browser sessions. Code
-rotation also invalidates sessions whose embedded versions are stale.
+`workspace access` emits one copyable `%`-separated browser login ID containing the workspace ID,
+member ID, workspace code, and member code. The browser parses that value at the entry boundary and
+submits the existing four-field payload to the auth route. Successful login creates an HMAC-signed
+cookie containing workspace/member IDs, code versions, and expiry. The signing secret is process-local
+by default, so a service restart invalidates existing browser sessions. Code rotation also invalidates
+sessions whose embedded versions are stale.
 
 The browser surface is two tabs, 후보 and 캡션·주제 승인, both backed by `/api/candidates`. The
 context, asset, campaign, queue, and chat routes described below still run inside the same process
@@ -340,11 +343,11 @@ state and capture roots.
 
 | External dependency | Adapter or boundary | Contract |
 | --- | --- | --- |
-| ChatGPT/Codex-compatible Responses service | `auth/`, `providers/`, `transport/` | OAuth credential, model responses, tool calls, one-call candidate generation, three-layer image-generation output and provider-reported usage |
-| Appium 3 and XCUITest | `capture/` | Validated server URL, Simulator/Appium readiness, fresh iPhone UI screenshot, Trace component-export request and captured artifact provenance |
+| ChatGPT/Codex-compatible Responses service | `auth/`, `providers/`, `transport/` | OAuth credential, model responses, tool calls, one-call candidate generation, and provider-reported usage |
+| Appium 3 and XCUITest | `capture/` | Validated server URL, Simulator/Appium readiness, Trace UI component setup, request-bound export, and captured artifact provenance |
 | Trace iOS debug app | `capture/` | Installed `com.corca.Trace` build with the request-bound component-export trigger |
 | Browser automation | `tools/browser.py` | External `agent-browser` command with approval for mutating actions |
-| Web and image search | `tools/`, `search/` provider adapters | Read-only normalized results with source provenance |
+| Web and image search | `tools/`, `search/` provider adapters | Normalized source results; generation downloads only approved image-source domains and stores provenance |
 | cloudflared | `tunnel/` | Default live `trycloudflare.com` URL request; failure leaves the loopback service available |
 | launchd | `service/launchd.py` | Per-user service plist and protected log paths |
 
@@ -377,7 +380,6 @@ The implemented architecture does not currently provide:
 
 - a hosted control plane or remote database;
 - automatic external publication;
-- Web provisioning or authenticated administrator roles for additional workspace members;
 - automatic campaign-feedback learning;
 - real custom-wallpaper capture from the Simulator.
 

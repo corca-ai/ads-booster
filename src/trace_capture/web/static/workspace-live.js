@@ -6,6 +6,11 @@
   const memberName = one("[data-member-name]");
   const workspaceLive = one("[data-workspace-live]");
   const entryScreen = one("[data-entry-screen]");
+  const accessTokenField = one("#workspace-access-id");
+  const inviteDialog = one("[data-invite-dialog]"); const inviteButton = one("[data-action='open-invite']");
+  const inviteForm = one("[data-invite-form]"); const inviteName = one("[data-invite-name]");
+  const inviteFeedback = one("[data-invite-feedback]"); const inviteResult = one("[data-invite-result]");
+  const inviteToken = one("[data-invite-token]"); const inviteCopy = one("[data-invite-copy]");
   const skipLink = one(".skip-link");
   const candidateEmpty = one("[data-candidate-empty]");
   const candidateFeedback = one("[data-candidate-feedback]");
@@ -44,6 +49,42 @@
     submitted: JOURNEY_STEPS.length,
   });
 
+  const ACCESS_ID_SEPARATOR = "%";
+  const ACCESS_ID_PREFIX = "Workspace access ID (shown once; not written to logs):";
+
+  const parseAccessId = (value) => {
+    const normalized = value.trim();
+    const token = normalized.startsWith(ACCESS_ID_PREFIX)
+      ? normalized.slice(ACCESS_ID_PREFIX.length).trim()
+      : normalized;
+    const parts = token.split(ACCESS_ID_SEPARATOR).map((part) => part.trim());
+    if (parts.some((part) => !part)) return null;
+    if (parts.length === 4) {
+      const [workspaceId, memberId, workspaceCode, memberCode] = parts;
+      return {
+        path: "/api/auth/login",
+        credentials: {
+          workspace_id: workspaceId,
+          member_id: memberId,
+          workspace_code: workspaceCode,
+          member_code: memberCode,
+        },
+      };
+    }
+    if (parts.length === 3) {
+      const [workspaceId, memberId, memberCode] = parts;
+      return {
+        path: "/api/auth/member-login",
+        credentials: {
+          workspace_id: workspaceId,
+          member_id: memberId,
+          member_code: memberCode,
+        },
+      };
+    }
+    return null;
+  };
+
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   const candidateSourceLabel = (source) => CANDIDATE_SOURCE_LABELS[source] ?? source;
   const candidateStatusLabel = (status) => CANDIDATE_STATUS_LABELS[status] ?? status;
@@ -65,7 +106,7 @@
     if (!response.ok) {
       const validationError = Array.isArray(payload?.detail);
       const detail = validationError
-        ? "워크스페이스 ID, 멤버 ID, 워크스페이스 코드, 멤버 코드를 모두 입력해 주세요."
+        ? "워크스페이스 접속 ID 형식을 확인해 주세요."
         : typeof payload?.detail === "string"
           ? payload.detail
           : payload?.detail?.message;
@@ -85,6 +126,7 @@
     if (memberConnected) memberConnected.hidden = false;
     if (memberLabel) memberLabel.textContent = "로컬 연결됨";
     if (memberName) memberName.textContent = member.display_name;
+    if (inviteButton) inviteButton.hidden = member.is_admin !== true;
   };
 
   const markSignedOut = () => {
@@ -95,6 +137,21 @@
     if (memberConnected) memberConnected.hidden = true;
     if (memberLabel) memberLabel.textContent = "입장 전";
     if (memberName) memberName.textContent = "워크스페이스에 입장";
+    if (inviteButton) inviteButton.hidden = true;
+    inviteDialog?.close();
+    clearInviteResult();
+  };
+
+  const setInviteFeedback = (message) => {
+    if (!inviteFeedback) return;
+    inviteFeedback.hidden = !message;
+    inviteFeedback.textContent = message;
+  };
+
+  const clearInviteResult = () => {
+    if (inviteResult) inviteResult.hidden = true;
+    if (inviteToken) inviteToken.textContent = "";
+    setInviteFeedback("");
   };
 
   const setCandidateFeedback = (message) => {
@@ -295,36 +352,36 @@
     const target = event.currentTarget;
     const form = new FormData(target);
     setBusy(target, true, "워크스페이스에 연결하는 중…");
-    const requiredFields = [
-      ["workspace-id", "워크스페이스 ID"],
-      ["member-id", "멤버 ID"],
-      ["workspace-code", "워크스페이스 코드"],
-      ["member-code", "멤버 코드"],
-    ];
-    requiredFields.forEach(([name]) => document.getElementById(name)?.removeAttribute("aria-invalid"));
-    const missingFields = requiredFields.filter(([name]) => !String(form.get(name) ?? "").trim());
-    if (missingFields.length) {
-      missingFields.forEach(([name]) => document.getElementById(name)?.setAttribute("aria-invalid", "true"));
-      const [firstName] = missingFields[0];
-      const field = document.getElementById(firstName);
+    accessTokenField?.removeAttribute("aria-invalid");
+    const accessId = String(form.get("access-token") ?? "").trim();
+    if (!accessId) {
+      accessTokenField?.setAttribute("aria-invalid", "true");
       if (memberFeedback) {
         memberFeedback.hidden = false;
-        memberFeedback.textContent = `${missingFields.map(([, label]) => label).join(", ")} 값을 입력해 주세요.`;
+        memberFeedback.textContent = "워크스페이스 접속 ID 값을 입력해 주세요.";
       }
-      field?.focus();
+      accessTokenField?.focus();
       setBusy(target, false);
       return;
     }
+    const parsedAccessId = parseAccessId(accessId);
+    if (!parsedAccessId) {
+      accessTokenField?.setAttribute("aria-invalid", "true");
+      if (memberFeedback) {
+        memberFeedback.hidden = false;
+        memberFeedback.textContent = "워크스페이스 접속 ID 형식을 확인해 주세요.";
+      }
+      accessTokenField?.focus();
+      setBusy(target, false);
+      return;
+    }
+    target.reset();
     try {
-      const member = await request("/api/auth/login", {
+      const member = await request(parsedAccessId.path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_id: form.get("workspace-id"), member_id: form.get("member-id"),
-          workspace_code: form.get("workspace-code"), member_code: form.get("member-code"),
-        }),
+        body: JSON.stringify(parsedAccessId.credentials),
       });
-      target.reset();
       markAuthenticated(member);
       await refreshWorkspace();
       setNotice("워크스페이스에 연결되었습니다.");
@@ -344,6 +401,62 @@
     } catch (error) { setNotice(error.message); }
     finally { setBusy(memberForm, false); }
   });
+
+  const openInviteDialog = () => {
+    clearInviteResult();
+    inviteForm?.reset();
+    inviteDialog?.showModal();
+    inviteName?.focus();
+  };
+
+  inviteButton?.addEventListener("click", openInviteDialog);
+
+  inviteForm?.addEventListener("submit", async (event) => {
+    if (event.submitter?.value === "cancel") return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const form = new FormData(target);
+    const displayName = String(form.get("display-name") ?? "").trim();
+    setBusy(target, true, "팀원 초대 ID를 만드는 중…");
+    inviteName?.removeAttribute("aria-invalid");
+    setInviteFeedback("");
+    if (!displayName) {
+      inviteName?.setAttribute("aria-invalid", "true");
+      setInviteFeedback("팀원 이름을 입력해 주세요.");
+      inviteName?.focus();
+      setBusy(target, false);
+      return;
+    }
+    try {
+      const result = await request("/api/members/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      if (inviteToken) inviteToken.textContent = result.member_access_id;
+      if (inviteResult) inviteResult.hidden = false;
+      target.reset();
+      setNotice("팀원 초대 ID를 만들었습니다. 생성 직후 한 번 표시됩니다.");
+    } catch (error) {
+      setInviteFeedback(error.message);
+      setNotice(error.message);
+    } finally { setBusy(target, false); }
+  });
+
+  inviteCopy?.addEventListener("click", async () => {
+    const token = inviteToken?.textContent?.trim();
+    if (!token) return;
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(token);
+      setNotice("팀원 접속 ID를 복사했습니다.");
+    } catch (error) {
+      if (error instanceof Error) setNotice("접속 ID를 직접 선택해 복사해 주세요.");
+      else throw error;
+    }
+  });
+
+  inviteDialog?.querySelector("[value='cancel']")?.addEventListener("click", () => inviteDialog?.close());
 
   const generateCandidates = async (button) => {
     const label = button.textContent;

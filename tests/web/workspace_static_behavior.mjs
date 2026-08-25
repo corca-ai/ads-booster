@@ -241,11 +241,21 @@ const makeLiveDocument = () => {
   const memberName = new FakeElement("member-name");
   const notice = new FakeElement("notice");
   memberForm.formValues = new Map([
-    ["workspace-id", "workspace-1"],
-    ["member-id", "member-1"],
-    ["workspace-code", "workspace-code"],
-    ["member-code", "member-code"],
+    ["access-token", "workspace-1%member-1%workspace-code%member-code"],
   ]);
+  const accessTokenField = new FakeElement("workspace-access-id");
+  const inviteButton = new FakeElement("invite-button");
+  const inviteDialog = new FakeElement("invite-dialog");
+  const inviteForm = new FakeElement("invite-form");
+  const inviteName = new FakeElement("invite-name");
+  const inviteFeedback = new FakeElement("invite-feedback");
+  const inviteResult = new FakeElement("invite-result");
+  const inviteToken = new FakeElement("invite-token");
+  const inviteCopy = new FakeElement("invite-copy");
+  const inviteCancel = new FakeElement("invite-cancel");
+  inviteCancel.matches = (selector) => selector === "[value='cancel']";
+  inviteDialog.children = [inviteCancel];
+  inviteForm.formValues = new Map([["display-name", "Grace"]]);
   const candidateForm = new FakeElement("candidate-form");
   candidateForm.formValues = new Map([
     ["topic", "  시험기간 일정 관리 — 잠금화면 데모  "],
@@ -291,6 +301,15 @@ const makeLiveDocument = () => {
     ["[data-approval-empty]", approvalEmpty],
     ["[data-approval-count]", approvalCount],
     ["[data-autogen-feedback]", autogenFeedback],
+    ["#workspace-access-id", accessTokenField],
+    ["[data-action='open-invite']", inviteButton],
+    ["[data-invite-dialog]", inviteDialog],
+    ["[data-invite-form]", inviteForm],
+    ["[data-invite-name]", inviteName],
+    ["[data-invite-feedback]", inviteFeedback],
+    ["[data-invite-result]", inviteResult],
+    ["[data-invite-token]", inviteToken],
+    ["[data-invite-copy]", inviteCopy],
   ]);
   const selectorGroups = new Map([["[data-autogen]", [autogenButton]]]);
   const document = new FakeDocument([
@@ -317,6 +336,16 @@ const makeLiveDocument = () => {
     topicField,
     autogenButton,
     autogenFeedback,
+    accessTokenField,
+    inviteButton,
+    inviteDialog,
+    inviteForm,
+    inviteName,
+    inviteFeedback,
+    inviteResult,
+    inviteToken,
+    inviteCopy,
+    inviteCancel,
   ]);
   document.querySelector = (selector) => selectors.get(selector) ?? null;
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
@@ -344,6 +373,16 @@ const makeLiveDocument = () => {
     topicField,
     autogenButton,
     autogenFeedback,
+    accessTokenField,
+    inviteButton,
+    inviteDialog,
+    inviteForm,
+    inviteName,
+    inviteFeedback,
+    inviteResult,
+    inviteToken,
+    inviteCopy,
+    inviteCancel,
   };
 };
 
@@ -509,23 +548,116 @@ const testAuthFailureSignsOut = async () => {
   assert.equal(fixture.skipLink.getAttribute("href"), "#entry-title");
 };
 
-const testLoginValidationExplainsTheFirstMissingValue = async () => {
+const testLoginValidationExplainsTheMissingAccessId = async () => {
   const fixture = makeLiveDocument();
-  fixture.memberForm.formValues.set("workspace-id", "");
+  fixture.memberForm.formValues.set("access-token", "");
   await loadLive(fixture, signedOut);
   await fixture.memberForm.submit();
-  assert.equal(fixture.memberFeedback.textContent, "워크스페이스 ID 값을 입력해 주세요.");
+  assert.equal(fixture.accessTokenField.getAttribute("aria-invalid"), "true");
+  assert.equal(fixture.memberFeedback.textContent, "워크스페이스 접속 ID 값을 입력해 주세요.");
 };
 
-const testLoginValidationReportsEveryMissingValue = async () => {
+const testLoginParsesCompositeAccessId = async () => {
   const fixture = makeLiveDocument();
-  fixture.memberForm.formValues.forEach((_value, name) => fixture.memberForm.formValues.set(name, ""));
+  fixture.memberForm.formValues.set(
+    "access-token",
+    "Workspace access ID (shown once; not written to logs): workspace-1%member-1%workspace-code%member-code",
+  );
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
+    if (path === "/api/auth/login") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.memberForm.submit();
+  const login = calls.find(([path]) => path === "/api/auth/login");
+  assert.ok(login);
+  assert.deepEqual(JSON.parse(login[1].body), {
+    workspace_id: "workspace-1",
+    member_id: "member-1",
+    workspace_code: "workspace-code",
+    member_code: "member-code",
+  });
+};
+
+const testLoginRejectsMalformedCompositeAccessId = async () => {
+  const fixture = makeLiveDocument();
+  fixture.memberForm.formValues.set("access-token", "workspace-1%member-1");
   await loadLive(fixture, signedOut);
   await fixture.memberForm.submit();
-  assert.equal(
-    fixture.memberFeedback.textContent,
-    "워크스페이스 ID, 멤버 ID, 워크스페이스 코드, 멤버 코드 값을 입력해 주세요.",
-  );
+  assert.equal(fixture.accessTokenField.getAttribute("aria-invalid"), "true");
+  assert.equal(fixture.memberFeedback.textContent, "워크스페이스 접속 ID 형식을 확인해 주세요.");
+};
+
+const testMemberAccessIdUsesMemberLoginRoute = async () => {
+  const fixture = makeLiveDocument();
+  fixture.memberForm.formValues.set("access-token", "workspace-1%member-1%member-code");
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
+    if (path === "/api/auth/member-login") return response(200, { display_name: "Grace", is_admin: false });
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.memberForm.submit();
+  const login = calls.find(([path]) => path === "/api/auth/member-login");
+  assert.ok(login);
+  assert.deepEqual(JSON.parse(login[1].body), {
+    workspace_id: "workspace-1",
+    member_id: "member-1",
+    member_code: "member-code",
+  });
+  assert.equal(fixture.inviteButton.hidden, true);
+};
+
+const testOwnerCanInviteMemberAndSeeOneTimeAccessId = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Owner", is_admin: true });
+    if (path === "/api/members/invite") return response(201, { member_access_id: "workspace-1%member-2%member-code" });
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  assert.equal(fixture.inviteButton.hidden, false);
+  await fixture.inviteButton.click();
+  assert.equal(fixture.inviteDialog.open, true);
+  await fixture.inviteForm.submit();
+  assert.equal(fixture.inviteResult.hidden, false);
+  assert.equal(fixture.inviteToken.textContent, "workspace-1%member-2%member-code");
+  const invite = calls.find(([path]) => path === "/api/members/invite");
+  assert.ok(invite);
+  assert.deepEqual(JSON.parse(invite[1].body), { display_name: "Grace" });
+};
+
+const testInviteValidationAndFailureStayNearby = async () => {
+  const fixture = makeLiveDocument();
+  fixture.inviteForm.formValues.set("display-name", "");
+  const owner = async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Owner", is_admin: true });
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  };
+  await loadLive(fixture, owner);
+  await fixture.inviteButton.click();
+  await fixture.inviteForm.submit();
+  assert.equal(fixture.inviteName.getAttribute("aria-invalid"), "true");
+  assert.equal(fixture.inviteFeedback.textContent, "팀원 이름을 입력해 주세요.");
+  const failing = async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Owner", is_admin: true });
+    if (path === "/api/members/invite") return response(403, { detail: "admin access required" });
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const failureFixture = makeLiveDocument();
+  await loadLive(failureFixture, failing);
+  await failureFixture.inviteButton.click();
+  await failureFixture.inviteForm.submit();
+  assert.equal(failureFixture.inviteFeedback.hidden, false);
 };
 
 const testAutogenGeneratesAndRefreshesTheList = async () => {
@@ -744,8 +876,12 @@ await testRefreshShowsAndClearsBusyState();
 await testLoginShowsAndClearsActionBusyState();
 await testRefreshFailureDoesNotSignOut();
 await testAuthFailureSignsOut();
-await testLoginValidationExplainsTheFirstMissingValue();
-await testLoginValidationReportsEveryMissingValue();
+await testLoginValidationExplainsTheMissingAccessId();
+await testLoginParsesCompositeAccessId();
+await testLoginRejectsMalformedCompositeAccessId();
+await testMemberAccessIdUsesMemberLoginRoute();
+await testOwnerCanInviteMemberAndSeeOneTimeAccessId();
+await testInviteValidationAndFailureStayNearby();
 await testAutogenGeneratesAndRefreshesTheList();
 await testAutogenShowsTheServerMessageVerbatim();
 await testManualCandidateSubmitsParsedListFields();
@@ -756,4 +892,4 @@ await testOnlyAwaitingCaptionsFillTheApprovalGate();
 await testJourneyIsVisibleOnRowsAndCards();
 await testJourneyPositionFollowsTheStatus();
 await testMarkupUsesTheAgreedTerminology();
-console.log("workspace static behavior: 21 passed");
+console.log("workspace static behavior: 25 passed");

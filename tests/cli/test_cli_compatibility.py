@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from typer.testing import CliRunner
 
 from trace_capture.cli.agent import app
+from trace_capture.default_assets import default_iphone_ui_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,13 +54,17 @@ def test_agent_auth_status_uses_a_clean_home_without_printing_credentials(
     assert "Bearer" not in result.stdout
 
 
-def test_generate_one_help_keeps_context_and_image_model_contract() -> None:
+def test_generate_one_help_keeps_context_and_iphone_ui_without_image_model_contract() -> None:
     # Given the context-driven one-shot command
     result = CliRunner().invoke(app, ["generate-one", "--help"])
 
     # When its help is rendered
-    # Then the required context input and compatible image model remain visible
+    # Then the context and system UI inputs remain visible without Image Model options
     assert result.exit_code == 0
     assert "--context-file" in result.stdout
-    assert "--image-model" in result.stdout
-    assert "gpt-5.6-luna" in result.stdout
+    assert "--image-model" not in result.stdout
+    assert "--iphone-ui" in result.stdout
+
+
+def test_default_iphone_ui_asset_is_available_to_the_installed_cli() -> None:
+    assert default_iphone_ui_path().is_file()

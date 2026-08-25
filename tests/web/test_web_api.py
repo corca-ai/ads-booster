@@ -105,6 +105,7 @@ def test_login_uses_hashed_codes_and_sets_a_secure_session_cookie(tmp_path: Path
         "workspace_name": "Trace team",
         "member_id": member.member.member_id,
         "display_name": "Ada",
+        "is_admin": False,
     }
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie
@@ -165,6 +166,7 @@ def test_login_compatibility_route_preserves_the_authenticated_member_contract(
         "workspace_name": "Trace team",
         "member_id": member.member.member_id,
         "display_name": "Ada",
+        "is_admin": False,
     }
     assert client.get("/api/sessions").status_code == 200
     assert workspace.access_code not in response.text

@@ -21,7 +21,7 @@ class SceneRecipe:
     context: MarketingContext
     reference_date: datetime
     trace_items: tuple[str, str, str]
-    background_prompt: str
+    background_query: str
 
 
 class ScenePlanner:
@@ -38,7 +38,7 @@ class ScenePlanner:
             context=context,
             reference_date=bundle.reference_date,
             trace_items=items,
-            background_prompt=self._background_prompt(bundle),
+            background_query=self._background_query(bundle),
         )
 
     def _trace_items(self, bundle: MarketingContextBundle) -> tuple[str, str, str]:
@@ -52,17 +52,14 @@ class ScenePlanner:
             return _JAPANESE_STUDENT_ITEMS
         return _DEFAULT_ITEMS
 
-    def _background_prompt(self, bundle: MarketingContextBundle) -> str:
+    def _background_query(self, bundle: MarketingContextBundle) -> str:
         persona = bundle.persona
         material = bundle.promotion_material
         traits = ", ".join(persona.traits)
         interests = ", ".join(persona.interests)
         tones = ", ".join(material.tone)
         return (
-            f"Vertical 9:16 lifestyle background for a {persona.age_group} {persona.occupation} "
-            f"in {persona.country}. Personality: {traits}. Interests: {interests}. "
-            f"Promote {material.feature} with the concept {material.concept}; mood: {tones}. "
-            f"Create distinct campaign variation {bundle.variation_index}. "
-            "Leave the upper and center areas calm for native lock-screen UI overlays. "
-            "Do not include text, numbers, letters, logos, phones, calendars, icons, or UI."
+            f"{persona.country} {persona.age_group} {persona.occupation} {traits} {interests} "
+            f"{material.feature} {material.concept} {tones} vertical lifestyle photo "
+            f"variation {bundle.variation_index} no text no logo no phone no UI"
         )

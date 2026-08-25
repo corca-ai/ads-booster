@@ -3,7 +3,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 
-from trace_capture.web.schemas import AuthenticatedMemberResponse, LoginRequest
+from trace_capture.web.schemas import AuthenticatedMemberResponse, LoginRequest, MemberLoginRequest
 from trace_capture.web.session import InvalidSessionError, SessionClaims, SessionCodec
 from trace_capture.workspace import (
     MemberId,
@@ -21,12 +21,20 @@ _UNAUTHORIZED: Final = "authentication required"
 class Principal:
     workspace_id: WorkspaceId
     member_id: MemberId
+    is_admin: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerIdentity:
+    workspace_id: WorkspaceId
+    member_id: MemberId
 
 
 @dataclass(frozen=True, slots=True)
 class CurrentPrincipal:
     store: SqliteWorkspaceStore
     codec: SessionCodec
+    owner_identity: OwnerIdentity | None = None
 
     def __call__(
         self,
@@ -45,7 +53,14 @@ class CurrentPrincipal:
             or claims.member_code_version != member.code_version
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, _UNAUTHORIZED)
-        return Principal(workspace_id=claims.workspace_id, member_id=claims.member_id)
+        return Principal(
+            workspace_id=claims.workspace_id,
+            member_id=claims.member_id,
+            is_admin=self.is_admin_for(claims.workspace_id, claims.member_id),
+        )
+
+    def is_admin_for(self, workspace_id: WorkspaceId, member_id: MemberId) -> bool:
+        return self.owner_identity == OwnerIdentity(workspace_id, member_id)
 
 
 def build_auth_router(
@@ -53,25 +68,22 @@ def build_auth_router(
     codec: SessionCodec,
     *,
     session_ttl_seconds: int,
+    owner_identity: OwnerIdentity | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["auth"])
-    current_principal = CurrentPrincipal(store, codec)
+    current_principal = CurrentPrincipal(store, codec, owner_identity)
 
-    @router.post("/api/auth/login", response_model=AuthenticatedMemberResponse)
-    @router.post("/login", response_model=AuthenticatedMemberResponse, include_in_schema=False)
-    def login(payload: LoginRequest, response: Response) -> AuthenticatedMemberResponse:
-        workspace_valid = store.verify_workspace_code(payload.workspace_id, payload.workspace_code)
-        member_valid = store.verify_member_code(
-            payload.workspace_id, payload.member_id, payload.member_code
-        )
-        if not (workspace_valid and member_valid):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _INVALID_CREDENTIALS)
-        workspace = store.get_workspace(payload.workspace_id)
-        member = store.get_member(payload.workspace_id, payload.member_id)
+    def issue_session(
+        response: Response,
+        workspace_id: WorkspaceId,
+        member_id: MemberId,
+    ) -> AuthenticatedMemberResponse:
+        workspace = store.get_workspace(workspace_id)
+        member = store.get_member(workspace_id, member_id)
         token = codec.issue(
             SessionClaims(
-                workspace_id=payload.workspace_id,
-                member_id=payload.member_id,
+                workspace_id=workspace_id,
+                member_id=member_id,
                 workspace_code_version=workspace.code_version,
                 member_code_version=member.code_version,
                 expires_at=codec.clock() + session_ttl_seconds,
@@ -91,7 +103,31 @@ def build_auth_router(
             workspace_name=workspace.name,
             member_id=member.member_id,
             display_name=member.display_name,
+            is_admin=current_principal.is_admin_for(workspace_id, member_id),
         )
+
+    @router.post("/api/auth/login", response_model=AuthenticatedMemberResponse)
+    @router.post("/login", response_model=AuthenticatedMemberResponse, include_in_schema=False)
+    def login(payload: LoginRequest, response: Response) -> AuthenticatedMemberResponse:
+        workspace_valid = store.verify_workspace_code(payload.workspace_id, payload.workspace_code)
+        member_valid = store.verify_member_code(
+            payload.workspace_id, payload.member_id, payload.member_code
+        )
+        if not (workspace_valid and member_valid):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _INVALID_CREDENTIALS)
+        return issue_session(response, payload.workspace_id, payload.member_id)
+
+    @router.post("/api/auth/member-login", response_model=AuthenticatedMemberResponse)
+    def member_login(
+        payload: MemberLoginRequest,
+        response: Response,
+    ) -> AuthenticatedMemberResponse:
+        member_valid = store.verify_member_code(
+            payload.workspace_id, payload.member_id, payload.member_code
+        )
+        if not member_valid:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _INVALID_CREDENTIALS)
+        return issue_session(response, payload.workspace_id, payload.member_id)
 
     @router.get("/api/auth/session", response_model=AuthenticatedMemberResponse)
     def get_session(
@@ -104,11 +140,12 @@ def build_auth_router(
             workspace_name=workspace.name,
             member_id=member.member_id,
             display_name=member.display_name,
+            is_admin=principal.is_admin,
         )
 
     @router.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
     def logout(response: Response) -> None:
         response.delete_cookie(_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="lax")
 
-    _ = (login, get_session, logout)
+    _ = (login, member_login, get_session, logout)
     return router

@@ -98,16 +98,22 @@ def safe_candidate(root: Path, candidate: Path, stop: Path) -> Path | None:
 
 
 def composition_paths_are_safe(job: MarketingCompositeJob, root: Path) -> bool:
-    source_paths = (
-        job.layers.background,
-        job.layers.trace_components,
-        job.layers.iphone_ui,
+    source_paths = tuple(
+        path
+        for path in (
+            job.layers.background,
+            job.layers.trace_components,
+            job.layers.iphone_ui,
+        )
+        if path is not None
     )
     if any(safe_job_path(root, relative_path) is None for relative_path in source_paths):
         return False
     output = safe_job_path(root, job.output_image)
     if output is None:
         return False
+    if job.layers.iphone_ui is None:
+        return True
     normalized = safe_candidate(
         root.resolve(), output.with_name(f"{job.job_id}-iphone-ui.png"), root.resolve()
     )

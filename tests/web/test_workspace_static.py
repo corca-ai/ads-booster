@@ -21,4 +21,4 @@ def test_workspace_static_behavior_contract() -> None:
 
     # Then
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "workspace static behavior: 21 passed"
+    assert result.stdout.strip() == "workspace static behavior: 25 passed"

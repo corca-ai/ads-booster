@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
-import time
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -14,9 +12,11 @@ import typer
 
 from trace_capture.service.launchd import (
     LaunchdConfig,
+    bootstrap_launchd_service,
     default_plist_path,
     install_plist,
     launchd_label,
+    stop_launchd_service,
 )
 from trace_capture.service.readiness import (
     discovered_cloudflared_path,
@@ -35,9 +35,11 @@ from trace_capture.service.state import (
 )
 from trace_capture.transport.http import create_http_client
 from trace_capture.workspace import (
+    MemberId,
     RevisionConflictError,
     ScopedRecordNotFoundError,
     SqliteWorkspaceStore,
+    WorkspaceId,
 )
 from trace_capture.workspace.database import default_agent_home
 
@@ -47,36 +49,20 @@ _DEFAULT_HOST: Final = "127.0.0.1"
 _DEFAULT_PORT: Final = 8765
 _MAX_MEMBER_NAME_LENGTH: Final = 80
 _HTTP_OK: Final = 200
-_LAUNCHCTL: Final = "/bin/launchctl"
-_LAUNCHD_INPUT_OUTPUT_ERROR: Final = 5
-_LAUNCHD_BOOTSTRAP_ATTEMPTS: Final = 6
-_LAUNCHD_RETRY_DELAY_SECONDS: Final = 0.5
+_ACCESS_ID_SEPARATOR: Final = "%"
 
 
 def _access_hint() -> None:
     typer.echo("Run `trace-agent workspace access` to display login details; startup hides codes.")
 
 
-def bootstrap_launchd_service(
-    domain: str,
-    target: Path,
-) -> subprocess.CompletedProcess[str]:
-    result = subprocess.CompletedProcess[str]([], 1, stdout="", stderr="")
-    for attempt in range(_LAUNCHD_BOOTSTRAP_ATTEMPTS):
-        result = subprocess.run(  # noqa: S603
-            [_LAUNCHCTL, "bootstrap", domain, str(target)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result
-        detail = f"{result.stdout}\n{result.stderr}"
-        if result.returncode != _LAUNCHD_INPUT_OUTPUT_ERROR or "Input/output error" not in detail:
-            return result
-        if attempt + 1 < _LAUNCHD_BOOTSTRAP_ATTEMPTS:
-            time.sleep(_LAUNCHD_RETRY_DELAY_SECONDS)
-    return result
+def _compose_workspace_access_id(
+    workspace_id: WorkspaceId,
+    member_id: MemberId,
+    workspace_code: str,
+    member_code: str,
+) -> str:
+    return _ACCESS_ID_SEPARATOR.join((workspace_id, member_id, workspace_code, member_code))
 
 
 def serve(
@@ -179,11 +165,13 @@ def _rotate_owner_access() -> None:
     except RevisionConflictError as error:
         typer.echo(f"Code rotation conflicted with another operator: {error}", err=True)
         raise typer.Exit(code=1) from error
-    typer.echo("Workspace access details (shown once; not written to logs):")
-    typer.echo(f"Workspace ID: {rotated_workspace.workspace.workspace_id}")
-    typer.echo(f"Member ID: {rotated_member.member.member_id}")
-    typer.echo(f"Workspace code: {rotated_workspace.access_code}")
-    typer.echo(f"Member code: {rotated_member.invite_code}")
+    access_id = _compose_workspace_access_id(
+        rotated_workspace.workspace.workspace_id,
+        rotated_member.member.member_id,
+        rotated_workspace.access_code,
+        rotated_member.invite_code,
+    )
+    typer.echo(f"Workspace access ID (shown once; not written to logs): {access_id}")
 
 
 @workspace_app.command("access")
@@ -280,15 +268,16 @@ def service_install(
         typer.echo("launchd load skipped; service definition generated only")
         return
     domain = f"gui/{os.getuid()}"
-    _ = subprocess.run(  # noqa: S603
-        [_LAUNCHCTL, "bootout", f"{domain}/{launchd_label()}"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    if not stop_launchd_service(domain, launchd_label()):
+        typer.echo("launchd service did not finish stopping; retry workspace start", err=True)
+        raise typer.Exit(code=1)
     loaded = bootstrap_launchd_service(domain, target)
     if loaded.returncode != 0:
-        typer.echo("launchd bootstrap failed; inspect the protected service stderr log", err=True)
+        detail = loaded.stderr.strip() or loaded.stdout.strip()
+        typer.echo(
+            f"launchd bootstrap failed: {detail or 'inspect the protected service stderr log'}",
+            err=True,
+        )
         raise typer.Exit(code=1)
     typer.echo("launchd service installed and started")
     local_url, public_url = wait_for_service_ready(home, tunnel)

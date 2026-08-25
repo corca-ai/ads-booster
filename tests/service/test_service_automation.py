@@ -5,7 +5,7 @@ import subprocess
 from datetime import UTC, datetime
 from hashlib import sha256
 from threading import Event
-from typing import TYPE_CHECKING, NoReturn, final
+from typing import TYPE_CHECKING, final
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -21,10 +21,14 @@ from trace_capture.cli.agent import app
 from trace_capture.contracts import TraceRunResult
 from trace_capture.contracts.generation import MarketingContextBundle
 from trace_capture.contracts.run import TraceRunState
-from trace_capture.providers.errors import ProviderError
 from trace_capture.runtime.generate_one import GenerateOneOptions
-from trace_capture.service.cli import bootstrap_launchd_service
-from trace_capture.service.launchd import LaunchdConfig, install_plist
+from trace_capture.search.image.background import BackgroundSearchError
+from trace_capture.service.launchd import (
+    LaunchdConfig,
+    bootstrap_launchd_service,
+    install_plist,
+    stop_launchd_service,
+)
 from trace_capture.service.runtime import create_service_app
 from trace_capture.service.state import ServiceState, ServiceStateStore, ensure_workspace
 from trace_capture.service.worker import ProductionGenerateOneRunner, ServiceWorkerConfig
@@ -35,12 +39,12 @@ if TYPE_CHECKING:
 
     import pytest
 
-    from trace_capture.providers.image_generation import ImageGenerationRequest
+    from trace_capture.search.image.background import SearchedBackground
 
 
 _NOW = datetime(2026, 8, 24, 3, 0, tzinfo=UTC)
-_FIXTURE_PROVIDER_FAILED = "fixture_provider_failed"
-_FIXTURE_PROVIDER_MESSAGE = "fixture provider failure"
+_FIXTURE_BACKGROUND_FAILED = "fixture_background_failed"
+_FIXTURE_BACKGROUND_MESSAGE = "fixture background failure"
 
 
 def _bundle(request_id: str) -> MarketingContextBundle:
@@ -102,10 +106,10 @@ class _LifecycleFixtureRunner:
 
 
 @final
-class _FailingImageGenerator:
-    def generate(self, request: ImageGenerationRequest) -> NoReturn:
-        del request
-        raise ProviderError(_FIXTURE_PROVIDER_FAILED, _FIXTURE_PROVIDER_MESSAGE)
+class _FailingBackgroundFetcher:
+    def fetch(self, query: str, destination: Path) -> SearchedBackground:
+        del query, destination
+        raise BackgroundSearchError(_FIXTURE_BACKGROUND_FAILED, _FIXTURE_BACKGROUND_MESSAGE)
 
 
 def test_generation_route_feeds_the_persistent_worker_to_review(tmp_path: Path) -> None:
@@ -207,10 +211,10 @@ def test_service_worker_when_finite_campaign_is_active_then_it_generates_every_v
     assert member.member.workspace_id == campaign.workspace_id
 
 
-def test_production_runner_when_provider_fails_then_it_returns_a_failed_result(
+def test_production_runner_when_background_search_fails_then_it_returns_a_failed_result(
     tmp_path: Path,
 ) -> None:
-    # Given production generation options and an image provider failure
+    # Given production generation options and a background search failure
     system_ui = tmp_path / "system-ui.png"
     _ = system_ui.write_bytes(b"fixture-system-ui")
     runner = ProductionGenerateOneRunner(
@@ -219,21 +223,19 @@ def test_production_runner_when_provider_fails_then_it_returns_a_failed_result(
             state_root=tmp_path / "state",
             capture_output_root=tmp_path / "capture",
             iphone_ui_path=system_ui,
-            reference_root=tmp_path,
             appium_server="http://127.0.0.1:4723",
             timeout_seconds=30,
-            image_model="fixture-image-model",
         ),
-        image_generator=_FailingImageGenerator(),
+        background_fetcher=_FailingBackgroundFetcher(),
     )
 
     # When the service runs one generation attempt
-    result = runner.run(_bundle("provider-failure"))
+    result = runner.run(_bundle("background-search-failure"))
 
     # Then the failure is returned to the durable worker instead of terminating the service task
     assert result.state is TraceRunState.FAILED
-    assert result.run_id == "provider-failure"
-    assert result.idempotency_key == "provider-failure-v1"
+    assert result.run_id == "background-search-failure"
+    assert result.idempotency_key == "background-search-failure-v1"
 
 
 def test_service_state_round_trips_the_live_public_url(tmp_path: Path) -> None:
@@ -319,8 +321,8 @@ def test_launchd_bootstrap_retries_transient_teardown_error(
     def no_wait(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("trace_capture.service.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("trace_capture.service.cli.time.sleep", no_wait)
+    monkeypatch.setattr("trace_capture.service.launchd.subprocess.run", fake_run)
+    monkeypatch.setattr("trace_capture.service.launchd.time.sleep", no_wait)
 
     # When the workspace service is bootstrapped
     result = bootstrap_launchd_service("gui/501", tmp_path / "service.plist")
@@ -328,6 +330,40 @@ def test_launchd_bootstrap_retries_transient_teardown_error(
     # Then only the transient teardown error is retried
     assert result.returncode == 0
     assert attempts == 3
+
+
+def test_launchd_stop_waits_until_previous_job_is_unloaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = 0
+
+    def fake_run(
+        args: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal probes
+        if args[1] == "bootout":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        probes += 1
+        if probes < 3:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args,
+            113,
+            stdout="",
+            stderr="Could not find service",
+        )
+
+    def no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("trace_capture.service.launchd.subprocess.run", fake_run)
+    monkeypatch.setattr("trace_capture.service.launchd.time.sleep", no_wait)
+
+    unloaded = stop_launchd_service("gui/501", "com.corca.trace-agent")
+
+    assert unloaded
+    assert probes == 3
 
 
 def test_service_install_requires_a_name_for_a_fresh_workspace(
@@ -391,7 +427,7 @@ def test_service_install_workspace_name_updates_existing_workspace(
     )
 
 
-def test_workspace_access_command_prints_a_fresh_four_value_login_pair(
+def test_workspace_access_command_prints_one_composite_login_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -411,12 +447,24 @@ def test_workspace_access_command_prints_a_fresh_four_value_login_pair(
     # When the operator explicitly asks for workspace access details
     result = CliRunner().invoke(app, ["workspace", "access"])
 
-    # Then the command rotates and prints exactly the values needed by the browser form
+    # Then the command rotates and prints one copyable value containing the four browser values
     assert result.exit_code == 0
-    assert "Workspace ID:" in result.stdout
-    assert "Member ID:" in result.stdout
-    assert "Workspace code:" in result.stdout
-    assert "Member code:" in result.stdout
+    access_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("Workspace access ID (shown once; not written to logs): ")
+    ]
+    assert len(access_lines) == 1
+    access_id = access_lines[0].removeprefix(
+        "Workspace access ID (shown once; not written to logs): "
+    )
+    access_parts = access_id.split("%")
+    assert len(access_parts) == 4
+    assert access_parts[:2] == [
+        str(provisioned.workspace.workspace_id),
+        str(member.member.member_id),
+    ]
+    assert all(access_parts[2:])
 
 
 def test_launchd_plist_passes_the_absolute_cloudflared_path(tmp_path: Path) -> None:

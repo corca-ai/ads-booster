@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING, Protocol, assert_never
 from appium import webdriver
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.client_config import AppiumClientConfig
+from appium.webdriver.common.appiumby import AppiumBy
+from appium.webdriver.webdriver import WebDriver as AppiumWebDriver
 from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.support import expected_conditions as conditions
+from selenium.webdriver.support.ui import WebDriverWait
 from urllib3.exceptions import HTTPError as Urllib3HttpError
 
 from trace_capture.capture.appium_endpoint import validate_appium_server_url
 from trace_capture.capture.appium_process import (
+    ProcessArguments,
+    build_configuration_process_arguments,
     build_process_arguments,
     capture_request_digest,
 )
@@ -21,9 +27,11 @@ from trace_capture.capture.capture_safety import (
     CaptureControl,
     CaptureLeaseFactory,
     ComponentCollectionRequest,
+    ElementFindingWebDriver,
     ExportBinding,
     UdidCaptureLeaseFactory,
     WebDriverClient,
+    WebDriverElement,
     path_has_symlink_component,
 )
 from trace_capture.contracts import CaptureProvenance, ErrorCode
@@ -32,6 +40,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from selenium.webdriver.remote.webelement import WebElement
+
     from trace_capture.capture.readiness import CaptureReadiness
     from trace_capture.capture.worker import CaptureRequest
 
@@ -39,7 +49,10 @@ if TYPE_CHECKING:
 TRACE_BUNDLE_ID = "com.corca.Trace"
 
 
-def build_xcuitest_options(request: CaptureRequest) -> XCUITestOptions:
+def build_xcuitest_options(
+    request: CaptureRequest,
+    process_arguments: ProcessArguments | None = None,
+) -> XCUITestOptions:
     options = XCUITestOptions()
     options.platform_name = "iOS"
     options.automation_name = "XCUITest"
@@ -56,12 +69,16 @@ def build_xcuitest_options(request: CaptureRequest) -> XCUITestOptions:
     )
     _ = options.set_capability("appium:language", request.scene.locale.split("-")[0])
     _ = options.set_capability("appium:locale", request.scene.locale.replace("-", "_"))
-    _ = options.set_capability("appium:processArguments", build_process_arguments(request))
+    _ = options.set_capability(
+        "appium:processArguments",
+        process_arguments or build_process_arguments(request),
+    )
     _ = options.set_capability("appium:sessionName", capture_request_digest(request))
     return options
 
 
 class AppiumSession(Protocol):
+    def configure_components(self, items: tuple[str, ...], control: CaptureControl) -> None: ...
     def session_id(self, control: CaptureControl) -> str: ...
     def lock(self, seconds: int, control: CaptureControl) -> None: ...
     def is_locked(self, control: CaptureControl) -> bool: ...
@@ -72,6 +89,8 @@ class AppiumSession(Protocol):
 
 class AppiumSessionFactory(Protocol):
     def open(self, request: CaptureRequest) -> AppiumSession: ...
+    def open_configuration(self, request: CaptureRequest) -> AppiumSession: ...
+    def open_export(self, request: CaptureRequest) -> AppiumSession: ...
 
 
 class SimulatorController(Protocol):
@@ -122,6 +141,62 @@ def _driver_error_message(error: WebDriverException | Urllib3HttpError) -> str:
 @dataclass(frozen=True, slots=True)
 class WebDriverSession:
     driver: WebDriverClient
+
+    def configure_components(self, items: tuple[str, ...], control: CaptureControl) -> None:
+        for index, item in enumerate(items):
+            field = self._find_element(f"marketingCapture_item_{index}", control)
+            _ = appium_call(
+                field.clear,
+                ErrorCode.SCENE_CAPTURE_FAILED,
+                "Trace component field could not be cleared",
+                control,
+            )
+            _ = appium_call(
+                lambda field=field, item=item: field.send_keys(item),
+                ErrorCode.SCENE_CAPTURE_FAILED,
+                "Trace component text could not be entered",
+                control,
+            )
+        save = self._find_element("marketingCapture_save", control)
+        _ = appium_call(
+            save.click,
+            ErrorCode.SCENE_CAPTURE_FAILED,
+            "Trace component configuration could not be saved",
+            control,
+        )
+
+    def _find_element(
+        self,
+        identifier: str,
+        control: CaptureControl,
+    ) -> WebElement | WebDriverElement:
+        driver = self.driver
+        if isinstance(driver, AppiumWebDriver):
+            element = appium_call(
+                lambda: WebDriverWait(driver, control.remaining_seconds()).until(
+                    conditions.presence_of_element_located((AppiumBy.ACCESSIBILITY_ID, identifier))
+                ),
+                ErrorCode.SCENE_CAPTURE_FAILED,
+                "Trace component control is unavailable",
+                control,
+            )
+            if element is False:
+                raise CaptureAdapterError(
+                    code=ErrorCode.SCENE_CAPTURE_FAILED,
+                    message="Trace component control is unavailable",
+                )
+            return element
+        if isinstance(driver, ElementFindingWebDriver):
+            return appium_call(
+                lambda: driver.find_element(AppiumBy.ACCESSIBILITY_ID, identifier),
+                ErrorCode.SCENE_CAPTURE_FAILED,
+                "Trace component control is unavailable",
+                control,
+            )
+        raise CaptureAdapterError(
+            code=ErrorCode.SCENE_CAPTURE_FAILED,
+            message="Appium session cannot configure Trace components",
+        )
 
     def session_id(self, control: CaptureControl) -> str:
         session_id = appium_call(
@@ -199,6 +274,15 @@ class DefaultAppiumSessionFactory:
         _ = validate_appium_server_url(self.server_url)
 
     def open(self, request: CaptureRequest) -> AppiumSession:
+        return self.open_export(request)
+
+    def open_configuration(self, request: CaptureRequest) -> AppiumSession:
+        return self._open(request, build_configuration_process_arguments())
+
+    def open_export(self, request: CaptureRequest) -> AppiumSession:
+        return self._open(request, build_process_arguments(request))
+
+    def _open(self, request: CaptureRequest, process_arguments: ProcessArguments) -> AppiumSession:
         timeout_seconds = request.control.remaining_seconds()
         client_config = AppiumClientConfig(
             remote_server_addr=self.server_url,
@@ -207,7 +291,7 @@ class DefaultAppiumSessionFactory:
         )
         driver = appium_call(
             lambda: webdriver.Remote(
-                options=build_xcuitest_options(request),
+                options=build_xcuitest_options(request, process_arguments),
                 client_config=client_config,
             ),
             ErrorCode.APPIUM_SESSION_FAILED,
@@ -268,12 +352,19 @@ class AppiumComponentExportAdapter:
             self.readiness.ensure(request.device, request.control)
         with self.lease_factory.acquire(request.device.udid):
             request.control.checkpoint()
+            configuration_session = self.session_factory.open_configuration(request)
+            try:
+                configuration_session.configure_components(
+                    request.scene.trace_data.items,
+                    request.control,
+                )
+            finally:
+                configuration_session.quit(request.control)
+            request.control.checkpoint()
             cleared_at_ns = self.collector.clear(request.device.udid, request.control)
             request.control.checkpoint()
-            session = self.session_factory.open(request)
+            session = self.session_factory.open_export(request)
             try:
-                if request.iphone_ui_destination is not None:
-                    session.screenshot(request.iphone_ui_destination, request.control)
                 binding = ExportBinding(
                     request_sha256=capture_request_digest(request),
                     bundle_id=TRACE_BUNDLE_ID,
