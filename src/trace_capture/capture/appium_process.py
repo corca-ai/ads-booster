@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import base64
-import json
-from datetime import UTC
 from hashlib import sha256
 from typing import TYPE_CHECKING, TypedDict
 
@@ -15,31 +12,14 @@ class ProcessArguments(TypedDict):
     env: dict[str, str]
 
 
+def build_configuration_process_arguments() -> ProcessArguments:
+    return ProcessArguments(args=["-traceMarketingAutomation"], env={})
+
+
 def build_process_arguments(request: CaptureRequest) -> ProcessArguments:
-    items_json = json.dumps(
-        request.scene.trace_data.items,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode()
-    encoded_items = base64.b64encode(items_json).decode("ascii")
     request_digest = capture_request_digest(request)
-    reference_date = (
-        request.scene.reference_date.astimezone(UTC)
-        .isoformat()
-        .replace(
-            "+00:00",
-            "Z",
-        )
-    )
     return ProcessArguments(
         args=[
-            "-traceMarketingFixture",
-            "-traceMarketingFixtureItems",
-            encoded_items,
-            "-traceMarketingReferenceDate",
-            reference_date,
-            "-traceMarketingSurface",
-            "calendar",
             "-traceMarketingExportComponents",
             "-traceMarketingRequestDigest",
             request_digest,
