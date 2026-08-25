@@ -585,6 +585,25 @@ textarea:focus-visible {
   margin: 0;
 }
 
+.invite-result {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.invite-result p { margin: 0; }
+
+.invite-result__token {
+  color: var(--color-text);
+  display: block;
+  font-family: var(--font-mono-stack);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .advanced-input textarea[aria-invalid="true"] {
   border-color: var(--color-danger);
 }
@@ -626,6 +645,11 @@ textarea:focus-visible {
   color: var(--color-text);
   inline-size: min(42rem, calc(100% - var(--space-6)));
   max-inline-size: var(--content-max);
+}
+
+.command-dialog .section-heading {
+  align-items: center;
+  flex-direction: row;
 }
 
 .command-dialog::backdrop {
