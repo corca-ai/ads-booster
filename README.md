@@ -798,13 +798,23 @@ npm run deploy
 npx wrangler queues consumer http add trace-marketing-tasks
 ```
 
-Create the D1 database, R2 bucket, and Queue named in `wrangler.template.jsonc` before rendering the
-config. The generated config is ignored because it contains environment-specific resource IDs. See
+The commands above are for an initial resource bootstrap or an explicit local recovery. Normal
+production delivery is automatic: a merge to `main` that changes `cloudflare/**` runs
+`.github/workflows/deploy-cloudflare.yml`, checks the Worker, applies pending D1 migrations, deploys
+the merged revision, and verifies `/health` in that order. Pull Requests run the same Worker check
+without receiving deployment credentials or changing Cloudflare. GitHub Actions stores the deployment API
+token as the `CLOUDFLARE_API_TOKEN` repository secret; account ID, D1 ID, and health URL are
+repository variables. Existing Worker runtime secrets remain in Cloudflare and are not copied into
+the repository or deployment log.
+
+Create the D1 database, R2 bucket, and Queue named in `wrangler.template.jsonc` only for a new
+environment. The generated config is ignored because it contains environment-specific resource IDs. See
 [the full loop contract](docs/contracts/cloudflare-marketing-loop.md) for states, extension rules,
 security boundaries, and the honest two-hour acceptance path.
 
 The `0002_one_active_run_per_account.sql` migration prevents Cron and manual triggers from creating
-overlapping non-terminal runs for one account. Apply migrations before deploying this revision.
+overlapping non-terminal runs for one account. The merge workflow applies it before deploying this
+revision; operators do not run it separately during the normal merge path.
 Account registration currently accepts only `adapter_mode: "simulation"`; `"live"` fails closed
 until a reviewed publication adapter and readback path are present.
 

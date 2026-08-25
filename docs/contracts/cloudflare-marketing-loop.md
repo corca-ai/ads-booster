@@ -169,3 +169,22 @@ The honest two-hour target after credentials and Cloudflare resources exist is:
 
 Enabling real Threads publication is a separate target because platform capability and permission
 verification are external facts, not an implementation toggle.
+
+## Merge-to-deploy contract
+
+For the existing Cloudflare environment, a merge to `main` that changes `cloudflare/**` is the
+production delivery trigger. A Pull Request changing the same paths runs the check job without
+Cloudflare credentials. After merge, the repository workflow must, in order:
+
+1. install dependencies from `package-lock.json`;
+2. run the Worker syntax and state-machine checks;
+3. render the ignored Wrangler config from repository variables;
+4. apply all pending D1 migrations;
+5. deploy the merged Worker revision; and
+6. read back `{"ok":true}` from the configured health URL.
+
+The job is serialized and does not cancel an in-flight deployment. Any failed check, migration,
+deploy, or health readback leaves the GitHub job red and prevents a success claim. Human candidate
+and publication approvals remain product gates rather than deployment chores. Starting the Mac
+bridge and enabling a marketing account are runtime lifecycle choices and are not silently changed
+by a code merge.

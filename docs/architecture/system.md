@@ -405,6 +405,15 @@ HTTP pull compatibility, task completion events include the task ID, and duplica
 the same event only after the stored callback ID and result match. Pull, acknowledgement, and callback
 transport failures do not block already-durable local work.
 
+Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A qualifying
+Pull Request runs an unprivileged Worker check. A qualifying merge to `main` then installs the
+locked Worker dependencies, reuses that check as a deployment prerequisite, renders the
+environment-specific Wrangler config from GitHub variables, applies D1 migrations, deploys the
+Worker, and requires a successful public `/health` readback. The deployment job
+is concurrency-serialized and never cancels an in-flight migration/deploy. Runtime control-plane and
+callback secrets stay attached to the Worker in Cloudflare; GitHub receives only the scoped deploy
+credential required by Wrangler.
+
 The bridge defaults to an explicitly labeled simulation executor. Its opt-in `candidate-pipeline`
 executor maps an account's opaque local `workspace_id` to the existing provider candidate generator
 and PR #22 search/composition image runner. Generated candidates remain in the existing workspace
@@ -439,6 +448,8 @@ Appium processes, but does not install the missing Trace build or driver.
   durable outbox.
 - One account can own only one non-terminal hosted run; observation offsets are interpreted as
   absolute minutes since publication and converted to relative Workflow sleeps.
+- A normal Cloudflare code merge is deploy-complete only when the serialized GitHub Actions job has
+  applied migrations, deployed the same merged revision, and read back `/health` successfully.
 - Hosted marketing runs cannot bypass either the caption/candidate approval gate or the final image
   approval gate when using the installed candidate pipeline.
 - A generated artifact is not ready for delivery until its path and digest are verified and a human

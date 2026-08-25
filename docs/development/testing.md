@@ -169,7 +169,7 @@ when the tooling configuration being changed applies to the whole repository.
 | `web/` | Changed router, schema, command, and approval tests | Changed API and browser interaction against a running app, including slash commands and approval state |
 | `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
 | `capture/` | Changed adapter, worker, or provenance tests | Changed capture step with the current Appium, Simulator, and Trace build |
-| `marketing/`, `cloudflare/` | Focused Python bridge, Queue decoder, D1 migration tests plus `cd cloudflare && npm run check` | Fresh-installed `trace-marketing simulate`; deployed API/Queue probe only when Cloudflare is explicitly in scope |
+| `marketing/`, `cloudflare/` | Focused Python bridge, Queue decoder, D1 migration tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate`; after a qualifying `main` merge, require the Actions migration/deploy job and `/health` readback |
 | `composition/` | Changed composer and artifact tests | Open the generated image and inspect the changed layer or output |
 | Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
 
