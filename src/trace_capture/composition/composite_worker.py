@@ -47,7 +47,9 @@ class CompositeWorker:
         root = job_root.resolve()
         destination = root / job.output_image
         normalized_ui = destination.with_name(f"{job.job_id}-iphone-ui.png")
-        if path_has_symlink_component(destination) or path_has_symlink_component(normalized_ui):
+        if path_has_symlink_component(destination) or (
+            job.layers.iphone_ui is not None and path_has_symlink_component(normalized_ui)
+        ):
             result = MarketingCompositeResult(
                 job_id=job.job_id,
                 status=JobStatus.FAILED,
@@ -61,11 +63,12 @@ class CompositeWorker:
             )
             self._write_result(result=result, destination=destination)
             return result
-        source_paths = (
+        source_paths: tuple[tuple[str, str], ...] = (
             ("background", job.layers.background),
             ("trace_components", job.layers.trace_components),
-            ("iphone_ui", job.layers.iphone_ui),
         )
+        if job.layers.iphone_ui is not None:
+            source_paths += (("iphone_ui", job.layers.iphone_ui),)
         resolved_sources: dict[str, Path] = {}
         for layer_name, relative_path in source_paths:
             source_candidate = root / relative_path
@@ -102,16 +105,17 @@ class CompositeWorker:
 
         canvas = CanvasSize(width=job.canvas.width, height=job.canvas.height)
         try:
-            normalize_ai_ui_layer(
-                source=resolved_sources["iphone_ui"],
-                destination=normalized_ui,
-                canvas=canvas,
-            )
+            if job.layers.iphone_ui is not None:
+                normalize_ai_ui_layer(
+                    source=resolved_sources["iphone_ui"],
+                    destination=normalized_ui,
+                    canvas=canvas,
+                )
             compose_marketing_image(
                 layers=CompositionLayers(
                     background=resolved_sources["background"],
                     trace_components=resolved_sources["trace_components"],
-                    iphone_ui=normalized_ui,
+                    iphone_ui=normalized_ui if job.layers.iphone_ui is not None else None,
                 ),
                 destination=destination,
                 canvas=canvas,
@@ -136,7 +140,11 @@ class CompositeWorker:
             status=JobStatus.COMPLETED,
             layers=job.layers,
             output_image=job.output_image,
-            normalized_iphone_ui=normalized_ui.relative_to(root).as_posix(),
+            normalized_iphone_ui=(
+                normalized_ui.relative_to(root).as_posix()
+                if job.layers.iphone_ui is not None
+                else None
+            ),
         )
         self._write_result(result=result, destination=destination)
         return result

@@ -116,34 +116,31 @@ def test_compose_marketing_image_when_component_layer_is_nearly_whole_image(
     assert raised.value.path == components
 
 
-def test_compose_marketing_image_when_iphone_ui_is_invisible(
+def test_compose_marketing_image_when_no_iphone_ui_layer_is_supplied(
     tmp_path: Path,
 ) -> None:
-    # Given a valid Trace layer and an empty required iPhone UI layer
+    # Given a valid background and native Trace layer without system UI
     background = tmp_path / "background.png"
     components = tmp_path / "components.png"
-    iphone_ui = tmp_path / "iphone-ui.png"
     output = tmp_path / "final.png"
     Image.new("RGB", (2, 2), (255, 0, 0)).save(background)
     component_image = Image.new("RGBA", (2, 2), (0, 0, 0, 0))
     component_image.putpixel((0, 0), (0, 255, 0, 255))
     component_image.save(components)
-    Image.new("RGBA", (2, 2), (0, 0, 0, 0)).save(iphone_ui)
+    # When the compositor renders only product-owned layers
+    compose_marketing_image(
+        layers=CompositionLayers(
+            background=background,
+            trace_components=components,
+            iphone_ui=None,
+        ),
+        destination=output,
+        canvas=CanvasSize(width=2, height=2),
+    )
 
-    # When the compositor validates the required system UI boundary
-    with pytest.raises(LayerCompositionError) as raised:
-        compose_marketing_image(
-            layers=CompositionLayers(
-                background=background,
-                trace_components=components,
-                iphone_ui=iphone_ui,
-            ),
-            destination=output,
-            canvas=CanvasSize(width=2, height=2),
-        )
-
-    # Then it rejects the invisible system UI before composition
-    assert raised.value.path == iphone_ui
+    # Then Trace content overlays the searched background without system icons
+    with Image.open(output) as final:
+        assert final.getpixel((0, 0))[:3] == (0, 255, 0)
 
 
 def test_compose_marketing_image_when_fit_removes_component_transparency(

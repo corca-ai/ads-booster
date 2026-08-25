@@ -19,7 +19,7 @@ class CanvasSize:
 class CompositionLayers:
     background: Path
     trace_components: Path
-    iphone_ui: Path
+    iphone_ui: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,11 +104,9 @@ def compose_marketing_image(
     canvas: CanvasSize,
 ) -> None:
     size = (canvas.width, canvas.height)
-    with (
-        Image.open(layers.background) as raw_background,
-        Image.open(layers.trace_components) as raw_components,
-        Image.open(layers.iphone_ui) as raw_ui,
-    ):
+    with Image.open(layers.background) as raw_background, Image.open(
+        layers.trace_components
+    ) as raw_components:
         background = ImageOps.fit(
             raw_background.convert("RGBA"),
             size,
@@ -119,15 +117,17 @@ def compose_marketing_image(
             size,
             method=Image.Resampling.LANCZOS,
         )
-        iphone_ui = ImageOps.fit(
-            raw_ui.convert("RGBA"),
-            size,
-            method=Image.Resampling.LANCZOS,
-        )
         _require_sparse_overlay(components, layers.trace_components)
-        _require_sparse_overlay(iphone_ui, layers.iphone_ui)
         composed = Image.alpha_composite(background, components)
-        composed = Image.alpha_composite(composed, iphone_ui)
+        if layers.iphone_ui is not None:
+            with Image.open(layers.iphone_ui) as raw_ui:
+                iphone_ui = ImageOps.fit(
+                    raw_ui.convert("RGBA"),
+                    size,
+                    method=Image.Resampling.LANCZOS,
+                )
+            _require_sparse_overlay(iphone_ui, layers.iphone_ui)
+            composed = Image.alpha_composite(composed, iphone_ui)
         destination.parent.mkdir(parents=True, exist_ok=True)
         composed.save(destination, format="PNG")
 
