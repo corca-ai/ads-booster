@@ -2,11 +2,11 @@
 
 Status: Draft
 
-The control-plane, local simulation, queue bridge, and deployment configuration are implemented in
-this branch. The bridge can also opt into the installed candidate pipeline added by PR #22: provider
-generation writes reviewable candidates and the search-based image stage composes only
-caption-approved candidates. A live external Queue pull, real Threads publication, and live metrics
-readback remain unverified. Simulation output must not be represented as a published post.
+The control-plane, hosted/local simulation, queue bridge, and deployment configuration are
+implemented in this branch. The bridge can also opt into the installed candidate pipeline added by
+PR #22: provider generation writes reviewable candidates and the search-based image stage composes
+only caption-approved candidates. A live external Queue pull, real Threads publication, and live
+metrics readback remain unverified. Simulation output must not be represented as a published post.
 
 ## First milestone
 
@@ -17,8 +17,8 @@ content quality. The acceptance path is:
 2. register a marketing account as data;
 3. start a durable run for that account;
 4. snapshot shared instructions plus account-private memory;
-5. dispatch research, generation, capture, publication, and metrics tasks through Cloudflare Queue;
-6. persist each task in the Mac inbox before acknowledging its Cloudflare lease;
+5. execute labeled simulation tasks in Cloudflare, or route workspace-backed tasks through Queue;
+6. persist each queued task in the Mac inbox before acknowledging its Cloudflare lease;
 7. pause for caption/candidate selection before image capture;
 8. pause again for image/publication approval before publication;
 9. observe, evaluate, commit account-private memory, and complete; and

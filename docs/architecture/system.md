@@ -403,8 +403,7 @@ a `workspace_id`, the Workflow instead emits versioned tasks to Cloudflare Queue
 `trace-marketing bridge`, pulls over the Cloudflare REST API, commits each task to a protected SQLite
 inbox, and only then acknowledges the queue lease. Task completion and its callback are committed to
 a local outbox so a process restart cannot lose the control-plane notification. The bridge initiates
-every connection;
-the quick `trycloudflare.com` tunnel is not part of this transport. Queue bodies use JSON text for
+every connection; the quick `trycloudflare.com` tunnel is not part of this transport. Queue bodies use JSON text for
 HTTP pull compatibility, task completion events include the task ID, and duplicate callbacks replay
 the same event only after the stored callback ID and result match. Pull, acknowledgement, and callback
 transport failures do not block already-durable local work.
