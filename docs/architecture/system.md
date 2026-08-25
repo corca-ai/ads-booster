@@ -230,27 +230,56 @@ records its normalized path, digest, size, and optional context binding. Campaig
 the path, bytes, and digest again before freezing the reference into generation input.
 
 Post candidates are workspace-scoped rows in the same workspace database. A candidate carries the
-topic, caption, hypothesis, references, applied principles, and the free-form Appium prompt stored
-in `shooting_order`, and it enters at `awaiting_review`. Topic and caption are reviewed together as
-one decision, so the first gate has a single approve/reject pair. `/api/candidates` creates manual candidates and
-lists a workspace newest-first.
+topic, caption, hypothesis, references, applied principles, the free-form Appium prompt stored in
+`shooting_order`, and the machine `image_inputs` the image stage needs: one to eight lock-screen
+schedule items, an `HH:MM` device time, a background subject drawn from a fixed vocabulary, a short
+background mood, and the content language. A candidate enters at `awaiting_review`. Topic and
+caption are reviewed together as one decision, so the first gate has a single approve/reject pair.
+`/api/candidates` creates manual candidates and lists a workspace newest-first.
 
-A candidate is meant to travel three approval stages, and both browser surfaces render that journey
-so its position is visible. Only the first stage is implemented:
+A candidate travels three approval stages, and both browser surfaces render that journey so its
+position is visible. Stages one and two are implemented:
 
 ```text
-awaiting_review --approve--> caption_approved ..(not implemented).. image_approved ..(not implemented).. submitted
-       |
-       +----reject--------> rejected
+awaiting_review --approve--> caption_approved --generate image--> image_awaiting_review --approve--> submitted
+       |                            ^                                     |
+       +----reject--------> rejected +---------------reject---------------+
 ```
 
-`/api/candidates/{candidate_id}/review` is that first gate and moves one candidate to
-`caption_approved` or `rejected` with an optional note. The transition requires the current revision
-and only applies while the candidate is still awaiting review, so a stale or repeated decision fails
-with a conflict instead of overwriting the first one. `CandidateStatus` also declares
-`image_approved` and `submitted` for stages two and three, but no route, worker, or store method
-writes them, and no candidate image is composed; `ai_verdict` and `image_path` are stored for display
-only. Publishing a submitted post stays a human action outside this runtime.
+`/api/candidates/{candidate_id}/review` is the first gate and moves one candidate to
+`caption_approved` or `rejected` with an optional note. `/api/candidates/{candidate_id}/generate-image`
+is the second: it composes one lock-screen image and moves the candidate to
+`image_awaiting_review`, and `/api/candidates/{candidate_id}/review-image` either submits the
+candidate or returns it to `caption_approved` with the note so a new image can be composed. Every
+transition requires the current revision and the expected source status, so a stale or repeated
+decision fails with a conflict instead of overwriting the first one. Publishing a submitted post
+stays a human action outside this runtime.
+
+### Candidate image composition
+
+The image stage runs synchronously inside the web process and never drives a device. Its three
+layers come from:
+
+| Layer | Source | Verified by |
+| --- | --- | --- |
+| Background | `search/image/` fetches one image from the Pexels/Unsplash/Pixabay allowlist | Approved source host, decodable bytes, minimum edge, recorded digest |
+| Trace components | The packaged offline fixture `trace_capture/assets/trace-components.png` | Read as a local artifact through `LocalArtifactCapturePort` |
+| iPhone UI | The packaged `trace_capture/assets/iphone-ui.png` | Normalized and required to leave transparent canvas |
+
+Both local layers are packaged assets resolved through `importlib.resources`, so the stage never
+depends on the directory the service was started from; `TRACE_AGENT_TRACE_COMPONENTS` and
+`TRACE_AGENT_IPHONE_UI` override them for a local experiment.
+
+`LocalComposePort` merges them with the same deterministic composer the native path uses, and the
+run writes `inputs/background-source.json` next to the background so the searched provider, source
+URL, and artifact digest stay auditable. The composed image and its SHA-256 are recorded on the
+candidate and served by `/api/candidates/{candidate_id}/image` to the owning workspace only.
+
+Because the Trace component layer is a fixture rather than a native export, the candidate's own
+schedule items and device time are recorded on the run request but are **not** rendered into the
+image; the fixture's own calendar and clock appear instead. Rendering the candidate's schedule
+needs the native Appium capture path, which this stage does not use. A failed run leaves the
+candidate at `caption_approved` with a Korean message and writes no image.
 
 Opening the workspace database runs two idempotent candidate migrations: rows written under the
 earlier single-stage `accepted` status are rewritten to `caption_approved`, which carries the same

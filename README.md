@@ -237,6 +237,7 @@ TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS
 TRACE_AGENT_BROWSER_COMMAND
 TRACE_AGENT_APPIUM_SERVER       # default: http://127.0.0.1:4723
 TRACE_AGENT_IPHONE_UI           # default: packaged clean iPhone system UI asset
+TRACE_AGENT_TRACE_COMPONENTS    # default: packaged Trace component fixture asset
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 ```
 
@@ -256,16 +257,22 @@ One approve/reject pair decides the topic and the caption together — there is 
 gate.
 
 Every candidate row and approval card carries the same three-step journey line,
-`① 캡션·주제 승인 → ② 이미지 승인 → ③ 제출`, so the current position is visible. Steps ② and ③ are
-rendered muted with the tooltip `다음 단계에서 연결됩니다`, because only stage one exists:
+`① 캡션·주제 승인 → ② 이미지 승인 → ③ 제출`, so the current position is visible. Stages ① and ② are
+implemented; ③ is reached by approving the image, and posting itself stays manual:
 
 | Status | Meaning | Reachable today |
 | --- | --- | --- |
 | `awaiting_review` | 캡션·주제 검수 대기 | yes, on creation |
-| `caption_approved` | 캡션·주제 승인됨 · 이미지 대기 | yes, by approving stage one |
+| `caption_approved` | 캡션·주제 승인됨 · 이미지 대기 | yes, by approving stage one or rejecting an image |
 | `rejected` | 반려됨 | yes, by rejecting stage one |
-| `image_approved` | 이미지 승인됨 · 제출 대기 | **no** — declared for stage two, no writer |
-| `submitted` | 제출됨 | **no** — declared for stage three, no writer |
+| `image_awaiting_review` | 이미지 검수 대기 | yes, by generating an image |
+| `submitted` | 제출됨 · 게시 준비 완료 | yes, by approving an image |
+
+The 캡션·주제 승인 tab holds both gates. `① 캡션·주제` lists candidates awaiting the first decision.
+`② 이미지` lists candidates that passed it: a `caption_approved` card offers `🎨 이미지 생성` and
+shows `이미지 생성 중… (1~3분)` while the request runs, and an `image_awaiting_review` card shows the
+composed image with the topic and caption beside `✅ 승인` and `❌ 반려` plus a reason field. A
+rejection returns the candidate to `caption_approved` with the note, so a new image can be composed.
 
 Opening the workspace database runs two idempotent migrations for rows written before these
 fields existed: `accepted` becomes `caption_approved`, and candidates stored before `topic` was
@@ -294,15 +301,47 @@ candidate's Appium 프롬프트.
 | Route | Purpose |
 | --- | --- |
 | `GET /api/candidates` | List the authenticated member's workspace candidates, newest first |
-| `POST /api/candidates` | Create a manual candidate from `topic`, `country`, `caption`, `hypothesis`, and optional `refs_used`/`principles_applied`/`shooting_order`; the server forces `source=manual` and `status=awaiting_review` |
+| `POST /api/candidates` | Create a manual candidate from `topic`, `country`, `caption`, `hypothesis`, `image_inputs`, and optional `refs_used`/`principles_applied`/`shooting_order`; the server forces `source=manual` and `status=awaiting_review` |
 | `POST /api/candidates/generate` | Assemble `context/` into one provider call and store three `source=auto` candidates, or store nothing; `409` for a missing context folder or credential, `502` for a provider or format failure |
 | `POST /api/candidates/{candidate_id}/review` | Stage-one decision on topic and caption together: `caption_approved` or `rejected`, with an optional note and an `expected_revision` guard |
+| `POST /api/candidates/{candidate_id}/generate-image` | Stage-two composition: search a background, compose the lock-screen image, and move a `caption_approved` candidate to `image_awaiting_review`; `409` for the wrong stage, a stale revision, or a failed run |
+| `POST /api/candidates/{candidate_id}/review-image` | Stage-two decision: `submitted`, or back to `caption_approved` with the note; `409` for the wrong stage or a stale revision |
+| `GET /api/candidates/{candidate_id}/image` | Serve the composed PNG to the owning workspace; `404` when the candidate has no image |
 
-There is no endpoint for stages two and three. A review carries the candidate's current revision and
-only applies to a candidate that is still awaiting review. A stale revision or a second decision
-returns `409`, an unknown candidate returns `404`, and candidates are never visible or reviewable
-from another workspace. The current runtime stores `ai_verdict` and `image_path` for display only.
-The Appium prompt is stored in the `shooting_order` field; only its UI label was renamed.
+Every decision carries the candidate's current revision and only applies from the expected stage. A
+stale revision or a repeated decision returns `409`, an unknown candidate returns `404`, and
+candidates are never visible or reviewable from another workspace. The Appium prompt is stored in
+the `shooting_order` field; only its UI label was renamed.
+
+`image_inputs` is the machine half of a candidate and the manual form collects it: 잠금화면 일정 is a
+textarea with one item per line (1–8 lines), 기기 시각 takes `HH:MM`, 배경 소재 is a dropdown with
+Korean labels, 배경 분위기 is a short free-text mood, and the content language is derived from the
+selected country.
+
+#### What the image stage needs
+
+`🎨 이미지 생성` composes the image in the web process without Appium or a simulator, from three
+layers: a background from the external image search allowlist (Pexels/Unsplash/Pixabay), the
+packaged Trace component fixture, and the packaged iPhone UI asset. The searched background's
+provider, source URL, and digest are written to `inputs/background-source.json` beside it.
+
+- **An image search route.** The stage uses the same provider selection as `trace-generate-one`:
+  install `ddgs`, or set `BRAVE_SEARCH_API_KEY`. `TRACE_AGENT_WEB_SEARCH_PROVIDER` and
+  `TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS` override the choice and its timeout. Without a working
+  route the browser reports `배경 이미지를 찾지 못했습니다` and the candidate stays `caption_approved`.
+- **Nothing else.** The Trace component fixture and the iPhone UI both ship inside the installed
+  package, so the stage works from whatever directory the service was started in — including a
+  knowledge folder that holds only `context/`. `TRACE_AGENT_TRACE_COMPONENTS` and
+  `TRACE_AGENT_IPHONE_UI` override them with an absolute or working-directory-relative path; a
+  missing override file stops the run before any search and is reported with the environment
+  variable that set it.
+
+Because the Trace component layer is that fixture and not a fresh native export, the candidate's own
+schedule items and device time are recorded on the run but are **not** drawn into the image — the
+fixture's calendar and clock appear instead. Rendering a candidate's own schedule needs the native
+Appium capture environment, which this stage does not use. Artifacts are written under
+`$TRACE_AGENT_HOME/candidates/<candidate-id>/r<revision>/`, and the composed image's path and
+SHA-256 are recorded on the candidate.
 
 ### Continuous campaign and review flow
 

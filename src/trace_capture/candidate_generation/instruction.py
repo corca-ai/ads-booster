@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
+from trace_capture.workspace import CandidateBackgroundSubject
+
 if TYPE_CHECKING:
     from trace_capture.candidate_generation.models import CandidateContextBundle
 
@@ -22,7 +24,14 @@ _RULES: Final = """[반드시 지킬 규칙]
 3. 반말/존댓말과 어조는 VOICE 문서를 그대로 따르세요. 스스로 문체를 새로 정하지 마세요.
 4. refs_used에는 레퍼런스 INDEX 문서에 실제로 존재하는 id만 넣으세요. 없으면 빈 배열로 두세요.
 5. principles_applied에는 원리 문서에서 실제로 사용한 원리 번호만 넣으세요.
-6. {count}개 후보의 주제(topic)는 서로 겹치지 않아야 합니다."""
+6. {count}개 후보의 주제(topic)는 서로 겹치지 않아야 합니다.
+7. image_inputs.background_subject는 그 페르소나가 실제로 잠금화면에 설정해뒀을 법한 배경을
+   아래 토큰 중에서 고르세요. 토큰 외의 값이나 새 단어를 만들지 마세요.
+   {subjects}
+8. image_inputs.background_mood는 "감성적", "예쁜" 같은 모호어 대신 실제로 보이는 것을
+   40자 안에서 구체적으로 쓰세요. 예: "늦은 밤 책상 위 스탠드 불빛".
+9. image_inputs.trace_items는 잠금화면에 실제로 뜰 일정 문자열이며 5~7개를 권장합니다
+   (최소 1개, 최대 8개)."""
 
 _OUTPUT: Final = """[출력 형식]
 설명, 머리말, 코드펜스 없이 JSON 배열 하나만 출력하세요.
@@ -36,7 +45,14 @@ _OUTPUT: Final = """[출력 형식]
     "hypothesis": "이 후보가 통할 것이라고 보는 이유 한 문장",
     "refs_used": ["INDEX에 존재하는 레퍼런스 id"],
     "principles_applied": [1, 4],
-    "appium_prompt": "이미지 생성 지시 텍스트"
+    "appium_prompt": "이미지 생성 지시 텍스트",
+    "image_inputs": {{
+      "trace_items": ["9:00 통계학 2교시", "13:00 스터디", "19:00 러닝"],
+      "device_time": "07:20",
+      "background_subject": "scenery",
+      "background_mood": "늦은 밤 책상 위 스탠드 불빛",
+      "language": "ko"
+    }}
   }}
 ]
 
@@ -45,7 +61,14 @@ appium_prompt는 아래 항목을 사람이 읽을 수 있는 텍스트 블록�
 - 기기_시각: 화면에 표시할 시각
 - 배경화면: 소재와 무드
 - 언어: 화면에 쓸 언어
-- 정지/영상: 정지 이미지인지 영상인지"""
+- 정지/영상: 정지 이미지인지 영상인지
+
+image_inputs는 같은 내용을 기계가 읽는 형식으로 담습니다.
+- trace_items: 일정 문자열 배열 (5~7개 권장, 각 80자 이내)
+- device_time: "HH:MM" 24시간 형식
+- background_subject: 위 토큰 목록 중 하나
+- background_mood: 배경의 구체적 묘사 (40자 이내)
+- language: 화면 언어의 두 글자 코드 (예: ko)"""
 
 _DOCUMENT_HEADER: Final = "[context 문서: {relative_path}]"
 
@@ -56,9 +79,10 @@ _RETRY: Final = """직전 응답은 형식 검증을 통과하지 못했습니�
 
 def build_instruction(bundle: CandidateContextBundle, *, count: int) -> str:
     """Assemble the single generation instruction from the loaded context documents."""
+    subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
     sections = [
         _ROLE.format(count=count),
-        _RULES.format(count=count),
+        _RULES.format(count=count, subjects=subjects),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"
             for document in bundle.documents

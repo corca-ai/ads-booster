@@ -32,20 +32,15 @@
     awaiting_review: "캡션·주제 검수 대기",
     caption_approved: "캡션·주제 승인됨 · 이미지 대기",
     rejected: "반려됨",
-    image_approved: "이미지 승인됨 · 제출 대기",
-    submitted: "제출됨",
+    image_awaiting_review: "이미지 검수 대기",
+    submitted: "제출됨 · 게시 준비 완료",
   });
-  const JOURNEY_PLANNED_HINT = "다음 단계에서 연결됩니다";
-  const JOURNEY_STEPS = Object.freeze([
-    Object.freeze({ label: "① 캡션·주제 승인", planned: false }),
-    Object.freeze({ label: "② 이미지 승인", planned: true }),
-    Object.freeze({ label: "③ 제출", planned: true }),
-  ]);
+  const JOURNEY_STEPS = Object.freeze(["① 캡션·주제 승인", "② 이미지 승인", "③ 제출"]);
   const JOURNEY_POSITION = Object.freeze({
     awaiting_review: 0,
     rejected: 0,
     caption_approved: 1,
-    image_approved: 2,
+    image_awaiting_review: 1,
     submitted: JOURNEY_STEPS.length,
   });
 
@@ -84,6 +79,17 @@
     }
     return null;
   };
+
+  const COUNTRY_LANGUAGES = Object.freeze({
+    KR: "ko",
+    JP: "ja",
+    TW: "zh",
+    US: "en",
+  });
+  const DEFAULT_LANGUAGE = "en";
+  const MAX_TRACE_ITEMS = 8;
+
+  const countryLanguage = (country) => COUNTRY_LANGUAGES[country] ?? DEFAULT_LANGUAGE;
 
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   const candidateSourceLabel = (source) => CANDIDATE_SOURCE_LABELS[source] ?? source;
@@ -179,14 +185,13 @@
     list.setAttribute("aria-label", "후보 진행 단계");
     const rejected = record.status === "rejected";
     const position = JOURNEY_POSITION[record.status] ?? 0;
-    JOURNEY_STEPS.forEach((step, index) => {
+    JOURNEY_STEPS.forEach((label, index) => {
       const item = document.createElement("li");
       const state = rejected
         ? (index === 0 ? "is-rejected" : "")
         : index < position ? "is-done" : index === position ? "is-current" : "";
-      item.className = `journey__step${step.planned ? " is-planned" : ""}${state ? ` ${state}` : ""}`;
-      item.textContent = step.label;
-      if (step.planned) item.title = JOURNEY_PLANNED_HINT;
+      item.className = `journey__step${state ? ` ${state}` : ""}`;
+      item.textContent = label;
       if (state === "is-current") item.setAttribute("aria-current", "step");
       list.append(item);
     });
@@ -238,7 +243,7 @@
     const visual = document.createElement("div"); visual.className = "approval-visual";
     if (record.image_path) {
       const image = document.createElement("img");
-      image.src = `/${record.image_path}`;
+      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image`;
       image.alt = "합성된 후보 이미지";
       image.loading = "lazy";
       image.addEventListener("error", () => {
@@ -301,6 +306,117 @@
     return card;
   };
 
+  const imageSummary = (record) => {
+    const text = document.createElement("div"); text.className = "approval-card__text";
+    const label = document.createElement("span"); label.className = "eyebrow";
+    label.textContent = "주제/컨셉";
+    const topic = document.createElement("h3"); topic.className = "approval-card__topic";
+    topic.textContent = record.topic || "(주제 없음)";
+    const caption = document.createElement("p"); caption.className = "approval-card__caption";
+    caption.textContent = record.caption;
+    text.append(label, topic, caption);
+    return text;
+  };
+
+  const imageNode = (record) => {
+    const card = document.createElement("article"); card.className = "approval-card";
+    const header = document.createElement("div"); header.className = "approval-card__header";
+    header.append(
+      badge("candidate-source", candidateSourceLabel(record.source)),
+      badge(`candidate-status ${record.status}`, candidateStatusLabel(record.status)),
+    );
+    const body = document.createElement("div"); body.className = "approval-card__body";
+    body.append(imageSummary(record), approvalVisual(record));
+    const actions = document.createElement("div"); actions.className = "approval-card__actions";
+    const feedback = document.createElement("p");
+    feedback.className = "candidate-feedback";
+    feedback.setAttribute("role", "alert");
+    feedback.hidden = true;
+    if (record.status === "caption_approved") {
+      const button = document.createElement("button");
+      button.className = "button button-primary";
+      button.type = "button";
+      button.textContent = "🎨 이미지 생성";
+      button.addEventListener("click", () => generateCandidateImage(record, button, feedback));
+      actions.append(button);
+      if (record.review_note) {
+        const note = approvalField("직전 반려 사유", record.review_note);
+        card.append(header, body, note, actions, feedback);
+        return card;
+      }
+    } else {
+      const reason = document.createElement("input");
+      reason.className = "approval-card__reason";
+      reason.type = "text";
+      reason.maxLength = 2000;
+      reason.placeholder = "반려 사유 (다음 이미지 생성에 반영됩니다)";
+      reason.setAttribute("aria-label", "이미지 반려 사유");
+      const buttons = [true, false].map((accepted) => {
+        const button = document.createElement("button");
+        button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
+        button.type = "button";
+        button.textContent = accepted ? "✅ 승인" : "❌ 반려";
+        button.addEventListener("click", () =>
+          reviewCandidateImage(record, accepted, reason, button, feedback, () => buttons));
+        return button;
+      });
+      actions.append(reason, ...buttons);
+    }
+    card.append(header, body, actions, feedback);
+    return card;
+  };
+
+  const setCardFeedback = (element, message) => {
+    if (!element) return;
+    element.hidden = !message;
+    element.textContent = message;
+  };
+
+  const generateCandidateImage = async (record, button, feedback) => {
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "이미지 생성 중… (1~3분)";
+    setCardFeedback(feedback, "");
+    setBusy(button, true, "잠금화면 이미지를 만드는 중… (1~3분 소요)");
+    try {
+      await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/generate-image`, {
+        method: "POST",
+      });
+      await loadCandidates();
+      setNotice("이미지를 만들었습니다. 이미지 검수를 진행해 주세요.");
+    } catch (error) {
+      setCardFeedback(feedback, error.message);
+      setNotice(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+      setBusy(button, false);
+    }
+  };
+
+  const reviewCandidateImage = async (record, accepted, reason, target, feedback, siblings) => {
+    const note = String(reason?.value ?? "").trim();
+    const disabled = siblings();
+    disabled.forEach((button) => { button.disabled = true; });
+    setCardFeedback(feedback, "");
+    setBusy(target, true, "이미지 검수 결과를 저장하는 중…");
+    try {
+      await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/review-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accepted, note: note || null, expected_revision: record.revision }),
+      });
+      await loadCandidates();
+      setNotice(accepted ? "제출 준비가 끝났습니다." : "이미지를 반려했습니다. 다시 생성할 수 있습니다.");
+    } catch (error) {
+      setCardFeedback(feedback, error.message);
+      setNotice(error.message);
+      disabled.forEach((button) => { button.disabled = false; });
+    } finally {
+      setBusy(target, false);
+    }
+  };
+
   const reviewCandidate = async (record, accepted, reason, target, siblings) => {
     const note = String(reason?.value ?? "").trim();
     const disabled = siblings();
@@ -334,9 +450,21 @@
     if (approvalEmpty) approvalEmpty.hidden = pending.length > 0;
     const approvalCount = one("[data-approval-count]");
     if (approvalCount) approvalCount.textContent = `캡션·주제 검수 대기 ${pending.length}건`;
+    const imageStage = records.filter(
+      (record) => record.status === "caption_approved" || record.status === "image_awaiting_review",
+    );
+    one("[data-image-list]")?.replaceChildren(...imageStage.map(imageNode));
+    const imageEmpty = one("[data-image-empty]");
+    if (imageEmpty) imageEmpty.hidden = imageStage.length > 0;
+    const imageCount = one("[data-image-count]");
+    if (imageCount) {
+      const waiting = imageStage.filter((record) => record.status === "image_awaiting_review");
+      imageCount.textContent = `이미지 대기 ${imageStage.length}건 · 검수 대기 ${waiting.length}건`;
+    }
   };
 
   const commaList = (value) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+  const lineList = (value) => String(value ?? "").split("\n").map((item) => item.trim()).filter(Boolean);
 
   const refreshWorkspace = async () => {
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
@@ -489,6 +617,17 @@
     if (draft.principles_applied.some((value) => !Number.isInteger(value) || value < 1)) {
       return ["candidate-principles", "적용 원리는 1 이상의 숫자를 쉼표로 구분해 입력해 주세요."];
     }
+    const items = draft.image_inputs.trace_items;
+    if (!items.length) return ["candidate-schedule", "잠금화면 일정을 한 줄에 하나씩 입력해 주세요."];
+    if (items.length > MAX_TRACE_ITEMS) {
+      return ["candidate-schedule", `잠금화면 일정은 최대 ${MAX_TRACE_ITEMS}줄까지 입력할 수 있습니다.`];
+    }
+    if (!/^\d{2}:\d{2}$/.test(draft.image_inputs.device_time)) {
+      return ["candidate-device-time", "기기 시각은 HH:MM 형식으로 입력해 주세요. 예: 07:20"];
+    }
+    if (!draft.image_inputs.background_mood) {
+      return ["candidate-background-mood", "배경 분위기를 입력해 주세요."];
+    }
     return null;
   };
 
@@ -504,8 +643,16 @@
       refs_used: commaList(form.get("refs-used")),
       principles_applied: commaList(form.get("principles-applied")).map(Number),
       shooting_order: String(form.get("shooting-order") ?? ""),
+      image_inputs: {
+        trace_items: lineList(form.get("trace-items")),
+        device_time: String(form.get("device-time") ?? "").trim(),
+        background_subject: String(form.get("background-subject") ?? "").trim(),
+        background_mood: String(form.get("background-mood") ?? "").trim(),
+        language: countryLanguage(String(form.get("country") ?? "").trim().toUpperCase()),
+      },
     };
-    ["candidate-topic", "candidate-country", "candidate-caption", "candidate-hypothesis", "candidate-principles"]
+    ["candidate-topic", "candidate-country", "candidate-caption", "candidate-hypothesis", "candidate-principles",
+      "candidate-schedule", "candidate-device-time", "candidate-background-mood"]
       .forEach((id) => document.getElementById(id)?.removeAttribute("aria-invalid"));
     const problem = candidateProblem(draft);
     if (problem) {

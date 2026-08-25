@@ -37,7 +37,7 @@ class PromotionMaterial(BaseModel):
     feature: Annotated[str, Field(min_length=1, max_length=120)]
     concept: Annotated[str, Field(min_length=1, max_length=120)]
     tone: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
-    trace_items: tuple[TraceItem, TraceItem, TraceItem] | None = None
+    trace_items: Annotated[tuple[TraceItem, ...], Field(min_length=1, max_length=8)] | None = None
 
 
 class GenerationReferenceImage(BaseModel):

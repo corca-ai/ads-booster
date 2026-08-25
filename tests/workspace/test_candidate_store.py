@@ -12,8 +12,10 @@ if TYPE_CHECKING:
 from trace_capture.workspace import (
     LEGACY_CANDIDATE_TOPIC,
     CandidateAlreadyReviewedError,
+    CandidateBackgroundSubject,
     CandidateCreate,
     CandidateId,
+    CandidateImageInputs,
     CandidateRecord,
     CandidateSource,
     CandidateStatus,
@@ -37,6 +39,13 @@ def _manual(workspace_id: WorkspaceId, caption: str = "오늘의 캡션") -> Can
         topic="시험기간 일정 관리 — 잠금화면 데모",
         caption=caption,
         hypothesis="시험 기간 공감 문장이 저장률을 올린다",
+        image_inputs=CandidateImageInputs(
+            trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
+            device_time="07:20",
+            background_subject=CandidateBackgroundSubject.SCENERY,
+            background_mood="늦은 밤 책상 위 스탠드 불빛",
+            language="ko",
+        ),
         refs_used=("ref-a", "ref-b"),
         principles_applied=(1, 4),
         shooting_order="- 책상 위 아이폰\n- 형광펜 두 자루",
@@ -59,6 +68,13 @@ def test_created_candidate_is_listed_newest_first_with_its_input(
             topic="새 학기 준비 — 위젯 소개",
             caption="두 번째 캡션",
             hypothesis="자동 생성 가설",
+            image_inputs=CandidateImageInputs(
+                trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
+                device_time="07:20",
+                background_subject=CandidateBackgroundSubject.SCENERY,
+                background_mood="늦은 밤 책상 위 스탠드 불빛",
+                language="ko",
+            ),
             ai_verdict="수정 후 통과 — 1인칭 감탄 문장 빠짐",
             image_path="assets/candidate.png",
         )
@@ -194,6 +210,13 @@ def test_topic_is_required_on_every_candidate() -> None:
             topic="",
             caption="주제 없는 후보",
             hypothesis="가설",
+            image_inputs=CandidateImageInputs(
+                trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
+                device_time="07:20",
+                background_subject=CandidateBackgroundSubject.SCENERY,
+                background_mood="늦은 밤 책상 위 스탠드 불빛",
+                language="ko",
+            ),
         )
 
 

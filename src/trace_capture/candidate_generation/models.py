@@ -8,6 +8,7 @@ from trace_capture.workspace import (
     CandidateCaption,
     CandidateCountry,
     CandidateHypothesis,
+    CandidateImageInputs,
     CandidatePrinciple,
     CandidateReference,
     CandidateShootingOrder,
@@ -30,6 +31,7 @@ class CandidateDraft(GenerationModel):
     country: CandidateCountry
     caption: CandidateCaption
     hypothesis: CandidateHypothesis
+    image_inputs: CandidateImageInputs
     refs_used: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
     principles_applied: Annotated[tuple[CandidatePrinciple, ...], Field(max_length=32)] = ()
     appium_prompt: CandidateShootingOrder = ""

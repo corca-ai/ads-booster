@@ -128,18 +128,35 @@ class CandidateSource(StrEnum):
 
 
 @unique
+class CandidateBackgroundSubject(StrEnum):
+    """Background subject vocabulary the operator's AXES document defines."""
+
+    CHARACTER_KITTY = "character_kitty"
+    CHARACTER_OTHER = "character_other"
+    FAMILY_PHOTO = "family_photo"
+    PERSON = "person"
+    PET = "pet"
+    SCENERY = "scenery"
+    MINIMAL = "minimal"
+    SPORTS_TEAM = "sports_team"
+    NONE = "none"
+
+
+@unique
 class CandidateStatus(StrEnum):
     """Position of a candidate on the three-stage approval journey.
 
-    Only stage one is implemented: reviewing a candidate moves it from
-    `AWAITING_REVIEW` to `CAPTION_APPROVED` or `REJECTED`. `IMAGE_APPROVED` and
-    `SUBMITTED` name planned stages two and three; no code path reaches them yet.
+    Stage one moves a candidate from `AWAITING_REVIEW` to `CAPTION_APPROVED` or
+    `REJECTED`. Stage two composes an image, moving `CAPTION_APPROVED` to
+    `IMAGE_AWAITING_REVIEW`; approving that image reaches `SUBMITTED`, and rejecting it
+    returns the candidate to `CAPTION_APPROVED` so a new image can be composed.
+    Publishing a submitted post stays a human action outside this runtime.
     """
 
     AWAITING_REVIEW = "awaiting_review"
     CAPTION_APPROVED = "caption_approved"
     REJECTED = "rejected"
-    IMAGE_APPROVED = "image_approved"
+    IMAGE_AWAITING_REVIEW = "image_awaiting_review"
     SUBMITTED = "submitted"
 
 
@@ -153,6 +170,21 @@ CandidateShootingOrder = Annotated[str, Field(max_length=20_000)]
 CandidateVerdict = Annotated[str, Field(min_length=1, max_length=2_000)]
 CandidateImagePath = Annotated[str, Field(min_length=1, max_length=1_024)]
 CandidateReviewNote = Annotated[str, Field(min_length=1, max_length=2_000)]
+CandidateScheduleItem = Annotated[str, Field(min_length=1, max_length=80)]
+CandidateDeviceTime = Annotated[str, Field(pattern=r"^\d{2}:\d{2}$")]
+CandidateBackgroundMood = Annotated[str, Field(min_length=1, max_length=40)]
+CandidateLanguage = Annotated[str, Field(pattern=r"^[a-z]{2}$")]
+CandidateImageDigest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+
+
+class CandidateImageInputs(FrozenModel):
+    """Machine inputs the image stage needs to compose a lock-screen image."""
+
+    trace_items: Annotated[tuple[CandidateScheduleItem, ...], Field(min_length=1, max_length=8)]
+    device_time: CandidateDeviceTime
+    background_subject: CandidateBackgroundSubject
+    background_mood: CandidateBackgroundMood
+    language: CandidateLanguage
 
 
 class CandidateCreate(FrozenModel):
@@ -165,6 +197,7 @@ class CandidateCreate(FrozenModel):
     refs_used: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
     principles_applied: Annotated[tuple[CandidatePrinciple, ...], Field(max_length=32)] = ()
     shooting_order: CandidateShootingOrder = ""
+    image_inputs: CandidateImageInputs
     ai_verdict: CandidateVerdict | None = None
     image_path: CandidateImagePath | None = None
 
@@ -180,8 +213,10 @@ class CandidateRecord(FrozenModel):
     refs_used: tuple[str, ...]
     principles_applied: tuple[int, ...]
     shooting_order: str
+    image_inputs: CandidateImageInputs | None
     ai_verdict: str | None
     image_path: str | None
+    image_sha256: str | None
     status: CandidateStatus
     review_note: str | None
     revision: int = Field(ge=1)
