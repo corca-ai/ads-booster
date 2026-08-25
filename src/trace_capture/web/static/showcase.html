@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Trace Workspace primitive and state showcase.">
+    <title>Trace Workspace Primitives</title>
+    <link rel="stylesheet" href="./showcase.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to primitives</a>
+    <main class="showcase-shell" id="main-content">
+      <header class="showcase-header">
+        <p class="eyebrow">Trace Workspace</p>
+        <h1>Primitive state showcase</h1>
+        <p class="muted">Shared controls, signals, and recovery surfaces before composing the team workspace.</p>
+      </header>
+
+      <section class="showcase-section" aria-labelledby="buttons-title">
+        <p class="eyebrow">Controls</p>
+        <h2 id="buttons-title">Button states</h2>
+        <div class="showcase-grid">
+          <article class="primitive-panel">
+            <p class="state-label">Default and hover</p>
+            <div class="control-cluster">
+              <button class="button button-primary" type="button">Queue capture</button>
+              <button class="button button-secondary" type="button">Open review</button>
+              <button class="button button-quiet" type="button">Mute thread</button>
+              <button class="button button-danger" type="button">Cancel run</button>
+            </div>
+          </article>
+          <article class="primitive-panel">
+            <p class="state-label">Disabled and loading</p>
+            <div class="control-cluster">
+              <button class="button button-primary" type="button" disabled>Queue capture</button>
+              <button class="button button-secondary" type="button" aria-busy="true">Saving context</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="tabs-title">
+        <p class="eyebrow">Navigation</p>
+        <h2 id="tabs-title">Segment states</h2>
+        <div class="tabs" role="tablist" aria-label="Showcase filters">
+          <button type="button" role="tab" aria-selected="true">Ready</button>
+          <button type="button" role="tab" aria-selected="false">Review</button>
+          <button type="button" role="tab" aria-selected="false" disabled>Archived</button>
+        </div>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="signals-title">
+        <p class="eyebrow">Signal rows</p>
+        <h2 id="signals-title">Working, complete, and blocked</h2>
+        <div class="showcase-grid">
+          <div class="state-stack primitive-panel">
+            <p class="state-label">Default</p>
+            <button class="signal-row" type="button">
+              <span class="signal-mark warning" aria-hidden="true"></span>
+              <span class="signal-row__content"><strong>Caption policy review</strong><span class="signal-row__meta">Needed before scheduling</span></span>
+            </button>
+          </div>
+          <div class="state-stack primitive-panel">
+            <p class="state-label">Complete</p>
+            <button class="signal-row" type="button">
+              <span class="signal-mark success" aria-hidden="true"></span>
+              <span class="signal-row__content"><strong>Persona update saved</strong><span class="signal-row__meta">Workspace library</span></span>
+            </button>
+          </div>
+          <div class="state-stack primitive-panel">
+            <p class="state-label">Blocked</p>
+            <button class="signal-row" type="button">
+              <span class="signal-mark danger" aria-hidden="true"></span>
+              <span class="signal-row__content"><strong>Simulator offline</strong><span class="signal-row__meta">Reconnect host to resume</span></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="recovery-title">
+        <p class="eyebrow">Recovery surfaces</p>
+        <h2 id="recovery-title">Empty, loading, and error states</h2>
+        <div class="showcase-grid">
+          <article class="empty-surface primitive-panel">
+            <p class="state-label">Empty</p>
+            <h3>No review requests</h3>
+            <p class="muted">Queue a capture to start a review record.</p>
+            <button class="button button-secondary" type="button">Queue capture</button>
+          </article>
+          <article class="empty-surface primitive-panel" role="status" aria-label="Loading review assets">
+            <p class="state-label">Loading</p>
+            <span class="skeleton" aria-hidden="true"></span>
+            <span class="skeleton short" aria-hidden="true"></span>
+            <span class="mono">Review assets are loading</span>
+          </article>
+          <article class="empty-surface primitive-panel state-error" role="alert">
+            <p class="state-label">Error</p>
+            <h3>Context library unavailable</h3>
+            <p class="muted">The local index did not respond. Retry once the host is available.</p>
+            <button class="button button-danger" type="button">Retry index</button>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
