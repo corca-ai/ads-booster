@@ -22,7 +22,12 @@ from trace_capture.candidate_generation import (
 )
 from trace_capture.providers.codex import ModelTurn
 from trace_capture.providers.errors import ProviderError
-from trace_capture.workspace import CandidateSource, CandidateStatus, SqliteWorkspaceStore
+from trace_capture.workspace import (
+    CandidateBackgroundSubject,
+    CandidateSource,
+    CandidateStatus,
+    SqliteWorkspaceStore,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -43,6 +48,13 @@ def _draft(topic: str = "시험기간 일정 관리") -> dict[str, object]:
         "refs_used": ["kr-001"],
         "principles_applied": [1, 4],
         "appium_prompt": "입력_일정: 9시 스터디\n기기_시각: 07:20",
+        "image_inputs": {
+            "trace_items": ["09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"],
+            "device_time": "07:20",
+            "background_subject": "scenery",
+            "background_mood": "늦은 밤 책상 위 스탠드 불빛",
+            "language": "ko",
+        },
     }
 
 
@@ -169,6 +181,12 @@ def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -
     assert "INDEX 문서에 실제로 존재하는 id만" in instruction
     assert "appium_prompt" in instruction
     assert "정확히 3개의 객체" in instruction
+    assert "image_inputs" in instruction
+    assert "character_kitty" in instruction
+    assert "sports_team" in instruction
+    assert "5~7개를 권장합니다" in instruction
+    assert "모호어 대신 실제로 보이는 것을" in instruction
+    assert "실제로 잠금화면에 설정해뒀을 법한 배경" in instruction
 
 
 def test_fenced_json_is_parsed() -> None:
@@ -198,6 +216,73 @@ def test_parse_rejects_a_wrong_count_and_a_wrong_country() -> None:
     assert (
         count_failure.value.message == "AI 응답이 형식을 통과하지 못했습니다 — 다시 시도해 주세요."
     )
+
+
+def test_parse_rejects_unusable_image_inputs() -> None:
+    # Given answers whose image inputs break the machine contract
+    def one(image_inputs: dict[str, object]) -> str:
+        return json.dumps([{**_draft(), "image_inputs": image_inputs}], ensure_ascii=False)
+
+    base = _draft()["image_inputs"]
+    assert isinstance(base, dict)
+    bad_time = one({**base, "device_time": "7시 20분"})
+    unknown_subject = one({**base, "background_subject": "감성적인 무언가"})
+    nine_items = one({**base, "trace_items": [f"일정 {index}" for index in range(9)]})
+    no_items = one({**base, "trace_items": []})
+
+    # When / Then
+    for payload, rejected_field in (
+        (bad_time, "device_time"),
+        (unknown_subject, "background_subject"),
+        (nine_items, "trace_items"),
+        (no_items, "trace_items"),
+    ):
+        with pytest.raises(CandidateFormatError) as failure:
+            _ = parse_candidate_drafts(payload, expected=1, country="KR")
+        assert rejected_field in failure.value.detail
+
+
+def test_parse_accepts_five_to_seven_schedule_items() -> None:
+    # Given answers at the recommended schedule lengths
+    base = _draft()["image_inputs"]
+    assert isinstance(base, dict)
+
+    # When / Then
+    for count in (5, 6, 7):
+        items = [f"{index:02d}:00 일정" for index in range(count)]
+        payload = json.dumps(
+            [{**_draft(), "image_inputs": {**base, "trace_items": items}}],
+            ensure_ascii=False,
+        )
+        drafts = parse_candidate_drafts(payload, expected=1, country="KR")
+        assert len(drafts[0].image_inputs.trace_items) == count
+
+
+def test_malformed_image_inputs_are_retried_once(tmp_path: Path) -> None:
+    # Given a first answer whose background subject is not in the vocabulary
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    base = _draft()["image_inputs"]
+    assert isinstance(base, dict)
+    invalid = json.dumps(
+        [
+            {**_draft(f"주제 {index}"), "image_inputs": {**base, "background_subject": "예쁜 배경"}}
+            for index in range(3)
+        ],
+        ensure_ascii=False,
+    )
+    client = FakeModelClient([invalid, _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    assert created[0].image_inputs is not None
+    assert created[0].image_inputs.background_subject is CandidateBackgroundSubject.SCENERY
+    retry_turn = client.histories[1][-1]
+    assert "background_subject" in str(retry_turn["content"])
 
 
 def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:

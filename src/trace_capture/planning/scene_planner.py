@@ -20,7 +20,7 @@ class SceneRecipe:
     locale: str
     context: MarketingContext
     reference_date: datetime
-    trace_items: tuple[str, str, str]
+    trace_items: tuple[str, ...]
     background_query: str
 
 
@@ -41,7 +41,7 @@ class ScenePlanner:
             background_query=self._background_query(bundle),
         )
 
-    def _trace_items(self, bundle: MarketingContextBundle) -> tuple[str, str, str]:
+    def _trace_items(self, bundle: MarketingContextBundle) -> tuple[str, ...]:
         if bundle.promotion_material.trace_items is not None:
             return bundle.promotion_material.trace_items
         if (

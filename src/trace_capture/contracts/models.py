@@ -58,7 +58,7 @@ class DeviceTarget(ContractModel):
 
 
 class TraceData(ContractModel):
-    items: Annotated[tuple[TraceItem, ...], Field(min_length=3, max_length=3)]
+    items: Annotated[tuple[TraceItem, ...], Field(min_length=1, max_length=8)]
 
 
 class ComponentExportCanvas(ContractModel):

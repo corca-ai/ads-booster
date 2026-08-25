@@ -265,7 +265,14 @@ const makeLiveDocument = () => {
     ["refs-used", "ref-a, ref-b"],
     ["principles-applied", "1, 4"],
     ["shooting-order", "- 책상 위 아이폰"],
+    ["trace-items", "  09:00 통계학 2교시  \n\n13:00 스터디\n"],
+    ["device-time", "07:20"],
+    ["background-subject", "scenery"],
+    ["background-mood", "늦은 밤 책상 위 스탠드 불빛"],
   ]);
+  const scheduleField = new FakeElement("candidate-schedule");
+  const deviceTimeField = new FakeElement("candidate-device-time");
+  const backgroundMoodField = new FakeElement("candidate-background-mood");
   const candidateFeedback = new FakeElement("candidate-feedback");
   candidateFeedback.hidden = true;
   const candidateList = new FakeElement("candidate-list");
@@ -274,6 +281,9 @@ const makeLiveDocument = () => {
   const approvalList = new FakeElement("approval-list");
   const approvalEmpty = new FakeElement("approval-empty");
   const approvalCount = new FakeElement("approval-count");
+  const imageList = new FakeElement("image-list");
+  const imageEmpty = new FakeElement("image-empty");
+  const imageCount = new FakeElement("image-count");
   const countryField = new FakeElement("candidate-country");
   const topicField = new FakeElement("candidate-topic");
   const autogenButton = new FakeElement("autogen-button", { autogen: "" });
@@ -300,6 +310,9 @@ const makeLiveDocument = () => {
     ["[data-approval-list]", approvalList],
     ["[data-approval-empty]", approvalEmpty],
     ["[data-approval-count]", approvalCount],
+    ["[data-image-list]", imageList],
+    ["[data-image-empty]", imageEmpty],
+    ["[data-image-count]", imageCount],
     ["[data-autogen-feedback]", autogenFeedback],
     ["#workspace-access-id", accessTokenField],
     ["[data-action='open-invite']", inviteButton],
@@ -332,6 +345,9 @@ const makeLiveDocument = () => {
     approvalList,
     approvalEmpty,
     approvalCount,
+    imageList,
+    imageEmpty,
+    imageCount,
     countryField,
     topicField,
     autogenButton,
@@ -346,6 +362,9 @@ const makeLiveDocument = () => {
     inviteToken,
     inviteCopy,
     inviteCancel,
+    scheduleField,
+    deviceTimeField,
+    backgroundMoodField,
   ]);
   document.querySelector = (selector) => selectors.get(selector) ?? null;
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
@@ -369,6 +388,9 @@ const makeLiveDocument = () => {
     approvalList,
     approvalEmpty,
     approvalCount,
+    imageList,
+    imageEmpty,
+    imageCount,
     countryField,
     topicField,
     autogenButton,
@@ -383,6 +405,9 @@ const makeLiveDocument = () => {
     inviteToken,
     inviteCopy,
     inviteCancel,
+    scheduleField,
+    deviceTimeField,
+    backgroundMoodField,
   };
 };
 
@@ -424,6 +449,15 @@ const deferred = () => {
 
 const nextTurn = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+const findByText = (node, text) => {
+  if (node?.textContent === text) return node;
+  for (const child of node?.children ?? []) {
+    const found = findByText(child, text);
+    if (found) return found;
+  }
+  return null;
+};
+
 const findJourney = (node) => {
   if (node?.className === "journey") return node;
   for (const child of node?.children ?? []) {
@@ -443,6 +477,14 @@ const candidate = (overrides) => ({
   refs_used: ["ref-a"],
   principles_applied: [2],
   shooting_order: "- 아이폰 잠금화면, 기기 시각 07:20",
+  image_inputs: {
+    trace_items: ["09:00 통계학 2교시", "13:00 스터디"],
+    device_time: "07:20",
+    background_subject: "scenery",
+    background_mood: "늦은 밤 책상 위 스탠드 불빛",
+    language: "ko",
+  },
+  image_sha256: null,
   ai_verdict: null,
   image_path: null,
   status: "awaiting_review",
@@ -728,6 +770,13 @@ const testManualCandidateSubmitsParsedListFields = async () => {
   assert.deepEqual(payload.refs_used, ["ref-a", "ref-b"]);
   assert.deepEqual(payload.principles_applied, [1, 4]);
   assert.equal(payload.shooting_order, "- 책상 위 아이폰");
+  assert.deepEqual(payload.image_inputs, {
+    trace_items: ["09:00 통계학 2교시", "13:00 스터디"],
+    device_time: "07:20",
+    background_subject: "scenery",
+    background_mood: "늦은 밤 책상 위 스탠드 불빛",
+    language: "ja",
+  });
   assert.equal(fixture.candidateForm.resetCount, 1);
   assert.equal(fixture.notice.textContent, "후보를 등록했습니다.");
 };
@@ -741,6 +790,42 @@ const testManualCandidateValidationRequiresATopic = async () => {
   assert.equal(fixture.candidateFeedback.textContent, "주제/컨셉을 입력해 주세요.");
   assert.equal(fixture.topicField.getAttribute("aria-invalid"), "true");
   assert.ok(fixture.topicField.events.includes("focus"));
+};
+
+const testManualCandidateValidationRequiresASchedule = async () => {
+  const fixture = makeLiveDocument();
+  fixture.candidateForm.formValues.set("trace-items", "   \n  ");
+  await loadLive(fixture, signedOut);
+  await fixture.candidateForm.submit();
+  assert.equal(fixture.scheduleField.getAttribute("aria-invalid"), "true");
+  assert.equal(fixture.candidateFeedback.textContent, "잠금화면 일정을 한 줄에 하나씩 입력해 주세요.");
+};
+
+const testManualCandidateValidationCapsTheSchedule = async () => {
+  const fixture = makeLiveDocument();
+  fixture.candidateForm.formValues.set(
+    "trace-items",
+    Array.from({ length: 9 }, (_value, index) => `0${index}:00 일정`).join("\n"),
+  );
+  await loadLive(fixture, signedOut);
+  await fixture.candidateForm.submit();
+  assert.equal(fixture.scheduleField.getAttribute("aria-invalid"), "true");
+  assert.equal(
+    fixture.candidateFeedback.textContent,
+    "잠금화면 일정은 최대 8줄까지 입력할 수 있습니다.",
+  );
+};
+
+const testManualCandidateValidationExplainsTheDeviceTime = async () => {
+  const fixture = makeLiveDocument();
+  fixture.candidateForm.formValues.set("device-time", "7시 20분");
+  await loadLive(fixture, signedOut);
+  await fixture.candidateForm.submit();
+  assert.equal(fixture.deviceTimeField.getAttribute("aria-invalid"), "true");
+  assert.equal(
+    fixture.candidateFeedback.textContent,
+    "기기 시각은 HH:MM 형식으로 입력해 주세요. 예: 07:20",
+  );
 };
 
 const testTopicLeadsTheRowAndTheApprovalCard = async () => {
@@ -809,11 +894,10 @@ const testJourneyIsVisibleOnRowsAndCards = async () => {
       journey.children.map((step) => step.textContent),
       ["① 캡션·주제 승인", "② 이미지 승인", "③ 제출"],
     );
-    assert.equal(journey.children[0].title, undefined);
-    assert.equal(journey.children[1].title, "다음 단계에서 연결됩니다");
-    assert.equal(journey.children[2].title, "다음 단계에서 연결됩니다");
-    assert.ok(journey.children[1].className.includes("is-planned"));
-    assert.ok(journey.children[2].className.includes("is-planned"));
+    for (const step of journey.children) {
+      assert.equal(step.title, undefined, "no step is marked as not yet connected");
+      assert.ok(!step.className.includes("is-planned"));
+    }
   }
 };
 
@@ -821,8 +905,8 @@ const testJourneyPositionFollowsTheStatus = async () => {
   const cases = [
     ["awaiting_review", ["is-current", "", ""]],
     ["caption_approved", ["is-done", "is-current", ""]],
+    ["image_awaiting_review", ["is-done", "is-current", ""]],
     ["rejected", ["is-rejected", "", ""]],
-    ["image_approved", ["is-done", "is-done", "is-current"]],
     ["submitted", ["is-done", "is-done", "is-done"]],
   ];
   for (const [status, expected] of cases) {
@@ -831,7 +915,7 @@ const testJourneyPositionFollowsTheStatus = async () => {
     const journey = findJourney(fixture.candidateList.children[0]);
     assert.ok(journey, `journey rendered for ${status}`);
     const states = journey.children.map((step) => {
-      const marks = step.className.split(" ").filter((name) => name.startsWith("is-") && name !== "is-planned");
+      const marks = step.className.split(" ").filter((name) => name.startsWith("is-"));
       return marks.join(" ");
     });
     assert.deepEqual(states, expected, `journey state for ${status}`);
@@ -840,6 +924,111 @@ const testJourneyPositionFollowsTheStatus = async () => {
       expected.includes("is-current") ? 1 : 0,
     );
   }
+};
+
+const testImageStageSplitsCaptionAndImageWork = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({}),
+    candidate({ candidate_id: "candidate-2", status: "caption_approved", revision: 2 }),
+    candidate({
+      candidate_id: "candidate-3",
+      status: "image_awaiting_review",
+      revision: 3,
+      image_path: "candidates/candidate-3/r2/outputs/final.png",
+      image_sha256: "a".repeat(64),
+    }),
+    candidate({ candidate_id: "candidate-4", status: "submitted", revision: 4 }),
+  ]);
+  assert.equal(fixture.approvalList.children.length, 1);
+  assert.equal(fixture.imageList.children.length, 2);
+  assert.equal(fixture.imageEmpty.hidden, true);
+  assert.equal(fixture.imageCount.textContent, "이미지 대기 2건 · 검수 대기 1건");
+  assert.equal(fixture.candidateList.children.length, 4);
+};
+
+const testImageGenerationButtonRunsTheStage = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  let stored = [candidate({ status: "caption_approved", revision: 2 })];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates/candidate-1/generate-image") {
+      stored = [
+        candidate({
+          status: "image_awaiting_review",
+          revision: 3,
+          image_path: "candidates/candidate-1/r2/outputs/final.png",
+          image_sha256: "b".repeat(64),
+        }),
+      ];
+      return response(201, stored[0]);
+    }
+    if (path === "/api/candidates") return response(200, stored);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  const button = findByText(fixture.imageList.children[0], "🎨 이미지 생성");
+  assert.ok(button, "the caption-approved card offers image generation");
+  await button.click();
+  assert.ok(calls.some(([path, method]) =>
+    path === "/api/candidates/candidate-1/generate-image" && method === "POST"));
+  assert.equal(fixture.notice.textContent, "이미지를 만들었습니다. 이미지 검수를 진행해 주세요.");
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, "🎨 이미지 생성");
+  assert.ok(findByText(fixture.imageList.children[0], "✅ 승인"), "the composed card offers review");
+};
+
+const testImageGenerationFailureShowsTheServerMessage = async () => {
+  const fixture = makeLiveDocument();
+  const detail = "잠금화면 부품 이미지를 찾을 수 없습니다 (경로: /x) — trace 폴더에서 서버를 실행했는지 확인하세요.";
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates/candidate-1/generate-image") return response(409, { detail });
+    if (path === "/api/candidates") {
+      return response(200, [candidate({ status: "caption_approved", revision: 2 })]);
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+  const card = fixture.imageList.children[0];
+  const button = findByText(card, "🎨 이미지 생성");
+  await button.click();
+  const feedback = card.children.find((child) => child.className === "candidate-feedback");
+  assert.equal(feedback.hidden, false);
+  assert.equal(feedback.textContent, detail);
+  assert.equal(fixture.notice.textContent, detail);
+  assert.equal(button.disabled, false);
+};
+
+const testImageApprovalPostsTheDecision = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  const composed = candidate({
+    status: "image_awaiting_review",
+    revision: 3,
+    image_path: "candidates/candidate-1/r2/outputs/final.png",
+    image_sha256: "c".repeat(64),
+  });
+  let stored = [composed];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates/candidate-1/review-image") {
+      stored = [candidate({ status: "submitted", revision: 4 })];
+      return response(200, stored[0]);
+    }
+    if (path === "/api/candidates") return response(200, stored);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await findByText(fixture.imageList.children[0], "✅ 승인").click();
+  const submitted = calls.find(([path]) => path === "/api/candidates/candidate-1/review-image");
+  assert.ok(submitted);
+  const payload = JSON.parse(submitted[1].body);
+  assert.equal(payload.accepted, true);
+  assert.equal(payload.expected_revision, 3);
+  assert.equal(fixture.notice.textContent, "제출 준비가 끝났습니다.");
+  assert.equal(fixture.imageList.children.length, 0);
+  assert.equal(fixture.imageEmpty.hidden, false);
 };
 
 const testMarkupUsesTheAgreedTerminology = async () => {
@@ -858,6 +1047,30 @@ const testMarkupUsesTheAgreedTerminology = async () => {
     "topic comes before country in the manual form",
   );
   assert.ok(markup.includes("주제/컨셉"), "the topic field is labelled 주제/컨셉");
+  assert.ok(markup.includes("① 캡션·주제"), "the caption stage is titled");
+  assert.ok(markup.includes("② 이미지"), "the image stage is titled");
+  assert.ok(markup.includes("data-image-list"), "the image stage renders its own list");
+  assert.ok(
+    markup.includes('id="candidate-schedule" name="trace-items" required'),
+    "the manual form collects the lock-screen schedule",
+  );
+  assert.ok(
+    markup.includes('id="candidate-device-time" name="device-time" required'),
+    "the manual form collects the device time",
+  );
+  assert.ok(
+    markup.includes('id="candidate-background-subject" name="background-subject" required'),
+    "the manual form collects the background subject",
+  );
+  assert.ok(markup.includes(">풍경</option>"), "background subjects are labelled in Korean");
+  assert.ok(
+    markup.includes("네이티브 캡처 환경(Appium/시뮬레이터)"),
+    "the image stage says what the offline path cannot render yet",
+  );
+  assert.ok(
+    markup.includes("배경은 외부 이미지 검색에서 출처를 확인해 가져오고"),
+    "the image stage says where the background comes from",
+  );
   for (const option of ['value="KR" selected>한국', 'value="JP">일본', 'value="TW">대만', 'value="US">미국']) {
     assert.ok(markup.includes(option), `country option ${option}`);
   }
@@ -887,9 +1100,16 @@ await testAutogenShowsTheServerMessageVerbatim();
 await testManualCandidateSubmitsParsedListFields();
 await testManualCandidateValidationExplainsTheCountryCode();
 await testManualCandidateValidationRequiresATopic();
+await testManualCandidateValidationRequiresASchedule();
+await testManualCandidateValidationCapsTheSchedule();
+await testManualCandidateValidationExplainsTheDeviceTime();
 await testTopicLeadsTheRowAndTheApprovalCard();
 await testOnlyAwaitingCaptionsFillTheApprovalGate();
 await testJourneyIsVisibleOnRowsAndCards();
 await testJourneyPositionFollowsTheStatus();
+await testImageStageSplitsCaptionAndImageWork();
+await testImageGenerationButtonRunsTheStage();
+await testImageGenerationFailureShowsTheServerMessage();
+await testImageApprovalPostsTheDecision();
 await testMarkupUsesTheAgreedTerminology();
-console.log("workspace static behavior: 25 passed");
+console.log("workspace static behavior: 32 passed");

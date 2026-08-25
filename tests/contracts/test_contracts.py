@@ -112,17 +112,37 @@ def test_parse_job_when_scene_ids_repeat() -> None:
         _ = CaptureJob.model_validate_json(raw_job)
 
 
-def test_parse_job_when_trace_items_are_not_three() -> None:
-    # Given a job that cannot satisfy Trace's current marketing fixture contract
-    raw_job = VALID_JOB.replace(
+def test_parse_job_accepts_one_to_eight_trace_items() -> None:
+    # Given jobs at both ends of the supported schedule length
+    one_item = VALID_JOB.replace(
         '["統計学の試験", "レポート提出", "友達と夕食"]',
-        '["統計学の試験", "レポート提出"]',
+        '["統計学の試験"]',
+    )
+    eight_items = VALID_JOB.replace(
+        '["統計学の試験", "レポート提出", "友達と夕食"]',
+        '["1限", "2限", "3限", "4限", "5限", "6限", "7限", "8限"]',
     )
 
-    # When the trust boundary parses it
-    # Then it rejects the unsupported item count
+    # When the trust boundary parses them
+    # Then both scheduling lengths are accepted
+    assert len(CaptureJob.model_validate_json(one_item).scenes[0].trace_data.items) == 1
+    assert len(CaptureJob.model_validate_json(eight_items).scenes[0].trace_data.items) == 8
+
+
+def test_parse_job_when_trace_items_exceed_the_supported_range() -> None:
+    # Given a job whose schedule is empty or longer than the fixture contract allows
+    empty = VALID_JOB.replace('["統計学の試験", "レポート提出", "友達と夕食"]', "[]")
+    nine_items = VALID_JOB.replace(
+        '["統計学の試験", "レポート提出", "友達と夕食"]',
+        '["1", "2", "3", "4", "5", "6", "7", "8", "9"]',
+    )
+
+    # When the trust boundary parses them
+    # Then it rejects the unsupported item counts
     with pytest.raises(ValidationError):
-        _ = CaptureJob.model_validate_json(raw_job)
+        _ = CaptureJob.model_validate_json(empty)
+    with pytest.raises(ValidationError):
+        _ = CaptureJob.model_validate_json(nine_items)
 
 
 def test_parse_manifest_when_session_id_is_claimed_rejects_non_native_binding() -> None:

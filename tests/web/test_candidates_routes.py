@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from fastapi.testclient import TestClient
@@ -11,10 +12,14 @@ from trace_capture.candidate_generation import (
     CandidateContextMissingError,
     CandidateFormatError,
     CandidateGenerationError,
+    CandidateImageStageError,
 )
 from trace_capture.web.app import create_app
 from trace_capture.workspace import (
+    CandidateBackgroundSubject,
     CandidateCreate,
+    CandidateId,
+    CandidateImageInputs,
     CandidateSource,
     CandidateStatus,
     ProvisionedMember,
@@ -50,6 +55,13 @@ class FakeGenerator:
                     topic=f"자동 주제 {index}",
                     caption=f"자동 캡션 {index}",
                     hypothesis="자동 가설",
+                    image_inputs=CandidateImageInputs(
+                        trace_items=("09:00 통계학 2교시", "13:00 스터디"),
+                        device_time="07:20",
+                        background_subject=CandidateBackgroundSubject.SCENERY,
+                        background_mood="늦은 밤 책상 위 스탠드 불빛",
+                        language="ko",
+                    ),
                     refs_used=("kr-001",),
                     principles_applied=(1,),
                     shooting_order="입력_일정: 9시 스터디",
@@ -72,11 +84,36 @@ def _login(client: TestClient, workspace: ProvisionedWorkspace, member: Provisio
     assert response.status_code == 200
 
 
+@dataclass(frozen=True, slots=True)
+class FakeImageRunner:
+    store: SqliteWorkspaceStore | None = None
+    failure: Exception | None = None
+    image_bytes: bytes = b"\x89PNG\r\n\x1a\n composed"
+
+    def generate(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> CandidateRecord:
+        if self.failure is not None:
+            raise self.failure
+        assert self.store is not None
+        record = self.store.get_candidate(workspace_id, candidate_id)
+        relative = f"candidates/{candidate_id}/r{record.revision}/outputs/final.png"
+        path = self.store.database_path.parent / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_bytes(self.image_bytes)
+        return self.store.attach_candidate_image(
+            workspace_id,
+            candidate_id,
+            image_path=relative,
+            image_sha256=sha256(self.image_bytes).hexdigest(),
+            expected_revision=record.revision,
+        )
+
+
 def _client(
     root: Path,
     store: SqliteWorkspaceStore,
     name: str,
     generator: FakeGenerator | None = None,
+    image_runner: FakeImageRunner | None = None,
 ) -> TestClient:
     workspace = store.create_workspace(name)
     member = store.create_member(workspace.workspace.workspace_id, "Ada")
@@ -84,10 +121,23 @@ def _client(
         root,
         session_secret=b"s" * 32,
         candidate_generator=FakeGenerator(store) if generator is None else generator,
+        candidate_image_runner=FakeImageRunner(store) if image_runner is None else image_runner,
     )
     client = TestClient(app, base_url="https://test")
     _login(client, workspace, member)
     return client
+
+
+def _caption_approved(client: TestClient) -> CandidateResponse:
+    created = CandidateResponse.model_validate_json(
+        client.post("/api/candidates", json=_payload()).content
+    )
+    reviewed = client.post(
+        f"/api/candidates/{created.candidate_id}/review",
+        json={"accepted": True, "note": None, "expected_revision": created.revision},
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    return CandidateResponse.model_validate_json(reviewed.content)
 
 
 def _payload(caption: str = "시험 기간엔 잠금화면부터 바꾼다") -> dict[str, object]:
@@ -96,6 +146,13 @@ def _payload(caption: str = "시험 기간엔 잠금화면부터 바꾼다") -> 
         "country": "JP",
         "caption": caption,
         "hypothesis": "1인칭 감탄이 저장률을 올린다",
+        "image_inputs": {
+            "trace_items": ["09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"],
+            "device_time": "07:20",
+            "background_subject": "scenery",
+            "background_mood": "늦은 밤 책상 위 스탠드 불빛",
+            "language": "ko",
+        },
         "refs_used": ["ref-a", "ref-b"],
         "principles_applied": [1, 4],
         "shooting_order": "- 책상 위 아이폰\n- 형광펜 두 자루",
@@ -357,3 +414,164 @@ def test_generate_reports_a_format_failure_as_a_bad_gateway(tmp_path: Path) -> N
         "detail": "AI 응답이 형식을 통과하지 못했습니다 — 다시 시도해 주세요."
     }
     assert client.get("/api/candidates").json() == []
+
+
+def test_generate_image_composes_and_moves_to_image_review(tmp_path: Path) -> None:
+    # Given a caption-approved candidate
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team")
+    approved = _caption_approved(client)
+
+    # When the image stage runs
+    response = client.post(f"/api/candidates/{approved.candidate_id}/generate-image")
+
+    # Then the candidate carries a verified image and waits for image review
+    assert response.status_code == 201, response.text
+    composed = CandidateResponse.model_validate_json(response.content)
+    assert composed.status is CandidateStatus.IMAGE_AWAITING_REVIEW
+    assert composed.image_path is not None
+    assert composed.image_sha256 is not None
+
+
+def test_generate_image_rejects_a_candidate_that_is_not_caption_approved(tmp_path: Path) -> None:
+    # Given a candidate still awaiting caption review
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team")
+    created = CandidateResponse.model_validate_json(
+        client.post("/api/candidates", json=_payload()).content
+    )
+
+    # When
+    response = client.post(f"/api/candidates/{created.candidate_id}/generate-image")
+
+    # Then
+    assert response.status_code == 409
+    assert response.json() == {"detail": "candidate is not caption approved"}
+
+
+def test_generate_image_reports_a_stage_failure_verbatim(tmp_path: Path) -> None:
+    # Given an image stage that cannot find its component fixture
+    store = SqliteWorkspaceStore(tmp_path)
+    failure = CandidateImageStageError("잠금화면 부품 이미지를 찾을 수 없습니다 (경로: /x)")
+    client = _client(tmp_path, store, "Trace team", image_runner=FakeImageRunner(failure=failure))
+    approved = _caption_approved(client)
+
+    # When
+    response = client.post(f"/api/candidates/{approved.candidate_id}/generate-image")
+
+    # Then
+    assert response.status_code == 409
+    assert response.json() == {"detail": failure.message}
+
+
+def test_image_approval_submits_and_rejection_returns_for_a_new_image(tmp_path: Path) -> None:
+    # Given two composed candidates
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team")
+    first = _caption_approved(client)
+    second = _caption_approved(client)
+    approved = CandidateResponse.model_validate_json(
+        client.post(f"/api/candidates/{first.candidate_id}/generate-image").content
+    )
+    rejected = CandidateResponse.model_validate_json(
+        client.post(f"/api/candidates/{second.candidate_id}/generate-image").content
+    )
+
+    # When
+    submit = client.post(
+        f"/api/candidates/{approved.candidate_id}/review-image",
+        json={"accepted": True, "note": None, "expected_revision": approved.revision},
+    )
+    send_back = client.post(
+        f"/api/candidates/{rejected.candidate_id}/review-image",
+        json={
+            "accepted": False,
+            "note": "배경이 너무 어둡습니다",
+            "expected_revision": rejected.revision,
+        },
+    )
+
+    # Then
+    assert submit.status_code == 200, submit.text
+    assert send_back.status_code == 200, send_back.text
+    submitted = CandidateResponse.model_validate_json(submit.content)
+    returned = CandidateResponse.model_validate_json(send_back.content)
+    assert submitted.status is CandidateStatus.SUBMITTED
+    assert submitted.image_path == approved.image_path
+    assert returned.status is CandidateStatus.CAPTION_APPROVED
+    assert returned.review_note == "배경이 너무 어둡습니다"
+    assert returned.image_path is None
+
+
+def test_image_review_requires_a_candidate_at_the_image_gate(tmp_path: Path) -> None:
+    # Given a caption-approved candidate with no composed image
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team")
+    approved = _caption_approved(client)
+
+    # When
+    response = client.post(
+        f"/api/candidates/{approved.candidate_id}/review-image",
+        json={"accepted": True, "note": None, "expected_revision": approved.revision},
+    )
+
+    # Then
+    assert response.status_code == 409
+    assert response.json() == {"detail": "candidate has no image awaiting review"}
+
+
+def test_stale_image_review_conflicts(tmp_path: Path) -> None:
+    # Given a composed candidate
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team")
+    approved = _caption_approved(client)
+    composed = CandidateResponse.model_validate_json(
+        client.post(f"/api/candidates/{approved.candidate_id}/generate-image").content
+    )
+
+    # When a stale revision reviews it
+    response = client.post(
+        f"/api/candidates/{composed.candidate_id}/review-image",
+        json={"accepted": True, "note": None, "expected_revision": composed.revision + 5},
+    )
+
+    # Then
+    assert response.status_code == 409
+    assert response.json() == {"detail": "candidate revision conflict"}
+
+
+def test_candidate_image_is_served_to_its_own_workspace_only(tmp_path: Path) -> None:
+    # Given a composed candidate in one workspace and a member of another
+    store = SqliteWorkspaceStore(tmp_path)
+    owner = _client(tmp_path, store, "First")
+    other = _client(tmp_path, store, "Second")
+    approved = _caption_approved(owner)
+    composed = CandidateResponse.model_validate_json(
+        owner.post(f"/api/candidates/{approved.candidate_id}/generate-image").content
+    )
+
+    # When both workspaces request the image
+    owned = owner.get(f"/api/candidates/{composed.candidate_id}/image")
+    foreign = other.get(f"/api/candidates/{composed.candidate_id}/image")
+
+    # Then only the owning workspace receives the bytes
+    assert owned.status_code == 200
+    assert owned.headers["content-type"] == "image/png"
+    assert sha256(owned.content).hexdigest() == composed.image_sha256
+    assert foreign.status_code == 404
+
+
+def test_candidate_without_an_image_has_no_image_route(tmp_path: Path) -> None:
+    # Given a candidate that has not reached the image stage
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team")
+    created = CandidateResponse.model_validate_json(
+        client.post("/api/candidates", json=_payload()).content
+    )
+
+    # When
+    response = client.get(f"/api/candidates/{created.candidate_id}/image")
+
+    # Then
+    assert response.status_code == 404
+    assert response.json() == {"detail": "candidate image not found"}

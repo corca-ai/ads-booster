@@ -69,8 +69,10 @@ CREATE TABLE IF NOT EXISTS candidates (
     refs_used_json TEXT NOT NULL,
     principles_applied_json TEXT NOT NULL,
     shooting_order TEXT NOT NULL,
+    image_inputs_json TEXT,
     ai_verdict TEXT,
     image_path TEXT,
+    image_sha256 TEXT,
     status TEXT NOT NULL,
     review_note TEXT,
     revision INTEGER NOT NULL,
@@ -95,6 +97,10 @@ CREATE TABLE IF NOT EXISTS private_sessions (
 """
 LEGACY_CANDIDATE_TOPIC: Final = "(주제 미기록)"
 _ADD_CANDIDATE_TOPIC: Final = "ALTER TABLE candidates ADD COLUMN topic TEXT NOT NULL DEFAULT ''"
+_ADD_CANDIDATE_COLUMNS: Final = {
+    "image_inputs_json": "ALTER TABLE candidates ADD COLUMN image_inputs_json TEXT",
+    "image_sha256": "ALTER TABLE candidates ADD COLUMN image_sha256 TEXT",
+}
 _BACKFILL_CANDIDATE_TOPIC: Final = "UPDATE candidates SET topic = ? WHERE topic = ''"
 _MIGRATE_ACCEPTED_STATUS: Final = (
     "UPDATE candidates SET status = 'caption_approved' WHERE status = 'accepted'"
@@ -135,15 +141,19 @@ class WorkspaceDatabase:
 def _migrate_candidates(connection: sqlite3.Connection) -> None:
     """Bring candidate rows written before the approval journey up to the current shape.
 
-    Both steps are idempotent so they can run on every open: `topic` became a required
-    reviewable field after the first candidates were stored, and single-stage "accepted"
-    rows mean the same thing as the first journey stage.
+    Every step is idempotent so they can run on every open: `topic` became a required
+    reviewable field after the first candidates were stored, the image stage added nullable
+    `image_inputs_json` and `image_sha256` columns, and single-stage "accepted" rows mean the
+    same thing as the first journey stage.
     """
     cursor: SqliteCursor = connection.execute("PRAGMA table_info(candidates)")
     rows: list[SqliteRow] = cursor.fetchall()
     columns = {row[1] for row in rows}
     if "topic" not in columns:
         _ = connection.execute(_ADD_CANDIDATE_TOPIC)
+    for column, statement in _ADD_CANDIDATE_COLUMNS.items():
+        if column not in columns:
+            _ = connection.execute(statement)
     _ = connection.execute(_BACKFILL_CANDIDATE_TOPIC, (LEGACY_CANDIDATE_TOPIC,))
     _ = connection.execute(_MIGRATE_ACCEPTED_STATUS)
     connection.commit()

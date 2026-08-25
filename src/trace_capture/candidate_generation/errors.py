@@ -69,6 +69,11 @@ class CandidateProviderError(CandidateGenerationError):
 
 
 @final
+class CandidateImageStageError(CandidateGenerationError):
+    """A candidate image run that stopped before producing a verified image."""
+
+
+@final
 class CandidateFormatError(CandidateGenerationError):
     def __init__(self, detail: str) -> None:
         """Create an error for a model response that failed the strict output contract."""

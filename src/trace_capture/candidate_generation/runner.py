@@ -98,6 +98,7 @@ class CandidateGenerator:
             topic=draft.topic,
             caption=draft.caption,
             hypothesis=draft.hypothesis,
+            image_inputs=draft.image_inputs,
             refs_used=draft.refs_used,
             principles_applied=draft.principles_applied,
             shooting_order=draft.appium_prompt,

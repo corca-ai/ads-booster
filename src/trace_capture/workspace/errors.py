@@ -47,6 +47,20 @@ class CandidateAlreadyReviewedError(RuntimeError):
 
 
 @final
+class CandidateStateError(RuntimeError):
+    def __init__(self, *, record_id: str, status: str, required: str) -> None:
+        """Create an error for a journey transition attempted from the wrong stage."""
+        self.record_id = record_id
+        self.status = status
+        self.required = required
+        super().__init__(record_id, status, required)
+
+    @override
+    def __str__(self) -> str:
+        return f"candidate {self.record_id} is {self.status}, not {self.required}"
+
+
+@final
 class WorkspaceStoreCorruptionError(RuntimeError):
     def __init__(self, *, record_type: str) -> None:
         """Create an error for a database row that fails its typed boundary."""

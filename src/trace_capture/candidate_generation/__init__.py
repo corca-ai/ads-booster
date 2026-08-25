@@ -9,11 +9,24 @@ from trace_capture.candidate_generation.errors import (
     CandidateContextMissingError,
     CandidateFormatError,
     CandidateGenerationError,
+    CandidateImageStageError,
     CandidateProviderError,
 )
 from trace_capture.candidate_generation.factory import (
+    ProductionCandidateBackgrounds,
     ProductionCandidateModels,
     build_candidate_generator,
+    build_candidate_image_runner,
+)
+from trace_capture.candidate_generation.image_runner import (
+    CANDIDATE_IMAGE_DIRECTORY,
+    CandidateBackgroundPort,
+    CandidateBackgroundSource,
+    CandidateImageOptions,
+    CandidateImageRunner,
+    CandidateImageRunnerPort,
+    CandidateImageStore,
+    build_background_query,
 )
 from trace_capture.candidate_generation.instruction import (
     SYSTEM_INSTRUCTION,
@@ -35,11 +48,14 @@ from trace_capture.candidate_generation.runner import (
 )
 
 __all__ = [
+    "CANDIDATE_IMAGE_DIRECTORY",
     "CONTEXT_DIR_ENVIRONMENT",
     "DEFAULT_CANDIDATE_COUNT",
     "REQUIRED_DOCUMENTS",
     "SYSTEM_INSTRUCTION",
     "CandidateAuthRequiredError",
+    "CandidateBackgroundPort",
+    "CandidateBackgroundSource",
     "CandidateContextBundle",
     "CandidateContextMissingError",
     "CandidateContextSource",
@@ -49,11 +65,19 @@ __all__ = [
     "CandidateGenerationError",
     "CandidateGenerator",
     "CandidateGeneratorPort",
+    "CandidateImageOptions",
+    "CandidateImageRunner",
+    "CandidateImageRunnerPort",
+    "CandidateImageStageError",
+    "CandidateImageStore",
     "CandidateModelSource",
     "CandidateProviderError",
     "CandidateWriter",
+    "ProductionCandidateBackgrounds",
     "ProductionCandidateModels",
+    "build_background_query",
     "build_candidate_generator",
+    "build_candidate_image_runner",
     "build_instruction",
     "build_retry_instruction",
     "default_context_directory",

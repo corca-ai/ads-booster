@@ -53,7 +53,7 @@ src/trace_capture/
 ├── agent/          # agent loop, context, TUI, REPL, standalone sessions
 ├── auth/           # OAuth flow and credential persistence
 ├── automation/     # durable campaigns, queue, producer, worker and review lifecycle
-├── candidate_generation/  # context assembly and one-call post-candidate production
+├── candidate_generation/  # context assembly, one-call candidate production and the offline image stage
 ├── capture/        # Appium/XCUITest capture and artifact validation
 ├── cli/            # installed Typer entry points and composition roots
 ├── composition/    # deterministic offline image-layer validation and composition
@@ -77,7 +77,7 @@ src/trace_capture/
 | `agent/` | Conversation history, context projection/compaction, tool loop, and TUI/REPL session control | Provider HTTP details or native capture |
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
-| `candidate_generation/` | Context-document loading, the assembled generation instruction, strict-JSON parsing with one retry, and all-or-nothing candidate writing through a store protocol | HTTP routes, provider transport details, or candidate review transitions |
+| `candidate_generation/` | Context-document loading, the assembled generation instruction, strict-JSON parsing with one retry, all-or-nothing candidate writing through a store protocol, and the offline candidate image run | HTTP routes, provider transport details, native capture, composition algorithms, or candidate review transitions |
 | `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Trace setup entry, component collection, and provenance validation | Scene planning or final composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
 | `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
@@ -106,7 +106,7 @@ Compose concrete dependencies at these entry points.
 | `capture/factory.py` | Native capture-adapter selection by device kind |
 | `cli/trace_run.py` | run store, capture port, compose port, CLI error mapping |
 | `web/app.py` | workspace/queue stores, session codec, chat factory, candidate generator, focused routers, static shell |
-| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider client, and context directory for automatic candidate production |
+| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider and image clients, context directory, and shipped fixture paths for candidate production and the image stage |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
 
@@ -146,6 +146,11 @@ composition time and give an explicit lifespan or context manager ownership of s
   `CandidateWriter` protocol; compose both in `candidate_generation/factory.py`.
 - Keep the Web layer limited to authentication, typed-error-to-status mapping, and response shaping.
 - v1 is script assembly: one provider call, no tool loop and no search.
+- The image stage owns only orchestration: it calls the `providers/` image port for the background
+  and drives `runtime/`'s `TraceRunRunner` with the offline `LocalArtifactCapturePort` and
+  `LocalComposePort`. Do not reimplement capture, staging, or composition inside this package.
+- Candidate journey transitions stay in `workspace/`; the image runner writes through the
+  `CandidateImageStore` protocol and never edits status columns itself.
 
 ### Web APIs
 

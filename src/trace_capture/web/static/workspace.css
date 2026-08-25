@@ -642,18 +642,6 @@ textarea:focus-visible {
   font-weight: 700;
 }
 
-.journey__step.is-planned {
-  color: var(--color-text-quiet);
-  cursor: help;
-}
-
-.journey__step.is-planned.is-current {
-  color: var(--color-text-muted);
-  font-weight: 400;
-  text-decoration: underline dotted;
-  text-underline-offset: var(--space-1);
-}
-
 .entry-block {
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-md);
@@ -742,14 +730,28 @@ textarea:focus-visible {
 
 .candidate-status.awaiting_review { background: var(--color-warning); color: var(--color-accent-ink); }
 .candidate-status.caption_approved,
-.candidate-status.image_approved { background: var(--color-info); color: var(--color-accent-ink); }
-.candidate-status.submitted { background: var(--color-success); color: var(--color-accent-ink); }
+.candidate-status.image_awaiting_review { background: var(--color-info); color: var(--color-accent-ink); }
+.candidate-status.submitted { background: var(--color-accent); color: var(--color-accent-ink); }
 .candidate-status.rejected { background: var(--color-danger); color: var(--color-accent-ink); }
 
 .approval-list {
   display: grid;
   gap: var(--space-4);
   margin-block-start: var(--space-4);
+}
+
+.approval-stage {
+  border-block-start: var(--border-width) solid var(--color-border);
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-4);
+}
+
+.approval-stage__title {
+  color: var(--color-text);
+  font-size: var(--font-heading);
+  line-height: var(--leading-heading);
+  margin: 0;
 }
 
 .approval-card {

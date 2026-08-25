@@ -17,6 +17,7 @@ from trace_capture.workspace import (
     CandidateCountry,
     CandidateHypothesis,
     CandidateId,
+    CandidateImageInputs,
     CandidatePrinciple,
     CandidateReference,
     CandidateReviewNote,
@@ -241,6 +242,7 @@ class CandidateCreateRequest(WebModel):
     country: CandidateCountry
     caption: CandidateCaption
     hypothesis: CandidateHypothesis
+    image_inputs: CandidateImageInputs
     refs_used: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
     principles_applied: Annotated[tuple[CandidatePrinciple, ...], Field(max_length=32)] = ()
     shooting_order: CandidateShootingOrder = ""
@@ -250,6 +252,10 @@ class CandidateReviewRequest(WebModel):
     accepted: bool
     note: CandidateReviewNote | None = None
     expected_revision: int = Field(ge=1)
+
+
+class CandidateImageReviewRequest(CandidateReviewRequest):
+    """Stage-two decision on the composed image."""
 
 
 class CandidateResponse(WebModel):
@@ -263,8 +269,10 @@ class CandidateResponse(WebModel):
     refs_used: tuple[str, ...]
     principles_applied: tuple[int, ...]
     shooting_order: str
+    image_inputs: CandidateImageInputs | None
     ai_verdict: str | None
     image_path: str | None
+    image_sha256: str | None
     status: CandidateStatus
     review_note: str | None
     revision: int

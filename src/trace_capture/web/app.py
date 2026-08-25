@@ -10,7 +10,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from trace_capture.automation import AutomationQueue, CampaignStore
-from trace_capture.candidate_generation import CandidateGeneratorPort, build_candidate_generator
+from trace_capture.candidate_generation import (
+    CandidateGeneratorPort,
+    CandidateImageRunnerPort,
+    build_candidate_generator,
+    build_candidate_image_runner,
+)
 from trace_capture.config.settings import AgentSettings
 from trace_capture.service.state import ServiceStateStore
 from trace_capture.web.assets import build_asset_router
@@ -41,6 +46,7 @@ def create_app(
     clock: Clock = time.time,
     chat_factory: WebAgentSessionFactory | None = None,
     candidate_generator: CandidateGeneratorPort | None = None,
+    candidate_image_runner: CandidateImageRunnerPort | None = None,
 ) -> FastAPI:
     store = SqliteWorkspaceStore(root)
     state = ServiceStateStore(store.database_path.parent).load()
@@ -56,10 +62,16 @@ def create_app(
     active_chat_factory = (
         WebAgentSessionFactory.production(settings) if chat_factory is None else chat_factory
     )
+    home = store.database_path.parent
     active_generator = (
         build_candidate_generator(settings, store)
         if candidate_generator is None
         else candidate_generator
+    )
+    active_image_runner = (
+        build_candidate_image_runner(settings, home, store)
+        if candidate_image_runner is None
+        else candidate_image_runner
     )
     app = FastAPI(title="Trace Workspace API")
     app.include_router(
@@ -72,7 +84,15 @@ def create_app(
     )
     app.include_router(build_context_router(store, current_principal))
     app.include_router(build_asset_router(store, current_principal))
-    app.include_router(build_candidate_router(store, current_principal, active_generator))
+    app.include_router(
+        build_candidate_router(
+            store,
+            current_principal,
+            active_generator,
+            active_image_runner,
+            home,
+        )
+    )
     app.include_router(build_session_router(store, current_principal))
     app.include_router(build_chat_router(store, current_principal, active_chat_factory))
     app.include_router(build_run_router(current_principal))
