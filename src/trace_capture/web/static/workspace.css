@@ -477,9 +477,9 @@ textarea:focus-visible {
 
 .member-access__field {
   display: grid;
-  flex: 1 1 min(var(--member-code-field-min), 100%);
+  flex: 1 1 min(var(--member-access-field-min), 100%);
   gap: var(--space-1);
-  min-inline-size: min(var(--member-code-field-min), 100%);
+  min-inline-size: min(var(--member-access-field-min), 100%);
 }
 
 .member-access__field span,

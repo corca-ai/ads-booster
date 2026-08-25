@@ -391,7 +391,7 @@ def test_service_install_workspace_name_updates_existing_workspace(
     )
 
 
-def test_workspace_access_command_prints_a_fresh_four_value_login_pair(
+def test_workspace_access_command_prints_one_composite_login_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -411,12 +411,24 @@ def test_workspace_access_command_prints_a_fresh_four_value_login_pair(
     # When the operator explicitly asks for workspace access details
     result = CliRunner().invoke(app, ["workspace", "access"])
 
-    # Then the command rotates and prints exactly the values needed by the browser form
+    # Then the command rotates and prints one copyable value containing the four browser values
     assert result.exit_code == 0
-    assert "Workspace ID:" in result.stdout
-    assert "Member ID:" in result.stdout
-    assert "Workspace code:" in result.stdout
-    assert "Member code:" in result.stdout
+    access_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("Workspace access ID (shown once; not written to logs): ")
+    ]
+    assert len(access_lines) == 1
+    access_id = access_lines[0].removeprefix(
+        "Workspace access ID (shown once; not written to logs): "
+    )
+    access_parts = access_id.split("%")
+    assert len(access_parts) == 4
+    assert access_parts[:2] == [
+        str(provisioned.workspace.workspace_id),
+        str(member.member.member_id),
+    ]
+    assert all(access_parts[2:])
 
 
 def test_launchd_plist_passes_the_absolute_cloudflared_path(tmp_path: Path) -> None:

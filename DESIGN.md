@@ -23,8 +23,8 @@ raw color or spacing values.
 
 The web workspace has two mutually exclusive states.
 
-1. `workspace-entry` is a dedicated, centered entry screen. It contains only the four access
-   fields, validation, the privacy note, and the `입장` action.
+1. `workspace-entry` is a dedicated, centered entry screen. It contains only one composite access
+   ID field, validation, the privacy note, and the `입장` action.
 2. `workspace-main` appears only after server-side membership authentication. It is one bounded
    content canvas with a compact tab bar and the single primary action `새 자료 만들기`.
 
@@ -42,7 +42,8 @@ the current UTC time when the campaign is submitted.
 ### Member Access
 
 - States: entry, focus, validation error, connecting, connected, unavailable.
-- Inputs always have visible labels. Codes are password fields and never stored by the static UI.
+- Inputs always have visible labels. The composite access ID is a password field and is never stored
+  by the static UI.
 - On success, the entry screen hides before the authenticated work canvas is revealed.
 
 ### Workspace Toolbar

@@ -167,10 +167,11 @@ uv run trace-agent workspace access
 
 `workspace show` remains an optional diagnostic command; it is not required for normal team access.
 
-`workspace access` explicitly rotates the owner workspace/member codes and prints the four browser
-login values once: Workspace ID, Member ID, Workspace code, and Member code. The compatibility
-alias `rotate-code` performs the same action. A browser login supplies those values. The service
-then scopes shared context to the workspace and private chat history to the authenticated member.
+`workspace access` explicitly rotates the owner workspace/member codes and prints one browser login
+ID once. Its four `%`-separated parts are Workspace ID, Member ID, Workspace code, and Member code;
+paste the complete value into the browser entry form. The compatibility alias `rotate-code` performs
+the same action. The service still parses and verifies those four values separately, then scopes
+shared context to the workspace and private chat history to the authenticated member.
 Rotating either code version invalidates sessions issued with the old version. The first-run CLI
 provisions the owner pair; the local operator can provision another member with a one-time invite
 code:

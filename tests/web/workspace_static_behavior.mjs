@@ -217,6 +217,7 @@ const makeLiveDocument = () => {
   const liveStatus = new FakeElement("live-status");
   const memberForm = new FakeElement("member-form");
   const memberFields = new FakeElement("member-fields");
+  const accessTokenField = new FakeElement("workspace-access-id");
   const memberConnected = new FakeElement("member-connected");
   const memberFeedback = new FakeElement("member-feedback");
   const memberLabel = new FakeElement("member-label");
@@ -226,10 +227,7 @@ const makeLiveDocument = () => {
   const queueEmpty = new FakeElement("queue-empty");
   const queueSummary = new FakeElement("queue-summary");
   memberForm.formValues = new Map([
-    ["workspace-id", "workspace-1"],
-    ["member-id", "member-1"],
-    ["workspace-code", "workspace-code"],
-    ["member-code", "member-code"],
+    ["access-token", "workspace-1%member-1%workspace-code%member-code"],
   ]);
   const captureDialog = new FakeElement("capture-dialog");
   const captureCancel = new FakeElement("capture-cancel");
@@ -291,6 +289,7 @@ const makeLiveDocument = () => {
     ["[data-live-status]", liveStatus],
     ["[data-member-access]", memberForm],
     ["[data-member-access-form]", memberFields],
+    ["#workspace-access-id", accessTokenField],
     ["[data-member-connected]", memberConnected],
     ["[data-member-feedback]", memberFeedback],
     ["[data-member-state-label]", memberLabel],
@@ -324,6 +323,7 @@ const makeLiveDocument = () => {
     liveStatus,
     memberForm,
     memberFields,
+    accessTokenField,
     memberConnected,
     memberFeedback,
     memberLabel,
@@ -355,6 +355,7 @@ const makeLiveDocument = () => {
     notice,
     memberForm,
     memberFields,
+    accessTokenField,
     memberConnected,
     memberFeedback,
     memberLabel,
@@ -500,13 +501,13 @@ const testAuthFailureSignsOut = async () => {
 
 const testLoginValidationExplainsTheFirstMissingValue = async () => {
   const fixture = makeLiveDocument();
-  fixture.memberForm.formValues.set("workspace-id", "");
+  fixture.memberForm.formValues.set("access-token", "");
   await loadLive(fixture, async (path) => {
     if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
     throw new Error(`unexpected path: ${path}`);
   });
   await fixture.memberForm.submit();
-  assert.equal(fixture.memberFeedback.textContent, "워크스페이스 ID 값을 입력해 주세요.");
+  assert.equal(fixture.memberFeedback.textContent, "워크스페이스 접속 ID 값을 입력해 주세요.");
 };
 
 const testLoginValidationReportsEveryMissingValue = async () => {
@@ -519,8 +520,47 @@ const testLoginValidationReportsEveryMissingValue = async () => {
   await fixture.memberForm.submit();
   assert.equal(
     fixture.memberFeedback.textContent,
-    "워크스페이스 ID, 멤버 ID, 워크스페이스 코드, 멤버 코드 값을 입력해 주세요.",
+    "워크스페이스 접속 ID 값을 입력해 주세요.",
   );
+};
+
+const testLoginParsesCompositeAccessId = async () => {
+  const fixture = makeLiveDocument();
+  fixture.memberForm.formValues.set(
+    "access-token",
+    "Workspace access ID (shown once; not written to logs): workspace-1%member-1%workspace-code%member-code",
+  );
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
+    if (path === "/api/auth/login") return response(200, { display_name: "Ada" });
+    if (["/api/contexts", "/api/assets", "/api/campaigns", "/api/queue", "/api/sessions", "/api/chat/commands"].includes(path)) {
+      return response(200, []);
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.memberForm.submit();
+  const login = calls.find(([path]) => path === "/api/auth/login");
+  assert.ok(login);
+  assert.deepEqual(JSON.parse(login[1].body), {
+    workspace_id: "workspace-1",
+    member_id: "member-1",
+    workspace_code: "workspace-code",
+    member_code: "member-code",
+  });
+};
+
+const testLoginRejectsMalformedCompositeAccessId = async () => {
+  const fixture = makeLiveDocument();
+  fixture.memberForm.formValues.set("access-token", "workspace-1%member-1%workspace-code");
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.memberForm.submit();
+  assert.equal(fixture.accessTokenField.getAttribute("aria-invalid"), "true");
+  assert.equal(fixture.memberFeedback.textContent, "워크스페이스 접속 ID 형식을 확인해 주세요.");
 };
 
 const testQueueEmptySurfaceExplainsTheNextAction = async () => {
@@ -680,6 +720,8 @@ await testRefreshFailureDoesNotSignOut();
 await testAuthFailureSignsOut();
 await testLoginValidationExplainsTheFirstMissingValue();
 await testLoginValidationReportsEveryMissingValue();
+await testLoginParsesCompositeAccessId();
+await testLoginRejectsMalformedCompositeAccessId();
 await testQueueEmptySurfaceExplainsTheNextAction();
 await testAsyncSubmitHandlersRetainTheirFormTargets();
 await testChatCommandOutputRendersTuiSessionOptions();
@@ -691,4 +733,4 @@ await testOverviewNavigationResetsTheSelectedTab();
 await testChatNavigationSelectsTheChatPanel();
 await testRefreshShowsAndClearsBusyState();
 await testLoginShowsAndClearsActionBusyState();
-console.log("workspace static behavior: 17 passed");
+console.log("workspace static behavior: 19 passed");

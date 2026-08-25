@@ -13,7 +13,7 @@
     <a class="skip-link" href="#entry-title">워크스페이스 입장으로 건너뛰기</a>
     <div class="workspace-shell">
       <section class="workspace-entry" data-entry-screen aria-labelledby="entry-title">
-        <form class="member-access" data-member-access novalidate aria-describedby="member-code-note member-code-feedback">
+        <form class="member-access" data-member-access novalidate aria-describedby="access-id-note access-id-feedback">
           <div class="member-access__header">
             <div>
               <p class="eyebrow">입장 전</p>
@@ -23,16 +23,13 @@
             <span class="mono" data-member-state-label>입장 전</span>
           </div>
           <div class="member-access__form" data-member-access-form>
-            <label class="member-access__field" for="workspace-id"><span>워크스페이스 ID</span><input id="workspace-id" name="workspace-id" autocomplete="off" required></label>
-            <label class="member-access__field" for="member-id"><span>멤버 ID</span><input id="member-id" name="member-id" autocomplete="off" required></label>
-            <label class="member-access__field" for="workspace-code"><span>워크스페이스 코드</span><input id="workspace-code" name="workspace-code" type="password" autocomplete="one-time-code" required></label>
-            <label class="member-access__field" for="member-code"><span>멤버 코드</span><input id="member-code" name="member-code" type="password" autocomplete="one-time-code" required></label>
+            <label class="member-access__field" for="workspace-access-id"><span>워크스페이스 접속 ID</span><input id="workspace-access-id" name="access-token" type="password" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" required></label>
           </div>
           <div class="member-access__footer">
-            <p class="member-access__note" id="member-code-note">입력한 정보는 이 페이지에 저장하지 않습니다.</p>
+            <p class="member-access__note" id="access-id-note"><code>trace-agent workspace access</code>의 전체 값을 붙여넣으세요. ID와 코드 4개가 <code>%</code>로 연결되어 있습니다.</p>
             <button class="button button-primary" type="submit" data-member-submit>입장</button>
           </div>
-          <p class="member-access__feedback" id="member-code-feedback" data-member-feedback role="alert" hidden></p>
+          <p class="member-access__feedback" id="access-id-feedback" data-member-feedback role="alert" hidden></p>
           <div class="member-access__connected" data-member-connected hidden><span class="signal-mark success" aria-hidden="true"></span><span>이 브라우저에서 워크스페이스에 연결되었습니다.</span><button class="button button-quiet" type="button" data-member-reset>다른 정보로 입장</button></div>
         </form>
       </section>
