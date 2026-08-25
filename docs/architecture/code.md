@@ -76,15 +76,15 @@ src/trace_capture/
 | `agent/` | Conversation history, context projection/compaction, tool loop, and TUI/REPL session control | Provider HTTP details or native capture |
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
-| `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, iPhone UI screenshots, Trace component collection, and provenance validation | Scene planning or final composition policy |
+| `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Trace setup entry, component collection, and provenance validation | Scene planning or final composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
-| `composition/` | Offline layer validation, transparency/path constraints, and deterministic PNG composition | Appium navigation or provider calls; context-driven Image Model composition |
+| `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
 | `contracts/` | Versioned capture, composition, generation, run, and model-tool descriptor contracts | File, network, or database access |
-| `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` | Image generation, capture, or persistence |
+| `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` and image-search query | Image generation, capture, or persistence |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
-| `runtime/` | GenerateOne/TraceRun orchestration, capability order, Image Model composition boundary, journals, replay, locks, and artifact validation | CLI output or HTTP routing |
+| `runtime/` | GenerateOne/TraceRun orchestration, capability order, searched background plus clean system UI and deterministic composition boundary, journals, replay, locks, and artifact validation | CLI output or HTTP routing |
 | `service/` | Loopback listener, workspace bootstrap, automation-worker hosting, launchd, and service status | Web schemas or queue transitions |
 | `tools/` | Executable tools, registry, approval, workspace paths, and bounded output | Provider loop or TraceRun state transitions |
 | `transport/` | Shared HTTP client and JSON transport types | Provider-specific meaning |
