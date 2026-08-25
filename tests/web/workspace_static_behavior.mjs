@@ -280,6 +280,18 @@ const makeLiveDocument = () => {
   const chatApprovalDetail = new FakeElement("chat-approval-detail");
   const chatModel = new FakeElement("chat-model");
   const chatPermission = new FakeElement("chat-permission");
+  const inviteButton = new FakeElement("invite-button");
+  const inviteDialog = new FakeElement("invite-dialog");
+  const inviteForm = new FakeElement("invite-form");
+  const inviteName = new FakeElement("invite-name");
+  const inviteFeedback = new FakeElement("invite-feedback");
+  const inviteResult = new FakeElement("invite-result");
+  const inviteToken = new FakeElement("invite-token");
+  const inviteCopy = new FakeElement("invite-copy");
+  const inviteCancel = new FakeElement("invite-cancel");
+  inviteCancel.matches = (selector) => selector === "[value='cancel']";
+  inviteDialog.children = [inviteCancel];
+  inviteForm.formValues = new Map([["display-name", "Grace"]]);
   chatCommandOutput.hidden = true;
   chatApproval.hidden = true;
   const selectors = new Map([
@@ -315,6 +327,14 @@ const makeLiveDocument = () => {
     ["[data-chat-approval-detail]", chatApprovalDetail],
     ["[data-chat-model]", chatModel],
     ["[data-chat-permission]", chatPermission],
+    ["[data-action='open-invite']", inviteButton],
+    ["[data-invite-dialog]", inviteDialog],
+    ["[data-invite-form]", inviteForm],
+    ["[data-invite-name]", inviteName],
+    ["[data-invite-feedback]", inviteFeedback],
+    ["[data-invite-result]", inviteResult],
+    ["[data-invite-token]", inviteToken],
+    ["[data-invite-copy]", inviteCopy],
   ]);
   const document = new FakeDocument([
     workspaceLive,
@@ -343,6 +363,15 @@ const makeLiveDocument = () => {
     promotionSelect,
     chatForm,
     chatField,
+    inviteButton,
+    inviteDialog,
+    inviteForm,
+    inviteName,
+    inviteFeedback,
+    inviteResult,
+    inviteToken,
+    inviteCopy,
+    inviteCancel,
   ]);
   document.querySelector = (selector) => selectors.get(selector) ?? null;
   document.querySelectorAll = () => [];
@@ -381,6 +410,14 @@ const makeLiveDocument = () => {
     chatApprovalDetail,
     chatModel,
     chatPermission,
+    inviteButton,
+    inviteDialog,
+    inviteForm,
+    inviteName,
+    inviteFeedback,
+    inviteResult,
+    inviteToken,
+    inviteCopy,
   };
 };
 
@@ -553,7 +590,7 @@ const testLoginParsesCompositeAccessId = async () => {
 
 const testLoginRejectsMalformedCompositeAccessId = async () => {
   const fixture = makeLiveDocument();
-  fixture.memberForm.formValues.set("access-token", "workspace-1%member-1%workspace-code");
+  fixture.memberForm.formValues.set("access-token", "workspace-1%member-1");
   await loadLive(fixture, async (path) => {
     if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
     throw new Error(`unexpected path: ${path}`);
@@ -561,6 +598,83 @@ const testLoginRejectsMalformedCompositeAccessId = async () => {
   await fixture.memberForm.submit();
   assert.equal(fixture.accessTokenField.getAttribute("aria-invalid"), "true");
   assert.equal(fixture.memberFeedback.textContent, "워크스페이스 접속 ID 형식을 확인해 주세요.");
+};
+
+const testMemberAccessIdUsesMemberLoginRoute = async () => {
+  const fixture = makeLiveDocument();
+  fixture.memberForm.formValues.set("access-token", "workspace-1%member-1%member-code");
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(401, { detail: "authentication required" });
+    if (path === "/api/auth/member-login") return response(200, { display_name: "Grace", is_admin: false });
+    if (["/api/contexts", "/api/assets", "/api/campaigns", "/api/queue", "/api/sessions", "/api/chat/commands"].includes(path)) {
+      return response(200, []);
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.memberForm.submit();
+  const login = calls.find(([path]) => path === "/api/auth/member-login");
+  assert.ok(login);
+  assert.deepEqual(JSON.parse(login[1].body), {
+    workspace_id: "workspace-1",
+    member_id: "member-1",
+    member_code: "member-code",
+  });
+  assert.equal(fixture.inviteButton.hidden, true);
+};
+
+const testOwnerCanInviteMemberAndSeeOneTimeAccessId = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Owner", is_admin: true });
+    if (path === "/api/members/invite") return response(201, { member_access_id: "workspace-1%member-2%member-code" });
+    if (["/api/contexts", "/api/assets", "/api/campaigns", "/api/queue", "/api/sessions", "/api/chat/commands"].includes(path)) {
+      return response(200, []);
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+  assert.equal(fixture.inviteButton.hidden, false);
+  await fixture.inviteButton.click();
+  assert.equal(fixture.inviteDialog.open, true);
+  await fixture.inviteForm.submit();
+  assert.equal(fixture.inviteResult.hidden, false);
+  assert.equal(fixture.inviteToken.textContent, "workspace-1%member-2%member-code");
+  const invite = calls.find(([path]) => path === "/api/members/invite");
+  assert.ok(invite);
+  assert.deepEqual(JSON.parse(invite[1].body), { display_name: "Grace" });
+};
+
+const testInviteValidationAndFailureStayNearby = async () => {
+  const fixture = makeLiveDocument();
+  fixture.inviteForm.formValues.set("display-name", "");
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Owner", is_admin: true });
+    if (["/api/contexts", "/api/assets", "/api/campaigns", "/api/queue", "/api/sessions", "/api/chat/commands"].includes(path)) {
+      return response(200, []);
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.inviteButton.click();
+  await fixture.inviteForm.submit();
+  assert.equal(fixture.inviteName.getAttribute("aria-invalid"), "true");
+  assert.equal(fixture.inviteFeedback.textContent, "팀원 이름을 입력해 주세요.");
+  const failing = async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Owner", is_admin: true });
+    if (path === "/api/members/invite") return response(403, { detail: "admin access required" });
+    if (["/api/contexts", "/api/assets", "/api/campaigns", "/api/queue", "/api/sessions", "/api/chat/commands"].includes(path)) {
+      return response(200, []);
+    }
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const failureFixture = makeLiveDocument();
+  failureFixture.inviteForm.formValues.set("display-name", "Grace");
+  await loadLive(failureFixture, failing);
+  await failureFixture.inviteButton.click();
+  await failureFixture.inviteForm.submit();
+  assert.equal(failureFixture.inviteFeedback.hidden, false);
 };
 
 const testQueueEmptySurfaceExplainsTheNextAction = async () => {
@@ -722,6 +836,9 @@ await testLoginValidationExplainsTheFirstMissingValue();
 await testLoginValidationReportsEveryMissingValue();
 await testLoginParsesCompositeAccessId();
 await testLoginRejectsMalformedCompositeAccessId();
+await testMemberAccessIdUsesMemberLoginRoute();
+await testOwnerCanInviteMemberAndSeeOneTimeAccessId();
+await testInviteValidationAndFailureStayNearby();
 await testQueueEmptySurfaceExplainsTheNextAction();
 await testAsyncSubmitHandlersRetainTheirFormTargets();
 await testChatCommandOutputRendersTuiSessionOptions();
@@ -733,4 +850,4 @@ await testOverviewNavigationResetsTheSelectedTab();
 await testChatNavigationSelectsTheChatPanel();
 await testRefreshShowsAndClearsBusyState();
 await testLoginShowsAndClearsActionBusyState();
-console.log("workspace static behavior: 19 passed");
+console.log("workspace static behavior: 22 passed");

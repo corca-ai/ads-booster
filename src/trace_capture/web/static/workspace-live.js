@@ -19,6 +19,10 @@
   const workspaceNames = all("[data-workspace-name]");
   const workspaceChatName = one("[data-workspace-chat-name]");
   const captureDialog = one("[data-capture-dialog]"); const workspaceLive = one("[data-workspace-live]");
+  const inviteDialog = one("[data-invite-dialog]"); const inviteButton = one("[data-action='open-invite']");
+  const inviteForm = one("[data-invite-form]"); const inviteName = one("[data-invite-name]");
+  const inviteFeedback = one("[data-invite-feedback]"); const inviteResult = one("[data-invite-result]");
+  const inviteToken = one("[data-invite-token]"); const inviteCopy = one("[data-invite-copy]");
   const entryScreen = one("[data-entry-screen]");
   const accessTokenField = one("#workspace-access-id");
   const skipLink = one(".skip-link");
@@ -66,7 +70,6 @@
     failed: "실패",
   });
   const ACCESS_ID_SEPARATOR = "%";
-  const ACCESS_ID_PART_COUNT = 4;
   const ACCESS_ID_PREFIX = "Workspace access ID (shown once; not written to logs):";
 
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
@@ -78,14 +81,31 @@
       ? normalized.slice(ACCESS_ID_PREFIX.length).trim()
       : normalized;
     const parts = token.split(ACCESS_ID_SEPARATOR).map((part) => part.trim());
-    if (parts.length !== ACCESS_ID_PART_COUNT || parts.some((part) => !part)) return null;
-    const [workspaceId, memberId, workspaceCode, memberCode] = parts;
-    return {
-      workspace_id: workspaceId,
-      member_id: memberId,
-      workspace_code: workspaceCode,
-      member_code: memberCode,
-    };
+    if (parts.some((part) => !part)) return null;
+    if (parts.length === 4) {
+      const [workspaceId, memberId, workspaceCode, memberCode] = parts;
+      return {
+        path: "/api/auth/login",
+        credentials: {
+          workspace_id: workspaceId,
+          member_id: memberId,
+          workspace_code: workspaceCode,
+          member_code: memberCode,
+        },
+      };
+    }
+    if (parts.length === 3) {
+      const [workspaceId, memberId, memberCode] = parts;
+      return {
+        path: "/api/auth/member-login",
+        credentials: {
+          workspace_id: workspaceId,
+          member_id: memberId,
+          member_code: memberCode,
+        },
+      };
+    }
+    return null;
   };
 
   const setNotice = (message) => {
@@ -96,6 +116,18 @@
     if (!captureFeedback) return;
     captureFeedback.hidden = !message;
     captureFeedback.textContent = message;
+  };
+
+  const setInviteFeedback = (message) => {
+    if (!inviteFeedback) return;
+    inviteFeedback.hidden = !message;
+    inviteFeedback.textContent = message;
+  };
+
+  const clearInviteResult = () => {
+    if (inviteResult) inviteResult.hidden = true;
+    if (inviteToken) inviteToken.textContent = "";
+    setInviteFeedback("");
   };
 
   const clearCaptureValidation = () => {
@@ -140,6 +172,7 @@
     if (memberName) memberName.textContent = member.display_name;
     workspaceNames.forEach((element) => { element.textContent = member.workspace_name; });
     if (workspaceChatName) workspaceChatName.textContent = `${member.workspace_name} 팀`;
+    if (inviteButton) inviteButton.hidden = member.is_admin !== true;
   };
 
   const markSignedOut = () => {
@@ -152,6 +185,9 @@
     if (memberName) memberName.textContent = "워크스페이스에 입장";
     workspaceNames.forEach((element) => { element.textContent = "워크스페이스"; });
     if (workspaceChatName) workspaceChatName.textContent = "개인 채팅";
+    if (inviteButton) inviteButton.hidden = true;
+    inviteDialog?.close();
+    clearInviteResult();
     activeChatSessionId = null;
     chatCommandCatalog = [];
     clearCommandOutput();
@@ -561,8 +597,8 @@
       setBusy(target, false);
       return;
     }
-    const credentials = parseAccessId(accessId);
-    if (!credentials) {
+    const parsedAccessId = parseAccessId(accessId);
+    if (!parsedAccessId) {
       accessTokenField?.setAttribute("aria-invalid", "true");
       if (memberFeedback) {
         memberFeedback.hidden = false;
@@ -574,10 +610,10 @@
     }
     target.reset();
     try {
-      const member = await request("/api/auth/login", {
+      const member = await request(parsedAccessId.path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(credentials),
+        body: JSON.stringify(parsedAccessId.credentials),
       });
       markAuthenticated(member);
       await refreshWorkspace();
@@ -598,6 +634,62 @@
     } catch (error) { setNotice(error.message); }
     finally { setBusy(memberForm, false); }
   });
+
+  const openInviteDialog = () => {
+    clearInviteResult();
+    inviteForm?.reset();
+    inviteDialog?.showModal();
+    inviteName?.focus();
+  };
+
+  inviteButton?.addEventListener("click", openInviteDialog);
+
+  inviteForm?.addEventListener("submit", async (event) => {
+    if (event.submitter?.value === "cancel") return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const form = new FormData(target);
+    const displayName = String(form.get("display-name") ?? "").trim();
+    setBusy(target, true, "팀원 초대 ID를 만드는 중…");
+    inviteName?.removeAttribute("aria-invalid");
+    setInviteFeedback("");
+    if (!displayName) {
+      inviteName?.setAttribute("aria-invalid", "true");
+      setInviteFeedback("팀원 이름을 입력해 주세요.");
+      inviteName?.focus();
+      setBusy(target, false);
+      return;
+    }
+    try {
+      const result = await request("/api/members/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      if (inviteToken) inviteToken.textContent = result.member_access_id;
+      if (inviteResult) inviteResult.hidden = false;
+      target.reset();
+      setNotice("팀원 초대 ID를 만들었습니다. 생성 직후 한 번 표시됩니다.");
+    } catch (error) {
+      setInviteFeedback(error.message);
+      setNotice(error.message);
+    } finally { setBusy(target, false); }
+  });
+
+  inviteCopy?.addEventListener("click", async () => {
+    const token = inviteToken?.textContent?.trim();
+    if (!token) return;
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(token);
+      setNotice("팀원 접속 ID를 복사했습니다.");
+    } catch (error) {
+      if (error instanceof Error) setNotice("접속 ID를 직접 선택해 복사해 주세요.");
+      else throw error;
+    }
+  });
+
+  inviteDialog?.querySelector("[value='cancel']")?.addEventListener("click", () => inviteDialog?.close());
 
   one("[data-context-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();

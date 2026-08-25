@@ -199,9 +199,11 @@ On first start:
 3. Only scrypt hashes and code versions are stored in SQLite.
 4. `service.json` stores identifiers and service configuration, not plaintext access codes.
 
-After bootstrap, a local operator can run `trace-agent workspace add-member --name <name>` to
-provision another member. The command is a local administration boundary and prints the invite code
-once; the Web API does not pretend that any authenticated member is an administrator.
+The first owner member recorded in `service.json` is the authenticated Web administrator. The owner
+can use `POST /api/members/invite` from the browser to create a regular member and receive a
+three-part member access ID once. A regular member can redeem that ID through
+`POST /api/auth/member-login`; the existing four-part owner access ID and `/api/auth/login` contract
+remain unchanged. `trace-agent workspace add-member --name <name>` remains a local fallback.
 
 `workspace access` emits one copyable `%`-separated browser login ID containing the workspace ID,
 member ID, workspace code, and member code. The browser parses that value at the entry boundary and
@@ -321,7 +323,6 @@ The implemented architecture does not currently provide:
 
 - a hosted control plane or remote database;
 - automatic external publication;
-- Web provisioning or authenticated administrator roles for additional workspace members;
 - automatic campaign-feedback learning;
 - real custom-wallpaper capture from the Simulator.
 

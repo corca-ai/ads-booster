@@ -169,20 +169,24 @@ uv run trace-agent workspace access
 
 `workspace access` explicitly rotates the owner workspace/member codes and prints one browser login
 ID once. Its four `%`-separated parts are Workspace ID, Member ID, Workspace code, and Member code;
-paste the complete value into the browser entry form. The compatibility alias `rotate-code` performs
-the same action. The service still parses and verifies those four values separately, then scopes
-shared context to the workspace and private chat history to the authenticated member.
+paste the complete value into the browser entry form. An authenticated owner can use `팀원 초대` in
+the browser to create a regular member and receive a three-part member access ID that does not
+contain the shared workspace code. The compatibility alias `rotate-code` performs the same action.
+The service still scopes shared context to the workspace and private chat history to the authenticated
+member.
 Rotating either code version invalidates sessions issued with the old version. The first-run CLI
-provisions the owner pair; the local operator can provision another member with a one-time invite
+provisions the owner pair; the local operator can provision another member with a member access
 code:
 
 ```bash
 uv run trace-agent workspace add-member --name "Grace"
 ```
 
-The command is intentionally local-only because the current Web surface has no separate
-administrator identity. It prints the new member ID and invite code once; only the scrypt hash is
-stored. Authenticated members can upload JPEG, PNG, and WebP references from 자료 준비. The
+The first owner access ID is the workspace administrator. After signing in, the owner can use the
+browser's `팀원 초대` action to create a regular member and receive a three-part member access ID
+once. The member pastes that ID into the same browser entry field; the server verifies only the
+member's scrypt-backed code and never exposes the shared workspace code. The CLI command remains
+available as a local fallback. Authenticated members can upload JPEG, PNG, and WebP references from 자료 준비. The
 `/api/assets/upload` route validates the image bytes, stores a protected copy below
 `$TRACE_AGENT_HOME/assets/`, and records its normalized path, media type, SHA-256, and size.
 The lower-level `/api/assets` CRUD routes remain available for metadata integrations.
@@ -205,9 +209,9 @@ Use an absolute path when configuring a dedicated Mac:
 
 | Path | Contents |
 | --- | --- |
-| `$TRACE_AGENT_HOME/workspace.sqlite3` | Workspace/member records, hashed access-code versions, shared context and asset metadata, and member-scoped private session histories |
+| `$TRACE_AGENT_HOME/workspace.sqlite3` | Workspace/member records, hashed access-code versions, shared context, asset metadata, and member-scoped private session histories |
 | `$TRACE_AGENT_HOME/automation.sqlite3` | Finite/continuous campaigns, queue records, leases, run references, artifact hashes, and review state |
-| `$TRACE_AGENT_HOME/service.json` | Workspace/member IDs, loopback host/port, tunnel selection, and the last emitted public URL; never plaintext codes |
+| `$TRACE_AGENT_HOME/service.json` | Owner workspace/member IDs, loopback host/port, tunnel selection, and the last emitted public URL; never plaintext codes |
 | `$TRACE_AGENT_HOME/auth.json` | Agent OAuth credentials, written with mode `0600` |
 | `$TRACE_AGENT_HOME/memory.jsonl` | Context-compaction summaries for the standalone agent |
 | `$TRACE_AGENT_HOME/sessions/` | Standalone TUI/REPL session histories |

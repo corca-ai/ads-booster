@@ -58,6 +58,13 @@ the current UTC time when the campaign is submitted.
 - Validation and request errors use a nearby `role="alert"`; live request progress remains text in
   a polite live region. Color never carries state alone.
 
+### Member Invitation
+
+- The owner-only `팀원 초대` action opens the existing command-dialog surface.
+- The form has a visible member-name label, nearby validation feedback, and a polite result region.
+- A generated member access ID is displayed once and can be copied without exposing the shared
+  workspace access ID.
+
 ## Accessibility constraints
 
 - Keyboard users can skip to the entry heading before login and to the work canvas afterward.

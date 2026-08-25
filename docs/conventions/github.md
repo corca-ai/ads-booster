@@ -47,7 +47,8 @@ unrelated changes on one branch.
 
 Every implementation, bug fix, test, or repository-policy change starts from a GitHub Issue. Every
 commit must include its issue reference in the subject using `(#<issue-number>)`; one logical commit
-maps to one issue, and unrelated changes must not share an issue or commit.
+maps to one issue, and each commit subject may contain exactly one issue reference. Never list
+multiple issue numbers in one commit message; split the work into separate logical commits instead.
 
 Examples:
 
@@ -110,12 +111,21 @@ git push -u origin <branch-name>
 gh pr create --draft --base main --title "<type>: <summary>" --body "<description>"
 ```
 
-Include at least the following in the Pull Request body:
+The PR title is a short change summary; an issue number is optional in the title. Link the owning
+issue(s) in the body instead. The body must be concrete enough for a reviewer to understand the
+user-visible flow and verify the change without reading the commit history. Include:
 
-- the purpose and problem being solved;
-- the main changes;
-- focused verification commands and results; and
-- migration, environment-variable, or deployment notes.
+- `## Issues`: links to the owning issue(s), with one primary issue identified;
+- `## User flow`: the before/after behavior and the exact path a user takes;
+- `## Implementation`: changed contracts, routes, state boundaries, and important file areas;
+- `## Security and limits`: authorization, secret handling, migrations, compatibility, and known
+  limitations;
+- `## Verification`: exact focused commands and observed results;
+- `## Deployment`: environment variables, data migrations, release/tag impact, and rollback notes.
+
+Do not paste a commit hash list or a commit-by-commit diary into the PR body. The commit history
+should remain the atomic implementation record; the PR description explains the delivered behavior,
+evidence, and operational impact.
 
 ### 4. Review and merge
 
