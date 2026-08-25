@@ -2,6 +2,33 @@
   "schema_version": "hallmark.log.v1",
   "entries": [
     {
+      "created_at": "2026-08-26T02:24:32+09:00",
+      "macrostructure": "Workbench with progressive disclosure",
+      "tone": "utilitarian technical",
+      "anchor_hue": "indigo",
+      "navigation": "N9 edge-minimal",
+      "footer": "none",
+      "variation_knobs": {
+        "default_path": "account and persona selection, four-candidate generation, then list",
+        "secondary_tools": "account settings, context provenance, feedback, manual entry, and capture mechanics collapsed",
+        "candidate_density": "topic, provenance, status, and controls without duplicate caption or journey"
+      },
+      "files": [
+        "DESIGN.md",
+        "src/trace_capture/web/static/workspace.css",
+        "src/trace_capture/web/static/workspace.html",
+        "src/trace_capture/web/static/workspace-live.js",
+        "tests/web/workspace_static_behavior.mjs"
+      ],
+      "verification": {
+        "desktop": "compact account, pipeline counts, context action, candidate list, and review surface visually verified",
+        "mobile": "320, 375, 414, and 768px: no document overflow or wrapped clickable labels",
+        "interaction": "account, context, and advanced-tool disclosures default closed; disclosure, ready filter, and review-tab paths passed",
+        "slop_test": "pass: 58/58; 136 visible text pairs checked with no WCAG contrast failures",
+        "browser_surface": "local Cloudflare Worker"
+      }
+    },
+    {
       "created_at": "2026-08-26T00:35:47+09:00",
       "macrostructure": "Workbench",
       "tone": "utilitarian technical",

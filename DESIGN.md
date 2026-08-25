@@ -23,13 +23,16 @@ is the Hallmark-compatible entrypoint that imports that source of truth.
 
 The work surface has six stable regions.
 
-1. `workspace-toolbar` states the product and shows one live status line.
-2. `account-console` selects a logical account silo and exposes its market, schedule, and automation.
-3. `pipeline-summary` exposes counts for caption review, image work, and publication-ready results.
+1. `workspace-toolbar` names the product and shows one live status line without an explanatory hero.
+2. `account-console` keeps the logical account selector visible while market, schedule, automation,
+   and account creation stay behind one settings disclosure.
+3. `pipeline-summary` exposes compact counts for caption review, image work, and publication-ready
+   results.
 4. The two-tab rail separates candidate preparation from human review.
-5. `generation-workbench` places the selected context and the generation action side by side on wide
-   screens and in a single reading order on narrow screens.
-6. The candidate list can be filtered by operational state without hiding the canonical total.
+5. `generation-workbench` keeps the persona selector and four-candidate action together; full context,
+   feedback learning, and manual registration use progressive disclosure.
+6. The candidate list follows the generation action immediately and can be filtered by operational
+   state without hiding the canonical total.
 
 The Cloudflare build removes the entry form and opens directly into the last selected public logical
 account scope. Account switching changes settings, context, candidates, and feedback together; it is
@@ -38,10 +41,10 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
 
 ## Context surface
 
-- The account ID is visible because D1 candidates, profiles, and Durable Object memory are isolated
-  by that account boundary.
+- The selected logical account stays visible because D1 candidates, profiles, and Durable Object
+  memory are isolated by that boundary; its raw account ID remains available in context details.
 - The active country/persona is selected before generation. Audience, situation, tone, guidance,
-  and reference IDs remain visible instead of being hidden in a prompt.
+  and reference IDs remain inspectable in one disclosure instead of occupying the default work path.
 - Starter context is labeled honestly as a generic seed. Team operators can add, edit, or hide
   profiles; prior candidates retain immutable context snapshots.
 - KR, JP, TW, US, DE, FR, and BR ship as starter markets with 16 total starter profiles. Adding
@@ -50,7 +53,8 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
 
 ## Review and states
 
-- Candidate cards show source, country, context snapshot, date, status, and the three-step journey.
+- Compact candidate rows show topic, source, country, date, status, and edit/delete controls. Detailed
+  captions, context snapshots, and the decision journey stay on the review surface.
 - One generation action creates four candidates grouped into two morning and two evening slots.
 - A one-click approval records 5 points. Rejection expands inline to a 1–3 rating and explicit tags;
   three equal account/persona tags surface as a rule for the next generation.
@@ -69,3 +73,10 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
   positions. Textareas resize vertically.
 - Touch-reachable controls use at least a 44px block size, and status is never communicated by color
   alone.
+
+## Progressive disclosure
+
+- The default screen answers three questions only: which account, which persona, and what needs work.
+- Account administration, full context provenance, feedback learning, manual candidate entry, and
+  native capture mechanics are available but collapsed by default.
+- Candidate rows avoid repeating caption and journey details already owned by the review tab.

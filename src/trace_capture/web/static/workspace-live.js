@@ -262,7 +262,7 @@
       const element = one(selector);
       if (element) element.textContent = text;
     };
-    value("[data-context-source]", profile?.source === "custom" ? "team" : "starter");
+    value("[data-context-source]", profile?.source === "custom" ? "팀" : "기본");
     value("[data-context-audience]", profile?.audience ?? "사용할 수 있는 컨텍스트가 없습니다.");
     value("[data-context-situation]", profile?.situation ?? "—");
     value("[data-context-tone]", profile?.tone ?? "—");
