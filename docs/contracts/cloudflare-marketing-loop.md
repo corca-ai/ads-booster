@@ -9,6 +9,15 @@ candidates and the search-based image stage composes only caption-approved candi
 publication and live metrics readback remain unverified. Simulation output must not be represented
 as a published post.
 
+One login-free hosted review workspace is also implemented at the Worker root. It is deliberately
+public, fixed to the configured public account, and separate from token-protected `/v1` operations.
+Workers AI reads the selected D1 country/persona profile, matching packaged country context, and the
+account instruction. D1 stores profiles, immutable candidate context snapshots, candidates, and
+review revisions; R2 stores labeled deterministic previews. Native Appium capture and live
+publication remain outside this hosted surface. Image approval ends at `submitted` without an
+external side effect. Hosted candidates remain editable and deletable in every state; an edit
+invalidates prior approvals and preview artifacts before returning to the first review gate.
+
 ## First milestone
 
 The first milestone is a pipeline that can run and be changed safely. It does not optimize generated
@@ -38,6 +47,8 @@ content quality. The acceptance path is:
 | artifacts | R2 in cloud, digest-backed local worker files | large payloads do not become workflow state and provenance remains inspectable |
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
 | installed candidate journey | optional local executor selected at bridge startup | the default remains simulation; enabling the installed pipeline does not silently enable publication |
+| hosted review workspace | Worker static assets, Workers AI, D1, and R2 | the public URL needs no local daemon or access ID; context, model, account, and preview adapters remain replaceable configuration/code boundaries |
+| hosted context registry | packaged manifest plus account-scoped D1 profiles | countries extend through reviewed documents/profile data; team profiles change without Worker source edits; candidate snapshots retain provenance |
 
 This combines ideas used by established harnesses: actor isolation from Akka/Orleans-style systems,
 durable workflow steps from Temporal-style systems, inbox/outbox delivery from event-driven systems,
@@ -49,6 +60,8 @@ irreversible action.
 The following changes are data-only:
 
 - add or disable an account;
+- add, edit, or hide a profile for the configured public account;
+- add a packaged country by registering its documents and starter profile JSON in the context manifest;
 - change country, timezone, cadence, or instruction revision;
 - rotate an opaque `credential_ref`;
 - switch an account from live back to simulation; and
@@ -64,6 +77,11 @@ The following changes intentionally require code review and deployment:
 
 Dynamic does not mean arbitrary code loaded from D1. Account data can select a reviewed adapter, but
 cannot inject executable code into a Worker or local bridge process.
+
+A D1 profile alone cannot enable an unreviewed country. Hosted generation resolves global plus
+country documents from the packaged manifest and fails with `409` when that country is absent. Each
+candidate persists the complete selected profile snapshot; editing or hiding the profile later does
+not rewrite already-generated evidence.
 
 ## Isolation and instructions
 
@@ -143,6 +161,8 @@ confirms, against the current official Threads API and the actual account permis
 - operator-visible verification after publication.
 
 The current product does not automatically delete, edit, or retry an ambiguous live publication.
+This restriction is about already-published external content. The hosted D1 candidate and its R2
+preview can still be edited or deleted before any separate human publishing action.
 
 Only one non-terminal run may exist for an account. Candidate approval, publication approval, and
 task callback timeouts transition the run to `failed`. Observation settings are absolute minutes
@@ -195,7 +215,9 @@ Cloudflare credentials. After merge, the repository workflow must, in order:
 3. render the ignored Wrangler config from repository variables;
 4. apply all pending D1 migrations;
 5. deploy the merged Worker revision; and
-6. read back `{"ok":true}` from the configured health URL.
+6. read back `{"ok":true}` from the configured health URL; and
+7. verify the root workspace has no access-ID form, `/api/auth/session` identifies the public account,
+   and `/api/context-profiles` returns a default profile after migration.
 
 The job is serialized and does not cancel an in-flight deployment. Any failed check, migration,
 deploy, or health readback leaves the GitHub job red and prevents a success claim. Human candidate

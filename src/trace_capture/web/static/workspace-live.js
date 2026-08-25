@@ -15,6 +15,27 @@
   const candidateEmpty = one("[data-candidate-empty]");
   const candidateFeedback = one("[data-candidate-feedback]");
   const autogenFeedback = one("[data-autogen-feedback]");
+  const candidateForm = one("[data-candidate-form]");
+  const manualEntry = one("[data-manual-entry]");
+  const candidateFormTitle = one("[data-candidate-form-title]");
+  const candidateSubmit = one("[data-candidate-submit]");
+  const candidateCancel = one("[data-candidate-cancel]");
+  const candidateEditNote = one("[data-candidate-edit-note]");
+  const contextSelect = one("[data-context-select]");
+  const contextForm = one("[data-context-form]");
+  const contextFeedback = one("[data-context-feedback]");
+  const contextCancel = one("[data-context-cancel]");
+  const contextSubmit = one("[data-context-submit]");
+  const contextFormTitle = one("[data-context-form-title]");
+  let hostedCandidateControls = false;
+  let editingCandidate = null;
+  let editingCandidateContextChanged = false;
+  let editingContextProfile = null;
+  let contextProfiles = [];
+  let contextCountries = [];
+  let selectedContextProfileId = "";
+  let candidateRecords = [];
+  let candidateFilter = "all";
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -25,8 +46,8 @@
     "candidate already reviewed": "이미 승인 또는 반려된 후보입니다. 새로고침 후 다시 시도해 주세요.",
   });
   const CANDIDATE_SOURCE_LABELS = Object.freeze({
-    auto: "🤖 자동",
-    manual: "✍️ 수동",
+    auto: "AI 생성",
+    manual: "수동",
   });
   const CANDIDATE_STATUS_LABELS = Object.freeze({
     awaiting_review: "캡션·주제 검수 대기",
@@ -125,14 +146,18 @@
   };
 
   const markAuthenticated = (member) => {
+    hostedCandidateControls = member.member_id === "public" && String(member.workspace_id).startsWith("cloudflare:");
     if (entryScreen) entryScreen.hidden = true;
     if (workspaceLive) workspaceLive.hidden = false;
     if (skipLink) skipLink.setAttribute("href", "#workspace-content");
     if (memberFields) memberFields.hidden = true;
     if (memberConnected) memberConnected.hidden = false;
-    if (memberLabel) memberLabel.textContent = "로컬 연결됨";
+    if (memberLabel) memberLabel.textContent = hostedCandidateControls ? "Cloudflare 연결됨" : "로컬 연결됨";
     if (memberName) memberName.textContent = member.display_name;
+    const workspaceAccount = one("[data-workspace-account]");
+    if (workspaceAccount) workspaceAccount.textContent = member.account_id ?? member.workspace_id;
     if (inviteButton) inviteButton.hidden = member.is_admin !== true;
+    all("[data-hosted-only]").forEach((element) => { element.hidden = !hostedCandidateControls; });
   };
 
   const markSignedOut = () => {
@@ -144,6 +169,7 @@
     if (memberLabel) memberLabel.textContent = "입장 전";
     if (memberName) memberName.textContent = "워크스페이스에 입장";
     if (inviteButton) inviteButton.hidden = true;
+    all("[data-hosted-only]").forEach((element) => { element.hidden = true; });
     inviteDialog?.close();
     clearInviteResult();
   };
@@ -179,6 +205,30 @@
     return element;
   };
 
+  const selectedContextProfile = () =>
+    contextProfiles.find((profile) => profile.profile_id === selectedContextProfileId) ?? null;
+
+  const setContextFeedback = (message) => {
+    if (!contextFeedback) return;
+    contextFeedback.hidden = !message;
+    contextFeedback.textContent = message;
+  };
+
+  const renderSelectedContext = () => {
+    const profile = selectedContextProfile();
+    const value = (selector, text) => {
+      const element = one(selector);
+      if (element) element.textContent = text;
+    };
+    value("[data-context-source]", profile?.source === "custom" ? "team" : "starter");
+    value("[data-context-audience]", profile?.audience ?? "사용할 수 있는 컨텍스트가 없습니다.");
+    value("[data-context-situation]", profile?.situation ?? "—");
+    value("[data-context-tone]", profile?.tone ?? "—");
+    value("[data-context-guidance]", profile?.guidance ?? "—");
+    value("[data-context-refs]", profile?.reference_ids?.join(", ") || "연결된 레퍼런스 없음");
+    if (contextSelect) contextSelect.value = profile?.profile_id ?? "";
+  };
+
   const journeyNode = (record) => {
     const list = document.createElement("ol");
     list.className = "journey";
@@ -208,9 +258,26 @@
     caption.textContent = record.caption.split("\n", 1)[0] || "(캡션 없음)";
     const meta = document.createElement("span"); meta.className = "candidate-row__meta";
     meta.textContent = `${record.country} · ${candidateDate(record.created_at)}`;
-    content.append(title, caption, meta, journeyNode(record));
+    content.append(title, caption, meta);
+    if (record.context_profile) {
+      content.append(badge("candidate-context", `Context · ${record.context_profile.name}`));
+    }
+    content.append(journeyNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
     trailing.append(badge(`candidate-status ${record.status}`, candidateStatusLabel(record.status)));
+    if (hostedCandidateControls) {
+      const edit = document.createElement("button");
+      edit.className = "button button-quiet candidate-row__action";
+      edit.type = "button";
+      edit.textContent = "수정";
+      edit.addEventListener("click", () => beginCandidateEdit(record));
+      const remove = document.createElement("button");
+      remove.className = "button button-quiet candidate-row__action candidate-row__action--danger";
+      remove.type = "button";
+      remove.textContent = "삭제";
+      remove.addEventListener("click", () => deleteCandidate(record, remove));
+      trailing.append(edit, remove);
+    }
     row.append(source, content, trailing);
     return row;
   };
@@ -277,6 +344,7 @@
     const facts = document.createElement("div"); facts.className = "approval-card__facts";
     facts.append(
       approvalField("가설", record.hypothesis),
+      approvalField("생성 컨텍스트", record.context_profile?.name || "기록 없음"),
       approvalPrinciples(record),
       approvalField("참조", record.refs_used.length ? record.refs_used.join(", ") : "—"),
       approvalField("AI 검수", record.ai_verdict || "—"),
@@ -297,7 +365,7 @@
       const button = document.createElement("button");
       button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
       button.type = "button";
-      button.textContent = accepted ? "✅ 캡션·주제 승인" : "❌ 반려";
+      button.textContent = accepted ? "캡션·주제 승인" : "반려";
       button.addEventListener("click", () => reviewCandidate(record, accepted, reason, button, () => buttons));
       return button;
     });
@@ -336,7 +404,7 @@
       const button = document.createElement("button");
       button.className = "button button-primary";
       button.type = "button";
-      button.textContent = "🎨 이미지 생성";
+      button.textContent = "이미지 생성";
       button.addEventListener("click", () => generateCandidateImage(record, button, feedback));
       actions.append(button);
       if (record.review_note) {
@@ -355,7 +423,7 @@
         const button = document.createElement("button");
         button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
         button.type = "button";
-        button.textContent = accepted ? "✅ 승인" : "❌ 반려";
+        button.textContent = accepted ? "승인" : "반려";
         button.addEventListener("click", () =>
           reviewCandidateImage(record, accepted, reason, button, feedback, () => buttons));
         return button;
@@ -438,12 +506,52 @@
     }
   };
 
+  const candidateMatchesFilter = (record) => {
+    if (candidateFilter === "review") return record.status === "awaiting_review";
+    if (candidateFilter === "image") {
+      return record.status === "caption_approved" || record.status === "image_awaiting_review";
+    }
+    if (candidateFilter === "ready") return record.status === "submitted";
+    if (candidateFilter === "rejected") return record.status === "rejected";
+    return true;
+  };
+
+  const renderCandidateList = () => {
+    const visible = candidateRecords.filter(candidateMatchesFilter);
+    one("[data-candidate-list]")?.replaceChildren(...visible.map(candidateNode));
+    all("[data-candidate-filter]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.candidateFilter === candidateFilter));
+    });
+    const count = one("[data-candidate-count]");
+    if (count) count.textContent = visible.length === candidateRecords.length
+      ? `후보 ${candidateRecords.length}개`
+      : `전체 ${candidateRecords.length}개 · 표시 ${visible.length}개`;
+    if (candidateEmpty) candidateEmpty.hidden = visible.length > 0;
+    const emptyTitle = one("[data-candidate-empty-title]");
+    const emptyCopy = one("[data-candidate-empty-copy]");
+    if (emptyTitle) emptyTitle.textContent = candidateRecords.length ? "이 상태의 후보가 없습니다" : "등록된 후보가 없습니다";
+    if (emptyCopy) emptyCopy.textContent = candidateRecords.length
+      ? "다른 상태 필터를 선택해 전체 흐름을 확인하세요."
+      : "컨텍스트를 선택하고 후보 3개 생성을 눌러 첫 후보를 만드세요.";
+  };
+
+  const renderPipelineStats = () => {
+    const value = (selector, count) => {
+      const element = one(selector);
+      if (element) element.textContent = String(count);
+    };
+    value("[data-stat-review]", candidateRecords.filter((record) => record.status === "awaiting_review").length);
+    value("[data-stat-image]", candidateRecords.filter(
+      (record) => record.status === "caption_approved" || record.status === "image_awaiting_review",
+    ).length);
+    value("[data-stat-ready]", candidateRecords.filter((record) => record.status === "submitted").length);
+  };
+
   const loadCandidates = async () => {
     const records = await request("/api/candidates");
-    one("[data-candidate-list]")?.replaceChildren(...records.map(candidateNode));
-    const count = one("[data-candidate-count]");
-    if (count) count.textContent = `후보 ${records.length}개`;
-    if (candidateEmpty) candidateEmpty.hidden = records.length > 0;
+    candidateRecords = records;
+    renderCandidateList();
+    renderPipelineStats();
     const pending = records.filter((record) => record.status === "awaiting_review");
     one("[data-approval-list]")?.replaceChildren(...pending.map(approvalNode));
     const approvalEmpty = one("[data-approval-empty]");
@@ -463,12 +571,203 @@
     }
   };
 
+  const contextProfileNode = (profile) => {
+    const row = document.createElement("article");
+    row.className = "context-profile-row";
+    const content = document.createElement("div");
+    content.className = "context-profile-row__content";
+    const name = document.createElement("strong");
+    name.textContent = profile.name;
+    const meta = document.createElement("span");
+    meta.textContent = `${profile.country} · ${profile.persona_id} · ${profile.source === "custom" ? "팀 추가" : "기본"}`;
+    content.append(name, meta);
+    const actions = document.createElement("div");
+    actions.className = "context-profile-row__actions";
+    const edit = document.createElement("button");
+    edit.className = "button button-quiet";
+    edit.type = "button";
+    edit.textContent = "수정";
+    edit.addEventListener("click", () => beginContextEdit(profile));
+    const remove = document.createElement("button");
+    remove.className = "button button-quiet candidate-row__action--danger";
+    remove.type = "button";
+    remove.textContent = "숨기기";
+    remove.addEventListener("click", () => deleteContextProfile(profile, remove));
+    actions.append(edit, remove);
+    row.append(content, actions);
+    return row;
+  };
+
+  const renderContextProfiles = () => {
+    if (contextSelect) {
+      const options = contextProfiles.map((profile) => {
+        const option = document.createElement("option");
+        option.value = profile.profile_id;
+        option.textContent = `${profile.name} · ${profile.country}`;
+        return option;
+      });
+      contextSelect.replaceChildren(...options);
+    }
+    one("[data-context-profile-list]")?.replaceChildren(...contextProfiles.map(contextProfileNode));
+    renderSelectedContext();
+  };
+
+  const renderContextCountries = () => {
+    const select = document.getElementById("context-country");
+    if (!select) return;
+    const displayNames = typeof Intl?.DisplayNames === "function"
+      ? new Intl.DisplayNames(["ko"], { type: "region" })
+      : null;
+    const options = contextCountries.map(({ country }) => {
+      const option = document.createElement("option");
+      option.value = country;
+      option.textContent = `${displayNames?.of(country) ?? country} (${country})`;
+      return option;
+    });
+    select.replaceChildren(...options);
+  };
+
+  const loadContextProfiles = async () => {
+    if (!hostedCandidateControls) return;
+    const previous = selectedContextProfileId;
+    [contextCountries, contextProfiles] = await Promise.all([
+      request("/api/context-countries"),
+      request("/api/context-profiles"),
+    ]);
+    selectedContextProfileId = contextProfiles.some((profile) => profile.profile_id === previous)
+      ? previous
+      : (contextProfiles.find((profile) => profile.is_default) ?? contextProfiles[0])?.profile_id ?? "";
+    renderContextCountries();
+    renderContextProfiles();
+  };
+
+  const cancelContextEdit = () => {
+    editingContextProfile = null;
+    contextForm?.reset();
+    if (contextFormTitle) contextFormTitle.textContent = "새 컨텍스트 추가";
+    if (contextSubmit) contextSubmit.textContent = "컨텍스트 추가";
+    if (contextCancel) contextCancel.hidden = true;
+    setContextFeedback("");
+  };
+
+  const beginContextEdit = (profile) => {
+    editingContextProfile = profile;
+    const manager = one("[data-context-manager]");
+    if (manager) manager.open = true;
+    if (contextFormTitle) contextFormTitle.textContent = "컨텍스트 수정";
+    if (contextSubmit) contextSubmit.textContent = "수정 저장";
+    if (contextCancel) contextCancel.hidden = false;
+    const values = {
+      "context-name": profile.name,
+      "context-persona-id": profile.persona_id,
+      "context-country": profile.country,
+      "context-tone": profile.tone,
+      "context-audience": profile.audience,
+      "context-situation": profile.situation,
+      "context-guidance": profile.guidance,
+      "context-refs": profile.reference_ids.join(", "),
+    };
+    Object.entries(values).forEach(([id, value]) => {
+      const field = document.getElementById(id);
+      if (field) field.value = value;
+    });
+    setContextFeedback("");
+    document.getElementById("context-name")?.focus({ preventScroll: true });
+  };
+
+  const deleteContextProfile = async (profile, button) => {
+    if (!window.confirm(`“${profile.name}” 컨텍스트를 목록에서 숨길까요? 기존 후보의 생성 기록은 유지됩니다.`)) return;
+    button.disabled = true;
+    setBusy(button, true, "컨텍스트를 숨기는 중…");
+    try {
+      await request(`/api/context-profiles/${encodeURIComponent(profile.profile_id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: profile.revision }),
+      });
+      if (editingContextProfile?.profile_id === profile.profile_id) cancelContextEdit();
+      await loadContextProfiles();
+      setNotice("컨텍스트를 숨겼습니다. 기존 후보의 생성 기록은 유지됩니다.");
+    } catch (error) {
+      setNotice(error.message);
+      button.disabled = false;
+    } finally {
+      setBusy(button, false);
+    }
+  };
+
   const commaList = (value) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
   const lineList = (value) => String(value ?? "").split("\n").map((item) => item.trim()).filter(Boolean);
+
+  const candidateField = (id) => document.getElementById(id);
+
+  const cancelCandidateEdit = () => {
+    editingCandidate = null;
+    editingCandidateContextChanged = false;
+    candidateForm?.reset();
+    if (candidateFormTitle) candidateFormTitle.textContent = "수동 등록";
+    if (candidateSubmit) candidateSubmit.textContent = "후보 등록";
+    if (candidateCancel) candidateCancel.hidden = true;
+    if (candidateEditNote) candidateEditNote.hidden = true;
+    setCandidateFeedback("");
+    const profile = selectedContextProfile();
+    if (profile) candidateField("candidate-country").value = profile.country;
+  };
+
+  const beginCandidateEdit = (record) => {
+    editingCandidate = record;
+    editingCandidateContextChanged = false;
+    const recordedProfileId = record.context_profile?.profile_id;
+    if (recordedProfileId && contextProfiles.some((profile) => profile.profile_id === recordedProfileId)) {
+      selectedContextProfileId = recordedProfileId;
+      renderSelectedContext();
+    }
+    if (manualEntry) manualEntry.open = true;
+    if (candidateFormTitle) candidateFormTitle.textContent = "후보 수정";
+    if (candidateSubmit) candidateSubmit.textContent = "수정 저장";
+    if (candidateCancel) candidateCancel.hidden = false;
+    if (candidateEditNote) candidateEditNote.hidden = false;
+    candidateField("candidate-topic").value = record.topic;
+    candidateField("candidate-country").value = record.country;
+    candidateField("candidate-hypothesis").value = record.hypothesis;
+    candidateField("candidate-caption").value = record.caption;
+    candidateField("candidate-refs").value = record.refs_used.join(", ");
+    candidateField("candidate-principles").value = record.principles_applied.join(", ");
+    candidateField("candidate-shooting-order").value = record.shooting_order || "";
+    candidateField("candidate-schedule").value = record.image_inputs.trace_items.join("\n");
+    candidateField("candidate-device-time").value = record.image_inputs.device_time;
+    candidateField("candidate-background-subject").value = record.image_inputs.background_subject;
+    candidateField("candidate-background-mood").value = record.image_inputs.background_mood;
+    setCandidateFeedback("");
+    manualEntry?.scrollIntoView({ behavior: "smooth", block: "start" });
+    candidateField("candidate-topic")?.focus({ preventScroll: true });
+  };
+
+  const deleteCandidate = async (record, button) => {
+    if (!window.confirm(`“${record.topic}” 후보를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+    button.disabled = true;
+    setBusy(button, true, "후보를 삭제하는 중…");
+    try {
+      await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: record.revision }),
+      });
+      if (editingCandidate?.candidate_id === record.candidate_id) cancelCandidateEdit();
+      await loadCandidates();
+      setNotice("후보를 삭제했습니다.");
+    } catch (error) {
+      setNotice(error.message);
+      button.disabled = false;
+    } finally {
+      setBusy(button, false);
+    }
+  };
 
   const refreshWorkspace = async () => {
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
     try {
+      await loadContextProfiles();
       await loadCandidates();
     } finally {
       setBusy(workspaceLive, false);
@@ -593,7 +892,15 @@
     setAutogenFeedback("");
     setBusy(workspaceLive, true, "AI가 후보를 만드는 중… (1~3분 소요)");
     try {
-      const created = await request("/api/candidates/generate", { method: "POST" });
+      const profile = selectedContextProfile();
+      const options = hostedCandidateControls
+        ? {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ context_profile_id: profile?.profile_id ?? null }),
+          }
+        : { method: "POST" };
+      const created = await request("/api/candidates/generate", options);
       await loadCandidates();
       setNotice(`후보 ${created.length}개가 등록되었습니다.`);
     } catch (error) {
@@ -608,6 +915,30 @@
 
   all("[data-autogen]").forEach((button) =>
     button.addEventListener("click", () => generateCandidates(button)));
+
+  all("[data-candidate-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      candidateFilter = button.dataset.candidateFilter;
+      renderCandidateList();
+    });
+  });
+
+  all("[data-candidate-filter-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      one("[data-tab='candidates']")?.click();
+      candidateFilter = button.dataset.candidateFilterJump;
+      renderCandidateList();
+      one("[data-candidate-list]")?.scrollIntoView({ block: "start" });
+    });
+  });
+
+  contextSelect?.addEventListener("change", () => {
+    selectedContextProfileId = contextSelect.value;
+    if (editingCandidate) editingCandidateContextChanged = true;
+    renderSelectedContext();
+    const profile = selectedContextProfile();
+    if (profile) candidateField("candidate-country").value = profile.country;
+  });
 
   const candidateProblem = (draft) => {
     if (!draft.topic) return ["candidate-topic", "주제/컨셉을 입력해 주세요."];
@@ -631,7 +962,75 @@
     return null;
   };
 
-  one("[data-candidate-form]")?.addEventListener("submit", async (event) => {
+  const contextProfileDraft = (form) => ({
+    name: String(form.get("name") ?? "").trim(),
+    persona_id: String(form.get("persona-id") ?? "").trim(),
+    country: String(form.get("country") ?? "").trim().toUpperCase(),
+    tone: String(form.get("tone") ?? "").trim(),
+    audience: String(form.get("audience") ?? "").trim(),
+    situation: String(form.get("situation") ?? "").trim(),
+    guidance: String(form.get("guidance") ?? "").trim(),
+    reference_ids: commaList(form.get("reference-ids")),
+  });
+
+  const contextProblem = (draft) => {
+    if (!draft.name) return ["context-name", "표시 이름을 입력해 주세요."];
+    if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(draft.persona_id)) {
+      return ["context-persona-id", "페르소나 ID는 영문 소문자·숫자로 시작하고 -, _만 사용할 수 있습니다."];
+    }
+    if (!/^[A-Z]{2}$/.test(draft.country)) return ["context-country", "두 자리 국가 코드를 선택해 주세요."];
+    if (!draft.tone) return ["context-tone", "문체를 입력해 주세요."];
+    if (!draft.audience) return ["context-audience", "대상을 입력해 주세요."];
+    if (!draft.situation) return ["context-situation", "사용 상황을 입력해 주세요."];
+    if (!draft.guidance) return ["context-guidance", "추가 지침을 입력해 주세요."];
+    return null;
+  };
+
+  contextCancel?.addEventListener("click", cancelContextEdit);
+
+  contextForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    const draft = contextProfileDraft(new FormData(target));
+    ["context-name", "context-persona-id", "context-country", "context-tone", "context-audience",
+      "context-situation", "context-guidance"]
+      .forEach((id) => document.getElementById(id)?.removeAttribute("aria-invalid"));
+    const problem = contextProblem(draft);
+    if (problem) {
+      const [id, message] = problem;
+      const field = document.getElementById(id);
+      field?.setAttribute("aria-invalid", "true");
+      field?.focus();
+      setContextFeedback(message);
+      return;
+    }
+    const editing = editingContextProfile;
+    setBusy(target, true, editing ? "컨텍스트 수정 내용을 저장하는 중…" : "컨텍스트를 추가하는 중…");
+    setContextFeedback("");
+    try {
+      const saved = await request(
+        editing ? `/api/context-profiles/${encodeURIComponent(editing.profile_id)}` : "/api/context-profiles",
+        {
+          method: editing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editing ? { ...draft, expected_revision: editing.revision } : draft),
+        },
+      );
+      selectedContextProfileId = saved.profile_id;
+      cancelContextEdit();
+      await loadContextProfiles();
+      setNotice(editing ? "컨텍스트를 수정했습니다." : "컨텍스트를 추가하고 생성 기준으로 선택했습니다.");
+    } catch (error) {
+      setContextFeedback(error.message);
+      setNotice(error.message);
+    } finally {
+      setBusy(target, false);
+    }
+  });
+
+  candidateCancel?.addEventListener("click", cancelCandidateEdit);
+
+  candidateForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const target = event.currentTarget;
     const form = new FormData(target);
@@ -651,6 +1050,10 @@
         language: countryLanguage(String(form.get("country") ?? "").trim().toUpperCase()),
       },
     };
+    const profile = selectedContextProfile();
+    const contextProfileId = hostedCandidateControls && profile?.country === draft.country
+      ? profile.profile_id
+      : null;
     ["candidate-topic", "candidate-country", "candidate-caption", "candidate-hypothesis", "candidate-principles",
       "candidate-schedule", "candidate-device-time", "candidate-background-mood"]
       .forEach((id) => document.getElementById(id)?.removeAttribute("aria-invalid"));
@@ -666,14 +1069,22 @@
     setBusy(target, true, "후보를 등록하는 중…");
     setCandidateFeedback("");
     try {
-      await request("/api/candidates", {
-        method: "POST",
+      const editing = editingCandidate;
+      const requestBody = editing ? { ...draft, expected_revision: editing.revision } : { ...draft };
+      // Omitting the field on ordinary edits keeps the original generation snapshot immutable.
+      if (hostedCandidateControls && (!editing || editingCandidateContextChanged)) {
+        requestBody.context_profile_id = contextProfileId;
+      }
+      await request(
+        editing ? `/api/candidates/${encodeURIComponent(editing.candidate_id)}` : "/api/candidates",
+        {
+        method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(requestBody),
       });
-      target.reset();
+      cancelCandidateEdit();
       await loadCandidates();
-      setNotice("후보를 등록했습니다.");
+      setNotice(editing ? "후보를 수정했습니다. 캡션·주제 검수부터 다시 진행해 주세요." : "후보를 등록했습니다.");
     } catch (error) {
       setCandidateFeedback(error.message);
       setNotice(error.message);

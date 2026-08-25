@@ -2,72 +2,64 @@
 
 ## Design read
 
-This is a local team workspace with a single high-stakes entry action. The surface is a restrained
-dark operations product, not a dashboard that exposes every capability before membership is known.
+Trace Workspace is a utilitarian marketing workbench. Its primary job is to make the live pipeline
+legible: choose an account-scoped country/persona context, generate candidates, review caption and
+topic, review the image, then leave approved work in `submitted` for manual publication.
 
-`DESIGN_VARIANCE: 4`, `MOTION_INTENSITY: 2`, `VISUAL_DENSITY: 4`.
+`DESIGN_VARIANCE: 4`, `MOTION_INTENSITY: 2`, `VISUAL_DENSITY: 5`.
 
 ## Tokens
 
-All color, type, spacing, radius, border, focus, and motion tokens are declared in
-`src/trace_capture/web/static/design-tokens.css`. UI code uses those tokens rather than adding
-raw color or spacing values.
+The canonical tokens live in `src/trace_capture/web/static/design-tokens.css`; root `tokens.css`
+is the Hallmark-compatible entrypoint that imports that source of truth.
 
-- Canvas and raised surfaces establish hierarchy with tonal steps and `--color-border`.
-- `--color-accent` is reserved for the selected tab, focus, and the one primary action.
-- `--radius-sm` applies to controls; `--radius-md` applies to bounded entry and work surfaces.
-- Motion is limited to the declared transform, color, and opacity transitions. Reduced motion
-  removes non-essential transitions.
+- Dark OKLCH surfaces create hierarchy without ornamental gradients or glow.
+- Indigo accent is reserved for the primary generation action, focus, and submitted state.
+- Body text stays at 16px, controls share a 44px minimum height, and muted copy remains readable.
+- Motion is limited to press feedback, tab/state transitions, and loading skeletons. Reduced-motion
+  users receive effectively instant state changes.
 
-## Layout
+## Macrostructure: Workbench
 
-The web workspace has two mutually exclusive states.
+The authenticated work surface has five stable regions.
 
-1. `workspace-entry` is a dedicated, centered entry screen. It contains only one composite access
-   ID field, validation, the privacy note, and the `입장` action.
-2. `workspace-main` appears only after server-side membership authentication. It is one bounded
-   content canvas with a compact tab bar and the single primary action `새 자료 만들기`.
+1. `workspace-toolbar` states the product and shows one live status line.
+2. `pipeline-summary` exposes counts for caption review, image work, and publication-ready results.
+3. The two-tab rail separates candidate preparation from human review.
+4. `generation-workbench` places the selected context and the generation action side by side on wide
+   screens and in a single reading order on narrow screens.
+5. The candidate list can be filtered by operational state without hiding the canonical total.
 
-There is no persistent sidebar, context rail, brand mark, or workspace breadcrumb. Each tab is a
-separate work surface, so the initial screen does not try to display preparation, queue, review,
-and chat at once. At narrow widths both the entry form and work toolbar become one column.
+The Cloudflare build removes the entry form and opens directly into one public account scope. The
+local product keeps its member entry flow. The shared template exposes hosted-only context controls
+only after the public Cloudflare session is confirmed.
 
-Campaign creation asks only for campaign name, persona, promotion material, and optional image
-references. The local capture target is fixed to the available iPhone 17 Pro on iOS 26.5, with its
-configured Simulator UDID kept as an implementation default. The reference date is generated from
-the current UTC time when the campaign is submitted.
+## Context surface
 
-## Primitives
+- The account ID is visible because D1 candidates, profiles, and Durable Object memory are isolated
+  by that account boundary.
+- The active country/persona is selected before generation. Audience, situation, tone, guidance,
+  and reference IDs remain visible instead of being hidden in a prompt.
+- Starter context is labeled honestly as a generic seed. Team operators can add, edit, or hide
+  profiles; prior candidates retain immutable context snapshots.
+- Adding another country is data-driven through the packaged manifest and profiles. Generation
+  fails visibly when country documents are missing instead of silently using the wrong country.
 
-### Member Access
+## Review and states
 
-- States: entry, focus, validation error, connecting, connected, unavailable.
-- Inputs always have visible labels. The composite access ID is a password field and is never stored
-  by the static UI.
-- On success, the entry screen hides before the authenticated work canvas is revealed.
+- Candidate cards show source, country, context snapshot, date, status, and the three-step journey.
+- Any candidate, including `submitted`, can be edited or deleted in the hosted workspace. Editing
+  invalidates approvals and image provenance and returns the candidate to caption review.
+- Image approval ends at `submitted`; the UI never implies that Threads publishing occurred.
+- Errors stay next to the action that failed, while changes already visible in the list use silent
+  success plus the global status line.
 
-### Workspace Toolbar
+## Responsive and accessibility constraints
 
-- Contains semantic tabs, a text live status, and `새 자료 만들기`.
-- The tab bar is keyboard-operable with the existing arrow-key behavior.
-- It never repeats the login form or identity breadcrumb.
-
-### Buttons and Feedback
-
-- Buttons have primary, secondary, and quiet variants with visible focus and press feedback.
-- Validation and request errors use a nearby `role="alert"`; live request progress remains text in
-  a polite live region. Color never carries state alone.
-
-### Member Invitation
-
-- The owner-only `팀원 초대` action opens the existing command-dialog surface.
-- The form has a visible member-name label, nearby validation feedback, and a polite result region.
-- A generated member access ID is displayed once and can be copied without exposing the shared
-  workspace access ID.
-
-## Accessibility constraints
-
-- Keyboard users can skip to the entry heading before login and to the work canvas afterward.
-- Required fields report missing values inline and focus the first invalid field.
-- Controls retain a focus ring from `--focus-width` and `--color-accent`.
-- Long IDs and names must wrap without horizontal overflow at 375px.
+- `html` and `body` use `overflow-x: clip`; layouts collapse at content-driven 40rem and 60rem
+  breakpoints and remain usable at 320px.
+- Interactive labels do not wrap; filter rails scroll inside their own bounds when needed.
+- All inputs have visible labels, constant border width, a visible focus ring, and stable helper/error
+  positions. Textareas resize vertically.
+- Touch-reachable controls use at least a 44px block size, and status is never communicated by color
+  alone.

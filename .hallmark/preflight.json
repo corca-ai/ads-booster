@@ -1,0 +1,42 @@
+{
+  "schema_version": "hallmark.preflight.v1",
+  "created_at": "2026-08-26T00:35:47+09:00",
+  "brief": {
+    "audience": "Trace marketing team",
+    "primary_use": "select context, generate candidates, review captions and images, prepare for manual publication",
+    "tone": "utilitarian technical",
+    "theme": "existing Trace dark operations system",
+    "macrostructure": "Workbench"
+  },
+  "design_system": {
+    "locked": true,
+    "source": "DESIGN.md",
+    "canonical_tokens": "src/trace_capture/web/static/design-tokens.css",
+    "hallmark_entrypoint": "tokens.css"
+  },
+  "references": [
+    "references/macrostructures/05-workbench.md",
+    "references/genres/modern-minimal.md",
+    "references/typography.md",
+    "references/color.md",
+    "references/layout-and-space.md",
+    "references/microinteractions.md",
+    "references/interaction-and-states.md",
+    "references/responsive.md",
+    "references/slop-test.md",
+    "references/contract.md"
+  ],
+  "expected_files": [
+    "DESIGN.md",
+    "tokens.css",
+    "src/trace_capture/web/static/design-tokens.css",
+    "src/trace_capture/web/static/workspace.css",
+    "src/trace_capture/web/static/workspace.html",
+    "src/trace_capture/web/static/workspace-live.js"
+  ],
+  "image_decision": "No decorative imagery. Candidate images remain the only visual media because they are pipeline artifacts.",
+  "user_gate": {
+    "status": "inferred-and-announced",
+    "correction_window": "open while implementation continued"
+  }
+}

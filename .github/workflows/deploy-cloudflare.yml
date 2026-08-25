@@ -105,3 +105,34 @@ jobs:
             --retry 5 --retry-all-errors --retry-delay 3 \
             "$TRACE_MARKETING_HEALTH_URL")"
           test "$response" = '{"ok":true}'
+
+          workspace_url="${TRACE_MARKETING_HEALTH_URL%/health}/"
+          workspace="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            "$workspace_url")"
+          test "${workspace#*data-workspace-live}" != "$workspace"
+          test "${workspace#*data-context-select}" != "$workspace"
+          test "${workspace#*워크스페이스 접속 ID}" = "$workspace"
+
+          session="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            "${workspace_url}api/auth/session")"
+          node -e '
+            const session = JSON.parse(process.argv[1]);
+            if (session.member_id !== "public" || session.workspace_id !== "cloudflare:trace_demo_kr" || session.account_id !== "trace_demo_kr") {
+              process.exit(1);
+            }
+          ' "$session"
+
+          contexts="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            "${workspace_url}api/context-profiles")"
+          node -e '
+            const profiles = JSON.parse(process.argv[1]);
+            if (!Array.isArray(profiles) || profiles.length === 0 || !profiles.some((profile) => profile.is_default)) {
+              process.exit(1);
+            }
+          ' "$contexts"

@@ -1,0 +1,33 @@
+{
+  "schema_version": "hallmark.log.v1",
+  "entries": [
+    {
+      "created_at": "2026-08-26T00:35:47+09:00",
+      "macrostructure": "Workbench",
+      "tone": "utilitarian technical",
+      "anchor_hue": "indigo",
+      "navigation": "N9 edge-minimal",
+      "footer": "none",
+      "variation_knobs": {
+        "status_surface": "three operational queue counts",
+        "primary_split": "visible context inspector plus one candidate-generation action",
+        "candidate_navigation": "status filter rail"
+      },
+      "files": [
+        "DESIGN.md",
+        "tokens.css",
+        "src/trace_capture/web/static/design-tokens.css",
+        "src/trace_capture/web/static/workspace.css",
+        "src/trace_capture/web/static/workspace.html",
+        "src/trace_capture/web/static/workspace-live.js"
+      ],
+      "verification": {
+        "desktop": "1280x800 visual pass",
+        "mobile": "320, 375, 414, and 768px: no document overflow",
+        "interaction": "context selection, manager disclosure, ready filter, and review tab",
+        "slop_test": "pass",
+        "browser_surface": "temporary Cloudflare Tunnel to local Worker"
+      }
+    }
+  ]
+}

@@ -112,7 +112,7 @@ Compose concrete dependencies at these entry points.
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
 | `cli/marketing.py` | local simulation, external pull-bridge, and opt-in installed candidate-pipeline dependency composition |
-| `cloudflare/src/index.js` | hosted HTTP API, Workflow, Durable Object, D1, Queue, and R2 composition |
+| `cloudflare/src/index.js` | hosted control API, public workspace assets/API, Workers AI, Workflow, Durable Object, D1, Queue, and R2 composition |
 
 Do not start new dependencies through global singletons or import side effects. Construct them at
 composition time and give an explicit lifespan or context manager ownership of shutdown.
@@ -125,9 +125,12 @@ production handlers depend inward on the marketing contract rather than putting 
 or response shapes into `automation/` or `workspace/`.
 
 `cloudflare/` is a separate deployment composition root. Its Worker owns HTTP authorization and D1
-registry APIs; `MarketingWorkflow` owns durable orchestration; `MarketingAccountAgent` owns one
-account's private memory. Pure transition rules stay in `cloudflare/src/state-machine.js` so they can
-be tested outside the Workers runtime.
+registry APIs. `hosted-workspace.js` owns the intentionally public context/candidate APIs, account
+scoping, context snapshots, Workers AI schema, review transitions, and R2 preview contract. The build
+script copies the existing browser shell, validates the context manifest and profile data, and emits
+one generated Worker module from the canonical packaged source. `MarketingWorkflow` owns durable orchestration;
+`MarketingAccountAgent` owns one account's private memory. Pure run transition rules stay in
+`cloudflare/src/state-machine.js` so they can be tested outside the Workers runtime.
 
 ## Code placement rules
 
@@ -218,6 +221,16 @@ be tested outside the Workers runtime.
   explanatory fast paths, not the concurrency authority.
 - Treat a new account, locale, schedule, instruction revision, or credential reference as data.
 - Require code review for a new adapter, task kind, state edge, or retry rule.
+- Keep login-free hosted workspace routes under `/api/*`; never weaken `/v1/*` control-plane or
+  callback authorization to expose the UI.
+- Keep the starter context canonical under `trace_capture/assets/context/` and generate the Worker
+  module from it during the Cloudflare build instead of maintaining a second copy.
+- Keep country document/profile membership in the context manifest. D1 may add account-scoped
+  profiles, but a profile cannot generate for a country without reviewed packaged documents.
+- Store the selected profile snapshot on every hosted candidate; later profile edits must not change
+  the candidate's generation provenance.
+- Label R2 SVG output as a hosted preview; native Appium provenance belongs to `capture/` and cannot
+  be inferred from a Cloudflare-rendered artifact.
 
 ## Cross-package rules
 

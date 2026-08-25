@@ -246,7 +246,7 @@ TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 A candidate is the post unit of the workspace: a topic, a caption, its hypothesis, the references
 and principles behind it, and the free-form Appium prompt used to build its image. Candidates have two
 entrances, automatic and manual, and both land in one list before a human approval gate. The 후보
-tab opens on a 새 게시물 만들기 block: 🤖 후보 자동 생성 is the primary action and ✍️ 수동 등록 is a
+tab opens on a 새 게시물 만들기 block: 후보 자동 생성 is the primary action and 수동 등록 is a
 collapsed form for pasting one candidate by hand — 주제/컨셉 comes first and is required, and 국가
 is a KR/JP/TW/US dropdown that defaults to KR. Below the block the tab lists every candidate in the
 workspace, newest first, with the topic as its main line and the caption's first line beneath it.
@@ -269,9 +269,9 @@ implemented; ③ is reached by approving the image, and posting itself stays man
 | `submitted` | 제출됨 · 게시 준비 완료 | yes, by approving an image |
 
 The 캡션·주제 승인 tab holds both gates. `① 캡션·주제` lists candidates awaiting the first decision.
-`② 이미지` lists candidates that passed it: a `caption_approved` card offers `🎨 이미지 생성` and
+`② 이미지` lists candidates that passed it: a `caption_approved` card offers `이미지 생성` and
 shows `이미지 생성 중… (1~3분)` while the request runs, and an `image_awaiting_review` card shows the
-composed image with the topic and caption beside `✅ 승인` and `❌ 반려` plus a reason field. A
+composed image with the topic and caption beside `승인` and `반려` plus a reason field. A
 rejection returns the candidate to `caption_approved` with the note, so a new image can be composed.
 
 Opening the workspace database runs two idempotent migrations for rows written before these
@@ -279,7 +279,7 @@ fields existed: `accepted` becomes `caption_approved`, and candidates stored bef
 required are backfilled with the placeholder `(주제 미기록)` so the required field holds. Posting
 stays manual and outside this runtime.
 
-🤖 후보 자동 생성 is wired to the built-in agent. One click assembles the operator's context
+후보 자동 생성 is wired to the built-in agent. One click assembles the operator's context
 documents into a single provider call and stores three Korean candidates as `source=auto`, awaiting
 caption approval like any manual candidate. The button disables itself and shows
 `생성 중… (1~3분 소요)` while the request runs, then refreshes the list. It needs two things:
@@ -320,7 +320,7 @@ selected country.
 
 #### What the image stage needs
 
-`🎨 이미지 생성` composes the image in the web process without Appium or a simulator, from three
+`이미지 생성` composes the image in the web process without Appium or a simulator, from three
 layers: a background from the external image search allowlist (Pexels/Unsplash/Pixabay), the
 packaged Trace component fixture, and the packaged iPhone UI asset. The searched background's
 provider, source URL, and digest are written to `inputs/background-source.json` beside it.
@@ -749,6 +749,53 @@ metrics tasks inside the Cloudflare Workflow. Each task is explicitly labeled as
 as a digest-backed R2 artifact, and indexed as succeeded in D1. The Workflow still pauses at both
 human approval gates. This hosted path needs no always-on worker process.
 
+The existing production Worker also serves one public review workspace at:
+
+```text
+https://trace-marketing-control.donghun.workers.dev/
+```
+
+It has no workspace access ID or login step. Anyone with the URL can view and change the public
+`trace_demo_kr` candidate list, so do not put private material in this surface. The workbench shows
+the account boundary and live counts for caption review, image work, and publication-ready results.
+Choose one country/persona context before `후보 3개 생성`; Cloudflare Workers AI combines that
+profile with the packaged Trace principles, facts, voice, country reference index, and current
+account instruction, then stores three complete candidates in D1. Profiles can be added, edited, or
+hidden from the same screen. Every candidate stores the selected profile as an immutable snapshot,
+so later profile edits do not rewrite its generation provenance.
+
+Caption approval, a deterministic Cloudflare lock-screen preview stored in R2, and image approval use
+the same review tab. The preview records and renders the candidate schedule and device time, but it is
+explicitly not a native Appium capture and does not publish to an external channel. Image approval
+ends at `submitted` (게시 준비 완료); it does not call Threads or another publishing API. Candidate
+filters make review, image, ready, and rejected queues visible. Every hosted candidate, including
+`submitted` candidates, has 수정 and 삭제 controls. Editing clears its previous approval and R2
+preview and returns it to `awaiting_review`; deletion removes both its D1 row and preview with an
+optimistic revision guard.
+
+The packaged context is also the local generator's fallback. `TRACE_AGENT_CONTEXT_DIR` remains the
+explicit override, and an existing `<serve workspace>/context` still takes precedence; starting from
+a directory without `context/` no longer leaves the default candidate generator empty.
+The repository did not previously contain a production country/account/persona context library:
+the JSON files under `appium/jobs/**/mock-contexts/` are capture fixtures, and PR #21 expected the
+operator to supply the six markdown files in an untracked local `context/` directory. The packaged
+KR documents and four profiles in this version are therefore safe starter guidance, not a migration
+of team-owned persona knowledge. They keep a fresh install and hosted build runnable while the team
+replaces them with its successful-account evidence. The context manifest owns country document and
+profile paths; adding a packaged country is a data change to the manifest/documents/profile JSON,
+not a Worker source edit. Custom account-scoped profiles live in D1. Generation fails with `409`
+when a selected country has no packaged documents rather than silently falling back to KR.
+
+Hosted context endpoints are intentionally public with the rest of this workspace:
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /api/context-countries` | List countries currently enabled by the packaged manifest; the UI builds its country selector from this response |
+| `GET /api/context-profiles` | Seed packaged profiles if needed, then list enabled profiles for `PUBLIC_WORKSPACE_ACCOUNT_ID` |
+| `POST /api/context-profiles` | Add an account-scoped team profile |
+| `PATCH /api/context-profiles/{profile_id}` | Edit a profile with `expected_revision` |
+| `DELETE /api/context-profiles/{profile_id}` | Soft-hide a profile while preserving candidate snapshots |
+
 The external worker is required only for an account with a `workspace_id`, where provider
 candidate generation and local image composition need the installed Trace workspace. For an
 interactive foreground check it reads these environment variables:
@@ -831,7 +878,8 @@ npx wrangler queues consumer http add trace-marketing-tasks
 The commands above are for an initial resource bootstrap or an explicit local recovery. Normal
 production delivery is automatic: a merge to `main` that changes `cloudflare/**` runs
 `.github/workflows/deploy-cloudflare.yml`, checks the Worker, applies pending D1 migrations, deploys
-the merged revision, and verifies `/health` in that order. Pull Requests run the same Worker check
+the merged revision, and verifies `/health`, the login-free root workspace, and its public session in
+that order. Pull Requests run the same Worker check
 without receiving deployment credentials or changing Cloudflare. GitHub Actions stores the deployment API
 token as the `CLOUDFLARE_API_TOKEN` repository secret; account ID, D1 ID, and health URL are
 repository variables. Existing Worker runtime secrets remain in Cloudflare and are not copied into

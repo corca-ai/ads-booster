@@ -1,5 +1,11 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
+import { handleHostedWorkspace } from "./hosted-workspace.js";
+import {
+  WORKSPACE_CONTEXT,
+  WORKSPACE_CONTEXT_PROFILES,
+} from "./generated-workspace-context.js";
+
 import {
   accountName,
   approvalPhase,
@@ -348,6 +354,13 @@ export default {
       if (request.method === "GET" && url.pathname === "/health") {
         return Response.json({ ok: true });
       }
+      const workspaceResponse = await handleHostedWorkspace(
+        request,
+        env,
+        WORKSPACE_CONTEXT,
+        WORKSPACE_CONTEXT_PROFILES,
+      );
+      if (workspaceResponse) return workspaceResponse;
       authorize(
         request,
         ["/v1/task-callbacks", "/v1/review-events"].includes(url.pathname)
