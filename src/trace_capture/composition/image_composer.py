@@ -104,9 +104,10 @@ def compose_marketing_image(
     canvas: CanvasSize,
 ) -> None:
     size = (canvas.width, canvas.height)
-    with Image.open(layers.background) as raw_background, Image.open(
-        layers.trace_components
-    ) as raw_components:
+    with (
+        Image.open(layers.background) as raw_background,
+        Image.open(layers.trace_components) as raw_components,
+    ):
         background = ImageOps.fit(
             raw_background.convert("RGBA"),
             size,
