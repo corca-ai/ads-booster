@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -48,7 +49,10 @@ class MarketingBridge:
         return self.inbox.recover_running()
 
     def tick(self) -> bool:
-        leases = self.queue.pull()
+        try:
+            leases = self.queue.pull()
+        except CloudflareQueueError:
+            leases = ()
         ack: list[str] = []
         retry: list[str] = []
         for lease in leases:
@@ -59,10 +63,11 @@ class MarketingBridge:
             else:
                 ack.append(lease.lease_id)
         if ack or retry:
-            self.queue.acknowledge(
-                ack_lease_ids=tuple(ack),
-                retry_lease_ids=tuple(retry),
-            )
+            with suppress(CloudflareQueueError):
+                self.queue.acknowledge(
+                    ack_lease_ids=tuple(ack),
+                    retry_lease_ids=tuple(retry),
+                )
 
         task = self.inbox.claim_next()
         if task is not None:

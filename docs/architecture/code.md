@@ -111,16 +111,18 @@ Compose concrete dependencies at these entry points.
 | `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider and image clients, context directory, and shipped fixture paths for candidate production and the image stage |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
-| `cli/marketing.py` | local simulation and external pull-bridge dependency composition |
+| `cli/marketing.py` | local simulation, external pull-bridge, and opt-in installed candidate-pipeline dependency composition |
 | `cloudflare/src/index.js` | hosted HTTP API, Workflow, Durable Object, D1, Queue, and R2 composition |
 
 Do not start new dependencies through global singletons or import side effects. Construct them at
 composition time and give an explicit lifespan or context manager ownership of shutdown.
 
 `marketing/` owns the Cloudflare Queue task contract, durable Mac inbox/outbox, bridge orchestration,
-task-handler port, and local end-to-end control-plane proof. It may depend on shared transport JSON
-types, but channel-specific production handlers depend inward on the marketing contract rather than
-putting Cloudflare response shapes into `automation/` or `workspace/`.
+task-handler port, optional candidate-journey adapter, and local end-to-end control-plane proof. The
+candidate adapter may invoke the provider-neutral ports in `candidate_generation/` and the existing
+workspace review store; Cloudflare response shapes do not enter either package. Channel-specific
+production handlers depend inward on the marketing contract rather than putting their credentials
+or response shapes into `automation/` or `workspace/`.
 
 `cloudflare/` is a separate deployment composition root. Its Worker owns HTTP authorization and D1
 registry APIs; `MarketingWorkflow` owns durable orchestration; `MarketingAccountAgent` owns one
@@ -205,7 +207,11 @@ be tested outside the Workers runtime.
   the inbox store.
 - Keep queue acknowledgement after durable inbox insertion and callback delivery after durable
   outbox insertion.
+- Encode Queue HTTP-pull envelopes as JSON text, keep task completion event types unique per task,
+  and normalize transport exceptions at the Cloudflare client boundary.
 - Keep account registry data in D1 and account-private learned memory in the named Durable Object.
+- Let D1's partial unique index own the one-active-run-per-account invariant; API and Cron checks are
+  explanatory fast paths, not the concurrency authority.
 - Treat a new account, locale, schedule, instruction revision, or credential reference as data.
 - Require code review for a new adapter, task kind, state edge, or retry rule.
 

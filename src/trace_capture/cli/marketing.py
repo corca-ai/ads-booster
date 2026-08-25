@@ -2,23 +2,38 @@ from __future__ import annotations
 
 import os
 import time
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from trace_capture.candidate_generation import (
+    build_candidate_generator,
+    build_candidate_image_runner,
+)
+from trace_capture.config.settings import AgentSettings
 from trace_capture.marketing.bridge import MarketingBridge
 from trace_capture.marketing.cloudflare_queue import (
     CloudflareQueueClient,
     CloudflareQueueConfig,
     ControlPlaneCallbackClient,
 )
-from trace_capture.marketing.executors import ArtifactSimulationExecutor
+from trace_capture.marketing.executors import (
+    ArtifactSimulationExecutor,
+    CandidatePipelineExecutor,
+)
 from trace_capture.marketing.inbox import MarketingInbox
 from trace_capture.marketing.simulator import LocalMarketingControlPlane, MarketingAccount
 from trace_capture.transport.http import create_http_client
+from trace_capture.workspace import SqliteWorkspaceStore
 
 app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
+
+
+class BridgeExecutor(StrEnum):
+    SIMULATION = "simulation"
+    CANDIDATE_PIPELINE = "candidate-pipeline"
 
 
 @app.command("simulate")
@@ -43,9 +58,18 @@ def simulate(
 
 @app.command("bridge")
 def bridge(
-    home: Annotated[Path | None, typer.Option(help="Bridge state root.")] = None,
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     once: Annotated[bool, typer.Option(help="Pull and process at most one local task.")] = False,
     poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
+    executor: Annotated[
+        BridgeExecutor,
+        typer.Option(
+            help=(
+                "simulation, or candidate-pipeline for real provider candidate generation "
+                "and PR #22 image composition; publication stays simulated"
+            )
+        ),
+    ] = BridgeExecutor.SIMULATION,
 ) -> None:
     """Run the external Cloudflare Queue pull consumer.
 
@@ -58,7 +82,20 @@ def bridge(
     queue_token = _required("TRACE_MARKETING_QUEUE_TOKEN")
     control_plane_url = _required("TRACE_MARKETING_CONTROL_PLANE_URL")
     worker_token = _required("TRACE_MARKETING_WORKER_TOKEN")
-    root = _home(home) / "marketing-bridge"
+    agent_home = _home(home)
+    root = agent_home / "marketing-bridge"
+    simulation = ArtifactSimulationExecutor(root / "artifacts")
+    active_executor = simulation
+    if executor is BridgeExecutor.CANDIDATE_PIPELINE:
+        settings = AgentSettings.from_environment()
+        store = SqliteWorkspaceStore(agent_home)
+        active_executor = CandidatePipelineExecutor(
+            generator=build_candidate_generator(settings, store),
+            image_runner=build_candidate_image_runner(settings, agent_home, store),
+            store=store,
+            artifact_root=agent_home,
+            fallback=simulation,
+        )
     with create_http_client() as http:
         worker = MarketingBridge(
             queue=CloudflareQueueClient(
@@ -71,7 +108,7 @@ def bridge(
             ),
             callbacks=ControlPlaneCallbackClient(http, control_plane_url, worker_token),
             inbox=MarketingInbox(root),
-            executor=ArtifactSimulationExecutor(root / "artifacts"),
+            executor=active_executor,
         )
         recovered = worker.recover()
         if recovered:

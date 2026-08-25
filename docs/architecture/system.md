@@ -389,18 +389,30 @@ state and capture roots.
 The optional hosted control plane is defined under `cloudflare/`. D1 owns versioned shared
 instructions, account configuration, schedules, runs, events, and task indexes. A named Durable
 Object selected by `account_id` owns private learned memory for exactly one marketing account.
-Cloudflare Workflows owns the durable run and its human-approval wait. A Cron Trigger checks D1 every
-minute and claims accounts whose data-driven `next_run_at` is due.
+Cloudflare Workflows owns the durable run and two human-approval waits: candidate/caption selection
+before image capture, then image/publication approval before the channel boundary. A Cron Trigger
+checks D1 every minute and claims accounts whose data-driven `next_run_at` is due. A partial unique
+D1 index permits only one non-terminal run per account, so a long approval wait cannot accumulate
+overlapping Cron runs. Approval or task callback expiry moves the D1 run to `failed` with a stable
+timeout code instead of leaving a permanently waiting row.
 
 The Workflow emits versioned tasks to Cloudflare Queue. The Mac runs `trace-marketing bridge`, pulls
 over the Cloudflare REST API, commits each task to a protected SQLite inbox, and only then
 acknowledges the queue lease. Task completion and its callback are committed to a local outbox so a
 process restart cannot lose the control-plane notification. The bridge initiates every connection;
-the quick `trycloudflare.com` tunnel is not part of this transport.
+the quick `trycloudflare.com` tunnel is not part of this transport. Queue bodies use JSON text for
+HTTP pull compatibility, task completion events include the task ID, and duplicate callbacks replay
+the same event only after the stored callback ID and result match. Pull, acknowledgement, and callback
+transport failures do not block already-durable local work.
 
-Publication remains behind both a human approval event and a channel adapter. The branch implements
-an explicitly labeled simulation executor. Live Threads publication remains capability-gated and is
-not enabled or claimed. See [Dynamic Cloudflare Marketing Loop Contract](../contracts/cloudflare-marketing-loop.md).
+The bridge defaults to an explicitly labeled simulation executor. Its opt-in `candidate-pipeline`
+executor maps an account's opaque local `workspace_id` to the existing provider candidate generator
+and PR #22 search/composition image runner. Generated candidates remain in the existing workspace
+review journey: captions must reach `caption_approved` before capture, and composed images must reach
+`submitted` before the publication task can cross the adapter boundary. Research, publication, and
+metrics still use the simulation executor in this mode. Live Threads publication remains
+capability-gated and is not enabled or claimed. See
+[Dynamic Cloudflare Marketing Loop Contract](../contracts/cloudflare-marketing-loop.md).
 
 The base CLI, TUI, Web shell, and offline composition do not require native capture dependencies.
 Generation that includes Trace component capture requires Xcode, an available Simulator, the Trace
@@ -425,6 +437,10 @@ Appium processes, but does not install the missing Trace build or driver.
   account's context snapshot.
 - Queue messages are acknowledged only after durable local insertion; callbacks use an independent
   durable outbox.
+- One account can own only one non-terminal hosted run; observation offsets are interpreted as
+  absolute minutes since publication and converted to relative Workflow sleeps.
+- Hosted marketing runs cannot bypass either the caption/candidate approval gate or the final image
+  approval gate when using the installed candidate pipeline.
 - A generated artifact is not ready for delivery until its path and digest are verified and a human
   accepts the review record.
 - No current live adapter publishes to Notion, Threads, or another external marketing channel.
@@ -433,7 +449,7 @@ Appium processes, but does not install the missing Trace build or driver.
 
 The implemented architecture does not currently provide:
 
-- a verified production deployment of the hosted control plane;
+- a verified production round trip through the hosted Queue pull bridge;
 - a capability-proven live Threads publication adapter;
 - real channel metrics and production feedback learning;
 - real custom-wallpaper capture from the Simulator.

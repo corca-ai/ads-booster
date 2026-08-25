@@ -3,8 +3,10 @@
 Status: Draft
 
 The control-plane, local simulation, queue bridge, and deployment configuration are implemented in
-this branch. A production Cloudflare deployment, real Threads publication, and live metrics readback
-remain unverified. Simulation output must not be represented as a published post.
+this branch. The bridge can also opt into the installed candidate pipeline added by PR #22: provider
+generation writes reviewable candidates and the search-based image stage composes only
+caption-approved candidates. A live external Queue pull, real Threads publication, and live metrics
+readback remain unverified. Simulation output must not be represented as a published post.
 
 ## First milestone
 
@@ -17,9 +19,10 @@ content quality. The acceptance path is:
 4. snapshot shared instructions plus account-private memory;
 5. dispatch research, generation, capture, publication, and metrics tasks through Cloudflare Queue;
 6. persist each task in the Mac inbox before acknowledging its Cloudflare lease;
-7. pause for human approval before publication;
-8. observe, evaluate, commit account-private memory, and complete; and
-9. prove the same state contract end-to-end in simulation mode.
+7. pause for caption/candidate selection before image capture;
+8. pause again for image/publication approval before publication;
+9. observe, evaluate, commit account-private memory, and complete; and
+10. prove the same state contract end-to-end in simulation mode.
 
 ## Architecture decisions
 
@@ -32,6 +35,7 @@ content quality. The acceptance path is:
 | task durability | local SQLite inbox/outbox | queue acknowledgement follows durable insert; callbacks survive Mac restarts |
 | artifacts | R2 in cloud, digest-backed local files on Mac | large payloads do not become workflow state and provenance remains inspectable |
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
+| installed candidate journey | optional Mac executor selected at bridge startup | the default remains simulation; enabling the installed pipeline does not silently enable publication |
 
 This combines ideas used by established harnesses: actor isolation from Akka/Orleans-style systems,
 durable workflow steps from Temporal-style systems, inbox/outbox delivery from event-driven systems,
@@ -63,6 +67,9 @@ cannot inject executable code into a Worker or Mac process.
 
 - D1 contains account configuration and an opaque credential reference, never the credential value.
 - One named Durable Object owns each account's private learned memory.
+- An account may carry an opaque local `workspace_id`. The control plane forwards it to the Mac but
+  never uses it to read another workspace; the installed candidate executor requires the referenced
+  workspace to already exist in the local Trace store.
 - Shared instructions are immutable revisions. Every run records the selected revision and a digest
   of the resulting context snapshot in R2.
 - Mac credential values are resolved outside this contract, preferably from Keychain. They are not
@@ -75,14 +82,19 @@ The happy path is:
 
 ```text
 scheduled -> context_snapshot -> research -> planning -> candidate_generation
--> capture_requested -> capture_completed -> automatic_quality_check
+-> awaiting_candidate_approval -> candidates_approved -> capture_requested
+-> capture_completed -> automatic_quality_check
 -> awaiting_human_approval -> approved -> scheduled_for_publish -> publishing
 -> published -> observing -> evaluated -> memory_committed -> completed
 ```
 
-Rejection terminates at `rejected`. Verified failures terminate at `failed`. If a publication request
-times out after it may have reached a channel, the run terminates at `unknown_side_effect`; it is not
-retried until an operator reads back channel state.
+The first approval selects caption-approved candidate IDs. With the installed candidate executor,
+the operator approves captions in the existing Trace workspace before sending this event. The image
+stage then moves those candidates to image review, and the second approval is sent only after the
+operator approves the images in that workspace. Rejection at either gate terminates at `rejected`.
+Verified failures terminate at `failed`. If a publication request times out after it may have reached
+a channel, the run terminates at `unknown_side_effect`; it is not retried until an operator reads
+back channel state.
 
 ## Task delivery contract
 
@@ -97,14 +109,20 @@ Every task has `schema_version`, `task_id`, `run_id`, `account_id`, `kind`, `ide
 6. writes a terminal result and callback to the local outbox in the same transaction; and
 7. retries callback delivery independently until the control plane accepts its callback ID.
 
+The Worker publishes the task envelope with Queue `contentType: "text"`. HTTP pull therefore returns
+plain JSON text; the Mac accepts that canonical shape and legacy base64 JSON during rollout. Every
+Workflow callback event type includes its `task_id`. Repeating an identical callback replays the
+same buffered event, while a reused callback ID with a changed result is rejected.
+
 Cloudflare task execution is at-least-once. Business side effects become effectively-once only when
 the selected channel adapter supports an idempotency key or a conclusive readback.
 
 ## Human approval and live publication
 
-Simulation mode may close the whole state loop but cannot impersonate a live post. Live mode remains
-disabled until a capability probe confirms, against the current official Threads API and the actual
-account permissions:
+Simulation mode may close the whole state loop but cannot impersonate a live post. Account writes
+with `adapter_mode: "live"` are currently rejected, and the local simulation executor independently
+refuses a non-simulation publication task. Live mode remains disabled until a capability probe
+confirms, against the current official Threads API and the actual account permissions:
 
 - creation and publication calls;
 - stable publication identifiers;
@@ -113,6 +131,30 @@ account permissions:
 - operator-visible verification after publication.
 
 The current product does not automatically delete, edit, or retry an ambiguous live publication.
+
+Only one non-terminal run may exist for an account. Candidate approval, publication approval, and
+task callback timeouts transition the run to `failed`. Observation settings are absolute minutes
+since publication; the Workflow converts them to relative sleeps so `5,10,15` samples at minutes 5,
+10, and 15 rather than 5, 15, and 30.
+
+## Installed candidate executor
+
+`trace-marketing bridge --executor candidate-pipeline` replaces only the candidate generation and
+image capture task handlers. Research, publication, and metrics remain explicitly simulated. The
+executor:
+
+1. requires `workspace_id` in the account configuration;
+2. adds the versioned shared instruction, account-private memory, and research output to the provider
+   generation request;
+3. writes generated candidates into the existing workspace candidate store;
+4. accepts only candidate IDs selected at the first approval gate;
+5. uses PR #22's provenance-checked search background and deterministic image composer; and
+6. refuses publication unless every selected candidate has reached `submitted` through the existing
+   image review gate.
+
+The offline image stage still uses the packaged Trace component fixture. Candidate schedule items and
+device time are recorded but are not rendered until the native Appium capture path replaces that
+fixture.
 
 ## Two-hour operating target
 

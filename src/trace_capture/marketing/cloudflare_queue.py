@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -42,7 +45,8 @@ class CloudflareQueueClient:
     config: CloudflareQueueConfig
 
     def pull(self) -> tuple[QueueLease, ...]:
-        response = self.http.post_json(
+        response = _post_json(
+            self.http,
             f"{self.config.messages_url}/pull",
             {
                 "batch_size": self.config.batch_size,
@@ -61,9 +65,7 @@ class CloudflareQueueClient:
         for raw in messages:
             if not isinstance(raw, dict):
                 raise CloudflareQueueError("queue message is not an object")
-            body = raw.get("body")
-            if not isinstance(body, dict):
-                raise CloudflareQueueError("queue message body is not an object")
+            body = _message_body(raw.get("body"))
             try:
                 leases.append(
                     QueueLease(
@@ -83,7 +85,8 @@ class CloudflareQueueClient:
         ack_lease_ids: tuple[str, ...] = (),
         retry_lease_ids: tuple[str, ...] = (),
     ) -> None:
-        response = self.http.post_json(
+        response = _post_json(
+            self.http,
             f"{self.config.messages_url}/ack",
             {
                 "acks": [{"lease_id": lease_id} for lease_id in ack_lease_ids],
@@ -107,7 +110,8 @@ class ControlPlaneCallbackClient:
     worker_token: str
 
     def deliver(self, callback: TaskCallback) -> None:
-        response = self.http.post_json(
+        response = _post_json(
+            self.http,
             f"{self.control_plane_url.rstrip('/')}/v1/task-callbacks",
             _JSON_OBJECT.validate_json(callback.model_dump_json()),
             {
@@ -117,6 +121,34 @@ class ControlPlaneCallbackClient:
             },
         )
         _ = _response_payload(response, operation="callback")
+
+
+def _post_json(
+    http: HttpClient,
+    url: str,
+    payload: JsonObject,
+    headers: dict[str, str],
+) -> HttpResponse:
+    try:
+        return http.post_json(url, payload, headers)
+    except Exception as error:
+        raise CloudflareQueueError("Cloudflare transport request failed") from error
+
+
+def _message_body(value: object) -> JsonObject:
+    if isinstance(value, dict):
+        return _JSON_OBJECT.validate_python(value)
+    if not isinstance(value, str):
+        raise CloudflareQueueError("queue message body is not text")
+    candidates = [value]
+    with suppress(binascii.Error, UnicodeDecodeError):
+        candidates.append(base64.b64decode(value, validate=True).decode())
+    for candidate in candidates:
+        try:
+            return _JSON_OBJECT.validate_json(candidate)
+        except ValidationError:
+            continue
+    raise CloudflareQueueError("queue message body is not a JSON object")
 
 
 def _response_payload(response: HttpResponse, *, operation: str) -> JsonObject:

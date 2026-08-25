@@ -1,8 +1,19 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
-import { accountName, assertTransition, taskEventType } from "./state-machine.js";
+import {
+  accountName,
+  approvalPhase,
+  assertRunnableAdapterMode,
+  assertTransition,
+  normalizeCandidateIds,
+  observationSchedule,
+  selectedCandidateIds,
+  taskCompletionEventType,
+} from "./state-machine.js";
 
 const TERMINAL_TASK_FAILURES = new Set(["failed", "unknown_side_effect"]);
+const MAX_INSTRUCTION_BYTES = 32 * 1024;
+const MAX_CALLBACK_RESULT_BYTES = 96 * 1024;
 
 export class MarketingAccountAgent extends DurableObject {
   async contextSnapshot(account, sharedInstruction) {
@@ -56,16 +67,74 @@ export class MarketingWorkflow extends WorkflowEntrypoint {
 
     const candidates = await this.runTask(step, runId, account, "generate_candidates", {
       context_digest: snapshot.digest,
+      workspace_id: account.workspace_id,
+      shared_instruction: snapshot.value.shared_instruction,
+      private_memory: snapshot.value.private_memory,
       research,
     });
     await step.do("mark-candidate-generation", () =>
       transition(this.env.DB, runId, "planning", "candidate_generation", candidates),
     );
+    await step.do("await-candidate-approval", () =>
+      transition(this.env.DB, runId, "candidate_generation", "awaiting_candidate_approval", {}),
+    );
+    let candidateApproval;
+    try {
+      candidateApproval = await step.waitForEvent("human candidate approval", {
+        type: "candidate_approval",
+        timeout: "7 days",
+      });
+    } catch (error) {
+      await step.do("record-candidate-approval-timeout", () =>
+        transition(this.env.DB, runId, "awaiting_candidate_approval", "failed", {
+          failure_code: "candidate_approval_timeout",
+        }),
+      );
+      throw error;
+    }
+    if (candidateApproval.payload?.decision !== "approved") {
+      await step.do("record-candidate-rejection", () =>
+        transition(
+          this.env.DB,
+          runId,
+          "awaiting_candidate_approval",
+          "rejected",
+          { ...candidateApproval.payload, phase: "candidates" },
+        ),
+      );
+      return { run_id: runId, state: "rejected" };
+    }
+    let candidateIds;
+    try {
+      candidateIds = selectedCandidateIds(
+        candidateApproval.payload?.candidate_ids,
+        candidates.candidate_ids,
+      );
+    } catch (error) {
+      await step.do("record-invalid-candidate-approval", () =>
+        transition(this.env.DB, runId, "awaiting_candidate_approval", "failed", {
+          failure_code: "candidate_approval_invalid",
+        }),
+      );
+      throw error;
+    }
+    await step.do("record-candidate-approval", () =>
+      transition(this.env.DB, runId, "awaiting_candidate_approval", "candidates_approved", {
+        phase: "candidates",
+        candidate_ids: candidateIds,
+      }),
+    );
     await step.do("mark-capture-requested", () =>
-      transition(this.env.DB, runId, "candidate_generation", "capture_requested", {}),
+      transition(this.env.DB, runId, "candidates_approved", "capture_requested", {
+        candidate_ids: candidateIds,
+      }),
     );
 
-    const capture = await this.runTask(step, runId, account, "capture", { candidates });
+    const capture = await this.runTask(step, runId, account, "capture", {
+      workspace_id: account.workspace_id,
+      candidate_ids: candidateIds,
+      candidates,
+    });
     await step.do("mark-capture-completed", () =>
       transition(this.env.DB, runId, "capture_requested", "capture_completed", capture),
     );
@@ -84,10 +153,20 @@ export class MarketingWorkflow extends WorkflowEntrypoint {
       ),
     );
 
-    const approval = await step.waitForEvent("human publication approval", {
-      type: "human_approval",
-      timeout: "7 days",
-    });
+    let approval;
+    try {
+      approval = await step.waitForEvent("human publication approval", {
+        type: "human_approval",
+        timeout: "7 days",
+      });
+    } catch (error) {
+      await step.do("record-publication-approval-timeout", () =>
+        transition(this.env.DB, runId, "awaiting_human_approval", "failed", {
+          failure_code: "publication_approval_timeout",
+        }),
+      );
+      throw error;
+    }
     if (approval.payload?.decision !== "approved") {
       await step.do("record-rejection", () =>
         transition(this.env.DB, runId, "awaiting_human_approval", "rejected", approval.payload ?? {}),
@@ -105,6 +184,8 @@ export class MarketingWorkflow extends WorkflowEntrypoint {
     );
 
     const publication = await this.runTask(step, runId, account, "publish", {
+      workspace_id: account.workspace_id,
+      candidate_ids: candidateIds,
       candidates,
       capture,
       adapter_mode: account.adapter_mode,
@@ -117,9 +198,9 @@ export class MarketingWorkflow extends WorkflowEntrypoint {
     );
 
     const samples = [];
-    const minutes = observationMinutes(this.env.OBSERVATION_MINUTES);
-    for (const minute of minutes) {
-      await step.sleep(`wait-${minute}-minute-sample`, `${minute} minutes`);
+    const schedule = observationSchedule(this.env.OBSERVATION_MINUTES);
+    for (const { minute, delay_minutes: delayMinutes } of schedule) {
+      await step.sleep(`wait-${minute}-minute-sample`, `${delayMinutes} minutes`);
       samples.push(
         await this.runTask(step, runId, account, "sample_metrics", {
           publication,
@@ -144,33 +225,55 @@ export class MarketingWorkflow extends WorkflowEntrypoint {
 
   async runTask(step, runId, account, kind, payload) {
     const task = await step.do(`dispatch-${kind}`, async () => {
-      const taskId = crypto.randomUUID();
-      const now = new Date().toISOString();
+      const idempotencyKey = `${runId}:${kind}:${payload.minute ?? "once"}`;
+      const existing = await this.env.DB.prepare(
+        "SELECT task_id, created_at FROM marketing_tasks WHERE idempotency_key = ?",
+      )
+        .bind(idempotencyKey)
+        .first();
+      const taskId = existing?.task_id ?? crypto.randomUUID();
+      const createdAt = existing?.created_at ?? new Date().toISOString();
       const body = {
         schema_version: "1",
         task_id: taskId,
         run_id: runId,
         account_id: account.account_id,
         kind,
-        idempotency_key: `${runId}:${kind}:${payload.minute ?? "once"}`,
+        idempotency_key: idempotencyKey,
         payload,
-        created_at: now,
+        created_at: createdAt,
         credential_ref: account.credential_ref,
       };
-      await this.env.DB.prepare(
+      const inserted = await this.env.DB.prepare(
         `INSERT INTO marketing_tasks
           (task_id, run_id, account_id, kind, idempotency_key, state, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+         ON CONFLICT(idempotency_key) DO NOTHING`,
       )
-        .bind(taskId, runId, account.account_id, kind, body.idempotency_key, now, now)
+        .bind(taskId, runId, account.account_id, kind, body.idempotency_key, createdAt, createdAt)
         .run();
-      await this.env.TASK_QUEUE.send(body, { contentType: "json" });
+      if (inserted.meta.changes === 0 && !existing) {
+        throw new Error(`concurrent task dispatch for ${idempotencyKey}`);
+      }
+      await this.env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
       return body;
     });
-    const completion = await step.waitForEvent(`wait-${kind}-${task.task_id}`, {
-      type: taskEventType(kind),
-      timeout: "12 hours",
-    });
+    let completion;
+    try {
+      completion = await step.waitForEvent(`wait-${kind}-${task.task_id}`, {
+        type: taskCompletionEventType(kind, task.task_id),
+        timeout: "12 hours",
+      });
+    } catch (error) {
+      await step.do(`record-${kind}-callback-timeout`, async () => {
+        const current = await currentRunState(this.env.DB, runId);
+        await transition(this.env.DB, runId, current, "failed", {
+          failure_code: `${kind}_callback_timeout`,
+          task_id: task.task_id,
+        });
+      });
+      throw error;
+    }
     if (completion.payload?.task_id !== task.task_id) {
       throw new Error(`workflow received a callback for the wrong ${kind} task`);
     }
@@ -230,9 +333,27 @@ export default {
         if (!["approved", "rejected"].includes(body.decision)) {
           return Response.json({ error: "decision must be approved or rejected" }, { status: 400 });
         }
+        const state = await currentRunState(env.DB, runId);
+        let phase;
+        try {
+          phase = approvalPhase(state, body.phase);
+        } catch (error) {
+          throw new HttpError(409, error.message);
+        }
+        const payload = { ...body, phase };
+        if (phase === "candidates" && body.decision === "approved") {
+          try {
+            payload.candidate_ids = normalizeCandidateIds(body.candidate_ids);
+          } catch (error) {
+            throw new HttpError(400, error.message);
+          }
+        }
         const instance = await env.MARKETING_WORKFLOW.get(runId);
-        await instance.sendEvent({ type: "human_approval", payload: body });
-        return Response.json({ accepted: true, run_id: runId }, { status: 202 });
+        await instance.sendEvent({
+          type: phase === "candidates" ? "candidate_approval" : "human_approval",
+          payload,
+        });
+        return Response.json({ accepted: true, run_id: runId, phase }, { status: 202 });
       }
       if (request.method === "POST" && url.pathname === "/v1/task-callbacks") {
         return Response.json(await receiveCallback(env, await request.json()), { status: 202 });
@@ -265,6 +386,9 @@ function authorize(request, token) {
 async function createInstruction(db, input) {
   if (typeof input.body !== "string" || !input.body.trim()) {
     throw new HttpError(400, "instruction body is required");
+  }
+  if (new TextEncoder().encode(input.body).byteLength > MAX_INSTRUCTION_BYTES) {
+    throw new HttpError(413, `instruction body exceeds ${MAX_INSTRUCTION_BYTES} bytes`);
   }
   const digest = await sha256(input.body);
   const now = new Date().toISOString();
@@ -310,6 +434,7 @@ async function upsertAccount(db, input) {
     timezone: input.timezone ?? "Asia/Seoul",
     schedule_minutes: Number(input.schedule_minutes ?? 1440),
     instruction_revision: instructionRevision,
+    workspace_id: input.workspace_id ?? null,
     credential_ref: input.credential_ref ?? null,
     adapter_mode: input.adapter_mode ?? "simulation",
     enabled: input.enabled !== false,
@@ -317,11 +442,16 @@ async function upsertAccount(db, input) {
   if (!Number.isInteger(config.schedule_minutes) || config.schedule_minutes < 1) {
     throw new HttpError(400, "schedule_minutes must be a positive integer");
   }
-  if (!["simulation", "live"].includes(config.adapter_mode)) {
-    throw new HttpError(400, "adapter_mode must be simulation or live");
+  if (
+    config.workspace_id !== null &&
+    (typeof config.workspace_id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(config.workspace_id))
+  ) {
+    throw new HttpError(400, "workspace_id must be a safe opaque identifier");
   }
-  if (config.adapter_mode === "live" && !config.credential_ref) {
-    throw new HttpError(400, "live accounts require an opaque credential_ref");
+  try {
+    assertRunnableAdapterMode(config.adapter_mode);
+  } catch (error) {
+    throw new HttpError(config.adapter_mode === "live" ? 409 : 400, error.message);
   }
   const now = new Date().toISOString();
   await db
@@ -360,17 +490,39 @@ async function startRun(env, accountId) {
   accountName(accountId);
   const account = await loadAccount(env.DB, accountId);
   if (!account.enabled) throw new HttpError(409, "account is disabled");
+  const active = await activeRun(env.DB, accountId);
+  if (active) {
+    throw new HttpError(409, `account already has active run ${active.run_id}`);
+  }
   const runId = crypto.randomUUID();
   const now = new Date().toISOString();
-  await env.DB.prepare(
-    `INSERT INTO marketing_runs
-      (run_id, account_id, workflow_instance_id, state, created_at, updated_at)
-     VALUES (?, ?, ?, 'scheduled', ?, ?)`,
-  )
-    .bind(runId, accountId, runId, now, now)
-    .run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO marketing_runs
+        (run_id, account_id, workflow_instance_id, state, created_at, updated_at)
+       VALUES (?, ?, ?, 'scheduled', ?, ?)`,
+    )
+      .bind(runId, accountId, runId, now, now)
+      .run();
+  } catch (error) {
+    const concurrent = await activeRun(env.DB, accountId);
+    if (concurrent) {
+      throw new HttpError(409, `account already has active run ${concurrent.run_id}`);
+    }
+    throw error;
+  }
   await recordEvent(env.DB, runId, "scheduled", { trigger: "api" });
-  await env.MARKETING_WORKFLOW.create({ id: runId, params: { run_id: runId, account_id: accountId } });
+  try {
+    await env.MARKETING_WORKFLOW.create({
+      id: runId,
+      params: { run_id: runId, account_id: accountId },
+    });
+  } catch (error) {
+    await transition(env.DB, runId, "scheduled", "failed", {
+      failure_code: "workflow_create_failed",
+    });
+    throw error;
+  }
   return { run_id: runId, state: "scheduled" };
 }
 
@@ -388,13 +540,30 @@ async function startDueRuns(env) {
     )
       .bind(next, now.toISOString(), row.account_id, now.toISOString())
       .run();
-    if (claimed.meta.changes === 1) await startRun(env, row.account_id);
+    if (claimed.meta.changes === 1) {
+      try {
+        await startRun(env, row.account_id);
+      } catch (error) {
+        if (!(error instanceof HttpError && error.status === 409)) throw error;
+      }
+    }
   }
 }
 
 async function receiveCallback(env, callback) {
+  if (
+    typeof callback.callback_id !== "string" ||
+    callback.callback_id.length < 1 ||
+    callback.callback_id.length > 256
+  ) {
+    throw new HttpError(400, "callback_id must be a non-empty identifier");
+  }
+  const resultJson = JSON.stringify(callback.result);
+  if (new TextEncoder().encode(resultJson).byteLength > MAX_CALLBACK_RESULT_BYTES) {
+    throw new HttpError(413, `callback result exceeds ${MAX_CALLBACK_RESULT_BYTES} bytes`);
+  }
   const task = await env.DB.prepare(
-    "SELECT run_id, account_id, kind, state, callback_id FROM marketing_tasks WHERE task_id = ?",
+    "SELECT run_id, account_id, kind, state, callback_id, result_json FROM marketing_tasks WHERE task_id = ?",
   )
     .bind(callback.task_id)
     .first();
@@ -402,8 +571,13 @@ async function receiveCallback(env, callback) {
   if (task.run_id !== callback.run_id || task.account_id !== callback.account_id || task.kind !== callback.kind) {
     throw new HttpError(409, "callback scope does not match task");
   }
+  if (callback.callback_id !== `${callback.task_id}:completed`) {
+    throw new HttpError(409, "callback_id does not match task");
+  }
   if (task.callback_id) {
     if (task.callback_id !== callback.callback_id) throw new HttpError(409, "conflicting callback");
+    if (task.result_json !== resultJson) throw new HttpError(409, "callback result changed");
+    await sendTaskCompletion(env, task, callback);
     return { accepted: true, duplicate: true };
   }
   const status = callback.result?.status;
@@ -411,14 +585,34 @@ async function receiveCallback(env, callback) {
     throw new HttpError(400, "invalid task result status");
   }
   const now = new Date().toISOString();
-  await env.DB.prepare(
+  const updated = await env.DB.prepare(
     "UPDATE marketing_tasks SET state = ?, result_json = ?, callback_id = ?, updated_at = ? WHERE task_id = ? AND callback_id IS NULL",
   )
-    .bind(status, JSON.stringify(callback.result), callback.callback_id, now, callback.task_id)
+    .bind(status, resultJson, callback.callback_id, now, callback.task_id)
     .run();
-  const instance = await env.MARKETING_WORKFLOW.get(task.run_id);
-  await instance.sendEvent({ type: taskEventType(task.kind), payload: callback });
+  if (updated.meta.changes !== 1) {
+    const winner = await env.DB.prepare(
+      "SELECT callback_id, result_json FROM marketing_tasks WHERE task_id = ?",
+    )
+      .bind(callback.task_id)
+      .first();
+    if (winner?.callback_id !== callback.callback_id) {
+      throw new HttpError(409, "conflicting callback");
+    }
+    if (winner.result_json !== resultJson) throw new HttpError(409, "callback result changed");
+    await sendTaskCompletion(env, task, callback);
+    return { accepted: true, duplicate: true };
+  }
+  await sendTaskCompletion(env, task, callback);
   return { accepted: true, duplicate: false };
+}
+
+async function sendTaskCompletion(env, task, callback) {
+  const instance = await env.MARKETING_WORKFLOW.get(task.run_id);
+  await instance.sendEvent({
+    type: taskCompletionEventType(task.kind, callback.task_id),
+    payload: callback,
+  });
 }
 
 async function transition(db, runId, from, to, detail) {
@@ -484,12 +678,16 @@ async function currentRunState(db, runId) {
   return row.state;
 }
 
-function observationMinutes(value) {
-  const parsed = String(value ?? "5,10,15,20,25,30")
-    .split(",")
-    .map(Number)
-    .filter((item) => Number.isInteger(item) && item > 0);
-  return parsed.length ? parsed : [5, 10, 15, 20, 25, 30];
+async function activeRun(db, accountId) {
+  return db
+    .prepare(
+      `SELECT run_id, state FROM marketing_runs
+       WHERE account_id = ?
+         AND state NOT IN ('completed', 'failed', 'rejected', 'unknown_side_effect')
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(accountId)
+    .first();
 }
 
 function evaluate(samples) {

@@ -305,6 +305,23 @@ def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:
     assert len(client.histories) == 1
 
 
+def test_generation_includes_control_plane_run_context(tmp_path: Path) -> None:
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_answer()])
+    generator = _generator(tmp_path, store, client)
+
+    created = generator.generate(
+        workspace_id,
+        run_context='{"shared_instruction":"계정별 실행 지침","private_memory":[]}',
+    )
+
+    assert len(created) == 3
+    instruction = str(client.histories[0][0]["content"])
+    assert "[control-plane 실행 컨텍스트]" in instruction
+    assert "계정별 실행 지침" in instruction
+
+
 def test_one_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)

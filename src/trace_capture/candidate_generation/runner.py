@@ -39,7 +39,12 @@ class CandidateModelSource(Protocol):
 
 
 class CandidateGeneratorPort(Protocol):
-    def generate(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]: ...
+    def generate(
+        self,
+        workspace_id: WorkspaceId,
+        *,
+        run_context: str | None = None,
+    ) -> tuple[CandidateRecord, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +62,14 @@ class CandidateGenerator:
     count: int = DEFAULT_CANDIDATE_COUNT
     country: str = DEFAULT_COUNTRY
 
-    def generate(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
+    def generate(
+        self,
+        workspace_id: WorkspaceId,
+        *,
+        run_context: str | None = None,
+    ) -> tuple[CandidateRecord, ...]:
         bundle = self.context_source.load()
-        instruction = build_instruction(bundle, count=self.count)
+        instruction = build_instruction(bundle, count=self.count, run_context=run_context)
         with self.models.open() as client:
             drafts = self._drafts(client, instruction)
         return tuple(

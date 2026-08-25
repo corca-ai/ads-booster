@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from trace_capture.transport.json_types import JsonObject
+from trace_capture.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -29,6 +29,8 @@ class RunState(StrEnum):
     RESEARCH = "research"
     PLANNING = "planning"
     CANDIDATE_GENERATION = "candidate_generation"
+    AWAITING_CANDIDATE_APPROVAL = "awaiting_candidate_approval"
+    CANDIDATES_APPROVED = "candidates_approved"
     CAPTURE_REQUESTED = "capture_requested"
     CAPTURE_COMPLETED = "capture_completed"
     AUTOMATIC_QUALITY_CHECK = "automatic_quality_check"
@@ -51,7 +53,13 @@ _ALLOWED_TRANSITIONS: Final[dict[RunState, frozenset[RunState]]] = {
     RunState.CONTEXT_SNAPSHOT: frozenset({RunState.RESEARCH, RunState.FAILED}),
     RunState.RESEARCH: frozenset({RunState.PLANNING, RunState.FAILED}),
     RunState.PLANNING: frozenset({RunState.CANDIDATE_GENERATION, RunState.FAILED}),
-    RunState.CANDIDATE_GENERATION: frozenset({RunState.CAPTURE_REQUESTED, RunState.FAILED}),
+    RunState.CANDIDATE_GENERATION: frozenset(
+        {RunState.AWAITING_CANDIDATE_APPROVAL, RunState.FAILED}
+    ),
+    RunState.AWAITING_CANDIDATE_APPROVAL: frozenset(
+        {RunState.CANDIDATES_APPROVED, RunState.REJECTED}
+    ),
+    RunState.CANDIDATES_APPROVED: frozenset({RunState.CAPTURE_REQUESTED}),
     RunState.CAPTURE_REQUESTED: frozenset({RunState.CAPTURE_COMPLETED, RunState.FAILED}),
     RunState.CAPTURE_COMPLETED: frozenset({RunState.AUTOMATIC_QUALITY_CHECK, RunState.FAILED}),
     RunState.AUTOMATIC_QUALITY_CHECK: frozenset(
@@ -85,6 +93,7 @@ class MarketingAccount(SimulationModel):
     timezone: str = "Asia/Seoul"
     schedule_minutes: int = Field(default=1440, ge=1, le=43_200)
     instruction_revision: int = Field(default=1, ge=1)
+    workspace_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
     credential_ref: str | None = None
     enabled: bool = True
     adapter_mode: str = Field(default="simulation", pattern=r"^(simulation|live)$")
@@ -222,18 +231,35 @@ class LocalMarketingControlPlane:
         run = self._advance(run, RunState.PLANNING, {"goal": "one useful organic post"})
         candidate = self._candidate(account, run)
         run = self._advance(run, RunState.CANDIDATE_GENERATION, {"candidate": candidate})
+        run = self._advance(run, RunState.AWAITING_CANDIDATE_APPROVAL, {})
+        return self.approve(run_id) if auto_approve else run
+
+    def approve_candidates(self, run_id: str) -> MarketingRun:
+        run = self.get_run(run_id)
+        if run.state is not RunState.AWAITING_CANDIDATE_APPROVAL:
+            raise ValueError(f"run {run_id!r} is not awaiting candidate approval")
+        candidate = run.output.get("candidate")
+        if not isinstance(candidate, dict) or not isinstance(candidate.get("id"), str):
+            raise ValueError(f"run {run_id!r} has no candidate")
+        candidate_ids: list[JsonValue] = [str(candidate["id"])]
+        run = self._advance(
+            run,
+            RunState.CANDIDATES_APPROVED,
+            {"candidate_ids": candidate_ids, "approved_by": "simulation-operator"},
+        )
         run = self._advance(run, RunState.CAPTURE_REQUESTED, {"capture": "requested"})
         run = self._advance(
             run,
             RunState.CAPTURE_COMPLETED,
-            {"artifact": f"sim://artifact/{account_id}/{run_id}.png"},
+            {"artifact": f"sim://artifact/{run.account_id}/{run_id}.png"},
         )
         run = self._advance(run, RunState.AUTOMATIC_QUALITY_CHECK, {"quality": "pass"})
-        run = self._advance(run, RunState.AWAITING_HUMAN_APPROVAL, {})
-        return self.approve(run_id) if auto_approve else run
+        return self._advance(run, RunState.AWAITING_HUMAN_APPROVAL, {})
 
     def approve(self, run_id: str) -> MarketingRun:
         run = self.get_run(run_id)
+        if run.state is RunState.AWAITING_CANDIDATE_APPROVAL:
+            run = self.approve_candidates(run_id)
         if run.state is not RunState.AWAITING_HUMAN_APPROVAL:
             raise ValueError(f"run {run_id!r} is not awaiting approval")
         account = self.get_account(run.account_id)
@@ -264,9 +290,17 @@ class LocalMarketingControlPlane:
 
     def reject(self, run_id: str, reason: str) -> MarketingRun:
         run = self.get_run(run_id)
-        if run.state is not RunState.AWAITING_HUMAN_APPROVAL:
+        if run.state not in {
+            RunState.AWAITING_CANDIDATE_APPROVAL,
+            RunState.AWAITING_HUMAN_APPROVAL,
+        }:
             raise ValueError(f"run {run_id!r} is not awaiting approval")
-        return self._advance(run, RunState.REJECTED, {"rejection_reason": reason})
+        phase = "candidates" if run.state is RunState.AWAITING_CANDIDATE_APPROVAL else "publication"
+        return self._advance(
+            run,
+            RunState.REJECTED,
+            {"rejection_reason": reason, "phase": phase},
+        )
 
     def get_account(self, account_id: str) -> MarketingAccount:
         with self._connect() as connection:

@@ -740,8 +740,9 @@ trace-marketing simulate --account-id trace-kr --country KR --auto-approve
 
 The command creates a shared registry plus a separate private-memory SQLite file per account, walks
 the approval-gated state machine, simulates six observation samples, evaluates them, commits private
-memory, and prints a `completed` run. Omit `--auto-approve` to stop at
-`awaiting_human_approval`.
+memory, and prints a `completed` run. Omit `--auto-approve` to stop first at
+`awaiting_candidate_approval`; after candidate approval the run stops again at
+`awaiting_human_approval` before publication.
 
 The external Mac consumer requires these environment variables:
 
@@ -756,7 +757,33 @@ trace-marketing bridge
 
 The queue token needs Cloudflare Queues read and write permissions because pull consumers must also
 acknowledge messages. Keep credential values in the Mac credential store or environment; D1 account
-rows contain only opaque `credential_ref` values.
+rows contain only opaque `credential_ref` values. The Worker sends task envelopes as JSON text so
+the HTTP pull response is directly decodable; the bridge also accepts the older base64-encoded JSON
+shape during rollout. A temporary pull, acknowledgement, or callback outage leaves inbox/outbox work
+durable and retryable.
+
+The bridge defaults to an artifact-only simulation executor. To connect PR #22's installed candidate
+journey, register the Cloudflare account with the local Trace `workspace_id`, start the service from
+the workspace that owns its `context/` directory, and opt in explicitly:
+
+```bash
+trace-marketing bridge --executor candidate-pipeline
+```
+
+This mode uses the provider-backed candidate generator and the provenance-checked search/composition
+image stage. It does **not** enable live publication or metrics: those task kinds remain visibly
+simulated. The operator approves captions in the existing workspace before sending candidate
+approval with 1–8 selected IDs, then approves the generated images before publication approval:
+
+```json
+{"decision":"approved","phase":"candidates","candidate_ids":["<candidate-id>"]}
+{"decision":"approved","phase":"publication"}
+```
+
+Both bodies are posted to `POST /v1/runs/<run-id>/approval`. Omitting `phase` remains supported: the
+control plane infers it from the run's current waiting state. The offline image stage still uses the
+packaged Trace component fixture, so candidate schedule text and device time are recorded but are not
+rendered until the native Appium capture adapter replaces that fixture.
 
 Cloudflare deployment is under `cloudflare/`:
 
@@ -775,6 +802,11 @@ Create the D1 database, R2 bucket, and Queue named in `wrangler.template.jsonc` 
 config. The generated config is ignored because it contains environment-specific resource IDs. See
 [the full loop contract](docs/contracts/cloudflare-marketing-loop.md) for states, extension rules,
 security boundaries, and the honest two-hour acceptance path.
+
+The `0002_one_active_run_per_account.sql` migration prevents Cron and manual triggers from creating
+overlapping non-terminal runs for one account. Apply migrations before deploying this revision.
+Account registration currently accepts only `adapter_mode: "simulation"`; `"live"` fails closed
+until a reviewed publication adapter and readback path are present.
 
 ## Sample asset status
 
