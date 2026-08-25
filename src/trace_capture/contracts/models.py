@@ -215,7 +215,7 @@ class CompositeCanvas(ContractModel):
 class CompositeLayers(ContractModel):
     background: RelativePath
     trace_components: RelativePath
-    iphone_ui: RelativePath
+    iphone_ui: RelativePath | None = None
 
 
 class MarketingCompositeJob(ContractModel):
@@ -228,11 +228,15 @@ class MarketingCompositeJob(ContractModel):
 
     @model_validator(mode="after")
     def require_distinct_layer_paths(self) -> Self:
-        paths = (
-            self.layers.background,
-            self.layers.trace_components,
-            self.layers.iphone_ui,
-            self.output_image,
+        paths = tuple(
+            path
+            for path in (
+                self.layers.background,
+                self.layers.trace_components,
+                self.layers.iphone_ui,
+                self.output_image,
+            )
+            if path is not None
         )
         if len(paths) != len(set(paths)):
             error_type = "composite_path_collision"

@@ -23,6 +23,7 @@ from trace_capture.runtime.generate_one import (
     GenerateOneOptions,
     GenerateOneRunner,
 )
+from trace_capture.search.image.background import SearchedBackground
 from trace_capture.transport.http import HttpResponse
 
 if TYPE_CHECKING:
@@ -113,6 +114,30 @@ class RecordingImageGenerator:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FixtureBackgroundFetcher:
+    def fetch(self, query: str, destination: Path) -> SearchedBackground:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (4, 6), (12, 24, 48)).save(destination, format="PNG")
+        return SearchedBackground(
+            path=destination,
+            sha256=hashlib.sha256(destination.read_bytes()).hexdigest(),
+            query=query,
+            provider="fixture-search",
+            image_url="https://images.example/background.png",
+            source_url="https://example.com/background",
+        )
+
+
+@dataclass(slots=True)
+class RecordingBackgroundFetcher:
+    queries: list[str] = field(default_factory=list)
+
+    def fetch(self, query: str, destination: Path) -> SearchedBackground:
+        self.queries.append(query)
+        return FixtureBackgroundFetcher().fetch(query, destination)
+
+
 @dataclass(slots=True)
 class RecordingReadiness:
     devices: list[str] = field(default_factory=list)
@@ -173,6 +198,14 @@ def context() -> MarketingContextBundle:
             },
         }
     )
+
+
+def system_ui_asset(tmp_path: Path) -> Path:
+    path = tmp_path / "system-ui.png"
+    image = Image.new("RGB", (4, 6), (0, 0, 0))
+    image.putpixel((0, 0), (255, 255, 255))
+    image.save(path, format="PNG")
+    return path
 
 
 def test_scene_planner_when_japanese_student_context_creates_three_trace_items() -> None:
@@ -333,40 +366,35 @@ def test_codex_image_generator_when_reference_exists_then_it_requests_an_image_e
 def test_generate_one_runner_when_context_is_valid_then_it_completes_one_image(
     tmp_path: Path,
 ) -> None:
-    system_ui = tmp_path / "system-ui.png"
-    system_ui_image = Image.new("RGBA", (4, 6), (0, 0, 0, 255))
-    system_ui_image.putpixel((2, 1), (255, 255, 255, 255))
-    system_ui_image.save(system_ui, format="PNG")
+    system_ui = system_ui_asset(tmp_path)
     options = GenerateOneOptions(
         output_root=tmp_path / "generated",
         state_root=tmp_path / "state",
         capture_output_root=tmp_path / "capture",
         iphone_ui_path=system_ui,
-        reference_root=tmp_path,
         appium_server="http://127.0.0.1:4723",
         timeout_seconds=30,
-        image_model="fixture-image-model",
     )
 
     result = GenerateOneRunner(
         options=options,
-        image_generator=FixtureImageGenerator(),
+        background_fetcher=FixtureBackgroundFetcher(),
         capture_adapter=FixtureCaptureAdapter(),
     ).run(context())
 
     assert result.state.value == "completed"
     assert result.output_image == "outputs/final.png"
     assert (tmp_path / "generated" / "jp-student-exam" / "outputs" / "final.png").is_file()
+    assert (tmp_path / "generated" / "jp-student-exam" / "inputs" / "iphone-ui.png").is_file()
 
 
-def test_generate_one_runner_when_capture_is_ready_then_final_model_receives_three_layers(
+def test_generate_one_runner_when_capture_is_ready_then_it_searches_one_background(
     tmp_path: Path,
 ) -> None:
     # Given a valid context and a capture adapter that produces the native Trace layer
-    generator = RecordingImageGenerator()
+    background_fetcher = RecordingBackgroundFetcher()
     readiness = RecordingReadiness()
-    system_ui = tmp_path / "system-ui.png"
-    Image.new("RGBA", (4, 6), (0, 0, 0, 255)).save(system_ui, format="PNG")
+    system_ui = system_ui_asset(tmp_path)
 
     # When the complete generation runner executes the bundle
     _ = GenerateOneRunner(
@@ -375,25 +403,22 @@ def test_generate_one_runner_when_capture_is_ready_then_final_model_receives_thr
             state_root=tmp_path / "state",
             capture_output_root=tmp_path / "capture",
             iphone_ui_path=system_ui,
-            reference_root=tmp_path,
             appium_server="http://127.0.0.1:4723",
             timeout_seconds=30,
-            image_model="fixture-image-model",
             capture_readiness=readiness,
         ),
-        image_generator=generator,
+        background_fetcher=background_fetcher,
         capture_adapter=FixtureCaptureAdapter(),
     ).run(context())
 
-    # Then the final image request contains the background, native Trace, and iPhone UI layers
-    assert len(generator.requests) == 2
-    final_request = generator.requests[-1]
-    assert final_request.destination.name == "final.png"
-    assert len(final_request.reference_images) == 3
+    # Then the background is searched once and composition receives the system UI layer
+    assert len(background_fetcher.queries) == 1
+    assert "vertical lifestyle photo" in background_fetcher.queries[0]
+    assert (tmp_path / "generated" / "jp-student-exam" / "inputs" / "iphone-ui.png").is_file()
     assert readiness.devices == ["E1FB798D-79E6-4B25-A987-D298A4FD122A"]
 
 
-def test_generate_one_runner_when_bundle_has_reference_then_it_reaches_image_provider(
+def test_generate_one_runner_when_bundle_has_reference_then_it_uses_search_not_image_edit(
     tmp_path: Path,
 ) -> None:
     # Given a bundle bound to a verified workspace reference image
@@ -410,9 +435,8 @@ def test_generate_one_runner_when_bundle_has_reference_then_it_reaches_image_pro
         }
     ]
     bundle = MarketingContextBundle.model_validate(payload)
-    system_ui = tmp_path / "system-ui.png"
-    Image.new("RGBA", (4, 6), (0, 0, 0, 255)).save(system_ui, format="PNG")
-    generator = RecordingImageGenerator()
+    background_fetcher = RecordingBackgroundFetcher()
+    system_ui = system_ui_asset(tmp_path)
 
     # When the complete generation runner executes the bundle
     _ = GenerateOneRunner(
@@ -421,20 +445,12 @@ def test_generate_one_runner_when_bundle_has_reference_then_it_reaches_image_pro
             state_root=tmp_path / "state",
             capture_output_root=tmp_path / "capture",
             iphone_ui_path=system_ui,
-            reference_root=tmp_path,
             appium_server="http://127.0.0.1:4723",
             timeout_seconds=30,
-            image_model="fixture-image-model",
         ),
-        image_generator=generator,
+        background_fetcher=background_fetcher,
         capture_adapter=FixtureCaptureAdapter(),
     ).run(bundle)
 
-    # Then the provider receives the resolved reference with its frozen digest
-    assert generator.requests[0].reference_images == (
-        ImageReferenceInput(
-            path=reference,
-            mime_type="image/png",
-            sha256=hashlib.sha256(reference.read_bytes()).hexdigest(),
-        ),
-    )
+    # Then the search query is constructed from context rather than the image-edit reference
+    assert len(background_fetcher.queries) == 1

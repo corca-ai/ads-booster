@@ -46,6 +46,7 @@ class SceneCaptureAdapter(Protocol):
 class CaptureExecutionOptions:
     timeout_seconds: float = 120.0
     cancel_file: Path | None = None
+    capture_iphone_ui: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +113,11 @@ class CaptureWorker:
                 background=background,
                 destination=destination,
                 control=control,
-                iphone_ui_destination=resolved_input_root / "inputs" / "iphone-ui.png",
+                iphone_ui_destination=(
+                    resolved_input_root / "inputs" / "iphone-ui.png"
+                    if self.options.capture_iphone_ui
+                    else None
+                ),
                 capture_nonce=secrets.token_hex(32),
             )
             try:

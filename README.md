@@ -1,9 +1,9 @@
 # Trace Marketing Agent Runtime
 
-This repository builds Trace lock-screen marketing images without setting a real
-iOS wallpaper. It keeps the background photo, native Trace components, and
-AI-generated iPhone system UI as independent layers, then runs capture and composition
-through a durable, idempotent `TraceRun` state machine.
+This repository builds Trace marketing images without setting a real iOS wallpaper. It retrieves
+a licensed-source background from image search, configures native Trace components through Appium,
+and deterministically composites those layers with a clean iPhone system-UI asset through a durable,
+idempotent `TraceRun` state machine.
 
 The standalone agent can perform read-only web and image searches when asked, but it does not
 automatically research trends, invent personas, write campaign copy, publish to Notion or Threads,
@@ -110,19 +110,17 @@ The first context-driven capture path is available directly from the standalone 
 
 ```bash
 trace-agent generate-one \
-  --context-file appium/jobs/composite/mock-contexts/jp-student-exam.json \
-  --image-model gpt-5.6-luna
+  --context-file appium/jobs/composite/mock-contexts/jp-student-exam.json
 ```
 
-The command parses the persona and promotion-material context, prepares the native runtime by
-opening and booting the selected Simulator and starting Appium when they are installed but inactive,
-then asks the current ChatGPT/Codex OAuth compatibility Responses endpoint to generate the external
-background. Appium captures the current iPhone UI and requests a fresh Trace component export for
-the same run. A final high-fidelity Image Model edit receives those three verified image layers and
-returns the marketing image. It does not reuse a previous Trace component artifact, start a Codex
-process, or require a separate manually authored `trace-run` job. The default `gpt-5.6-luna` value matches the current
-ChatGPT/Codex account-compatible model catalog; `--image-model` can override it when the
-authenticated account advertises another image-capable Responses model.
+The command parses the persona and promotion-material context, searches approved public image
+sources for a background, verifies and normalizes the selected file to PNG, then prepares the native
+runtime by opening and booting the selected Simulator and starting Appium when they are installed
+but inactive. Appium enters the three current Trace component titles through the Trace setup UI,
+saves that configuration, and requests a fresh request-bound native component export. The final
+image is a deterministic three-layer composition: searched background, native Trace components,
+and the packaged iPhone system UI. It does not call an image-generation model, reuse a prior Trace
+component artifact, add Trace branding, or require a separately authored `trace-run` job.
 
 ## Team workspace service
 
@@ -233,8 +231,7 @@ TRACE_AGENT_WEB_SEARCH_PROVIDER
 TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS
 TRACE_AGENT_BROWSER_COMMAND
 TRACE_AGENT_APPIUM_SERVER       # default: http://127.0.0.1:4723
-TRACE_AGENT_IPHONE_UI           # default: appium/jobs/composite/inputs/iphone-ui-ai.png
-TRACE_AGENT_IMAGE_MODEL         # default: gpt-5.6-luna
+TRACE_AGENT_IPHONE_UI           # default: packaged clean iPhone system UI asset
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 ```
 
@@ -245,7 +242,7 @@ JSON. A promotion may include exactly three `trace_items` to control the native 
 optional visual references, then select those records in 새 자료 만들기. Choose a finite count or
 leave continuous production enabled. The campaign freezes those inputs and the service creates one
 uniquely identified variation at a time. Stopping a campaign prevents future variations without
-erasing work already submitted or running. A known Image Model, credential, filesystem, or Appium
+erasing work already submitted or running. A known image-search, filesystem, or Appium
 failure records the queue item as failed and automatically stops that campaign instead of producing
 an unbounded failure loop.
 
@@ -307,7 +304,7 @@ team member. Configure a stable domain separately if the deployment needs one.
 The workspace web/API shell can start without native capture dependencies. A queued generation
 or `generate-one` run also needs:
 
-- ChatGPT/Codex OAuth with an image-capable model (`trace-agent auth login`)
+- network access to DDGS image search or `BRAVE_SEARCH_API_KEY` for the approved background-source search
 - Xcode and an available iOS Simulator
 - a Debug Trace build installed as `com.corca.Trace`
 - the request-bound Trace component-export trigger from the sibling `Trace_iOS` checkout
@@ -385,7 +382,7 @@ The built-in tools are:
   source pages, and available dimensions
 - approval-gated `trace_run` for the existing Appium/staging/composition workflow
 
-For Trace capture, image generation, and visual QA, the agent first inspects the local runtime. It
+For Trace capture, searched-background generation, and visual QA, the agent first inspects the local runtime. It
 starts an installed but inactive Simulator or Appium dependency, verifies readiness, and continues
 without asking the user. It does not install missing software or start these services for unrelated
 work. A missing Trace Debug build remains a typed prerequisite failure.
@@ -483,10 +480,10 @@ are flushed and `fsync`ed before each capability side effect.
 
 ### 1. Export Trace components
 
-The capture job injects exact fixture items and passes
-`-traceMarketingExportComponents` to the Trace debug build. Trace writes a native
-transparent `trace_components.png` plus `trace_components.manifest.json` into its App
-Group, and the worker collects both.
+The capture job starts a Trace setup session, enters the request's three component titles through
+Appium, then starts a request-bound export session. Trace writes a native transparent
+`trace_components.png` plus `trace_components.manifest.json` into its App Group, and the worker
+collects both.
 
 ```bash
 uv run trace-capture \
@@ -537,23 +534,22 @@ appium/jobs/composite/outputs/jp-night-city-calendar-iphone-ui.png
 appium/jobs/composite/outputs/composite-result.json
 ```
 
-The compositor crops the background photo to the requested canvas, normalizes the
-AI UI layer to real alpha transparency, resizes every layer consistently, and applies
-the fixed layer order.
+The compositor crops the searched background photo to the requested canvas, normalizes the clean
+iPhone system UI asset to alpha, resizes every layer consistently, and applies the fixed order.
 
 ## Contracts
 
 ### Component export
 
-`trace.capture-job.v1` configures the Simulator, fixture items, and component export.
+`trace.capture-job.v1` configures the Simulator, Appium-entered Trace component titles, and
+component export.
 The only supported capture target is `trace_components`.
 For component-only capture, `background_image` may be omitted; the background remains
 required by the separate composition job.
 When supplied, `component_canvas` declares the expected native PNG dimensions (the
 current iPhone 17 Pro/iOS 26.5 export is `1206×2622`) and the
 manifest/artifact validator rejects a self-consistent export with the wrong canvas.
-`reference_date` is also scene input and is passed to the Trace fixture instead of being
-fixed inside the Appium adapter.
+`reference_date` remains scene input for the planned Trace configuration and provenance contract.
 
 Successful scene results contain provenance:
 
@@ -592,7 +588,9 @@ replay/error output remain scoped to the requested run directory.
 
 ### Marketing composition
 
-`trace.marketing-composite-job.v2` requires three distinct input paths:
+`trace.marketing-composite-job.v2` requires background and Trace component paths. `iphone_ui` is
+optional for lower-level composition commands and is included by `generate-one` from the packaged
+clean system-UI asset.
 
 ```json
 {
@@ -607,7 +605,7 @@ replay/error output remain scoped to the requested run directory.
   "layers": {
     "background": "inputs/background-night-city.png",
     "trace_components": "work/component-export/trace-components.png",
-    "iphone_ui": "inputs/iphone-ui-ai.png"
+    "iphone_ui": "inputs/iphone-ui.png"
   },
   "output_image": "outputs/final-marketing.png"
 }
@@ -618,10 +616,9 @@ escape that directory.
 
 ## Sample asset status
 
-The checked sample final image demonstrates the corrected three-layer pipeline. Its
-component layer is a temporary transparent fixture derived from the supplied visual
-reference. Replace it by running the native Appium component export after the updated
-Trace debug build is built and installed.
+The checked sample final image demonstrates the deterministic three-layer composition pipeline.
+The context-driven path requires a current Trace debug build and performs a fresh Appium setup and
+native export for every run.
 
 ## Exit codes
 

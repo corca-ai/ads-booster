@@ -12,9 +12,6 @@ from uuid import uuid4
 from anyio import sleep
 from anyio.to_thread import run_sync
 
-from trace_capture.auth.browser import BrowserOAuthError
-from trace_capture.auth.codex import CodexOAuth, OAuthError
-from trace_capture.auth.store import AuthStore, AuthStoreError
 from trace_capture.automation import (
     AutomationQueue,
     CampaignProducer,
@@ -29,26 +26,29 @@ from trace_capture.capture.factory import build_capture_adapter
 from trace_capture.capture.readiness import DefaultCaptureReadiness
 from trace_capture.contracts.results import TraceRunResult
 from trace_capture.contracts.run import TraceRunState
-from trace_capture.providers.errors import ProviderError
-from trace_capture.providers.image_generation import CodexImageGenerator
+from trace_capture.default_assets import default_iphone_ui_path
 from trace_capture.runtime.generate_one import (
+    BackgroundFetcher,
     GenerateOneError,
     GenerateOneOptions,
     GenerateOneRunner,
 )
+from trace_capture.search.image.background import (
+    BackgroundSearchError,
+    ImageSearchBackgroundFetcher,
+)
+from trace_capture.search.image.providers import create_image_search_provider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from trace_capture.contracts.generation import MarketingContextBundle
-    from trace_capture.providers.image_generation import ImageGenerationPort
     from trace_capture.transport.http import HttpClient
 
 _DEFAULT_POLL_INTERVAL_SECONDS: Final = 0.25
 _DEFAULT_LEASE_SECONDS: Final = 300.0
 _DEFAULT_APPIUM_SERVER: Final = "http://127.0.0.1:4723"
-_DEFAULT_IMAGE_MODEL: Final = "gpt-5.6-luna"
-_DEFAULT_IPHONE_UI: Final = Path("appium/jobs/composite/inputs/iphone-ui-ai.png")
+_DEFAULT_IPHONE_UI: Final = default_iphone_ui_path()
 
 
 def _utc_now() -> datetime:
@@ -89,7 +89,7 @@ class ServiceWorkerConfig:
 @dataclass(frozen=True, slots=True)
 class ProductionGenerateOneRunner:
     options: GenerateOneOptions
-    image_generator: ImageGenerationPort
+    background_fetcher: BackgroundFetcher
 
     def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
         try:
@@ -100,17 +100,14 @@ class ProductionGenerateOneRunner:
             )
             return GenerateOneRunner(
                 options=self.options,
-                image_generator=self.image_generator,
+                background_fetcher=self.background_fetcher,
                 capture_adapter=adapter,
             ).run(bundle)
         except (
-            AuthStoreError,
-            BrowserOAuthError,
+            BackgroundSearchError,
             CaptureAdapterError,
             GenerateOneError,
-            OAuthError,
             OSError,
-            ProviderError,
         ):
             return TraceRunResult(
                 run_id=bundle.request_id,
@@ -148,7 +145,6 @@ def create_service_worker(
 
 def build_production_runner(home: Path, http: HttpClient) -> GenerateOnePort:
     appium_server = os.environ.get("TRACE_AGENT_APPIUM_SERVER", _DEFAULT_APPIUM_SERVER)
-    image_model = os.environ.get("TRACE_AGENT_IMAGE_MODEL", _DEFAULT_IMAGE_MODEL)
     iphone_ui = Path(os.environ.get("TRACE_AGENT_IPHONE_UI", str(_DEFAULT_IPHONE_UI)))
     readiness = DefaultCaptureReadiness(appium_server=appium_server)
     options = GenerateOneOptions(
@@ -156,16 +152,20 @@ def build_production_runner(home: Path, http: HttpClient) -> GenerateOnePort:
         state_root=home / "state",
         capture_output_root=home / "capture",
         iphone_ui_path=iphone_ui.expanduser().resolve(),
-        reference_root=home,
         appium_server=appium_server,
         timeout_seconds=float(os.environ.get("TRACE_AGENT_GENERATION_TIMEOUT_SECONDS", "120")),
-        image_model=image_model,
         capture_readiness=readiness,
     )
     return ProductionGenerateOneRunner(
         options=options,
-        image_generator=CodexImageGenerator(
+        background_fetcher=ImageSearchBackgroundFetcher(
+            image_search=create_image_search_provider(
+                http=http,
+                provider_name=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
+                timeout_seconds=float(
+                    os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
+                ),
+            ),
             http=http,
-            oauth=CodexOAuth(http=http, store=AuthStore(home / "auth.json")),
         ),
     )

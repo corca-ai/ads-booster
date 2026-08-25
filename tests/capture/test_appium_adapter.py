@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # pyright: reportUnknownMemberType=false
-import base64
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol, override
@@ -42,6 +41,13 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class LockedSession:
+    def configure_components(
+        self,
+        items: tuple[str, str, str],
+        control: CaptureControl,
+    ) -> None:
+        del items, control
+
     def session_id(self, control: CaptureControl) -> str:
         del control
         return "appium-session-01"
@@ -80,6 +86,12 @@ class SessionFactory:
     def open(self, request: CaptureRequest) -> AppiumSession:
         del request
         return self.session
+
+    def open_configuration(self, request: CaptureRequest) -> AppiumSession:
+        return self.open(request)
+
+    def open_export(self, request: CaptureRequest) -> AppiumSession:
+        return self.open(request)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,10 +214,12 @@ def test_build_options_when_scene_is_valid(tmp_path: Path) -> None:
     process_arguments = build_process_arguments(request)
     options = build_xcuitest_options(request)
 
-    # Then the debug fixture receives the exact items and current device target
+    # Then the Appium export launch is bound to this request without fixture data
     args = process_arguments["args"]
-    encoded_items = args[args.index("-traceMarketingFixtureItems") + 1]
-    assert base64.b64decode(encoded_items).decode() == '["試験","レポート","夕食"]'
+    assert "-traceMarketingFixture" not in args
+    assert "-traceMarketingFixtureItems" not in args
+    assert "-traceMarketingReferenceDate" not in args
+    assert "-traceMarketingSurface" not in args
     assert "-traceMarketingExportComponents" in args
     assert options.udid == "E1FB798D-79E6-4B25-A987-D298A4FD122A"
     assert options.use_new_wda is True
@@ -249,8 +263,49 @@ def test_session_factory_when_deadline_is_subsecond_uses_remaining_timeout(
     assert captured_timeouts == [0.25]
 
 
+def test_webdriver_session_when_configuring_components_then_it_types_all_trace_items() -> None:
+    # Given an Appium WebDriver session for the Trace setup screen
+    calls: list[str] = []
+    session = WebDriverSession(driver=RecordingWebDriver(calls))
+
+    # When the capture adapter configures this run's component titles
+    session.configure_components(
+        ("첫 일정", "두 번째 일정", "세 번째 일정"),
+        CaptureControl.start(30),
+    )
+
+    # Then every item is entered through the app UI before the save tap
+    assert calls == [
+        "find:accessibility id:marketingCapture_item_0",
+        "clear",
+        "send_keys:첫 일정",
+        "find:accessibility id:marketingCapture_item_1",
+        "clear",
+        "send_keys:두 번째 일정",
+        "find:accessibility id:marketingCapture_item_2",
+        "clear",
+        "send_keys:세 번째 일정",
+        "find:accessibility id:marketingCapture_save",
+        "click",
+    ]
+
+
 class ClientConfigLike(Protocol):
     timeout: float | int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingWebElement:
+    calls: list[str]
+
+    def clear(self) -> None:
+        self.calls.append("clear")
+
+    def click(self) -> None:
+        self.calls.append("click")
+
+    def send_keys(self, value: str) -> None:
+        self.calls.append(f"send_keys:{value}")
 
 
 class RecordingWebDriver:
@@ -278,6 +333,10 @@ class RecordingWebDriver:
     def save_screenshot(self, filename: str) -> bool:
         self.calls.append(f"screenshot:{filename}")
         return True
+
+    def find_element(self, by: str, value: str) -> RecordingWebElement:
+        self.calls.append(f"find:{by}:{value}")
+        return RecordingWebElement(self.calls)
 
     def quit(self) -> None:
         self.calls.append("quit")

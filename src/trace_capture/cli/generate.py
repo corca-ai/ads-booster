@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # pyright: reportUnnecessaryComparison=false
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, ClassVar, Final, Literal, assert_never
@@ -8,21 +9,22 @@ from typing import Annotated, ClassVar, Final, Literal, assert_never
 import typer
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from trace_capture.auth.browser import BrowserOAuthError
-from trace_capture.auth.codex import CodexOAuth, OAuthError
-from trace_capture.auth.store import AuthStore, AuthStoreError
 from trace_capture.capture.capture_safety import CaptureAdapterError
 from trace_capture.capture.factory import build_capture_adapter
 from trace_capture.capture.readiness import DefaultCaptureReadiness
 from trace_capture.contracts.generation import MarketingContextBundle
-from trace_capture.providers.errors import ProviderError
-from trace_capture.providers.image_generation import CodexImageGenerator
+from trace_capture.default_assets import default_iphone_ui_path
 from trace_capture.runtime.generate_one import (
     GenerateOneError,
     GenerateOneOptions,
     GenerateOneRunner,
 )
 from trace_capture.runtime.trace_run import TraceRunState
+from trace_capture.search.image.background import (
+    BackgroundSearchError,
+    ImageSearchBackgroundFetcher,
+)
+from trace_capture.search.image.providers import create_image_search_provider
 from trace_capture.tools.paths import resolve_workspace_path
 from trace_capture.transport.http import create_http_client
 
@@ -30,7 +32,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=False)
 DEFAULT_OUTPUT_ROOT = Path(".trace-agent/generated")
 DEFAULT_STATE_ROOT = Path(".trace-agent/state")
 DEFAULT_CAPTURE_OUTPUT_ROOT = Path(".trace-agent/capture")
-DEFAULT_IPHONE_UI = Path("appium/jobs/composite/inputs/iphone-ui-ai.png")
+DEFAULT_IPHONE_UI = default_iphone_ui_path()
 GenerateOneStatus = Literal["invalid_context", "invalid_config", "generation_failed"]
 CONTEXT_INVALID: Final = "context_invalid"
 GENERATION_FAILED: Final = "generation_failed"
@@ -58,7 +60,6 @@ def generate_one(
     ),
     appium_server: Annotated[str, typer.Option()] = "http://127.0.0.1:4723",
     timeout_seconds: Annotated[float, typer.Option(min=1, max=3600)] = 120,
-    image_model: Annotated[str, typer.Option()] = "gpt-5.6-luna",
 ) -> None:
     workspace = Path.cwd().resolve()
     try:
@@ -67,11 +68,13 @@ def generate_one(
             output_root=_required_path(workspace, output_root, "output"),
             state_root=_required_path(workspace, state_root, "state"),
             capture_output_root=_required_path(workspace, capture_output_root, "capture"),
-            iphone_ui_path=_required_path(workspace, iphone_ui, "iPhone UI"),
-            reference_root=workspace,
+            iphone_ui_path=(
+                DEFAULT_IPHONE_UI
+                if iphone_ui == DEFAULT_IPHONE_UI
+                else _required_path(workspace, iphone_ui, "iPhone UI")
+            ),
             appium_server=appium_server,
             timeout_seconds=timeout_seconds,
-            image_model=image_model,
         )
     except (OSError, UnicodeError, ValidationError, GenerateOneError) as error:
         _emit_error("invalid_context", CONTEXT_INVALID, str(error), exit_code=2)
@@ -86,21 +89,24 @@ def generate_one(
             readiness=readiness,
         )
         with create_http_client() as http:
-            generator = CodexImageGenerator(
+            background_fetcher = ImageSearchBackgroundFetcher(
+                image_search=create_image_search_provider(
+                    http=http,
+                    provider_name=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
+                    timeout_seconds=float(
+                        os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
+                    ),
+                ),
                 http=http,
-                oauth=CodexOAuth(http=http, store=AuthStore.default()),
             )
             result = GenerateOneRunner(
                 options=options,
-                image_generator=generator,
+                background_fetcher=background_fetcher,
                 capture_adapter=adapter,
             ).run(bundle)
     except (
-        BrowserOAuthError,
-        OAuthError,
-        AuthStoreError,
+        BackgroundSearchError,
         CaptureAdapterError,
-        ProviderError,
     ) as error:
         _emit_error(GENERATION_FAILED, GENERATION_FAILED, str(error), exit_code=1)
         return
