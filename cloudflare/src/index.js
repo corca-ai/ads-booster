@@ -1,6 +1,6 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
-import { handleHostedWorkspace } from "./hosted-workspace.js";
+import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
 import {
   WORKSPACE_CONTEXT,
   WORKSPACE_CONTEXT_PROFILES,
@@ -430,7 +430,10 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(startDueRuns(env));
+    ctx.waitUntil(Promise.all([
+      startDueRuns(env),
+      runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
+    ]));
   },
 };
 

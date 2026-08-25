@@ -755,14 +755,21 @@ The existing production Worker also serves one public review workspace at:
 https://trace-marketing-control.donghun.workers.dev/
 ```
 
-It has no workspace access ID or login step. Anyone with the URL can view and change the public
-`trace_demo_kr` candidate list, so do not put private material in this surface. The workbench shows
-the account boundary and live counts for caption review, image work, and publication-ready results.
-Choose one country/persona context before `후보 3개 생성`; Cloudflare Workers AI combines that
-profile with the packaged Trace principles, facts, voice, country reference index, and current
-account instruction, then stores three complete candidates in D1. Profiles can be added, edited, or
-hidden from the same screen. Every candidate stores the selected profile as an immutable snapshot,
-so later profile edits do not rewrite its generation provenance.
+It has no workspace access ID or login step. Anyone with the URL can create or change an account,
+its context, candidates, settings, and feedback, so do not put private material in this surface.
+The account selector is a logical D1 silo, not an authorization boundary: every candidate, profile,
+review event, and learned rule is scoped by `account_id`, but every visitor can select those accounts.
+The workbench shows live counts for caption review, image work, and publication-ready results.
+
+Each account owns a country, locale, timezone, morning/evening posting times, and an automatic daily
+generation switch. The default KR account is ready after migration; additional accounts can be
+created and edited in the workbench. Choose one account persona before `오늘 후보 4개 생성`;
+Cloudflare Workers AI combines it with the packaged Trace principles, facts, voice, country reference
+index, current account instruction, and that account/persona's repeated rejection rules. One batch
+stores exactly four D1 candidates: two morning-slot and two evening-slot candidates. The Cron Trigger
+also claims each enabled account at its next local morning time and runs the same generation path.
+Profiles can be added, edited, or hidden from the same screen. Every candidate stores the selected
+profile as an immutable snapshot, so later profile edits do not rewrite its generation provenance.
 
 Caption approval, a deterministic Cloudflare lock-screen preview stored in R2, and image approval use
 the same review tab. The preview records and renders the candidate schedule and device time, but it is
@@ -771,7 +778,9 @@ ends at `submitted` (게시 준비 완료); it does not call Threads or another 
 filters make review, image, ready, and rejected queues visible. Every hosted candidate, including
 `submitted` candidates, has 수정 and 삭제 controls. Editing clears its previous approval and R2
 preview and returns it to `awaiting_review`; deletion removes both its D1 row and preview with an
-optimistic revision guard.
+optimistic revision guard. Approval is a one-click 5-point review. Rejection requires a 1–3 rating
+and one or more structured tags; `기타` also requires a note. Three matching rejections for the same
+account/persona become an account-scoped rule candidate and are injected into its next generation prompt.
 
 The packaged context is also the local generator's fallback. `TRACE_AGENT_CONTEXT_DIR` remains the
 explicit override, and an existing `<serve workspace>/context` still takes precedence; starting from
@@ -779,22 +788,28 @@ a directory without `context/` no longer leaves the default candidate generator 
 The repository did not previously contain a production country/account/persona context library:
 the JSON files under `appium/jobs/**/mock-contexts/` are capture fixtures, and PR #21 expected the
 operator to supply the six markdown files in an untracked local `context/` directory. The packaged
-KR documents and four profiles in this version are therefore safe starter guidance, not a migration
-of team-owned persona knowledge. They keep a fresh install and hosted build runnable while the team
-replaces them with its successful-account evidence. The context manifest owns country document and
-profile paths; adding a packaged country is a data change to the manifest/documents/profile JSON,
-not a Worker source edit. Custom account-scoped profiles live in D1. Generation fails with `409`
-when a selected country has no packaged documents rather than silently falling back to KR.
+documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are therefore safe starter guidance,
+not a migration of team-owned persona knowledge. They keep a fresh install and hosted build runnable
+while the team replaces them with successful-account evidence. The context manifest owns country
+document and profile paths; adding a packaged country is a data change to the
+manifest/documents/profile JSON, not a Worker source edit. Custom account-scoped profiles live in
+D1. Generation fails with `409` when a selected country has no packaged documents rather than
+silently falling back to KR.
 
 Hosted context endpoints are intentionally public with the rest of this workspace:
 
 | Endpoint | Behavior |
 | --- | --- |
+| `GET /api/accounts` | List enabled logical account silos and seed the default KR account |
+| `POST /api/accounts` | Create an account with country, locale, timezone, two posting times, and optional automatic generation |
+| `PATCH /api/accounts/{account_id}` | Edit account schedule and generation settings with `expected_revision` |
+| `DELETE /api/accounts/{account_id}` | Disable an account without rewriting its historical records |
 | `GET /api/context-countries` | List countries currently enabled by the packaged manifest; the UI builds its country selector from this response |
-| `GET /api/context-profiles` | Seed packaged profiles if needed, then list enabled profiles for `PUBLIC_WORKSPACE_ACCOUNT_ID` |
+| `GET /api/context-profiles` | Seed packaged profiles if needed, then list enabled profiles for the selected account |
 | `POST /api/context-profiles` | Add an account-scoped team profile |
 | `PATCH /api/context-profiles/{profile_id}` | Edit a profile with `expected_revision` |
 | `DELETE /api/context-profiles/{profile_id}` | Soft-hide a profile while preserving candidate snapshots |
+| `GET /api/feedback-summary` | Return account/persona rejection counts, top tags, and 3+ occurrence rule candidates |
 
 The external worker is required only for an account with a `workspace_id`, where provider
 candidate generation and local image composition need the installed Trace workspace. For an

@@ -27,6 +27,11 @@
   const contextCancel = one("[data-context-cancel]");
   const contextSubmit = one("[data-context-submit]");
   const contextFormTitle = one("[data-context-form-title]");
+  const accountSelect = one("[data-account-select]");
+  const accountEditForm = one("[data-account-edit-form]");
+  const accountCreateForm = one("[data-account-create-form]");
+  const accountEditFeedback = one("[data-account-edit-feedback]");
+  const accountCreateFeedback = one("[data-account-create-feedback]");
   let hostedCandidateControls = false;
   let editingCandidate = null;
   let editingCandidateContextChanged = false;
@@ -36,6 +41,9 @@
   let selectedContextProfileId = "";
   let candidateRecords = [];
   let candidateFilter = "all";
+  let hostedAccounts = [];
+  let selectedAccountId = "";
+  let feedbackSignal = null;
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -106,7 +114,30 @@
     JP: "ja",
     TW: "zh",
     US: "en",
+    DE: "de",
+    FR: "fr",
+    BR: "pt",
   });
+  const COUNTRY_TIMEZONES = Object.freeze({
+    KR: "Asia/Seoul",
+    JP: "Asia/Tokyo",
+    TW: "Asia/Taipei",
+    US: "America/New_York",
+    DE: "Europe/Berlin",
+    FR: "Europe/Paris",
+    BR: "America/Sao_Paulo",
+  });
+  const REVIEW_TAGS = Object.freeze([
+    "이미지 품질·AI 티",
+    "앱 화면·데이터 오류",
+    "국가·언어 부적합",
+    "계정 페르소나 불일치",
+    "컨셉이 약함",
+    "기존 게시물과 중복",
+    "캡션 부적합",
+    "브랜드·정책 위험",
+    "기타",
+  ]);
   const DEFAULT_LANGUAGE = "en";
   const MAX_TRACE_ITEMS = 8;
 
@@ -116,6 +147,7 @@
   const candidateSourceLabel = (source) => CANDIDATE_SOURCE_LABELS[source] ?? source;
   const candidateStatusLabel = (status) => CANDIDATE_STATUS_LABELS[status] ?? status;
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
+  const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
 
   const setNotice = (message) => {
     if (notice) notice.textContent = message;
@@ -128,7 +160,11 @@
   };
 
   const request = async (path, options = {}) => {
-    const response = await fetch(path, { credentials: "same-origin", ...options });
+    const headers = new Headers(options.headers ?? {});
+    if (hostedCandidateControls && selectedAccountId) {
+      headers.set("X-Trace-Account-ID", selectedAccountId);
+    }
+    const response = await fetch(path, { credentials: "same-origin", ...options, headers });
     const payload = response.status === 204 ? null : await response.json();
     if (!response.ok) {
       const validationError = Array.isArray(payload?.detail);
@@ -147,6 +183,7 @@
 
   const markAuthenticated = (member) => {
     hostedCandidateControls = member.member_id === "public" && String(member.workspace_id).startsWith("cloudflare:");
+    if (hostedCandidateControls && !selectedAccountId) selectedAccountId = member.account_id;
     if (entryScreen) entryScreen.hidden = true;
     if (workspaceLive) workspaceLive.hidden = false;
     if (skipLink) skipLink.setAttribute("href", "#workspace-content");
@@ -155,7 +192,7 @@
     if (memberLabel) memberLabel.textContent = hostedCandidateControls ? "Cloudflare 연결됨" : "로컬 연결됨";
     if (memberName) memberName.textContent = member.display_name;
     const workspaceAccount = one("[data-workspace-account]");
-    if (workspaceAccount) workspaceAccount.textContent = member.account_id ?? member.workspace_id;
+    if (workspaceAccount) workspaceAccount.textContent = selectedAccountId || member.account_id || member.workspace_id;
     if (inviteButton) inviteButton.hidden = member.is_admin !== true;
     all("[data-hosted-only]").forEach((element) => { element.hidden = !hostedCandidateControls; });
   };
@@ -257,10 +294,13 @@
     const caption = document.createElement("span"); caption.className = "candidate-row__caption";
     caption.textContent = record.caption.split("\n", 1)[0] || "(캡션 없음)";
     const meta = document.createElement("span"); meta.className = "candidate-row__meta";
-    meta.textContent = `${record.country} · ${candidateDate(record.created_at)}`;
+    meta.textContent = `${record.country} · ${postingSlotLabel(record.posting_slot)} 슬롯 · ${candidateDate(record.created_at)}`;
     content.append(title, caption, meta);
     if (record.context_profile) {
       content.append(badge("candidate-context", `Context · ${record.context_profile.name}`));
+    }
+    if (record.review_rating) {
+      content.append(badge("candidate-context", `최근 평가 · ${record.review_rating}점`));
     }
     content.append(journeyNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
@@ -306,11 +346,100 @@
     return field;
   };
 
+  const reviewControls = (record, stage, approveLabel) => {
+    const actions = document.createElement("div");
+    actions.className = "review-controls";
+    const feedback = document.createElement("p");
+    feedback.className = "candidate-feedback";
+    feedback.setAttribute("role", "alert");
+    feedback.hidden = true;
+
+    const approve = document.createElement("button");
+    approve.className = "button button-primary";
+    approve.type = "button";
+    approve.textContent = approveLabel;
+
+    const rejection = document.createElement("details");
+    rejection.className = "review-rejection";
+    const summary = document.createElement("summary");
+    summary.textContent = "반려 사유 선택";
+    const body = document.createElement("div");
+    body.className = "review-rejection__body";
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "review-tag-grid";
+    const legend = document.createElement("legend");
+    legend.textContent = "이유 태그 · 하나 이상";
+    fieldset.append(legend);
+    const tagInputs = REVIEW_TAGS.map((tag, index) => {
+      const label = document.createElement("label");
+      label.className = "review-tag";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = tag;
+      input.id = `review-${stage}-${record.candidate_id}-${index}`;
+      const text = document.createElement("span");
+      text.textContent = tag;
+      label.append(input, text);
+      fieldset.append(label);
+      return input;
+    });
+    const ratingLabel = document.createElement("label");
+    ratingLabel.className = "review-rating";
+    ratingLabel.textContent = "평점";
+    const rating = document.createElement("select");
+    [[1, "1 · 사용 어려움"], [2, "2 · 큰 수정 필요"], [3, "3 · 보완 필요"]].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = label;
+      option.selected = value === 2;
+      rating.append(option);
+    });
+    ratingLabel.append(rating);
+    const note = document.createElement("textarea");
+    note.className = "approval-card__reason";
+    note.rows = 2;
+    note.maxLength = 2000;
+    note.placeholder = "선택 사항 · 기타를 고르면 상세 이유를 적어 주세요.";
+    note.setAttribute("aria-label", "반려 상세 이유");
+    const reject = document.createElement("button");
+    reject.className = "button button-secondary";
+    reject.type = "button";
+    reject.textContent = "반려 저장";
+    body.append(fieldset, ratingLabel, note, reject);
+    rejection.append(summary, body);
+    actions.append(approve, rejection, feedback);
+
+    const buttons = () => [approve, reject];
+    const submit = stage === "caption" ? reviewCandidate : reviewCandidateImage;
+    approve.addEventListener("click", () => submit(
+      record,
+      true,
+      { rating: 5, tags: [], note: null },
+      approve,
+      feedback,
+      buttons,
+    ));
+    reject.addEventListener("click", () => submit(
+      record,
+      false,
+      {
+        rating: Number(rating.value),
+        tags: tagInputs.filter((input) => input.checked).map((input) => input.value),
+        note: note.value.trim() || null,
+      },
+      reject,
+      feedback,
+      buttons,
+    ));
+    return actions;
+  };
+
   const approvalVisual = (record) => {
     const visual = document.createElement("div"); visual.className = "approval-visual";
     if (record.image_path) {
       const image = document.createElement("img");
-      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image`;
+      const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
+      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image${accountQuery}`;
       image.alt = "합성된 후보 이미지";
       image.loading = "lazy";
       image.addEventListener("error", () => {
@@ -328,7 +457,7 @@
     const header = document.createElement("div"); header.className = "approval-card__header";
     header.append(
       badge("candidate-source", candidateSourceLabel(record.source)),
-      badge("mono", `${record.country} · ${candidateDate(record.created_at)}`),
+      badge("mono", `${record.country} · ${postingSlotLabel(record.posting_slot)} · ${candidateDate(record.created_at)}`),
     );
     const journey = journeyNode(record);
     const body = document.createElement("div"); body.className = "approval-card__body";
@@ -354,22 +483,7 @@
     const orderBody = document.createElement("pre"); orderBody.className = "approval-card__order";
     orderBody.textContent = record.shooting_order || "Appium 프롬프트가 비어 있습니다.";
     order.append(summary, orderBody);
-    const actions = document.createElement("div"); actions.className = "approval-card__actions";
-    const reason = document.createElement("input");
-    reason.className = "approval-card__reason";
-    reason.type = "text";
-    reason.maxLength = 2000;
-    reason.placeholder = "반려 사유 (다음 후보 생성에 반영됩니다)";
-    reason.setAttribute("aria-label", "반려 사유");
-    const buttons = [true, false].map((accepted) => {
-      const button = document.createElement("button");
-      button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
-      button.type = "button";
-      button.textContent = accepted ? "캡션·주제 승인" : "반려";
-      button.addEventListener("click", () => reviewCandidate(record, accepted, reason, button, () => buttons));
-      return button;
-    });
-    actions.append(reason, ...buttons);
+    const actions = reviewControls(record, "caption", "캡션·주제 승인 · 5점");
     card.append(header, journey, body, facts, order, actions);
     return card;
   };
@@ -413,22 +527,7 @@
         return card;
       }
     } else {
-      const reason = document.createElement("input");
-      reason.className = "approval-card__reason";
-      reason.type = "text";
-      reason.maxLength = 2000;
-      reason.placeholder = "반려 사유 (다음 이미지 생성에 반영됩니다)";
-      reason.setAttribute("aria-label", "이미지 반려 사유");
-      const buttons = [true, false].map((accepted) => {
-        const button = document.createElement("button");
-        button.className = `button ${accepted ? "button-primary" : "button-secondary"}`;
-        button.type = "button";
-        button.textContent = accepted ? "승인" : "반려";
-        button.addEventListener("click", () =>
-          reviewCandidateImage(record, accepted, reason, button, feedback, () => buttons));
-        return button;
-      });
-      actions.append(reason, ...buttons);
+      actions.append(reviewControls(record, "image", "이미지 승인 · 5점"));
     }
     card.append(header, body, actions, feedback);
     return card;
@@ -450,7 +549,7 @@
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/generate-image`, {
         method: "POST",
       });
-      await loadCandidates();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
       setNotice("이미지를 만들었습니다. 이미지 검수를 진행해 주세요.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
@@ -462,8 +561,7 @@
     }
   };
 
-  const reviewCandidateImage = async (record, accepted, reason, target, feedback, siblings) => {
-    const note = String(reason?.value ?? "").trim();
+  const reviewCandidateImage = async (record, accepted, review, target, feedback, siblings) => {
     const disabled = siblings();
     disabled.forEach((button) => { button.disabled = true; });
     setCardFeedback(feedback, "");
@@ -472,9 +570,9 @@
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/review-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accepted, note: note || null, expected_revision: record.revision }),
+        body: JSON.stringify({ accepted, ...review, expected_revision: record.revision }),
       });
-      await loadCandidates();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
       setNotice(accepted ? "제출 준비가 끝났습니다." : "이미지를 반려했습니다. 다시 생성할 수 있습니다.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
@@ -485,20 +583,21 @@
     }
   };
 
-  const reviewCandidate = async (record, accepted, reason, target, siblings) => {
-    const note = String(reason?.value ?? "").trim();
+  const reviewCandidate = async (record, accepted, review, target, feedback, siblings) => {
     const disabled = siblings();
     disabled.forEach((button) => { button.disabled = true; });
+    setCardFeedback(feedback, "");
     setBusy(target, true, "검수 결과를 저장하는 중…");
     try {
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accepted, note: note || null, expected_revision: record.revision }),
+        body: JSON.stringify({ accepted, ...review, expected_revision: record.revision }),
       });
-      await loadCandidates();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
       setNotice(accepted ? "주제와 캡션을 승인했습니다. 이미지 승인 단계로 넘어갑니다." : "후보를 반려했습니다.");
     } catch (error) {
+      setCardFeedback(feedback, error.message);
       setNotice(error.message);
       disabled.forEach((button) => { button.disabled = false; });
     } finally {
@@ -532,7 +631,7 @@
     if (emptyTitle) emptyTitle.textContent = candidateRecords.length ? "이 상태의 후보가 없습니다" : "등록된 후보가 없습니다";
     if (emptyCopy) emptyCopy.textContent = candidateRecords.length
       ? "다른 상태 필터를 선택해 전체 흐름을 확인하세요."
-      : "컨텍스트를 선택하고 후보 3개 생성을 눌러 첫 후보를 만드세요.";
+      : "컨텍스트를 선택하고 오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.";
   };
 
   const renderPipelineStats = () => {
@@ -566,8 +665,9 @@
     if (imageEmpty) imageEmpty.hidden = imageStage.length > 0;
     const imageCount = one("[data-image-count]");
     if (imageCount) {
-      const waiting = imageStage.filter((record) => record.status === "image_awaiting_review");
-      imageCount.textContent = `이미지 대기 ${imageStage.length}건 · 검수 대기 ${waiting.length}건`;
+      const generationPending = imageStage.filter((record) => record.status === "caption_approved");
+      const reviewPending = imageStage.filter((record) => record.status === "image_awaiting_review");
+      imageCount.textContent = `생성 대기 ${generationPending.length}건 · 검수 대기 ${reviewPending.length}건`;
     }
   };
 
@@ -613,18 +713,129 @@
   };
 
   const renderContextCountries = () => {
-    const select = document.getElementById("context-country");
-    if (!select) return;
     const displayNames = typeof Intl?.DisplayNames === "function"
       ? new Intl.DisplayNames(["ko"], { type: "region" })
       : null;
-    const options = contextCountries.map(({ country }) => {
+    const countryOption = ({ country }) => {
       const option = document.createElement("option");
       option.value = country;
       option.textContent = `${displayNames?.of(country) ?? country} (${country})`;
       return option;
-    });
-    select.replaceChildren(...options);
+    };
+    const currentCountry = selectedHostedAccount()?.country;
+    const scopedCountries = currentCountry
+      ? contextCountries.filter(({ country }) => country === currentCountry)
+      : contextCountries;
+    [document.getElementById("context-country"), document.getElementById("candidate-country")]
+      .filter(Boolean)
+      .forEach((select) => select.replaceChildren(...scopedCountries.map(countryOption)));
+    const newAccountCountry = document.getElementById("new-account-country");
+    if (newAccountCountry) {
+      const previous = newAccountCountry.value;
+      newAccountCountry.replaceChildren(...contextCountries.map(countryOption));
+      if (contextCountries.some(({ country }) => country === previous)) newAccountCountry.value = previous;
+      const timezone = document.getElementById("new-account-timezone");
+      if (timezone && !timezone.value) timezone.value = COUNTRY_TIMEZONES[newAccountCountry.value] ?? "UTC";
+    }
+  };
+
+  const selectedHostedAccount = () =>
+    hostedAccounts.find((account) => account.account_id === selectedAccountId) ?? null;
+
+  const setAccountFeedback = (element, message) => {
+    if (!element) return;
+    element.hidden = !message;
+    element.textContent = message;
+  };
+
+  const renderHostedAccounts = () => {
+    const account = selectedHostedAccount();
+    if (accountSelect) {
+      const options = hostedAccounts.map((item) => {
+        const option = document.createElement("option");
+        option.value = item.account_id;
+        option.textContent = `${item.display_name} · ${item.country}`;
+        return option;
+      });
+      accountSelect.replaceChildren(...options);
+      accountSelect.value = account?.account_id ?? "";
+    }
+    const text = (selector, value) => {
+      const element = one(selector);
+      if (element) element.textContent = value;
+    };
+    text("[data-workspace-account]", account?.account_id ?? "—");
+    text("[data-account-market]", account ? `${account.country} · ${account.language} · ${account.timezone}` : "—");
+    text("[data-account-slots]", account ? `오전 ${account.morning_time} · 저녁 ${account.evening_time}` : "—");
+    const next = account?.next_generation_at
+      ? new Intl.DateTimeFormat("ko-KR", {
+        timeZone: account.timezone,
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(account.next_generation_at))
+      : null;
+    text(
+      "[data-account-automation]",
+      account?.generation_enabled ? `사용 · 다음 ${next}` : "중지 · 수동 생성만",
+    );
+    if (account) {
+      const values = {
+        "account-display-name": account.display_name,
+        "account-timezone": account.timezone,
+        "account-morning-time": account.morning_time,
+        "account-evening-time": account.evening_time,
+      };
+      Object.entries(values).forEach(([id, value]) => {
+        const field = document.getElementById(id);
+        if (field) field.value = value;
+      });
+      const enabled = document.getElementById("account-generation-enabled");
+      if (enabled) enabled.checked = account.generation_enabled;
+    }
+    renderContextCountries();
+  };
+
+  const loadHostedAccounts = async () => {
+    if (!hostedCandidateControls) return;
+    hostedAccounts = await request("/api/accounts");
+    let remembered = "";
+    try { remembered = window.localStorage.getItem("trace:hosted-account") ?? ""; } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
+    const preferred = remembered || selectedAccountId;
+    selectedAccountId = hostedAccounts.some((account) => account.account_id === preferred)
+      ? preferred
+      : hostedAccounts[0]?.account_id ?? "";
+    try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
+    renderHostedAccounts();
+  };
+
+  const renderFeedbackSummary = () => {
+    const summary = one("[data-feedback-learning]");
+    const tags = one("[data-feedback-tags]");
+    if (!summary || !tags) return;
+    if (!feedbackSignal || feedbackSignal.rejected_reviews === 0) {
+      summary.textContent = "아직 누적된 반려 신호가 없습니다. 반려 태그는 같은 계정·페르소나의 다음 생성에 사용됩니다.";
+      tags.replaceChildren();
+      return;
+    }
+    summary.textContent = feedbackSignal.rule_candidates.length
+      ? `반복 3회 이상 규칙 ${feedbackSignal.rule_candidates.length}개가 다음 생성에 자동 반영됩니다.`
+      : `반려 ${feedbackSignal.rejected_reviews}건이 누적되었습니다. 같은 태그가 3회 쌓이면 생성 규칙이 됩니다.`;
+    tags.replaceChildren(...feedbackSignal.top_tags.slice(0, 6).map(({ tag, count }) =>
+      badge("approval-badge", `${tag} · ${count}`)));
+  };
+
+  const loadFeedbackSummary = async () => {
+    if (!hostedCandidateControls) return;
+    const profile = selectedContextProfile();
+    const query = profile ? `?context_profile_id=${encodeURIComponent(profile.profile_id)}` : "";
+    feedbackSignal = await request(`/api/feedback-summary${query}`);
+    renderFeedbackSummary();
   };
 
   const loadContextProfiles = async () => {
@@ -729,6 +940,7 @@
     if (candidateEditNote) candidateEditNote.hidden = false;
     candidateField("candidate-topic").value = record.topic;
     candidateField("candidate-country").value = record.country;
+    candidateField("candidate-posting-slot").value = record.posting_slot || "manual";
     candidateField("candidate-hypothesis").value = record.hypothesis;
     candidateField("candidate-caption").value = record.caption;
     candidateField("candidate-refs").value = record.refs_used.join(", ");
@@ -767,8 +979,9 @@
   const refreshWorkspace = async () => {
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
     try {
+      await loadHostedAccounts();
       await loadContextProfiles();
-      await loadCandidates();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
     } finally {
       setBusy(workspaceLive, false);
     }
@@ -932,12 +1145,112 @@
     });
   });
 
+  accountSelect?.addEventListener("change", async () => {
+    const next = accountSelect.value;
+    if (!hostedAccounts.some((account) => account.account_id === next)) return;
+    selectedAccountId = next;
+    try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
+    cancelCandidateEdit();
+    cancelContextEdit();
+    renderHostedAccounts();
+    setBusy(workspaceLive, true, "운영 계정을 바꾸는 중…");
+    try {
+      await loadContextProfiles();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      setNotice(`${selectedHostedAccount()?.display_name ?? selectedAccountId} 계정으로 전환했습니다.`);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(workspaceLive, false);
+    }
+  });
+
+  accountEditForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    if (!target.checkValidity()) { target.reportValidity(); return; }
+    const account = selectedHostedAccount();
+    if (!account) return;
+    const form = new FormData(target);
+    setAccountFeedback(accountEditFeedback, "");
+    setBusy(target, true, "계정 설정을 저장하는 중…");
+    try {
+      await request(`/api/accounts/${encodeURIComponent(account.account_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_revision: account.revision,
+          display_name: String(form.get("display-name") ?? "").trim(),
+          timezone: String(form.get("timezone") ?? "").trim(),
+          morning_time: String(form.get("morning-time") ?? "").trim(),
+          evening_time: String(form.get("evening-time") ?? "").trim(),
+          generation_enabled: form.get("generation-enabled") === "on",
+        }),
+      });
+      await loadHostedAccounts();
+      setNotice("계정 운영 설정을 저장했습니다.");
+    } catch (error) {
+      setAccountFeedback(accountEditFeedback, error.message);
+      setNotice(error.message);
+    } finally {
+      setBusy(target, false);
+    }
+  });
+
+  document.getElementById("new-account-country")?.addEventListener("change", (event) => {
+    const timezone = document.getElementById("new-account-timezone");
+    if (timezone) timezone.value = COUNTRY_TIMEZONES[event.currentTarget.value] ?? "UTC";
+  });
+
+  accountCreateForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    if (!target.checkValidity()) { target.reportValidity(); return; }
+    const form = new FormData(target);
+    setAccountFeedback(accountCreateFeedback, "");
+    setBusy(target, true, "격리 계정을 추가하는 중…");
+    try {
+      const created = await request("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account_id: String(form.get("account-id") ?? "").trim(),
+          display_name: String(form.get("display-name") ?? "").trim(),
+          country: String(form.get("country") ?? "").trim(),
+          timezone: String(form.get("timezone") ?? "").trim(),
+          morning_time: String(form.get("morning-time") ?? "").trim(),
+          evening_time: String(form.get("evening-time") ?? "").trim(),
+          generation_enabled: form.get("generation-enabled") === "on",
+        }),
+      });
+      selectedAccountId = created.account_id;
+      try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
+        if (!(error instanceof DOMException)) throw error;
+      }
+      target.reset();
+      document.getElementById("new-account-morning-time").value = "07:30";
+      document.getElementById("new-account-evening-time").value = "19:30";
+      await loadHostedAccounts();
+      await loadContextProfiles();
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      setNotice("새 격리 계정을 추가하고 전환했습니다.");
+    } catch (error) {
+      setAccountFeedback(accountCreateFeedback, error.message);
+      setNotice(error.message);
+    } finally {
+      setBusy(target, false);
+    }
+  });
+
   contextSelect?.addEventListener("change", () => {
     selectedContextProfileId = contextSelect.value;
     if (editingCandidate) editingCandidateContextChanged = true;
     renderSelectedContext();
     const profile = selectedContextProfile();
     if (profile) candidateField("candidate-country").value = profile.country;
+    void loadFeedbackSummary().catch((error) => setNotice(error.message));
   });
 
   const candidateProblem = (draft) => {
@@ -1037,6 +1350,7 @@
     const draft = {
       topic: String(form.get("topic") ?? "").trim(),
       country: String(form.get("country") ?? "").trim().toUpperCase(),
+      posting_slot: String(form.get("posting-slot") ?? "manual").trim(),
       caption: String(form.get("caption") ?? "").trim(),
       hypothesis: String(form.get("hypothesis") ?? "").trim(),
       refs_used: commaList(form.get("refs-used")),

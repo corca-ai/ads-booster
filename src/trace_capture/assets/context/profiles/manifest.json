@@ -13,6 +13,30 @@
         "references/KR/INDEX.md"
       ],
       "profiles": "profiles/KR.json"
+    },
+    "JP": {
+      "documents": ["markets/JP.md"],
+      "profiles": "profiles/JP.json"
+    },
+    "TW": {
+      "documents": ["markets/TW.md"],
+      "profiles": "profiles/TW.json"
+    },
+    "US": {
+      "documents": ["markets/US.md"],
+      "profiles": "profiles/US.json"
+    },
+    "DE": {
+      "documents": ["markets/DE.md"],
+      "profiles": "profiles/DE.json"
+    },
+    "FR": {
+      "documents": ["markets/FR.md"],
+      "profiles": "profiles/FR.json"
+    },
+    "BR": {
+      "documents": ["markets/BR.md"],
+      "profiles": "profiles/BR.json"
     }
   }
 }

@@ -125,8 +125,9 @@ production handlers depend inward on the marketing contract rather than putting 
 or response shapes into `automation/` or `workspace/`.
 
 `cloudflare/` is a separate deployment composition root. Its Worker owns HTTP authorization and D1
-registry APIs. `hosted-workspace.js` owns the intentionally public context/candidate APIs, account
-scoping, context snapshots, Workers AI schema, review transitions, and R2 preview contract. The build
+registry APIs. `hosted-workspace.js` owns the intentionally public account/context/candidate APIs,
+logical account scoping, daily slot scheduling, context snapshots, structured feedback aggregation,
+Workers AI schema, review transitions, and R2 preview contract. The build
 script copies the existing browser shell, validates the context manifest and profile data, and emits
 one generated Worker module from the canonical packaged source. `MarketingWorkflow` owns durable orchestration;
 `MarketingAccountAgent` owns one account's private memory. Pure run transition rules stay in
@@ -223,12 +224,16 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
 - Require code review for a new adapter, task kind, state edge, or retry rule.
 - Keep login-free hosted workspace routes under `/api/*`; never weaken `/v1/*` control-plane or
   callback authorization to expose the UI.
+- Treat hosted `account_id` as a logical data scope, never as proof of caller authorization. Public
+  account settings, profiles, candidates, and feedback must all use the same selected scope.
 - Keep the starter context canonical under `trace_capture/assets/context/` and generate the Worker
   module from it during the Cloudflare build instead of maintaining a second copy.
 - Keep country document/profile membership in the context manifest. D1 may add account-scoped
   profiles, but a profile cannot generate for a country without reviewed packaged documents.
 - Store the selected profile snapshot on every hosted candidate; later profile edits must not change
   the candidate's generation provenance.
+- Keep the four-candidate morning/evening batch rule and repeated-feedback threshold in the hosted
+  workspace owner; UI text and Cron scheduling consume that contract rather than duplicating it.
 - Label R2 SVG output as a hosted preview; native Appium provenance belongs to `capture/` and cannot
   be inferred from a Cloudflare-rendered artifact.
 

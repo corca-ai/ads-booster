@@ -40,13 +40,66 @@
           <div class="workspace-title">
             <p class="eyebrow">Trace marketing pipeline</p>
             <h1>마케팅 워크벤치</h1>
-            <p>컨텍스트를 고르고 후보 생성부터 이미지 승인까지 한곳에서 진행합니다.</p>
+            <p>계정별 컨텍스트부터 하루 후보 생성, 검수와 다음 생성 학습까지 한곳에서 진행합니다.</p>
           </div>
           <div class="header-actions">
             <div class="status-line" role="status" aria-live="polite" data-live-status><span class="signal-mark success" aria-hidden="true"></span><span data-notice>준비됨</span></div>
             <button class="button button-secondary" type="button" data-action="open-invite" hidden>팀원 초대</button>
           </div>
         </header>
+
+        <section class="account-console" data-hosted-only hidden aria-labelledby="account-console-title">
+          <div class="account-console__primary">
+            <div>
+              <p class="eyebrow">격리 계정</p>
+              <h2 id="account-console-title">운영 계정</h2>
+            </div>
+            <label class="context-selector account-selector" for="workspace-account">현재 계정
+              <select id="workspace-account" data-account-select aria-describedby="account-selector-help"></select>
+            </label>
+            <p class="context-selector__help" id="account-selector-help">계정을 바꾸면 후보·컨텍스트·피드백도 해당 계정 범위로 함께 바뀝니다.</p>
+            <dl class="account-facts">
+              <div><dt>국가·언어</dt><dd data-account-market>—</dd></div>
+              <div><dt>게시 슬롯</dt><dd data-account-slots>—</dd></div>
+              <div><dt>자동 생성</dt><dd data-account-automation>—</dd></div>
+            </dl>
+          </div>
+          <details class="account-settings" data-account-settings>
+            <summary>계정 설정·추가</summary>
+            <div class="account-settings__body">
+              <form class="stack-form" data-account-edit-form novalidate aria-describedby="account-edit-feedback">
+                <h3>현재 계정 설정</h3>
+                <div class="candidate-fields">
+                  <label for="account-display-name">표시 이름<input id="account-display-name" name="display-name" required maxlength="80" autocomplete="off"></label>
+                  <label for="account-timezone">시간대<input id="account-timezone" name="timezone" required maxlength="80" autocomplete="off" placeholder="Asia/Seoul"></label>
+                  <label for="account-morning-time">오전 게시 시각<input id="account-morning-time" name="morning-time" type="time" required></label>
+                  <label for="account-evening-time">저녁 게시 시각<input id="account-evening-time" name="evening-time" type="time" required></label>
+                  <label class="check-row candidate-fields__wide" for="account-generation-enabled"><input id="account-generation-enabled" name="generation-enabled" type="checkbox"><span>매일 오전 게시 시각에 오전 2개·저녁 2개 후보 자동 생성</span></label>
+                </div>
+                <p class="candidate-feedback" id="account-edit-feedback" data-account-edit-feedback role="alert" hidden></p>
+                <div class="form-actions"><button class="button button-secondary" type="submit">설정 저장</button></div>
+              </form>
+              <details class="advanced-input">
+                <summary>새 격리 계정 추가</summary>
+                <div class="advanced-input__body">
+                  <form class="stack-form" data-account-create-form novalidate aria-describedby="account-create-feedback">
+                    <div class="candidate-fields">
+                      <label for="new-account-id">계정 ID<input id="new-account-id" name="account-id" required maxlength="64" pattern="[a-z0-9][a-z0-9_-]*" autocomplete="off" placeholder="trace_jp_01"></label>
+                      <label for="new-account-name">표시 이름<input id="new-account-name" name="display-name" required maxlength="80" autocomplete="off" placeholder="Trace Japan 01"></label>
+                      <label for="new-account-country">국가<select id="new-account-country" name="country" required></select></label>
+                      <label for="new-account-timezone">시간대<input id="new-account-timezone" name="timezone" required maxlength="80" autocomplete="off" placeholder="Asia/Tokyo"></label>
+                      <label for="new-account-morning-time">오전 게시 시각<input id="new-account-morning-time" name="morning-time" type="time" value="07:30" required></label>
+                      <label for="new-account-evening-time">저녁 게시 시각<input id="new-account-evening-time" name="evening-time" type="time" value="19:30" required></label>
+                      <label class="check-row candidate-fields__wide" for="new-account-generation-enabled"><input id="new-account-generation-enabled" name="generation-enabled" type="checkbox"><span>추가 직후 매일 자동 생성 시작</span></label>
+                    </div>
+                    <p class="candidate-feedback" id="account-create-feedback" data-account-create-feedback role="alert" hidden></p>
+                    <div class="form-actions"><button class="button button-secondary" type="submit">계정 추가</button></div>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </details>
+        </section>
 
         <section class="pipeline-summary" aria-label="파이프라인 현황">
           <button class="pipeline-step" type="button" data-action="open-review">
@@ -88,7 +141,7 @@
                 </div>
                 <span class="context-source" data-context-source>starter</span>
               </div>
-              <p class="context-scope">격리 계정 <code data-workspace-account>불러오는 중…</code></p>
+              <p class="context-scope">격리 계정 <code data-workspace-account>불러오는 중…</code> · 후보 생성 당시 컨텍스트는 스냅샷으로 보존됩니다.</p>
               <label class="context-selector" for="workspace-context-profile">사용할 컨텍스트
                 <select id="workspace-context-profile" data-context-select aria-describedby="context-selector-help"></select>
               </label>
@@ -132,16 +185,22 @@
                 <p class="eyebrow">새 작업</p>
                 <h3 class="entry-block__title" id="new-candidate-title">게시물 후보 만들기</h3>
               </div>
-              <p class="entry-block__help" id="autogen-help">AI가 공통 원리와 선택한 컨텍스트를 읽고 서로 다른 후보 3개를 아래 목록에 등록합니다.</p>
-              <button class="button button-primary entry-block__action" type="button" data-autogen aria-describedby="autogen-help">후보 3개 생성</button>
+              <p class="entry-block__help" id="autogen-help">AI가 공통 원리·선택 컨텍스트·누적 반려를 읽고 오전 2개와 저녁 2개를 등록합니다.</p>
+              <button class="button button-primary entry-block__action" type="button" data-autogen aria-describedby="autogen-help">오늘 후보 4개 생성</button>
               <p class="entry-block__status" role="status" data-autogen-feedback hidden></p>
+              <section class="learning-panel" data-hosted-only hidden aria-labelledby="learning-panel-title">
+                <div><p class="eyebrow">피드백 루프</p><h4 id="learning-panel-title">다음 생성에 반영되는 신호</h4></div>
+                <p data-feedback-learning>아직 누적된 반려 신호가 없습니다.</p>
+                <div class="approval-badges" data-feedback-tags></div>
+              </section>
               <details class="advanced-input" data-manual-entry>
               <summary data-candidate-form-title>수동 등록</summary>
               <div class="advanced-input__body">
                 <form class="stack-form" data-candidate-form novalidate aria-describedby="candidate-feedback">
                   <div class="candidate-fields">
                     <label class="candidate-fields__wide" for="candidate-topic">주제/컨셉<input id="candidate-topic" name="topic" required maxlength="200" autocomplete="off" placeholder="예: 시험기간 일정 관리 — 잠금화면 데모로 공감 훅"></label>
-                    <label for="candidate-country">국가<select id="candidate-country" name="country" required><option value="KR" selected>한국 (KR)</option><option value="JP">일본 (JP)</option><option value="TW">대만 (TW)</option><option value="US">미국 (US)</option></select></label>
+                    <label for="candidate-country">국가<select id="candidate-country" name="country" required><option value="KR" selected>한국 (KR)</option></select></label>
+                    <label for="candidate-posting-slot">게시 슬롯<select id="candidate-posting-slot" name="posting-slot" required><option value="manual" selected>수동</option><option value="morning">오전</option><option value="evening">저녁</option></select></label>
                     <label for="candidate-hypothesis">가설<input id="candidate-hypothesis" name="hypothesis" required maxlength="2000" autocomplete="off" placeholder="예: 1인칭 감탄이 저장률을 올린다"></label>
                     <label class="candidate-fields__wide" for="candidate-caption">캡션<textarea id="candidate-caption" name="caption" required rows="5" placeholder="게시할 캡션을 그대로 붙여넣으세요."></textarea></label>
                     <label for="candidate-refs">참조 레퍼런스<input id="candidate-refs" name="refs-used" autocomplete="off" placeholder="쉼표로 구분: ref-a, ref-b"></label>
@@ -188,7 +247,7 @@
           <div class="empty-surface" data-candidate-empty>
             <p class="eyebrow">아직 없음</p>
             <h3 data-candidate-empty-title>등록된 후보가 없습니다</h3>
-            <p data-candidate-empty-copy>컨텍스트를 선택하고 후보 3개 생성을 눌러 첫 후보를 만드세요.</p>
+            <p data-candidate-empty-copy>컨텍스트를 선택하고 오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.</p>
           </div>
         </section>
 
@@ -218,6 +277,7 @@
               <span class="mono" role="status" data-image-count></span>
             </div>
             <p class="section-note">배경은 외부 이미지 검색에서 출처를 확인해 가져오고, 잠금화면 부품은 저장된 오프라인 이미지를 사용합니다. 위에 입력한 일정과 기기 시각은 기록에는 남지만, 네이티브 캡처 환경(Appium/시뮬레이터)을 연결하기 전까지는 이미지에 그려지지 않습니다.</p>
+            <div class="capture-boundary" data-hosted-only hidden><strong>현재 이미지 실행</strong><span>Cloudflare 검수용 SVG 미리보기</span><small>네이티브 Appium 캡처 worker는 별도 Mac 실행 경계이며 이 공개 버튼에는 아직 연결되지 않았습니다.</small></div>
             <div class="approval-list" data-image-list></div>
             <div class="empty-surface" data-image-empty>
               <p class="eyebrow">비어 있음</p>

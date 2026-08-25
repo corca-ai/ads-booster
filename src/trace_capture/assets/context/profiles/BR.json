@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "starter-br-student",
+    "country": "BR",
+    "name": "Estudante · aulas e deslocamento",
+    "persona_id": "br-student-commuter",
+    "audience": "Estudantes no Brasil que conciliam aulas, estudo, deslocamento, exercício e compromissos",
+    "situation": "Um dia que começa com aula e segue com estudo, almoço, atividade e volta para casa",
+    "tone": "Português brasileiro natural, curto e próximo",
+    "guidance": "Usar horários e cenas plausíveis sem inventar cidade, instituição ou resultado.",
+    "reference_ids": ["br-study-commute"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-br-worker",
+    "country": "BR",
+    "name": "Trabalho · rotina e família",
+    "persona_id": "br-worker-family",
+    "audience": "Pessoas que organizam trabalho, deslocamento, consultas, exercício e tarefas da família",
+    "situation": "Um dia útil com reuniões, tarefas pessoais e um compromisso familiar no fim do dia",
+    "tone": "Acolhedor e específico, sem promessa exagerada",
+    "guidance": "Não presumir profissão ou estrutura familiar; mostrar apenas a ordem do dia.",
+    "reference_ids": ["br-work-family"],
+    "is_default": false
+  }
+]

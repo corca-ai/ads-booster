@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "starter-us-student",
+    "country": "US",
+    "name": "Student · classes and shift",
+    "persona_id": "us-student-shift",
+    "audience": "US students balancing classes, study blocks, campus activities, and a part-time shift",
+    "situation": "A weekday that moves from an early class to study time, practice, or a work shift",
+    "tone": "Concise first-person US English without ad-speak",
+    "guidance": "Use plausible schedule details without naming a school, city, or outcome that is not provided.",
+    "reference_ids": ["us-campus-shift"],
+    "is_default": true
+  },
+  {
+    "profile_id": "starter-us-hybrid",
+    "country": "US",
+    "name": "Hybrid worker · meetings and errands",
+    "persona_id": "us-hybrid-worker",
+    "audience": "US workers coordinating meetings, focus blocks, appointments, exercise, and household errands",
+    "situation": "A hybrid workday with changing locations and an after-work commitment",
+    "tone": "Direct, conversational US English with no hype",
+    "guidance": "Let the order of the day demonstrate the use case; do not invent productivity gains.",
+    "reference_ids": ["us-hybrid-workday"],
+    "is_default": false
+  }
+]

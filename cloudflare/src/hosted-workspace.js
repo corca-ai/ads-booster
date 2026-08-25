@@ -4,6 +4,19 @@ const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const MAX_CANDIDATES = 200;
 const MAX_CONTEXT_PROFILES = 100;
+const MAX_HOSTED_ACCOUNTS = 100;
+const POSTING_SLOTS = new Set(["morning", "evening", "manual"]);
+export const REVIEW_TAGS = Object.freeze([
+  "이미지 품질·AI 티",
+  "앱 화면·데이터 오류",
+  "국가·언어 부적합",
+  "계정 페르소나 불일치",
+  "컨셉이 약함",
+  "기존 게시물과 중복",
+  "캡션 부적합",
+  "브랜드·정책 위험",
+  "기타",
+]);
 const ALLOWED_BACKGROUND_SUBJECTS = new Set([
   "scenery",
   "character_kitty",
@@ -21,10 +34,12 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
   if (!url.pathname.startsWith("/api/")) return null;
 
   try {
+    const requestedAccountId = accountIdFromRequest(request, env);
+    const scopedEnv = withHostedAccount(env, requestedAccountId);
     if (request.method === "GET" && url.pathname === "/api/auth/session") {
       return json({
-        workspace_id: workspaceId(env),
-        account_id: accountId(env),
+        workspace_id: workspaceId(scopedEnv),
+        account_id: accountId(scopedEnv),
         member_id: "public",
         display_name: "Trace Team",
         is_admin: false,
@@ -36,14 +51,39 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     if (request.method === "GET" && url.pathname === "/api/context-countries") {
       return json(configuredContextCountries(contextRegistry));
     }
+    if (request.method === "GET" && url.pathname === "/api/accounts") {
+      await ensureDefaultHostedAccount(env);
+      return json(await listHostedAccounts(env));
+    }
+    if (request.method === "POST" && url.pathname === "/api/accounts") {
+      const settings = normalizeHostedAccount(await readJson(request), contextRegistry);
+      return json(await createHostedAccount(env, settings), 201);
+    }
+    const accountRoute = url.pathname.match(/^\/api\/accounts\/([^/]+)$/);
+    if (accountRoute && ["PATCH", "DELETE"].includes(request.method)) {
+      const targetAccountId = safeAccountId(decodeURIComponent(accountRoute[1]));
+      const targetEnv = withHostedAccount(env, targetAccountId);
+      const body = await readJson(request);
+      const revision = positiveInteger(body?.expected_revision, null);
+      if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
+      if (request.method === "PATCH") {
+        return json(await updateHostedAccount(targetEnv, revision, body));
+      }
+      await disableHostedAccount(targetEnv, revision);
+      return new Response(null, { status: 204 });
+    }
+
+    await ensureDefaultHostedAccount(env);
+    await requireHostedAccount(scopedEnv);
     if (request.method === "GET" && url.pathname === "/api/context-profiles") {
-      await ensureStarterProfiles(env, starterProfiles);
-      return json(await listContextProfiles(env));
+      await ensureStarterProfiles(scopedEnv, starterProfiles);
+      return json(await listContextProfiles(scopedEnv));
     }
     if (request.method === "POST" && url.pathname === "/api/context-profiles") {
       const profile = normalizeContextProfile(await readJson(request));
       assertConfiguredContextCountry(contextRegistry, profile.country);
-      return json(await createContextProfile(env, profile), 201);
+      await assertAccountCountry(scopedEnv, profile.country);
+      return json(await createContextProfile(scopedEnv, profile), 201);
     }
     const contextRoute = url.pathname.match(/^\/api\/context-profiles\/([^/]+)$/);
     if (contextRoute && ["PATCH", "DELETE"].includes(request.method)) {
@@ -54,31 +94,37 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
       if (request.method === "PATCH") {
         const profile = normalizeContextProfile(body);
         assertConfiguredContextCountry(contextRegistry, profile.country);
+        await assertAccountCountry(scopedEnv, profile.country);
         return json(
-          await updateContextProfile(env, profileId, revision, profile),
+          await updateContextProfile(scopedEnv, profileId, revision, profile),
         );
       }
       if (request.method === "DELETE") {
-        await disableContextProfile(env, profileId, revision);
+        await disableContextProfile(scopedEnv, profileId, revision);
         return new Response(null, { status: 204 });
       }
     }
+    if (request.method === "GET" && url.pathname === "/api/feedback-summary") {
+      return json(await feedbackSummary(scopedEnv, url.searchParams.get("context_profile_id")));
+    }
     if (request.method === "GET" && url.pathname === "/api/candidates") {
-      return json(await listCandidates(env));
+      return json(await listCandidates(scopedEnv));
     }
     if (request.method === "POST" && url.pathname === "/api/candidates") {
-      await ensureStarterProfiles(env, starterProfiles);
+      await ensureStarterProfiles(scopedEnv, starterProfiles);
       const body = await readJson(request);
       const profile = Object.prototype.hasOwnProperty.call(body, "context_profile_id")
-        ? await optionalContextProfile(env, body.context_profile_id)
+        ? await optionalContextProfile(scopedEnv, body.context_profile_id)
         : undefined;
-      return json(await insertCandidate(env, normalizeCandidateDraft(body), "manual", profile), 201);
+      const draft = normalizeCandidateDraft(body);
+      await assertAccountCountry(scopedEnv, draft.country);
+      return json(await insertCandidate(scopedEnv, draft, "manual", profile), 201);
     }
     if (request.method === "POST" && url.pathname === "/api/candidates/generate") {
-      await ensureStarterProfiles(env, starterProfiles);
+      await ensureStarterProfiles(scopedEnv, starterProfiles);
       const body = await readOptionalJson(request);
-      const profile = await resolveContextProfile(env, body?.context_profile_id);
-      return json(await generateCandidates(env, contextRegistry, profile), 201);
+      const profile = await resolveContextProfile(scopedEnv, body?.context_profile_id);
+      return json(await generateCandidates(scopedEnv, contextRegistry, profile), 201);
     }
 
     const route = url.pathname.match(
@@ -88,34 +134,36 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     const candidateId = decodeURIComponent(route[1]);
     const action = route[2];
     if (request.method === "POST" && action === "review") {
-      return json(await reviewCandidate(env, candidateId, await readJson(request)));
+      return json(await reviewCandidate(scopedEnv, candidateId, await readJson(request)));
     }
     if (request.method === "POST" && action === "generate-image") {
-      return json(await generateCandidateImage(env, candidateId), 201);
+      return json(await generateCandidateImage(scopedEnv, candidateId), 201);
     }
     if (request.method === "POST" && action === "review-image") {
-      return json(await reviewCandidateImage(env, candidateId, await readJson(request)));
+      return json(await reviewCandidateImage(scopedEnv, candidateId, await readJson(request)));
     }
     if (request.method === "GET" && action === "image") {
-      return readCandidateImage(env, candidateId);
+      return readCandidateImage(scopedEnv, candidateId);
     }
     if (request.method === "PATCH" && !action) {
-      await ensureStarterProfiles(env, starterProfiles);
+      await ensureStarterProfiles(scopedEnv, starterProfiles);
       const body = await readJson(request);
       const revision = positiveInteger(body?.expected_revision, null);
       if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
       const profile = Object.prototype.hasOwnProperty.call(body, "context_profile_id")
-        ? await optionalContextProfile(env, body.context_profile_id)
+        ? await optionalContextProfile(scopedEnv, body.context_profile_id)
         : undefined;
+      const draft = normalizeCandidateDraft(body);
+      await assertAccountCountry(scopedEnv, draft.country);
       return json(
-        await updateCandidate(env, candidateId, revision, normalizeCandidateDraft(body), profile),
+        await updateCandidate(scopedEnv, candidateId, revision, draft, profile),
       );
     }
     if (request.method === "DELETE" && !action) {
       const body = await readJson(request);
       const revision = positiveInteger(body?.expected_revision, null);
       if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
-      await deleteCandidate(env, candidateId, revision);
+      await deleteCandidate(scopedEnv, candidateId, revision);
       return new Response(null, { status: 204 });
     }
     return null;
@@ -125,6 +173,54 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
       { detail: status === 500 ? "워크스페이스 요청을 처리하지 못했습니다." : error.message },
       status,
     );
+  }
+}
+
+export async function runHostedWorkspaceSchedules(env, contextRegistry, starterProfiles = []) {
+  await ensureDefaultHostedAccount(env);
+  const now = new Date();
+  const due = await env.DB.prepare(
+    `SELECT account_id FROM hosted_workspace_accounts
+     WHERE enabled = 1 AND generation_enabled = 1 AND next_generation_at <= ?
+     ORDER BY next_generation_at LIMIT 20`,
+  )
+    .bind(now.toISOString())
+    .all();
+  for (const row of due.results) {
+    const retryAt = new Date(now.getTime() + 15 * 60_000).toISOString();
+    const claimed = await env.DB.prepare(
+      `UPDATE hosted_workspace_accounts SET next_generation_at = ?, updated_at = ?
+       WHERE account_id = ? AND enabled = 1 AND generation_enabled = 1
+         AND next_generation_at <= ?`,
+    )
+      .bind(retryAt, Date.now() / 1000, row.account_id, now.toISOString())
+      .run();
+    if (claimed.meta.changes !== 1) continue;
+    const scopedEnv = withHostedAccount(env, row.account_id);
+    try {
+      await ensureStarterProfiles(scopedEnv, starterProfiles);
+      const [account, profile] = await Promise.all([
+        requireHostedAccount(scopedEnv),
+        resolveContextProfile(scopedEnv, null),
+      ]);
+      await generateCandidates(scopedEnv, contextRegistry, profile);
+      const next = nextDailyGenerationAt(
+        account.timezone,
+        account.morning_time,
+        new Date(now.getTime() + 60_000),
+      ).toISOString();
+      await env.DB.prepare(
+        `UPDATE hosted_workspace_accounts SET next_generation_at = ?, updated_at = ?
+         WHERE account_id = ? AND enabled = 1 AND generation_enabled = 1`,
+      )
+        .bind(next, Date.now() / 1000, account.account_id)
+        .run();
+    } catch (error) {
+      console.error("hosted workspace scheduled generation failed", {
+        account_id: row.account_id,
+        message: error instanceof Error ? error.message : "unknown error",
+      });
+    }
   }
 }
 
@@ -146,6 +242,10 @@ export function normalizeCandidateDraft(input) {
   const appiumPrompt = isCompleteAppiumPrompt(requestedPrompt)
     ? requestedPrompt
     : appiumPromptFrom(imageInputs);
+  const postingSlot = optionalString(input.posting_slot, 16) || "manual";
+  if (!POSTING_SLOTS.has(postingSlot)) {
+    throw new WorkspaceHttpError(400, "posting_slot은 morning, evening, manual 중 하나여야 합니다.");
+  }
   return {
     topic,
     country,
@@ -155,6 +255,7 @@ export function normalizeCandidateDraft(input) {
     principles_applied: principlesApplied,
     appium_prompt: appiumPrompt,
     image_inputs: imageInputs,
+    posting_slot: postingSlot,
   };
 }
 
@@ -201,8 +302,8 @@ export function candidateResponseSchema(country = "KR") {
     properties: {
       candidates: {
         type: "array",
-        minItems: 3,
-        maxItems: 3,
+        minItems: 4,
+        maxItems: 4,
         items: {
           type: "object",
           additionalProperties: false,
@@ -211,6 +312,7 @@ export function candidateResponseSchema(country = "KR") {
             country: { type: "string", enum: [country] },
             caption: { type: "string" },
             hypothesis: { type: "string" },
+            posting_slot: { type: "string", enum: ["morning", "evening"] },
             refs_used: { type: "array", items: { type: "string" } },
             principles_applied: { type: "array", items: { type: "integer" } },
             appium_prompt: { type: "string" },
@@ -227,7 +329,7 @@ export function candidateResponseSchema(country = "KR") {
               required: ["trace_items", "device_time", "background_subject", "background_mood", "language"],
             },
           },
-          required: ["topic", "country", "caption", "hypothesis", "refs_used", "principles_applied", "appium_prompt", "image_inputs"],
+          required: ["topic", "country", "caption", "hypothesis", "posting_slot", "refs_used", "principles_applied", "appium_prompt", "image_inputs"],
         },
       },
     },
@@ -259,10 +361,291 @@ export function normalizeContextProfile(input) {
   };
 }
 
+export function normalizeHostedAccount(input, contextRegistry) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkspaceHttpError(400, "계정 입력 형식이 올바르지 않습니다.");
+  }
+  const country = requiredString(input.country ?? "KR", "country", 2).toUpperCase();
+  assertConfiguredContextCountry(contextRegistry, country);
+  const timezone = requiredString(input.timezone ?? defaultTimezone(country), "timezone", 80);
+  assertTimezone(timezone);
+  const morningTime = clockTime(input.morning_time ?? "07:30", "morning_time");
+  const eveningTime = clockTime(input.evening_time ?? "19:30", "evening_time");
+  if (morningTime === eveningTime) {
+    throw new WorkspaceHttpError(400, "오전·저녁 게시 시각은 서로 달라야 합니다.");
+  }
+  return {
+    account_id: safeAccountId(input.account_id),
+    display_name: requiredString(input.display_name, "display_name", 80),
+    country,
+    language: languageForCountry(country),
+    timezone,
+    morning_time: morningTime,
+    evening_time: eveningTime,
+    generation_enabled: input.generation_enabled === true,
+  };
+}
+
+async function ensureDefaultHostedAccount(env) {
+  const id = accountId(env);
+  const now = Date.now() / 1000;
+  const next = nextDailyGenerationAt("Asia/Seoul", "07:30").toISOString();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO hosted_workspace_accounts
+      (account_id, display_name, country, language, timezone, morning_time, evening_time,
+       generation_enabled, next_generation_at, enabled, revision, created_at, updated_at)
+     VALUES (?, 'Trace Korea', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, ?, 1, 1, ?, ?)`,
+  )
+    .bind(id, next, now, now)
+    .run();
+}
+
+async function listHostedAccounts(env) {
+  const result = await env.DB.prepare(
+    `SELECT * FROM hosted_workspace_accounts
+     WHERE enabled = 1 ORDER BY country, display_name LIMIT ?`,
+  )
+    .bind(MAX_HOSTED_ACCOUNTS)
+    .all();
+  return result.results.map(hostedAccountFromRow);
+}
+
+async function createHostedAccount(env, settings) {
+  const now = Date.now() / 1000;
+  const next = settings.generation_enabled
+    ? nextDailyGenerationAt(settings.timezone, settings.morning_time).toISOString()
+    : null;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO hosted_workspace_accounts
+        (account_id, display_name, country, language, timezone, morning_time, evening_time,
+         generation_enabled, next_generation_at, enabled, revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+    )
+      .bind(
+        settings.account_id,
+        settings.display_name,
+        settings.country,
+        settings.language,
+        settings.timezone,
+        settings.morning_time,
+        settings.evening_time,
+        Number(settings.generation_enabled),
+        next,
+        now,
+        now,
+      )
+      .run();
+  } catch (error) {
+    const existing = await env.DB.prepare(
+      "SELECT account_id FROM hosted_workspace_accounts WHERE account_id = ?",
+    )
+      .bind(settings.account_id)
+      .first();
+    if (existing) throw new WorkspaceHttpError(409, "이미 사용 중인 계정 ID입니다.");
+    throw error;
+  }
+  return requireHostedAccount(withHostedAccount(env, settings.account_id));
+}
+
+async function updateHostedAccount(env, revision, input) {
+  const current = await requireHostedAccount(env);
+  const displayName = Object.prototype.hasOwnProperty.call(input, "display_name")
+    ? requiredString(input.display_name, "display_name", 80)
+    : current.display_name;
+  const timezone = Object.prototype.hasOwnProperty.call(input, "timezone")
+    ? requiredString(input.timezone, "timezone", 80)
+    : current.timezone;
+  assertTimezone(timezone);
+  const morningTime = Object.prototype.hasOwnProperty.call(input, "morning_time")
+    ? clockTime(input.morning_time, "morning_time")
+    : current.morning_time;
+  const eveningTime = Object.prototype.hasOwnProperty.call(input, "evening_time")
+    ? clockTime(input.evening_time, "evening_time")
+    : current.evening_time;
+  if (morningTime === eveningTime) {
+    throw new WorkspaceHttpError(400, "오전·저녁 게시 시각은 서로 달라야 합니다.");
+  }
+  const generationEnabled = Object.prototype.hasOwnProperty.call(input, "generation_enabled")
+    ? booleanField(input.generation_enabled, "generation_enabled")
+    : current.generation_enabled;
+  const scheduleChanged = timezone !== current.timezone || morningTime !== current.morning_time;
+  const next = generationEnabled
+    ? (!current.generation_enabled || scheduleChanged
+        ? nextDailyGenerationAt(timezone, morningTime).toISOString()
+        : current.next_generation_at)
+    : null;
+  const result = await env.DB.prepare(
+    `UPDATE hosted_workspace_accounts
+     SET display_name = ?, timezone = ?, morning_time = ?, evening_time = ?,
+         generation_enabled = ?, next_generation_at = ?, revision = revision + 1, updated_at = ?
+     WHERE account_id = ? AND enabled = 1 AND revision = ?`,
+  )
+    .bind(
+      displayName,
+      timezone,
+      morningTime,
+      eveningTime,
+      Number(generationEnabled),
+      next,
+      Date.now() / 1000,
+      accountId(env),
+      revision,
+    )
+    .run();
+  if (result.meta.changes !== 1) {
+    throw new WorkspaceHttpError(409, "계정 설정이 다른 요청에서 먼저 변경되었습니다.");
+  }
+  return requireHostedAccount(env);
+}
+
+async function disableHostedAccount(env, revision) {
+  const result = await env.DB.prepare(
+    `UPDATE hosted_workspace_accounts
+     SET enabled = 0, generation_enabled = 0, next_generation_at = NULL,
+         revision = revision + 1, updated_at = ?
+     WHERE account_id = ? AND enabled = 1 AND revision = ?`,
+  )
+    .bind(Date.now() / 1000, accountId(env), revision)
+    .run();
+  if (result.meta.changes !== 1) {
+    throw new WorkspaceHttpError(409, "계정 설정이 다른 요청에서 먼저 변경되었습니다.");
+  }
+}
+
+async function requireHostedAccount(env) {
+  const row = await env.DB.prepare(
+    "SELECT * FROM hosted_workspace_accounts WHERE account_id = ? AND enabled = 1",
+  )
+    .bind(accountId(env))
+    .first();
+  if (!row) throw new WorkspaceHttpError(404, "워크스페이스 계정을 찾을 수 없습니다.");
+  return hostedAccountFromRow(row);
+}
+
+function hostedAccountFromRow(row) {
+  return {
+    account_id: row.account_id,
+    display_name: row.display_name,
+    country: row.country,
+    language: row.language,
+    timezone: row.timezone,
+    morning_time: row.morning_time,
+    evening_time: row.evening_time,
+    generation_enabled: row.generation_enabled === 1,
+    next_generation_at: row.next_generation_at,
+    revision: row.revision,
+  };
+}
+
+async function assertAccountCountry(env, country) {
+  const account = await requireHostedAccount(env);
+  if (account.country !== country) {
+    throw new WorkspaceHttpError(
+      400,
+      `계정 국가 ${account.country}와 후보·컨텍스트 국가 ${country}가 일치해야 합니다.`,
+    );
+  }
+}
+
+export function nextDailyGenerationAt(timezone, time, after = new Date()) {
+  assertTimezone(timezone);
+  const normalizedTime = clockTime(time, "generation_time");
+  const [hour, minute] = normalizedTime.split(":").map(Number);
+  const current = zonedParts(after, timezone);
+  let desired = {
+    year: current.year,
+    month: current.month,
+    day: current.day,
+    hour,
+    minute,
+  };
+  let next = instantForZonedParts(desired, timezone);
+  if (next.getTime() <= after.getTime()) {
+    const tomorrow = new Date(Date.UTC(desired.year, desired.month - 1, desired.day + 1));
+    desired = {
+      ...desired,
+      year: tomorrow.getUTCFullYear(),
+      month: tomorrow.getUTCMonth() + 1,
+      day: tomorrow.getUTCDate(),
+    };
+    next = instantForZonedParts(desired, timezone);
+  }
+  return next;
+}
+
+function instantForZonedParts(desired, timezone) {
+  const desiredWall = Date.UTC(
+    desired.year,
+    desired.month - 1,
+    desired.day,
+    desired.hour,
+    desired.minute,
+  );
+  let timestamp = desiredWall;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const actual = zonedParts(new Date(timestamp), timezone);
+    const actualWall = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute);
+    const adjustment = desiredWall - actualWall;
+    timestamp += adjustment;
+    if (adjustment === 0) break;
+  }
+  return new Date(timestamp);
+}
+
+function zonedParts(date, timezone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+  };
+}
+
+function clockTime(value, field) {
+  const normalized = requiredString(value, field, 5);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(normalized)) {
+    throw new WorkspaceHttpError(400, `${field}은 HH:MM 형식이어야 합니다.`);
+  }
+  return normalized;
+}
+
+function assertTimezone(value) {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value }).format();
+  } catch (error) {
+    throw new WorkspaceHttpError(400, "timezone은 올바른 IANA 시간대여야 합니다.");
+  }
+}
+
+function defaultTimezone(country) {
+  return {
+    KR: "Asia/Seoul",
+    JP: "Asia/Tokyo",
+    TW: "Asia/Taipei",
+    US: "America/New_York",
+    DE: "Europe/Berlin",
+    FR: "Europe/Paris",
+    BR: "America/Sao_Paulo",
+  }[country] ?? "UTC";
+}
+
 async function ensureStarterProfiles(env, profiles) {
   if (!Array.isArray(profiles) || profiles.length === 0) return;
+  const account = await requireHostedAccount(env);
   const now = Date.now() / 1000;
-  const statements = profiles.map((input) => {
+  const statements = profiles.filter((input) => input.country === account.country).map((input) => {
     const profile = normalizeContextProfile(input);
     const profileId = requiredString(input.profile_id, "profile_id", 100);
     return env.DB.prepare(
@@ -286,7 +669,7 @@ async function ensureStarterProfiles(env, profiles) {
       now,
     );
   });
-  await env.DB.batch(statements);
+  if (statements.length) await env.DB.batch(statements);
 }
 
 async function listContextProfiles(env) {
@@ -438,8 +821,18 @@ async function generateCandidates(env, contextRegistry, profile) {
   }
   const contextDocuments = contextForCountry(contextRegistry, profile.country);
   await claimGenerationWindow(env);
-  const sharedInstruction = await loadSharedInstruction(env);
-  const prompt = generationPrompt(contextDocuments, sharedInstruction, profile);
+  const [sharedInstruction, account, learnedFeedback] = await Promise.all([
+    loadSharedInstruction(env),
+    requireHostedAccount(env),
+    feedbackSummary(env, profile.profile_id),
+  ]);
+  const prompt = generationPrompt(
+    contextDocuments,
+    sharedInstruction,
+    profile,
+    account,
+    learnedFeedback,
+  );
   let detail = "AI 응답 형식이 올바르지 않습니다.";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -466,9 +859,16 @@ async function generateCandidates(env, contextRegistry, profile) {
     try {
       const raw = aiCandidates(result);
       const drafts = raw.map(normalizeCandidateDraft);
-      if (drafts.length !== 3) throw new Error("후보는 정확히 3개여야 합니다.");
+      if (drafts.length !== 4) throw new Error("후보는 정확히 4개여야 합니다.");
       if (new Set(drafts.map((draft) => draft.topic)).size !== drafts.length) {
         throw new Error("후보 주제가 서로 달라야 합니다.");
+      }
+      const slots = drafts.reduce((counts, draft) => {
+        counts[draft.posting_slot] = (counts[draft.posting_slot] ?? 0) + 1;
+        return counts;
+      }, {});
+      if (slots.morning !== 2 || slots.evening !== 2) {
+        throw new Error("오전 후보 2개와 저녁 후보 2개가 필요합니다.");
       }
       return insertCandidates(env, drafts, "auto", profile);
     } catch (error) {
@@ -514,8 +914,21 @@ async function loadSharedInstruction(env) {
   return typeof active?.body === "string" ? active.body : "";
 }
 
-export function generationPrompt(contextDocuments, sharedInstruction, profile) {
-  return `아래 Trace context, 계정 지침, 선택한 국가·페르소나 컨텍스트만 근거로 서로 다른 게시물 후보 3개를 만드세요.
+export function generationPrompt(
+  contextDocuments,
+  sharedInstruction,
+  profile,
+  account = null,
+  learnedFeedback = null,
+) {
+  const morningTime = account?.morning_time ?? "07:30";
+  const eveningTime = account?.evening_time ?? "19:30";
+  const learnedRules = learnedFeedback?.rule_candidates?.length
+    ? learnedFeedback.rule_candidates.map((rule) => `- ${rule}`).join("\n")
+    : "- 아직 3회 이상 반복된 반려 규칙 없음";
+  return `아래 Trace context, 계정 지침, 선택한 국가·페르소나 컨텍스트만 근거로 서로 다른 게시물 후보 4개를 만드세요.
+posting_slot=morning 후보 2개, posting_slot=evening 후보 2개를 정확히 만드세요.
+오전 슬롯 기준 시각은 ${morningTime}, 저녁 슬롯 기준 시각은 ${eveningTime}${account?.timezone ? ` (${account.timezone})` : ""}입니다.
 사실 문서 밖의 수치나 기능은 주장하지 마세요. appium_prompt와 image_inputs를 비우지 마세요.
 trace_items는 실제 하루처럼 읽히는 일정 5~7개를 권장합니다.
 
@@ -533,7 +946,10 @@ ${sharedInstruction || "추가 지침 없음"}
 상황: ${profile.situation}
 문체: ${profile.tone}
 추가 지침: ${profile.guidance}
-레퍼런스 ID: ${profile.reference_ids.join(", ") || "없음"}`;
+레퍼런스 ID: ${profile.reference_ids.join(", ") || "없음"}
+
+[같은 계정·페르소나의 반복 피드백]
+${learnedRules}`;
 }
 
 function contextForCountry(registry, country) {
@@ -566,7 +982,15 @@ function assertConfiguredContextCountry(registry, country) {
 }
 
 function languageForCountry(country) {
-  return { KR: "ko", JP: "ja", TW: "zh", US: "en" }[country] ?? "en";
+  return {
+    KR: "ko",
+    JP: "ja",
+    TW: "zh",
+    US: "en",
+    DE: "de",
+    FR: "fr",
+    BR: "pt",
+  }[country] ?? "en";
 }
 
 function assertProfileCountry(profile, country) {
@@ -590,6 +1014,7 @@ function aiCandidates(result) {
 async function insertCandidates(env, drafts, source, profile = null) {
   const now = Date.now() / 1000;
   const contextSnapshot = profile ? JSON.stringify(profile) : null;
+  const batchId = source === "auto" ? crypto.randomUUID() : null;
   const inserts = drafts.map((draft, index) => {
     assertProfileCountry(profile, draft.country);
     const candidateId = crypto.randomUUID();
@@ -599,8 +1024,9 @@ async function insertCandidates(env, drafts, source, profile = null) {
         `INSERT INTO hosted_workspace_candidates
         (candidate_id, account_id, source, country, topic, caption, hypothesis,
          refs_json, principles_json, appium_prompt, image_inputs_json, ai_verdict,
-         context_profile_id, context_snapshot_json, status, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_review', 1, ?, ?)`,
+         context_profile_id, context_snapshot_json, posting_slot, generation_batch_id,
+         status, revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_review', 1, ?, ?)`,
       ).bind(
         candidateId,
         accountId(env),
@@ -613,9 +1039,11 @@ async function insertCandidates(env, drafts, source, profile = null) {
         JSON.stringify(draft.principles_applied),
         draft.appium_prompt,
         JSON.stringify(draft.image_inputs),
-        source === "auto" ? "Cloudflare Workers AI · context 검증" : null,
+        source === "auto" ? "기계 검수 통과 · 필수 필드/국가/언어/시간 형식" : null,
         profile?.profile_id ?? null,
         contextSnapshot,
+        draft.posting_slot,
+        batchId,
         now + index / 1000,
         now + index / 1000,
       ),
@@ -637,9 +1065,10 @@ async function updateCandidate(env, candidateId, revision, draft, requestedProfi
     `UPDATE hosted_workspace_candidates
      SET country = ?, topic = ?, caption = ?, hypothesis = ?, refs_json = ?,
          principles_json = ?, appium_prompt = ?, image_inputs_json = ?,
-         context_profile_id = ?, context_snapshot_json = ?,
+         context_profile_id = ?, context_snapshot_json = ?, posting_slot = ?,
          ai_verdict = NULL, status = 'awaiting_review', review_note = NULL, image_key = NULL,
-         image_sha256 = NULL, revision = revision + 1, updated_at = ?
+         image_sha256 = NULL, last_review_rating = NULL, last_review_tags_json = '[]',
+         revision = revision + 1, updated_at = ?
      WHERE account_id = ? AND candidate_id = ? AND revision = ?`,
   )
     .bind(
@@ -653,6 +1082,7 @@ async function updateCandidate(env, candidateId, revision, draft, requestedProfi
       JSON.stringify(draft.image_inputs),
       profile?.profile_id ?? null,
       profile ? JSON.stringify(profile) : null,
+      draft.posting_slot,
       Date.now() / 1000,
       accountId(env),
       candidateId,
@@ -696,8 +1126,21 @@ async function reviewCandidate(env, candidateId, body) {
   const accepted = booleanField(body?.accepted, "accepted");
   const revision = positiveInteger(body?.expected_revision, null);
   if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
+  const feedback = normalizeReviewFeedback(body, accepted);
+  const current = await requireCandidate(env, candidateId);
+  if (current.status !== "awaiting_review") {
+    throw new WorkspaceHttpError(409, "검수 대기 중인 캡션·주제를 찾을 수 없습니다.");
+  }
   const status = accepted ? "caption_approved" : "rejected";
-  await transitionCandidate(env, candidateId, revision, "awaiting_review", status, body?.note);
+  await transitionCandidate(
+    env,
+    candidateId,
+    revision,
+    "awaiting_review",
+    status,
+    feedback,
+  );
+  await recordFeedbackEvent(env, current, "caption", accepted, feedback);
   return requireCandidate(env, candidateId);
 }
 
@@ -731,6 +1174,7 @@ async function reviewCandidateImage(env, candidateId, body) {
   const accepted = booleanField(body?.accepted, "accepted");
   const revision = positiveInteger(body?.expected_revision, null);
   if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
+  const feedback = normalizeReviewFeedback(body, accepted);
   const current = await requireCandidate(env, candidateId);
   if (current.status !== "image_awaiting_review") {
     throw new WorkspaceHttpError(409, "검수 대기 중인 이미지를 찾을 수 없습니다.");
@@ -739,14 +1183,17 @@ async function reviewCandidateImage(env, candidateId, body) {
   const result = await env.DB.prepare(
     `UPDATE hosted_workspace_candidates
      SET status = ?, review_note = ?, image_key = ?, image_sha256 = ?,
+         last_review_rating = ?, last_review_tags_json = ?,
          revision = revision + 1, updated_at = ?
      WHERE account_id = ? AND candidate_id = ? AND status = 'image_awaiting_review' AND revision = ?`,
   )
     .bind(
       status,
-      optionalString(body?.note, 2000) || null,
+      feedback.note || null,
       accepted ? current.image_path : null,
       accepted ? current.image_sha256 : null,
+      feedback.rating,
+      JSON.stringify(feedback.tags),
       Date.now() / 1000,
       accountId(env),
       candidateId,
@@ -756,6 +1203,7 @@ async function reviewCandidateImage(env, candidateId, body) {
   if (result.meta.changes !== 1) {
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
   }
+  await recordFeedbackEvent(env, current, "image", accepted, feedback);
   if (!accepted && current.image_path) await env.ARTIFACTS.delete(current.image_path);
   return requireCandidate(env, candidateId);
 }
@@ -774,15 +1222,18 @@ async function readCandidateImage(env, candidateId) {
   });
 }
 
-async function transitionCandidate(env, candidateId, revision, from, to, note) {
+async function transitionCandidate(env, candidateId, revision, from, to, feedback) {
   const result = await env.DB.prepare(
     `UPDATE hosted_workspace_candidates
-     SET status = ?, review_note = ?, revision = revision + 1, updated_at = ?
+     SET status = ?, review_note = ?, last_review_rating = ?, last_review_tags_json = ?,
+         revision = revision + 1, updated_at = ?
      WHERE account_id = ? AND candidate_id = ? AND status = ? AND revision = ?`,
   )
     .bind(
       to,
-      optionalString(note, 2000) || null,
+      feedback.note || null,
+      feedback.rating,
+      JSON.stringify(feedback.tags),
       Date.now() / 1000,
       accountId(env),
       candidateId,
@@ -795,6 +1246,89 @@ async function transitionCandidate(env, candidateId, revision, from, to, note) {
     if (!existing) throw new WorkspaceHttpError(404, "후보를 찾을 수 없습니다.");
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
   }
+}
+
+export function normalizeReviewFeedback(input, accepted) {
+  const tags = stringList(input?.tags ?? [], REVIEW_TAGS.length, 40);
+  if (new Set(tags).size !== tags.length || tags.some((tag) => !REVIEW_TAGS.includes(tag))) {
+    throw new WorkspaceHttpError(400, "지원하지 않는 반려 태그가 포함되어 있습니다.");
+  }
+  const fallbackRating = accepted ? 5 : 2;
+  const rating = Number(input?.rating ?? fallbackRating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    throw new WorkspaceHttpError(400, "평점은 1~5의 정수여야 합니다.");
+  }
+  if (accepted && rating < 4) {
+    throw new WorkspaceHttpError(400, "승인 평점은 4점 또는 5점이어야 합니다.");
+  }
+  if (!accepted && rating > 3) {
+    throw new WorkspaceHttpError(400, "반려 평점은 1~3점이어야 합니다.");
+  }
+  const note = optionalString(input?.note, 2000);
+  if (!accepted && tags.length === 0) {
+    throw new WorkspaceHttpError(400, "반려할 때는 이유 태그를 하나 이상 선택해 주세요.");
+  }
+  if (tags.includes("기타") && !note) {
+    throw new WorkspaceHttpError(400, "기타를 선택하면 상세 이유를 입력해야 합니다.");
+  }
+  return { rating, tags: accepted ? [] : tags, note };
+}
+
+async function recordFeedbackEvent(env, candidate, stage, accepted, feedback) {
+  await env.DB.prepare(
+    `INSERT INTO hosted_workspace_feedback_events
+      (event_id, account_id, candidate_id, context_profile_id, stage, decision,
+       rating, tags_json, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      crypto.randomUUID(),
+      accountId(env),
+      candidate.candidate_id,
+      candidate.context_profile?.profile_id ?? null,
+      stage,
+      accepted ? "approved" : "rejected",
+      feedback.rating,
+      JSON.stringify(feedback.tags),
+      feedback.note || null,
+      Date.now() / 1000,
+    )
+    .run();
+}
+
+async function feedbackSummary(env, requestedProfileId) {
+  const profileId = optionalString(requestedProfileId, 100) || null;
+  const query = profileId
+    ? `SELECT tags_json, note, rating, stage, created_at
+       FROM hosted_workspace_feedback_events
+       WHERE account_id = ? AND context_profile_id = ? AND decision = 'rejected'
+       ORDER BY created_at DESC LIMIT 200`
+    : `SELECT tags_json, note, rating, stage, created_at
+       FROM hosted_workspace_feedback_events
+       WHERE account_id = ? AND decision = 'rejected'
+       ORDER BY created_at DESC LIMIT 200`;
+  const statement = env.DB.prepare(query);
+  const result = profileId
+    ? await statement.bind(accountId(env), profileId).all()
+    : await statement.bind(accountId(env)).all();
+  const counts = new Map();
+  const recentNotes = [];
+  for (const row of result.results) {
+    const tags = JSON.parse(row.tags_json);
+    for (const tag of tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    if (row.note && recentNotes.length < 5) recentNotes.push(row.note);
+  }
+  const topTags = [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag));
+  return {
+    rejected_reviews: result.results.length,
+    top_tags: topTags,
+    rule_candidates: topTags
+      .filter(({ count }) => count >= 3)
+      .map(({ tag, count }) => `“${tag}” 반려가 ${count}회 누적됨 — 같은 패턴을 피할 것`),
+    recent_notes: recentNotes,
+  };
 }
 
 async function requireCandidate(env, candidateId) {
@@ -827,10 +1361,14 @@ function candidateFromRow(row) {
     image_inputs: JSON.parse(row.image_inputs_json),
     ai_verdict: row.ai_verdict,
     context_profile: row.context_snapshot_json ? JSON.parse(row.context_snapshot_json) : null,
+    posting_slot: row.posting_slot ?? "manual",
+    generation_batch_id: row.generation_batch_id ?? null,
     image_path: row.image_key,
     image_sha256: row.image_sha256,
     status: row.status,
     review_note: row.review_note,
+    review_rating: row.last_review_rating ?? null,
+    review_tags: JSON.parse(row.last_review_tags_json ?? "[]"),
     revision: row.revision,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -923,8 +1461,30 @@ function positiveInteger(value, fallback) {
 }
 
 function accountId(env) {
-  const value = env.PUBLIC_WORKSPACE_ACCOUNT_ID || DEFAULT_ACCOUNT_ID;
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error("invalid public workspace account ID");
+  return safeAccountId(
+    env.HOSTED_WORKSPACE_ACCOUNT_ID || env.PUBLIC_WORKSPACE_ACCOUNT_ID || DEFAULT_ACCOUNT_ID,
+  );
+}
+
+function accountIdFromRequest(request, env) {
+  const url = new URL(request.url);
+  const requested = request.headers.get("x-trace-account-id") || url.searchParams.get("account_id");
+  return requested ? safeAccountId(requested) : accountId(env);
+}
+
+function withHostedAccount(env, value) {
+  const scoped = Object.create(env);
+  scoped.HOSTED_WORKSPACE_ACCOUNT_ID = safeAccountId(value);
+  return scoped;
+}
+
+function safeAccountId(value) {
+  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)) {
+    throw new WorkspaceHttpError(
+      400,
+      "계정 ID는 영문 소문자·숫자로 시작하고 -, _만 사용할 수 있습니다.",
+    );
+  }
   return value;
 }
 

@@ -21,18 +21,20 @@ is the Hallmark-compatible entrypoint that imports that source of truth.
 
 ## Macrostructure: Workbench
 
-The authenticated work surface has five stable regions.
+The work surface has six stable regions.
 
 1. `workspace-toolbar` states the product and shows one live status line.
-2. `pipeline-summary` exposes counts for caption review, image work, and publication-ready results.
-3. The two-tab rail separates candidate preparation from human review.
-4. `generation-workbench` places the selected context and the generation action side by side on wide
+2. `account-console` selects a logical account silo and exposes its market, schedule, and automation.
+3. `pipeline-summary` exposes counts for caption review, image work, and publication-ready results.
+4. The two-tab rail separates candidate preparation from human review.
+5. `generation-workbench` places the selected context and the generation action side by side on wide
    screens and in a single reading order on narrow screens.
-5. The candidate list can be filtered by operational state without hiding the canonical total.
+6. The candidate list can be filtered by operational state without hiding the canonical total.
 
-The Cloudflare build removes the entry form and opens directly into one public account scope. The
-local product keeps its member entry flow. The shared template exposes hosted-only context controls
-only after the public Cloudflare session is confirmed.
+The Cloudflare build removes the entry form and opens directly into the last selected public logical
+account scope. Account switching changes settings, context, candidates, and feedback together; it is
+not an authorization boundary. The local product keeps its member entry flow. The shared template
+exposes hosted-only controls only after the public Cloudflare session is confirmed.
 
 ## Context surface
 
@@ -42,12 +44,16 @@ only after the public Cloudflare session is confirmed.
   and reference IDs remain visible instead of being hidden in a prompt.
 - Starter context is labeled honestly as a generic seed. Team operators can add, edit, or hide
   profiles; prior candidates retain immutable context snapshots.
-- Adding another country is data-driven through the packaged manifest and profiles. Generation
+- KR, JP, TW, US, DE, FR, and BR ship as starter markets with 16 total starter profiles. Adding
+  another country remains data-driven through the packaged manifest and profiles. Generation
   fails visibly when country documents are missing instead of silently using the wrong country.
 
 ## Review and states
 
 - Candidate cards show source, country, context snapshot, date, status, and the three-step journey.
+- One generation action creates four candidates grouped into two morning and two evening slots.
+- A one-click approval records 5 points. Rejection expands inline to a 1–3 rating and explicit tags;
+  three equal account/persona tags surface as a rule for the next generation.
 - Any candidate, including `submitted`, can be edited or deleted in the hosted workspace. Editing
   invalidates approvals and image provenance and returns the candidate to caption review.
 - Image approval ends at `submitted`; the UI never implies that Threads publishing occurred.

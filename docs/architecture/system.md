@@ -28,8 +28,9 @@ layered Trace lock-screen marketing images. It exposes three primary product sur
 - a deterministic generation pipeline through `trace-agent generate-one` and `trace-run`.
 
 The optional Cloudflare deployment adds a fourth surface: one login-free hosted candidate workspace
-served from the control-plane Worker root. It is intentionally a public team review surface rather
-than a replacement for member-private local sessions.
+served from the control-plane Worker root. It contains switchable logical account silos and is
+intentionally a public team review surface rather than a replacement for member-private local
+sessions. Account selection scopes data; it does not authorize a visitor.
 
 The surfaces share model-provider, tool, generation, capture, composition, and contract code, but
 they do not share one process lifecycle. Starting the Web service does not start the standalone
@@ -403,14 +404,20 @@ overlapping Cron runs. Approval or task callback expiry moves the D1 run to `fai
 timeout code instead of leaving a permanently waiting row.
 
 The same Worker root serves a static copy of the candidate and two-stage review UI. `/api/*` on this
-hosted surface is intentionally login-free and scoped to `PUBLIC_WORKSPACE_ACCOUNT_ID`; it must not be
-confused with the token-protected `/v1/*` control-plane and callback APIs. D1 owns hosted candidates,
+hosted surface is intentionally login-free; it must not be confused with the token-protected `/v1/*`
+control-plane and callback APIs. `X-Trace-Account-ID` or `account_id` selects an enabled logical silo,
+but every visitor may list and select those accounts. D1 owns hosted account settings, candidates,
 account-scoped country/persona profiles, optimistic revisions, immutable candidate context snapshots,
-and a global generation cooldown. The UI exposes the fixed account ID, current context, pipeline
-counts, and candidate status filters. Workers AI receives the selected profile, the matching packaged
-country context, and the account's current shared instruction and must return three schema-shaped
-candidates. A manifest maps packaged global and country documents to starter profile files, so a new
-country does not require a Worker source edit. Missing country documents fail closed with `409`.
+structured feedback events, and a per-account generation cooldown. Each account owns its country,
+locale, timezone, morning/evening slots, generation switch, and next generation time. The UI exposes
+account switching and settings, current context, pipeline counts, candidate status filters, and the
+account-scoped feedback summary. Workers AI receives the selected profile, matching packaged country
+context, current account instruction, and repeated account/persona feedback rules. It must return
+four schema-shaped candidates in one batch: two morning and two evening. The Cron Trigger claims due
+enabled accounts and invokes the same generator; failures move that account's retry time 15 minutes
+forward without changing another silo. A manifest maps packaged global and country documents to
+starter profile files, so a new country does not require a Worker source edit. Missing country
+documents fail closed with `409`.
 Missing or incomplete Appium prompt text is rebuilt from the validated image inputs.
 R2 stores a digest-backed SVG review preview that renders the candidate's schedule and device time.
 That preview proves the hosted review loop only; it is not a native Appium capture or a publication.
@@ -418,11 +425,13 @@ Image approval ends at `submitted` and performs no outbound publication action. 
 can be edited or deleted from any state with its current optimistic revision. Editing invalidates the
 old review and image, returns the candidate to `awaiting_review`, and removes the old R2 object;
 deletion removes the D1 record and its R2 object. Profile deletion is a soft hide and never changes a
-candidate's stored context snapshot. The packaged KR context and four profiles are generic starter
-material. Existing Appium persona JSON files are test/demo fixtures, not production team context,
-and the earlier generator's `context/` contract pointed to operator-owned local files that were not
-committed to this repository. Team-owned evidence enters through D1 profile CRUD or reviewed manifest
-data rather than being inferred from those fixtures.
+candidate's stored context snapshot. Approval records a 5-point event. Rejection requires a 1–3
+rating and a taxonomy tag; three matching tag events for one account/persona become a generation
+rule candidate. The packaged KR, JP, TW, US, DE, FR, and BR context plus 16 profiles are generic
+starter material. Existing Appium persona JSON files are test/demo fixtures, not production team
+context, and the earlier generator's `context/` contract pointed to operator-owned local files that
+were not committed to this repository. Team-owned evidence enters through D1 profile CRUD or
+reviewed manifest data rather than being inferred from those fixtures.
 
 For a simulation account without a local `workspace_id`, the Workflow executes each task in
 Cloudflare, stores a labeled digest-backed task artifact in R2, and records the result in D1. This
