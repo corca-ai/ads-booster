@@ -744,7 +744,14 @@ memory, and prints a `completed` run. Omit `--auto-approve` to stop first at
 `awaiting_candidate_approval`; after candidate approval the run stops again at
 `awaiting_human_approval` before publication.
 
-The external Mac consumer requires these environment variables:
+Simulation accounts without a `workspace_id` execute research, candidate, capture, publication, and
+metrics tasks inside the Cloudflare Workflow. Each task is explicitly labeled as simulated, stored
+as a digest-backed R2 artifact, and indexed as succeeded in D1. The Workflow still pauses at both
+human approval gates. This hosted path needs no always-on Mac process.
+
+The external Mac consumer is required only for an account with a `workspace_id`, where provider
+candidate generation and local image composition need the installed Trace workspace. It requires
+these environment variables:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=...
@@ -762,9 +769,10 @@ the HTTP pull response is directly decodable; the bridge also accepts the older 
 shape during rollout. A temporary pull, acknowledgement, or callback outage leaves inbox/outbox work
 durable and retryable.
 
-The bridge defaults to an artifact-only simulation executor. To connect PR #22's installed candidate
-journey, register the Cloudflare account with the local Trace `workspace_id`, start the service from
-the workspace that owns its `context/` directory, and opt in explicitly:
+The bridge defaults to an artifact-only simulation executor for transport testing. To connect PR
+#22's installed candidate journey, register the Cloudflare account with the local Trace
+`workspace_id`, start the service from the workspace that owns its `context/` directory, and opt in
+explicitly:
 
 ```bash
 trace-marketing bridge --executor candidate-pipeline

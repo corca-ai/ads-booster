@@ -6,9 +6,11 @@ import {
   approvalPhase,
   assertRunnableAdapterMode,
   assertTransition,
+  hostedSimulationOutput,
   normalizeCandidateIds,
   observationSchedule,
   selectedCandidateIds,
+  taskExecutionBoundary,
   taskCompletionEventType,
 } from "../src/state-machine.js";
 
@@ -90,4 +92,49 @@ test("fails closed until a live publication adapter exists", () => {
   assert.equal(assertRunnableAdapterMode("simulation"), "simulation");
   assert.throws(() => assertRunnableAdapterMode("live"), /not enabled/);
   assert.throws(() => assertRunnableAdapterMode("unknown"), /must be simulation or live/);
+});
+
+test("routes only workspace-backed work to the Mac bridge", () => {
+  assert.equal(
+    taskExecutionBoundary({ adapter_mode: "simulation", workspace_id: null }),
+    "hosted-simulation",
+  );
+  assert.equal(
+    taskExecutionBoundary({ adapter_mode: "simulation", workspace_id: "workspace-1" }),
+    "mac-bridge",
+  );
+  assert.equal(
+    taskExecutionBoundary({ adapter_mode: "live", workspace_id: null }),
+    "mac-bridge",
+  );
+});
+
+test("hosted simulation returns labeled task outputs", async () => {
+  const task = {
+    kind: "generate_candidates",
+    run_id: "12345678-rest",
+    account_id: "trace_kr",
+    payload: {},
+  };
+  assert.deepEqual(await hostedSimulationOutput(task), {
+    simulation: true,
+    kind: "generate_candidates",
+    candidate_ids: ["candidate-12345678"],
+  });
+  assert.deepEqual(
+    await hostedSimulationOutput({
+      ...task,
+      kind: "publish",
+      payload: { adapter_mode: "simulation" },
+    }),
+    {
+      simulation: true,
+      kind: "publish",
+      publication_id: "sim://threads/trace_kr/12345678-rest",
+    },
+  );
+  await assert.rejects(
+    hostedSimulationOutput({ ...task, kind: "publish", payload: { adapter_mode: "live" } }),
+    /live adapter is not enabled/,
+  );
 });

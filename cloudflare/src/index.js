@@ -5,9 +5,11 @@ import {
   approvalPhase,
   assertRunnableAdapterMode,
   assertTransition,
+  hostedSimulationOutput,
   normalizeCandidateIds,
   observationSchedule,
   selectedCandidateIds,
+  taskExecutionBoundary,
   taskCompletionEventType,
 } from "./state-machine.js";
 
@@ -255,9 +257,55 @@ export class MarketingWorkflow extends WorkflowEntrypoint {
       if (inserted.meta.changes === 0 && !existing) {
         throw new Error(`concurrent task dispatch for ${idempotencyKey}`);
       }
-      await this.env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
+      if (taskExecutionBoundary(account) === "mac-bridge") {
+        await this.env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
+      }
       return body;
     });
+    if (taskExecutionBoundary(account) === "hosted-simulation") {
+      return step.do(`complete-hosted-${kind}`, async () => {
+        const output = await hostedSimulationOutput(task);
+        const artifact = JSON.stringify({ simulation: true, task, output });
+        const digest = await sha256(artifact);
+        const key = `runs/${runId}/tasks/${task.task_id}.json`;
+        await this.env.ARTIFACTS.put(key, artifact, {
+          customMetadata: {
+            sha256: digest,
+            account_id: account.account_id,
+            task_id: task.task_id,
+          },
+        });
+        const result = {
+          status: "succeeded",
+          output,
+          artifacts: [{ uri: `r2://ARTIFACTS/${key}`, sha256: digest }],
+        };
+        const updated = await this.env.DB.prepare(
+          `UPDATE marketing_tasks
+           SET state = 'succeeded', result_json = ?, callback_id = ?, updated_at = ?
+           WHERE task_id = ? AND callback_id IS NULL`,
+        )
+          .bind(
+            JSON.stringify(result),
+            `${task.task_id}:hosted`,
+            new Date().toISOString(),
+            task.task_id,
+          )
+          .run();
+        if (updated.meta.changes !== 1) {
+          const existing = await this.env.DB.prepare(
+            "SELECT state, result_json FROM marketing_tasks WHERE task_id = ?",
+          )
+            .bind(task.task_id)
+            .first();
+          if (existing?.state !== "succeeded" || !existing.result_json) {
+            throw new Error(`hosted simulation task ${task.task_id} did not complete`);
+          }
+          return JSON.parse(existing.result_json).output;
+        }
+        return output;
+      });
+    }
     let completion;
     try {
       completion = await step.waitForEvent(`wait-${kind}-${task.task_id}`, {

@@ -31,8 +31,8 @@ content quality. The acceptance path is:
 | account registry, schedules, instruction revisions, run/task index | D1 | new accounts, countries, schedules, and instruction versions are rows, not deployments |
 | one account agent | named Durable Object using `account_id` | actor-style isolation prevents one account from reading another account's learned memory |
 | long-running loop and approval wait | Cloudflare Workflow | durable steps and buffered events survive process restarts and long human waits |
-| Mac task transport | Cloudflare Queue HTTP pull | the Mac initiates outbound traffic; no permanent inbound tunnel is required |
-| task durability | local SQLite inbox/outbox | queue acknowledgement follows durable insert; callbacks survive Mac restarts |
+| task execution | hosted simulation, or Cloudflare Queue HTTP pull when `workspace_id` exists | the baseline loop needs no Mac daemon; installed workspace work crosses an explicit outbound-only boundary |
+| Mac task durability | local SQLite inbox/outbox | queue acknowledgement follows durable insert; callbacks survive Mac restarts |
 | artifacts | R2 in cloud, digest-backed local files on Mac | large payloads do not become workflow state and provenance remains inspectable |
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
 | installed candidate journey | optional Mac executor selected at bridge startup | the default remains simulation; enabling the installed pipeline does not silently enable publication |
@@ -99,7 +99,9 @@ back channel state.
 ## Task delivery contract
 
 Every task has `schema_version`, `task_id`, `run_id`, `account_id`, `kind`, `idempotency_key`, `payload`,
-`created_at`, and optional opaque `credential_ref`. The Mac bridge:
+`created_at`, and optional opaque `credential_ref`. For a simulation account without
+`workspace_id`, the Workflow executes the task in Cloudflare, writes a labeled digest-backed result
+artifact to R2, and records completion in D1. For a workspace-backed account, the Mac bridge:
 
 1. pulls a batch with a visibility lease;
 2. validates the versioned task;
@@ -161,11 +163,11 @@ fixture.
 The honest two-hour target after credentials and Cloudflare resources exist is:
 
 - migrate D1 and deploy the Worker;
-- enable HTTP pull on the task queue;
-- create secrets and one instruction/account row;
-- start the Mac bridge with its simulation executor;
+- create secrets and one instruction/account row without a `workspace_id`;
 - start a run, approve it, and observe `completed`; and
-- inspect the R2 context snapshot, D1 events, local inbox/outbox, and account-private memory.
+- inspect the R2 context/task snapshots, D1 events, and account-private memory.
+
+HTTP pull and the Mac bridge are required only when the account opts into a local `workspace_id`.
 
 Enabling real Threads publication is a separate target because platform capability and permission
 verification are external facts, not an implementation toggle.

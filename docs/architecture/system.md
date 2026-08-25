@@ -396,10 +396,14 @@ D1 index permits only one non-terminal run per account, so a long approval wait 
 overlapping Cron runs. Approval or task callback expiry moves the D1 run to `failed` with a stable
 timeout code instead of leaving a permanently waiting row.
 
-The Workflow emits versioned tasks to Cloudflare Queue. The Mac runs `trace-marketing bridge`, pulls
-over the Cloudflare REST API, commits each task to a protected SQLite inbox, and only then
-acknowledges the queue lease. Task completion and its callback are committed to a local outbox so a
-process restart cannot lose the control-plane notification. The bridge initiates every connection;
+For a simulation account without a local `workspace_id`, the Workflow executes each task in
+Cloudflare, stores a labeled digest-backed task artifact in R2, and records the result in D1. This
+keeps the first durable loop hosted while preserving both human approval waits. When an account has
+a `workspace_id`, the Workflow instead emits versioned tasks to Cloudflare Queue. The Mac runs
+`trace-marketing bridge`, pulls over the Cloudflare REST API, commits each task to a protected SQLite
+inbox, and only then acknowledges the queue lease. Task completion and its callback are committed to
+a local outbox so a process restart cannot lose the control-plane notification. The bridge initiates
+every connection;
 the quick `trycloudflare.com` tunnel is not part of this transport. Queue bodies use JSON text for
 HTTP pull compatibility, task completion events include the task ID, and duplicate callbacks replay
 the same event only after the stored callback ID and result match. Pull, acknowledgement, and callback
@@ -444,6 +448,8 @@ Appium processes, but does not install the missing Trace build or driver.
 - Unknown external side effects fail closed and are not retried blindly.
 - Account-private marketing memory is addressed by account ID and is never assembled into another
   account's context snapshot.
+- Simulation accounts without `workspace_id` complete task execution in Cloudflare and retain R2
+  digest provenance; workspace-backed accounts cross the explicit Queue-to-Mac worker boundary.
 - Queue messages are acknowledged only after durable local insertion; callbacks use an independent
   durable outbox.
 - One account can own only one non-terminal hosted run; observation offsets are interpreted as

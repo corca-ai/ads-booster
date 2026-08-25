@@ -125,3 +125,46 @@ export function assertRunnableAdapterMode(value) {
   if (value === "live") throw new Error("live adapter is not enabled");
   throw new Error("adapter_mode must be simulation or live");
 }
+
+export function taskExecutionBoundary(account) {
+  if (account.adapter_mode === "simulation" && !account.workspace_id) {
+    return "hosted-simulation";
+  }
+  return "mac-bridge";
+}
+
+export async function hostedSimulationOutput(task) {
+  const common = { simulation: true, kind: task.kind };
+  switch (task.kind) {
+    case "research":
+      return { ...common, signals: ["customer language", "organic conversation"] };
+    case "generate_candidates":
+      return { ...common, candidate_ids: [`candidate-${task.run_id.slice(0, 8)}`] };
+    case "capture":
+      return { ...common, quality: "pass" };
+    case "publish":
+      if (task.payload.adapter_mode !== "simulation") {
+        throw new Error("live adapter is not enabled");
+      }
+      return {
+        ...common,
+        publication_id: `sim://threads/${task.account_id}/${task.run_id}`,
+      };
+    case "sample_metrics": {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(task.account_id),
+      );
+      const seed = new DataView(digest).getUint32(0);
+      const minute = Number.isInteger(task.payload.minute) ? task.payload.minute : 0;
+      return {
+        ...common,
+        minute,
+        views: seed % 100 + minute * 7,
+        likes: seed % 11 + Math.floor(minute / 5),
+      };
+    }
+    default:
+      throw new Error(`unsupported hosted simulation task: ${task.kind}`);
+  }
+}
