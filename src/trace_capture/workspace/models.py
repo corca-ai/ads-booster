@@ -14,6 +14,7 @@ WorkspaceId = NewType("WorkspaceId", str)
 MemberId = NewType("MemberId", str)
 ContextId = NewType("ContextId", str)
 AssetId = NewType("AssetId", str)
+CandidateId = NewType("CandidateId", str)
 PrivateSessionId = NewType("PrivateSessionId", str)
 
 
@@ -118,6 +119,74 @@ class AssetRecord(FrozenModel):
     sha256: str
     size_bytes: int
     created_at: float
+
+
+@unique
+class CandidateSource(StrEnum):
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
+@unique
+class CandidateStatus(StrEnum):
+    """Position of a candidate on the three-stage approval journey.
+
+    Only stage one is implemented: reviewing a candidate moves it from
+    `AWAITING_REVIEW` to `CAPTION_APPROVED` or `REJECTED`. `IMAGE_APPROVED` and
+    `SUBMITTED` name planned stages two and three; no code path reaches them yet.
+    """
+
+    AWAITING_REVIEW = "awaiting_review"
+    CAPTION_APPROVED = "caption_approved"
+    REJECTED = "rejected"
+    IMAGE_APPROVED = "image_approved"
+    SUBMITTED = "submitted"
+
+
+CandidateCountry = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
+CandidateTopic = Annotated[str, Field(min_length=1, max_length=200)]
+CandidateCaption = Annotated[str, Field(min_length=1, max_length=10_000)]
+CandidateHypothesis = Annotated[str, Field(min_length=1, max_length=2_000)]
+CandidateReference = Annotated[str, Field(min_length=1, max_length=80)]
+CandidatePrinciple = Annotated[int, Field(ge=1)]
+CandidateShootingOrder = Annotated[str, Field(max_length=20_000)]
+CandidateVerdict = Annotated[str, Field(min_length=1, max_length=2_000)]
+CandidateImagePath = Annotated[str, Field(min_length=1, max_length=1_024)]
+CandidateReviewNote = Annotated[str, Field(min_length=1, max_length=2_000)]
+
+
+class CandidateCreate(FrozenModel):
+    workspace_id: WorkspaceId
+    source: CandidateSource
+    country: CandidateCountry
+    topic: CandidateTopic
+    caption: CandidateCaption
+    hypothesis: CandidateHypothesis
+    refs_used: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
+    principles_applied: Annotated[tuple[CandidatePrinciple, ...], Field(max_length=32)] = ()
+    shooting_order: CandidateShootingOrder = ""
+    ai_verdict: CandidateVerdict | None = None
+    image_path: CandidateImagePath | None = None
+
+
+class CandidateRecord(FrozenModel):
+    workspace_id: WorkspaceId
+    candidate_id: CandidateId
+    source: CandidateSource
+    country: str
+    topic: str
+    caption: str
+    hypothesis: str
+    refs_used: tuple[str, ...]
+    principles_applied: tuple[int, ...]
+    shooting_order: str
+    ai_verdict: str | None
+    image_path: str | None
+    status: CandidateStatus
+    review_note: str | None
+    revision: int = Field(ge=1)
+    created_at: float
+    updated_at: float
 
 
 class PrivateSessionCreate(FrozenModel):

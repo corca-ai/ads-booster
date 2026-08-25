@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, final
 
 from trace_capture.workspace.asset_store import AssetStore
+from trace_capture.workspace.candidate_store import CandidateStore
 from trace_capture.workspace.context_store import ContextStore
 from trace_capture.workspace.database import (
     WorkspaceDatabase,
@@ -17,7 +18,9 @@ if TYPE_CHECKING:
 
 
 @final
-class SqliteWorkspaceStore(IdentityStore, ContextStore, AssetStore, PrivateSessionStore):
+class SqliteWorkspaceStore(
+    IdentityStore, ContextStore, AssetStore, CandidateStore, PrivateSessionStore
+):
     def __init__(self, home: Path | None = None) -> None:
         """Open or create workspace storage under TRACE_AGENT_HOME by default."""
         database = WorkspaceDatabase(default_agent_home() if home is None else home)

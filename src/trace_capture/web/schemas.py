@@ -13,6 +13,17 @@ from trace_capture.transport.json_types import JsonObject
 from trace_capture.workspace import (
     AssetId,
     AssetRelativePath,
+    CandidateCaption,
+    CandidateCountry,
+    CandidateHypothesis,
+    CandidateId,
+    CandidatePrinciple,
+    CandidateReference,
+    CandidateReviewNote,
+    CandidateShootingOrder,
+    CandidateSource,
+    CandidateStatus,
+    CandidateTopic,
     ContextId,
     ContextKind,
     MemberId,
@@ -223,3 +234,39 @@ class CampaignStopRequest(WebModel):
 class QueueReviewRequest(WebModel):
     accepted: bool
     expected_revision: int = Field(ge=1)
+
+
+class CandidateCreateRequest(WebModel):
+    topic: CandidateTopic
+    country: CandidateCountry
+    caption: CandidateCaption
+    hypothesis: CandidateHypothesis
+    refs_used: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
+    principles_applied: Annotated[tuple[CandidatePrinciple, ...], Field(max_length=32)] = ()
+    shooting_order: CandidateShootingOrder = ""
+
+
+class CandidateReviewRequest(WebModel):
+    accepted: bool
+    note: CandidateReviewNote | None = None
+    expected_revision: int = Field(ge=1)
+
+
+class CandidateResponse(WebModel):
+    workspace_id: WorkspaceId
+    candidate_id: CandidateId
+    source: CandidateSource
+    country: str
+    topic: str
+    caption: str
+    hypothesis: str
+    refs_used: tuple[str, ...]
+    principles_applied: tuple[int, ...]
+    shooting_order: str
+    ai_verdict: str | None
+    image_path: str | None
+    status: CandidateStatus
+    review_note: str | None
+    revision: int
+    created_at: float
+    updated_at: float

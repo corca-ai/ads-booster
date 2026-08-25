@@ -156,7 +156,8 @@ def test_static_workspace_is_served_by_fastapi(tmp_path: Path) -> None:
     assert workspace.status_code == 200
     assert "Trace 워크스페이스" in workspace.text
     assert 'lang="ko"' in workspace.text
-    assert "새 마케팅 자료 만들기" in workspace.text
+    assert "후보 자동 생성" in workspace.text
+    assert "캡션·주제 승인" in workspace.text
     assert script.status_code == 200
     assert "fetch(" in script.text
 

@@ -34,6 +34,19 @@ class RevisionConflictError(RuntimeError):
 
 
 @final
+class CandidateAlreadyReviewedError(RuntimeError):
+    def __init__(self, *, record_id: str, status: str) -> None:
+        """Create an error for a candidate that already left the review gate."""
+        self.record_id = record_id
+        self.status = status
+        super().__init__(record_id, status)
+
+    @override
+    def __str__(self) -> str:
+        return f"candidate is already reviewed: {self.record_id}"
+
+
+@final
 class WorkspaceStoreCorruptionError(RuntimeError):
     def __init__(self, *, record_type: str) -> None:
         """Create an error for a database row that fails its typed boundary."""

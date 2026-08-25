@@ -58,6 +58,27 @@ CREATE TABLE IF NOT EXISTS assets (
     FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
     FOREIGN KEY (workspace_id, context_id) REFERENCES contexts(workspace_id, context_id)
 );
+CREATE TABLE IF NOT EXISTS candidates (
+    workspace_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    country TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    caption TEXT NOT NULL,
+    hypothesis TEXT NOT NULL,
+    refs_used_json TEXT NOT NULL,
+    principles_applied_json TEXT NOT NULL,
+    shooting_order TEXT NOT NULL,
+    ai_verdict TEXT,
+    image_path TEXT,
+    status TEXT NOT NULL,
+    review_note TEXT,
+    revision INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (workspace_id, candidate_id),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS private_sessions (
     workspace_id TEXT NOT NULL,
     member_id TEXT NOT NULL,
@@ -72,6 +93,12 @@ CREATE TABLE IF NOT EXISTS private_sessions (
         ON DELETE CASCADE
 );
 """
+LEGACY_CANDIDATE_TOPIC: Final = "(주제 미기록)"
+_ADD_CANDIDATE_TOPIC: Final = "ALTER TABLE candidates ADD COLUMN topic TEXT NOT NULL DEFAULT ''"
+_BACKFILL_CANDIDATE_TOPIC: Final = "UPDATE candidates SET topic = ? WHERE topic = ''"
+_MIGRATE_ACCEPTED_STATUS: Final = (
+    "UPDATE candidates SET status = 'caption_approved' WHERE status = 'accepted'"
+)
 
 
 class WorkspaceDatabase:
@@ -83,6 +110,7 @@ class WorkspaceDatabase:
         self.path = home / _DATABASE_FILENAME
         with self.connect() as connection:
             _ = connection.executescript(_SCHEMA)
+            _migrate_candidates(connection)
         self.path.chmod(0o600)
 
     @contextmanager
@@ -102,6 +130,23 @@ class WorkspaceDatabase:
             raise
         finally:
             connection.close()
+
+
+def _migrate_candidates(connection: sqlite3.Connection) -> None:
+    """Bring candidate rows written before the approval journey up to the current shape.
+
+    Both steps are idempotent so they can run on every open: `topic` became a required
+    reviewable field after the first candidates were stored, and single-stage "accepted"
+    rows mean the same thing as the first journey stage.
+    """
+    cursor: SqliteCursor = connection.execute("PRAGMA table_info(candidates)")
+    rows: list[SqliteRow] = cursor.fetchall()
+    columns = {row[1] for row in rows}
+    if "topic" not in columns:
+        _ = connection.execute(_ADD_CANDIDATE_TOPIC)
+    _ = connection.execute(_BACKFILL_CANDIDATE_TOPIC, (LEGACY_CANDIDATE_TOPIC,))
+    _ = connection.execute(_MIGRATE_ACCEPTED_STATUS)
+    connection.commit()
 
 
 @dataclass(frozen=True, slots=True)

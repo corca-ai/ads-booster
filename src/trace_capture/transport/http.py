@@ -59,7 +59,8 @@ class HttpClient(Protocol):
 
 
 class HttpxClient:
-    def __init__(self) -> None:
+    def __init__(self, read_timeout: float | None = None) -> None:
+        """Create the shared client, widening only the read timeout when a call is slow."""
         transport = httpx2.HTTPTransport(
             http2=True,
             retries=3,
@@ -68,7 +69,7 @@ class HttpxClient:
         )
         self._client: httpx2.Client = httpx2.Client(
             transport=transport,
-            timeout=_TIMEOUT,
+            timeout=_TIMEOUT if read_timeout is None else _read_timeout(read_timeout),
             follow_redirects=True,
             event_hooks={"request": [_log_request], "response": [_log_response]},
         )
@@ -111,8 +112,12 @@ class HttpxClient:
         return HttpResponse(response.status_code, response.content, dict(response.headers))
 
 
-def create_http_client() -> HttpxClient:
-    return HttpxClient()
+def create_http_client(read_timeout: float | None = None) -> HttpxClient:
+    return HttpxClient(read_timeout)
+
+
+def _read_timeout(read_timeout: float) -> httpx2.Timeout:
+    return httpx2.Timeout(connect=5.0, read=read_timeout, write=10.0, pool=10.0)
 
 
 def _log_request(request: httpx2.Request) -> None:
