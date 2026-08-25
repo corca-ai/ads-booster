@@ -23,8 +23,12 @@ from trace_capture.contracts.generation import MarketingContextBundle
 from trace_capture.contracts.run import TraceRunState
 from trace_capture.providers.errors import ProviderError
 from trace_capture.runtime.generate_one import GenerateOneOptions
-from trace_capture.service.cli import bootstrap_launchd_service
-from trace_capture.service.launchd import LaunchdConfig, install_plist
+from trace_capture.service.launchd import (
+    LaunchdConfig,
+    bootstrap_launchd_service,
+    install_plist,
+    stop_launchd_service,
+)
 from trace_capture.service.runtime import create_service_app
 from trace_capture.service.state import ServiceState, ServiceStateStore, ensure_workspace
 from trace_capture.service.worker import ProductionGenerateOneRunner, ServiceWorkerConfig
@@ -319,8 +323,8 @@ def test_launchd_bootstrap_retries_transient_teardown_error(
     def no_wait(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("trace_capture.service.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("trace_capture.service.cli.time.sleep", no_wait)
+    monkeypatch.setattr("trace_capture.service.launchd.subprocess.run", fake_run)
+    monkeypatch.setattr("trace_capture.service.launchd.time.sleep", no_wait)
 
     # When the workspace service is bootstrapped
     result = bootstrap_launchd_service("gui/501", tmp_path / "service.plist")
@@ -328,6 +332,40 @@ def test_launchd_bootstrap_retries_transient_teardown_error(
     # Then only the transient teardown error is retried
     assert result.returncode == 0
     assert attempts == 3
+
+
+def test_launchd_stop_waits_until_previous_job_is_unloaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = 0
+
+    def fake_run(
+        args: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal probes
+        if args[1] == "bootout":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        probes += 1
+        if probes < 3:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args,
+            113,
+            stdout="",
+            stderr="Could not find service",
+        )
+
+    def no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("trace_capture.service.launchd.subprocess.run", fake_run)
+    monkeypatch.setattr("trace_capture.service.launchd.time.sleep", no_wait)
+
+    unloaded = stop_launchd_service("gui/501", "com.corca.trace-agent")
+
+    assert unloaded
+    assert probes == 3
 
 
 def test_service_install_requires_a_name_for_a_fresh_workspace(

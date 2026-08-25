@@ -271,8 +271,9 @@ launchctl print "gui/$(id -u)/com.corca.trace-agent"
 
 `workspace start` uses the same launchd service boundary. It writes
 `~/Library/LaunchAgents/com.corca.trace-agent.plist`, creates
-protected stdout/stderr files below `$TRACE_AGENT_HOME/logs/`, loads the job by default, and waits
-briefly for the local service and the emitted public URL to become ready. On an existing state root,
+protected stdout/stderr files below `$TRACE_AGENT_HOME/logs/`, loads the job by default, waits for the
+previous launchd job to finish unloading before replacement, and then waits briefly for the local
+service and the emitted public URL to become ready. On an existing state root,
 `--workspace-name` updates the stored workspace name when you intentionally rerun setup.
 The default launchd command requests cloudflared; use `--tunnel none` for local-only service
 operation. Use `--no-load` to generate the plist without starting it or `--plist <path>` to

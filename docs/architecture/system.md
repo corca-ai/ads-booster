@@ -189,7 +189,8 @@ prepares a loopback listener, bootstraps a workspace when needed, requests a
 cloudflared quick tunnel by default, and starts a Uvicorn process with the FastAPI application and
 an explicitly attached automation worker. Readiness requires the loopback service to answer
 `/health` and cloudflared to emit a public URL; it does not perform a second public DNS probe from
-the same host. `--tunnel none` opts out of public access.
+the same host. During launchd replacement, the service waits for the previous job to finish
+unloading before bootstrapping the new plist. `--tunnel none` opts out of public access.
 
 On first start:
 

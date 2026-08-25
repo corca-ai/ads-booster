@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import plistlib
+import subprocess
+import time
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from pathlib import Path
@@ -8,6 +10,12 @@ from typing import Final, override
 
 _LABEL: Final = "com.corca.trace-agent"
 _MAX_PORT: Final = 65_535
+_LAUNCHCTL: Final = "/bin/launchctl"
+_INPUT_OUTPUT_ERROR: Final = 5
+_BOOTSTRAP_ATTEMPTS: Final = 6
+_RETRY_DELAY_SECONDS: Final = 0.5
+_UNLOAD_ATTEMPTS: Final = 40
+_UNLOAD_DELAY_SECONDS: Final = 0.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,3 +100,47 @@ def install_plist(config: LaunchdConfig, path: Path) -> None:
 
 def launchd_label() -> str:
     return _LABEL
+
+
+def bootstrap_launchd_service(
+    domain: str,
+    target: Path,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.CompletedProcess[str]([], 1, stdout="", stderr="")
+    for attempt in range(_BOOTSTRAP_ATTEMPTS):
+        result = subprocess.run(  # noqa: S603
+            [_LAUNCHCTL, "bootstrap", domain, str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result
+        detail = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != _INPUT_OUTPUT_ERROR or "Input/output error" not in detail:
+            return result
+        if attempt + 1 < _BOOTSTRAP_ATTEMPTS:
+            time.sleep(_RETRY_DELAY_SECONDS)
+    return result
+
+
+def stop_launchd_service(domain: str, label: str) -> bool:
+    target = f"{domain}/{label}"
+    _ = subprocess.run(  # noqa: S603
+        [_LAUNCHCTL, "bootout", target],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    for attempt in range(_UNLOAD_ATTEMPTS):
+        probe = subprocess.run(  # noqa: S603
+            [_LAUNCHCTL, "print", target],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            return True
+        if attempt + 1 < _UNLOAD_ATTEMPTS:
+            time.sleep(_UNLOAD_DELAY_SECONDS)
+    return False
