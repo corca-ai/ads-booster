@@ -54,6 +54,10 @@ _PROVENANCE_WRITE_FAILED: Final = (
 _SYSTEM_UI_COPY_FAILED: Final = (
     "아이폰 UI 이미지를 준비하지 못했습니다 — 저장 공간과 권한을 확인해 주세요."
 )
+_COMPONENT_FIXTURE_MISSING: Final = "잠금화면 부품 이미지를 찾을 수 없습니다"
+_SYSTEM_UI_MISSING: Final = "아이폰 UI 이미지를 찾을 수 없습니다"
+_COMPONENT_FIXTURE_ENVIRONMENT: Final = "TRACE_AGENT_TRACE_COMPONENTS"
+_SYSTEM_UI_ENVIRONMENT: Final = "TRACE_AGENT_IPHONE_UI"
 
 # The offline run never drives a device; the contract still requires a device target, so the
 # run records this fixed placeholder instead of inventing simulator provenance.
@@ -141,11 +145,12 @@ class CandidateImageRunner:
     """Composes one candidate lock-screen image without the native capture environment.
 
     The background is a provenance-verified image from the external search provider, the
-    Trace component layer is the shipped offline fixture rather than a native export, and
-    the deterministic local composer merges the layers. Because that component layer is a
-    fixture, the candidate's own schedule items and device time are recorded on the run
-    request but are not rendered into the image; rendering them needs the native Appium
-    capture path.
+    Trace component layer is the packaged offline fixture rather than a native export, and
+    the deterministic local composer merges the layers. Both local layers ship inside the
+    installed package, so a run does not depend on the directory the service was started
+    from. Because that component layer is a fixture, the candidate's own schedule items and
+    device time are recorded on the run request but are not rendered into the image;
+    rendering them needs the native Appium capture path.
     """
 
     store: CandidateImageStore
@@ -159,11 +164,13 @@ class CandidateImageRunner:
         query = build_background_query(record)
         fixture = self._require(
             self.options.component_fixture,
-            "잠금화면 부품 이미지를 찾을 수 없습니다",
+            _COMPONENT_FIXTURE_MISSING,
+            _COMPONENT_FIXTURE_ENVIRONMENT,
         )
         system_ui = self._require(
             self.options.iphone_ui_path,
-            "아이폰 UI 이미지를 찾을 수 없습니다",
+            _SYSTEM_UI_MISSING,
+            _SYSTEM_UI_ENVIRONMENT,
         )
         job_root = (
             self.options.home / CANDIDATE_IMAGE_DIRECTORY / candidate_id / f"r{record.revision}"
@@ -223,9 +230,17 @@ class CandidateImageRunner:
         except OSError as error:
             raise CandidateImageStageError(_SYSTEM_UI_COPY_FAILED) from error
 
-    def _require(self, path: Path, message: str) -> Path:
+    def _require(self, path: Path, message: str, environment: str) -> Path:
+        """Require one packaged asset, or the override that replaced it, to exist.
+
+        The default ships inside the installed package, so a missing file here means the
+        `environment` override points somewhere that does not exist.
+        """
         if not path.is_file():
-            missing = f"{message} (경로: {path}) — trace 폴더에서 서버를 실행했는지 확인하세요."
+            missing = (
+                f"{message} (경로: {path}) — "
+                f"환경변수 {environment} 에 설정한 경로가 존재하는지 확인해 주세요."
+            )
             raise CandidateImageStageError(missing)
         return path
 

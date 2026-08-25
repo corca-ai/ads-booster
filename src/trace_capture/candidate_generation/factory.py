@@ -19,7 +19,10 @@ from trace_capture.candidate_generation.image_runner import (
 )
 from trace_capture.candidate_generation.instruction import SYSTEM_INSTRUCTION
 from trace_capture.candidate_generation.runner import CandidateGenerator, CandidateWriter
-from trace_capture.default_assets import default_iphone_ui_path
+from trace_capture.default_assets import (
+    default_iphone_ui_path,
+    default_trace_components_path,
+)
 from trace_capture.providers.codex import CodexResponsesClient
 from trace_capture.search.image.background import ImageSearchBackgroundFetcher
 from trace_capture.search.image.providers import create_image_search_provider
@@ -32,7 +35,6 @@ if TYPE_CHECKING:
     from trace_capture.candidate_generation.image_runner import CandidateBackgroundPort
     from trace_capture.config.settings import AgentSettings
 
-DEFAULT_COMPONENT_FIXTURE: Final = "appium/jobs/composite/inputs/trace-components-fixture.png"
 COMPONENT_FIXTURE_ENVIRONMENT: Final = "TRACE_AGENT_TRACE_COMPONENTS"
 IPHONE_UI_ENVIRONMENT: Final = "TRACE_AGENT_IPHONE_UI"
 SEARCH_PROVIDER_ENVIRONMENT: Final = "TRACE_AGENT_WEB_SEARCH_PROVIDER"
@@ -91,9 +93,14 @@ class ProductionCandidateBackgrounds:
             )
 
 
-def resolve_asset(workspace: Path, environment: str, default: str) -> Path:
-    """Resolve a shipped image asset, allowing an absolute or workspace-relative override."""
-    return _absolute_or_workspace(workspace, os.environ.get(environment, default))
+def resolve_asset(workspace: Path, environment: str, packaged: Path) -> Path:
+    """Resolve a packaged image asset, honouring an absolute or cwd-relative override.
+
+    The assets ship inside the installed package, so the default never depends on the
+    directory the service was started from; only an explicit override is resolved against it.
+    """
+    configured = os.environ.get(environment)
+    return packaged if configured is None else _absolute_or_workspace(workspace, configured)
 
 
 def build_candidate_image_runner(
@@ -101,8 +108,7 @@ def build_candidate_image_runner(
     home: Path,
     store: CandidateImageStore,
 ) -> CandidateImageRunner:
-    """Compose the offline image runner from settings, shipped assets, and the state root."""
-    configured_iphone_ui = os.environ.get(IPHONE_UI_ENVIRONMENT)
+    """Compose the offline image runner from settings, packaged assets, and the state root."""
     return CandidateImageRunner(
         store=store,
         backgrounds=ProductionCandidateBackgrounds(settings),
@@ -111,12 +117,12 @@ def build_candidate_image_runner(
             component_fixture=resolve_asset(
                 settings.workspace,
                 COMPONENT_FIXTURE_ENVIRONMENT,
-                DEFAULT_COMPONENT_FIXTURE,
+                default_trace_components_path(),
             ),
-            iphone_ui_path=(
-                default_iphone_ui_path()
-                if configured_iphone_ui is None
-                else _absolute_or_workspace(settings.workspace, configured_iphone_ui)
+            iphone_ui_path=resolve_asset(
+                settings.workspace,
+                IPHONE_UI_ENVIRONMENT,
+                default_iphone_ui_path(),
             ),
         ),
     )

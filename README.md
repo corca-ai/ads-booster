@@ -237,7 +237,7 @@ TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS
 TRACE_AGENT_BROWSER_COMMAND
 TRACE_AGENT_APPIUM_SERVER       # default: http://127.0.0.1:4723
 TRACE_AGENT_IPHONE_UI           # default: packaged clean iPhone system UI asset
-TRACE_AGENT_TRACE_COMPONENTS    # default: appium/jobs/composite/inputs/trace-components-fixture.png
+TRACE_AGENT_TRACE_COMPONENTS    # default: packaged Trace component fixture asset
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 ```
 
@@ -321,18 +321,20 @@ selected country.
 #### What the image stage needs
 
 `🎨 이미지 생성` composes the image in the web process without Appium or a simulator, from three
-layers: a background from the external image search allowlist (Pexels/Unsplash/Pixabay), the shipped
-Trace component fixture, and the packaged iPhone UI asset. The searched background's provider,
-source URL, and digest are written to `inputs/background-source.json` beside it.
+layers: a background from the external image search allowlist (Pexels/Unsplash/Pixabay), the
+packaged Trace component fixture, and the packaged iPhone UI asset. The searched background's
+provider, source URL, and digest are written to `inputs/background-source.json` beside it.
 
 - **An image search route.** The stage uses the same provider selection as `trace-generate-one`:
   install `ddgs`, or set `BRAVE_SEARCH_API_KEY`. `TRACE_AGENT_WEB_SEARCH_PROVIDER` and
   `TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS` override the choice and its timeout. Without a working
   route the browser reports `배경 이미지를 찾지 못했습니다` and the candidate stays `caption_approved`.
-- **The Trace component fixture.** Run the service from the repository folder that holds
-  `appium/jobs/composite/inputs/trace-components-fixture.png`, or point
-  `TRACE_AGENT_TRACE_COMPONENTS` at a copy. `TRACE_AGENT_IPHONE_UI` overrides the packaged iPhone UI
-  asset. A missing file stops the run before any search.
+- **Nothing else.** The Trace component fixture and the iPhone UI both ship inside the installed
+  package, so the stage works from whatever directory the service was started in — including a
+  knowledge folder that holds only `context/`. `TRACE_AGENT_TRACE_COMPONENTS` and
+  `TRACE_AGENT_IPHONE_UI` override them with an absolute or working-directory-relative path; a
+  missing override file stops the run before any search and is reported with the environment
+  variable that set it.
 
 Because the Trace component layer is that fixture and not a fresh native export, the candidate's own
 schedule items and device time are recorded on the run but are **not** drawn into the image — the

@@ -14,7 +14,14 @@ from trace_capture.candidate_generation import (
     CandidateImageRunner,
     CandidateImageStageError,
     build_background_query,
+    build_candidate_image_runner,
 )
+from trace_capture.candidate_generation.factory import (
+    COMPONENT_FIXTURE_ENVIRONMENT,
+    IPHONE_UI_ENVIRONMENT,
+)
+from trace_capture.config.settings import AgentSettings
+from trace_capture.default_assets import default_iphone_ui_path, default_trace_components_path
 from trace_capture.search.image.background import BackgroundSearchError, SearchedBackground
 from trace_capture.workspace import (
     CandidateBackgroundSubject,
@@ -223,6 +230,10 @@ def test_a_missing_component_fixture_stops_the_run_before_the_model(tmp_path: Pa
     with pytest.raises(CandidateImageStageError) as failure:
         _ = runner.generate(workspace_id, candidate.candidate_id)
     assert "잠금화면 부품 이미지를 찾을 수 없습니다" in failure.value.message
+    assert (
+        "환경변수 TRACE_AGENT_TRACE_COMPONENTS 에 설정한 경로가 존재하는지" in failure.value.message
+    )
+    assert "trace 폴더에서 서버를 실행했는지" not in failure.value.message
     assert fetcher.queries == []
     assert store.get_candidate(workspace_id, candidate.candidate_id) == candidate
 
@@ -350,3 +361,50 @@ def test_approving_an_image_submits_the_candidate(tmp_path: Path) -> None:
     assert submitted.status is CandidateStatus.SUBMITTED
     assert submitted.image_path == composed.image_path
     assert submitted.image_sha256 == composed.image_sha256
+
+
+def test_the_packaged_assets_resolve_from_any_working_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a service started from a knowledge folder that holds no tool assets
+    serve_root = tmp_path / "knowledge"
+    serve_root.mkdir()
+    monkeypatch.chdir(serve_root)
+    monkeypatch.delenv(COMPONENT_FIXTURE_ENVIRONMENT, raising=False)
+    monkeypatch.delenv(IPHONE_UI_ENVIRONMENT, raising=False)
+    settings = AgentSettings.from_environment()
+    store = SqliteWorkspaceStore(tmp_path / "workspace")
+
+    # When the production runner is composed
+    runner = build_candidate_image_runner(settings, tmp_path, store)
+
+    # Then both local layers come from the installed package, not the working directory
+    assert runner.options.component_fixture == default_trace_components_path()
+    assert runner.options.iphone_ui_path == default_iphone_ui_path()
+    assert runner.options.component_fixture.is_file()
+    assert runner.options.iphone_ui_path.is_file()
+    assert serve_root not in runner.options.component_fixture.parents
+
+
+def test_an_asset_override_is_resolved_against_the_working_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given relative and absolute overrides for the two local layers
+    serve_root = tmp_path / "knowledge"
+    serve_root.mkdir()
+    monkeypatch.chdir(serve_root)
+    relative_fixture = _component_png(serve_root / "custom" / "components.png")
+    absolute_ui = _ui_png(tmp_path / "elsewhere" / "iphone-ui.png")
+    monkeypatch.setenv(COMPONENT_FIXTURE_ENVIRONMENT, "custom/components.png")
+    monkeypatch.setenv(IPHONE_UI_ENVIRONMENT, str(absolute_ui))
+    settings = AgentSettings.from_environment()
+    store = SqliteWorkspaceStore(tmp_path / "workspace")
+
+    # When the production runner is composed
+    runner = build_candidate_image_runner(settings, tmp_path, store)
+
+    # Then the relative override follows the working directory and the absolute one is kept
+    assert runner.options.component_fixture == relative_fixture
+    assert runner.options.iphone_ui_path == absolute_ui

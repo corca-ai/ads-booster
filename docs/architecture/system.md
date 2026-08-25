@@ -263,8 +263,12 @@ layers come from:
 | Layer | Source | Verified by |
 | --- | --- | --- |
 | Background | `search/image/` fetches one image from the Pexels/Unsplash/Pixabay allowlist | Approved source host, decodable bytes, minimum edge, recorded digest |
-| Trace components | The shipped offline fixture at `appium/jobs/composite/inputs/trace-components-fixture.png` | Read as a local artifact through `LocalArtifactCapturePort` |
+| Trace components | The packaged offline fixture `trace_capture/assets/trace-components.png` | Read as a local artifact through `LocalArtifactCapturePort` |
 | iPhone UI | The packaged `trace_capture/assets/iphone-ui.png` | Normalized and required to leave transparent canvas |
+
+Both local layers are packaged assets resolved through `importlib.resources`, so the stage never
+depends on the directory the service was started from; `TRACE_AGENT_TRACE_COMPONENTS` and
+`TRACE_AGENT_IPHONE_UI` override them for a local experiment.
 
 `LocalComposePort` merges them with the same deterministic composer the native path uses, and the
 run writes `inputs/background-source.json` next to the background so the searched provider, source
