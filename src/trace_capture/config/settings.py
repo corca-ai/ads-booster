@@ -18,6 +18,7 @@ class AgentSettings:
     context_hard_ratio: float = 0.85
     context_recent_tail_tokens: int = 16_000
     context_max_tool_output_chars: int = 6_000
+    candidate_timeout_seconds: float = 240.0
     memory_file: Path | None = None
     sessions_dir: Path = field(default_factory=lambda: Path.home() / ".trace-agent" / "sessions")
 
@@ -50,6 +51,9 @@ class AgentSettings:
             ),
             context_max_tool_output_chars=int(
                 os.environ.get("TRACE_AGENT_CONTEXT_MAX_TOOL_OUTPUT_CHARS", "6000")
+            ),
+            candidate_timeout_seconds=float(
+                os.environ.get("TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS", "240")
             ),
             memory_file=(
                 Path(memory_file).expanduser()

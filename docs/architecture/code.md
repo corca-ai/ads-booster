@@ -20,7 +20,7 @@ behavior, external adapters, and delivery/composition responsibilities.
 ```mermaid
 flowchart TD
     DELIVERY[cli web service]
-    APP[agent planning runtime automation workspace]
+    APP[agent planning runtime automation workspace candidate_generation]
     CONTRACTS[contracts and owner models]
     ADAPTERS[auth providers tools capture composition tunnel transport]
     EXTERNAL[model provider Appium filesystem browser launchd cloudflared]
@@ -36,8 +36,8 @@ flowchart TD
 The direction is:
 
 1. `cli/`, `web/`, and `service/` translate user input and compose concrete dependencies.
-2. `agent/`, `planning/`, `runtime/`, `automation/`, and `workspace/` own application behavior and
-   state transitions.
+2. `agent/`, `planning/`, `runtime/`, `automation/`, `candidate_generation/`, and `workspace/` own
+   application behavior and state transitions.
 3. `auth/`, `providers/`, `search/`, `tools/`, `capture/`, `composition/`, `tunnel/`, and
    `transport/` implement external or technical boundaries.
 4. `contracts/` and owner-package models define typed data across boundaries.
@@ -53,6 +53,7 @@ src/trace_capture/
 ├── agent/          # agent loop, context, TUI, REPL, standalone sessions
 ├── auth/           # OAuth flow and credential persistence
 ├── automation/     # durable campaigns, queue, producer, worker and review lifecycle
+├── candidate_generation/  # context assembly and one-call post-candidate production
 ├── capture/        # Appium/XCUITest capture and artifact validation
 ├── cli/            # installed Typer entry points and composition roots
 ├── composition/    # deterministic offline image-layer validation and composition
@@ -76,6 +77,7 @@ src/trace_capture/
 | `agent/` | Conversation history, context projection/compaction, tool loop, and TUI/REPL session control | Provider HTTP details or native capture |
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
+| `candidate_generation/` | Context-document loading, the assembled generation instruction, strict-JSON parsing with one retry, and all-or-nothing candidate writing through a store protocol | HTTP routes, provider transport details, or candidate review transitions |
 | `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, iPhone UI screenshots, Trace component collection, and provenance validation | Scene planning or final composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
 | `composition/` | Offline layer validation, transparency/path constraints, and deterministic PNG composition | Appium navigation or provider calls; context-driven Image Model composition |
@@ -89,7 +91,7 @@ src/trace_capture/
 | `tools/` | Executable tools, registry, approval, workspace paths, and bounded output | Provider loop or TraceRun state transitions |
 | `transport/` | Shared HTTP client and JSON transport types | Provider-specific meaning |
 | `tunnel/` | cloudflared process and emitted public-URL boundary | The full local-service lifecycle |
-| `web/` | FastAPI auth/context/asset/campaign/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
+| `web/` | FastAPI auth/context/asset/campaign/candidate/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
 | `workspace/` | Workspace/member identity, code hashes/versions, shared context, asset metadata, and private sessions | Automation queue or model calls |
 
 ## Composition root
@@ -103,7 +105,8 @@ Compose concrete dependencies at these entry points.
 | `cli/generate.py` | context bundle, image generator, capture adapter, `GenerateOneRunner` options |
 | `capture/factory.py` | Native capture-adapter selection by device kind |
 | `cli/trace_run.py` | run store, capture port, compose port, CLI error mapping |
-| `web/app.py` | workspace/queue stores, session codec, chat factory, focused routers, static shell |
+| `web/app.py` | workspace/queue stores, session codec, chat factory, candidate generator, focused routers, static shell |
+| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider client, and context directory for automatic candidate production |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
 
@@ -134,6 +137,15 @@ composition time and give an explicit lifespan or context manager ownership of s
 - Define approval for mutating behavior.
 - Restrict file and command paths to the selected workspace.
 - Do not hard-code tool names separately in providers or the TUI.
+
+### Candidate generation
+
+- Keep the context-document contract, instruction assembly, and strict-JSON parsing in
+  `candidate_generation/`.
+- Accept the provider client through the `ModelClient` protocol and the store through the
+  `CandidateWriter` protocol; compose both in `candidate_generation/factory.py`.
+- Keep the Web layer limited to authentication, typed-error-to-status mapping, and response shaping.
+- v1 is script assembly: one provider call, no tool loop and no search.
 
 ### Web APIs
 

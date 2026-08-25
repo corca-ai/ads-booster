@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Trace 팀의 로컬 마케팅 자료 생성 워크스페이스입니다.">
+    <meta name="description" content="Trace 팀의 로컬 게시물 후보 워크스페이스입니다.">
     <title>Trace 워크스페이스</title>
     <link rel="stylesheet" href="/static/workspace.css">
     <script src="/static/workspace-navigation.js" defer></script>
@@ -18,7 +18,7 @@
             <div>
               <p class="eyebrow">입장 전</p>
               <h1 id="entry-title" data-member-name>워크스페이스에 입장</h1>
-              <p>초대받은 정보를 입력하면 팀의 자료와 작업 화면으로 이동합니다.</p>
+              <p>초대받은 정보를 입력하면 팀의 후보와 승인 화면으로 이동합니다.</p>
             </div>
             <span class="mono" data-member-state-label>입장 전</span>
           </div>
@@ -40,149 +40,72 @@
       <main class="workspace-main" id="workspace-content" data-workspace-live aria-busy="false" hidden>
         <header class="workspace-toolbar">
           <div class="filter-tabs" role="tablist" aria-label="워크스페이스 보기">
-            <button class="filter-tab" id="tab-library" type="button" role="tab" aria-controls="library" aria-selected="true" tabindex="0" data-tab="library">자료 준비</button>
-            <button class="filter-tab" id="tab-queue" type="button" role="tab" aria-controls="queue" aria-selected="false" tabindex="-1" data-tab="queue">생성 큐</button>
-            <button class="filter-tab" id="tab-review" type="button" role="tab" aria-controls="reviews" aria-selected="false" tabindex="-1" data-tab="review">검수</button>
-            <button class="filter-tab" id="tab-chat" type="button" role="tab" aria-controls="chat" aria-selected="false" tabindex="-1" data-tab="chat">개인 채팅</button>
+            <button class="filter-tab" id="tab-candidates" type="button" role="tab" aria-controls="candidates" aria-selected="true" tabindex="0" data-tab="candidates">후보</button>
+            <button class="filter-tab" id="tab-review" type="button" role="tab" aria-controls="reviews" aria-selected="false" tabindex="-1" data-tab="review">캡션·주제 승인</button>
           </div>
           <div class="header-actions">
             <div class="status-line" role="status" aria-live="polite" data-live-status><span class="signal-mark success" aria-hidden="true"></span><span data-notice>준비됨</span></div>
-            <button class="button button-primary" type="button" data-action="new-capture">새 자료 만들기</button>
           </div>
         </header>
 
-        <section class="section-card tab-panel" id="queue" role="tabpanel" tabindex="0" aria-labelledby="tab-queue" data-panel="queue" hidden>
+        <section class="section-card tab-panel" id="candidates" role="tabpanel" tabindex="0" aria-labelledby="tab-candidates" data-panel="candidates">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">세 번째 단계</p>
-              <h2>생성 큐</h2>
+              <p class="eyebrow">게시물 후보</p>
+              <h2>후보</h2>
             </div>
+            <span class="mono" role="status" data-candidate-count>입장하면 후보를 불러옵니다</span>
           </div>
-          <div class="queue-summary" data-queue-summary role="status">
-            <span class="signal-mark" aria-hidden="true"></span>
-            <span class="queue-summary__copy"><strong>생성 큐가 비어 있습니다</strong><span>새 자료 만들기에서 첫 요청을 등록하세요.</span></span>
+          <div class="entry-block">
+            <h3 class="entry-block__title">새 게시물 만들기</h3>
+            <button class="button button-primary entry-block__action" type="button" data-autogen aria-describedby="autogen-help">🤖 후보 자동 생성</button>
+            <p class="entry-block__help" id="autogen-help">AI가 context/의 원리·레퍼런스를 읽고 후보를 만들어 아래 목록에 등록합니다.</p>
+            <p class="entry-block__status" role="status" data-autogen-feedback hidden></p>
+            <details class="advanced-input" data-manual-entry>
+              <summary>✍️ 수동 등록</summary>
+              <div class="advanced-input__body">
+                <form class="stack-form" data-candidate-form novalidate aria-describedby="candidate-feedback">
+                  <div class="candidate-fields">
+                    <label class="candidate-fields__wide" for="candidate-topic">주제/컨셉<input id="candidate-topic" name="topic" required maxlength="200" autocomplete="off" placeholder="예: 시험기간 일정 관리 — 잠금화면 데모로 공감 훅"></label>
+                    <label for="candidate-country">국가<select id="candidate-country" name="country" required><option value="KR" selected>한국 (KR)</option><option value="JP">일본 (JP)</option><option value="TW">대만 (TW)</option><option value="US">미국 (US)</option></select></label>
+                    <label for="candidate-hypothesis">가설<input id="candidate-hypothesis" name="hypothesis" required maxlength="2000" autocomplete="off" placeholder="예: 1인칭 감탄이 저장률을 올린다"></label>
+                    <label class="candidate-fields__wide" for="candidate-caption">캡션<textarea id="candidate-caption" name="caption" required rows="5" placeholder="게시할 캡션을 그대로 붙여넣으세요."></textarea></label>
+                    <label for="candidate-refs">참조 레퍼런스<input id="candidate-refs" name="refs-used" autocomplete="off" placeholder="쉼표로 구분: ref-a, ref-b"></label>
+                    <label for="candidate-principles">적용 원리<input id="candidate-principles" name="principles-applied" autocomplete="off" placeholder="쉼표로 구분: 1, 4"></label>
+                    <label class="candidate-fields__wide" for="candidate-shooting-order">Appium 프롬프트<textarea id="candidate-shooting-order" name="shooting-order" rows="4" placeholder="이미지 생성 시 Appium에 전달할 지시 (일정 문자열, 기기 시각, 배경 등)"></textarea></label>
+                  </div>
+                  <p class="candidate-feedback" id="candidate-feedback" data-candidate-feedback role="alert" hidden></p>
+                  <button class="button button-secondary" type="submit">후보 등록</button>
+                </form>
+              </div>
+            </details>
           </div>
-          <div class="campaign-list" data-campaign-list></div>
-          <div class="queue-list" data-queue-list></div>
-          <div class="empty-surface queue-empty" data-queue-empty>
+          <div class="candidate-list" data-candidate-list></div>
+          <div class="empty-surface" data-candidate-empty>
             <p class="eyebrow">아직 없음</p>
-            <h3>생성 큐가 비어 있습니다</h3>
-            <p>워크스페이스에 입장한 뒤 상단의 새 자료 만들기에서 첫 요청을 등록하세요.</p>
-          </div>
-          <div class="error-surface" role="alert" data-queue-feedback hidden>
-            <p class="eyebrow">오류 상태</p>
-            <h3>큐 요청을 확인해 주세요</h3>
-            <p data-queue-feedback-text></p>
-            <div><button class="button button-secondary" type="button" data-action="retry">큐 새로고침</button></div>
+            <h3>등록된 후보가 없습니다</h3>
+            <p>자동 생성으로 후보를 만들거나 수동 등록에 주제와 캡션을 입력하세요. 두 입구 모두 이 목록에 쌓입니다.</p>
           </div>
         </section>
 
         <section class="section-card tab-panel" id="reviews" role="tabpanel" tabindex="0" aria-labelledby="tab-review" data-panel="review" hidden>
           <div class="section-heading">
             <div>
-              <p class="eyebrow">네 번째 단계</p>
-              <h2>검수할 자료</h2>
+              <p class="eyebrow">1단계 · 주제와 캡션</p>
+              <h2>캡션·주제 승인</h2>
             </div>
+            <span class="mono" role="status" data-approval-count>입장하면 후보를 불러옵니다</span>
           </div>
-          <div class="review-gallery" data-review-gallery></div>
-          <div class="empty-surface" data-review-empty>
+          <p class="section-note">주제와 캡션을 함께 승인하면 후보는 이미지 승인 단계로 넘어갑니다. 이미지 승인과 제출은 다음 단계에서 연결됩니다.</p>
+          <div class="approval-list" data-approval-list></div>
+          <div class="empty-surface" data-approval-empty>
             <p class="eyebrow">비어 있음</p>
-            <h3>검수할 요청이 없습니다</h3>
-            <p>새로 생성된 자료가 검수 대기 상태가 되면 이곳에 표시됩니다. 상단의 새 자료 만들기에서 요청을 등록하세요.</p>
+            <h3>승인할 후보가 없습니다</h3>
+            <p>후보 탭에서 후보를 만들면 주제·캡션 검수 대기 후보가 이곳에 카드로 표시됩니다.</p>
           </div>
-        </section>
-
-        <section class="section-card tab-panel" id="library" role="tabpanel" tabindex="0" aria-labelledby="tab-library" data-panel="library">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">두 번째 단계</p>
-              <h2>공유 컨텍스트</h2>
-            </div>
-            <span class="mono" role="status" data-context-count>입장하면 자료를 불러옵니다</span>
-          </div>
-          <form class="stack-form" data-context-form>
-            <label for="context-kind">종류<select id="context-kind" name="kind"><option value="persona">페르소나</option><option value="promotion">프로모션</option><option value="reference">레퍼런스</option><option value="rule">규칙</option></select></label>
-            <label for="context-title-input">제목<input id="context-title-input" name="title" required maxlength="120"></label>
-            <label for="context-body-input">공유 컨텍스트<textarea id="context-body-input" name="body" required rows="4"></textarea></label>
-            <button class="button button-secondary" type="submit">자료 추가</button>
-          </form>
-          <form class="stack-form reference-upload" data-asset-upload>
-            <div>
-              <p class="eyebrow">이미지 레퍼런스</p>
-              <h3>새 레퍼런스 올리기</h3>
-            </div>
-            <label for="reference-file">이미지 파일<input id="reference-file" name="reference-file" type="file" accept="image/png,image/jpeg,image/webp" required></label>
-            <p class="form-help">JPEG, PNG, WebP · 최대 25MB. 업로드한 원본은 이미지 생성 시 시각 레퍼런스로 사용됩니다.</p>
-            <button class="button button-secondary" type="submit">레퍼런스 저장</button>
-          </form>
-          <div class="context-list" data-context-list></div>
-        </section>
-
-        <section class="chat-card tab-panel" id="chat" role="tabpanel" tabindex="0" aria-labelledby="tab-chat" data-panel="chat" hidden>
-          <div class="chat-card__header">
-            <div><p class="eyebrow">보조 도구</p><h2 id="chat-title" data-workspace-chat-name>개인 채팅</h2></div>
-            <div class="chat-runtime-meta" role="status" aria-live="polite">
-              <span class="mono" data-chat-model>모델: gpt-5.5</span>
-              <span class="mono" data-chat-permission>승인: 자동 허용</span>
-            </div>
-          </div>
-          <div class="chat-thread" aria-live="polite" data-chat-thread>
-            <div class="empty-surface chat-empty" data-chat-empty>
-              <h3>아직 대화가 없습니다</h3>
-              <p>생성 작업과 직접 관련된 질문이 있을 때 개인 채팅을 사용하세요.</p>
-            </div>
-          </div>
-          <section class="chat-command-output" data-chat-command-output aria-live="polite" hidden>
-            <div class="chat-command-output__events" data-chat-command-events></div>
-            <div class="chat-command-output__options" data-chat-command-options></div>
-          </section>
-          <section class="chat-approval" data-chat-approval role="alert" aria-live="assertive" hidden>
-            <p class="eyebrow">승인이 필요합니다</p>
-            <strong data-chat-approval-action></strong>
-            <p data-chat-approval-detail></p>
-            <div class="form-actions">
-              <button class="button button-primary" type="button" data-chat-approval-decision="approve">허용</button>
-              <button class="button button-secondary" type="button" data-chat-approval-decision="deny">거절</button>
-            </div>
-          </section>
-          <form class="chat-composer" data-chat-form>
-            <label class="visually-hidden" for="chat-message">개인 메시지 또는 명령어</label>
-            <textarea id="chat-message" name="message" rows="2" autocomplete="off" data-chat-input placeholder="Trace 에이전트에게 질문하거나 /help를 입력하세요."></textarea>
-            <div class="chat-command-suggestions" data-chat-command-suggestions role="listbox" aria-label="TUI 명령어" hidden></div>
-            <div class="form-actions"><button class="button button-secondary" type="button" data-action="attach-context">자료 선택</button><button class="button button-primary" type="submit">보내기</button></div>
-          </form>
         </section>
       </main>
     </div>
-    <dialog class="command-dialog" data-capture-dialog aria-labelledby="capture-dialog-title">
-      <form method="dialog" class="stack-form" data-capture-form>
-        <div class="section-heading"><h2 id="capture-dialog-title">새 마케팅 자료 만들기</h2><button class="button button-quiet" value="cancel" type="submit">닫기</button></div>
-        <p>저장된 페르소나와 홍보 소재를 고르면 Trace가 새로운 변형을 계속 생성합니다.</p>
-        <div class="campaign-fields">
-          <label for="campaign-name">캠페인 이름<input id="campaign-name" name="campaign-name" required maxlength="120" placeholder="예: 일본 대학생 시험 기간"></label>
-          <label for="campaign-persona">페르소나<select id="campaign-persona" name="persona-context-id" data-persona-select required><option value="">페르소나 선택</option></select></label>
-          <label for="campaign-promotion">홍보 소재<select id="campaign-promotion" name="promotion-context-id" data-promotion-select required><option value="">홍보 소재 선택</option></select></label>
-          <label for="campaign-references">이미지 레퍼런스<select id="campaign-references" name="reference-asset-ids" data-reference-select multiple size="3" aria-describedby="campaign-reference-help"></select></label>
-          <p class="form-help" id="campaign-reference-help">여러 장은 Command 또는 Shift 키로 선택할 수 있습니다.</p>
-          <input type="hidden" name="reference-date" data-reference-date>
-          <input type="hidden" name="device-udid" value="E1FB798D-79E6-4B25-A987-D298A4FD122A">
-          <input type="hidden" name="platform-version" value="26.5">
-          <input type="hidden" name="device-name" value="iPhone 17 Pro">
-          <label class="check-row" for="campaign-continuous"><input id="campaign-continuous" name="continuous" type="checkbox" value="true" data-continuous checked><span>중지할 때까지 계속 생성</span></label>
-          <label for="campaign-variation-count" data-variation-count-label hidden>생성 개수<input id="campaign-variation-count" name="variation-count" type="number" min="1" value="1" data-variation-count disabled></label>
-        </div>
-        <details class="advanced-input" data-capture-details>
-          <summary>고급 입력: 단건 컨텍스트 JSON</summary>
-          <div class="advanced-input__body">
-            <p>여기에 JSON을 입력하면 위 캠페인 선택 대신 단건 생성으로 등록합니다.</p>
-            <label for="bundle-json">컨텍스트 JSON<textarea id="bundle-json" data-bundle-json name="bundle-json" rows="12" aria-describedby="bundle-json-help" placeholder="trace.marketing-context.v1 형식의 JSON을 붙여넣으세요."></textarea></label>
-            <p class="form-help" id="bundle-json-help">고급 단건 실행에서만 사용합니다. 비워두면 저장된 자료로 캠페인을 시작합니다.</p>
-          </div>
-        </details>
-        <p class="capture-feedback" data-capture-feedback role="alert" hidden></p>
-        <button class="button button-primary" data-capture-submit value="submit" type="submit">캠페인 시작</button>
-      </form>
-    </dialog>
     <dialog class="command-dialog command-menu-dialog" data-command-dialog aria-labelledby="command-menu-title">
       <div class="stack-form">
         <div class="section-heading">
@@ -191,9 +114,7 @@
         </div>
         <p class="command-menu-note">원하는 작업으로 바로 이동할 수 있습니다.</p>
         <div class="command-menu-actions">
-          <button class="button button-secondary" type="button" data-command-action="new-capture">새 자료 만들기</button>
-          <button class="button button-secondary" type="button" data-command-action="open-review">검수 보기</button>
-          <button class="button button-secondary" type="button" data-command-action="attach-context">자료 준비</button>
+          <button class="button button-secondary" type="button" data-command-action="open-review">캡션·주제 승인 보기</button>
         </div>
       </div>
     </dialog>

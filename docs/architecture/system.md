@@ -146,8 +146,9 @@ The standalone TUI owns a thread-safe `TuiApproval` boundary. Its default permis
 `yolo`, which automatically grants the boundary for the current TUI session. `/permission ask`
 switches to per-operation confirmation with keyboard- and mouse-selectable Approve/Deny controls;
 `/permission yolo` switches back, and `/permission` reports the current mode. The plain REPL and
-Web session factory use the same command contract. Web members receive the equivalent approval
-request in their browser, and the decision is resolved against that member's live agent state.
+Web session factory use the same command contract. The `/api/chat/approval` routes carry the
+equivalent approval request for a Web member, and the decision is resolved against that member's
+live agent state; the current two-tab browser surface does not render those controls.
 
 ## Generation and TraceRun flow
 
@@ -207,8 +208,12 @@ an HMAC-signed cookie containing workspace/member IDs, code versions, and expiry
 is process-local by default, so a service restart invalidates existing browser sessions. Code
 rotation also invalidates sessions whose embedded versions are stale.
 
+The browser surface is two tabs, 후보 and 캡션·주제 승인, both backed by `/api/candidates`. The
+context, asset, campaign, queue, and chat routes described below still run inside the same process
+and keep their tests, but no browser tab renders them; they are reachable only as API endpoints.
+
 Shared context is workspace-scoped. Private conversation history is scoped by workspace, member,
-and session. A Web chat request loads shared context as a read-only developer prefix, runs a fresh
+and session. A chat request loads shared context as a read-only developer prefix, runs a fresh
 request-local `AgentSession` built by the same factory as the TUI, and persists only the resulting
 private history. The Web adapter dispatches `/auth`, `/model`, `/permission`, `/new`, `/clear`,
 `/session`, and `/help` through the existing TUI command contract. Live model, reasoning, permission,
@@ -221,9 +226,62 @@ data, verifies the decoded image, writes a protected file below `TRACE_AGENT_HOM
 records its normalized path, digest, size, and optional context binding. Campaign creation verifies
 the path, bytes, and digest again before freezing the reference into generation input.
 
+Post candidates are workspace-scoped rows in the same workspace database. A candidate carries the
+topic, caption, hypothesis, references, applied principles, and the free-form Appium prompt stored
+in `shooting_order`, and it enters at `awaiting_review`. Topic and caption are reviewed together as
+one decision, so the first gate has a single approve/reject pair. `/api/candidates` creates manual candidates and
+lists a workspace newest-first.
+
+A candidate is meant to travel three approval stages, and both browser surfaces render that journey
+so its position is visible. Only the first stage is implemented:
+
+```text
+awaiting_review --approve--> caption_approved ..(not implemented).. image_approved ..(not implemented).. submitted
+       |
+       +----reject--------> rejected
+```
+
+`/api/candidates/{candidate_id}/review` is that first gate and moves one candidate to
+`caption_approved` or `rejected` with an optional note. The transition requires the current revision
+and only applies while the candidate is still awaiting review, so a stale or repeated decision fails
+with a conflict instead of overwriting the first one. `CandidateStatus` also declares
+`image_approved` and `submitted` for stages two and three, but no route, worker, or store method
+writes them, and no candidate image is composed; `ai_verdict` and `image_path` are stored for display
+only. Publishing a submitted post stays a human action outside this runtime.
+
+Opening the workspace database runs two idempotent candidate migrations: rows written under the
+earlier single-stage `accepted` status are rewritten to `caption_approved`, which carries the same
+meaning on the journey, and rows stored before `topic` became a required reviewable field gain the
+column with the placeholder value `(주제 미기록)`.
+
+## Automatic candidate generation
+
+`POST /api/candidates/generate` is the second candidate entrance. `candidate_generation/` runs it as
+script assembly rather than an agent loop:
+
+1. Resolve the context directory from `TRACE_AGENT_CONTEXT_DIR`, or `<serve workspace>/context`.
+2. Read a fixed Korean document set — `core/PRINCIPLES-GLOBAL.md`, `core/PRINCIPLES-KR.md`,
+   `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`, `core/FACTS.md`, and `references/KR/INDEX.md`. An
+   absent directory, or any absent or blank document, fails the run before any provider call and
+   names what is missing.
+3. Assemble one instruction from those documents, the hard rules, and the strict output contract.
+4. Make one non-streaming Responses call through the same `auth/`, `providers/`, and `transport/`
+   boundary the chat surface uses, with its read timeout widened to
+   `TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS`.
+5. Parse the response as a JSON array of exactly three candidates, tolerating a markdown code fence.
+   One failed validation is retried once with the validation error appended; a second failure ends
+   the run.
+6. Write all three candidates as `source=auto`, `status=awaiting_review`, or write nothing.
+
+The run has no tools, no web search, and no file writes; the context documents are read-only inputs.
+It is a synchronous request handled in the FastAPI threadpool, so the browser waits for it. Failure
+modes are typed and mapped to a status with an operator-facing Korean message: missing context or a
+missing provider credential answer `409`, and a provider or format failure answers `502`. Only
+Korean candidates are produced in this version.
+
 ## Automation queue
 
-The standard browser route creates a durable finite or continuous campaign from one stored persona,
+The campaign route creates a durable finite or continuous campaign from one stored persona,
 one stored promotion, optional stored references, a reference date, and a device. `CampaignProducer`
 keeps at most one outstanding queue item per campaign, assigns a monotonic variation index, and
 continues after service restart. A finite campaign becomes `completed` after its requested count;
@@ -262,13 +320,14 @@ roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
 
 | Path | Owner | Contents |
 | --- | --- | --- |
-| `$TRACE_AGENT_HOME/workspace.sqlite3` | `workspace/` | Workspaces, members, hashed code versions, shared contexts, asset metadata and member-private sessions |
+| `$TRACE_AGENT_HOME/workspace.sqlite3` | `workspace/` | Workspaces, members, hashed code versions, shared contexts, asset metadata, post candidates with their review state, and member-private sessions |
 | `$TRACE_AGENT_HOME/automation.sqlite3` | `automation/` | Campaign inputs/state, queue payloads, leases, run references, artifact digests and review state |
 | `$TRACE_AGENT_HOME/service.json` | `service/` | Bootstrap identifiers, loopback host/port, tunnel selection, and last emitted public URL |
 | `$TRACE_AGENT_HOME/auth.json` | `auth/` | OAuth credential data, protected with file mode `0600` |
 | `$TRACE_AGENT_HOME/sessions/` | `agent/` | Standalone TUI and REPL canonical histories, one protected JSON file per session |
 | `$TRACE_AGENT_HOME/memory.jsonl` | `agent/` | Append-only context-compaction summaries |
 | `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected service and optional tunnel logs |
+| `<serve workspace>/context/` | `candidate_generation/` | Operator-owned Korean principle, element, voice, fact, and reference documents, read only |
 
 Generation artifacts are separate from service metadata. By default, the standalone
 `generate-one` command writes the job tree, TraceRun journal, and capture output below
@@ -281,7 +340,7 @@ state and capture roots.
 
 | External dependency | Adapter or boundary | Contract |
 | --- | --- | --- |
-| ChatGPT/Codex-compatible Responses service | `auth/`, `providers/`, `transport/` | OAuth credential, model responses, tool calls, three-layer image-generation output and provider-reported usage |
+| ChatGPT/Codex-compatible Responses service | `auth/`, `providers/`, `transport/` | OAuth credential, model responses, tool calls, one-call candidate generation, three-layer image-generation output and provider-reported usage |
 | Appium 3 and XCUITest | `capture/` | Validated server URL, Simulator/Appium readiness, fresh iPhone UI screenshot, Trace component-export request and captured artifact provenance |
 | Trace iOS debug app | `capture/` | Installed `com.corca.Trace` build with the request-bound component-export trigger |
 | Browser automation | `tools/browser.py` | External `agent-browser` command with approval for mutating actions |

@@ -10,10 +10,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from trace_capture.automation import AutomationQueue, CampaignStore
+from trace_capture.candidate_generation import CandidateGeneratorPort, build_candidate_generator
 from trace_capture.config.settings import AgentSettings
 from trace_capture.web.assets import build_asset_router
 from trace_capture.web.auth import CurrentPrincipal, build_auth_router
 from trace_capture.web.campaigns import build_campaign_router
+from trace_capture.web.candidates import build_candidate_router
 from trace_capture.web.chat import build_chat_router
 from trace_capture.web.chat_factory import WebAgentSessionFactory
 from trace_capture.web.contexts import build_context_router
@@ -36,20 +38,26 @@ def create_app(
     session_ttl_seconds: int = _DEFAULT_SESSION_TTL_SECONDS,
     clock: Clock = time.time,
     chat_factory: WebAgentSessionFactory | None = None,
+    candidate_generator: CandidateGeneratorPort | None = None,
 ) -> FastAPI:
     store = SqliteWorkspaceStore(root)
     secret = secrets.token_bytes(32) if session_secret is None else session_secret
     codec = SessionCodec(secret=secret, clock=clock)
     current_principal = CurrentPrincipal(store, codec)
+    settings = AgentSettings.from_environment()
     active_chat_factory = (
-        WebAgentSessionFactory.production(AgentSettings.from_environment())
-        if chat_factory is None
-        else chat_factory
+        WebAgentSessionFactory.production(settings) if chat_factory is None else chat_factory
+    )
+    active_generator = (
+        build_candidate_generator(settings, store)
+        if candidate_generator is None
+        else candidate_generator
     )
     app = FastAPI(title="Trace Workspace API")
     app.include_router(build_auth_router(store, codec, session_ttl_seconds=session_ttl_seconds))
     app.include_router(build_context_router(store, current_principal))
     app.include_router(build_asset_router(store, current_principal))
+    app.include_router(build_candidate_router(store, current_principal, active_generator))
     app.include_router(build_session_router(store, current_principal))
     app.include_router(build_chat_router(store, current_principal, active_chat_factory))
     app.include_router(build_run_router(current_principal))

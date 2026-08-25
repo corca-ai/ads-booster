@@ -128,13 +128,16 @@ authenticated account advertises another image-capable Responses model.
 
 The workspace is a local-first team surface layered on top of the existing agent. Keep
 `trace-ads` or `trace-agent` for the standalone TUI and plain REPL; install the agent on an
-always-on Mac when the team needs a persistent workspace, shared context, private member chats,
-and automatic marketing generation. The installer only installs the CLI; start the workspace
-separately when you are ready. The standalone TUI and authenticated Web private chat use the same
-`AgentSession`, tool registry, provider OAuth, and slash-command contract. Web chat is a browser
-surface for the same agent controls, including `/session`, `/model`, `/permission`, `/auth`, `/new`,
-`/clear`, and `/help`; `/permission ask` shows approval controls in the browser. The service does
-not start a Codex process, publish to Notion or Threads, or create a remote database.
+always-on Mac when the team needs a persistent post factory. The installer only installs the CLI;
+start the workspace separately when you are ready. The service does not start a Codex process,
+publish to Notion or Threads, or create a remote database.
+
+The browser surface is two tabs: 후보 and 캡션·주제 승인. 후보 is the default tab; it creates post
+candidates and lists every candidate in the workspace, and 캡션·주제 승인 is the human approval gate
+for the first stage of the candidate journey.
+Persona, promotion, and reference knowledge lives in the operator's own markdown folder rather than
+in a browser form. The context, asset, campaign, queue, and private-chat routes still run and keep
+their tests, but they are API-only: no browser tab renders them.
 
 ### Start the local service
 
@@ -181,21 +184,21 @@ uv run trace-agent workspace add-member --name "Grace"
 
 The command is intentionally local-only because the current Web surface has no separate
 administrator identity. It prints the new member ID and invite code once; only the scrypt hash is
-stored. Authenticated members can upload JPEG, PNG, and WebP references from 자료 준비. The
-`/api/assets/upload` route validates the image bytes, stores a protected copy below
-`$TRACE_AGENT_HOME/assets/`, and records its normalized path, media type, SHA-256, and size.
-The lower-level `/api/assets` CRUD routes remain available for metadata integrations.
+stored. The `/api/assets/upload` route validates JPEG, PNG, and WebP bytes, stores a protected copy
+below `$TRACE_AGENT_HOME/assets/`, and records its normalized path, media type, SHA-256, and size.
+That route and the lower-level `/api/assets` CRUD routes are API-only; the browser has no upload
+form since the two-tab restructure.
 
 The service binds to loopback only. `--port 0` chooses an available port for an ephemeral
 check and prints the selected URL; use a fixed port for launchd. A foreground `serve` process
 owns the listener, so stop it with `Ctrl-C` when it is not managed by launchd.
 
-The Web private chat keeps conversation history scoped to the authenticated member and session.
-The central agent OAuth credential belongs to the always-on host, so team members use their
+The private-chat API keeps conversation history scoped to the authenticated member and session, and
+the central agent OAuth credential belongs to the always-on host, so team members use their
 Workspace/Member access codes rather than separate provider accounts. `/session` lists only that
-member's saved private sessions; `/model` and `/permission` controls are also member-scoped for the
-running service. The browser command catalog is loaded from the same TUI command definitions, so
-new commands do not need a second Web-only list.
+member's saved private sessions; `/model` and `/permission` controls are also member-scoped. The
+two-tab browser surface no longer exposes chat, so these controls are reachable through the
+`/api/chat` routes and the standalone TUI.
 
 ### Workspace data and configuration
 
@@ -204,7 +207,7 @@ Use an absolute path when configuring a dedicated Mac:
 
 | Path | Contents |
 | --- | --- |
-| `$TRACE_AGENT_HOME/workspace.sqlite3` | Workspace/member records, hashed access-code versions, shared context and asset metadata, and member-scoped private session histories |
+| `$TRACE_AGENT_HOME/workspace.sqlite3` | Workspace/member records, hashed access-code versions, shared context and asset metadata, post candidates with their review state, and member-scoped private session histories |
 | `$TRACE_AGENT_HOME/automation.sqlite3` | Finite/continuous campaigns, queue records, leases, run references, artifact hashes, and review state |
 | `$TRACE_AGENT_HOME/service.json` | Workspace/member IDs, loopback host/port, tunnel selection, and the last emitted public URL; never plaintext codes |
 | `$TRACE_AGENT_HOME/auth.json` | Agent OAuth credentials, written with mode `0600` |
@@ -222,6 +225,8 @@ The relevant environment overrides are:
 ```text
 TRACE_AGENT_HOME              # default: ~/.trace-agent
 TRACE_AGENT_MODEL             # default: gpt-5.5
+TRACE_AGENT_CONTEXT_DIR       # default: <serve working directory>/context
+TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS  # default: 240
 TRACE_AGENT_MEMORY_FILE       # default: $TRACE_AGENT_HOME/memory.jsonl
 TRACE_AGENT_SESSIONS_DIR      # default: $TRACE_AGENT_HOME/sessions
 TRACE_AGENT_WEB_SEARCH_PROVIDER
@@ -233,12 +238,80 @@ TRACE_AGENT_IMAGE_MODEL         # default: gpt-5.6-luna
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 ```
 
+### Candidate pipeline
+
+A candidate is the post unit of the workspace: a topic, a caption, its hypothesis, the references
+and principles behind it, and the free-form Appium prompt used to build its image. Candidates have two
+entrances, automatic and manual, and both land in one list before a human approval gate. The 후보
+tab opens on a 새 게시물 만들기 block: 🤖 후보 자동 생성 is the primary action and ✍️ 수동 등록 is a
+collapsed form for pasting one candidate by hand — 주제/컨셉 comes first and is required, and 국가
+is a KR/JP/TW/US dropdown that defaults to KR. Below the block the tab lists every candidate in the
+workspace, newest first, with the topic as its main line and the caption's first line beneath it.
+The 캡션·주제 승인 tab shows one card per candidate that is still awaiting a decision: the topic is
+the card headline, the caption sits directly under it, and the composed image when one exists,
+hypothesis, applied principles, references, the recorded AI verdict, and the Appium prompt follow.
+One approve/reject pair decides the topic and the caption together — there is no separate per-field
+gate.
+
+Every candidate row and approval card carries the same three-step journey line,
+`① 캡션·주제 승인 → ② 이미지 승인 → ③ 제출`, so the current position is visible. Steps ② and ③ are
+rendered muted with the tooltip `다음 단계에서 연결됩니다`, because only stage one exists:
+
+| Status | Meaning | Reachable today |
+| --- | --- | --- |
+| `awaiting_review` | 캡션·주제 검수 대기 | yes, on creation |
+| `caption_approved` | 캡션·주제 승인됨 · 이미지 대기 | yes, by approving stage one |
+| `rejected` | 반려됨 | yes, by rejecting stage one |
+| `image_approved` | 이미지 승인됨 · 제출 대기 | **no** — declared for stage two, no writer |
+| `submitted` | 제출됨 | **no** — declared for stage three, no writer |
+
+Opening the workspace database runs two idempotent migrations for rows written before these
+fields existed: `accepted` becomes `caption_approved`, and candidates stored before `topic` was
+required are backfilled with the placeholder `(주제 미기록)` so the required field holds. Posting
+stays manual and outside this runtime.
+
+🤖 후보 자동 생성 is wired to the built-in agent. One click assembles the operator's context
+documents into a single provider call and stores three Korean candidates as `source=auto`, awaiting
+caption approval like any manual candidate. The button disables itself and shows
+`생성 중… (1~3분 소요)` while the request runs, then refreshes the list. It needs two things:
+
+- **Run the service from the folder that holds `context/`.** The generator reads
+  `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points elsewhere, and it needs
+  `core/PRINCIPLES-GLOBAL.md`, `core/PRINCIPLES-KR.md`, `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`,
+  `core/FACTS.md`, and `references/KR/INDEX.md`. A missing folder or file stops the run before any
+  model call and the browser shows which one.
+- **A logged-in agent credential.** Run `trace-agent auth login` in the terminal first; without it
+  the button reports `AI 로그인이 필요합니다`.
+
+This version is deliberately simple: one non-streaming call per click, no tool loop and no web
+search, exactly three candidates, Korean only. The model must answer with a strict JSON array; one
+malformed answer is retried once with the validation error, and a second failure stores nothing and
+reports `AI 응답이 형식을 통과하지 못했습니다`. The generated `appium_prompt` is stored as the
+candidate's Appium 프롬프트.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/candidates` | List the authenticated member's workspace candidates, newest first |
+| `POST /api/candidates` | Create a manual candidate from `topic`, `country`, `caption`, `hypothesis`, and optional `refs_used`/`principles_applied`/`shooting_order`; the server forces `source=manual` and `status=awaiting_review` |
+| `POST /api/candidates/generate` | Assemble `context/` into one provider call and store three `source=auto` candidates, or store nothing; `409` for a missing context folder or credential, `502` for a provider or format failure |
+| `POST /api/candidates/{candidate_id}/review` | Stage-one decision on topic and caption together: `caption_approved` or `rejected`, with an optional note and an `expected_revision` guard |
+
+There is no endpoint for stages two and three. A review carries the candidate's current revision and
+only applies to a candidate that is still awaiting review. A stale revision or a second decision
+returns `409`, an unknown candidate returns `404`, and candidates are never visible or reviewable
+from another workspace. The current runtime stores `ai_verdict` and `image_path` for display only.
+The Appium prompt is stored in the `shooting_order` field; only its UI label was renamed.
+
 ### Continuous campaign and review flow
 
-In 자료 준비, save a persona as `PersonaProfile` JSON and a promotion as `PromotionMaterial`
-JSON. A promotion may include exactly three `trace_items` to control the native Trace copy. Upload
-optional visual references, then select those records in 새 자료 만들기. Choose a finite count or
-leave continuous production enabled. The campaign freezes those inputs and the service creates one
+This flow is API-only after the two-tab restructure: the browser no longer has the 자료 준비,
+생성 큐, or 새 자료 만들기 surfaces that used to drive it, and the routes below are reachable only
+through the API.
+
+Save a persona as `PersonaProfile` JSON and a promotion as `PromotionMaterial` JSON through
+`/api/contexts`. A promotion may include exactly three `trace_items` to control the native Trace
+copy. Upload optional visual references, then reference those records when creating a campaign
+through `/api/campaigns`. Choose a finite count or leave continuous production enabled. The campaign freezes those inputs and the service creates one
 uniquely identified variation at a time. Stopping a campaign prevents future variations without
 erasing work already submitted or running. A known Image Model, credential, filesystem, or Appium
 failure records the queue item as failed and automatically stops that campaign instead of producing

@@ -325,9 +325,7 @@ def test_codex_image_generator_when_reference_exists_then_it_requests_an_image_e
     image_url = image_item.get("image_url")
     assert isinstance(image_url, str)
     assert image_url.startswith("data:image/png;base64,")
-    assert http.payload["tools"] == [
-        {"type": "image_generation", "action": "edit"}
-    ]
+    assert http.payload["tools"] == [{"type": "image_generation", "action": "edit"}]
 
 
 def test_generate_one_runner_when_context_is_valid_then_it_completes_one_image(
