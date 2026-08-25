@@ -20,6 +20,7 @@
   const workspaceChatName = one("[data-workspace-chat-name]");
   const captureDialog = one("[data-capture-dialog]"); const workspaceLive = one("[data-workspace-live]");
   const entryScreen = one("[data-entry-screen]");
+  const accessTokenField = one("#workspace-access-id");
   const skipLink = one(".skip-link");
   const queueEmpty = one("[data-queue-empty]");
   const queueSummary = one("[data-queue-summary]");
@@ -64,10 +65,28 @@
     rejected: "거절됨",
     failed: "실패",
   });
+  const ACCESS_ID_SEPARATOR = "%";
+  const ACCESS_ID_PART_COUNT = 4;
+  const ACCESS_ID_PREFIX = "Workspace access ID (shown once; not written to logs):";
 
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   const contextKindLabel = (kind) => CONTEXT_KIND_LABELS[kind] ?? kind;
   const queueStateLabel = (state) => QUEUE_STATE_LABELS[state] ?? state;
+  const parseAccessId = (value) => {
+    const normalized = value.trim();
+    const token = normalized.startsWith(ACCESS_ID_PREFIX)
+      ? normalized.slice(ACCESS_ID_PREFIX.length).trim()
+      : normalized;
+    const parts = token.split(ACCESS_ID_SEPARATOR).map((part) => part.trim());
+    if (parts.length !== ACCESS_ID_PART_COUNT || parts.some((part) => !part)) return null;
+    const [workspaceId, memberId, workspaceCode, memberCode] = parts;
+    return {
+      workspace_id: workspaceId,
+      member_id: memberId,
+      workspace_code: workspaceCode,
+      member_code: memberCode,
+    };
+  };
 
   const setNotice = (message) => {
     if (notice) notice.textContent = message;
@@ -99,7 +118,7 @@
     if (!response.ok) {
       const validationError = Array.isArray(payload?.detail);
       const detail = validationError
-        ? "워크스페이스 ID, 멤버 ID, 워크스페이스 코드, 멤버 코드를 모두 입력해 주세요."
+        ? "워크스페이스 접속 ID 형식을 확인해 주세요."
         : typeof payload?.detail === "string"
           ? payload.detail
           : payload?.detail?.message;
@@ -530,36 +549,36 @@
     const target = event.currentTarget;
     const form = new FormData(target);
     setBusy(target, true, "워크스페이스에 연결하는 중…");
-    const requiredFields = [
-      ["workspace-id", "워크스페이스 ID"],
-      ["member-id", "멤버 ID"],
-      ["workspace-code", "워크스페이스 코드"],
-      ["member-code", "멤버 코드"],
-    ];
-    requiredFields.forEach(([name]) => document.getElementById(name)?.removeAttribute("aria-invalid"));
-    const missingFields = requiredFields.filter(([name]) => !String(form.get(name) ?? "").trim());
-    if (missingFields.length) {
-      missingFields.forEach(([name]) => document.getElementById(name)?.setAttribute("aria-invalid", "true"));
-      const [firstName] = missingFields[0];
-      const field = document.getElementById(firstName);
+    accessTokenField?.removeAttribute("aria-invalid");
+    const accessId = String(form.get("access-token") ?? "").trim();
+    if (!accessId) {
+      accessTokenField?.setAttribute("aria-invalid", "true");
       if (memberFeedback) {
         memberFeedback.hidden = false;
-        memberFeedback.textContent = `${missingFields.map(([, label]) => label).join(", ")} 값을 입력해 주세요.`;
+        memberFeedback.textContent = "워크스페이스 접속 ID 값을 입력해 주세요.";
       }
-      field?.focus();
+      accessTokenField?.focus();
       setBusy(target, false);
       return;
     }
+    const credentials = parseAccessId(accessId);
+    if (!credentials) {
+      accessTokenField?.setAttribute("aria-invalid", "true");
+      if (memberFeedback) {
+        memberFeedback.hidden = false;
+        memberFeedback.textContent = "워크스페이스 접속 ID 형식을 확인해 주세요.";
+      }
+      accessTokenField?.focus();
+      setBusy(target, false);
+      return;
+    }
+    target.reset();
     try {
       const member = await request("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_id: form.get("workspace-id"), member_id: form.get("member-id"),
-          workspace_code: form.get("workspace-code"), member_code: form.get("member-code"),
-        }),
+        body: JSON.stringify(credentials),
       });
-      target.reset();
       markAuthenticated(member);
       await refreshWorkspace();
       setNotice("워크스페이스에 연결되었습니다.");

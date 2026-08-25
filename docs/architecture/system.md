@@ -189,7 +189,8 @@ prepares a loopback listener, bootstraps a workspace when needed, requests a
 cloudflared quick tunnel by default, and starts a Uvicorn process with the FastAPI application and
 an explicitly attached automation worker. Readiness requires the loopback service to answer
 `/health` and cloudflared to emit a public URL; it does not perform a second public DNS probe from
-the same host. `--tunnel none` opts out of public access.
+the same host. During launchd replacement, the service waits for the previous job to finish
+unloading before bootstrapping the new plist. `--tunnel none` opts out of public access.
 
 On first start:
 
@@ -202,10 +203,12 @@ After bootstrap, a local operator can run `trace-agent workspace add-member --na
 provision another member. The command is a local administration boundary and prints the invite code
 once; the Web API does not pretend that any authenticated member is an administrator.
 
-The browser submits workspace and member credentials to the auth route. Successful login creates
-an HMAC-signed cookie containing workspace/member IDs, code versions, and expiry. The signing secret
-is process-local by default, so a service restart invalidates existing browser sessions. Code
-rotation also invalidates sessions whose embedded versions are stale.
+`workspace access` emits one copyable `%`-separated browser login ID containing the workspace ID,
+member ID, workspace code, and member code. The browser parses that value at the entry boundary and
+submits the existing four-field payload to the auth route. Successful login creates an HMAC-signed
+cookie containing workspace/member IDs, code versions, and expiry. The signing secret is process-local
+by default, so a service restart invalidates existing browser sessions. Code rotation also invalidates
+sessions whose embedded versions are stale.
 
 Shared context is workspace-scoped. Private conversation history is scoped by workspace, member,
 and session. A Web chat request loads shared context as a read-only developer prefix, runs a fresh

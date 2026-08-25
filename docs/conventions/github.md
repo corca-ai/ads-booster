@@ -42,18 +42,22 @@ unrelated changes on one branch.
 ### Format
 
 ```text
-<type>: <message>
+<type>: <message> (#<issue-number>)
 ```
+
+Every implementation, bug fix, test, or repository-policy change starts from a GitHub Issue. Every
+commit must include its issue reference in the subject using `(#<issue-number>)`; one logical commit
+maps to one issue, and unrelated changes must not share an issue or commit.
 
 Examples:
 
 ```text
-feat: add campaign health check
-fix: handle missing database url
-refactor: simplify database options
-docs: add GitHub conventions
-test: cover health endpoint failure
-chore: update development dependencies
+feat: add campaign health check (#123)
+fix: handle missing database url (#123)
+refactor: simplify database options (#123)
+docs: add GitHub conventions (#123)
+test: cover health endpoint failure (#123)
+chore: update development dependencies (#123)
 ```
 
 ### Types
@@ -69,6 +73,15 @@ Make each commit a meaningful unit with one intent. Before committing, inspect t
 diff, and ensure no passwords, tokens, `.env` files, or other secrets are included.
 
 ## Workflow
+
+### 0. Create or identify the issue
+
+Before implementation or staging, create or identify the GitHub Issue that owns the change and record
+its number. Use the issue number in every related commit subject, for example:
+
+```text
+fix: wait for launchd teardown before workspace restart (#123)
+```
 
 ### 1. Start from current `main`
 

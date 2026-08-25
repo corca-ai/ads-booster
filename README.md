@@ -167,10 +167,11 @@ uv run trace-agent workspace access
 
 `workspace show` remains an optional diagnostic command; it is not required for normal team access.
 
-`workspace access` explicitly rotates the owner workspace/member codes and prints the four browser
-login values once: Workspace ID, Member ID, Workspace code, and Member code. The compatibility
-alias `rotate-code` performs the same action. A browser login supplies those values. The service
-then scopes shared context to the workspace and private chat history to the authenticated member.
+`workspace access` explicitly rotates the owner workspace/member codes and prints one browser login
+ID once. Its four `%`-separated parts are Workspace ID, Member ID, Workspace code, and Member code;
+paste the complete value into the browser entry form. The compatibility alias `rotate-code` performs
+the same action. The service still parses and verifies those four values separately, then scopes
+shared context to the workspace and private chat history to the authenticated member.
 Rotating either code version invalidates sessions issued with the old version. The first-run CLI
 provisions the owner pair; the local operator can provision another member with a one-time invite
 code:
@@ -270,8 +271,9 @@ launchctl print "gui/$(id -u)/com.corca.trace-agent"
 
 `workspace start` uses the same launchd service boundary. It writes
 `~/Library/LaunchAgents/com.corca.trace-agent.plist`, creates
-protected stdout/stderr files below `$TRACE_AGENT_HOME/logs/`, loads the job by default, and waits
-briefly for the local service and the emitted public URL to become ready. On an existing state root,
+protected stdout/stderr files below `$TRACE_AGENT_HOME/logs/`, loads the job by default, waits for the
+previous launchd job to finish unloading before replacement, and then waits briefly for the local
+service and the emitted public URL to become ready. On an existing state root,
 `--workspace-name` updates the stored workspace name when you intentionally rerun setup.
 The default launchd command requests cloudflared; use `--tunnel none` for local-only service
 operation. Use `--no-load` to generate the plist without starting it or `--plist <path>` to
