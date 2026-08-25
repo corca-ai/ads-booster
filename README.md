@@ -891,10 +891,10 @@ npx wrangler queues consumer http add trace-marketing-tasks
 ```
 
 The commands above are for an initial resource bootstrap or an explicit local recovery. Normal
-production delivery is automatic: a merge to `main` that changes `cloudflare/**` runs
-`.github/workflows/deploy-cloudflare.yml`, checks the Worker, applies pending D1 migrations, deploys
-the merged revision, and verifies `/health`, the login-free root workspace, and its public session in
-that order. Pull Requests run the same Worker check
+production delivery is automatic: a merge to `main` that changes `cloudflare/**`, the canonical
+workspace UI, or packaged context runs `.github/workflows/deploy-cloudflare.yml`, checks the Worker,
+applies pending D1 migrations, deploys the merged revision, and verifies `/health`, the login-free
+root workspace, and its public session in that order. Pull Requests run the same Worker check
 without receiving deployment credentials or changing Cloudflare. GitHub Actions stores the deployment API
 token as the `CLOUDFLARE_API_TOKEN` repository secret; account ID, D1 ID, and health URL are
 repository variables. Existing Worker runtime secrets remain in Cloudflare and are not copied into

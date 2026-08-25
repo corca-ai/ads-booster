@@ -6,11 +6,15 @@ on:
     paths:
       - .github/workflows/deploy-cloudflare.yml
       - cloudflare/**
+      - src/trace_capture/assets/context/**
+      - src/trace_capture/web/static/**
   push:
     branches: [main]
     paths:
       - .github/workflows/deploy-cloudflare.yml
       - cloudflare/**
+      - src/trace_capture/assets/context/**
+      - src/trace_capture/web/static/**
   workflow_dispatch:
 
 concurrency:

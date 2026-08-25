@@ -452,12 +452,13 @@ task ID, and duplicate callbacks replay the same event only after the stored cal
 match. Pull, acknowledgement, callback, and approval transport failures do not block already-durable
 local work.
 
-Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A qualifying
-Pull Request runs an unprivileged Worker check. A qualifying merge to `main` then installs the
-locked Worker dependencies, reuses that check as a deployment prerequisite, renders the
-environment-specific Wrangler config from GitHub variables, applies D1 migrations, deploys the
-Worker and static assets, and requires successful public `/health`, root workspace, and public-session
-readbacks, including a non-empty default context profile after D1 migration. The deployment job
+Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A Pull Request
+that changes the Worker, canonical workspace UI, or packaged context runs an unprivileged Worker
+check. A qualifying merge to `main` then installs the locked Worker dependencies, reuses that check
+as a deployment prerequisite, renders the environment-specific Wrangler config from GitHub
+variables, applies D1 migrations, deploys the Worker and static assets, and requires successful
+public `/health`, root workspace, and public-session readbacks, including a non-empty default context
+profile after D1 migration. The deployment job
 is concurrency-serialized and never cancels an in-flight migration/deploy. Runtime control-plane and
 callback secrets stay attached to the Worker in Cloudflare; GitHub receives only the scoped deploy
 credential required by Wrangler.
