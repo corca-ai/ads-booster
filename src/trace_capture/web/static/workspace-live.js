@@ -44,6 +44,7 @@
   let hostedAccounts = [];
   let selectedAccountId = "";
   let feedbackSignal = null;
+  let capturePoll = null;
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -145,7 +146,11 @@
 
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   const candidateSourceLabel = (source) => CANDIDATE_SOURCE_LABELS[source] ?? source;
-  const candidateStatusLabel = (status) => CANDIDATE_STATUS_LABELS[status] ?? status;
+  const candidateStatusLabel = (record) => {
+    if (record.capture_state === "queued") return "Mac 캡처 대기·실행 중";
+    if (record.capture_state === "failed") return "Mac 캡처 실패 · 재시도 가능";
+    return CANDIDATE_STATUS_LABELS[record.status] ?? record.status;
+  };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
   const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
 
@@ -304,7 +309,10 @@
     }
     content.append(journeyNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
-    trailing.append(badge(`candidate-status ${record.status}`, candidateStatusLabel(record.status)));
+    trailing.append(badge(
+      `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
+      candidateStatusLabel(record),
+    ));
     if (hostedCandidateControls) {
       const edit = document.createElement("button");
       edit.className = "button button-quiet candidate-row__action";
@@ -505,7 +513,10 @@
     const header = document.createElement("div"); header.className = "approval-card__header";
     header.append(
       badge("candidate-source", candidateSourceLabel(record.source)),
-      badge(`candidate-status ${record.status}`, candidateStatusLabel(record.status)),
+      badge(
+        `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
+        candidateStatusLabel(record),
+      ),
     );
     const body = document.createElement("div"); body.className = "approval-card__body";
     body.append(imageSummary(record), approvalVisual(record));
@@ -515,12 +526,24 @@
     feedback.setAttribute("role", "alert");
     feedback.hidden = true;
     if (record.status === "caption_approved") {
-      const button = document.createElement("button");
-      button.className = "button button-primary";
-      button.type = "button";
-      button.textContent = "이미지 생성";
-      button.addEventListener("click", () => generateCandidateImage(record, button, feedback));
-      actions.append(button);
+      if (record.capture_state === "queued") {
+        const waiting = document.createElement("p");
+        waiting.className = "candidate-feedback";
+        waiting.textContent = "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다.";
+        actions.append(waiting);
+      } else {
+        const button = document.createElement("button");
+        button.className = "button button-primary";
+        button.type = "button";
+        button.textContent = record.capture_state === "failed" ? "Mac 캡처 다시 시도" : "Mac에서 이미지 생성";
+        button.addEventListener("click", () => generateCandidateImage(record, button, feedback));
+        actions.append(button);
+      }
+      if (record.capture_state === "failed") {
+        const failure = approvalField("캡처 실패 코드", record.capture_error || "native_capture_failed");
+        card.append(header, body, failure, actions, feedback);
+        return card;
+      }
       if (record.review_note) {
         const note = approvalField("직전 반려 사유", record.review_note);
         card.append(header, body, note, actions, feedback);
@@ -542,7 +565,7 @@
   const generateCandidateImage = async (record, button, feedback) => {
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = "이미지 생성 중… (1~3분)";
+    button.textContent = "Queue 등록 중…";
     setCardFeedback(feedback, "");
     setBusy(button, true, "잠금화면 이미지를 만드는 중… (1~3분 소요)");
     try {
@@ -550,7 +573,7 @@
         method: "POST",
       });
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
-      setNotice("이미지를 만들었습니다. 이미지 검수를 진행해 주세요.");
+      setNotice("Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
       setNotice(error.message);
@@ -667,7 +690,16 @@
     if (imageCount) {
       const generationPending = imageStage.filter((record) => record.status === "caption_approved");
       const reviewPending = imageStage.filter((record) => record.status === "image_awaiting_review");
-      imageCount.textContent = `생성 대기 ${generationPending.length}건 · 검수 대기 ${reviewPending.length}건`;
+      const queued = generationPending.filter((record) => record.capture_state === "queued").length;
+      const failed = generationPending.filter((record) => record.capture_state === "failed").length;
+      const ready = generationPending.length - queued - failed;
+      imageCount.textContent = `생성 가능 ${ready}건 · Mac 대기·실행 ${queued}건 · 실패 ${failed}건 · 검수 대기 ${reviewPending.length}건`;
+    }
+    if (capturePoll) window.clearTimeout(capturePoll);
+    if (records.some((record) => record.capture_state === "queued")) {
+      capturePoll = window.setTimeout(() => {
+        loadCandidates().catch((error) => setNotice(error.message));
+      }, 5000);
     }
   };
 

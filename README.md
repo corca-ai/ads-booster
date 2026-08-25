@@ -749,10 +749,10 @@ metrics tasks inside the Cloudflare Workflow. Each task is explicitly labeled as
 as a digest-backed R2 artifact, and indexed as succeeded in D1. The Workflow still pauses at both
 human approval gates. This hosted path needs no always-on worker process.
 
-The existing production Worker also serves one public review workspace at:
+The production Worker serves the public review workspace at the stable custom domain:
 
 ```text
-https://trace-marketing-control.donghun.workers.dev/
+https://workspace.borca.ai/
 ```
 
 It has no workspace access ID or login step. Anyone with the URL can create or change an account,
@@ -771,13 +771,16 @@ also claims each enabled account at its next local morning time and runs the sam
 Profiles can be added, edited, or hidden from the same screen. Every candidate stores the selected
 profile as an immutable snapshot, so later profile edits do not rewrite its generation provenance.
 
-Caption approval, a deterministic Cloudflare lock-screen preview stored in R2, and image approval use
-the same review tab. The preview records and renders the candidate schedule and device time, but it is
-explicitly not a native Appium capture and does not publish to an external channel. Image approval
+Caption approval, native Mac/Appium capture, and image approval use the same review tab. `이미지 생성`
+creates a revision-scoped Queue task. An enrolled Mac dynamically selects a booted or available iPhone
+Simulator, starts Appium when installed but inactive, captures a fresh Trace component, composes the
+final PNG, and sends a digest-backed result to the protected callback API. The Worker verifies the
+digest before storing the PNG in R2. Offline workers leave the card visibly queued; verified failures
+show a stable code and a retry button. Image approval
 ends at `submitted` (게시 준비 완료); it does not call Threads or another publishing API. Candidate
 filters make review, image, ready, and rejected queues visible. Every hosted candidate, including
 `submitted` candidates, has 수정 and 삭제 controls. Editing clears its previous approval and R2
-preview and returns it to `awaiting_review`; deletion removes both its D1 row and preview with an
+image and returns it to `awaiting_review`; deletion removes both its D1 row and R2 object with an
 optimistic revision guard. Approval is a one-click 5-point review. Rejection requires a 1–3 rating
 and one or more structured tags; `기타` also requires a note. Three matching rejections for the same
 account/persona become an account-scoped rule candidate and are injected into its next generation prompt.
@@ -811,9 +814,8 @@ Hosted context endpoints are intentionally public with the rest of this workspac
 | `DELETE /api/context-profiles/{profile_id}` | Soft-hide a profile while preserving candidate snapshots |
 | `GET /api/feedback-summary` | Return account/persona rejection counts, top tags, and 3+ occurrence rule candidates |
 
-The external worker is required only for an account with a `workspace_id`, where provider
-candidate generation and local image composition need the installed Trace workspace. For an
-interactive foreground check it reads these environment variables:
+The external worker is required for hosted native image capture and for control-plane accounts with
+a local `workspace_id`. For an interactive foreground check it reads these environment variables:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=...
@@ -856,9 +858,9 @@ explicitly:
 trace-marketing bridge --executor candidate-pipeline
 ```
 
-This mode uses the provider-backed candidate generator and the provenance-checked search/composition
-image stage. It does **not** enable live publication or metrics: those task kinds remain visibly
-simulated. The operator reviews every generated caption in the existing workspace. When no caption
+This mode routes `hosted_workspace_capture_v1` tasks through the production Appium/XCUITest capture
+runner. Other control-plane capture tasks keep the installed candidate-store journey. It does
+**not** enable live publication or metrics: those task kinds remain visibly simulated. The operator reviews every generated caption in the existing workspace. When no caption
 is left waiting, the bridge durably sends one candidate approval containing all accepted candidates
 (or one rejection if all were rejected). After capture, approving every selected image similarly
 sends publication approval. No separate API call is part of the normal review flow.
@@ -873,9 +875,9 @@ The control-plane approval endpoint remains available for explicit recovery or d
 Both bodies can be posted to `POST /v1/runs/<run-id>/approval`. Omitting `phase` remains supported:
 the control plane infers it from the run's current waiting state. Normal bridge-originated review
 events instead use the Worker-token-only `/v1/review-events` boundary and a D1 receipt keyed by
-`<run-id>:<phase>` so retrying the same event does not advance the Workflow twice. The offline image
-stage still uses the packaged Trace component fixture, so candidate schedule text and device time are
-recorded but are not rendered until the native Appium capture adapter replaces that fixture.
+`<run-id>:<phase>` so retrying the same event does not advance the Workflow twice. Hosted workspace
+captures do not use the packaged fixture: the callback is accepted only when task, run, account,
+candidate revision, kind, callback ID, PNG digest, and size all match.
 
 Cloudflare deployment is under `cloudflare/`:
 
@@ -894,7 +896,7 @@ The commands above are for an initial resource bootstrap or an explicit local re
 production delivery is automatic: a merge to `main` that changes `cloudflare/**`, the canonical
 workspace UI, or packaged context runs `.github/workflows/deploy-cloudflare.yml`, checks the Worker,
 applies pending D1 migrations, deploys the merged revision, and verifies `/health`, the login-free
-root workspace, and its public session in that order. Pull Requests run the same Worker check
+root workspace, its public session, and `https://workspace.borca.ai/health` in that order. Pull Requests run the same Worker check
 without receiving deployment credentials or changing Cloudflare. GitHub Actions stores the deployment API
 token as the `CLOUDFLARE_API_TOKEN` repository secret; account ID, D1 ID, and health URL are
 repository variables. Existing Worker runtime secrets remain in Cloudflare and are not copied into

@@ -419,8 +419,13 @@ forward without changing another silo. A manifest maps packaged global and count
 starter profile files, so a new country does not require a Worker source edit. Missing country
 documents fail closed with `409`.
 Missing or incomplete Appium prompt text is rebuilt from the validated image inputs.
-R2 stores a digest-backed SVG review preview that renders the candidate's schedule and device time.
-That preview proves the hosted review loop only; it is not a native Appium capture or a publication.
+Caption approval creates a revision-scoped hosted capture task in D1 and Cloudflare Queue. The
+portable bridge recognizes that task contract, discovers a booted or available iPhone Simulator at
+execution time, runs the production Appium/XCUITest capture and deterministic composition path, and
+returns the final PNG in its durable callback outbox. The Worker verifies task/run/account/candidate
+scope, callback ID, byte limit, and SHA-256 before storing the PNG in R2. A duplicate identical
+callback is accepted; a changed or stale callback cannot advance the candidate. Offline workers leave
+`capture_state=queued`; verified failures use `capture_state=failed` and remain retryable.
 Image approval ends at `submitted` and performs no outbound publication action. A hosted candidate
 can be edited or deleted from any state with its current optimistic revision. Editing invalidates the
 old review and image, returns the candidate to `awaiting_review`, and removes the old R2 object;
@@ -452,13 +457,19 @@ task ID, and duplicate callbacks replay the same event only after the stored cal
 match. Pull, acknowledgement, callback, and approval transport failures do not block already-durable
 local work.
 
+The login-free hosted workspace uses the same Queue independently of the Workflow account mode for
+native image work. Its task payload contains the immutable candidate/context snapshot but no bridge
+secret. The Mac bridge is outbound-only and stores credentials through the existing environment or
+external-command provider, never macOS Keychain. `TRACE_AGENT_DEVICE_UDID` is an optional override;
+without it the worker chooses a compatible Simulator dynamically.
+
 Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A Pull Request
 that changes the Worker, canonical workspace UI, or packaged context runs an unprivileged Worker
 check. A qualifying merge to `main` then installs the locked Worker dependencies, reuses that check
 as a deployment prerequisite, renders the environment-specific Wrangler config from GitHub
 variables, applies D1 migrations, deploys the Worker and static assets, and requires successful
 public `/health`, root workspace, and public-session readbacks, including a non-empty default context
-profile after D1 migration. The deployment job
+profile after D1 migration and reads back the `workspace.borca.ai` custom domain. The deployment job
 is concurrency-serialized and never cancels an in-flight migration/deploy. Runtime control-plane and
 callback secrets stay attached to the Worker in Cloudflare; GitHub receives only the scoped deploy
 credential required by Wrangler.
@@ -473,7 +484,7 @@ capability-gated and is not enabled or claimed. See
 [Dynamic Cloudflare Marketing Loop Contract](../contracts/cloudflare-marketing-loop.md).
 
 The base CLI, TUI, Web shell, and offline composition do not require native capture dependencies.
-Generation that includes Trace component capture requires Xcode, an available Simulator, the Trace
+Generation that includes Trace component capture requires full Xcode, an available Simulator, the Trace
 debug build, Appium, and the XCUITest driver. The agent starts installed but inactive Simulator and
 Appium processes, but does not install the missing Trace build or driver.
 

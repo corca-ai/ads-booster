@@ -759,6 +759,8 @@ textarea:focus-visible {
 .candidate-status.awaiting_review { background: var(--color-warning); color: var(--color-accent-ink); }
 .candidate-status.caption_approved,
 .candidate-status.image_awaiting_review { background: var(--color-info); color: var(--color-accent-ink); }
+.candidate-status.capture_queued { background: var(--color-info); color: var(--color-accent-ink); }
+.candidate-status.capture_failed { background: var(--color-danger); color: var(--color-accent-ink); }
 .candidate-status.submitted { background: var(--color-accent); color: var(--color-accent-ink); }
 .candidate-status.rejected { background: var(--color-danger); color: var(--color-accent-ink); }
 

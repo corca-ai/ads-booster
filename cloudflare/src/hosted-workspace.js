@@ -178,6 +178,7 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
 
 export async function runHostedWorkspaceSchedules(env, contextRegistry, starterProfiles = []) {
   await ensureDefaultHostedAccount(env);
+  await redispatchHostedCaptureTasks(env);
   const now = new Date();
   const due = await env.DB.prepare(
     `SELECT account_id FROM hosted_workspace_accounts
@@ -224,6 +225,37 @@ export async function runHostedWorkspaceSchedules(env, contextRegistry, starterP
   }
 }
 
+async function redispatchHostedCaptureTasks(env) {
+  if (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function") return;
+  const retryBefore = new Date(Date.now() - 5 * 60_000).toISOString();
+  const pending = await env.DB.prepare(
+    `SELECT task_id, task_json FROM hosted_workspace_capture_tasks
+     WHERE state = 'queued' AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)
+     ORDER BY created_at LIMIT 50`,
+  )
+    .bind(retryBefore)
+    .all();
+  for (const task of pending.results) {
+    const now = new Date().toISOString();
+    const claimed = await env.DB.prepare(
+      `UPDATE hosted_workspace_capture_tasks SET last_dispatched_at = ?, updated_at = ?
+       WHERE task_id = ? AND state = 'queued'
+         AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)`,
+    )
+      .bind(now, now, task.task_id, retryBefore)
+      .run();
+    if (claimed.meta.changes !== 1) continue;
+    try {
+      await env.TASK_QUEUE.send(task.task_json, { contentType: "text" });
+    } catch (error) {
+      console.error("hosted capture task redispatch failed", {
+        task_id: task.task_id,
+        message: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+  }
+}
+
 export function normalizeCandidateDraft(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new WorkspaceHttpError(400, "후보 입력 형식이 올바르지 않습니다.");
@@ -257,42 +289,6 @@ export function normalizeCandidateDraft(input) {
     image_inputs: imageInputs,
     posting_slot: postingSlot,
   };
-}
-
-export function renderCandidatePreview(candidate) {
-  const inputs = candidate.image_inputs;
-  const items = inputs.trace_items
-    .map(
-      (item, index) =>
-        `<text x="92" y="${680 + index * 122}" class="item">${escapeXml(item)}</text>`,
-    )
-    .join("");
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1179" height="2556" viewBox="0 0 1179 2556">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1d2939"/><stop offset="0.55" stop-color="#344054"/><stop offset="1" stop-color="#101828"/>
-    </linearGradient>
-    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="24" flood-opacity="0.28"/></filter>
-  </defs>
-  <style>
-    .time{font:700 176px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#fff;letter-spacing:-8px}
-    .date{font:500 34px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#e4e7ec}
-    .title{font:700 40px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#101828}
-    .item{font:500 34px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#344054}
-    .meta{font:500 27px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#d0d5dd}
-  </style>
-  <rect width="1179" height="2556" fill="url(#bg)"/>
-  <circle cx="950" cy="330" r="330" fill="#7f56d9" opacity="0.28"/>
-  <circle cx="210" cy="2050" r="420" fill="#2e90fa" opacity="0.18"/>
-  <text x="589.5" y="300" text-anchor="middle" class="date">오늘의 Trace</text>
-  <text x="589.5" y="500" text-anchor="middle" class="time">${escapeXml(inputs.device_time)}</text>
-  <rect x="48" y="570" width="1083" height="${Math.max(510, 210 + inputs.trace_items.length * 122)}" rx="54" fill="#fff" fill-opacity="0.94" filter="url(#shadow)"/>
-  <text x="92" y="632" class="title">${escapeXml(candidate.topic)}</text>
-  ${items}
-  <text x="72" y="2440" class="meta">${escapeXml(inputs.background_mood)}</text>
-  <text x="72" y="2488" class="meta">Cloudflare hosted preview · native Appium capture 아님</text>
-</svg>`;
 }
 
 export function candidateResponseSchema(country = "KR") {
@@ -1067,7 +1063,9 @@ async function updateCandidate(env, candidateId, revision, draft, requestedProfi
          principles_json = ?, appium_prompt = ?, image_inputs_json = ?,
          context_profile_id = ?, context_snapshot_json = ?, posting_slot = ?,
          ai_verdict = NULL, status = 'awaiting_review', review_note = NULL, image_key = NULL,
-         image_sha256 = NULL, last_review_rating = NULL, last_review_tags_json = '[]',
+         image_sha256 = NULL, capture_state = NULL, capture_task_id = NULL,
+         capture_error = NULL, capture_requested_at = NULL,
+         last_review_rating = NULL, last_review_tags_json = '[]',
          revision = revision + 1, updated_at = ?
      WHERE account_id = ? AND candidate_id = ? AND revision = ?`,
   )
@@ -1149,23 +1147,95 @@ async function generateCandidateImage(env, candidateId) {
   if (candidate.status !== "caption_approved") {
     throw new WorkspaceHttpError(409, "캡션·주제가 승인된 후보만 이미지를 만들 수 있습니다.");
   }
-  const svg = renderCandidatePreview(candidate);
-  const digest = await sha256(svg);
-  const key = `workspace/${accountId(env)}/candidates/${candidateId}.svg`;
-  await env.ARTIFACTS.put(key, svg, {
-    httpMetadata: { contentType: "image/svg+xml; charset=utf-8" },
-    customMetadata: { sha256: digest, account_id: accountId(env), candidate_id: candidateId },
-  });
+  if (candidate.capture_state === "queued") {
+    throw new WorkspaceHttpError(409, "이미지 캡처가 이미 Mac worker를 기다리고 있습니다.");
+  }
+  if (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function") {
+    throw new WorkspaceHttpError(503, "Mac 캡처 Queue가 준비되지 않았습니다.");
+  }
+  const taskId = crypto.randomUUID();
+  const runId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const nextRevision = candidate.revision + 1;
+  const idempotencyKey = `hosted:${accountId(env)}:${candidateId}:${candidate.revision}`;
+  const body = {
+    schema_version: "1",
+    task_id: taskId,
+    run_id: runId,
+    account_id: accountId(env),
+    kind: "capture",
+    idempotency_key: idempotencyKey,
+    payload: {
+      pipeline: "hosted_workspace_capture_v1",
+      candidate_id: candidateId,
+      candidate_revision: nextRevision,
+      country: candidate.country,
+      topic: candidate.topic,
+      caption: candidate.caption,
+      appium_prompt: candidate.shooting_order,
+      image_inputs: candidate.image_inputs,
+      context_profile: candidate.context_profile,
+    },
+    created_at: now,
+    credential_ref: null,
+  };
+  await env.DB.prepare(
+    `INSERT INTO hosted_workspace_capture_tasks
+      (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+       task_json, state, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+  )
+    .bind(
+      taskId,
+      runId,
+      accountId(env),
+      candidateId,
+      nextRevision,
+      idempotencyKey,
+      JSON.stringify(body),
+      now,
+      now,
+    )
+    .run();
   const result = await env.DB.prepare(
     `UPDATE hosted_workspace_candidates
-     SET status = 'image_awaiting_review', image_key = ?, image_sha256 = ?,
-         revision = revision + 1, updated_at = ?
+     SET capture_state = 'queued', capture_task_id = ?, capture_error = NULL,
+         capture_requested_at = ?, revision = revision + 1, updated_at = ?
      WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved' AND revision = ?`,
   )
-    .bind(key, digest, Date.now() / 1000, accountId(env), candidateId, candidate.revision)
+    .bind(taskId, now, Date.now() / 1000, accountId(env), candidateId, candidate.revision)
     .run();
   if (result.meta.changes !== 1) {
+    await env.DB.prepare(
+      `UPDATE hosted_workspace_capture_tasks SET state = 'failed', result_json = ?, updated_at = ?
+       WHERE task_id = ? AND state = 'queued'`,
+    )
+      .bind(JSON.stringify({ status: "failed", failure_code: "candidate_revision_conflict" }), now, taskId)
+      .run();
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
+  }
+  try {
+    await env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
+    await env.DB.prepare(
+      `UPDATE hosted_workspace_capture_tasks SET last_dispatched_at = ?, updated_at = ?
+       WHERE task_id = ? AND state = 'queued'`,
+    )
+      .bind(now, now, taskId)
+      .run();
+  } catch (error) {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE hosted_workspace_capture_tasks SET state = 'failed', result_json = ?, updated_at = ?
+         WHERE task_id = ? AND state = 'queued'`,
+      ).bind(JSON.stringify({ status: "failed", failure_code: "queue_dispatch_failed" }), now, taskId),
+      env.DB.prepare(
+        `UPDATE hosted_workspace_candidates
+         SET capture_state = 'failed', capture_error = 'queue_dispatch_failed',
+             revision = revision + 1, updated_at = ?
+         WHERE account_id = ? AND candidate_id = ? AND capture_task_id = ? AND capture_state = 'queued'`,
+      ).bind(Date.now() / 1000, accountId(env), candidateId, taskId),
+    ]);
+    throw new WorkspaceHttpError(503, "Mac 캡처 작업을 Queue에 등록하지 못했습니다. 다시 시도해 주세요.");
   }
   return requireCandidate(env, candidateId);
 }
@@ -1365,6 +1435,10 @@ function candidateFromRow(row) {
     generation_batch_id: row.generation_batch_id ?? null,
     image_path: row.image_key,
     image_sha256: row.image_sha256,
+    capture_state: row.capture_state ?? null,
+    capture_task_id: row.capture_task_id ?? null,
+    capture_error: row.capture_error ?? null,
+    capture_requested_at: row.capture_requested_at ?? null,
     status: row.status,
     review_note: row.review_note,
     review_rating: row.last_review_rating ?? null,
@@ -1515,15 +1589,6 @@ function json(payload, status = 200) {
     status,
     headers: { "cache-control": "no-store" },
   });
-}
-
-function escapeXml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
 }
 
 async function sha256(value) {

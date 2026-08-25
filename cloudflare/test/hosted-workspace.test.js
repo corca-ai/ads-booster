@@ -11,7 +11,6 @@ import {
   normalizeContextProfile,
   normalizeHostedAccount,
   normalizeReviewFeedback,
-  renderCandidatePreview,
 } from "../src/hosted-workspace.js";
 import {
   WORKSPACE_CONTEXT,
@@ -72,6 +71,8 @@ function candidateRow(overrides = {}) {
 function candidateEnvironment(initial = candidateRow()) {
   let row = { ...initial };
   const deletedArtifacts = [];
+  const queuedTasks = [];
+  const captureTasks = [];
   const DB = {
     prepare(sql) {
       return {
@@ -145,6 +146,32 @@ function candidateEnvironment(initial = candidateRow()) {
                 };
                 return { meta: { changes: 1 } };
               }
+              if (sql.includes("INSERT INTO hosted_workspace_capture_tasks")) {
+                captureTasks.push(values);
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET capture_state = 'queued'")) {
+                const [taskId, requestedAt, updatedAt, accountId, candidateId, revision] = values;
+                if (
+                  !row || row.account_id !== accountId || row.candidate_id !== candidateId ||
+                  row.status !== "caption_approved" || row.revision !== revision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                row = {
+                  ...row,
+                  capture_state: "queued",
+                  capture_task_id: taskId,
+                  capture_error: null,
+                  capture_requested_at: requestedAt,
+                  revision: row.revision + 1,
+                  updated_at: updatedAt,
+                };
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET last_dispatched_at = ?")) {
+                return { meta: { changes: 1 } };
+              }
               if (sql.includes("DELETE FROM hosted_workspace_candidates")) {
                 const [accountId, candidateId, revision] = values;
                 if (!row || row.account_id !== accountId || row.candidate_id !== candidateId || row.revision !== revision) {
@@ -168,9 +195,16 @@ function candidateEnvironment(initial = candidateRow()) {
           deletedArtifacts.push(key);
         },
       },
+      TASK_QUEUE: {
+        async send(body) {
+          queuedTasks.push(JSON.parse(body));
+        },
+      },
       PUBLIC_WORKSPACE_ACCOUNT_ID: "trace_demo_kr",
     },
     deletedArtifacts,
+    queuedTasks,
+    captureTasks,
     row: () => row,
   };
 }
@@ -307,16 +341,6 @@ test("generation prompt binds the selected persona and country", () => {
   );
 });
 
-test("hosted preview renders candidate schedule and escapes input", () => {
-  const normalized = normalizeCandidateDraft(candidate({ topic: "시험 <주간>" }));
-  const svg = renderCandidatePreview(normalized);
-
-  assert.match(svg, /시험 &lt;주간&gt;/);
-  assert.match(svg, /09:00 통계학/);
-  assert.match(svg, /Cloudflare hosted preview · native Appium capture 아님/);
-  assert.doesNotMatch(svg, /시험 <주간>/);
-});
-
 test("editing a submitted candidate invalidates approval and removes its preview", async () => {
   const state = candidateEnvironment();
   const response = await handleHostedWorkspace(
@@ -373,6 +397,36 @@ test("stale candidate edits fail without deleting the approved preview", async (
   assert.deepEqual(state.deletedArtifacts, []);
 });
 
+test("image generation queues a revision-scoped native Mac capture", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+  }));
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(state.row().status, "caption_approved");
+  assert.equal(state.row().capture_state, "queued");
+  assert.equal(state.queuedTasks.length, 1);
+  assert.equal(state.queuedTasks[0].kind, "capture");
+  assert.equal(state.queuedTasks[0].payload.pipeline, "hosted_workspace_capture_v1");
+  assert.equal(state.queuedTasks[0].payload.candidate_revision, 4);
+  assert.equal(state.queuedTasks[0].payload.image_inputs.device_time, "07:20");
+  assert.equal(state.captureTasks.length, 1);
+});
+
 test("built public workspace has no login form and keeps candidate controls", async () => {
   const markup = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
 
@@ -386,8 +440,8 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /data-context-select/);
   assert.match(markup, /data-stat-review/);
   assert.match(markup, /href="#workspace-content">워크스페이스로 건너뛰기/);
-  assert.match(markup, /Cloudflare가 일정과 기기 시각을 넣은 검수용 잠금화면/);
-  assert.match(markup, /네이티브 Appium 캡처 worker는 별도 Mac 실행 경계/);
-  assert.doesNotMatch(markup, /네이티브 캡처 환경\(Appium\/시뮬레이터\)을 연결하기 전까지/);
+  assert.match(markup, /Cloudflare Queue → Mac Appium → R2/);
+  assert.match(markup, /부팅 가능한 Simulator를 찾아 Appium으로 Trace 부품을 캡처/);
+  assert.doesNotMatch(markup, /Cloudflare 검수용 SVG 미리보기/);
   assert.match(markup, /data-candidate-submit/);
 });

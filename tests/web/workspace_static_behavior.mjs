@@ -415,6 +415,13 @@ const loadLive = async (fixture, fetchImplementation) => {
   runInNewContext(liveSource, {
     document: fixture.document,
     fetch: fetchImplementation,
+    Headers,
+    window: {
+      clearTimeout,
+      setTimeout,
+      confirm: () => true,
+      localStorage: { getItem: () => null, setItem: () => {} },
+    },
     FormData: class FakeFormData {
       constructor(element) {
         this.values = element?.formValues ?? new Map();
@@ -943,7 +950,10 @@ const testImageStageSplitsCaptionAndImageWork = async () => {
   assert.equal(fixture.approvalList.children.length, 1);
   assert.equal(fixture.imageList.children.length, 2);
   assert.equal(fixture.imageEmpty.hidden, true);
-  assert.equal(fixture.imageCount.textContent, "이미지 대기 2건 · 검수 대기 1건");
+  assert.equal(
+    fixture.imageCount.textContent,
+    "생성 가능 1건 · Mac 대기·실행 0건 · 실패 0건 · 검수 대기 1건",
+  );
   assert.equal(fixture.candidateList.children.length, 4);
 };
 
@@ -957,10 +967,10 @@ const testImageGenerationButtonRunsTheStage = async () => {
     if (path === "/api/candidates/candidate-1/generate-image") {
       stored = [
         candidate({
-          status: "image_awaiting_review",
+          status: "caption_approved",
           revision: 3,
-          image_path: "candidates/candidate-1/r2/outputs/final.png",
-          image_sha256: "b".repeat(64),
+          capture_state: "queued",
+          capture_task_id: "task-1",
         }),
       ];
       return response(201, stored[0]);
@@ -968,15 +978,15 @@ const testImageGenerationButtonRunsTheStage = async () => {
     if (path === "/api/candidates") return response(200, stored);
     throw new Error(`unexpected path: ${path}`);
   });
-  const button = findByText(fixture.imageList.children[0], "🎨 이미지 생성");
+  const button = findByText(fixture.imageList.children[0], "Mac에서 이미지 생성");
   assert.ok(button, "the caption-approved card offers image generation");
   await button.click();
   assert.ok(calls.some(([path, method]) =>
     path === "/api/candidates/candidate-1/generate-image" && method === "POST"));
-  assert.equal(fixture.notice.textContent, "이미지를 만들었습니다. 이미지 검수를 진행해 주세요.");
+  assert.equal(fixture.notice.textContent, "Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
   assert.equal(button.disabled, false);
-  assert.equal(button.textContent, "🎨 이미지 생성");
-  assert.ok(findByText(fixture.imageList.children[0], "✅ 승인"), "the composed card offers review");
+  assert.equal(button.textContent, "Mac에서 이미지 생성");
+  assert.ok(findByText(fixture.imageList.children[0], "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다."));
 };
 
 const testImageGenerationFailureShowsTheServerMessage = async () => {
@@ -991,7 +1001,7 @@ const testImageGenerationFailureShowsTheServerMessage = async () => {
     throw new Error(`unexpected path: ${path}`);
   });
   const card = fixture.imageList.children[0];
-  const button = findByText(card, "🎨 이미지 생성");
+  const button = findByText(card, "Mac에서 이미지 생성");
   await button.click();
   const feedback = card.children.find((child) => child.className === "candidate-feedback");
   assert.equal(feedback.hidden, false);
@@ -1020,7 +1030,7 @@ const testImageApprovalPostsTheDecision = async () => {
     if (path === "/api/candidates") return response(200, stored);
     throw new Error(`unexpected path: ${path}`);
   });
-  await findByText(fixture.imageList.children[0], "✅ 승인").click();
+  await findByText(fixture.imageList.children[0], "이미지 승인 · 5점").click();
   const submitted = calls.find(([path]) => path === "/api/candidates/candidate-1/review-image");
   assert.ok(submitted);
   const payload = JSON.parse(submitted[1].body);
@@ -1033,7 +1043,7 @@ const testImageApprovalPostsTheDecision = async () => {
 
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
-  assert.ok(markup.includes(">캡션·주제 승인</button>"), "approval tab is labelled 캡션·주제 승인");
+  assert.ok(markup.includes(">검수</button>"), "approval tab is labelled 검수");
   assert.ok(!markup.includes("오늘의 승인"), "the old approval tab label is gone");
   assert.ok(markup.includes("Appium 프롬프트"), "the shooting order field is renamed");
   assert.ok(!markup.includes("촬영 주문서"), "the insider shooting-order label is gone");
@@ -1063,21 +1073,14 @@ const testMarkupUsesTheAgreedTerminology = async () => {
     "the manual form collects the background subject",
   );
   assert.ok(markup.includes(">풍경</option>"), "background subjects are labelled in Korean");
-  assert.ok(
-    markup.includes("네이티브 캡처 환경(Appium/시뮬레이터)"),
-    "the image stage says what the offline path cannot render yet",
-  );
-  assert.ok(
-    markup.includes("배경은 외부 이미지 검색에서 출처를 확인해 가져오고"),
-    "the image stage says where the background comes from",
-  );
-  for (const option of ['value="KR" selected>한국', 'value="JP">일본', 'value="TW">대만', 'value="US">미국']) {
-    assert.ok(markup.includes(option), `country option ${option}`);
-  }
+  assert.ok(markup.includes("Cloudflare Queue → Mac Appium → R2"), "the native capture boundary is visible");
+  assert.ok(markup.includes("부팅 가능한 Simulator를 찾아 Appium"), "dynamic Simulator discovery is explained");
+  assert.ok(markup.includes('value="KR" selected>한국 (KR)'), "the form has a safe KR fallback");
   const live = await readFile(join(staticRoot, "workspace-live.js"), "utf8");
   assert.ok(!live.includes("촬영 주문서"), "no insider shooting-order copy in the live script");
   assert.ok(!live.includes("촬영 전"), "the image placeholder is renamed");
   assert.ok(live.includes("이미지 생성 전"), "the image placeholder explains itself");
+  assert.ok(live.includes("/api/context-countries"), "country options come from the hosted manifest");
 };
 
 await testCandidatesIsTheDefaultTab();
