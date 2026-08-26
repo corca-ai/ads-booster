@@ -226,6 +226,9 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
 - Keep worker administration behind `CONTROL_PLANE_TOKEN`. Hash one-time enrollment codes and worker
   credentials in D1, return plaintext only once, and expose only aliases plus aggregate status from
   `/api/workers/status`.
+- Let `web/static/workspace-live.js` own the browser adapter for protected worker administration.
+  Keep its control token in the open dialog's JavaScript memory only, clear it and one-time output on
+  close/lock, and never duplicate worker health or lease-transition policy in the UI.
 - Let a conditional D1 task update, not an in-process check, choose the single lease winner. Accept a
   broker lease only after local inbox insertion, keep capture-time heartbeat independent from the
   synchronous executor, and reject a callback whose worker no longer owns the task.

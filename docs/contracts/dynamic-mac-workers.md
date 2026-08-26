@@ -10,9 +10,10 @@ one machine, and the public workspace cannot explain whether a queued image has 
 
 ## Capability Contract
 
-An operator can enroll any prepared Mac with a short-lived one-time code, see its sanitized health
-in the workspace, drain or revoke it independently, and replace it without rotating credentials for
-other workers. A healthy worker claims exactly one compatible hosted capture task through the
+An operator can open a dedicated workspace manager with the control-plane token, enroll any prepared
+Mac with a short-lived one-time code, inspect its protected health and task state, drain or revoke it
+independently, and replace it without rotating credentials for other workers. The public status strip
+continues to show only sanitized health. A healthy worker claims exactly one compatible hosted capture task through the
 control plane, keeps the existing local inbox/outbox durability, and returns the same verified
 Appium PNG callback accepted by the current R2 boundary.
 
@@ -23,6 +24,8 @@ Appium PNG callback accepted by the current R2 boundary.
 - A worker-broker client and `trace-marketing worker` CLI for enrollment, doctor, foreground run,
   status, and macOS LaunchAgent lifecycle.
 - A sanitized public worker-status endpoint and workspace status surface.
+- A protected Mac connection manager in the hosted workspace for inventory, refresh, active/draining
+  state, explicit two-step revocation, and one-time enrollment code plus target-Mac commands.
 - Legacy direct Queue pull remains available for non-hosted control-plane tasks and rollback. Hosted
   workspace capture uses the worker broker once a non-revoked machine identity exists; degraded or
   offline workers leave that task queued until a healthy claimant appears.
@@ -32,6 +35,9 @@ Appium PNG callback accepted by the current R2 boundary.
 - A worker is a machine identity, not a member identity or fixed Simulator UDID.
 - Worker administration remains behind the token-protected `/v1` boundary; the login-free `/api`
   surface exposes sanitized status only.
+- The browser receives an admin token only from an operator input. It keeps the token in JavaScript
+  memory for the open manager, never in markup, URL, cookie, `localStorage`, or `sessionStorage`, and
+  clears it with displayed one-time codes when the manager closes or locks.
 - Macs do not receive a Cloudflare Queue token in the new path. They receive one revocable,
   worker-scoped bearer credential.
 - Worker credentials are stored separately with mode `0600`; portable config contains no secret.
@@ -79,6 +85,8 @@ Appium PNG callback accepted by the current R2 boundary.
 - Heartbeat renewal keeps an executing task owned by one live worker and stops after the one-hour cap.
 - The public workspace explains no-worker, queued, assigned, degraded, and offline conditions without
   exposing credentials or detailed host inventory.
+- An operator can use the workspace UI to list, activate, drain, revoke, and prepare a replacement Mac
+  without copying worker IDs into CLI commands; the target Mac still consumes the one-time code locally.
 - A fresh-installed worker can install/start/stop its LaunchAgent without hand-writing a plist.
 
 ## Acceptance Checks
@@ -90,6 +98,9 @@ Appium PNG callback accepted by the current R2 boundary.
 - `integration`: local inbox persists before broker acknowledgement and callback delivery survives a
   transient control-plane failure.
 - `manual`: 320/375/414/768px workspace layouts show worker availability without horizontal overflow.
+- `browser`: the Mac manager rejects a wrong token without leaving the public workspace, sends the
+  bearer token only to protected `/v1` calls, renders inventory and health, performs active/draining
+  and two-step revoke actions, creates/copies an enrollment command, and clears secrets on close.
 - `e2e`: a fresh-installed prepared Mac enrolls, runs one real hosted Appium capture, stores the
   verified PNG in R2, and reaches `submitted` after human image approval.
 
@@ -100,7 +111,8 @@ Appium PNG callback accepted by the current R2 boundary.
 - `marketing/` owns portable worker config, credential storage, broker transport, local inbox/outbox,
   doctor, and native capture execution.
 - `capture/` continues to own Simulator/Appium/Trace artifact safety and provenance.
-- `web/static/` renders status and operator guidance but does not decide health or lease state.
+- `web/static/` renders sanitized status and the protected operator manager, keeps the admin token
+  ephemeral, and invokes control-plane transitions but does not decide health or lease state.
 
 ## Canonical Artifact
 
@@ -115,4 +127,5 @@ fixed decision, success criterion, or acceptance boundary.
 - `worker_broker.py`, `worker_doctor.py`, and `worker_launchd.py` own the installed Mac boundary.
 - `trace-marketing worker` owns admin enrollment, target-Mac enrollment, doctor, foreground run,
   service lifecycle, inventory, drain, and revoke commands.
-- The canonical workspace renders a compact sanitized status strip and continues candidate polling.
+- The canonical workspace renders a compact sanitized status strip plus a separately unlocked Mac
+  manager. The manager consumes the existing protected APIs and never persists its admin token.

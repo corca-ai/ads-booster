@@ -227,6 +227,13 @@ class EnrollmentStatement {
     }
     throw new Error(`unexpected enrollment run SQL: ${this.sql}`);
   }
+
+  async all() {
+    if (this.sql.includes("FROM mac_workers ORDER BY created_at DESC")) {
+      return { results: [...this.db.workers.values()] };
+    }
+    throw new Error(`unexpected enrollment all SQL: ${this.sql}`);
+  }
 }
 
 class HeartbeatDb {
@@ -440,10 +447,27 @@ test("one-time enrollment stores only hashes and cannot be replayed", async () =
     env,
     () => { throw new Error("unexpected callback"); },
   );
+  const inventoryResponse = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers", {
+      headers: { authorization: "Bearer admin-secret" },
+    }),
+    env,
+    () => { throw new Error("unexpected callback"); },
+  );
+  const unauthorizedInventory = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers"),
+    env,
+    () => { throw new Error("unexpected callback"); },
+  );
+  const inventory = await inventoryResponse.json();
 
   assert.equal(createdResponse.status, 201);
   assert.equal(enrolledResponse.status, 201);
   assert.equal(replayResponse.status, 401);
+  assert.equal(inventoryResponse.status, 200);
+  assert.equal(unauthorizedInventory.status, 401);
+  assert.equal(inventory.workers[0].status, "ready");
+  assert.deepEqual(inventory.workers[0].doctor, { ready: true, summary: "ready" });
   assert.equal(enrolled.display_name, "Studio Mac");
   assert.ok(enrolled.worker_token.startsWith("trace-worker_"));
   const persisted = JSON.stringify({

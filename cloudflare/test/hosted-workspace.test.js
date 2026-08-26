@@ -529,6 +529,13 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /href="#workspace-content">워크스페이스로 건너뛰기/);
   assert.match(markup, /Cloudflare D1 lease → Mac Appium → R2/);
   assert.match(markup, /data-worker-title/);
+  assert.match(markup, /data-worker-manager-open/);
+  assert.match(markup, /data-worker-manager/);
+  assert.match(markup, /data-worker-admin-form/);
+  assert.match(markup, /data-worker-enrollment-form/);
+  assert.match(markup, /data-worker-list/);
+  assert.match(markup, /id="worker-control-token" name="control-token" type="password" required autocomplete="off"/);
+  assert.doesNotMatch(markup, /id="worker-control-token"[^>]*value=/);
   assert.match(markup, /부팅 가능한 Simulator를 동적으로 찾습니다/);
   assert.doesNotMatch(markup, /Cloudflare 검수용 SVG 미리보기/);
   assert.match(markup, /data-candidate-submit/);

@@ -836,8 +836,22 @@ available Simulator before checking the installed Trace bundle, then reports eac
 trace-marketing worker doctor
 ```
 
-On an administrator machine, create a code that expires after ten minutes. The control-plane token
-is used only for this admin call and is not given to the target Mac:
+The normal operator path starts at `https://workspace.borca.ai/`. In the Mac status strip choose
+`Mac 연결 관리`, paste the Worker's `CONTROL_PLANE_TOKEN`, and use the protected manager to:
+
+- see every registered Mac, recent heartbeat, Appium doctor summary, and current task;
+- stop or resume new work for one Mac, or explicitly revoke only that machine credential; and
+- create a short-lived one-time code and copy the exact commands for the target Mac.
+
+This is not a workspace login. The public status strip still contains only sanitized aliases and
+counts. The token exists only in JavaScript memory while the manager is open; it is never written to
+HTML, URL parameters, cookies, `localStorage`, or `sessionStorage`, and closing or locking the manager
+clears both the token and the displayed one-time code. The target Mac receives only the enrollment
+code—not the control-plane token.
+
+The same administration remains available by CLI. On an administrator machine, create a code that
+expires after ten minutes. The control-plane token is used only for this admin call and is not given
+to the target Mac:
 
 ```bash
 export TRACE_MARKETING_CONTROL_TOKEN=...
@@ -864,9 +878,9 @@ absolute installed `trace-marketing` path plus that Mac's `PATH`, contains no cr
 the worker alive across logins/restarts. `TRACE_AGENT_DEVICE_UDID` remains an optional local override;
 without it each task resolves the best available iPhone Simulator at execution time.
 
-To replace a Mac without stopping the pipeline, enroll the new one first and wait until the public
-status strip shows it online. Then list IDs, drain the old worker so it receives no new work, and
-revoke it after its current task clears:
+To replace a Mac without stopping the pipeline, create and enroll the new one first, wait until the
+manager shows it as `작업 가능`, stop new work on the old Mac, and revoke the old connection after its
+current task clears. The equivalent CLI commands are:
 
 ```bash
 export TRACE_MARKETING_CONTROL_TOKEN=...

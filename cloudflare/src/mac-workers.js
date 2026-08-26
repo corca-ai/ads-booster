@@ -442,6 +442,7 @@ async function listWorkers(db) {
   ).all();
   return result.results.map((row) => ({
     ...row,
+    status: workerOperationalStatus(row),
     capabilities: parseObject(row.capabilities_json),
     doctor: parseObject(row.doctor_json),
     capabilities_json: undefined,

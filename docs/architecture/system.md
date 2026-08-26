@@ -443,7 +443,11 @@ or stale owner cannot advance the candidate. Offline workers leave `capture_stat
 expired lease becomes claimable by another healthy worker, and verified failures use
 `capture_state=failed` and remain retryable. `/api/workers/status` exposes only aliases and aggregate
 ready/busy/degraded/offline state to the login-free UI; enrollment, drain, list, and revoke stay under
-the control-token `/v1` boundary.
+the control-token `/v1` boundary. A separate workspace dialog is the browser adapter for that protected
+boundary: it accepts `CONTROL_PLANE_TOKEN` from the operator, keeps it only in memory while open, and
+uses it as a bearer header for inventory, active/draining transitions, explicit revocation, and
+one-time enrollment creation. Closing or locking the dialog clears the token, code, and command
+preview; the public status endpoint and account routes never inherit the credential.
 The claim starts at two minutes, durable acceptance extends it to fifteen, and worker heartbeat
 renews that window for no more than one hour from the original claim. This bounds both long capture
 races and indefinitely hung ownership.

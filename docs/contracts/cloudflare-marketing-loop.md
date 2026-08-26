@@ -168,7 +168,11 @@ Hosted broker delivery reuses the same local durability contract with a differen
 
 The public `/api/workers/status` projection contains only team-visible aliases, pools, aggregate
 counts, and ready/busy/degraded/offline states. One-time code creation, full inventory, state changes,
-and revocation remain under the `CONTROL_PLANE_TOKEN` `/v1` boundary.
+and revocation remain under the `CONTROL_PLANE_TOKEN` `/v1` boundary. The workspace exposes those
+protected actions through a separate Mac manager: an operator types the token into an unseeded
+password field, the browser sends it only as a bearer header to `/v1`, and closing or locking the
+manager clears the token and displayed enrollment code from memory. No browser persistence or public
+admin projection is introduced.
 
 Cloudflare task execution is at-least-once. Business side effects become effectively-once only when
 the selected channel adapter supports an idempotency key or a conclusive readback.
@@ -224,7 +228,8 @@ offline fixture path for its existing workspace journey and is never represented
 The first operating target after credentials and Cloudflare resources exist is:
 
 - migrate D1 and deploy the Worker;
-- prepare one Mac, issue a ten-minute enrollment code, enroll it, and install the generated
+- open `Mac 연결 관리`, enter the control-plane token, issue a ten-minute enrollment code, then on
+  one prepared Mac run the displayed enroll and service commands for the generated
   `com.corca.trace-marketing-worker` LaunchAgent;
 - open the login-free `workspace.borca.ai` workbench and generate four context-grounded candidates;
 - approve a caption, observe D1 lease → native Mac/Appium → verified R2 PNG, and approve the image;
