@@ -1,8 +1,14 @@
 {
-  "schema_version": "trace.workspace-context-manifest.v1",
+  "schema_version": "trace.workspace-context-manifest.v2",
   "global_documents": [
     "core/PRINCIPLES-GLOBAL.md",
     "core/FACTS.md"
+  ],
+  "global_research_documents": [
+    "research/PRINCIPLES-GLOBAL.md"
+  ],
+  "global_research_assets": [
+    "research/AXES.md"
   ],
   "countries": {
     "KR": {
@@ -12,30 +18,103 @@
         "core/VOICE-KR.md",
         "references/KR/INDEX.md"
       ],
+      "research_documents": [
+        "research/PRINCIPLES-KR.md",
+        "research/ELEMENTS-KR.md",
+        "research/VOICE-KR.md",
+        "research/SHOOTING-KR.md"
+      ],
+      "research_assets": [
+        "references/KR/RESEARCH-INDEX.md",
+        "references/KR/ELEMENTS-TABLE.md"
+      ],
+      "reference_bodies": [
+        "references/KR/kr-001.md",
+        "references/KR/kr-002.md",
+        "references/KR/kr-003.md",
+        "references/KR/kr-004.md",
+        "references/KR/kr-005.md",
+        "references/KR/kr-006.md",
+        "references/KR/kr-007.md",
+        "references/KR/kr-008.md",
+        "references/KR/kr-009.md",
+        "references/KR/kr-010.md",
+        "references/KR/kr-011.md",
+        "references/KR/kr-012.md",
+        "references/KR/kr-013.md",
+        "references/KR/kr-014.md",
+        "references/KR/kr-015.md",
+        "references/KR/kr-016.md",
+        "references/KR/kr-017.md",
+        "references/KR/kr-018.md",
+        "references/KR/kr-019.md",
+        "references/KR/kr-020.md",
+        "references/KR/kr-021.md",
+        "references/KR/kr-022.md",
+        "references/KR/kr-023.md",
+        "references/KR/kr-024.md",
+        "references/KR/kr-025.md",
+        "references/KR/kr-026.md",
+        "references/KR/kr-027.md",
+        "references/KR/kr-028.md",
+        "references/KR/kr-029.md",
+        "references/KR/kr-030.md",
+        "references/KR/kr-031.md",
+        "references/KR/kr-032.md",
+        "references/KR/kr-033.md",
+        "references/KR/kr-034.md",
+        "references/KR/kr-035.md",
+        "references/KR/kr-036.md",
+        "references/KR/kr-037.md",
+        "references/KR/kr-038.md",
+        "references/KR/kr-039.md",
+        "references/KR/kr-040.md",
+        "references/KR/kr-041.md"
+      ],
       "profiles": "profiles/KR.json"
     },
     "JP": {
-      "documents": ["markets/JP.md"],
+      "documents": [
+        "markets/JP.md"
+      ],
+      "research_documents": [
+        "research/PRINCIPLES-JP.md",
+        "research/ELEMENTS-JP.md"
+      ],
       "profiles": "profiles/JP.json"
     },
     "TW": {
-      "documents": ["markets/TW.md"],
+      "documents": [
+        "markets/TW.md"
+      ],
+      "research_documents": [
+        "research/PRINCIPLES-TW.md",
+        "research/ELEMENTS-TW.md"
+      ],
       "profiles": "profiles/TW.json"
     },
     "US": {
-      "documents": ["markets/US.md"],
+      "documents": [
+        "markets/US.md"
+      ],
       "profiles": "profiles/US.json"
     },
     "DE": {
-      "documents": ["markets/DE.md"],
+      "documents": [
+        "markets/DE.md"
+      ],
       "profiles": "profiles/DE.json"
     },
     "FR": {
-      "documents": ["markets/FR.md"],
+      "documents": [
+        "markets/FR.md"
+      ],
       "profiles": "profiles/FR.json"
     },
     "BR": {
-      "documents": ["markets/BR.md"],
+      "documents": [
+        "markets/BR.md"
+      ],
       "profiles": "profiles/BR.json"
     }
   }
