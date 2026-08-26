@@ -8,7 +8,7 @@ const webStaticRoot = resolve(repoRoot, "src/trace_capture/web/static");
 const contextRoot = resolve(repoRoot, "src/trace_capture/assets/context");
 const outputRoot = resolve(cloudflareRoot, "dist");
 const contextManifestPath = resolve(contextRoot, "profiles/manifest.json");
-const MAX_RESEARCH_CONTEXT_BYTES = 48_000;
+const MAX_CONTEXT_BYTES = 48_000;
 
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(resolve(outputRoot, "static"), { recursive: true });
@@ -45,21 +45,17 @@ if (contextManifest.schema_version !== "trace.workspace-context-manifest.v2") {
   throw new Error("unsupported workspace context manifest");
 }
 const globalContext = await readContextDocuments(contextManifest.global_documents);
-const globalResearch = await readOptionalContextDocuments(contextManifest.global_research_documents);
-await assertReadableAssets(contextManifest.global_research_assets);
+await assertReadableAssets(contextManifest.global_assets);
 const countryContexts = {};
-const countryResearch = {};
 const referenceBodies = {};
 const contextProfiles = [];
 for (const [country, config] of Object.entries(contextManifest.countries ?? {})) {
   if (!/^[A-Z]{2}$/.test(country)) throw new Error(`invalid workspace context country: ${country}`);
   countryContexts[country] = await readContextDocuments(config.documents);
-  const research = await readOptionalContextDocuments(config.research_documents);
-  if (research) countryResearch[country] = research;
-  await assertReadableAssets(config.research_assets);
+  await assertReadableAssets(config.assets);
   const bodies = await readReferenceBodies(country, config.reference_bodies);
   if (bodies) referenceBodies[country] = bodies;
-  assertResearchBudget(country, globalResearch, research);
+  assertContextBudget(country, globalContext, countryContexts[country]);
   const profiles = JSON.parse(await readFile(resolve(contextRoot, config.profiles), "utf8"));
   if (!Array.isArray(profiles)) throw new Error(`workspace context profiles for ${country} must be an array`);
   if (profiles.some((profile) => profile.country !== country)) {
@@ -86,7 +82,6 @@ await writeFile(
     {
       global: globalContext,
       countries: countryContexts,
-      research: { global: globalResearch, countries: countryResearch },
       referenceBodies,
     },
     null,
@@ -108,12 +103,6 @@ async function readContextDocuments(relativePaths) {
     documents.push(`[context 문서: ${relativePath}]\n${text}`);
   }
   return documents.join("\n\n");
-}
-
-/** Research documents are optional per country; an empty list stays absent instead of failing. */
-async function readOptionalContextDocuments(relativePaths) {
-  if (relativePaths === undefined) return "";
-  return readContextDocuments(relativePaths);
 }
 
 /**
@@ -154,14 +143,14 @@ async function readReferenceBodies(country, relativePaths) {
 }
 
 /**
- * Research documents are injected in full on every generation, so a country that grows past the
+ * Context documents are injected in full on every generation, so a country that grows past the
  * budget must fail the build loudly rather than silently truncate mid-table at runtime.
  */
-function assertResearchBudget(country, globalResearch, countryResearch) {
-  const bytes = Buffer.byteLength(globalResearch, "utf8") + Buffer.byteLength(countryResearch, "utf8");
-  if (bytes > MAX_RESEARCH_CONTEXT_BYTES) {
+function assertContextBudget(country, globalContext, countryContext) {
+  const bytes = Buffer.byteLength(globalContext, "utf8") + Buffer.byteLength(countryContext, "utf8");
+  if (bytes > MAX_CONTEXT_BYTES) {
     throw new Error(
-      `workspace research context for ${country} is ${bytes} bytes, over the ${MAX_RESEARCH_CONTEXT_BYTES} byte budget`,
+      `workspace context for ${country} is ${bytes} bytes, over the ${MAX_CONTEXT_BYTES} byte budget`,
     );
   }
 }

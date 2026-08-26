@@ -961,26 +961,9 @@ export function contextForCountry(registry, country, profile = null) {
     );
   }
   const sections = [globalContext, countryContext];
-  const research = researchForCountry(registry, country);
-  if (research) sections.push(research);
   const references = referenceBodiesForProfile(registry, country, profile);
   if (references) sections.push(references);
   return sections.join("\n\n").trim();
-}
-
-/**
- * Research documents are the operator's verified findings for KR/JP/TW. They carry their own
- * revision history, so the model is told to follow only the standing text.
- */
-function researchForCountry(registry, country) {
-  const documents = [registry?.research?.global, registry?.research?.countries?.[country]]
-    .filter((text) => typeof text === "string" && text.trim())
-    .join("\n\n");
-  if (!documents) return "";
-  return `[리서치 근거 문서]
-아래는 실제 Threads 게시물 수집으로 검증한 원리입니다. 취소선으로 폐기 표시된 항목과 "미검증"으로 표시된 항목은 따르지 마세요.
-
-${documents}`;
 }
 
 /**

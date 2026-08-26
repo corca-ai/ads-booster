@@ -272,21 +272,34 @@ test("workspace context assets expose data-driven country profiles", () => {
   )), new Set(["BR", "DE", "FR", "JP", "KR", "TW", "US"]));
 });
 
-test("researched countries carry their principle documents into the prompt", () => {
+test("researched countries carry the archive's own principle documents", () => {
   for (const country of ["KR", "JP", "TW"]) {
     const documents = contextForCountry(WORKSPACE_CONTEXT, country);
-    assert.ok(documents.includes(`research/PRINCIPLES-${country}.md`));
-    assert.ok(documents.includes(`research/ELEMENTS-${country}.md`));
-    assert.ok(documents.includes("research/PRINCIPLES-GLOBAL.md"));
+    assert.ok(documents.includes(`core/PRINCIPLES-${country}.md`));
+    assert.ok(documents.includes(`core/ELEMENTS-${country}.md`));
+    // The archive documents carry frontmatter the earlier paraphrased stubs never had.
+    assert.match(documents, new RegExp(`country: ${country}`));
+    assert.match(documents, /status: verified/);
   }
-  assert.ok(contextForCountry(WORKSPACE_CONTEXT, "KR").includes("research/VOICE-KR.md"));
+  const korean = contextForCountry(WORKSPACE_CONTEXT, "KR");
+  assert.ok(korean.includes("core/VOICE-KR.md"));
+  assert.ok(korean.includes("core/SHOOTING-KR.md"));
 });
 
-test("hypothesis markets carry no country research", () => {
+test("hypothesis markets carry no researched country documents", () => {
   for (const country of ["US", "DE", "FR", "BR"]) {
     const documents = contextForCountry(WORKSPACE_CONTEXT, country);
-    assert.ok(!documents.includes(`research/PRINCIPLES-${country}.md`));
+    assert.ok(!documents.includes(`core/PRINCIPLES-${country}.md`));
     assert.ok(documents.includes(`markets/${country}.md`));
+  }
+});
+
+test("every country is told how to read deprecated and unverified findings", () => {
+  for (const country of Object.keys(WORKSPACE_CONTEXT.countries)) {
+    const documents = contextForCountry(WORKSPACE_CONTEXT, country);
+    assert.ok(documents.includes("core/PIPELINE-SCOPE.md"));
+    assert.match(documents, /취소선/);
+    assert.match(documents, /자동 게시하지 않는다/);
   }
 });
 
