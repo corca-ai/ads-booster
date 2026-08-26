@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Final
 
 from pydantic import TypeAdapter, ValidationError
@@ -8,7 +9,10 @@ from trace_capture.candidate_generation.errors import CandidateFormatError
 from trace_capture.candidate_generation.models import CandidateDraft
 from trace_capture.transport.json_types import JsonValue
 
+REFERENCE_ID_PATTERN: Final = re.compile(r"^[a-z]{2,3}-[0-9]{3}$")
+
 _DRAFTS: TypeAdapter[tuple[CandidateDraft, ...]] = TypeAdapter(tuple[CandidateDraft, ...])
+_REFERENCE_IDS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 _JSON_VALUE: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _FENCE: Final = "```"
 _MAX_DETAIL_CHARS: Final = 500
@@ -43,6 +47,40 @@ def parse_candidate_drafts(text: str, *, expected: int, country: str) -> tuple[C
         mismatch = f"country는 모두 {country}여야 합니다: {wrong_country}"
         raise CandidateFormatError(mismatch)
     return drafts
+
+
+def parse_reference_ids(text: str, *, maximum: int) -> tuple[str, ...]:
+    """Parse the strict JSON array of reference ids the selection call must return.
+
+    Only the id shape is checked here; whether an id resolves to a readable reference file
+    is the context source's decision. Raises `CandidateFormatError` with a detail the retry
+    turn can quote back.
+    """
+    payload = _strip_fence(text)
+    if not payload:
+        empty = "응답이 비어 있습니다."
+        raise CandidateFormatError(empty)
+    try:
+        parsed = _JSON_VALUE.validate_json(payload)
+    except ValidationError as error:
+        invalid_json = f"JSON 파싱 실패: {_detail(error)}"
+        raise CandidateFormatError(invalid_json) from error
+    if not isinstance(parsed, list):
+        not_array = "최상위 값이 JSON 배열이 아닙니다."
+        raise CandidateFormatError(not_array)
+    try:
+        reference_ids = _REFERENCE_IDS.validate_python(parsed)
+    except ValidationError as error:
+        raise CandidateFormatError(_detail(error)) from error
+    malformed = [value for value in reference_ids if REFERENCE_ID_PATTERN.fullmatch(value) is None]
+    if malformed:
+        wrong_shape = f"레퍼런스 id 형식이 아닙니다(예: kr-001): {malformed}"
+        raise CandidateFormatError(wrong_shape)
+    unique = tuple(dict.fromkeys(reference_ids))
+    if not unique:
+        none_chosen = "레퍼런스를 최소 1개 골라야 합니다."
+        raise CandidateFormatError(none_chosen)
+    return unique[:maximum]
 
 
 def _strip_fence(text: str) -> str:

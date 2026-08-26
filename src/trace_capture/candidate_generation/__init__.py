@@ -1,5 +1,9 @@
 from trace_capture.candidate_generation.context_source import (
     CONTEXT_DIR_ENVIRONMENT,
+    MAX_REFERENCE_BODIES,
+    MAX_REFERENCE_CHARS,
+    REFERENCE_DIRECTORY,
+    REFERENCE_INDEX_PATH,
     REQUIRED_DOCUMENTS,
     CandidateContextSource,
     default_context_directory,
@@ -32,15 +36,23 @@ from trace_capture.candidate_generation.instruction import (
     SYSTEM_INSTRUCTION,
     build_instruction,
     build_retry_instruction,
+    build_selection_instruction,
+    build_selection_retry_instruction,
 )
 from trace_capture.candidate_generation.models import (
     CandidateContextBundle,
     CandidateDocument,
     CandidateDraft,
+    CandidateReferenceBody,
 )
-from trace_capture.candidate_generation.parsing import parse_candidate_drafts
+from trace_capture.candidate_generation.parsing import (
+    REFERENCE_ID_PATTERN,
+    parse_candidate_drafts,
+    parse_reference_ids,
+)
 from trace_capture.candidate_generation.runner import (
     DEFAULT_CANDIDATE_COUNT,
+    MIN_REFERENCE_BODIES,
     CandidateGenerator,
     CandidateGeneratorPort,
     CandidateModelSource,
@@ -51,6 +63,12 @@ __all__ = [
     "CANDIDATE_IMAGE_DIRECTORY",
     "CONTEXT_DIR_ENVIRONMENT",
     "DEFAULT_CANDIDATE_COUNT",
+    "MAX_REFERENCE_BODIES",
+    "MAX_REFERENCE_CHARS",
+    "MIN_REFERENCE_BODIES",
+    "REFERENCE_DIRECTORY",
+    "REFERENCE_ID_PATTERN",
+    "REFERENCE_INDEX_PATH",
     "REQUIRED_DOCUMENTS",
     "SYSTEM_INSTRUCTION",
     "CandidateAuthRequiredError",
@@ -72,6 +90,7 @@ __all__ = [
     "CandidateImageStore",
     "CandidateModelSource",
     "CandidateProviderError",
+    "CandidateReferenceBody",
     "CandidateWriter",
     "ProductionCandidateBackgrounds",
     "ProductionCandidateModels",
@@ -80,6 +99,9 @@ __all__ = [
     "build_candidate_image_runner",
     "build_instruction",
     "build_retry_instruction",
+    "build_selection_instruction",
+    "build_selection_retry_instruction",
     "default_context_directory",
     "parse_candidate_drafts",
+    "parse_reference_ids",
 ]

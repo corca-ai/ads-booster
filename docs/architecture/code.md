@@ -77,7 +77,7 @@ src/trace_capture/
 | `agent/` | Conversation history, context projection/compaction, tool loop, and TUI/REPL session control | Provider HTTP details or native capture |
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
-| `candidate_generation/` | Context-document loading, the assembled generation instruction, strict-JSON parsing with one retry, all-or-nothing candidate writing through a store protocol, and the offline candidate image run | HTTP routes, provider transport details, native capture, composition algorithms, or candidate review transitions |
+| `candidate_generation/` | Context-document loading, reference selection and bounded reference-body reading, the assembled generation instruction, strict-JSON parsing with one retry, all-or-nothing candidate writing through a store protocol, and the offline candidate image run | HTTP routes, provider transport details, native capture, composition algorithms, or candidate review transitions |
 | `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Trace setup entry, component collection, and provenance validation | Scene planning or final composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
 | `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |

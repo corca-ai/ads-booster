@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 
 from trace_capture.auth.codex import OAuthError
+from trace_capture.candidate_generation.context_source import (
+    MAX_REFERENCE_BODIES,
+    REFERENCE_INDEX_PATH,
+)
 from trace_capture.candidate_generation.errors import (
     CandidateAuthRequiredError,
     CandidateFormatError,
@@ -12,8 +16,10 @@ from trace_capture.candidate_generation.errors import (
 from trace_capture.candidate_generation.instruction import (
     build_instruction,
     build_retry_instruction,
+    build_selection_instruction,
+    build_selection_retry_instruction,
 )
-from trace_capture.candidate_generation.parsing import parse_candidate_drafts
+from trace_capture.candidate_generation.parsing import parse_candidate_drafts, parse_reference_ids
 from trace_capture.providers.errors import ProviderError
 from trace_capture.workspace import CandidateCreate, CandidateSource
 
@@ -22,12 +28,17 @@ if TYPE_CHECKING:
 
     from trace_capture.agent.session import ModelClient
     from trace_capture.candidate_generation.context_source import CandidateContextSource
-    from trace_capture.candidate_generation.models import CandidateDraft
+    from trace_capture.candidate_generation.models import (
+        CandidateContextBundle,
+        CandidateDraft,
+        CandidateReferenceBody,
+    )
     from trace_capture.transport.json_types import JsonObject
     from trace_capture.workspace import CandidateRecord, WorkspaceId
 
 DEFAULT_CANDIDATE_COUNT: Final = 3
 DEFAULT_COUNTRY: Final = "KR"
+MIN_REFERENCE_BODIES: Final = 3
 
 
 class CandidateWriter(Protocol):
@@ -44,11 +55,13 @@ class CandidateGeneratorPort(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CandidateGenerator:
-    """Assembles the context documents into one provider call and stores its candidates.
+    """Assembles the context documents into provider calls and stores their candidates.
 
-    This is the "script assembly" mode: no tool loop and no web search. The model is
-    called once, its strict JSON is validated, and one failed validation is retried once
-    before the run gives up without writing anything.
+    This is the "script assembly" mode: no tool loop and no web search. A selection call
+    picks which references to read in full from the reference index, and one generation
+    call receives the context documents plus those reference bodies. The generation
+    response is validated strictly, and one failed validation is retried once before the
+    run gives up without writing anything.
     """
 
     store: CandidateWriter
@@ -59,12 +72,64 @@ class CandidateGenerator:
 
     def generate(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
         bundle = self.context_source.load()
-        instruction = build_instruction(bundle, count=self.count)
         with self.models.open() as client:
+            references = self._references(client, bundle)
+            instruction = build_instruction(bundle, count=self.count, references=references)
             drafts = self._drafts(client, instruction)
         return tuple(
             self.store.create_candidate(self._create(workspace_id, draft)) for draft in drafts
         )
+
+    def _references(
+        self,
+        client: ModelClient,
+        bundle: CandidateContextBundle,
+    ) -> tuple[CandidateReferenceBody, ...]:
+        """Ask which references to read in full, then read the ones that resolve to a file.
+
+        An unusable selection is retried once and then abandoned. Reading bodies deepens the
+        captions but is not what the run exists to produce, so a selection the model cannot
+        get right leaves the generation call on the summary documents alone instead of
+        failing it.
+        """
+        index = bundle.document(REFERENCE_INDEX_PATH)
+        if index is None:
+            return ()
+        history: tuple[JsonObject, ...] = (
+            {
+                "role": "user",
+                "content": build_selection_instruction(
+                    index,
+                    count=self.count,
+                    minimum=MIN_REFERENCE_BODIES,
+                    maximum=MAX_REFERENCE_BODIES,
+                ),
+            },
+        )
+        answer = self._respond(client, history)
+        try:
+            return self._select(answer)
+        except CandidateFormatError as first_failure:
+            retry_history: tuple[JsonObject, ...] = (
+                *history,
+                {"role": "assistant", "content": answer},
+                {
+                    "role": "user",
+                    "content": build_selection_retry_instruction(first_failure.detail),
+                },
+            )
+            try:
+                return self._select(self._respond(client, retry_history))
+            except CandidateFormatError:
+                return ()
+
+    def _select(self, answer: str) -> tuple[CandidateReferenceBody, ...]:
+        reference_ids = parse_reference_ids(answer, maximum=MAX_REFERENCE_BODIES)
+        bodies = self.context_source.load_references(reference_ids)
+        if not bodies:
+            unresolved = f"고른 레퍼런스 본문을 찾을 수 없습니다: {list(reference_ids)}"
+            raise CandidateFormatError(unresolved)
+        return bodies
 
     def _drafts(self, client: ModelClient, instruction: str) -> tuple[CandidateDraft, ...]:
         history: tuple[JsonObject, ...] = ({"role": "user", "content": instruction},)

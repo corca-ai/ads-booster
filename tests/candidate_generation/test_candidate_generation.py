@@ -9,6 +9,8 @@ import pytest
 
 from trace_capture.auth.codex import OAuthError
 from trace_capture.candidate_generation import (
+    MAX_REFERENCE_BODIES,
+    MAX_REFERENCE_CHARS,
     REQUIRED_DOCUMENTS,
     CandidateAuthRequiredError,
     CandidateContextMissingError,
@@ -17,8 +19,10 @@ from trace_capture.candidate_generation import (
     CandidateGenerator,
     CandidateProviderError,
     build_instruction,
+    build_selection_instruction,
     default_context_directory,
     parse_candidate_drafts,
+    parse_reference_ids,
 )
 from trace_capture.providers.codex import ModelTurn
 from trace_capture.providers.errors import ProviderError
@@ -62,6 +66,17 @@ def _answer(count: int = 3) -> str:
     return json.dumps([_draft(f"주제 {index}") for index in range(count)], ensure_ascii=False)
 
 
+REFERENCE_IDS = ("kr-001", "kr-014", "kr-032")
+
+
+def _reference_body(reference_id: str) -> str:
+    return f"# {reference_id}\n와 이거 진짜 미쳤다… {reference_id} 캡션 본문 전문"
+
+
+def _selection(*reference_ids: str) -> str:
+    return json.dumps(list(reference_ids), ensure_ascii=False)
+
+
 @dataclass(slots=True)
 class FakeModelClient:
     answers: list[str | Exception]
@@ -91,13 +106,23 @@ class FakeModelSource:
 
 def _write_context(root: Path, *, skip: Sequence[str] = ()) -> Path:
     directory = root / "context"
+    references = directory / "references" / "KR"
+    references.mkdir(parents=True, exist_ok=True)
     for relative_path in REQUIRED_DOCUMENTS:
         if relative_path in skip:
             continue
         path = directory / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(f"# {relative_path}\n내용", encoding="utf-8")
+    for reference_id in REFERENCE_IDS:
+        _ = (references / f"{reference_id}.md").write_text(
+            _reference_body(reference_id), encoding="utf-8"
+        )
     return directory
+
+
+def _instruction_of(client: FakeModelClient, turn: int) -> str:
+    return str(client.histories[turn][0]["content"])
 
 
 def _generator(
@@ -187,6 +212,116 @@ def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -
     assert "5~7개를 권장합니다" in instruction
     assert "모호어 대신 실제로 보이는 것을" in instruction
     assert "실제로 잠금화면에 설정해뒀을 법한 배경" in instruction
+    assert "레퍼런스 본문 활용 규칙" not in instruction
+    assert "[레퍼런스 본문:" not in instruction
+
+
+def test_the_selection_call_asks_for_reference_ids_from_the_index(tmp_path: Path) -> None:
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path)).load()
+    index = bundle.document("references/KR/INDEX.md")
+    assert index is not None
+
+    # When
+    instruction = build_selection_instruction(index, count=3, minimum=3, maximum=8)
+
+    # Then
+    assert "[context 문서: references/KR/INDEX.md]" in instruction
+    assert "3~8개 고르세요" in instruction
+    assert "레퍼런스 id 문자열만 담은 JSON 배열" in instruction
+    assert "[context 문서: core/FACTS.md]" not in instruction
+
+
+def test_instruction_carries_the_selected_reference_bodies_and_the_borrowing_rules(
+    tmp_path: Path,
+) -> None:
+    # Given
+    source = CandidateContextSource(_write_context(tmp_path))
+    references = source.load_references(["kr-001", "kr-014"])
+
+    # When
+    instruction = build_instruction(source.load(), count=3, references=references)
+
+    # Then
+    assert "[레퍼런스 본문: kr-001]" in instruction
+    assert _reference_body("kr-014") in instruction
+    assert "[레퍼런스 본문: kr-032]" not in instruction
+    assert "본보기" in instruction
+    assert "그대로 베끼지는 마세요" in instruction
+    assert "성패를 가르지 않는 것" in instruction
+    assert "실제로 읽고 차용한 레퍼런스 id만" in instruction
+
+
+def test_a_selected_reference_without_a_file_is_dropped(tmp_path: Path) -> None:
+    # Given
+    source = CandidateContextSource(_write_context(tmp_path))
+
+    # When
+    bodies = source.load_references(["kr-001", "kr-999", "kr-014"])
+
+    # Then
+    assert tuple(body.reference_id for body in bodies) == ("kr-001", "kr-014")
+
+
+def test_a_reference_id_can_never_leave_the_reference_folder(tmp_path: Path) -> None:
+    # Given a readable document that sits outside references/KR
+    directory = _write_context(tmp_path)
+    _ = (directory / "references" / "secret.md").write_text("비밀 문서", encoding="utf-8")
+    source = CandidateContextSource(directory)
+
+    # When / Then
+    assert source.load_references(["../secret", "kr-001/../../secret", "/etc/passwd"]) == ()
+    assert tuple(body.reference_id for body in source.load_references(["kr-001"])) == ("kr-001",)
+
+
+def test_reference_bodies_are_dropped_from_the_end_at_the_character_cap(tmp_path: Path) -> None:
+    # Given a first reference that nearly fills the budget
+    directory = _write_context(tmp_path)
+    references = directory / "references" / "KR"
+    _ = (references / "kr-001.md").write_text("가" * (MAX_REFERENCE_CHARS - 10), encoding="utf-8")
+    _ = (references / "kr-014.md").write_text("나" * 100, encoding="utf-8")
+    _ = (references / "kr-032.md").write_text("다" * 5, encoding="utf-8")
+
+    # When
+    bodies = CandidateContextSource(directory).load_references(REFERENCE_IDS)
+
+    # Then the later references are dropped even though the last one would still fit
+    assert tuple(body.reference_id for body in bodies) == ("kr-001",)
+
+
+def test_parse_reference_ids_dedupes_and_caps_the_selection() -> None:
+    # Given more ids than one run reads, with a duplicate at the front
+    crowded = _selection("kr-001", "kr-001", *(f"kr-{index:03d}" for index in range(2, 20)))
+
+    # When
+    reference_ids = parse_reference_ids(crowded, maximum=MAX_REFERENCE_BODIES)
+
+    # Then
+    assert len(reference_ids) == MAX_REFERENCE_BODIES
+    assert reference_ids[0] == "kr-001"
+    assert len(set(reference_ids)) == len(reference_ids)
+
+
+def test_parse_reference_ids_rejects_unusable_selections() -> None:
+    # Given / When / Then
+    for payload, expected in (
+        ("", "응답이 비어 있습니다."),
+        ("설명만 있고 JSON이 없습니다", "JSON 파싱 실패"),
+        ('{"ids": ["kr-001"]}', "최상위 값이 JSON 배열이 아닙니다."),
+        ("[]", "레퍼런스를 최소 1개 골라야 합니다."),
+        (json.dumps([1, 2]), "string"),
+        (_selection("../evil"), "레퍼런스 id 형식이 아닙니다"),
+        (_selection("KR-001"), "레퍼런스 id 형식이 아닙니다"),
+        (_selection("kr-0011"), "레퍼런스 id 형식이 아닙니다"),
+    ):
+        with pytest.raises(CandidateFormatError) as failure:
+            _ = parse_reference_ids(payload, maximum=MAX_REFERENCE_BODIES)
+        assert expected in failure.value.detail
+
+
+def test_parse_reference_ids_accepts_a_fenced_array() -> None:
+    # Given / When / Then
+    assert parse_reference_ids(f"```json\n{_selection('kr-001')}\n```", maximum=8) == ("kr-001",)
 
 
 def test_fenced_json_is_parsed() -> None:
@@ -271,7 +406,7 @@ def test_malformed_image_inputs_are_retried_once(tmp_path: Path) -> None:
         ],
         ensure_ascii=False,
     )
-    client = FakeModelClient([invalid, _answer()])
+    client = FakeModelClient([_selection(*REFERENCE_IDS), invalid, _answer()])
     generator = _generator(tmp_path, store, client)
 
     # When
@@ -281,7 +416,7 @@ def test_malformed_image_inputs_are_retried_once(tmp_path: Path) -> None:
     assert len(created) == 3
     assert created[0].image_inputs is not None
     assert created[0].image_inputs.background_subject is CandidateBackgroundSubject.SCENERY
-    retry_turn = client.histories[1][-1]
+    retry_turn = client.histories[2][-1]
     assert "background_subject" in str(retry_turn["content"])
 
 
@@ -289,7 +424,7 @@ def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient([_answer()])
+    client = FakeModelClient([_selection(*REFERENCE_IDS), _answer()])
     generator = _generator(tmp_path, store, client)
 
     # When
@@ -302,14 +437,14 @@ def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:
     assert created[0].shooting_order.startswith("입력_일정")
     assert created[0].refs_used == ("kr-001",)
     assert len(store.list_candidates(workspace_id)) == 3
-    assert len(client.histories) == 1
+    assert len(client.histories) == 2
 
 
 def test_one_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient(["설명만 있고 JSON이 없습니다", _answer()])
+    client = FakeModelClient([_selection(*REFERENCE_IDS), "설명만 있고 JSON이 없습니다", _answer()])
     generator = _generator(tmp_path, store, client)
 
     # When
@@ -317,8 +452,8 @@ def test_one_malformed_answer_is_retried_once_with_the_validation_error(tmp_path
 
     # Then
     assert len(created) == 3
-    assert len(client.histories) == 2
-    retry_turn = client.histories[1][-1]
+    assert len(client.histories) == 3
+    retry_turn = client.histories[2][-1]
     assert "직전 응답은 형식 검증을 통과하지 못했습니다." in str(retry_turn["content"])
     assert "JSON 파싱 실패" in str(retry_turn["content"])
 
@@ -327,7 +462,7 @@ def test_two_malformed_answers_store_nothing(tmp_path: Path) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient(["nope", _answer(2)])
+    client = FakeModelClient([_selection(*REFERENCE_IDS), "nope", _answer(2)])
     generator = _generator(tmp_path, store, client)
 
     # When / Then
@@ -374,3 +509,87 @@ def test_provider_failure_and_context_overflow_have_separate_messages(tmp_path: 
     assert network_failure.value.message == "AI 요청에 실패했습니다 — 잠시 후 다시 시도해 주세요."
     assert "context 파일이 너무 커서" in overflow_failure.value.message
     assert store.list_candidates(workspace_id) == ()
+
+
+def test_generation_reads_the_bodies_of_the_references_it_selected(tmp_path: Path) -> None:
+    # Given a selection call that picks two of the three available references
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_selection("kr-001", "kr-032"), _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    assert len(client.histories) == 2
+    selection_turn = _instruction_of(client, 0)
+    generation_turn = _instruction_of(client, 1)
+    assert "[context 문서: references/KR/INDEX.md]" in selection_turn
+    assert "[레퍼런스 본문: kr-001]" in generation_turn
+    assert _reference_body("kr-032") in generation_turn
+    assert "[레퍼런스 본문: kr-014]" not in generation_turn
+    assert "레퍼런스 본문 활용 규칙" in generation_turn
+    # The answer borrowed only one of the two bodies, and refs_used keeps that subset.
+    assert created[0].refs_used == ("kr-001",)
+
+
+def test_an_unusable_selection_is_retried_once_and_then_dropped(tmp_path: Path) -> None:
+    # Given a selection call that answers with prose and then with numbers
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient(["kr-001을 추천합니다", json.dumps([1, 2, 3]), _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then the run still produces candidates, from the summary documents alone
+    assert len(created) == 3
+    assert len(client.histories) == 3
+    retry_turn = client.histories[1][-1]
+    assert "레퍼런스 선택 형식을 통과하지 못했습니다" in str(retry_turn["content"])
+    generation_turn = _instruction_of(client, 2)
+    assert "[레퍼런스 본문:" not in generation_turn
+    assert "레퍼런스 본문 활용 규칙" not in generation_turn
+
+
+def test_a_traversal_selection_never_reaches_a_file_outside_the_reference_folder(
+    tmp_path: Path,
+) -> None:
+    # Given a selection that tries to escape references/KR, then a usable retry
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_selection("../../core/FACTS"), _selection("kr-001"), _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    retry_turn = client.histories[1][-1]
+    assert "레퍼런스 id 형식이 아닙니다" in str(retry_turn["content"])
+    generation_turn = _instruction_of(client, 2)
+    assert generation_turn.count("[레퍼런스 본문:") == 1
+    assert "[레퍼런스 본문: kr-001]" in generation_turn
+
+
+def test_a_selection_that_resolves_to_no_file_falls_back_to_the_summary_documents(
+    tmp_path: Path,
+) -> None:
+    # Given two well-formed selections whose ids have no reference file
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_selection("kr-999"), _selection("kr-998"), _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    retry_turn = client.histories[1][-1]
+    assert "고른 레퍼런스 본문을 찾을 수 없습니다" in str(retry_turn["content"])
+    assert "[레퍼런스 본문:" not in _instruction_of(client, 2)

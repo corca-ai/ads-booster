@@ -279,30 +279,38 @@ fields existed: `accepted` becomes `caption_approved`, and candidates stored bef
 required are backfilled with the placeholder `(주제 미기록)` so the required field holds. Posting
 stays manual and outside this runtime.
 
-🤖 후보 자동 생성 is wired to the built-in agent. One click assembles the operator's context
-documents into a single provider call and stores three Korean candidates as `source=auto`, awaiting
-caption approval like any manual candidate. The button disables itself and shows
+🤖 후보 자동 생성 is wired to the built-in agent. One click asks the model which references to read
+in full, assembles the operator's context documents plus those reference bodies into a generation
+call, and stores three Korean candidates as `source=auto`, awaiting caption approval like any manual
+candidate. The button disables itself and shows
 `생성 중… (1~3분 소요)` while the request runs, then refreshes the list. It needs two things:
 
 - **Run the service from the folder that holds `context/`.** The generator reads
   `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points elsewhere, and it needs
   `core/PRINCIPLES-GLOBAL.md`, `core/PRINCIPLES-KR.md`, `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`,
   `core/FACTS.md`, and `references/KR/INDEX.md`. A missing folder or file stops the run before any
-  model call and the browser shows which one.
+  model call and the browser shows which one. The reference bodies the run reads are the
+  `references/KR/<id>.md` files the index names; an id with no file there is skipped instead of
+  failing the run.
 - **A logged-in agent credential.** Run `trace-agent auth login` in the terminal first; without it
   the button reports `AI 로그인이 필요합니다`.
 
-This version is deliberately simple: one non-streaming call per click, no tool loop and no web
-search, exactly three candidates, Korean only. The model must answer with a strict JSON array; one
-malformed answer is retried once with the validation error, and a second failure stores nothing and
-reports `AI 응답이 형식을 통과하지 못했습니다`. The generated `appium_prompt` is stored as the
-candidate's Appium 프롬프트.
+This version is deliberately simple: two non-streaming calls per click, no tool loop and no web
+search, exactly three candidates, Korean only. The first call sends the reference index on its own
+and asks for a JSON array of 3-8 reference ids. Each id must match `^[a-z]{2,3}-[0-9]{3}$`, and the
+file path is built from that validated id alone so a selection can never address anything outside
+`references/KR/`; at most 8 bodies and roughly 50,000 characters of reference text are attached,
+dropping from the end of the selection. An unusable selection is retried once and then abandoned:
+the run continues on the summary documents alone rather than failing. The second call must answer
+with a strict JSON array; one malformed answer is retried once with the validation error, and a
+second failure stores nothing and reports `AI 응답이 형식을 통과하지 못했습니다`. The generated
+`appium_prompt` is stored as the candidate's Appium 프롬프트.
 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/candidates` | List the authenticated member's workspace candidates, newest first |
 | `POST /api/candidates` | Create a manual candidate from `topic`, `country`, `caption`, `hypothesis`, `image_inputs`, and optional `refs_used`/`principles_applied`/`shooting_order`; the server forces `source=manual` and `status=awaiting_review` |
-| `POST /api/candidates/generate` | Assemble `context/` into one provider call and store three `source=auto` candidates, or store nothing; `409` for a missing context folder or credential, `502` for a provider or format failure |
+| `POST /api/candidates/generate` | Pick reference bodies from the index, assemble `context/` and those bodies into one generation call, and store three `source=auto` candidates, or store nothing; `409` for a missing context folder or credential, `502` for a provider or format failure |
 | `POST /api/candidates/{candidate_id}/review` | Stage-one decision on topic and caption together: `caption_approved` or `rejected`, with an optional note and an `expected_revision` guard |
 | `POST /api/candidates/{candidate_id}/generate-image` | Stage-two composition: search a background, compose the lock-screen image, and move a `caption_approved` candidate to `image_awaiting_review`; `409` for the wrong stage, a stale revision, or a failed run |
 | `POST /api/candidates/{candidate_id}/review-image` | Stage-two decision: `submitted`, or back to `caption_approved` with the note; `409` for the wrong stage or a stale revision |

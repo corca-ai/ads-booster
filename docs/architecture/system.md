@@ -296,16 +296,25 @@ script assembly rather than an agent loop:
    `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`, `core/FACTS.md`, and `references/KR/INDEX.md`. An
    absent directory, or any absent or blank document, fails the run before any provider call and
    names what is missing.
-3. Assemble one instruction from those documents, the hard rules, and the strict output contract.
-4. Make one non-streaming Responses call through the same `auth/`, `providers/`, and `transport/`
-   boundary the chat surface uses, with its read timeout widened to
+3. Send the reference index on its own and ask which references to read in full. The answer must be
+   a JSON array of 3-8 ids matching `^[a-z]{2,3}-[0-9]{3}$`, and each path is built from the
+   validated id alone and re-checked against `references/KR/`, so a selection can never address a
+   file outside that folder. An id with no readable file is dropped; at most eight bodies and about
+   50,000 characters of reference text are kept, dropping from the end of the selection. An
+   unusable selection is retried once, and a second failure abandons the bodies rather than the
+   run.
+4. Assemble one instruction from those documents, the selected reference bodies with the rules for
+   borrowing their shape, the hard rules, and the strict output contract.
+5. Make both calls through the same `auth/`, `providers/`, and `transport/` boundary the chat
+   surface uses, non-streaming, with the read timeout widened to
    `TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS`.
-5. Parse the response as a JSON array of exactly three candidates, tolerating a markdown code fence.
+6. Parse the response as a JSON array of exactly three candidates, tolerating a markdown code fence.
    One failed validation is retried once with the validation error appended; a second failure ends
    the run.
-6. Write all three candidates as `source=auto`, `status=awaiting_review`, or write nothing.
+7. Write all three candidates as `source=auto`, `status=awaiting_review`, or write nothing.
 
-The run has no tools, no web search, and no file writes; the context documents are read-only inputs.
+The run has no tools, no web search, and no file writes; the context documents and the selected
+reference bodies are read-only inputs.
 It is a synchronous request handled in the FastAPI threadpool, so the browser waits for it. Failure
 modes are typed and mapped to a status with an operator-facing Korean message: missing context or a
 missing provider credential answer `409`, and a provider or format failure answers `502`. Only
