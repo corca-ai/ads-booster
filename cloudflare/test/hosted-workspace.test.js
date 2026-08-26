@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   candidateResponseSchema,
+  contextForCountry,
   generationPrompt,
   handleHostedWorkspace,
   nextDailyGenerationAt,
@@ -269,6 +270,50 @@ test("workspace context assets expose data-driven country profiles", () => {
   assert.deepEqual(new Set(WORKSPACE_CONTEXT_PROFILES.map(
     (profile) => normalizeContextProfile(profile).country,
   )), new Set(["BR", "DE", "FR", "JP", "KR", "TW", "US"]));
+});
+
+test("researched countries carry their principle documents into the prompt", () => {
+  for (const country of ["KR", "JP", "TW"]) {
+    const documents = contextForCountry(WORKSPACE_CONTEXT, country);
+    assert.ok(documents.includes(`research/PRINCIPLES-${country}.md`));
+    assert.ok(documents.includes(`research/ELEMENTS-${country}.md`));
+    assert.ok(documents.includes("research/PRINCIPLES-GLOBAL.md"));
+  }
+  assert.ok(contextForCountry(WORKSPACE_CONTEXT, "KR").includes("research/VOICE-KR.md"));
+});
+
+test("hypothesis markets carry no country research", () => {
+  for (const country of ["US", "DE", "FR", "BR"]) {
+    const documents = contextForCountry(WORKSPACE_CONTEXT, country);
+    assert.ok(!documents.includes(`research/PRINCIPLES-${country}.md`));
+    assert.ok(documents.includes(`markets/${country}.md`));
+  }
+});
+
+test("the reference corpus ships whole but only named records reach the prompt", () => {
+  assert.equal(Object.keys(WORKSPACE_CONTEXT.referenceBodies.KR).length, 41);
+
+  const sceneProfile = WORKSPACE_CONTEXT_PROFILES.find((profile) => profile.country === "KR");
+  const withoutBodies = contextForCountry(WORKSPACE_CONTEXT, "KR", sceneProfile);
+  assert.ok(!withoutBodies.includes("[레퍼런스 본문:"));
+
+  const withBodies = contextForCountry(WORKSPACE_CONTEXT, "KR", {
+    ...sceneProfile,
+    reference_ids: ["kr-020", "kr-027"],
+  });
+  assert.ok(withBodies.includes("[레퍼런스 본문: kr-020]"));
+  assert.ok(withBodies.includes("[레퍼런스 본문: kr-027]"));
+});
+
+test("an oversized reference selection is trimmed instead of blowing the prompt", () => {
+  const ids = Object.keys(WORKSPACE_CONTEXT.referenceBodies.KR);
+  const documents = contextForCountry(WORKSPACE_CONTEXT, "KR", {
+    country: "KR",
+    reference_ids: ids,
+  });
+  const inlined = documents.match(/\[레퍼런스 본문: /g) ?? [];
+  assert.ok(inlined.length > 0);
+  assert.ok(inlined.length <= 5);
 });
 
 test("hosted context countries come from the packaged manifest", async () => {
