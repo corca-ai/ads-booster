@@ -286,9 +286,10 @@ caption approval like any manual candidate. The button disables itself and shows
 
 - **Run the service from the folder that holds `context/`.** The generator reads
   `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points elsewhere, and it needs
-  `core/PRINCIPLES-GLOBAL.md`, `core/PRINCIPLES-KR.md`, `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`,
-  `core/FACTS.md`, and `references/KR/INDEX.md`. A missing folder or file stops the run before any
-  model call and the browser shows which one.
+  `core/PIPELINE-SCOPE.md`, `core/PRINCIPLES-GLOBAL.md`, `core/PRINCIPLES-KR.md`,
+  `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`, `core/SHOOTING-KR.md`, `core/FACTS.md`, and
+  `references/KR/INDEX.md`. A missing folder or file stops the run before any model call and the
+  browser shows which one.
 - **A logged-in agent credential.** Run `trace-agent auth login` in the terminal first; without it
   the button reports `AI 로그인이 필요합니다`.
 
@@ -791,13 +792,18 @@ a directory without `context/` no longer leaves the default candidate generator 
 The repository did not previously contain a production country/account/persona context library:
 the JSON files under `appium/jobs/**/mock-contexts/` are capture fixtures, and PR #21 expected the
 operator to supply the six markdown files in an untracked local `context/` directory. The packaged
-documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are therefore safe starter guidance,
-not a migration of team-owned persona knowledge. They keep a fresh install and hosted build runnable
-while the team replaces them with successful-account evidence. The context manifest owns country
-document and profile paths; adding a packaged country is a data change to the
-manifest/documents/profile JSON, not a Worker source edit. Custom account-scoped profiles live in
-D1. Generation fails with `409` when a selected country has no packaged documents rather than
-silently falling back to KR.
+context is now mixed, and `src/trace_capture/assets/context/ORIGIN.md` records which part is which.
+`core/` and `references/KR/` hold the team's own collected and verified marketing documents for KR,
+JP, and TW, copied byte-identically from the marketing context archive, while `markets/US.md`,
+`markets/DE.md`, `markets/FR.md`, `markets/BR.md` and all 16 profiles remain unverified starter
+guidance. Read a US, DE, FR, or BR candidate as a hypothesis, not as a researched result. The
+context manifest owns country document, asset, reference, and profile paths; adding a packaged
+country is a data change to the manifest/documents/profile JSON, not a Worker source edit. Country
+documents are injected in full on every generation and the build rejects a country whose context
+exceeds 48,000 bytes; reference bodies ship whole but only the records a persona names by id are
+inlined, capped at five records and 24,000 bytes. Custom account-scoped profiles live in D1.
+Generation fails with `409` when a selected country has no packaged documents rather than silently
+falling back to KR.
 
 Hosted context endpoints are intentionally public with the rest of this workspace:
 

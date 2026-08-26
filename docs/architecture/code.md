@@ -227,10 +227,22 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
   callback authorization to expose the UI.
 - Treat hosted `account_id` as a logical data scope, never as proof of caller authorization. Public
   account settings, profiles, candidates, and feedback must all use the same selected scope.
-- Keep the starter context canonical under `trace_capture/assets/context/` and generate the Worker
-  module from it during the Cloudflare build instead of maintaining a second copy.
-- Keep country document/profile membership in the context manifest. D1 may add account-scoped
-  profiles, but a profile cannot generate for a country without reviewed packaged documents.
+- Keep the marketing context canonical under `trace_capture/assets/context/` and generate the Worker
+  module from it during the Cloudflare build instead of maintaining a second copy. `ORIGIN.md` owns
+  the provenance and verification status of every document there.
+- Keep documents copied from the marketing context archive byte-identical, frontmatter included, so
+  a re-sync stays a straight copy. Repository-owned operating rules live in their own files
+  (`core/PIPELINE-SCOPE.md`, `references/KR/INDEX.md`, `markets/*.md`), never as edits to an archive
+  document.
+- Keep `references/KR/INDEX.md` (the scene index backing `profile.reference_ids`) distinct from
+  `references/KR/RESEARCH-INDEX.md` (the collected-record screening table); neither may overwrite
+  the other.
+- Keep country document/asset/reference/profile membership in the context manifest. D1 may add
+  account-scoped profiles, but a profile cannot generate for a country without reviewed packaged
+  documents.
+- Keep whole-corpus injection out of the generation prompt. Reference bodies are selected by id and
+  bounded; a document set that must always be injected belongs in `documents` and under the build's
+  byte budget.
 - Store the selected profile snapshot on every hosted candidate; later profile edits must not change
   the candidate's generation provenance.
 - Keep the four-candidate morning/evening batch rule and repeated-feedback threshold in the hosted

@@ -12,10 +12,12 @@ from trace_capture.default_assets import default_candidate_context_path
 CONTEXT_DIR_ENVIRONMENT: Final = "TRACE_AGENT_CONTEXT_DIR"
 CONTEXT_DIRECTORY_NAME: Final = "context"
 REQUIRED_DOCUMENTS: Final = (
+    "core/PIPELINE-SCOPE.md",
     "core/PRINCIPLES-GLOBAL.md",
     "core/PRINCIPLES-KR.md",
     "core/ELEMENTS-KR.md",
     "core/VOICE-KR.md",
+    "core/SHOOTING-KR.md",
     "core/FACTS.md",
     "references/KR/INDEX.md",
 )
