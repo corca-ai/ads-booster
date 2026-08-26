@@ -416,8 +416,13 @@ context, current account instruction, and repeated account/persona feedback rule
 four schema-shaped candidates in one batch: two morning and two evening. The Cron Trigger claims due
 enabled accounts and invokes the same generator; failures move that account's retry time 15 minutes
 forward without changing another silo. A manifest maps packaged global and country documents to
-starter profile files, so a new country does not require a Worker source edit. Missing country
-documents fail closed with `409`.
+starter profile files, so a new country does not require a Worker source edit. It carries three
+document groups per country: `documents` and `research_documents` are injected into every generation
+in full, `research_assets` only have to resolve and stay non-blank, and `reference_bodies` are keyed
+by their frontmatter id so a generation inlines only the records the selected persona names, capped
+at five records and 24,000 bytes. The build fails when a country's research documents exceed 48,000
+bytes rather than letting the Worker truncate a table mid-row. Missing country documents fail closed
+with `409`.
 Missing or incomplete Appium prompt text is rebuilt from the validated image inputs.
 Caption approval creates a revision-scoped hosted capture task in D1 and Cloudflare Queue. The
 portable bridge recognizes that task contract, discovers a booted or available iPhone Simulator at
@@ -432,11 +437,15 @@ old review and image, returns the candidate to `awaiting_review`, and removes th
 deletion removes the D1 record and its R2 object. Profile deletion is a soft hide and never changes a
 candidate's stored context snapshot. Approval records a 5-point event. Rejection requires a 1–3
 rating and a taxonomy tag; three matching tag events for one account/persona become a generation
-rule candidate. The packaged KR, JP, TW, US, DE, FR, and BR context plus 16 profiles are generic
-starter material. Existing Appium persona JSON files are test/demo fixtures, not production team
-context, and the earlier generator's `context/` contract pointed to operator-owned local files that
-were not committed to this repository. Team-owned evidence enters through D1 profile CRUD or
-reviewed manifest data rather than being inferred from those fixtures.
+rule candidate. The packaged context is no longer uniform starter material: KR, JP, and TW carry the
+team's collected and verified principle and element documents under `research/`, and KR additionally
+carries the 41-record reference corpus, while US, DE, FR, and BR remain unverified hypothesis
+markets. `assets/context/ORIGIN.md` states that split and the archive commit each document came
+from. The 16 profiles are still generic starter material. Existing Appium persona JSON files are
+test/demo fixtures, not production team context, and the earlier generator's `context/` contract
+pointed to operator-owned local files that were not committed to this repository. Team-owned evidence
+enters through D1 profile CRUD or reviewed manifest data rather than being inferred from those
+fixtures.
 
 For a simulation account without a local `workspace_id`, the Workflow executes each task in
 Cloudflare, stores a labeled digest-backed task artifact in R2, and records the result in D1. This

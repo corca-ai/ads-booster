@@ -791,13 +791,17 @@ a directory without `context/` no longer leaves the default candidate generator 
 The repository did not previously contain a production country/account/persona context library:
 the JSON files under `appium/jobs/**/mock-contexts/` are capture fixtures, and PR #21 expected the
 operator to supply the six markdown files in an untracked local `context/` directory. The packaged
-documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are therefore safe starter guidance,
-not a migration of team-owned persona knowledge. They keep a fresh install and hosted build runnable
-while the team replaces them with successful-account evidence. The context manifest owns country
-document and profile paths; adding a packaged country is a data change to the
-manifest/documents/profile JSON, not a Worker source edit. Custom account-scoped profiles live in
-D1. Generation fails with `409` when a selected country has no packaged documents rather than
-silently falling back to KR.
+context is now mixed, and `src/trace_capture/assets/context/ORIGIN.md` records which part is which:
+`research/` and `references/KR/` hold the team's own collected and verified marketing documents for
+KR, JP, and TW, while `markets/US.md`, `markets/DE.md`, `markets/FR.md`, `markets/BR.md` and all 16
+profiles remain unverified starter guidance. Read a US, DE, FR, or BR candidate as a hypothesis, not
+as a researched result. The context manifest owns country document, research, reference, and profile
+paths; adding a packaged country is a data change to the manifest/documents/profile JSON, not a
+Worker source edit. Research documents are injected in full on every generation and the build
+rejects a country whose research exceeds 48,000 bytes; reference bodies ship whole but only the
+records a persona names by id are inlined, capped at five records and 24,000 bytes. Custom
+account-scoped profiles live in D1. Generation fails with `409` when a selected country has no
+packaged documents rather than silently falling back to KR.
 
 Hosted context endpoints are intentionally public with the rest of this workspace:
 
