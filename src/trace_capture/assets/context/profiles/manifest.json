@@ -1,14 +1,12 @@
 {
   "schema_version": "trace.workspace-context-manifest.v2",
   "global_documents": [
+    "core/PIPELINE-SCOPE.md",
     "core/PRINCIPLES-GLOBAL.md",
     "core/FACTS.md"
   ],
-  "global_research_documents": [
-    "research/PRINCIPLES-GLOBAL.md"
-  ],
-  "global_research_assets": [
-    "research/AXES.md"
+  "global_assets": [
+    "core/AXES.md"
   ],
   "countries": {
     "KR": {
@@ -16,15 +14,10 @@
         "core/PRINCIPLES-KR.md",
         "core/ELEMENTS-KR.md",
         "core/VOICE-KR.md",
+        "core/SHOOTING-KR.md",
         "references/KR/INDEX.md"
       ],
-      "research_documents": [
-        "research/PRINCIPLES-KR.md",
-        "research/ELEMENTS-KR.md",
-        "research/VOICE-KR.md",
-        "research/SHOOTING-KR.md"
-      ],
-      "research_assets": [
+      "assets": [
         "references/KR/RESEARCH-INDEX.md",
         "references/KR/ELEMENTS-TABLE.md"
       ],
@@ -75,21 +68,17 @@
     },
     "JP": {
       "documents": [
+        "core/PRINCIPLES-JP.md",
+        "core/ELEMENTS-JP.md",
         "markets/JP.md"
-      ],
-      "research_documents": [
-        "research/PRINCIPLES-JP.md",
-        "research/ELEMENTS-JP.md"
       ],
       "profiles": "profiles/JP.json"
     },
     "TW": {
       "documents": [
+        "core/PRINCIPLES-TW.md",
+        "core/ELEMENTS-TW.md",
         "markets/TW.md"
-      ],
-      "research_documents": [
-        "research/PRINCIPLES-TW.md",
-        "research/ELEMENTS-TW.md"
       ],
       "profiles": "profiles/TW.json"
     },

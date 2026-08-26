@@ -4,29 +4,42 @@
 게시물 후보 생성은 여기 있는 문서만 근거로 삼습니다.
 
 원본 리서치 아카이브는 <https://github.com/corca-ai/trace-marketing-context> 이며,
-`research/`와 `references/KR/`의 문서는 그 저장소의 `b77d8b541828319d67750d87ff5188216f1c2e3d`
-커밋에서 그대로 가져왔습니다. 아카이브는 이후 수집·검증 작업의 기록 보관소이고, 파이프라인이
-읽는 사본은 이 디렉터리입니다. 두 곳이 갈라지면 이 디렉터리가 이깁니다.
+`core/`와 `references/KR/`의 문서는 그 저장소의 `b77d8b541828319d67750d87ff5188216f1c2e3d`
+커밋에서 **바이트 단위로 동일하게** 복사했습니다(frontmatter 포함). 아카이브는 이후 수집·검증
+작업의 기록 보관소이고, 파이프라인이 읽는 사본은 이 디렉터리입니다. 두 곳이 갈라지면 이
+디렉터리가 이깁니다.
 
-## 계층
+아카이브에서 그대로 가져온 파일:
 
-| 디렉터리 | 역할 | 프롬프트 주입 |
-|---|---|---|
-| `core/` | 운영 계약 — 출력 필드 스펙, 제품 사실 시트, 기본 원리 | 매 생성마다 전문 |
-| `research/` | 수집·검증으로 도출한 국가별 원리와 요소 판정표 | 매 생성마다 전문 (KR·JP·TW만) |
-| `references/KR/` | 레퍼런스 레코드 원본과 스크리닝 표 | 페르소나가 지목한 id만 |
-| `markets/` | 리서치 근거가 없는 가설 시장의 시작 지침 | 매 생성마다 전문 |
-| `profiles/` | 국가별 페르소나와 manifest | 선택한 페르소나 1건 |
+```
+core/  PRINCIPLES-GLOBAL.md  PRINCIPLES-KR.md  PRINCIPLES-JP.md  PRINCIPLES-TW.md
+       ELEMENTS-KR.md  ELEMENTS-JP.md  ELEMENTS-TW.md
+       VOICE-KR.md  SHOOTING-KR.md  AXES.md  FACTS.md
+references/KR/  RESEARCH-INDEX.md(= 아카이브 INDEX.md)  ELEMENTS-TABLE.md  kr-001.md ~ kr-041.md
+```
 
-`core/`와 `research/`에는 이름이 같고 내용이 다른 파일이 있습니다. **의도된 것입니다.**
+## 이 저장소에만 있는 파일
 
-- `core/ELEMENTS-KR.md`는 후보가 채워야 할 **출력 필드 목록**입니다.
-- `research/ELEMENTS-KR.md`는 수집 레코드에서 도출한 **요소별 판정표**입니다.
-- `core/PRINCIPLES-*.md`는 짧은 운영 규칙, `research/PRINCIPLES-*.md`는 근거가 붙은 원리 문서입니다.
-- `references/KR/INDEX.md`는 페르소나가 참조하는 **장면 인덱스**(`kr-study-day` 등)이고,
-  `references/KR/RESEARCH-INDEX.md`는 수집 레코드 41건의 **스크리닝 표**(`kr-001` 등)입니다.
+아카이브에 대응 문서가 없고 파이프라인 운영을 위해 이 저장소가 소유하는 파일입니다.
 
-둘을 서로 덮어쓰지 마세요. 어느 한쪽을 지우면 생성이 깨집니다.
+| 파일 | 역할 |
+|---|---|
+| `core/PIPELINE-SCOPE.md` | 파이프라인 범위(사람 승인 필수, 자동 게시 없음)와 문서 읽는 규칙 |
+| `references/KR/INDEX.md` | 페르소나가 참조하는 **장면 인덱스**(`kr-study-day` 등) |
+| `markets/*.md` | 국가별 언어 지침과 장면 참조 id |
+| `profiles/*.json` | 국가별 시작 페르소나와 manifest |
+
+**`references/KR/INDEX.md`와 `references/KR/RESEARCH-INDEX.md`는 다른 문서입니다.** 앞의 것은
+`profiles/*.json`의 `reference_ids`가 가리키는 장면 인덱스이고, 뒤의 것은 수집 레코드 41건의
+스크리닝 표입니다. 서로 덮어쓰지 마세요.
+
+이관 전 이 디렉터리에는 아카이브 문서의 **축약본**이 들어 있었고, 전부 아카이브 원본으로
+교체했습니다. 예전 `core/PRINCIPLES-KR.md`는 586바이트 의역본이었고 실제 문서는
+8,617바이트입니다. `PRINCIPLES-GLOBAL.md`(496 → 13,218), `VOICE-KR.md`(526 → 4,094),
+`ELEMENTS-KR.md`, `FACTS.md`도 마찬가지였습니다. 축약본에만 있던 운영 규칙은
+`core/PIPELINE-SCOPE.md`로 옮겼습니다. 후보의 출력 필드 계약은 문서가 아니라 두 엔진이 각각
+코드로 강제합니다(hosted는 `candidateResponseSchema`, 로컬은
+`candidate_generation/instruction.py`의 출력 템플릿). 축약본에서 사라진 내용은 없습니다.
 
 ## 신뢰 등급
 
@@ -55,22 +68,27 @@ JP·TW의 언어 지침과 장면 참조 id는 `markets/JP.md` / `markets/TW.md`
 아니며, 어느 문장도 근거 문서를 가리키지 못합니다. 이 네 국가의 후보를 검증된 결과처럼
 다루지 마세요. 해당 시장을 실제로 운영하려면 KR과 같은 수집·검증 절차가 선행되어야 합니다.
 
+네 국가도 `core/PRINCIPLES-GLOBAL.md`를 받습니다. 이 문서는 KR·JP·TW 데이터에서 도출된
+것이므로, 네 국가에 대해서는 검증된 원리가 아니라 **이식 가설**로 읽어야 합니다.
+
 ## 이관하지 않은 것
 
 - **레퍼런스 이미지** — 아카이브의 `references/KR/img/`(약 4MB)는 가져오지 않았습니다. 본문
   28건에 남아 있는 `img/...` 링크는 이 사본에서 열리지 않습니다. 캡션과 `visual:` 블록의
   텍스트 묘사는 그대로 있습니다.
-- **`core/FACTS.md`(아카이브본)** — 아카이브의 FACTS는 답이 비어 있는 **질문지**입니다.
-  이 디렉터리의 `core/FACTS.md`는 파이프라인이 실제로 쓰는 제품 사실 시트이므로 덮어쓰지
-  않았습니다. 아카이브 FACTS의 미기입 항목(배포 상태, 위젯 인터랙션, 스타일 옵션 수, 화자
-  정책, 댓글 게이트 운영 리소스 등)은 여전히 팀이 채워야 할 공백입니다.
-- **`research/` 상위 조사 문서** — `stage3-korea.md`, `verification-pass.md` 등 원리 문서가
-  각주로 인용하는 조사 원문은 아카이브에만 있습니다. 이 사본의 원리 문서에서 해당 경로 참조는
-  아카이브를 가리키는 출처 표기로 읽으세요.
+- **아카이브의 `research/` 조사 원문** — `stage3-korea.md`, `verification-pass.md` 등 원리
+  문서가 각주로 인용하는 조사 원문은 아카이브에만 있습니다. 이 사본의 원리 문서에서 해당 경로
+  참조는 아카이브를 가리키는 출처 표기로 읽으세요.
 - **JP·TW 레퍼런스 본문** — 아카이브에 `jp-001`~`jp-032`, `tw-001`~`tw-018`가 있습니다.
+- **아카이브 `context/README.md`** — 아카이브 기준 디렉터리 구조를 설명하므로 이 사본의
+  구조와 어긋납니다. 이 파일이 그 역할을 대신합니다.
 
 ## 남아 있는 데이터 결함 (지어내서 메우지 말 것)
 
+- **`core/FACTS.md`의 답란 15개가 전부 비어 있습니다.** 배포 상태, 위젯 인터랙션, 스타일 옵션
+  수, 개발 비하인드, 화자·계정 정책, 댓글 게이트 운영 리소스, 촬영 정책이 미기입입니다. 이
+  공백은 팀이 채워야 하며, 그때까지 이 사실들을 전제로 한 주장은 캡션에서 빼야 합니다
+  (`core/PIPELINE-SCOPE.md` 참조).
 - KR 41건 중 다수가 `views: null`입니다. 도달을 논하는 KR 서술은 대부분 반응 수로부터의
   추론입니다.
 - `kr-025`의 `views: 39`(좋아요 163)는 물리적으로 불가능한 값입니다.
