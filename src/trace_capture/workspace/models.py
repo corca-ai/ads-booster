@@ -175,6 +175,30 @@ CandidateDeviceTime = Annotated[str, Field(pattern=r"^\d{2}:\d{2}$")]
 CandidateBackgroundMood = Annotated[str, Field(min_length=1, max_length=40)]
 CandidateLanguage = Annotated[str, Field(pattern=r"^[a-z]{2}$")]
 CandidateImageDigest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+CandidateContextRelativePath = Annotated[str, Field(min_length=1, max_length=1_024)]
+CandidateGenerationModel = Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class CandidateContextDocument(FrozenModel):
+    """One context document a generation run read, with the byte size it contributed."""
+
+    relative_path: CandidateContextRelativePath
+    size_bytes: int = Field(ge=0)
+
+
+class CandidateGenerationProvenance(FrozenModel):
+    """What one auto-generation batch actually read and asked for, recorded while it ran.
+
+    Every field is a fact the run observed: the context documents assembled into the
+    instruction with their UTF-8 byte sizes, the model id the run requested, the total
+    instruction length, and the moment the provider call was made. Manual candidates and
+    rows written before this record existed carry `None`.
+    """
+
+    documents: Annotated[tuple[CandidateContextDocument, ...], Field(max_length=64)]
+    model: CandidateGenerationModel
+    instruction_chars: int = Field(ge=0)
+    generated_at: float
 
 
 class CandidateImageInputs(FrozenModel):
@@ -200,6 +224,7 @@ class CandidateCreate(FrozenModel):
     image_inputs: CandidateImageInputs
     ai_verdict: CandidateVerdict | None = None
     image_path: CandidateImagePath | None = None
+    generation_provenance: CandidateGenerationProvenance | None = None
 
 
 class CandidateRecord(FrozenModel):
@@ -217,6 +242,7 @@ class CandidateRecord(FrozenModel):
     ai_verdict: str | None
     image_path: str | None
     image_sha256: str | None
+    generation_provenance: CandidateGenerationProvenance | None
     status: CandidateStatus
     review_note: str | None
     revision: int = Field(ge=1)

@@ -16,6 +16,7 @@ from trace_capture.workspace.errors import (
 )
 from trace_capture.workspace.models import (
     CandidateCreate,
+    CandidateGenerationProvenance,
     CandidateId,
     CandidateImageInputs,
     CandidateRecord,
@@ -39,6 +40,7 @@ type CandidateRow = tuple[
     str | None,
     str | None,
     str | None,
+    str | None,
     str,
     str | None,
     int,
@@ -49,19 +51,22 @@ type CandidateRow = tuple[
 _REFS_ADAPTER = TypeAdapter(tuple[str, ...])
 _PRINCIPLES_ADAPTER = TypeAdapter(tuple[int, ...])
 _IMAGE_INPUTS_ADAPTER = TypeAdapter(CandidateImageInputs)
+_PROVENANCE_ADAPTER = TypeAdapter(CandidateGenerationProvenance)
 _CANDIDATE: Final = "candidate"
 _SELECT_CANDIDATE: Final = """
 SELECT workspace_id, candidate_id, source, country, topic, caption, hypothesis, refs_used_json,
        principles_applied_json, shooting_order, image_inputs_json, ai_verdict, image_path,
-       image_sha256, status, review_note, revision, created_at, updated_at
+       image_sha256, generation_provenance_json, status, review_note, revision, created_at,
+       updated_at
 FROM candidates
 """
 _INSERT_CANDIDATE: Final = """
 INSERT INTO candidates (
     workspace_id, candidate_id, source, country, topic, caption, hypothesis, refs_used_json,
     principles_applied_json, shooting_order, image_inputs_json, ai_verdict, image_path,
-    image_sha256, status, review_note, revision, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, 1, ?, ?)
+    image_sha256, generation_provenance_json, status, review_note, revision, created_at,
+    updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 1, ?, ?)
 """
 _NEWEST_FIRST: Final = " ORDER BY created_at DESC, candidate_id DESC"
 _SELECT_STATUS: Final = "SELECT status FROM candidates WHERE workspace_id = ? AND candidate_id = ?"
@@ -89,6 +94,7 @@ class CandidateStore(WorkspaceRepositoryBase):
                     _dump_image_inputs(value.image_inputs),
                     value.ai_verdict,
                     value.image_path,
+                    _dump_provenance(value.generation_provenance),
                     status,
                     now,
                     now,
@@ -109,6 +115,7 @@ class CandidateStore(WorkspaceRepositoryBase):
             ai_verdict=value.ai_verdict,
             image_path=value.image_path,
             image_sha256=None,
+            generation_provenance=value.generation_provenance,
             status=status,
             review_note=None,
             revision=1,
@@ -299,6 +306,14 @@ def _load_image_inputs(payload: str | None) -> CandidateImageInputs | None:
     return None if payload is None else _IMAGE_INPUTS_ADAPTER.validate_json(payload)
 
 
+def _dump_provenance(value: CandidateGenerationProvenance | None) -> str | None:
+    return None if value is None else _PROVENANCE_ADAPTER.dump_json(value).decode()
+
+
+def _load_provenance(payload: str | None) -> CandidateGenerationProvenance | None:
+    return None if payload is None else _PROVENANCE_ADAPTER.validate_json(payload)
+
+
 def _raise_review_failure(
     cursor: SqliteCursor, candidate_id: CandidateId, expected_revision: int
 ) -> NoReturn:
@@ -333,11 +348,12 @@ def _candidate_from_row(row: CandidateRow) -> CandidateRecord:
         ai_verdict=row[11],
         image_path=row[12],
         image_sha256=row[13],
-        status=CandidateStatus(row[14]),
-        review_note=row[15],
-        revision=row[16],
-        created_at=row[17],
-        updated_at=row[18],
+        generation_provenance=_load_provenance(row[14]),
+        status=CandidateStatus(row[15]),
+        review_note=row[16],
+        revision=row[17],
+        created_at=row[18],
+        updated_at=row[19],
     )
 
 
@@ -360,6 +376,7 @@ def _fetch_candidate(cursor: SqliteCursor) -> CandidateRow | None:
             (str() | None) as ai_verdict,
             (str() | None) as image_path,
             (str() | None) as image_sha256,
+            (str() | None) as generation_provenance_json,
             str() as status,
             (str() | None) as review_note,
             int() as revision,
@@ -381,6 +398,7 @@ def _fetch_candidate(cursor: SqliteCursor) -> CandidateRow | None:
                 ai_verdict,
                 image_path,
                 image_sha256,
+                generation_provenance_json,
                 status,
                 review_note,
                 revision,

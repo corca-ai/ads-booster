@@ -15,6 +15,7 @@ from trace_capture.workspace import (
     AssetRelativePath,
     CandidateCaption,
     CandidateCountry,
+    CandidateGenerationProvenance,
     CandidateHypothesis,
     CandidateId,
     CandidateImageInputs,
@@ -273,6 +274,7 @@ class CandidateResponse(WebModel):
     ai_verdict: str | None
     image_path: str | None
     image_sha256: str | None
+    generation_provenance: CandidateGenerationProvenance | None
     status: CandidateStatus
     review_note: str | None
     revision: int

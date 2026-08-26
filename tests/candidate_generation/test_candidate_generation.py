@@ -109,6 +109,7 @@ def _generator(
         store=store,
         models=FakeModelSource(client),
         context_source=CandidateContextSource(_write_context(tmp_path)),
+        model="gpt-5.5",
     )
 
 
@@ -317,6 +318,35 @@ def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:
     assert created[0].refs_used == ("kr-001",)
     assert len(store.list_candidates(workspace_id)) == 3
     assert len(client.histories) == 1
+
+
+def test_generation_records_what_the_run_read_on_every_candidate(tmp_path: Path) -> None:
+    # Given a context directory whose documents the run will assemble
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_answer()])
+    generator = _generator(tmp_path, store, client)
+    directory = _write_context(tmp_path)
+
+    # When the batch is generated
+    created = generator.generate(workspace_id)
+
+    # Then every candidate of the batch carries the same recorded provenance
+    provenances = [record.generation_provenance for record in created]
+    assert all(provenance == provenances[0] for provenance in provenances)
+    provenance = provenances[0]
+    assert provenance is not None
+    assert tuple(document.relative_path for document in provenance.documents) == REQUIRED_DOCUMENTS
+    assert [document.size_bytes for document in provenance.documents] == [
+        (directory / relative_path).stat().st_size for relative_path in REQUIRED_DOCUMENTS
+    ]
+    assert provenance.model == "gpt-5.5"
+    assert provenance.instruction_chars == len(str(client.histories[0][0]["content"]))
+    assert provenance.generated_at > 0
+
+    # And it survives the store round trip
+    stored = store.get_candidate(workspace_id, created[0].candidate_id)
+    assert stored.generation_provenance == provenance
 
 
 def test_generation_includes_control_plane_run_context(tmp_path: Path) -> None:

@@ -17,7 +17,9 @@ from trace_capture.candidate_generation import (
 from trace_capture.web.app import create_app
 from trace_capture.workspace import (
     CandidateBackgroundSubject,
+    CandidateContextDocument,
     CandidateCreate,
+    CandidateGenerationProvenance,
     CandidateId,
     CandidateImageInputs,
     CandidateSource,
@@ -35,6 +37,15 @@ if TYPE_CHECKING:
     from trace_capture.workspace import CandidateRecord, WorkspaceId
 
 _CANDIDATES = TypeAdapter(tuple[CandidateResponse, ...])
+_PROVENANCE = CandidateGenerationProvenance(
+    documents=(
+        CandidateContextDocument(relative_path="core/PRINCIPLES-KR.md", size_bytes=8_806),
+        CandidateContextDocument(relative_path="references/KR/INDEX.md", size_bytes=1_240),
+    ),
+    model="gpt-5.5",
+    instruction_chars=41_238,
+    generated_at=1_770_000_000.0,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +76,7 @@ class FakeGenerator:
                     refs_used=("kr-001",),
                     principles_applied=(1,),
                     shooting_order="입력_일정: 9시 스터디",
+                    generation_provenance=_PROVENANCE,
                 )
             )
             for index in range(3)
@@ -177,6 +189,7 @@ def test_manual_candidate_is_created_and_listed_for_the_workspace(tmp_path: Path
     assert record.refs_used == ("ref-a", "ref-b")
     assert record.principles_applied == (1, 4)
     assert record.ai_verdict is None
+    assert record.generation_provenance is None
     assert listed.status_code == 200
     assert _CANDIDATES.validate_json(listed.content) == (record,)
 
@@ -342,8 +355,10 @@ def test_generate_stores_three_automatic_candidates(tmp_path: Path) -> None:
     assert len(created) == 3
     assert all(record.source is CandidateSource.AUTO for record in created)
     assert all(record.status is CandidateStatus.AWAITING_REVIEW for record in created)
+    assert all(record.generation_provenance == _PROVENANCE for record in created)
     listed = _CANDIDATES.validate_json(client.get("/api/candidates").content)
     assert len(listed) == 3
+    assert all(record.generation_provenance == _PROVENANCE for record in listed)
 
 
 def test_generate_requires_an_authenticated_member(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 
@@ -15,14 +16,19 @@ from trace_capture.candidate_generation.instruction import (
 )
 from trace_capture.candidate_generation.parsing import parse_candidate_drafts
 from trace_capture.providers.errors import ProviderError
-from trace_capture.workspace import CandidateCreate, CandidateSource
+from trace_capture.workspace import (
+    CandidateContextDocument,
+    CandidateCreate,
+    CandidateGenerationProvenance,
+    CandidateSource,
+)
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from trace_capture.agent.session import ModelClient
     from trace_capture.candidate_generation.context_source import CandidateContextSource
-    from trace_capture.candidate_generation.models import CandidateDraft
+    from trace_capture.candidate_generation.models import CandidateContextBundle, CandidateDraft
     from trace_capture.transport.json_types import JsonObject
     from trace_capture.workspace import CandidateRecord, WorkspaceId
 
@@ -54,11 +60,15 @@ class CandidateGenerator:
     This is the "script assembly" mode: no tool loop and no web search. The model is
     called once, its strict JSON is validated, and one failed validation is retried once
     before the run gives up without writing anything.
+
+    `model` is the model id the run requests; it is recorded on every candidate the batch
+    writes so a reviewer can see what produced the caption in front of them.
     """
 
     store: CandidateWriter
     models: CandidateModelSource
     context_source: CandidateContextSource
+    model: str
     count: int = DEFAULT_CANDIDATE_COUNT
     country: str = DEFAULT_COUNTRY
 
@@ -70,10 +80,29 @@ class CandidateGenerator:
     ) -> tuple[CandidateRecord, ...]:
         bundle = self.context_source.load()
         instruction = build_instruction(bundle, count=self.count, run_context=run_context)
+        provenance = self._provenance(bundle, instruction)
         with self.models.open() as client:
             drafts = self._drafts(client, instruction)
         return tuple(
-            self.store.create_candidate(self._create(workspace_id, draft)) for draft in drafts
+            self.store.create_candidate(self._create(workspace_id, draft, provenance))
+            for draft in drafts
+        )
+
+    def _provenance(
+        self, bundle: CandidateContextBundle, instruction: str
+    ) -> CandidateGenerationProvenance:
+        """Record what this run read, just before it spends the provider call on it."""
+        return CandidateGenerationProvenance(
+            documents=tuple(
+                CandidateContextDocument(
+                    relative_path=document.relative_path,
+                    size_bytes=len(document.text.encode("utf-8")),
+                )
+                for document in bundle.documents
+            ),
+            model=self.model,
+            instruction_chars=len(instruction),
+            generated_at=time.time(),
         )
 
     def _drafts(self, client: ModelClient, instruction: str) -> tuple[CandidateDraft, ...]:
@@ -100,7 +129,12 @@ class CandidateGenerator:
     def _parse(self, answer: str) -> tuple[CandidateDraft, ...]:
         return parse_candidate_drafts(answer, expected=self.count, country=self.country)
 
-    def _create(self, workspace_id: WorkspaceId, draft: CandidateDraft) -> CandidateCreate:
+    def _create(
+        self,
+        workspace_id: WorkspaceId,
+        draft: CandidateDraft,
+        provenance: CandidateGenerationProvenance,
+    ) -> CandidateCreate:
         return CandidateCreate(
             workspace_id=workspace_id,
             source=CandidateSource.AUTO,
@@ -112,4 +146,5 @@ class CandidateGenerator:
             refs_used=draft.refs_used,
             principles_applied=draft.principles_applied,
             shooting_order=draft.appium_prompt,
+            generation_provenance=provenance,
         )

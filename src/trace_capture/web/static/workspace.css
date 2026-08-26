@@ -511,6 +511,37 @@ textarea:focus-visible {
 
 .advanced-input__body > p { margin: 0; }
 
+.provenance .advanced-input__body { gap: var(--space-2); }
+
+.provenance__field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.provenance__documents {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.provenance__document,
+.provenance__model {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono-stack);
+  font-size: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.provenance__missing,
+.provenance__note {
+  color: var(--color-text-quiet);
+  font-size: var(--font-small);
+  line-height: var(--leading-small);
+  margin: 0;
+}
+
 .form-help { margin: calc(var(--space-3) * -1) 0 0; }
 
 .invite-result {

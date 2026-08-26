@@ -418,7 +418,13 @@ const loadLive = async (fixture, fetchImplementation) => {
     Headers,
     window: {
       clearTimeout,
-      setTimeout,
+      // The capture poll reschedules itself forever; an unreferenced timer still fires
+      // while a test is awaiting, but never holds the process open after the last one.
+      setTimeout: (handler, delay) => {
+        const timer = setTimeout(handler, delay);
+        timer.unref?.();
+        return timer;
+      },
       confirm: () => true,
       localStorage: { getItem: () => null, setItem: () => {} },
     },
@@ -474,6 +480,38 @@ const findJourney = (node) => {
   return null;
 };
 
+const findByClassName = (node, className) => {
+  if (node?.className === className) return node;
+  for (const child of node?.children ?? []) {
+    const found = findByClassName(child, className);
+    if (found) return found;
+  }
+  return null;
+};
+
+const findProvenance = (node) => findByClassName(node, "advanced-input provenance");
+
+const provenanceTexts = (node, className) => {
+  const found = [];
+  const walk = (current) => {
+    if (current?.className === className) found.push(current.textContent);
+    for (const child of current?.children ?? []) walk(child);
+  };
+  walk(node);
+  return found;
+};
+
+const provenance = (overrides = {}) => ({
+  documents: [
+    { relative_path: "core/PRINCIPLES-KR.md", size_bytes: 8_806 },
+    { relative_path: "references/KR/INDEX.md", size_bytes: 1_240 },
+  ],
+  model: "gpt-5.5",
+  instruction_chars: 41_238,
+  generated_at: 1_770_000_000,
+  ...overrides,
+});
+
 const candidate = (overrides) => ({
   candidate_id: "candidate-1",
   source: "manual",
@@ -494,6 +532,7 @@ const candidate = (overrides) => ({
   image_sha256: null,
   ai_verdict: null,
   image_path: null,
+  generation_provenance: null,
   status: "awaiting_review",
   review_note: null,
   revision: 1,
@@ -1041,6 +1080,72 @@ const testImageApprovalPostsTheDecision = async () => {
   assert.equal(fixture.imageEmpty.hidden, false);
 };
 
+const testGenerationProvenanceIsShownOnRowsAndCards = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({ source: "auto", generation_provenance: provenance() }),
+  ]);
+  const panels = [
+    findProvenance(fixture.candidateList.children[0]),
+    findProvenance(fixture.approvalList.children[0]),
+  ];
+  for (const panel of panels) {
+    assert.ok(panel, "the generation provenance panel is rendered");
+    assert.equal(panel.id, "details", "the panel stays collapsed until it is opened");
+    assert.equal(panel.children[0].textContent, "🧠 생성 근거");
+    assert.deepEqual(provenanceTexts(panel, "provenance__document mono"), [
+      "context/core/PRINCIPLES-KR.md · 8.6KB",
+      "context/references/KR/INDEX.md · 1.2KB",
+    ]);
+    assert.ok(findByText(panel, "읽은 문서 2개"), "the document count labels the list");
+    const model = findByClassName(panel, "provenance__model mono");
+    assert.ok(model.textContent.startsWith("gpt-5.5 · 지시문 41,238자 · "));
+    assert.equal(
+      model.textContent,
+      `gpt-5.5 · 지시문 41,238자 · ${new Date(1_770_000_000 * 1000).toLocaleString("ko-KR")}`,
+    );
+    assert.ok(findByText(panel, "적용 원리·참조 레퍼런스는 위 배지에 표시됩니다"));
+  }
+};
+
+const testCandidatesWithoutProvenanceSayWhyThePanelIsEmpty = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({}),
+    candidate({ candidate_id: "candidate-2", source: "auto", topic: "이전 후보" }),
+  ]);
+  const [manual, legacy] = fixture.candidateList.children.map(findProvenance);
+  assert.equal(
+    findByClassName(manual, "provenance__missing").textContent,
+    "수동 등록 — 생성 근거 없음",
+  );
+  assert.equal(
+    findByClassName(legacy, "provenance__missing").textContent,
+    "생성 근거가 기록되지 않은 후보입니다.",
+  );
+  assert.equal(provenanceTexts(manual, "provenance__document mono").length, 0);
+};
+
+const testAutogenNoticeReportsWhatTheRunRead = async () => {
+  const fixture = makeLiveDocument();
+  const generated = [
+    candidate({ source: "auto", generation_provenance: provenance() }),
+    candidate({ candidate_id: "candidate-2", source: "auto", generation_provenance: provenance() }),
+  ];
+  let stored = [];
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates/generate") {
+      stored = generated;
+      return response(201, generated);
+    }
+    if (path === "/api/candidates") return response(200, stored);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  await fixture.autogenButton.click();
+  assert.equal(fixture.notice.textContent, "후보 2개가 등록되었습니다 — 문서 2개(9.8KB)를 읽고 생성");
+};
+
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
   const styles = await readFile(join(staticRoot, "workspace.css"), "utf8");
@@ -1126,5 +1231,8 @@ await testImageStageSplitsCaptionAndImageWork();
 await testImageGenerationButtonRunsTheStage();
 await testImageGenerationFailureShowsTheServerMessage();
 await testImageApprovalPostsTheDecision();
+await testGenerationProvenanceIsShownOnRowsAndCards();
+await testCandidatesWithoutProvenanceSayWhyThePanelIsEmpty();
+await testAutogenNoticeReportsWhatTheRunRead();
 await testMarkupUsesTheAgreedTerminology();
-console.log("workspace static behavior: 32 passed");
+console.log("workspace static behavior: 35 passed");

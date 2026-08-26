@@ -299,6 +299,16 @@ malformed answer is retried once with the validation error, and a second failure
 reports `AI 응답이 형식을 통과하지 못했습니다`. The generated `appium_prompt` is stored as the
 candidate's Appium 프롬프트.
 
+Each generated candidate also keeps the provenance of its own batch. Just before the provider call
+the run records the context documents it assembled with their UTF-8 byte sizes, the model id it
+requested, the total instruction length, and the timestamp of that call; the same record is stored
+on every candidate the batch writes and returned as `generation_provenance` by the candidate routes.
+The 후보 목록 row and the 캡션·주제 승인 card each carry a collapsed `🧠 생성 근거` panel that shows
+it, and the notice after a run reads `후보 3개가 등록되었습니다 — 문서 8개(<n>KB)를 읽고 생성`. This
+is a retrospective record of one finished run, not live progress: manual candidates and rows written
+before the nullable `generation_provenance_json` column existed carry no record, and their panel
+says so.
+
 | Route | Purpose |
 | --- | --- |
 | `GET /api/candidates` | List the authenticated member's workspace candidates, newest first |

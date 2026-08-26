@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     ai_verdict TEXT,
     image_path TEXT,
     image_sha256 TEXT,
+    generation_provenance_json TEXT,
     status TEXT NOT NULL,
     review_note TEXT,
     revision INTEGER NOT NULL,
@@ -100,6 +101,9 @@ _ADD_CANDIDATE_TOPIC: Final = "ALTER TABLE candidates ADD COLUMN topic TEXT NOT 
 _ADD_CANDIDATE_COLUMNS: Final = {
     "image_inputs_json": "ALTER TABLE candidates ADD COLUMN image_inputs_json TEXT",
     "image_sha256": "ALTER TABLE candidates ADD COLUMN image_sha256 TEXT",
+    "generation_provenance_json": (
+        "ALTER TABLE candidates ADD COLUMN generation_provenance_json TEXT"
+    ),
 }
 _BACKFILL_CANDIDATE_TOPIC: Final = "UPDATE candidates SET topic = ? WHERE topic = ''"
 _MIGRATE_ACCEPTED_STATUS: Final = (
@@ -143,8 +147,9 @@ def _migrate_candidates(connection: sqlite3.Connection) -> None:
 
     Every step is idempotent so they can run on every open: `topic` became a required
     reviewable field after the first candidates were stored, the image stage added nullable
-    `image_inputs_json` and `image_sha256` columns, and single-stage "accepted" rows mean the
-    same thing as the first journey stage.
+    `image_inputs_json` and `image_sha256` columns, generation provenance added a nullable
+    `generation_provenance_json` column that stays NULL for rows written before it existed,
+    and single-stage "accepted" rows mean the same thing as the first journey stage.
     """
     cursor: SqliteCursor = connection.execute("PRAGMA table_info(candidates)")
     rows: list[SqliteRow] = cursor.fetchall()

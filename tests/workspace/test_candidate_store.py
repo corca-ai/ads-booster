@@ -13,7 +13,9 @@ from trace_capture.workspace import (
     LEGACY_CANDIDATE_TOPIC,
     CandidateAlreadyReviewedError,
     CandidateBackgroundSubject,
+    CandidateContextDocument,
     CandidateCreate,
+    CandidateGenerationProvenance,
     CandidateId,
     CandidateImageInputs,
     CandidateRecord,
@@ -94,6 +96,50 @@ def test_created_candidate_is_listed_newest_first_with_its_input(
     assert second.ai_verdict == "수정 후 통과 — 1인칭 감탄 문장 빠짐"
     assert second.image_path == "assets/candidate.png"
     assert store.get_candidate(workspace.workspace_id, first.candidate_id) == first
+
+
+def test_generation_provenance_survives_the_round_trip_and_stays_absent_for_manual(
+    store: SqliteWorkspaceStore,
+) -> None:
+    # Given a workspace and the provenance one generation batch recorded
+    workspace = store.create_workspace("Trace team").workspace
+    provenance = CandidateGenerationProvenance(
+        documents=(
+            CandidateContextDocument(relative_path="core/PRINCIPLES-KR.md", size_bytes=8_806),
+            CandidateContextDocument(relative_path="references/KR/INDEX.md", size_bytes=1_240),
+        ),
+        model="gpt-5.5",
+        instruction_chars=41_238,
+        generated_at=1_770_000_000.0,
+    )
+
+    # When one generated candidate and one manual candidate are stored
+    generated = store.create_candidate(
+        CandidateCreate(
+            workspace_id=workspace.workspace_id,
+            source=CandidateSource.AUTO,
+            country="KR",
+            topic="새 학기 준비 — 위젯 소개",
+            caption="자동 생성 캡션",
+            hypothesis="자동 생성 가설",
+            image_inputs=CandidateImageInputs(
+                trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
+                device_time="07:20",
+                background_subject=CandidateBackgroundSubject.SCENERY,
+                background_mood="늦은 밤 책상 위 스탠드 불빛",
+                language="ko",
+            ),
+            generation_provenance=provenance,
+        )
+    )
+    manual = store.create_candidate(_manual(workspace.workspace_id))
+
+    # Then only the generated candidate carries the recorded provenance, unchanged by SQLite
+    assert generated.generation_provenance == provenance
+    assert manual.generation_provenance is None
+    reread = store.get_candidate(workspace.workspace_id, generated.candidate_id)
+    assert reread.generation_provenance == provenance
+    assert store.get_candidate(workspace.workspace_id, manual.candidate_id) == manual
 
 
 def test_caption_approval_records_status_note_and_new_revision(
@@ -184,6 +230,7 @@ def test_candidates_stored_before_topic_and_the_journey_are_migrated(tmp_path: P
     assert migrated.topic == LEGACY_CANDIDATE_TOPIC
     assert migrated.status is CandidateStatus.CAPTION_APPROVED
     assert migrated.caption == "이전 캡션"
+    assert migrated.generation_provenance is None
     assert reopened.list_candidates(workspace.workspace_id) == (migrated,)
 
 

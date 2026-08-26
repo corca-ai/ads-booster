@@ -67,6 +67,7 @@ def build_candidate_generator(
         store=store,
         models=ProductionCandidateModels(settings),
         context_source=CandidateContextSource(default_context_directory(settings.workspace)),
+        model=settings.model,
     )
 
 

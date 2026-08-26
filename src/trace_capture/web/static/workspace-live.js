@@ -152,6 +152,10 @@
     return CANDIDATE_STATUS_LABELS[record.status] ?? record.status;
   };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
+  const candidateDateTime = (seconds) => new Date(seconds * 1000).toLocaleString("ko-KR");
+  const kilobytes = (bytes) => `${(bytes / 1024).toFixed(1)}KB`;
+  const provenanceBytes = (provenance) =>
+    provenance.documents.reduce((total, document) => total + document.size_bytes, 0);
   const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
 
   const setNotice = (message) => {
@@ -308,6 +312,7 @@
       content.append(badge("candidate-context", `최근 평가 · ${record.review_rating}점`));
     }
     content.append(journeyNode(record));
+    content.append(provenanceNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
     trailing.append(badge(
       `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
@@ -352,6 +357,55 @@
     }
     field.append(name, list);
     return field;
+  };
+
+  const provenanceField = (label, node) => {
+    const field = document.createElement("div"); field.className = "provenance__field";
+    const name = document.createElement("span"); name.className = "eyebrow";
+    name.textContent = label;
+    field.append(name, node);
+    return field;
+  };
+
+  const provenanceDocuments = (provenance) => {
+    const list = document.createElement("ul"); list.className = "provenance__documents";
+    provenance.documents.forEach((document_) => {
+      const item = document.createElement("li"); item.className = "provenance__document mono";
+      item.textContent = `context/${document_.relative_path} · ${kilobytes(document_.size_bytes)}`;
+      list.append(item);
+    });
+    return list;
+  };
+
+  const provenanceNode = (record) => {
+    const panel = document.createElement("details"); panel.className = "advanced-input provenance";
+    const summary = document.createElement("summary"); summary.textContent = "🧠 생성 근거";
+    const body = document.createElement("div"); body.className = "advanced-input__body";
+    const provenance = record.generation_provenance;
+    if (!provenance) {
+      const missing = document.createElement("p"); missing.className = "provenance__missing";
+      missing.textContent = record.source === "manual"
+        ? "수동 등록 — 생성 근거 없음"
+        : "생성 근거가 기록되지 않은 후보입니다.";
+      body.append(missing);
+      panel.append(summary, body);
+      return panel;
+    }
+    const model = document.createElement("span"); model.className = "provenance__model mono";
+    model.textContent = [
+      provenance.model,
+      `지시문 ${provenance.instruction_chars.toLocaleString("ko-KR")}자`,
+      candidateDateTime(provenance.generated_at),
+    ].join(" · ");
+    const note = document.createElement("p"); note.className = "provenance__note";
+    note.textContent = "적용 원리·참조 레퍼런스는 위 배지에 표시됩니다";
+    body.append(
+      provenanceField(`읽은 문서 ${provenance.documents.length}개`, provenanceDocuments(provenance)),
+      provenanceField("모델", model),
+      note,
+    );
+    panel.append(summary, body);
+    return panel;
   };
 
   const reviewControls = (record, stage, approveLabel) => {
@@ -492,7 +546,7 @@
     orderBody.textContent = record.shooting_order || "Appium 프롬프트가 비어 있습니다.";
     order.append(summary, orderBody);
     const actions = reviewControls(record, "caption", "캡션·주제 승인 · 5점");
-    card.append(header, journey, body, facts, order, actions);
+    card.append(header, journey, body, facts, order, provenanceNode(record), actions);
     return card;
   };
 
@@ -1130,6 +1184,14 @@
 
   inviteDialog?.querySelector("[value='cancel']")?.addEventListener("click", () => inviteDialog?.close());
 
+  const autogenNotice = (created) => {
+    const registered = `후보 ${created.length}개가 등록되었습니다`;
+    const provenance = created[0]?.generation_provenance;
+    if (!provenance) return `${registered}.`;
+    const documents = provenance.documents.length;
+    return `${registered} — 문서 ${documents}개(${kilobytes(provenanceBytes(provenance))})를 읽고 생성`;
+  };
+
   const generateCandidates = async (button) => {
     const label = button.textContent;
     button.disabled = true;
@@ -1147,7 +1209,7 @@
         : { method: "POST" };
       const created = await request("/api/candidates/generate", options);
       await loadCandidates();
-      setNotice(`후보 ${created.length}개가 등록되었습니다.`);
+      setNotice(autogenNotice(created));
     } catch (error) {
       setAutogenFeedback(error.message);
       setNotice(error.message);
