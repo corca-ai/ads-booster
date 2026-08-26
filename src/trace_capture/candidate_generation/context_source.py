@@ -62,6 +62,6 @@ def _read(path: Path) -> str | None:
     """Return the document text, or None when it is absent, unreadable, or blank."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError, UnicodeDecodeError:
+    except (OSError, UnicodeDecodeError):
         return None
     return text if text.strip() else None

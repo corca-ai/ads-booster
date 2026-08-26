@@ -31,7 +31,7 @@ class Repl:
         while True:
             try:
                 line = self.input_fn("trace-agent> ")
-            except EOFError, KeyboardInterrupt:
+            except (EOFError, KeyboardInterrupt):
                 self.output_fn("")
                 return
             command = line.strip()

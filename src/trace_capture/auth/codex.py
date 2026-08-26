@@ -274,6 +274,6 @@ def _account_id_from_token(access_token: str) -> str | None:
             value = auth_payload.get("chatgpt_account_id")
             if isinstance(value, str) and value:
                 return value
-    except binascii.Error, UnicodeDecodeError, ValidationError:
+    except (binascii.Error, UnicodeDecodeError, ValidationError):
         return None
     return None

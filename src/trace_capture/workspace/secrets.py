@@ -39,7 +39,7 @@ def verify_code(code: str, encoded: str) -> bool:
     try:
         salt = base64.urlsafe_b64decode(parts[1].encode())
         expected = base64.urlsafe_b64decode(parts[2].encode())
-    except ValueError, UnicodeError:
+    except (ValueError, UnicodeError):
         return False
     actual = hashlib.scrypt(code.encode(), salt=salt, n=2**14, r=8, p=1)
     return hmac.compare_digest(actual, expected)

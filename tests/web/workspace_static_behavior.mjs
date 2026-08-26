@@ -983,10 +983,10 @@ const testImageGenerationButtonRunsTheStage = async () => {
   await button.click();
   assert.ok(calls.some(([path, method]) =>
     path === "/api/candidates/candidate-1/generate-image" && method === "POST"));
-  assert.equal(fixture.notice.textContent, "Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
+  assert.equal(fixture.notice.textContent, "Mac 캡처 작업을 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, "Mac에서 이미지 생성");
-  assert.ok(findByText(fixture.imageList.children[0], "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다."));
+  assert.ok(findByText(fixture.imageList.children[0], "온라인 Mac worker가 작업 lease를 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다."));
 };
 
 const testImageGenerationFailureShowsTheServerMessage = async () => {
@@ -1084,8 +1084,9 @@ const testMarkupUsesTheAgreedTerminology = async () => {
     "the manual form collects the background subject",
   );
   assert.ok(markup.includes(">풍경</option>"), "background subjects are labelled in Korean");
-  assert.ok(markup.includes("Cloudflare Queue → Mac Appium → R2"), "the native capture boundary is visible");
-  assert.ok(markup.includes("부팅 가능한 Simulator를 찾아 Appium"), "dynamic Simulator discovery is explained");
+  assert.ok(markup.includes("Cloudflare D1 lease → Mac Appium → R2"), "the native capture boundary is visible");
+  assert.ok(markup.includes("data-worker-title"), "the hosted UI exposes sanitized Mac availability");
+  assert.ok(markup.includes("부팅 가능한 Simulator를 동적으로 찾습니다"), "dynamic Simulator discovery is explained");
   assert.ok(markup.includes('value="KR" selected>한국 (KR)'), "the form has a safe KR fallback");
   const live = await readFile(join(staticRoot, "workspace-live.js"), "utf8");
   assert.ok(live.includes('? "팀" : "기본"'), "context provenance uses short Korean labels");

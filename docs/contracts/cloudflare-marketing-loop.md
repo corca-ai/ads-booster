@@ -2,8 +2,9 @@
 
 Status: Implemented for the pre-publication pipeline; live Threads publication remains disabled.
 
-The control-plane, hosted/local simulation, queue bridge, automatic workspace-review relay, portable
-worker enrollment, and deployment configuration are implemented in this branch. The bridge can opt
+The control-plane, hosted/local simulation, legacy Queue bridge, D1 Mac-worker broker, automatic
+workspace-review relay, portable worker enrollment, and deployment configuration are implemented.
+The legacy bridge can opt
 into the installed candidate pipeline added by PR #22: provider generation writes reviewable
 candidates and the search-based image stage composes only caption-approved candidates. Real Threads
 publication and live metrics readback remain unverified. Simulation output must not be represented
@@ -13,8 +14,10 @@ One login-free hosted review workspace is also implemented at the Worker root. I
 public, fixed to the configured public account, and separate from token-protected `/v1` operations.
 Workers AI reads the selected D1 country/persona profile, matching packaged country context, and the
 account instruction. D1 stores profiles, immutable candidate context snapshots, candidates, capture
-tasks, and review revisions. Caption approval dispatches a Queue task to an enrolled Mac; the bridge
-performs native Appium capture and returns a digest-backed PNG for R2. Live publication remains
+tasks, worker identities, and review revisions. After the first non-revoked worker is enrolled, caption
+approval leaves a task in the D1 broker and one healthy Mac claims its expiring lease without a
+Cloudflare Queue token. The worker performs native Appium capture and returns a digest-backed PNG
+for R2. A deployment with no broker worker retains legacy Queue dispatch. Live publication remains
 outside this hosted surface. Image approval ends at `submitted` without an
 external side effect. Hosted candidates remain editable and deletable in every state; an edit
 invalidates prior approvals and image artifacts before returning to the first review gate.
@@ -28,8 +31,9 @@ content quality. The acceptance path is:
 2. register a marketing account as data;
 3. start a durable run for that account;
 4. snapshot shared instructions plus account-private memory;
-5. execute labeled simulation tasks in Cloudflare, or route workspace-backed tasks through Queue;
-6. persist each queued task in the worker inbox before acknowledging its Cloudflare lease;
+5. execute labeled simulation tasks in Cloudflare, route workspace-backed Workflow tasks through
+   the legacy Queue, or route hosted native capture through a D1 worker lease;
+6. persist each remote task in the worker inbox before acknowledging its transport lease;
 7. pause for caption/candidate selection before image capture;
 8. pause again for image/publication approval before publication;
 9. observe, evaluate, commit account-private memory, and complete; and
@@ -43,12 +47,13 @@ content quality. The acceptance path is:
 | one account agent | named Durable Object using `account_id` | actor-style isolation prevents one account from reading another account's learned memory |
 | long-running loop and approval wait | Cloudflare Workflow | durable steps and buffered events survive process restarts and long human waits |
 | task execution | hosted simulation, or Cloudflare Queue HTTP pull when `workspace_id` exists | the baseline loop needs no local daemon; installed workspace work crosses an explicit outbound-only boundary |
-| worker task/review durability | local SQLite inbox/outboxes | queue acknowledgement follows durable insert; callbacks and review approvals survive worker restarts |
-| worker enrollment and secrets | portable config plus environment or external command | any compatible computer can join the same worker contract without storing tokens in repo config, payloads, artifacts, or logs |
+| hosted native capture | D1 registry and conditional expiring lease | workers can be added, drained, revoked, or replaced independently while one atomic update chooses the task owner |
+| worker task/review durability | local SQLite inbox/outboxes | Queue or broker acknowledgement follows durable insert; callbacks and review approvals survive worker restarts |
+| worker enrollment and secrets | one-time code, token hash in D1, separate mode-`0600` machine credential, secret-free LaunchAgent | any prepared Mac can join without a Cloudflare account/Queue token, person login, fixed UDID, or macOS Keychain binding |
 | artifacts | R2 in cloud, digest-backed local worker files | large payloads do not become workflow state and provenance remains inspectable |
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
 | installed candidate journey | optional local executor selected at bridge startup | the default remains simulation; enabling the installed pipeline does not silently enable publication |
-| hosted review workspace | Worker static assets, Workers AI, D1, Queue, Mac bridge, and R2 | the public URL needs no access ID; context/model/account selection stays data-driven while native capture crosses an explicit replaceable worker boundary |
+| hosted review workspace | Worker static assets, Workers AI, D1 broker, Mac worker, and R2 | the public URL needs no access ID; context/model/account selection stays data-driven while native capture crosses an explicit replaceable worker boundary |
 | hosted context registry | packaged manifest plus account-scoped D1 profiles | countries extend through reviewed documents/profile data; team profiles change without Worker source edits; candidate snapshots retain provenance |
 
 This combines ideas used by established harnesses: actor isolation from Akka/Orleans-style systems,
@@ -93,11 +98,14 @@ not rewrite already-generated evidence.
   workspace to already exist in the local Trace store.
 - Shared instructions are immutable revisions. Every run records the selected revision and a digest
   of the resulting context snapshot in R2.
-- Worker Queue and callback credential values are injected by the supervisor or an external secret command. They are not
-  included in task payloads, callbacks, artifacts, or logs.
+- Legacy Queue and callback credentials are injected by a supervisor or external secret command.
+  Broker workers instead receive one independently revocable credential; only its hash is stored in
+  D1, and its plaintext value lives in a separate local mode-`0600` file. Neither path includes a
+  credential in task payloads, callbacks, artifacts, ordinary logs, or LaunchAgent plist.
 - A callback is accepted only when task, run, account, and task kind all match the stored task.
-- A hosted capture callback additionally requires the candidate revision, callback ID, PNG type,
-  byte limit, and SHA-256 to match. Changed or stale callbacks cannot advance the candidate.
+- A hosted capture callback additionally requires its assigned worker when brokered, candidate
+  revision, callback ID, PNG type, native provenance, byte limit, and SHA-256 to match. Changed,
+  revoked, or stale callbacks cannot advance the candidate.
 
 ## Run and failure states
 
@@ -147,6 +155,21 @@ events use the Worker-token-only endpoint, an ID of `<run-id>:<phase>`, and a D1
 identical delivered retry is acknowledged without sending a second Workflow event; changed content
 under the same ID is rejected.
 
+Hosted broker delivery reuses the same local durability contract with a different transport:
+
+1. a worker-scoped bearer token authenticates heartbeat, claim, acknowledgement, and callback;
+2. doctor status is refreshed on claim and degraded workers receive no task;
+3. a conditional D1 update gives exactly one worker an initial two-minute lease;
+4. successful local inbox insertion extends the accepted lease to fifteen minutes;
+5. a dedicated heartbeat continues while Appium executes synchronously and renews the lease for at
+   most one hour from its original claim;
+6. retry or revocation clears ownership, and expiry lets a different healthy worker reclaim it; and
+7. callback acceptance checks the current D1 owner before the existing candidate/digest boundary.
+
+The public `/api/workers/status` projection contains only team-visible aliases, pools, aggregate
+counts, and ready/busy/degraded/offline states. One-time code creation, full inventory, state changes,
+and revocation remain under the `CONTROL_PLANE_TOKEN` `/v1` boundary.
+
 Cloudflare task execution is at-least-once. Business side effects become effectively-once only when
 the selected channel adapter supports an idempotency key or a conclusive readback.
 
@@ -188,7 +211,9 @@ capture task handlers. Research, publication, and metrics remain explicitly simu
    image review gate.
 
 Tasks carrying `pipeline=hosted_workspace_capture_v1` are routed ahead of the legacy local-candidate
-handler. The executor discovers a booted or available iPhone Simulator on each compatible Mac,
+handler. `trace-marketing worker run` composes only this hosted executor behind the D1 broker; it
+does not poll or deliver the unrelated Workflow review contract. The executor discovers a booted or
+available iPhone Simulator on each compatible Mac,
 builds a typed marketing context from the immutable hosted snapshot, runs the production Appium
 capture/composition path, and places the final PNG plus digest in the durable callback outbox. A
 fixed UDID is optional, not part of enrollment. The legacy local candidate image handler remains an
@@ -199,14 +224,17 @@ offline fixture path for its existing workspace journey and is never represented
 The first operating target after credentials and Cloudflare resources exist is:
 
 - migrate D1 and deploy the Worker;
+- prepare one Mac, issue a ten-minute enrollment code, enroll it, and install the generated
+  `com.corca.trace-marketing-worker` LaunchAgent;
 - open the login-free `workspace.borca.ai` workbench and generate four context-grounded candidates;
-- approve a caption, observe Queue → native Mac/Appium → verified R2 PNG, and approve the image;
+- approve a caption, observe D1 lease → native Mac/Appium → verified R2 PNG, and approve the image;
 - reach `submitted` while confirming no Threads or other publication call occurs; and
 - inspect the D1 capture correlation row and R2 digest metadata.
 
-HTTP pull and a worker bridge are required for hosted native capture and for any control-plane
-account that opts into a local `workspace_id`. The worker may run on any compatible Mac; its process
-supervisor owns restart and its selected secret provider owns both bridge tokens.
+The D1 broker worker is the primary hosted native-capture path after enrollment. Legacy HTTP Queue
+pull remains required for a control-plane account that opts into a local `workspace_id` and as a
+pre-enrollment rollback path. A broker worker may run on any prepared Mac; its generated LaunchAgent
+owns restart and its separate machine credential does not grant Cloudflare account or Queue access.
 
 Enabling real Threads publication is a separate target because platform capability and permission
 verification are external facts, not an implementation toggle.
@@ -224,12 +252,12 @@ Cloudflare credentials. After merge, the repository workflow must, in order:
 5. deploy the merged Worker revision; and
 6. read back `{"ok":true}` from the configured health URL; and
 7. verify the root workspace has no access-ID form, `/api/auth/session` identifies the public account,
-   and `/api/context-profiles` returns a default profile after migration; and
+   `/api/context-profiles` returns a default profile, and `/api/workers/status` reads the migrated
+   registry without exposing a credential; and
 8. read back `https://workspace.borca.ai/health` through the custom domain.
 
 The job is serialized and does not cancel an in-flight deployment. Any failed check, migration,
 deploy, or health readback leaves the GitHub job red and prevents a success claim. Human candidate
-and publication approvals remain product gates rather than deployment chores. Enrolled workers use
-the same config and credential-provider contract across machines. Enrolling a new worker or changing
-the account/workspace binding remains an explicit infrastructure action because GitHub cannot
-securely provision arbitrary team computers or their secret managers.
+and publication approvals remain product gates rather than deployment chores. Enrolling, preparing,
+or replacing a physical Mac remains an explicit infrastructure action because GitHub cannot install
+Xcode, the Trace Debug build, or a revocable local credential on an arbitrary team computer.

@@ -1205,6 +1205,28 @@ textarea:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.worker-console {
+  align-items: center;
+  background: var(--color-surface-raised);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-inline-size: 0;
+  padding: var(--space-3);
+}
+
+.worker-console__copy { display: grid; gap: var(--space-1); min-inline-size: 0; }
+.worker-console__copy strong { color: var(--color-text); font-size: var(--font-small); }
+.worker-console__copy p {
+  color: var(--color-text-muted);
+  font-size: var(--font-label);
+  line-height: var(--leading-label);
+  margin: 0;
+}
+.worker-console__badges { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: end; }
+
 .pipeline-step {
   align-items: center;
   background: var(--color-surface);
@@ -1879,6 +1901,10 @@ textarea:focus-visible {
 
 @media (max-width: 39.99rem) {
   .workspace-toolbar .status-line { white-space: normal; }
+
+  .worker-console { grid-template-columns: auto minmax(0, 1fr); }
+
+  .worker-console__badges { grid-column: 1 / -1; justify-content: start; }
 
   .context-source { display: none; }
 

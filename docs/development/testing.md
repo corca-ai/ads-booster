@@ -154,6 +154,8 @@ uv run basedpyright path/to/changed.py tests/<domain>/test_changed.py
 
 Run repository-wide Ruff, formatting, or BasedPyright only when the user explicitly requests it or
 when the tooling configuration being changed applies to the whole repository.
+Ruff and BasedPyright target the package's lowest declared runtime, Python 3.13, so formatting and
+type checking cannot silently introduce syntax that a supported fresh install cannot import.
 
 ## Selection by change type
 
@@ -169,7 +171,7 @@ when the tooling configuration being changed applies to the whole repository.
 | `web/` | Changed router, schema, command, and approval tests | Changed API and browser interaction against a running app, including slash commands and approval state |
 | `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
 | `capture/` | Changed adapter, worker, or provenance tests | Changed capture step with the current Appium, Simulator, and Trace build |
-| `marketing/`, `cloudflare/` | Focused Python bridge/native-capture, Queue decoder, D1 migration and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate` and `bridge --executor candidate-pipeline --once`; for hosted UI/context changes exercise root, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, Queue→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
+| `marketing/`, `cloudflare/` | Focused Python bridge/broker/native-capture, worker credential/LaunchAgent, Queue decoder, D1 migration/lease and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate`, legacy `bridge --executor candidate-pipeline --once`, and broker `worker doctor/status/run --once`; for broker changes enroll with a one-time code, prove separate mode-`0600` credential and secret-free plist, race two workers for one task, reclaim one expired lease, prove heartbeat renewal stops at the one-hour cap, and keep heartbeat visible during capture; for hosted UI/context changes exercise root, sanitized worker status, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, D1 lease→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
 | `composition/` | Changed composer and artifact tests | Open the generated image and inspect the changed layer or output |
 | Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
 

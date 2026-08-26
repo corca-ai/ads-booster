@@ -773,11 +773,16 @@ Profiles can be added, edited, or hidden from the same screen. Every candidate s
 profile as an immutable snapshot, so later profile edits do not rewrite its generation provenance.
 
 Caption approval, native Mac/Appium capture, and image approval use the same review tab. `이미지 생성`
-creates a revision-scoped Queue task. An enrolled Mac dynamically selects a booted or available iPhone
-Simulator, starts Appium when installed but inactive, captures a fresh Trace component, composes the
-final PNG, and sends a digest-backed result to the protected callback API. The Worker verifies the
-digest before storing the PNG in R2. Offline workers leave the card visibly queued; verified failures
-show a stable code and a retry button. Image approval
+creates a revision-scoped D1 task. Once a non-revoked Mac has been enrolled, exactly one healthy worker
+claims an expiring lease with its own revocable machine credential; a Cloudflare Queue token is not
+installed on that Mac. It dynamically selects a booted or available iPhone Simulator, starts Appium
+when installed but inactive, captures a fresh Trace component, composes the final PNG, and sends a
+digest-backed result to the protected worker callback API. A background heartbeat remains active
+during capture and renews the accepted lease for up to one hour from its original claim. The Worker
+verifies lease ownership and the digest before storing the PNG in R2.
+Offline workers leave the card visibly queued for a replacement; verified failures show a stable
+code and a retry button. Installations with no registered broker worker retain the existing Queue
+path for rollout and rollback compatibility. Image approval
 ends at `submitted` (게시 준비 완료); it does not call Threads or another publishing API. Candidate
 filters make review, image, ready, and rejected queues visible. Every hosted candidate, including
 `submitted` candidates, has 수정 and 삭제 controls. Editing clears its previous approval and R2
@@ -819,9 +824,70 @@ Hosted context endpoints are intentionally public with the rest of this workspac
 | `PATCH /api/context-profiles/{profile_id}` | Edit a profile with `expected_revision` |
 | `DELETE /api/context-profiles/{profile_id}` | Soft-hide a profile while preserving candidate snapshots |
 | `GET /api/feedback-summary` | Return account/persona rejection counts, top tags, and 3+ occurrence rule candidates |
+| `GET /api/workers/status` | Return only sanitized worker aliases and ready/busy/degraded/offline counts for the public status strip |
 
-The external worker is required for hosted native image capture and for control-plane accounts with
-a local `workspace_id`. For an interactive foreground check it reads these environment variables:
+### Enroll or replace a hosted Mac worker
+
+Prepare the target Mac with Xcode, an available iPhone Simulator, the Trace Debug build
+(`com.corca.Trace`), Appium 3, and its XCUITest driver. The local doctor selects and boots the best
+available Simulator before checking the installed Trace bundle, then reports each prerequisite:
+
+```bash
+trace-marketing worker doctor
+```
+
+On an administrator machine, create a code that expires after ten minutes. The control-plane token
+is used only for this admin call and is not given to the target Mac:
+
+```bash
+export TRACE_MARKETING_CONTROL_TOKEN=...
+trace-marketing worker create-enrollment \
+  --url https://workspace.borca.ai \
+  --name "Studio Mac"
+```
+
+Use the returned `enrollment_code` once on the target Mac, then install the managed per-user service:
+
+```bash
+trace-marketing worker enroll \
+  --url https://workspace.borca.ai \
+  --code '<one-time-code>'
+trace-marketing worker install-service
+trace-marketing worker status
+```
+
+Enrollment writes non-secret routing to
+`$TRACE_AGENT_HOME/marketing-worker/config.json` and the one worker-scoped credential to the separate
+mode-`0600` `credential.json`. It does not use macOS Keychain, a person's login, a fixed Simulator
+UDID, the Cloudflare account ID, or a Cloudflare Queue token. The generated LaunchAgent plist uses an
+absolute installed `trace-marketing` path plus that Mac's `PATH`, contains no credential, and keeps
+the worker alive across logins/restarts. `TRACE_AGENT_DEVICE_UDID` remains an optional local override;
+without it each task resolves the best available iPhone Simulator at execution time.
+
+To replace a Mac without stopping the pipeline, enroll the new one first and wait until the public
+status strip shows it online. Then list IDs, drain the old worker so it receives no new work, and
+revoke it after its current task clears:
+
+```bash
+export TRACE_MARKETING_CONTROL_TOKEN=...
+trace-marketing worker list --url https://workspace.borca.ai
+trace-marketing worker set-state --state draining \
+  --url https://workspace.borca.ai --worker-id '<old-worker-id>'
+trace-marketing worker revoke \
+  --url https://workspace.borca.ai --worker-id '<old-worker-id>'
+```
+
+Revocation clears only that machine's token hash and releases its unfinished lease; other worker
+credentials and queued candidates are unchanged. An accepted task is first persisted in the local
+SQLite inbox, and its terminal callback stays in a durable outbox until Cloudflare accepts it. The
+two-minute claim becomes a renewable fifteen-minute execution window after local acceptance;
+heartbeat renewal stops after one hour so a hung worker eventually releases the task.
+
+### Legacy Queue bridge
+
+The external Queue bridge remains for non-hosted Workflow accounts with a local `workspace_id` and
+as a rollback path for hosted installations that have not enrolled a D1 worker. Its interactive
+form reads these environment variables:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=...
@@ -832,28 +898,21 @@ export TRACE_MARKETING_WORKER_TOKEN=...
 trace-marketing bridge
 ```
 
-For a portable worker enrollment, persist only the non-secret routing config, then start the hidden
-service entrypoint under any supervisor (systemd, launchd, a container, or a process manager):
+For an external supervisor, `bridge-configure` persists only non-secret routing and
+`bridge-service` resolves Queue/callback credentials from the environment or an argv-safe secret
+command:
 
 ```bash
 trace-marketing bridge-configure --executor candidate-pipeline
 trace-marketing bridge-service
 ```
 
-`bridge-configure` stores only account ID, Queue ID, control-plane URL, executor selection, polling
-interval, and credential-provider choice in `$TRACE_AGENT_HOME/marketing-bridge/service.json`.
-Secrets are injected at process start from environment variables by default. A team can instead use
-`--credential-provider command` with repeated `--credential-command` arguments to call its existing
-1Password, Vault, Kubernetes, or other secret adapter without a shell. The command must print one
-JSON object containing `queue_token` and `worker_token`; stderr and secret values are never logged.
-This keeps worker enrollment independent of a particular person, OS credential store, or computer.
+The queue token needs Cloudflare Queues read/write permission because this legacy consumer also
+acknowledges messages. Keep both values in the supervisor or external secret manager. The Worker
+sends JSON text and the bridge also accepts the older base64 body during rollout.
 
-The queue token needs Cloudflare Queues read and write permissions because pull consumers must also
-acknowledge messages. Keep credential values in the worker supervisor or external secret manager; D1 account
-rows contain only opaque `credential_ref` values. The Worker sends task envelopes as JSON text so
-the HTTP pull response is directly decodable; the bridge also accepts the older base64-encoded JSON
-shape during rollout. A temporary pull, acknowledgement, or callback outage leaves inbox/outbox work
-durable and retryable.
+A temporary claim, acknowledgement, callback, or heartbeat outage leaves local inbox/outbox work
+durable and lets an expired broker lease move to another healthy Mac.
 
 The bridge defaults to an artifact-only simulation executor for transport testing. To connect PR
 #22's installed candidate journey, register the Cloudflare account with the local Trace
@@ -960,9 +1019,9 @@ uv run pytest
 | `src/trace_capture/composition/` | Layer normalization and deterministic PNG composition |
 | `src/trace_capture/contracts/` | Versioned capture, composition, and run contracts |
 | `src/trace_capture/runtime/` | TraceRun state machine, journal, locks, and replay |
-| `src/trace_capture/marketing/` | Cloudflare task contract, durable worker inbox/outboxes, and local loop proof |
+| `src/trace_capture/marketing/` | Cloudflare task contract, legacy Queue/D1 broker transports, replaceable Mac worker lifecycle, durable inbox/outboxes, and local loop proof |
 | `src/trace_capture/cli/` | `trace-ads`, `trace-marketing`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
-| `cloudflare/` | Hosted account registry, Workflow, Durable Object, Queue, D1, and R2 deployment |
+| `cloudflare/` | Hosted account/worker registry, Workflow, Durable Object, D1 leases, legacy Queue, and R2 deployment |
 | `appium/jobs/composite/` | Runnable sample job, layers, result, and final PNG |
 
 Last reviewed: 2026-08-25

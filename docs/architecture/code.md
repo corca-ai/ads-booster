@@ -1,7 +1,7 @@
 # Code Architecture and Package Structure
 
 Status: Draft
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-26
 
 ## Purpose
 
@@ -84,7 +84,7 @@ src/trace_capture/
 | `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
 | `contracts/` | Versioned capture, composition, generation, run, and model-tool descriptor contracts | File, network, or database access |
-| `marketing/` | Cloudflare task/callback contracts, worker inbox/outboxes, bridge orchestration, task-handler ports, and local account-loop proof | Credential values, HTTP routes, or channel-specific policy |
+| `marketing/` | Cloudflare task/callback contracts, worker inbox/outboxes, bridge orchestration, D1 broker transport, machine credential file, Appium doctor/LaunchAgent adapter, task-handler ports, and local account-loop proof | HTTP routes, plaintext Cloudflare account/Queue/admin credentials, or channel-specific policy |
 | `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` and image-search query | Image generation, capture, or persistence |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
@@ -113,21 +113,25 @@ Compose concrete dependencies at these entry points.
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
 | `cli/marketing.py` | local simulation, external pull-bridge, and opt-in candidate/native-capture dependency composition |
 | `cloudflare/src/index.js` | hosted control API, public workspace assets/API, Workers AI, Workflow, Durable Object, D1, Queue, and R2 composition |
+| `cloudflare/src/mac-workers.js` | D1 worker registry, one-time enrollment, token-hash authorization, heartbeat, lease assignment, drain/revoke, and sanitized public status |
 
 Do not start new dependencies through global singletons or import side effects. Construct them at
 composition time and give an explicit lifespan or context manager ownership of shutdown.
 
-`marketing/` owns the Cloudflare Queue task contract, durable worker inbox/outboxes, bridge orchestration,
-task-handler port, optional candidate-journey adapter, hosted native-capture routing, and local end-to-end control-plane proof. The
+`marketing/` owns the Cloudflare task contract, durable worker inbox/outboxes, legacy Queue and D1
+broker transports, separate machine credential storage, doctor and LaunchAgent adapters, bridge
+orchestration, task-handler port, optional candidate-journey adapter, hosted native-capture routing,
+and local end-to-end control-plane proof. The
 candidate adapter may invoke the provider-neutral ports in `candidate_generation/` and the existing
 workspace review store; Cloudflare response shapes do not enter either package. Channel-specific
 production handlers depend inward on the marketing contract rather than putting their credentials
 or response shapes into `automation/` or `workspace/`.
 
 `cloudflare/` is a separate deployment composition root. Its Worker owns HTTP authorization and D1
-registry APIs. `hosted-workspace.js` owns the intentionally public account/context/candidate APIs,
+registry APIs. `mac-workers.js` owns one-time worker enrollment, token hashes, heartbeat, D1 lease
+races, drain/revoke, and the sanitized public status projection. `hosted-workspace.js` owns the intentionally public account/context/candidate APIs,
 logical account scoping, daily slot scheduling, context snapshots, structured feedback aggregation,
-Workers AI schema, review transitions, and Queue dispatch contract. `index.js` owns callback
+Workers AI schema, review transitions, and broker-or-legacy dispatch selection. `index.js` owns callback
 authorization, hosted capture correlation/digest checks, and the R2 native PNG write. The build
 script copies the existing browser shell, validates the context manifest and profile data, and emits
 one generated Worker module from the canonical packaged source. `MarketingWorkflow` owns durable orchestration;
@@ -216,6 +220,15 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
   routes continue to own only candidate state transitions.
 - Let `marketing/service.py` own portable non-secret bridge config and environment/external-command
   credential resolution. Never put Queue or Worker tokens in config, task payloads, or logs.
+- Let `marketing/worker_broker.py` own the worker-scoped D1 transport and its separate mode-`0600`
+  credential file. Let `worker_launchd.py` generate a plist with only absolute executable/state paths
+  and non-secret environment; never put the credential or enrollment code in the plist.
+- Keep worker administration behind `CONTROL_PLANE_TOKEN`. Hash one-time enrollment codes and worker
+  credentials in D1, return plaintext only once, and expose only aliases plus aggregate status from
+  `/api/workers/status`.
+- Let a conditional D1 task update, not an in-process check, choose the single lease winner. Accept a
+  broker lease only after local inbox insertion, keep capture-time heartbeat independent from the
+  synchronous executor, and reject a callback whose worker no longer owns the task.
 - Encode Queue HTTP-pull envelopes as JSON text, keep task completion event types unique per task,
   and normalize transport exceptions at the Cloudflare client boundary.
 - Keep account registry data in D1 and account-private learned memory in the named Durable Object.
@@ -247,8 +260,9 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
   the candidate's generation provenance.
 - Keep the four-candidate morning/evening batch rule and repeated-feedback threshold in the hosted
   workspace owner; UI text and Cron scheduling consume that contract rather than duplicating it.
-- Accept hosted capture output only through the worker-token callback, verify its task/candidate
-  scope and digest, and label the R2 PNG source as `native_appium`.
+- Accept hosted capture output through either the legacy global callback boundary or its assigned
+  worker-scoped broker callback, verify task/candidate/lease scope and digest, and label the R2 PNG
+  source as `native_appium`.
 - Keep Simulator discovery and Appium execution in `marketing/native_capture.py` plus `capture/`;
   Worker code must not invent native provenance or bind a team member's fixed device UDID.
 

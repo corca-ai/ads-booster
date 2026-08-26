@@ -45,6 +45,8 @@
   let selectedAccountId = "";
   let feedbackSignal = null;
   let capturePoll = null;
+  let workerPoll = null;
+  let macWorkerStatus = null;
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -151,6 +153,49 @@
     if (record.capture_state === "failed") return "Mac 캡처 실패 · 재시도 가능";
     return CANDIDATE_STATUS_LABELS[record.status] ?? record.status;
   };
+
+  const renderMacWorkerStatus = () => {
+    if (!macWorkerStatus) return;
+    const title = one("[data-worker-title]");
+    const copy = one("[data-worker-copy]");
+    const signal = one("[data-worker-signal]");
+    const badges = one("[data-worker-badges]");
+    const readyAliases = macWorkerStatus.workers
+      .filter((worker) => ["ready", "busy"].includes(worker.status))
+      .map((worker) => worker.display_name);
+    const presentation = macWorkerStatus.counts.draining > 0 && macWorkerStatus.counts.online === 0
+      ? ["Mac worker 전환 중", "기존 worker가 draining 상태라 새 작업을 받지 않습니다. 새 Mac을 활성화해 주세요.", "warning"]
+      : ({
+      ready: ["Mac 캡처 가능", readyAliases.length
+        ? `현재 ${readyAliases.join(", ")}에서 이미지 작업을 받을 수 있습니다.`
+        : "연결된 Mac이 이미지 작업을 받을 수 있습니다.", "success"],
+      degraded: ["Mac 환경 점검 필요", "worker는 온라인이지만 Appium 준비 항목이 부족해 작업을 받지 않습니다.", "warning"],
+      offline: ["Mac worker 오프라인", "작업은 Cloudflare에 대기하며 worker가 다시 켜지면 자동으로 이어집니다.", "danger"],
+      not_configured: ["Mac worker 미등록", "첫 worker를 등록하기 전에는 기존 Queue 호환 경로를 사용합니다.", "warning"],
+    }[macWorkerStatus.status] ?? ["Mac 상태 확인 불가", "잠시 후 다시 확인합니다.", "warning"]);
+    if (title) title.textContent = presentation[0];
+    if (copy) copy.textContent = presentation[1];
+    if (signal) signal.className = `signal-mark ${presentation[2]}`;
+    if (badges) badges.replaceChildren(
+      badge("approval-badge", `온라인 ${macWorkerStatus.counts.online}`),
+      badge("approval-badge", `작업 중 ${macWorkerStatus.counts.busy}`),
+      badge("approval-badge", `전환 중 ${macWorkerStatus.counts.draining}`),
+      badge("approval-badge quiet", `등록 ${macWorkerStatus.counts.registered}`),
+    );
+  };
+
+  const loadMacWorkerStatus = async () => {
+    if (!hostedCandidateControls || !one("[data-worker-title]")) return;
+    try {
+      macWorkerStatus = await request("/api/workers/status");
+      renderMacWorkerStatus();
+    } finally {
+      if (workerPoll) window.clearTimeout(workerPoll);
+      workerPoll = window.setTimeout(() => {
+        loadMacWorkerStatus().catch((error) => setNotice(error.message));
+      }, 15000);
+    }
+  };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
   const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
 
@@ -212,6 +257,8 @@
     if (memberName) memberName.textContent = "워크스페이스에 입장";
     if (inviteButton) inviteButton.hidden = true;
     all("[data-hosted-only]").forEach((element) => { element.hidden = true; });
+    if (workerPoll) window.clearTimeout(workerPoll);
+    workerPoll = null;
     inviteDialog?.close();
     clearInviteResult();
   };
@@ -529,7 +576,7 @@
       if (record.capture_state === "queued") {
         const waiting = document.createElement("p");
         waiting.className = "candidate-feedback";
-        waiting.textContent = "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다.";
+        waiting.textContent = "온라인 Mac worker가 작업 lease를 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다.";
         actions.append(waiting);
       } else {
         const button = document.createElement("button");
@@ -565,7 +612,7 @@
   const generateCandidateImage = async (record, button, feedback) => {
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = "Queue 등록 중…";
+    button.textContent = "Mac 작업 등록 중…";
     setCardFeedback(feedback, "");
     setBusy(button, true, "잠금화면 이미지를 만드는 중… (1~3분 소요)");
     try {
@@ -573,7 +620,7 @@
         method: "POST",
       });
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
-      setNotice("Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
+      setNotice("Mac 캡처 작업을 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
       setNotice(error.message);
@@ -1013,7 +1060,11 @@
     try {
       await loadHostedAccounts();
       await loadContextProfiles();
-      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      await Promise.all([
+        loadCandidates(),
+        loadFeedbackSummary(),
+        loadMacWorkerStatus().catch((error) => setNotice(error.message)),
+      ]);
     } finally {
       setBusy(workspaceLive, false);
     }

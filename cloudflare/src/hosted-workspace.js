@@ -1,3 +1,5 @@
+import { hasRegisteredBrokerWorker } from "./mac-workers.js";
+
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
 const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 const DEFAULT_AI_MAX_TOKENS = 4096;
@@ -232,7 +234,8 @@ async function redispatchHostedCaptureTasks(env) {
   const retryBefore = new Date(Date.now() - 5 * 60_000).toISOString();
   const pending = await env.DB.prepare(
     `SELECT task_id, task_json FROM hosted_workspace_capture_tasks
-     WHERE state = 'queued' AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)
+     WHERE state = 'queued' AND dispatch_mode = 'legacy_queue'
+       AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)
      ORDER BY created_at LIMIT 50`,
   )
     .bind(retryBefore)
@@ -241,7 +244,7 @@ async function redispatchHostedCaptureTasks(env) {
     const now = new Date().toISOString();
     const claimed = await env.DB.prepare(
       `UPDATE hosted_workspace_capture_tasks SET last_dispatched_at = ?, updated_at = ?
-       WHERE task_id = ? AND state = 'queued'
+       WHERE task_id = ? AND state = 'queued' AND dispatch_mode = 'legacy_queue'
          AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)`,
     )
       .bind(now, now, task.task_id, retryBefore)
@@ -1185,7 +1188,11 @@ async function generateCandidateImage(env, candidateId) {
   if (candidate.capture_state === "queued") {
     throw new WorkspaceHttpError(409, "이미지 캡처가 이미 Mac worker를 기다리고 있습니다.");
   }
-  if (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function") {
+  const dispatchMode = await hasRegisteredBrokerWorker(env.DB)
+    ? "worker_broker"
+    : "legacy_queue";
+  if (dispatchMode === "legacy_queue" &&
+      (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function")) {
     throw new WorkspaceHttpError(503, "Mac 캡처 Queue가 준비되지 않았습니다.");
   }
   const taskId = crypto.randomUUID();
@@ -1217,8 +1224,8 @@ async function generateCandidateImage(env, candidateId) {
   await env.DB.prepare(
     `INSERT INTO hosted_workspace_capture_tasks
       (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
-       task_json, state, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+       task_json, state, dispatch_mode, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
   )
     .bind(
       taskId,
@@ -1228,6 +1235,7 @@ async function generateCandidateImage(env, candidateId) {
       nextRevision,
       idempotencyKey,
       JSON.stringify(body),
+      dispatchMode,
       now,
       now,
     )
@@ -1249,6 +1257,7 @@ async function generateCandidateImage(env, candidateId) {
       .run();
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
   }
+  if (dispatchMode === "worker_broker") return requireCandidate(env, candidateId);
   try {
     await env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
     await env.DB.prepare(

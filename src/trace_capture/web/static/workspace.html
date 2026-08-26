@@ -97,6 +97,15 @@
           </details>
         </section>
 
+        <section class="worker-console" data-hosted-only hidden aria-live="polite" aria-labelledby="worker-console-title">
+          <span class="signal-mark" data-worker-signal aria-hidden="true"></span>
+          <div class="worker-console__copy">
+            <strong id="worker-console-title" data-worker-title>Mac 캡처 환경 확인 중</strong>
+            <p data-worker-copy>연결된 Appium worker 상태를 불러오고 있습니다.</p>
+          </div>
+          <div class="worker-console__badges" data-worker-badges aria-label="Mac worker 요약"></div>
+        </section>
+
         <section class="pipeline-summary" aria-label="파이프라인 현황">
           <button class="pipeline-step" type="button" data-action="open-review">
             <span class="pipeline-step__index">1</span>
@@ -273,7 +282,7 @@
             </div>
             <details class="capture-boundary" data-hosted-only hidden>
               <summary>이미지는 어떻게 만들어지나요?</summary>
-              <div class="capture-boundary__body"><strong>Cloudflare Queue → Mac Appium → R2</strong><small>연결된 Mac worker가 부팅 가능한 Simulator를 찾아 Appium으로 Trace 부품을 캡처합니다. Mac이 꺼져 있으면 대기하고, 실패하면 재시도 버튼을 표시합니다.</small></div>
+              <div class="capture-boundary__body"><strong>Cloudflare D1 lease → Mac Appium → R2</strong><small>온라인 worker 한 대가 작업 lease를 가져가 부팅 가능한 Simulator를 동적으로 찾습니다. Mac을 바꿔도 새 worker를 등록하면 같은 대기열을 이어받고, 실패하면 재시도할 수 있습니다.</small></div>
             </details>
             <div class="approval-list" data-image-list></div>
             <div class="empty-surface" data-image-empty>
