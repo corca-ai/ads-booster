@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   claimWorkerTasks,
   handleMacWorkerRequest,
+  hasRegisteredBrokerWorker,
   heartbeatWorker,
   publicWorkerStatus,
   workerOperationalStatus,
@@ -289,6 +290,28 @@ class HeartbeatStatement {
     throw new Error(`unexpected heartbeat SQL: ${this.sql}`);
   }
 }
+
+test("a draining identity keeps new hosted captures on the broker transport", async () => {
+  const rows = [worker("worker-draining", { state: "draining" })];
+  const db = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          if (sql.includes("state = 'active'")) {
+            return rows.find((row) => row.state === "active") ?? null;
+          }
+          if (sql.includes("state != 'revoked'")) {
+            return rows.find((row) => row.state !== "revoked") ?? null;
+          }
+          throw new Error("unexpected broker availability SQL: " + sql);
+        },
+      };
+    },
+  };
+
+  assert.equal(await hasRegisteredBrokerWorker(db), true);
+});
 
 test("public worker status exposes aliases and availability without machine details", async () => {
   const now = new Date("2026-08-26T00:00:30.000Z");

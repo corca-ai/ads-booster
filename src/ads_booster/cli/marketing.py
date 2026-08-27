@@ -93,13 +93,26 @@ class DoctorHeartbeat:
     refresh_seconds: float = 30.0
     lock: Lock = field(default_factory=Lock)
 
+    refreshing: bool = False
+
     def __call__(self) -> JsonObject:
         with self.lock:
             now = time.monotonic()
-            if now - self.checked_at >= self.refresh_seconds:
-                self.report = inspect_mac_worker()
-                self.checked_at = now
-            return self.report.heartbeat()
+            if now - self.checked_at < self.refresh_seconds or self.refreshing:
+                return self.report.heartbeat()
+            self.refreshing = True
+
+        refreshed: MacWorkerDoctorReport | None = None
+        try:
+            refreshed = inspect_mac_worker()
+        finally:
+            with self.lock:
+                if refreshed is not None:
+                    self.report = refreshed
+                    self.checked_at = time.monotonic()
+                self.refreshing = False
+                current = self.report.heartbeat()
+        return current
 
 
 @app.command("simulate")
@@ -601,8 +614,11 @@ def _admin_post(url: str, path: str, payload: JsonObject) -> JsonObject:
             },
         )
     if not _HTTP_SUCCESS_MIN <= response.status_code < _HTTP_SUCCESS_MAX:
-        message = f"Mac worker admin request failed with HTTP {response.status_code}"
-        raise typer.BadParameter(message)
+        typer.echo(
+            f"Mac worker admin request failed with HTTP {response.status_code}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     return response.json_object()
 
 

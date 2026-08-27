@@ -776,7 +776,6 @@ textarea:focus-visible {
   flex: 1 1 14rem;
   font-family: var(--font-mono-stack);
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .worker-enrollment-result__commands {

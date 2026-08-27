@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 import plistlib
 import stat
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from threading import Event, Thread
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from pydantic import TypeAdapter
+from typer.testing import CliRunner
 
+from ads_booster.cli import marketing as marketing_cli
 from ads_booster.marketing.models import (
     MarketingTask,
     TaskCallback,
@@ -25,7 +29,7 @@ from ads_booster.marketing.worker_broker import (
     enroll_mac_worker,
     normalize_control_plane_origin,
 )
-from ads_booster.marketing.worker_doctor import inspect_mac_worker
+from ads_booster.marketing.worker_doctor import MacWorkerDoctorReport, inspect_mac_worker
 from ads_booster.marketing.worker_launchd import MacWorkerLaunchd
 from ads_booster.transport.http import HttpResponse
 from ads_booster.transport.json_types import JsonObject
@@ -222,6 +226,70 @@ def test_worker_launchagent_contains_no_credential_or_person_specific_path(tmp_p
     assert "token" not in plist_path.read_text().lower()
     assert "keychain" not in plist_path.read_text().lower()
     assert stat.S_IMODE(plist_path.stat().st_mode) == 0o600
+
+
+def test_doctor_heartbeat_serves_cached_state_during_a_slow_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached = MacWorkerDoctorReport(ready=False, summary="cached", checks={}, version="0.2.3")
+    refreshed = MacWorkerDoctorReport(ready=True, summary="ready", checks={}, version="0.2.3")
+    refresh_started = Event()
+    release_refresh = Event()
+    refreshed_results: list[JsonObject] = []
+    cached_results: list[JsonObject] = []
+    cached_returned = Event()
+
+    def slow_inspection() -> MacWorkerDoctorReport:
+        refresh_started.set()
+        assert release_refresh.wait(timeout=1)
+        return refreshed
+
+    monkeypatch.setattr(marketing_cli, "inspect_mac_worker", slow_inspection)
+    heartbeat = marketing_cli.DoctorHeartbeat(report=cached, checked_at=0.0, refresh_seconds=0.0)
+    refresher = Thread(target=lambda: refreshed_results.append(heartbeat()))
+    refresher.start()
+    assert refresh_started.wait(timeout=1)
+
+    def read_cached() -> None:
+        cached_results.append(heartbeat())
+        cached_returned.set()
+
+    cached_reader = Thread(target=read_cached)
+    cached_reader.start()
+    returned_during_refresh = cached_returned.wait(timeout=1)
+    release_refresh.set()
+    refresher.join(timeout=1)
+    cached_reader.join(timeout=1)
+
+    assert returned_during_refresh
+    assert cached_results[0]["doctor"] == {"ready": False, "summary": "cached"}
+    assert refreshed_results[0]["doctor"] == {"ready": True, "summary": "ready"}
+
+
+def test_worker_admin_http_failure_is_a_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = StubHttp([_response({}, status=503)])
+    monkeypatch.setenv("TRACE_MARKETING_CONTROL_TOKEN", "admin-secret")
+    monkeypatch.setattr(marketing_cli, "create_http_client", lambda: nullcontext(http))
+
+    result = CliRunner().invoke(
+        marketing_cli.app,
+        [
+            "worker",
+            "set-state",
+            "--state",
+            "draining",
+            "--url",
+            "https://workspace.example.test",
+            "--worker-id",
+            "worker-1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Mac worker admin request failed with HTTP 503" in result.stderr
+    assert "Usage:" not in result.stderr
 
 
 def test_doctor_boots_the_selected_simulator_before_checking_trace(

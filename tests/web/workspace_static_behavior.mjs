@@ -1172,6 +1172,7 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   const fixture = makeLiveDocument();
   const calls = [];
   let workerState = "active";
+  let rejectEnrollment = false;
   const workerRecord = () => ({
     worker_id: "worker-1",
     display_name: "스튜디오 Mac",
@@ -1203,6 +1204,7 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
       return response(200, { worker_id: "worker-1", state: workerState });
     }
     if (path === "/v1/worker-enrollments") {
+      if (rejectEnrollment) return response(401, { error: "unauthorized" });
       return response(201, {
         enrollment_code: "trace-enroll_once",
         expires_at: "2026-08-26T04:00:00.000Z",
@@ -1246,6 +1248,8 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   await fixture.workerEnrollmentForm.submit();
   assert.equal(fixture.workerEnrollmentResult.hidden, false);
   assert.equal(fixture.workerEnrollmentCode.textContent, "trace-enroll_once");
+  const firstEnrollmentCall = calls.findLast(([path]) => path === "/v1/worker-enrollments");
+  assert.equal(JSON.parse(firstEnrollmentCall[1].body).ttl_seconds, 600);
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
     "trace-marketing worker enroll --url https://workspace.borca.ai --code 'trace-enroll_once'",
   ));
@@ -1261,6 +1265,16 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   await revoke.click();
   assert.equal(workerState, "revoked");
   assert.ok(findByText(fixture.workerList.children[0], "연결 폐기됨"));
+
+  fixture.workerEnrollmentForm.formValues.set("ttl-seconds", "");
+  rejectEnrollment = true;
+  await fixture.workerEnrollmentForm.submit();
+  const rejectedEnrollmentCall = calls.findLast(
+    ([path]) => path === "/v1/worker-enrollments",
+  );
+  assert.equal(Object.hasOwn(JSON.parse(rejectedEnrollmentCall[1].body), "ttl_seconds"), false);
+  assert.equal(fixture.workerAdminLocked.hidden, false);
+  assert.equal(fixture.workerAdminPanel.hidden, true);
 
   await fixture.workerManagerClose.click();
   assert.equal(fixture.workerManager.open, false);
@@ -1327,6 +1341,8 @@ const testMarkupUsesTheAgreedTerminology = async () => {
   assert.ok(markup.includes('value="KR" selected>한국 (KR)'), "the form has a safe KR fallback");
   const live = await readFile(join(staticRoot, "workspace-live.js"), "utf8");
   assert.ok(live.includes('let workerAdminToken = ""'), "the control token starts only in JavaScript memory");
+  const workerCodeRule = styles.match(/\.worker-enrollment-result__code code \{[^}]+\}/)?.[0] ?? "";
+  assert.ok(!workerCodeRule.includes("word-break"), "worker enrollment codes avoid deprecated word-break");
   assert.ok(!/localStorage[^\n]*workerAdminToken|workerAdminToken[^\n]*localStorage/.test(live), "the control token is never persisted in browser storage");
   assert.ok(live.includes('? "팀" : "기본"'), "context provenance uses short Korean labels");
   assert.ok(!live.includes("촬영 주문서"), "no insider shooting-order copy in the live script");

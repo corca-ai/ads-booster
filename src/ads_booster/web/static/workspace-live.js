@@ -336,7 +336,11 @@
   };
 
   const workerAdminRequest = async (path, options = {}) => {
-    if (!workerAdminToken) throw new Error("Mac 관리 토큰을 다시 입력해 주세요.");
+    if (!workerAdminToken) {
+      const failure = new Error("Mac 관리 토큰을 다시 입력해 주세요.");
+      failure.status = 401;
+      throw failure;
+    }
     const headers = new Headers(options.headers ?? {});
     headers.set("Authorization", `Bearer ${workerAdminToken}`);
     const response = await fetch(path, { credentials: "same-origin", ...options, headers });
@@ -348,7 +352,9 @@
         404: "Mac 연결을 찾지 못했습니다. 목록을 새로고침해 주세요.",
         409: "다른 작업이 먼저 상태를 바꿨습니다. 목록을 새로고침해 주세요.",
       })[response.status] ?? `Mac 관리 요청에 실패했습니다 (${response.status}).`;
-      throw new Error(message);
+      const failure = new Error(message);
+      failure.status = response.status;
+      throw failure;
     }
     return payload;
   };
@@ -524,7 +530,7 @@
     if (!workerAdminToken || !workerManager?.open) return;
     workerAdminPoll = window.setTimeout(() => {
       loadManagedWorkers().catch((error) => {
-        if (error.message.includes("제어 토큰")) lockWorkerManager(error.message);
+        if (error.status === 401) lockWorkerManager(error.message);
         else setWorkerAdminActionFeedback(error.message);
       });
     }, 15000);
@@ -1514,7 +1520,7 @@
     try {
       await loadManagedWorkers();
     } catch (error) {
-      if (error.message.includes("제어 토큰")) lockWorkerManager(error.message);
+      if (error.status === 401) lockWorkerManager(error.message);
       else setWorkerAdminActionFeedback(error.message);
     } finally {
       setWorkerActionBusy(workerAdminRefresh, false);
@@ -1532,7 +1538,10 @@
     const form = new FormData(target);
     const displayName = String(form.get("display-name") ?? "").trim();
     const pool = String(form.get("pool") ?? "").trim();
-    const ttlSeconds = Number(form.get("ttl-seconds"));
+    const requestedTtl = Number(form.get("ttl-seconds"));
+    const ttlSeconds = Number.isInteger(requestedTtl) && requestedTtl > 0
+      ? requestedTtl
+      : undefined;
     const nameField = one("#worker-display-name");
     const poolField = one("#worker-pool");
     nameField?.removeAttribute("aria-invalid");
@@ -1556,7 +1565,11 @@
       const enrollment = await workerAdminRequest("/v1/worker-enrollments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ display_name: displayName, pool, ttl_seconds: ttlSeconds }),
+        body: JSON.stringify({
+          display_name: displayName,
+          pool,
+          ...(ttlSeconds === undefined ? {} : { ttl_seconds: ttlSeconds }),
+        }),
       });
       const origin = window.location.origin.replace(/\/$/, "");
       const commands = [
@@ -1575,7 +1588,7 @@
       const poolReset = one("#worker-pool");
       if (poolReset) poolReset.value = "appium";
     } catch (error) {
-      if (error.message.includes("제어 토큰")) lockWorkerManager(error.message);
+      if (error.status === 401) lockWorkerManager(error.message);
       else setWorkerEnrollmentFeedback(error.message);
     } finally {
       setWorkerActionBusy(workerEnrollmentSubmit, false);

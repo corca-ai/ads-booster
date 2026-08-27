@@ -155,10 +155,19 @@ jobs:
             const topKeys = ["counts", "online_window_seconds", "status", "workers"];
             const countKeys = ["busy", "draining", "online", "ready", "registered"];
             const workerKeys = ["display_name", "pool", "status"];
+            const workerStatuses = new Set(["ready", "busy", "degraded", "draining", "offline"]);
             const exactKeys = (value, allowedKeys) =>
               JSON.stringify(Object.keys(value).sort()) === JSON.stringify(allowedKeys);
+            const nonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
+            const validWorker = (worker) =>
+              exactKeys(worker, workerKeys) &&
+              typeof worker.display_name === "string" && worker.display_name.length > 0 &&
+              typeof worker.pool === "string" && worker.pool.length > 0 &&
+              workerStatuses.has(worker.status);
             if (!exactKeys(status, topKeys) || !exactKeys(status.counts, countKeys) ||
-                status.workers.some((worker) => !exactKeys(worker, workerKeys))) {
+                !nonNegativeInteger(status.online_window_seconds) ||
+                Object.values(status.counts).some((value) => !nonNegativeInteger(value)) ||
+                status.workers.some((worker) => !validWorker(worker))) {
               process.exit(1);
             }
           ' "$workers"
