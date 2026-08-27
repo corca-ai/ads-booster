@@ -11,6 +11,8 @@ from ads_booster.workspace import (
     MarketingAccountCreate,
     MarketingAccountId,
     MarketingAccountIdentity,
+    MarketingAccountSchedule,
+    MarketingAccountSettings,
     MarketingAccountStatus,
     MarketingAccountTaste,
     RevisionConflictError,
@@ -42,6 +44,10 @@ def _identity(name: str = "박세나") -> MarketingAccountIdentity:
     )
 
 
+def _schedule() -> MarketingAccountSchedule:
+    return MarketingAccountSchedule(language="ko", timezone="Asia/Seoul")
+
+
 def _store(tmp_path: Path) -> tuple[SqliteWorkspaceStore, WorkspaceId]:
     store = SqliteWorkspaceStore(tmp_path)
     workspace = store.create_workspace("Trace")
@@ -53,7 +59,7 @@ def test_created_account_is_listed_with_its_identity(tmp_path: Path) -> None:
 
     created = store.create_account(
         workspace_id,
-        MarketingAccountCreate(country="KR", identity=_identity()),
+        MarketingAccountCreate(country="KR", identity=_identity(), schedule=_schedule()),
     )
 
     listed = store.list_accounts(workspace_id)
@@ -67,7 +73,7 @@ def test_status_change_is_the_human_verdict_and_bumps_the_revision(tmp_path: Pat
     store, workspace_id = _store(tmp_path)
     created = store.create_account(
         workspace_id,
-        MarketingAccountCreate(country="KR", identity=_identity()),
+        MarketingAccountCreate(country="KR", identity=_identity(), schedule=_schedule()),
     )
 
     promoted = store.set_account_status(
@@ -88,7 +94,7 @@ def test_a_stale_revision_is_refused_rather_than_overwriting(tmp_path: Path) -> 
     store, workspace_id = _store(tmp_path)
     created = store.create_account(
         workspace_id,
-        MarketingAccountCreate(country="KR", identity=_identity()),
+        MarketingAccountCreate(country="KR", identity=_identity(), schedule=_schedule()),
     )
     _ = store.set_account_status(
         workspace_id,
@@ -101,8 +107,10 @@ def test_a_stale_revision_is_refused_rather_than_overwriting(tmp_path: Path) -> 
         _ = store.update_account(
             workspace_id,
             created.account_id,
-            identity=_identity("다른 이름"),
-            note="",
+            settings=MarketingAccountSettings(
+                identity=_identity("다른 이름"),
+                schedule=_schedule(),
+            ),
             expected_revision=created.revision,
         )
 
@@ -112,7 +120,7 @@ def test_an_account_is_invisible_from_another_workspace(tmp_path: Path) -> None:
     other = store.create_workspace("Other").workspace.workspace_id
     created = store.create_account(
         workspace_id,
-        MarketingAccountCreate(country="KR", identity=_identity()),
+        MarketingAccountCreate(country="KR", identity=_identity(), schedule=_schedule()),
     )
 
     assert store.list_accounts(other) == ()

@@ -107,6 +107,56 @@
           <button class="button button-secondary" type="button" data-worker-manager-open>Mac 연결 관리</button>
         </section>
 
+        <section class="account-home" data-account-home aria-labelledby="account-home-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">국가별 계정</p>
+              <h2 id="account-home-title">어떤 계정으로 쓸까요</h2>
+            </div>
+            <span class="mono" role="status" data-account-count>계정을 불러오는 중…</span>
+          </div>
+          <p class="form-help">계정 하나가 하나의 컨셉입니다. 그 계정의 글은 전부 같은 사람의 목소리로 쓰이고, 일정과 배경도 그 사람의 것으로 맞춰집니다.</p>
+          <div class="account-grid" data-account-grid></div>
+          <div class="empty-surface" data-account-empty hidden>
+            <p class="eyebrow">아직 없음</p>
+            <h3>등록된 계정이 없습니다</h3>
+            <p>계정을 추가하면 그 컨셉 안에서 후보가 만들어집니다.</p>
+          </div>
+          <details class="advanced-input" data-account-form-details>
+            <summary>계정 추가</summary>
+            <div class="advanced-input__body">
+              <form class="stack-form" data-account-form novalidate aria-describedby="account-feedback">
+                <div class="candidate-fields">
+                  <label for="account-country">국가<select id="account-country" name="country" required><option value="KR" selected>한국 (KR)</option><option value="JP">일본 (JP)</option><option value="TW">대만 (TW)</option><option value="US">미국 (US)</option></select></label>
+                  <label for="account-name">이름<input id="account-name" name="display-name" required maxlength="40" autocomplete="off" placeholder="예: 박세나"></label>
+                  <label for="account-age">나이<input id="account-age" name="age" type="number" min="13" max="99" value="27" required></label>
+                  <label for="account-region">지역<input id="account-region" name="region" required maxlength="40" autocomplete="off" placeholder="예: 서울"></label>
+                  <label for="account-occupation">직업<input id="account-occupation" name="occupation" required maxlength="60" autocomplete="off" placeholder="예: 야구 좋아하는 백엔드 개발자"></label>
+                  <label for="account-domain">도메인<select id="account-domain" name="domain" required data-account-domain></select></label>
+                  <label for="account-concept">컨셉 한 줄<input id="account-concept" name="concept" required maxlength="200" autocomplete="off" placeholder="예: 야근과 직관 사이에서 일정으로 버티는 개발자"></label>
+                  <label for="account-interests">관심사<input id="account-interests" name="interests" required autocomplete="off" placeholder="쉼표로 구분: 기아 타이거즈, 러닝"></label>
+                  <label for="account-voice">말투<textarea id="account-voice" name="voice" rows="2" required maxlength="400" placeholder="예: 반말, 짧은 문장, 자조 섞인 감탄"></textarea></label>
+                  <label for="account-rhythm">생활 리듬<input id="account-rhythm" name="life-rhythm" required maxlength="200" autocomplete="off" placeholder="예: 10시 출근, 경기 있는 날은 퇴근 직행"></label>
+                  <label for="account-background-subject">배경 소재<select id="account-background-subject" name="background-subject" required data-account-background-subject></select></label>
+                  <label for="account-background-mood">배경 분위기<input id="account-background-mood" name="background-mood" required maxlength="60" autocomplete="off" placeholder="예: 야간 경기 조명 아래 관중석"></label>
+                  <label for="account-font">잠금화면 폰트<select id="account-font" name="font" required data-account-font></select></label>
+                </div>
+                <p class="candidate-feedback" id="account-feedback" data-account-feedback role="alert" hidden></p>
+                <button class="button button-primary" type="submit">계정 추가</button>
+              </form>
+            </div>
+          </details>
+        </section>
+
+        <div class="account-workspace" data-account-workspace hidden>
+          <div class="account-workspace__bar">
+            <button class="button button-quiet" type="button" data-account-back>← 계정 목록</button>
+            <div class="account-workspace__identity">
+              <strong data-account-current-name>계정</strong>
+              <span class="mono" data-account-current-concept></span>
+            </div>
+            <div class="account-workspace__verdict" data-account-verdict></div>
+          </div>
         <section class="pipeline-summary" aria-label="파이프라인 현황">
           <button class="pipeline-step" type="button" data-action="open-review">
             <span class="pipeline-step__index">1</span>
@@ -306,6 +356,7 @@
             </div>
           </section>
         </section>
+        </div>
       </main>
     </div>
     <dialog class="command-dialog" data-invite-dialog aria-labelledby="invite-dialog-title">

@@ -14,6 +14,7 @@ from ads_booster.workspace import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+_SCHEDULE: dict[str, Any] = {"language": "ko", "timezone": "Asia/Seoul"}
 _IDENTITY: dict[str, Any] = {
     "display_name": "박세나",
     "age": 27,
@@ -61,11 +62,15 @@ def _client(root: Path, name: str = "Trace") -> TestClient:
 def test_a_created_account_comes_back_in_the_list(tmp_path: Path) -> None:
     client = _client(tmp_path)
 
-    created = client.post("/api/accounts", json={"country": "KR", "identity": _IDENTITY})
+    created = client.post(
+        "/api/accounts", json={"country": "KR", "identity": _IDENTITY, "schedule": _SCHEDULE}
+    )
     assert created.status_code == 201
     body = created.json()
     assert body["identity"]["taste"]["font"] == "sf_pro_rounded"
     assert body["status"] == "observing"
+    assert body["display_name"] == "박세나"
+    assert body["language"] == "ko"
 
     listed = client.get("/api/accounts")
     assert listed.status_code == 200
@@ -74,7 +79,9 @@ def test_a_created_account_comes_back_in_the_list(tmp_path: Path) -> None:
 
 def test_status_route_records_the_human_verdict(tmp_path: Path) -> None:
     client = _client(tmp_path)
-    created = client.post("/api/accounts", json={"country": "KR", "identity": _IDENTITY}).json()
+    created = client.post(
+        "/api/accounts", json={"country": "KR", "identity": _IDENTITY, "schedule": _SCHEDULE}
+    ).json()
 
     promoted = client.post(
         f"/api/accounts/{created['account_id']}/status",
@@ -88,7 +95,9 @@ def test_status_route_records_the_human_verdict(tmp_path: Path) -> None:
 
 def test_a_stale_revision_conflicts_instead_of_overwriting(tmp_path: Path) -> None:
     client = _client(tmp_path)
-    created = client.post("/api/accounts", json={"country": "KR", "identity": _IDENTITY}).json()
+    created = client.post(
+        "/api/accounts", json={"country": "KR", "identity": _IDENTITY, "schedule": _SCHEDULE}
+    ).json()
     _ = client.post(
         f"/api/accounts/{created['account_id']}/status",
         json={"status": "active", "expected_revision": created["revision"]},
@@ -98,6 +107,7 @@ def test_a_stale_revision_conflicts_instead_of_overwriting(tmp_path: Path) -> No
         f"/api/accounts/{created['account_id']}",
         json={
             "identity": _IDENTITY,
+            "schedule": _SCHEDULE,
             "note": "다시 씀",
             "expected_revision": created["revision"],
         },

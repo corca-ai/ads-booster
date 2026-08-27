@@ -24,6 +24,7 @@ from ads_booster.workspace import (
     MarketingAccountCreate,
     MarketingAccountId,
     MarketingAccountRecord,
+    MarketingAccountSettings,
     MarketingAccountWriter,
     RevisionConflictError,
     ScopedRecordNotFoundError,
@@ -34,7 +35,7 @@ _ACCOUNT_REVISION_CONFLICT: Final = "marketing account revision conflict"
 
 
 def _response(record: MarketingAccountRecord) -> MarketingAccountResponse:
-    return MarketingAccountResponse.model_validate(record, from_attributes=True)
+    return MarketingAccountResponse.of(record)
 
 
 @contextmanager
@@ -71,6 +72,7 @@ def build_account_router(
                 MarketingAccountCreate(
                     country=payload.country,
                     identity=payload.identity,
+                    schedule=payload.schedule,
                     status=payload.status,
                     note=payload.note,
                 ),
@@ -96,8 +98,11 @@ def build_account_router(
                 store.update_account(
                     principal.workspace_id,
                     account_id,
-                    identity=payload.identity,
-                    note=payload.note,
+                    settings=MarketingAccountSettings(
+                        identity=payload.identity,
+                        schedule=payload.schedule,
+                        note=payload.note,
+                    ),
                     expected_revision=payload.expected_revision,
                 )
             )

@@ -27,14 +27,17 @@ from ads_booster.workspace.models import (
     MarketingAccountId,
     MarketingAccountIdentity,
     MarketingAccountRecord,
+    MarketingAccountSchedule,
+    MarketingAccountSettings,
     MarketingAccountStatus,
     WorkspaceId,
 )
 
-type AccountRow = tuple[str, str, str, str, str, str, int, float, float]
+type AccountRow = tuple[str, str, str, str, str, str, str, int, float, float]
 _ACCOUNT: Final = "marketing_account"
 _COLUMNS: Final[str] = (
-    "workspace_id, account_id, country, identity_json, status, note, revision, created_at, updated_at"  # noqa: E501
+    "workspace_id, account_id, country, identity_json, schedule_json, status, note, "
+    "revision, created_at, updated_at"
 )
 _TABLE: Final[str] = "marketing_accounts"
 _SELECT_ALL: Final[str] = (
@@ -71,8 +74,7 @@ class MarketingAccountWriter(MarketingAccountReader, Protocol):
         workspace_id: WorkspaceId,
         account_id: MarketingAccountId,
         *,
-        identity: MarketingAccountIdentity,
-        note: str,
+        settings: MarketingAccountSettings,
         expected_revision: int,
     ) -> MarketingAccountRecord: ...
 
@@ -98,12 +100,13 @@ class SqliteMarketingAccountStore(WorkspaceRepositoryBase):
         now = time.time()
         with self._database.connect(write=True) as connection:
             _ = connection.execute(
-                "INSERT INTO marketing_accounts VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                "INSERT INTO marketing_accounts VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                 (
                     workspace_id,
                     account_id,
                     value.country,
                     value.identity.model_dump_json(),
+                    value.schedule.model_dump_json(),
                     value.status,
                     value.note,
                     now,
@@ -115,6 +118,7 @@ class SqliteMarketingAccountStore(WorkspaceRepositoryBase):
             account_id=account_id,
             country=value.country,
             identity=value.identity,
+            schedule=value.schedule,
             status=value.status,
             note=value.note,
             revision=1,
@@ -146,8 +150,7 @@ class SqliteMarketingAccountStore(WorkspaceRepositoryBase):
         workspace_id: WorkspaceId,
         account_id: MarketingAccountId,
         *,
-        identity: MarketingAccountIdentity,
-        note: str,
+        settings: MarketingAccountSettings,
         expected_revision: int,
     ) -> MarketingAccountRecord:
         current = _account_from_row(self._row(workspace_id, account_id))
@@ -157,12 +160,14 @@ class SqliteMarketingAccountStore(WorkspaceRepositoryBase):
             _ = connection.execute(
                 """
                 UPDATE marketing_accounts
-                SET identity_json = ?, note = ?, revision = ?, updated_at = ?
+                SET identity_json = ?, schedule_json = ?, note = ?, revision = ?,
+                    updated_at = ?
                 WHERE workspace_id = ? AND account_id = ? AND revision = ?
                 """,
                 (
-                    identity.model_dump_json(),
-                    note,
+                    settings.identity.model_dump_json(),
+                    settings.schedule.model_dump_json(),
+                    settings.note,
                     current.revision + 1,
                     now,
                     workspace_id,
@@ -172,8 +177,9 @@ class SqliteMarketingAccountStore(WorkspaceRepositoryBase):
             )
         return current.model_copy(
             update={
-                "identity": identity,
-                "note": note,
+                "identity": settings.identity,
+                "schedule": settings.schedule,
+                "note": settings.note,
                 "revision": current.revision + 1,
                 "updated_at": now,
             }
@@ -233,6 +239,7 @@ def _fetch_account(cursor: SqliteCursor) -> AccountRow | None:
             str() as account_id,
             str() as country,
             str() as identity_json,
+            str() as schedule_json,
             str() as status,
             str() as note,
             int() as revision,
@@ -244,6 +251,7 @@ def _fetch_account(cursor: SqliteCursor) -> AccountRow | None:
                 account_id,
                 country,
                 identity_json,
+                schedule_json,
                 status,
                 note,
                 revision,
@@ -257,7 +265,8 @@ def _fetch_account(cursor: SqliteCursor) -> AccountRow | None:
 def _account_from_row(row: AccountRow) -> MarketingAccountRecord:
     try:
         identity = MarketingAccountIdentity.model_validate(json.loads(row[3]))
-        status = MarketingAccountStatus(row[4])
+        schedule = MarketingAccountSchedule.model_validate(json.loads(row[4]))
+        status = MarketingAccountStatus(row[5])
     except (ValidationError, ValueError, TypeError) as error:
         raise WorkspaceStoreCorruptionError(record_type=_ACCOUNT) from error
     return MarketingAccountRecord(
@@ -265,9 +274,10 @@ def _account_from_row(row: AccountRow) -> MarketingAccountRecord:
         account_id=MarketingAccountId(row[1]),
         country=row[2],
         identity=identity,
+        schedule=schedule,
         status=status,
-        note=row[5],
-        revision=row[6],
-        created_at=row[7],
-        updated_at=row[8],
+        note=row[6],
+        revision=row[7],
+        created_at=row[8],
+        updated_at=row[9],
     )

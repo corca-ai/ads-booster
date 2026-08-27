@@ -33,6 +33,8 @@ from ads_booster.workspace import (
     ContextKind,
     MarketingAccountId,
     MarketingAccountIdentity,
+    MarketingAccountRecord,
+    MarketingAccountSchedule,
     MarketingAccountStatus,
     MemberId,
     PrivateSessionId,
@@ -293,12 +295,14 @@ class CandidateResponse(WebModel):
 class MarketingAccountCreateRequest(WebModel):
     country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
     identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
     status: MarketingAccountStatus = MarketingAccountStatus.OBSERVING
     note: Annotated[str, Field(max_length=400)] = ""
 
 
 class MarketingAccountUpdateRequest(WebModel):
     identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
     note: Annotated[str, Field(max_length=400)] = ""
     expected_revision: int = Field(ge=1)
 
@@ -309,12 +313,46 @@ class MarketingAccountStatusRequest(WebModel):
 
 
 class MarketingAccountResponse(WebModel):
+    """One account, flattened into the field names the hosted control plane already emits.
+
+    `display_name`, `language`, `timezone`, the two posting times and `generation_enabled`
+    are lifted out of the record so a card rendered from this response and a card rendered
+    from D1 read the same keys. `identity` carries the half the hosted table does not have
+    yet, and is what the shared shell shows once it is there.
+    """
+
     workspace_id: WorkspaceId
     account_id: MarketingAccountId
+    display_name: str
     country: str
+    language: str
+    timezone: str
+    morning_time: str
+    evening_time: str
+    generation_enabled: bool
     identity: MarketingAccountIdentity
     status: MarketingAccountStatus
     note: str
     revision: int
     created_at: float
     updated_at: float
+
+    @classmethod
+    def of(cls, record: MarketingAccountRecord) -> MarketingAccountResponse:
+        return cls(
+            workspace_id=record.workspace_id,
+            account_id=record.account_id,
+            display_name=record.identity.display_name,
+            country=record.country,
+            language=record.schedule.language,
+            timezone=record.schedule.timezone,
+            morning_time=record.schedule.morning_time,
+            evening_time=record.schedule.evening_time,
+            generation_enabled=record.schedule.generation_enabled,
+            identity=record.identity,
+            status=record.status,
+            note=record.note,
+            revision=record.revision,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )

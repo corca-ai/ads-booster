@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS marketing_accounts (
     account_id TEXT NOT NULL,
     country TEXT NOT NULL,
     identity_json TEXT NOT NULL,
+    schedule_json TEXT NOT NULL,
     status TEXT NOT NULL,
     note TEXT NOT NULL,
     revision INTEGER NOT NULL,

@@ -575,18 +575,53 @@ class MarketingAccountIdentity(FrozenModel):
     taste: MarketingAccountTaste
 
 
+class MarketingAccountSchedule(FrozenModel):
+    """When and in what language the account posts.
+
+    These field names are the hosted control plane's, on purpose. The browser shell is one
+    file serving both surfaces, so an account has to look the same whether the rows came
+    from the local SQLite file or from D1; anything renamed here would have to be renamed
+    twice in the UI.
+    """
+
+    language: Annotated[str, Field(min_length=2, max_length=8)]
+    timezone: Annotated[str, Field(min_length=1, max_length=64)]
+    morning_time: Annotated[str, Field(pattern=r"^\d{2}:\d{2}$")] = "08:00"
+    evening_time: Annotated[str, Field(pattern=r"^\d{2}:\d{2}$")] = "20:00"
+    generation_enabled: bool = False
+
+
+class MarketingAccountSettings(FrozenModel):
+    """The editable half of an account, kept together because it is edited together."""
+
+    identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
+    note: Annotated[str, Field(max_length=400)] = ""
+
+
 class MarketingAccountCreate(FrozenModel):
     country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
     identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
     status: MarketingAccountStatus = MarketingAccountStatus.OBSERVING
     note: Annotated[str, Field(max_length=400)] = ""
 
 
 class MarketingAccountRecord(FrozenModel):
+    """One posting identity, operational half and personal half in one record.
+
+    The hosted control plane already keeps the operational half — display name, country,
+    language, time zone, posting slots — and the concept it posts as had nowhere to live.
+    Joining them here is the point: a caption, a schedule string, a background and a font
+    all have to come from the same person, and splitting that person across two records is
+    what let a nurse account borrow a developer's Tuesday.
+    """
+
     workspace_id: WorkspaceId
     account_id: MarketingAccountId
     country: str
     identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
     status: MarketingAccountStatus
     note: str
     revision: int = Field(ge=1)
