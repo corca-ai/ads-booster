@@ -16,6 +16,7 @@ MemberId = NewType("MemberId", str)
 ContextId = NewType("ContextId", str)
 AssetId = NewType("AssetId", str)
 CandidateId = NewType("CandidateId", str)
+MarketingAccountId = NewType("MarketingAccountId", str)
 PrivateSessionId = NewType("PrivateSessionId", str)
 
 
@@ -510,3 +511,84 @@ class PrivateSessionRecord(FrozenModel):
 
 _ = PrivateSessionCreate.model_rebuild(_types_namespace={"JsonObject": _JsonObject})
 _ = PrivateSessionRecord.model_rebuild(_types_namespace={"JsonObject": _JsonObject})
+
+
+@unique
+class MarketingAccountStatus(StrEnum):
+    """Where a marketing account stands in its life cycle.
+
+    An account is a Threads identity a person has to open and tend, so the system may
+    propose one but never creates one on its own. `PROPOSED` is that suggestion waiting for
+    a human; `OBSERVING` is a freshly opened account whose posts have not earned a verdict
+    yet; `ACTIVE` is one worth keeping in rotation; `RETIRED` stops selection without
+    deleting the record, because its posting record is still evidence.
+    """
+
+    PROPOSED = "proposed"
+    OBSERVING = "observing"
+    ACTIVE = "active"
+    RETIRED = "retired"
+
+
+@unique
+class LockScreenFont(StrEnum):
+    """The lock-screen type faces iOS actually ships, as an account-level taste.
+
+    A real person picks one and keeps it, so this belongs to the account rather than to a
+    single post. Which of these the capture path can genuinely apply is a question for the
+    Appium side; the field records the intent either way.
+    """
+
+    SF_PRO = "sf_pro"
+    SF_PRO_ROUNDED = "sf_pro_rounded"
+    SF_COMPACT = "sf_compact"
+    NEW_YORK = "new_york"
+    SF_MONO = "sf_mono"
+
+
+class MarketingAccountTaste(FrozenModel):
+    """The phone-shaped half of an account: what its wallpaper and clock look like."""
+
+    background_subject: CandidateBackgroundSubject
+    background_mood: Annotated[str, Field(min_length=1, max_length=60)]
+    font: LockScreenFont
+
+
+class MarketingAccountIdentity(FrozenModel):
+    """Who the account is, in the terms every generated post has to stay inside.
+
+    These fields are injected whole into generation, so each one is a constraint the
+    caption, the schedule, and the background query all have to agree with. The concept is
+    the single sentence a reader would recognise the account by; the voice is how that
+    person writes, which is why it is stored here and not re-decided per post.
+    """
+
+    display_name: Annotated[str, Field(min_length=1, max_length=40)]
+    age: int = Field(ge=13, le=99)
+    region: Annotated[str, Field(min_length=1, max_length=40)]
+    occupation: Annotated[str, Field(min_length=1, max_length=60)]
+    concept: Annotated[str, Field(min_length=1, max_length=200)]
+    domain: CandidatePersonaDomain
+    interests: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+    voice: Annotated[str, Field(min_length=1, max_length=400)]
+    life_rhythm: Annotated[str, Field(min_length=1, max_length=200)]
+    taste: MarketingAccountTaste
+
+
+class MarketingAccountCreate(FrozenModel):
+    country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
+    identity: MarketingAccountIdentity
+    status: MarketingAccountStatus = MarketingAccountStatus.OBSERVING
+    note: Annotated[str, Field(max_length=400)] = ""
+
+
+class MarketingAccountRecord(FrozenModel):
+    workspace_id: WorkspaceId
+    account_id: MarketingAccountId
+    country: str
+    identity: MarketingAccountIdentity
+    status: MarketingAccountStatus
+    note: str
+    revision: int = Field(ge=1)
+    created_at: float
+    updated_at: float

@@ -86,6 +86,19 @@ CREATE TABLE IF NOT EXISTS candidates (
     PRIMARY KEY (workspace_id, candidate_id),
     FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS marketing_accounts (
+    workspace_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    country TEXT NOT NULL,
+    identity_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (workspace_id, account_id),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS private_sessions (
     workspace_id TEXT NOT NULL,
     member_id TEXT NOT NULL,
@@ -116,6 +129,7 @@ _ADD_CANDIDATE_COLUMNS: Final = {
     "background_provenance_json": (
         "ALTER TABLE candidates ADD COLUMN background_provenance_json TEXT"
     ),
+    "account_id": "ALTER TABLE candidates ADD COLUMN account_id TEXT",
 }
 _BACKFILL_CANDIDATE_TOPIC: Final = "UPDATE candidates SET topic = ? WHERE topic = ''"
 _MIGRATE_ACCEPTED_STATUS: Final = (
