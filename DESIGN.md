@@ -21,17 +21,19 @@ is the Hallmark-compatible entrypoint that imports that source of truth.
 
 ## Macrostructure: Workbench
 
-The work surface has six stable regions.
+The work surface has seven stable regions.
 
 1. `workspace-toolbar` names the product and shows one live status line without an explanatory hero.
 2. `account-console` keeps the logical account selector visible while market, schedule, automation,
    and account creation stay behind one settings disclosure.
-3. `pipeline-summary` exposes compact counts for caption review, image work, and publication-ready
+3. `worker-console` keeps sanitized Mac availability visible and opens a separate protected manager
+   for registration, replacement, and detailed health only when an operator asks for it.
+4. `pipeline-summary` exposes compact counts for caption review, image work, and publication-ready
    results.
-4. The two-tab rail separates candidate preparation from human review.
-5. `generation-workbench` keeps the persona selector and four-candidate action together; full context,
+5. The two-tab rail separates candidate preparation from human review.
+6. `generation-workbench` keeps the persona selector and four-candidate action together; full context,
    feedback learning, and manual registration use progressive disclosure.
-6. The candidate list follows the generation action immediately and can be filtered by operational
+7. The candidate list follows the generation action immediately and can be filtered by operational
    state without hiding the canonical total.
 
 The Cloudflare build removes the entry form and opens directly into the last selected public logical
@@ -79,4 +81,6 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
 - The default screen answers three questions only: which account, which persona, and what needs work.
 - Account administration, full context provenance, feedback learning, manual candidate entry, and
   native capture mechanics are available but collapsed by default.
+- Detailed Mac inventory and mutating controls stay behind `Mac 연결 관리`; the operator token is
+  entered only inside that dialog and is cleared together with one-time code output on close.
 - Candidate rows avoid repeating caption and journey details already owned by the review tab.

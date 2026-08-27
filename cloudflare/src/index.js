@@ -9,6 +9,7 @@ import {
   WORKSPACE_CONTEXT,
   WORKSPACE_CONTEXT_PROFILES,
 } from "./generated-workspace-context.js";
+import { handleMacWorkerRequest } from "./mac-workers.js";
 
 import {
   accountName,
@@ -358,6 +359,12 @@ export default {
       if (request.method === "GET" && url.pathname === "/health") {
         return Response.json({ ok: true });
       }
+      const macWorkerResponse = await handleMacWorkerRequest(
+        request,
+        env,
+        (callback) => receiveCallback(env, callback),
+      );
+      if (macWorkerResponse) return macWorkerResponse;
       const workspaceResponse = await handleHostedWorkspace(
         request,
         env,

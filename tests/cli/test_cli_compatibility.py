@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import ast
+import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
 
 from ads_booster.cli.agent import app
+from ads_booster.cli.marketing import app as marketing_app
 from ads_booster.default_assets import default_iphone_ui_path
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 
@@ -73,3 +75,62 @@ def test_generate_one_help_exposes_only_live_wallpaper_inputs() -> None:
 
 def test_default_iphone_ui_asset_is_available_to_the_installed_cli() -> None:
     assert default_iphone_ui_path().is_file()
+
+
+def test_package_source_parses_on_the_declared_python_314_floor() -> None:
+    package_root = Path(__file__).parents[2] / "src" / "ads_booster"
+
+    for source in sorted(package_root.rglob("*.py")):
+        _ = ast.parse(
+            source.read_text(encoding="utf-8"),
+            filename=str(source),
+            feature_version=(3, 14),
+        )
+
+
+def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
+    result = CliRunner().invoke(marketing_app, ["worker", "--help"])
+
+    assert result.exit_code == 0
+    assert all(
+        command in result.stdout
+        for command in (
+            "create-enrollment",
+            "enroll",
+            "doctor",
+            "run",
+            "install-service",
+            "status",
+            "set-state",
+            "revoke",
+        )
+    )
+
+
+def test_worker_stop_treats_an_already_missing_launchd_service_as_stopped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MissingLaunchdService:
+        def stop(self) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["launchctl", "bootout"],
+                returncode=3,
+                stdout="",
+                stderr="Boot-out failed: No such process",
+            )
+
+        def wait_until_stopped(self) -> bool:
+            return True
+
+    missing = MissingLaunchdService()
+
+    def launchd_for(_home: Path) -> MissingLaunchdService:
+        return missing
+
+    monkeypatch.setattr("ads_booster.cli.marketing._worker_launchd", launchd_for)
+
+    result = CliRunner().invoke(marketing_app, ["worker", "stop", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "worker service: stopped" in result.stdout

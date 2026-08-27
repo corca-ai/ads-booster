@@ -97,6 +97,16 @@
           </details>
         </section>
 
+        <section class="worker-console" data-hosted-only hidden aria-labelledby="worker-console-title">
+          <span class="signal-mark" data-worker-signal aria-hidden="true"></span>
+          <div class="worker-console__copy" role="status" aria-live="polite">
+            <strong id="worker-console-title" data-worker-title>Mac 캡처 환경 확인 중</strong>
+            <p data-worker-copy>연결된 Appium worker 상태를 불러오고 있습니다.</p>
+          </div>
+          <div class="worker-console__badges" data-worker-badges aria-label="Mac worker 요약"></div>
+          <button class="button button-secondary" type="button" data-worker-manager-open>Mac 연결 관리</button>
+        </section>
+
         <section class="pipeline-summary" aria-label="파이프라인 현황">
           <button class="pipeline-step" type="button" data-action="open-review">
             <span class="pipeline-step__index">1</span>
@@ -273,7 +283,7 @@
             </div>
             <details class="capture-boundary" data-hosted-only hidden>
               <summary>이미지는 어떻게 만들어지나요?</summary>
-              <div class="capture-boundary__body"><strong>Cloudflare Queue → Mac Appium → R2</strong><small>연결된 Mac worker가 부팅 가능한 Simulator를 찾아 Appium으로 Trace 부품을 캡처합니다. Mac이 꺼져 있으면 대기하고, 실패하면 재시도 버튼을 표시합니다.</small></div>
+              <div class="capture-boundary__body"><strong>Cloudflare D1 lease → Mac Appium → R2</strong><small>온라인 worker 한 대가 작업 lease를 가져가 부팅 가능한 Simulator를 동적으로 찾습니다. Mac을 바꿔도 새 worker를 등록하면 같은 대기열을 이어받고, 실패하면 재시도할 수 있습니다.</small></div>
             </details>
             <div class="approval-list" data-image-list></div>
             <div class="empty-surface" data-image-empty>
@@ -297,6 +307,84 @@
         </section>
         <button class="button button-primary" data-invite-submit value="submit" type="submit">초대 ID 만들기</button>
       </form>
+    </dialog>
+    <dialog class="command-dialog worker-manager-dialog" data-worker-manager aria-labelledby="worker-manager-title">
+      <div class="worker-manager">
+        <div class="section-heading worker-manager__heading">
+          <div>
+            <h2 id="worker-manager-title">Mac 연결 관리</h2>
+            <p>새 Mac을 등록하고, 연결 상태를 확인하거나 기존 Mac을 교체합니다.</p>
+          </div>
+          <button class="button button-quiet" type="button" data-worker-manager-close>닫기</button>
+        </div>
+
+        <section class="worker-manager__lock" data-worker-admin-locked aria-labelledby="worker-admin-title">
+          <div>
+            <h3 id="worker-admin-title">운영 권한 열기</h3>
+            <p>Cloudflare Worker의 <code>CONTROL_PLANE_TOKEN</code>을 입력하세요. 값은 이 탭의 메모리에서만 사용하고, 창을 닫으면 즉시 지웁니다.</p>
+          </div>
+          <form class="stack-form worker-admin-form" data-worker-admin-form novalidate aria-describedby="worker-admin-help worker-admin-feedback">
+            <label for="worker-control-token">제어 토큰<input id="worker-control-token" name="control-token" type="password" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <p class="form-help" id="worker-admin-help">공개 워크스페이스 계정이나 로그인 ID가 아니라, Mac 관리 API에만 쓰는 운영 토큰입니다.</p>
+            <p class="candidate-feedback" id="worker-admin-feedback" data-worker-admin-feedback role="alert"></p>
+            <div class="form-actions"><button class="button button-primary" type="submit" data-worker-admin-submit>관리 열기</button></div>
+          </form>
+        </section>
+
+        <section class="worker-manager__panel" data-worker-admin-panel hidden aria-labelledby="worker-inventory-title">
+          <div class="worker-manager__toolbar">
+            <div>
+              <h3 id="worker-inventory-title">등록된 Mac</h3>
+              <p data-worker-admin-summary role="status" aria-live="polite">목록을 불러오는 중입니다.</p>
+            </div>
+            <div class="form-actions">
+              <button class="button button-secondary" type="button" data-worker-admin-refresh>새로고침</button>
+              <button class="button button-quiet" type="button" data-worker-admin-lock>잠그기</button>
+            </div>
+          </div>
+          <p class="candidate-feedback" data-worker-admin-action-feedback role="alert"></p>
+
+          <div class="worker-manager__layout">
+            <div class="worker-inventory">
+              <div class="worker-list" data-worker-list role="list"></div>
+              <div class="empty-surface worker-list__empty" data-worker-list-empty>
+                <h3>등록된 Mac이 없습니다</h3>
+                <p>오른쪽에서 일회용 코드를 만든 뒤 사용할 Mac에서 등록 명령을 실행하세요.</p>
+              </div>
+            </div>
+
+            <section class="worker-enrollment" aria-labelledby="worker-enrollment-title">
+              <div>
+                <h3 id="worker-enrollment-title">새 Mac 연결</h3>
+                <p>Mac 이름과 코드 유효시간을 정하면 일회용 등록 코드를 만듭니다.</p>
+              </div>
+              <form class="stack-form" data-worker-enrollment-form novalidate aria-describedby="worker-enrollment-feedback">
+                <label for="worker-display-name">Mac 이름<input id="worker-display-name" name="display-name" required maxlength="80" autocomplete="off" placeholder="스튜디오 Mac"></label>
+                <div class="worker-enrollment__fields">
+                  <label for="worker-pool">작업 풀<input id="worker-pool" name="pool" required maxlength="40" autocomplete="off" value="appium"></label>
+                  <label for="worker-enrollment-ttl">코드 유효시간<select id="worker-enrollment-ttl" name="ttl-seconds" required><option value="600" selected>10분</option><option value="1800">30분</option><option value="3600">1시간</option></select></label>
+                </div>
+                <p class="candidate-feedback" id="worker-enrollment-feedback" data-worker-enrollment-feedback role="alert"></p>
+                <button class="button button-primary" type="submit" data-worker-enrollment-submit>일회용 코드 만들기</button>
+              </form>
+
+              <section class="worker-enrollment-result" data-worker-enrollment-result aria-labelledby="worker-enrollment-result-title" hidden>
+                <div>
+                  <h4 id="worker-enrollment-result-title">이 코드만 새 Mac에 전달하세요</h4>
+                  <p data-worker-enrollment-expiry></p>
+                </div>
+                <div class="worker-enrollment-result__code">
+                  <code data-worker-enrollment-code></code>
+                  <button class="button button-secondary" type="button" data-worker-enrollment-code-copy>코드 복사</button>
+                </div>
+                <p>대상 Mac의 터미널에서 아래 명령을 순서대로 실행합니다.</p>
+                <pre class="worker-enrollment-result__commands"><code data-worker-enrollment-command></code></pre>
+                <button class="button button-secondary" type="button" data-worker-enrollment-command-copy>명령 복사</button>
+              </section>
+            </section>
+          </div>
+        </section>
+      </div>
     </dialog>
     <dialog class="command-dialog command-menu-dialog" data-command-dialog aria-labelledby="command-menu-title">
       <div class="stack-form">

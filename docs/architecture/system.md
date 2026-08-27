@@ -109,6 +109,7 @@ The installed commands are declared in `pyproject.toml`.
 | `trace-capture` | `src/ads_booster/cli/capture.py` | Legacy: execute a typed native component-capture job. |
 | `trace-compose` | `src/ads_booster/cli/compose.py` | Legacy: compose validated background, Trace component, and iPhone system-UI layers. |
 | `trace-run` | `src/ads_booster/cli/trace_run.py` | Legacy: execute or resume the component capture, staging, and composition state machine. |
+| `trace-marketing` | `src/ads_booster/cli/marketing.py` | Prove the account loop, run the legacy Queue bridge, or enroll and supervise a replaceable D1-backed Mac/Appium worker. |
 
 CLI modules parse input and compose dependencies. Business transitions and artifact validation
 belong in `runtime/`, `automation/`, `capture/`, and `composition/`, not in Typer callbacks.
@@ -395,6 +396,9 @@ task.
 | `$TRACE_AGENT_HOME/marketing-bridge/marketing-bridge.sqlite3` | `marketing/` | Durable remote-task inbox, callback outbox, run/candidate review linkage, and approval outbox |
 | `$TRACE_AGENT_HOME/marketing-bridge/service.json` | `marketing/` | Non-secret bridge endpoint, Queue ID, executor, and polling configuration |
 | `$TRACE_AGENT_HOME/marketing-bridge/artifacts/` | `marketing/` | Digest-backed simulation artifacts or adapter-owned task artifacts |
+| `$TRACE_AGENT_HOME/marketing-worker/config.json` | `marketing/` | Non-secret worker ID, alias, pool, control-plane origin, and poll interval |
+| `$TRACE_AGENT_HOME/marketing-worker/credential.json` | `marketing/` | One revocable worker credential, protected with file mode `0600`; not a macOS Keychain entry |
+| `$TRACE_AGENT_HOME/marketing-worker/runtime/` | `marketing/` | D1-broker task inbox and terminal callback outbox used across worker restarts |
 | `$TRACE_AGENT_HOME/marketing-simulation/` | `marketing/` | Local control-plane proof, with one separate SQLite memory file per account |
 | `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected workspace and tunnel logs |
 | `TRACE_AGENT_CONTEXT_DIR`, `<serve workspace>/context/`, or packaged `assets/context/` | `candidate_generation/` | Recursively discovered workspace or starter Markdown context for any marketing domain, read only |
@@ -415,8 +419,9 @@ for its component-composition job journal.
 | Browser automation | `tools/browser.py` | External `agent-browser` command with approval for mutating actions |
 | Web and image search | `tools/`, `search/` provider adapters | Normalized source results; generation downloads only approved image-source domains and stores provenance |
 | cloudflared | `tunnel/` | Default live `trycloudflare.com` URL request; failure leaves the loopback service available |
-| Worker supervisor and secret manager | `marketing/service.py` | Portable bridge config plus environment or argv-safe external credential command; no OS-specific store is required |
-| Cloudflare D1, Workflows, Durable Objects, Queues, and R2 | `cloudflare/`, `marketing/` | Dynamic account registry, durable loop, isolated account memory, outbound worker task pull, and context artifacts |
+| Worker supervisor and machine credential | `marketing/worker_launchd.py`, `marketing/worker_broker.py` | Generated per-user LaunchAgent plus a separate mode-`0600` revocable token file; plist and portable config contain no secret |
+| Legacy bridge supervisor and secret manager | `marketing/service.py` | Queue compatibility config plus environment or argv-safe external credential command; no OS-specific store is required |
+| Cloudflare D1, Workflows, Durable Objects, Queues, and R2 | `cloudflare/`, `marketing/` | Dynamic account/worker registry, durable loop, D1 task leases, isolated account memory, legacy Queue transport, and context/image artifacts |
 | Cloudflare Workers AI and Static Assets | `cloudflare/` | Public workspace assets plus context-grounded candidate generation; no local OAuth credential crosses this boundary |
 
 ## Dynamic marketing account loop
@@ -451,13 +456,29 @@ inlines only the records the selected persona names, capped at five records and 
 build fails when a country's documents exceed 48,000 bytes rather than letting the Worker truncate a
 table mid-row. Missing country documents fail closed with `409`.
 Missing or incomplete Appium prompt text is rebuilt from the validated image inputs.
-Caption approval creates a revision-scoped hosted capture task in D1 and Cloudflare Queue. The
-portable bridge recognizes that task contract, discovers a booted or available iPhone Simulator at
-execution time, runs the production Appium/XCUITest capture and deterministic composition path, and
-returns the final PNG in its durable callback outbox. The Worker verifies task/run/account/candidate
-scope, callback ID, byte limit, and SHA-256 before storing the PNG in R2. A duplicate identical
-callback is accepted; a changed or stale callback cannot advance the candidate. Offline workers leave
-`capture_state=queued`; verified failures use `capture_state=failed` and remain retryable.
+Caption approval creates a revision-scoped hosted capture task in D1. If at least one non-revoked broker
+worker is registered, the task remains in D1 until one machine atomically claims its expiring lease;
+installations with no broker worker retain the legacy Cloudflare Queue dispatch for rollout and
+rollback. Each broker worker has a one-time-enrolled, independently revocable credential whose hash
+is stored in D1. A doctor heartbeat blocks task claim when Xcode/Appium/Simulator prerequisites are
+degraded, and a separate heartbeat thread stays live during synchronous capture. The worker
+persists the task locally before accepting the lease, discovers a booted or available iPhone
+Simulator at execution time, runs the production Appium/XCUITest capture and deterministic
+composition path, and returns the final PNG from its durable callback outbox. The Worker verifies
+lease owner, task/run/account/candidate scope, callback ID, byte limit, native provenance, and
+SHA-256 before storing the PNG in R2. A duplicate identical callback is accepted; a changed, revoked,
+or stale owner cannot advance the candidate. Offline workers leave `capture_state=queued`; an
+expired lease becomes claimable by another healthy worker, and verified failures use
+`capture_state=failed` and remain retryable. `/api/workers/status` exposes only aliases and aggregate
+ready/busy/degraded/offline state to the login-free UI; enrollment, drain, list, and revoke stay under
+the control-token `/v1` boundary. A separate workspace dialog is the browser adapter for that protected
+boundary: it accepts `CONTROL_PLANE_TOKEN` from the operator, keeps it only in memory while open, and
+uses it as a bearer header for inventory, active/draining transitions, explicit revocation, and
+one-time enrollment creation. Closing or locking the dialog clears the token, code, and command
+preview; the public status endpoint and account routes never inherit the credential.
+The claim starts at two minutes, durable acceptance extends it to fifteen, and worker heartbeat
+renews that window for no more than one hour from the original claim. This bounds both long capture
+races and indefinitely hung ownership.
 Image approval ends at `submitted` and performs no outbound publication action. A hosted candidate
 can be edited or deleted from any state with its current optimistic revision. Editing invalidates the
 old review and image, returns the candidate to `awaiting_review`, and removes the old R2 object;
@@ -494,11 +515,14 @@ task ID, and duplicate callbacks replay the same event only after the stored cal
 match. Pull, acknowledgement, callback, and approval transport failures do not block already-durable
 local work.
 
-The login-free hosted workspace uses the same Queue independently of the Workflow account mode for
-native image work. Its task payload contains the immutable candidate/context snapshot but no bridge
-secret. The Mac bridge is outbound-only and stores credentials through the existing environment or
-external-command provider, never macOS Keychain. `TRACE_AGENT_DEVICE_UDID` is an optional override;
-without it the worker chooses a compatible Simulator dynamically.
+The login-free hosted workspace uses the D1 broker independently of Workflow account mode for
+native image work after the first machine enrollment. Its task payload contains the immutable
+candidate/context snapshot but no worker secret. Macs initiate every connection, receive neither a
+Cloudflare account credential nor Queue token, and keep their machine credential in a protected
+file rather than macOS Keychain. One Mac can be drained or revoked without rotating another's
+credential. `TRACE_AGENT_DEVICE_UDID` is an optional override; without it the worker chooses a
+compatible Simulator dynamically. The older Queue bridge remains a separate compatibility boundary
+for non-hosted Workflow tasks and pre-enrollment hosted rollback.
 
 Cloudflare production delivery is owned by `.github/workflows/deploy-cloudflare.yml`. A Pull Request
 that changes the Worker, canonical workspace UI, or packaged context runs an unprivileged Worker
@@ -545,8 +569,10 @@ Appium processes, but does not install the missing Trace build or driver.
   account's context snapshot.
 - Simulation accounts without `workspace_id` complete task execution in Cloudflare and retain R2
   digest provenance; workspace-backed accounts cross the explicit Queue-to-worker boundary.
-- Queue messages are acknowledged only after durable local insertion; callbacks use an independent
-  durable outbox.
+- Hosted native capture crosses the D1 worker broker after enrollment. Atomic conditional updates
+  own lease races, and expired leases are reclaimable by another healthy worker.
+- Queue messages and broker leases are acknowledged only after durable local insertion; callbacks
+  use an independent durable outbox.
 - One account can own only one non-terminal hosted run; observation offsets are interpreted as
   absolute minutes since publication and converted to relative Workflow sleeps.
 - A normal Cloudflare code merge is deploy-complete only when the serialized GitHub Actions job has
