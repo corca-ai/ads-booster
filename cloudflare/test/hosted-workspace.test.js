@@ -6,6 +6,7 @@ import {
   candidateResponseSchema,
   contextForCountry,
   DEFAULT_WORKSPACE_AI_MODEL,
+  feedbackSummary,
   generationPrompt,
   handleHostedWorkspace,
   nextDailyGenerationAt,
@@ -13,6 +14,8 @@ import {
   normalizeContextProfile,
   normalizeHostedAccount,
   normalizeReviewFeedback,
+  validateGeneratedCandidateBatch,
+  WORKSPACE_GENERATION_PROMPT_VERSION,
 } from "../src/hosted-workspace.js";
 import {
   WORKSPACE_CONTEXT,
@@ -39,6 +42,31 @@ function candidate(overrides = {}) {
   };
 }
 
+function generatedBatch() {
+  return [
+    ["아침 시험 준비", "도서관 가기 전 오늘 순서를 확인해요.", "morning", "07:10"],
+    ["출근 전 정리", "첫 미팅 전에 오늘의 흐름을 잠금화면에 두세요.", "morning", "07:40"],
+    ["저녁 운동 루틴", "퇴근 뒤 운동과 회복 순서를 놓치지 마세요.", "evening", "18:20"],
+    ["밤 공부 마감", "하루를 닫기 전 남은 공부를 차분히 끝내요.", "evening", "20:10"],
+  ].map(([topic, caption, postingSlot, start], index) => normalizeCandidateDraft(candidate({
+    topic,
+    caption,
+    hypothesis: `${topic}의 구체적인 전환 장면이 공감을 만든다.`,
+    posting_slot: postingSlot,
+    refs_used: ["kr-study-day"],
+    principles_applied: [index + 1],
+    image_inputs: {
+      ...candidate().image_inputs,
+      trace_items: Array.from({ length: 5 }, (_, itemIndex) => {
+        const [hour, minute] = start.split(":").map(Number);
+        const totalMinutes = hour * 60 + minute + itemIndex * 50;
+        const time = `${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
+        return `${time} ${topic} ${itemIndex + 1}`;
+      }),
+    },
+  })));
+}
+
 function candidateRow(overrides = {}) {
   return {
     candidate_id: "candidate-1",
@@ -57,6 +85,10 @@ function candidateRow(overrides = {}) {
     context_snapshot_json: null,
     posting_slot: "evening",
     generation_batch_id: "batch-1",
+    generation_prompt_version: null,
+    generation_prompt_sha256: null,
+    generation_model: null,
+    feedback_rules_json: "[]",
     last_review_rating: 5,
     last_review_tags_json: "[]",
     image_key: "workspace/trace_demo_kr/candidates/candidate-1.svg",
@@ -70,16 +102,19 @@ function candidateRow(overrides = {}) {
   };
 }
 
-function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false) {
+function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false, options = {}) {
   let row = { ...initial };
   const deletedArtifacts = [];
   const queuedTasks = [];
   const captureTasks = [];
+  const feedbackEvents = [];
   const DB = {
     prepare(sql) {
       return {
         bind(...values) {
           return {
+            sql,
+            values,
             async first() {
               if (sql.includes("SELECT worker_id FROM mac_workers")) {
                 return activeBrokerWorker ? { worker_id: "worker-1" } : null;
@@ -142,6 +177,10 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
                   context_snapshot_json: contextSnapshotJson,
                   posting_slot: postingSlot,
                   ai_verdict: null,
+                  generation_prompt_version: null,
+                  generation_prompt_sha256: null,
+                  generation_model: null,
+                  feedback_rules_json: "[]",
                   status: "awaiting_review",
                   review_note: null,
                   image_key: null,
@@ -152,13 +191,97 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
                 return { meta: { changes: 1 } };
               }
               if (sql.includes("INSERT INTO hosted_workspace_capture_tasks")) {
+                const [gateAccountId, gateCandidateId, gateRevision] = values.slice(-3);
+                if (
+                  !activeBrokerWorker || !row || row.account_id !== gateAccountId ||
+                  row.candidate_id !== gateCandidateId || row.status !== "caption_approved" ||
+                  row.revision !== gateRevision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
                 captureTasks.push(values);
                 return { meta: { changes: 1 } };
               }
-              if (sql.includes("SET capture_state = 'queued'")) {
-                const [taskId, requestedAt, updatedAt, accountId, candidateId, revision] = values;
+              if (sql.includes("INSERT INTO hosted_workspace_feedback_events")) {
+                if (options.failFeedbackInsert) throw new Error("injected feedback insert failure");
+                const [gateAccountId, gateCandidateId, gateStatus, gateRevision] = values.slice(-4);
+                if (
+                  !row || row.account_id !== gateAccountId || row.candidate_id !== gateCandidateId ||
+                  row.status !== gateStatus || row.revision !== gateRevision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                feedbackEvents.push(values);
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET status = ?, review_note = ?, last_review_rating = ?")) {
+                if (options.failReviewTransition) throw new Error("injected review transition failure");
+                const [
+                  status,
+                  reviewNote,
+                  reviewRating,
+                  reviewTagsJson,
+                  updatedAt,
+                  accountId,
+                  candidateId,
+                  previousStatus,
+                  revision,
+                ] = values;
                 if (
                   !row || row.account_id !== accountId || row.candidate_id !== candidateId ||
+                  row.status !== previousStatus || row.revision !== revision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                row = {
+                  ...row,
+                  status,
+                  review_note: reviewNote,
+                  last_review_rating: reviewRating,
+                  last_review_tags_json: reviewTagsJson,
+                  revision: row.revision + 1,
+                  updated_at: updatedAt,
+                };
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET status = ?, review_note = ?, image_key = ?, image_sha256 = ?")) {
+                if (options.failReviewTransition) throw new Error("injected review transition failure");
+                const [
+                  status,
+                  reviewNote,
+                  imageKey,
+                  imageSha256,
+                  reviewRating,
+                  reviewTagsJson,
+                  updatedAt,
+                  accountId,
+                  candidateId,
+                  revision,
+                ] = values;
+                if (
+                  !row || row.account_id !== accountId || row.candidate_id !== candidateId ||
+                  row.status !== "image_awaiting_review" || row.revision !== revision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                row = {
+                  ...row,
+                  status,
+                  review_note: reviewNote,
+                  image_key: imageKey,
+                  image_sha256: imageSha256,
+                  last_review_rating: reviewRating,
+                  last_review_tags_json: reviewTagsJson,
+                  revision: row.revision + 1,
+                  updated_at: updatedAt,
+                };
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET capture_state = 'queued'")) {
+                if (options.failCandidateQueueUpdate) throw new Error("injected candidate queue failure");
+                const [taskId, requestedAt, updatedAt, accountId, candidateId, revision] = values;
+                if (
+                  !activeBrokerWorker || !row || row.account_id !== accountId || row.candidate_id !== candidateId ||
                   row.status !== "caption_approved" || row.revision !== revision
                 ) {
                   return { meta: { changes: 0 } };
@@ -191,6 +314,21 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
         },
       };
     },
+    async batch(statements) {
+      const previousRow = row ? { ...row } : null;
+      const previousCaptureCount = captureTasks.length;
+      const previousFeedbackCount = feedbackEvents.length;
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        return results;
+      } catch (error) {
+        row = previousRow;
+        captureTasks.length = previousCaptureCount;
+        feedbackEvents.length = previousFeedbackCount;
+        throw error;
+      }
+    },
   };
   return {
     env: {
@@ -210,7 +348,137 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
     deletedArtifacts,
     queuedTasks,
     captureTasks,
+    feedbackEvents,
     row: () => row,
+  };
+}
+
+function generationEnvironment(options = {}) {
+  const inserted = new Map();
+  const aiCalls = [];
+  const account = {
+    account_id: "trace_demo_kr",
+    display_name: "Trace Korea",
+    country: "KR",
+    language: "ko",
+    timezone: "Asia/Seoul",
+    morning_time: "07:30",
+    evening_time: "19:30",
+    generation_enabled: 1,
+    next_generation_at: "2026-08-27T22:30:00.000Z",
+    enabled: 1,
+    revision: 1,
+  };
+  const profile = {
+    account_id: "trace_demo_kr",
+    profile_id: "profile-1",
+    country: "KR",
+    name: "학생의 실제 하루",
+    persona_id: "kr_student",
+    audience: "한국 대학생",
+    situation: "시험 주간",
+    tone: "담백한 한국어",
+    guidance: "실제 하루 장면을 보여준다.",
+    reference_ids_json: JSON.stringify(["kr-study-day"]),
+    source: "custom",
+    is_default: 1,
+    enabled: 1,
+    revision: 1,
+  };
+  const feedbackRows = [1, 2, 3].map((revision) => ({
+    candidate_id: `reviewed-${revision}`,
+    candidate_revision: revision,
+    tags_json: JSON.stringify(["컨셉이 약함"]),
+    note: `review ${revision}`,
+    rating: 2,
+    stage: "caption",
+    created_at: 100 - revision,
+  }));
+  const DB = {
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            sql,
+            values,
+            async run() {
+              if (sql.includes("INSERT OR IGNORE INTO hosted_workspace_accounts")) {
+                return { meta: { changes: 0 } };
+              }
+              if (sql.includes("hosted_workspace_generation_locks")) {
+                return { meta: { changes: 1 } };
+              }
+              throw new Error(`unexpected run SQL: ${sql}`);
+            },
+            async first() {
+              if (sql.includes("SELECT * FROM hosted_workspace_accounts")) return account;
+              if (sql.includes("SELECT * FROM hosted_workspace_context_profiles")) return profile;
+              if (sql.includes("JOIN shared_instructions")) return { body: "공통 지침" };
+              if (sql.includes("SELECT * FROM hosted_workspace_candidates")) {
+                return inserted.get(values[1]) ?? null;
+              }
+              throw new Error(`unexpected first SQL: ${sql}`);
+            },
+            async all() {
+              if (sql.includes("FROM hosted_workspace_feedback_events")) {
+                return { results: feedbackRows };
+              }
+              throw new Error(`unexpected all SQL: ${sql}`);
+            },
+          };
+        },
+      };
+    },
+    async batch(statements) {
+      if (options.failCandidateInsert) throw new Error("injected candidate insert failure");
+      for (const statement of statements) {
+        if (!statement.sql.includes("INSERT INTO hosted_workspace_candidates")) {
+          throw new Error(`unexpected batch SQL: ${statement.sql}`);
+        }
+        const values = statement.values;
+        inserted.set(values[0], {
+          candidate_id: values[0],
+          account_id: values[1],
+          source: values[2],
+          country: values[3],
+          topic: values[4],
+          caption: values[5],
+          hypothesis: values[6],
+          refs_json: values[7],
+          principles_json: values[8],
+          appium_prompt: values[9],
+          image_inputs_json: values[10],
+          ai_verdict: values[11],
+          context_profile_id: values[12],
+          context_snapshot_json: values[13],
+          posting_slot: values[14],
+          generation_batch_id: values[15],
+          generation_prompt_version: values[16],
+          generation_prompt_sha256: values[17],
+          generation_model: values[18],
+          feedback_rules_json: values[19],
+          status: "awaiting_review",
+          revision: 1,
+          created_at: values[20],
+          updated_at: values[21],
+        });
+      }
+      return statements.map(() => ({ meta: { changes: 1 } }));
+    },
+  };
+  return {
+    env: {
+      DB,
+      AI: {
+        async run(model, request) {
+          aiCalls.push({ model, request });
+          return { response: { candidates: generatedBatch() } };
+        },
+      },
+      PUBLIC_WORKSPACE_ACCOUNT_ID: "trace_demo_kr",
+    },
+    aiCalls,
+    inserted,
   };
 }
 
@@ -254,16 +522,67 @@ test("candidate normalization rejects unusable image context", () => {
   );
 });
 
-test("Workers AI schema requires two morning and two evening-ready candidates", () => {
-  const schema = candidateResponseSchema();
+test("Workers AI schema constrains generated references, principles, and schedules", () => {
+  const schema = candidateResponseSchema("KR", ["kr-study-day", "kr-020"]);
   const candidates = schema.properties.candidates;
 
   assert.equal(candidates.minItems, 4);
   assert.equal(candidates.maxItems, 4);
   assert.deepEqual(candidates.items.properties.posting_slot.enum, ["morning", "evening"]);
+  assert.equal(candidates.items.properties.refs_used.minItems, 1);
+  assert.equal(candidates.items.properties.refs_used.uniqueItems, true);
+  assert.deepEqual(candidates.items.properties.refs_used.items.enum, ["kr-study-day", "kr-020"]);
+  assert.equal(candidates.items.properties.principles_applied.minItems, 1);
+  assert.equal(candidates.items.properties.principles_applied.uniqueItems, true);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.minItems, 5);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.maxItems, 7);
   assert.ok(candidates.items.required.includes("posting_slot"));
   assert.ok(candidates.items.required.includes("appium_prompt"));
   assert.ok(candidates.items.required.includes("image_inputs"));
+});
+
+test("generated batches reject repeated content and non-schedule trace items", () => {
+  const profile = { reference_ids: ["kr-study-day"] };
+  const valid = generatedBatch();
+  assert.doesNotThrow(() => validateGeneratedCandidateBatch(valid, profile));
+
+  const repeatedCaption = generatedBatch();
+  repeatedCaption[1].caption = repeatedCaption[0].caption;
+  assert.throws(
+    () => validateGeneratedCandidateBatch(repeatedCaption, profile),
+    /캡션이 서로 달라야/u,
+  );
+
+  const filenameSchedule = generatedBatch();
+  filenameSchedule[0].image_inputs.trace_items[0] = "trace-home.png";
+  assert.throws(
+    () => validateGeneratedCandidateBatch(filenameSchedule, profile),
+    /HH:MM 제목/u,
+  );
+});
+
+test("generated batches reject profile escape, duplicate principles, and duplicate schedules", () => {
+  const profile = { reference_ids: ["kr-study-day"] };
+  const outsideReference = generatedBatch();
+  outsideReference[0].refs_used = ["kr-020"];
+  assert.throws(
+    () => validateGeneratedCandidateBatch(outsideReference, profile),
+    /페르소나 밖의 레퍼런스/u,
+  );
+
+  const duplicatePrinciples = generatedBatch();
+  duplicatePrinciples[0].principles_applied = [1, 1];
+  assert.throws(
+    () => validateGeneratedCandidateBatch(duplicatePrinciples, profile),
+    /적용 원리는 중복/u,
+  );
+
+  const duplicateSchedules = generatedBatch();
+  duplicateSchedules[1].image_inputs.trace_items = [...duplicateSchedules[0].image_inputs.trace_items];
+  assert.throws(
+    () => validateGeneratedCandidateBatch(duplicateSchedules, profile),
+    /서로 다른 일정 장면/u,
+  );
 });
 
 test("hosted candidate generation defaults to GPT-OSS 20B in code and deployment config", async () => {
@@ -357,6 +676,13 @@ test("candidate drafts reject reference IDs the Mac contract cannot consume", ()
   );
 });
 
+test("candidate drafts reject duplicate principles before storage", () => {
+  assert.throws(
+    () => normalizeCandidateDraft({ ...candidate(), principles_applied: [1, 1] }),
+    /적용 원리는 중복/u,
+  );
+});
+
 test("hosted context countries come from the packaged manifest", async () => {
   const response = await handleHostedWorkspace(
     new Request("https://workspace.example/api/context-countries"),
@@ -405,6 +731,232 @@ test("review feedback requires structured rejection reasons", () => {
   );
 });
 
+test("feedback rules require three distinct strong rejections in the same stage", async () => {
+  const rows = [
+    ["candidate-1", 1, "caption", 2, "컨셉이 약함", "첫 번째 구체적인 이유"],
+    ["candidate-1", 1, "caption", 1, "컨셉이 약함", "같은 revision 중복 이벤트"],
+    ["candidate-2", 2, "caption", 2, "컨셉이 약함", "두 번째 이유"],
+    ["candidate-3", 4, "caption", 1, "컨셉이 약함", "세 번째 이유"],
+    ["candidate-4", 1, "image", 2, "컨셉이 약함", "단계가 다른 이유"],
+    ["candidate-5", 1, "caption", 3, "캡션 부적합", "약한 반려"],
+    ["candidate-6", 1, "caption", 1, "기타", "자유 입력은 자동 규칙이 아님"],
+  ].map(([candidateId, revision, stage, rating, tag, note], index) => ({
+    candidate_id: candidateId,
+    candidate_revision: revision,
+    stage,
+    rating,
+    tags_json: JSON.stringify([tag]),
+    note,
+    created_at: 100 - index,
+  }));
+  const env = {
+    PUBLIC_WORKSPACE_ACCOUNT_ID: "trace_demo_kr",
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return { async all() { return { results: rows }; } };
+          },
+        };
+      },
+    },
+  };
+
+  const summary = await feedbackSummary(env, null);
+
+  assert.equal(summary.rejected_reviews, rows.length);
+  assert.equal(summary.active_rules.length, 1);
+  assert.deepEqual(summary.active_rules[0], {
+    rule_id: "caption-concept-specificity",
+    dimension: "concept",
+    instruction: "일반적인 생산성 문구 대신 한 장면과 한 갈등이 보이는 구체적인 컨셉을 만든다.",
+    stage: "caption",
+    tag: "컨셉이 약함",
+    evidence_count: 3,
+  });
+  assert.doesNotMatch(summary.rule_candidates[0], /첫 번째 구체적인 이유/u);
+  assert.equal(Object.hasOwn(summary, "recent_notes"), false);
+});
+
+test("legacy feedback without a reviewed revision remains aggregate-only", async () => {
+  const rows = ["legacy-1", "legacy-2", "legacy-3"].map((candidateId, index) => ({
+    candidate_id: candidateId,
+    candidate_revision: null,
+    stage: "caption",
+    rating: 1,
+    tags_json: JSON.stringify(["컨셉이 약함"]),
+    created_at: 100 - index,
+  }));
+  const env = {
+    PUBLIC_WORKSPACE_ACCOUNT_ID: "trace_demo_kr",
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return { async all() { return { results: rows }; } };
+          },
+        };
+      },
+    },
+  };
+
+  const summary = await feedbackSummary(env, null);
+
+  assert.equal(summary.rejected_reviews, 3);
+  assert.deepEqual(summary.top_tags, [{ tag: "컨셉이 약함", count: 3 }]);
+  assert.deepEqual(summary.rule_candidates, []);
+  assert.deepEqual(summary.active_rules, []);
+});
+
+test("caption review stores the exact reviewed revision snapshot and generation provenance", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "awaiting_review",
+    revision: 4,
+    generation_prompt_version: WORKSPACE_GENERATION_PROMPT_VERSION,
+    generation_prompt_sha256: "a".repeat(64),
+    generation_model: DEFAULT_WORKSPACE_AI_MODEL,
+    feedback_rules_json: JSON.stringify([{
+      rule_id: "caption-concept-specificity",
+      dimension: "concept",
+      instruction: "한 장면과 한 갈등을 만든다.",
+      stage: "caption",
+      tag: "컨셉이 약함",
+      evidence_count: 3,
+    }]),
+  }));
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accepted: false,
+        expected_revision: 4,
+        rating: 2,
+        tags: ["컨셉이 약함"],
+        note: "구체적인 사용 장면이 보이지 않음",
+      }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(state.row().status, "rejected");
+  assert.equal(state.feedbackEvents.length, 1);
+  const event = state.feedbackEvents[0];
+  assert.equal(event[2], "candidate-1");
+  assert.equal(event[4], "caption");
+  assert.equal(event[5], "rejected");
+  assert.equal(event[9], 4);
+  assert.equal(JSON.parse(event[10]).candidate_revision, 4);
+  assert.match(event[11], /^[a-f0-9]{64}$/u);
+  assert.equal(event[12], WORKSPACE_GENERATION_PROMPT_VERSION);
+  assert.equal(event[13], "a".repeat(64));
+  assert.equal(event[14], DEFAULT_WORKSPACE_AI_MODEL);
+  assert.equal(JSON.parse(event[15])[0].rule_id, "caption-concept-specificity");
+});
+
+test("caption review rejects image-only tags before storing a signal", async () => {
+  const state = candidateEnvironment(candidateRow({ status: "awaiting_review", revision: 4 }));
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accepted: false,
+        expected_revision: 4,
+        rating: 2,
+        tags: ["이미지 품질·AI 티"],
+      }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).detail, /caption 검수 단계/u);
+  assert.equal(state.feedbackEvents.length, 0);
+});
+
+test("caption review rolls back the decision when feedback evidence cannot be stored", async () => {
+  const state = candidateEnvironment(
+    candidateRow({ status: "awaiting_review", revision: 4 }),
+    false,
+    { failFeedbackInsert: true },
+  );
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accepted: false,
+        expected_revision: 4,
+        rating: 2,
+        tags: ["컨셉이 약함"],
+      }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 500);
+  assert.equal(state.row().status, "awaiting_review");
+  assert.equal(state.row().revision, 4);
+  assert.equal(state.feedbackEvents.length, 0);
+});
+
+test("image review rolls back feedback evidence when the candidate transition fails", async () => {
+  const state = candidateEnvironment(
+    candidateRow({ status: "image_awaiting_review", revision: 5 }),
+    false,
+    { failReviewTransition: true },
+  );
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/review-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accepted: false,
+        expected_revision: 5,
+        rating: 2,
+        tags: ["이미지 품질·AI 티"],
+      }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 500);
+  assert.equal(state.row().status, "image_awaiting_review");
+  assert.equal(state.row().revision, 5);
+  assert.equal(state.feedbackEvents.length, 0);
+  assert.deepEqual(state.deletedArtifacts, []);
+});
+
+test("image rejection commits its evidence and candidate transition together", async () => {
+  const state = candidateEnvironment(candidateRow({ status: "image_awaiting_review", revision: 5 }));
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/review-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accepted: false,
+        expected_revision: 5,
+        rating: 2,
+        tags: ["이미지 품질·AI 티"],
+      }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(state.row().status, "caption_approved");
+  assert.equal(state.row().revision, 6);
+  assert.equal(state.feedbackEvents.length, 1);
+  assert.deepEqual(state.deletedArtifacts, ["workspace/trace_demo_kr/candidates/candidate-1.svg"]);
+});
+
 test("daily generation follows the account timezone", () => {
   const after = new Date("2026-08-26T00:00:00.000Z");
   assert.equal(
@@ -416,8 +968,9 @@ test("daily generation follows the account timezone", () => {
 test("generation prompt binds the selected persona and country", () => {
   const profile = WORKSPACE_CONTEXT_PROFILES[1];
   const prompt = generationPrompt("기본 원리", "계정 지침", profile);
-  const schema = candidateResponseSchema(profile.country);
+  const schema = candidateResponseSchema(profile.country, profile.reference_ids);
 
+  assert.equal(WORKSPACE_GENERATION_PROMPT_VERSION, "trace.workspace-generation.v2");
   assert.match(prompt, new RegExp(profile.persona_id));
   assert.match(prompt, new RegExp(profile.audience));
   assert.deepEqual(schema.properties.candidates.items.properties.country.enum, ["KR"]);
@@ -425,6 +978,78 @@ test("generation prompt binds the selected persona and country", () => {
     schema.properties.candidates.items.properties.image_inputs.properties.language.enum,
     ["ko"],
   );
+});
+
+test("generation prompt routes controlled feedback rules by quality dimension", () => {
+  const profile = WORKSPACE_CONTEXT_PROFILES[1];
+  const prompt = generationPrompt("기본 원리", "계정 지침", profile, null, {
+    active_rules: [
+      { dimension: "caption", instruction: "캡션 규칙" },
+      { dimension: "design", instruction: "디자인 규칙" },
+      { dimension: "persona", instruction: "페르소나 규칙" },
+    ],
+  });
+
+  assert.match(prompt, /\[캡션 규칙\]\n- 캡션 규칙/u);
+  assert.match(prompt, /\[디자인 규칙\]\n- 디자인 규칙/u);
+  assert.match(prompt, /\[페르소나 규칙\]\n- 페르소나 규칙/u);
+});
+
+test("generated candidates persist the exact prompt digest, model, and active rule evidence", async () => {
+  const state = generationEnvironment();
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context_profile_id: "profile-1" }),
+    }),
+    state.env,
+    "기본 원리",
+  );
+
+  assert.equal(response.status, 201);
+  const generated = await response.json();
+  assert.equal(generated.length, 4);
+  assert.equal(state.aiCalls.length, 1);
+  const exactPrompt = state.aiCalls[0].request.messages[1].content;
+  const bytes = new TextEncoder().encode(exactPrompt);
+  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  for (const item of generated) {
+    assert.deepEqual(item.generation_provenance, {
+      prompt_version: WORKSPACE_GENERATION_PROMPT_VERSION,
+      prompt_sha256: digest,
+      model: DEFAULT_WORKSPACE_AI_MODEL,
+      feedback_rules: [{
+        rule_id: "caption-concept-specificity",
+        dimension: "concept",
+        instruction: "일반적인 생산성 문구 대신 한 장면과 한 갈등이 보이는 구체적인 컨셉을 만든다.",
+        stage: "caption",
+        tag: "컨셉이 약함",
+        evidence_count: 3,
+      }],
+    });
+  }
+  assert.match(exactPrompt, /\[컨셉 규칙\]/u);
+  assert.equal(state.inserted.size, 4);
+});
+
+test("candidate storage failure does not trigger another Workers AI call", async () => {
+  const state = generationEnvironment({ failCandidateInsert: true });
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context_profile_id: "profile-1" }),
+    }),
+    state.env,
+    "기본 원리",
+  );
+
+  assert.equal(response.status, 500);
+  assert.equal(state.aiCalls.length, 1);
+  assert.equal(state.inserted.size, 0);
 });
 
 test("editing a submitted candidate invalidates approval and removes its preview", async () => {
@@ -483,7 +1108,7 @@ test("stale candidate edits fail without deleting the approved preview", async (
   assert.deepEqual(state.deletedArtifacts, []);
 });
 
-test("image generation queues a revision-scoped native Mac capture", async () => {
+test("image generation fails before queueing when no Mac worker is registered", async () => {
   const state = candidateEnvironment(candidateRow({
     status: "caption_approved",
     image_key: null,
@@ -507,24 +1132,15 @@ test("image generation queues a revision-scoped native Mac capture", async () =>
     "context",
   );
 
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).detail, /등록된 Mac worker/u);
   assert.equal(state.row().status, "caption_approved");
-  assert.equal(state.row().capture_state, "queued");
-  assert.equal(state.queuedTasks.length, 1);
-  assert.equal(state.queuedTasks[0].kind, "capture");
-  assert.equal(state.queuedTasks[0].payload.pipeline, "hosted_workspace_capture_v1");
-  assert.equal(state.queuedTasks[0].payload.candidate_revision, 4);
-  assert.equal(state.queuedTasks[0].payload.image_inputs.device_time, "07:20");
-  assert.equal(state.queuedTasks[0].payload.caption, "기존 캡션");
-  assert.equal(state.queuedTasks[0].payload.hypothesis, "기존 가설");
-  assert.deepEqual(state.queuedTasks[0].payload.reference_ids, ["kr-study-day", "kr-020"]);
-  assert.match(state.queuedTasks[0].payload.creative_direction, /기존 Appium 프롬프트/);
-  assert.match(state.queuedTasks[0].payload.creative_direction, /과장 없이 실제 사용 장면/);
-  assert.equal(state.queuedTasks[0].payload.background_intent, "scenery: 이른 아침 캠퍼스 창가");
-  assert.equal(state.captureTasks.length, 1);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.queuedTasks.length, 0);
+  assert.equal(state.captureTasks.length, 0);
 });
 
-test("an enrolled Mac sends new hosted captures through the D1 worker broker", async () => {
+test("image generation rolls back the broker task when candidate queueing fails", async () => {
   const state = candidateEnvironment(candidateRow({
     status: "caption_approved",
     image_key: null,
@@ -534,6 +1150,61 @@ test("an enrolled Mac sends new hosted captures through the D1 worker broker", a
     capture_task_id: null,
     capture_error: null,
     capture_requested_at: null,
+  }), true, { failCandidateQueueUpdate: true });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 500);
+  assert.equal(state.row().status, "caption_approved");
+  assert.equal(state.row().revision, 3);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.captureTasks.length, 0);
+});
+
+test("an enrolled Mac receives revision-scoped capture context and learned design rules", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    context_snapshot_json: JSON.stringify({
+      persona_id: "kr_student",
+      guidance: "과장 없이 실제 사용 장면을 보여준다.",
+      reference_ids: ["kr-020"],
+    }),
+    generation_prompt_version: WORKSPACE_GENERATION_PROMPT_VERSION,
+    generation_prompt_sha256: "a".repeat(64),
+    generation_model: DEFAULT_WORKSPACE_AI_MODEL,
+    last_review_rating: 2,
+    last_review_tags_json: JSON.stringify(["앱 화면·데이터 오류"]),
+    feedback_rules_json: JSON.stringify([
+      {
+        rule_id: "image-natural-quality",
+        dimension: "design",
+        instruction: "실제 잠금화면처럼 자연스럽게 구성한다.",
+        stage: "image",
+        tag: "이미지 품질·AI 티",
+        evidence_count: 3,
+      },
+      {
+        rule_id: "caption-concept-specificity",
+        dimension: "concept",
+        instruction: "한 장면과 한 갈등을 만든다.",
+        stage: "caption",
+        tag: "컨셉이 약함",
+        evidence_count: 3,
+      },
+    ]),
   }), true);
 
   const response = await handleHostedWorkspace(
@@ -547,7 +1218,31 @@ test("an enrolled Mac sends new hosted captures through the D1 worker broker", a
   assert.equal(response.status, 201);
   assert.equal(state.row().capture_state, "queued");
   assert.equal(state.queuedTasks.length, 0);
+  assert.equal(state.captureTasks.length, 1);
   assert.equal(state.captureTasks[0][7], "worker_broker");
+  const task = JSON.parse(state.captureTasks[0][6]);
+  assert.equal(task.kind, "capture");
+  assert.equal(task.payload.pipeline, "hosted_workspace_capture_v1");
+  assert.equal(task.payload.candidate_revision, 4);
+  assert.equal(task.payload.image_inputs.device_time, "07:20");
+  assert.equal(task.payload.caption, "기존 캡션");
+  assert.equal(task.payload.hypothesis, "기존 가설");
+  assert.deepEqual(task.payload.reference_ids, ["kr-study-day", "kr-020"]);
+  assert.match(task.payload.creative_direction, /기존 Appium 프롬프트/u);
+  assert.match(task.payload.creative_direction, /과장 없이 실제 사용 장면/u);
+  assert.match(task.payload.creative_direction, /실제 잠금화면처럼 자연스럽게 구성/u);
+  assert.match(task.payload.creative_direction, /Trace UI 구조와 승인된 일정·시각·언어를 정확히 보존/u);
+  assert.doesNotMatch(task.payload.creative_direction, /한 장면과 한 갈등/u);
+  assert.equal(task.payload.background_intent, "scenery: 이른 아침 캠퍼스 창가");
+  assert.equal(task.payload.feedback_rules.length, 3);
+  assert.deepEqual(task.payload.feedback_rules[2], {
+    rule_id: "image-ui-data-accuracy",
+    dimension: "design",
+    instruction: "Trace UI 구조와 승인된 일정·시각·언어를 정확히 보존하고 임의 데이터를 추가하지 않는다.",
+    stage: "image",
+    tag: "앱 화면·데이터 오류",
+    evidence: "current_candidate_rejection",
+  });
 });
 
 test("built public workspace has no login form and keeps candidate controls", async () => {

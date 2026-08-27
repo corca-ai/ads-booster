@@ -9,12 +9,17 @@ This document describes the deployed Cloudflare workspace and installed Mac work
 behavior is established with a fresh-installed `trace-marketing` command plus the deployed
 `workspace.borca.ai` surface; worktree execution is implementation evidence only.
 
+Deployment note (2026-08-27): the feedback provenance/learning, generated-batch validator,
+immediate image-retry guidance, and zero-worker fail-fast described in Hosted candidate flow are
+candidate implementation only. They are not deployed behavior until migration, Worker deployment,
+hosted readback, and the first Mac canary complete.
+
 ## Process topology
 
 ```mermaid
 flowchart LR
     UI[Public workspace UI] --> API[Cloudflare Worker API]
-    API --> D1[D1 accounts contexts candidates runs workers leases]
+    API --> D1[D1 accounts contexts candidates feedback rules workers leases]
     API --> WAI[Workers AI candidate generation]
     API --> WF[Cloudflare Workflow approvals]
     WF --> LEASE[D1 hosted capture lease]
@@ -67,12 +72,24 @@ temporarily for source compatibility tests, but no production Mac or installer p
 1. The browser loads the login-free hosted workspace and selects a logical account. Account scope
    separates contexts, profiles, candidates, runs, feedback, and learned memory; it is not visitor
    authentication.
-2. Cloudflare Workers AI generates context-grounded candidates using `WORKSPACE_AI_MODEL`.
+2. Cloudflare Workers AI generates context-grounded candidates using `WORKSPACE_AI_MODEL`. D1
+   stores prompt version/digest, model, selected profile snapshot, and active controlled feedback
+   rules. A deterministic batch validator rejects duplicate topics/captions/schedules, invalid
+   references or principles, and non-`HH:MM 제목` Trace items before persistence.
 3. A teammate may edit or delete submitted candidates. Candidate approval creates a version-bound
-   capture task.
+   capture task only if at least one non-revoked broker worker is registered; otherwise it returns
+   `503` without queueing. Worker eligibility, task insertion, and candidate revision advance share
+   one conditional D1 batch. Manual edits clear generation provenance and invalidate earlier approval.
 4. D1 assigns one lease to an active worker whose heartbeat doctor is ready. Offline, degraded,
-   draining, and revoked workers receive no new task.
-5. The Workflow waits for the callback and then for human image approval. Approval reaches
+   draining, and revoked workers receive no new task. Learned design/policy rules snapshotted on the
+   candidate are appended to the Mac creative direction. A rejected image's controlled stage-valid
+   tags also guide the same candidate's immediate retry; its free-form note does not.
+5. Caption and image review events retain the reviewed candidate revision, bounded snapshot/digest,
+   generation provenance, stage, rating, tags, and note. A server-owned instruction activates only
+   after rating 1–2 evidence for the same stage/tag from three distinct revisions. Notes are never
+   injected into model context automatically. Review evidence and its candidate transition commit
+   in one D1 batch, preventing a decision without provenance or provenance without a decision.
+6. The Workflow waits for the callback and then for human image approval. Approval reaches
    `submitted`; Threads publication remains outside the runtime.
 
 ## Mac planning and capture flow
@@ -161,6 +178,8 @@ the managed product root.
 - An unhealthy worker cannot claim a new task; a stale or revoked worker cannot complete a lost lease.
 - Model output cannot invoke Appium until it passes the deterministic `WallpaperPlan` checks.
 - Generated images require native provenance and human review.
+- Automatic feedback learning accepts only server-owned instructions backed by stage-specific,
+  distinct-revision evidence; it never injects free-form notes or silently mutates a profile.
 - A D1 execution barrier prevents lease expiry from reassigning work after Appium begins; a second
   D1 callback reservation binds result content and linearizes callback application against explicit
   revocation/replacement.

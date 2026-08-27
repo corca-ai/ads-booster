@@ -301,6 +301,10 @@ const makeLiveDocument = () => {
   workerEnrollmentCodeCopy.textContent = "코드 복사";
   const workerEnrollmentCommandCopy = new FakeElement("worker-enrollment-command-copy");
   workerEnrollmentCommandCopy.textContent = "명령 복사";
+  const workerTitle = new FakeElement("worker-title");
+  const workerCopy = new FakeElement("worker-copy");
+  const workerSignal = new FakeElement("worker-signal");
+  const workerBadges = new FakeElement("worker-badges");
   const candidateForm = new FakeElement("candidate-form");
   candidateForm.formValues = new Map([
     ["topic", "  시험기간 일정 관리 — 잠금화면 데모  "],
@@ -393,6 +397,10 @@ const makeLiveDocument = () => {
     ["[data-worker-enrollment-expiry]", workerEnrollmentExpiry],
     ["[data-worker-enrollment-code-copy]", workerEnrollmentCodeCopy],
     ["[data-worker-enrollment-command-copy]", workerEnrollmentCommandCopy],
+    ["[data-worker-title]", workerTitle],
+    ["[data-worker-copy]", workerCopy],
+    ["[data-worker-signal]", workerSignal],
+    ["[data-worker-badges]", workerBadges],
   ]);
   const selectorGroups = new Map([["[data-autogen]", [autogenButton]]]);
   const document = new FakeDocument([
@@ -457,6 +465,10 @@ const makeLiveDocument = () => {
     workerEnrollmentExpiry,
     workerEnrollmentCodeCopy,
     workerEnrollmentCommandCopy,
+    workerTitle,
+    workerCopy,
+    workerSignal,
+    workerBadges,
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
@@ -525,6 +537,10 @@ const makeLiveDocument = () => {
     workerEnrollmentExpiry,
     workerEnrollmentCodeCopy,
     workerEnrollmentCommandCopy,
+    workerTitle,
+    workerCopy,
+    workerSignal,
+    workerBadges,
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
@@ -1288,6 +1304,42 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.equal(fixture.workerEnrollmentCode.textContent, "");
 };
 
+const testUnregisteredMacDisablesHostedImageCapture = async () => {
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") {
+      return response(200, {
+        member_id: "public",
+        workspace_id: "cloudflare:trace_demo_kr",
+        account_id: "trace_demo_kr",
+        display_name: "Public reviewer",
+      });
+    }
+    if (path === "/api/accounts") return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path === "/api/candidates") return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, {
+        status: "not_configured",
+        counts: { online: 0, busy: 0, draining: 0, registered: 0 },
+        workers: [],
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.workerTitle.textContent, "Mac worker 미등록");
+  assert.equal(
+    fixture.workerCopy.textContent,
+    "Mac worker를 등록하기 전에는 이미지 캡처를 시작할 수 없습니다.",
+  );
+  assert.doesNotMatch(fixture.workerCopy.textContent, /Queue/u);
+};
+
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
   const styles = await readFile(join(staticRoot, "workspace.css"), "utf8");
@@ -1387,5 +1439,6 @@ await testImageGenerationButtonRunsTheStage();
 await testImageGenerationFailureShowsTheServerMessage();
 await testImageApprovalPostsTheDecision();
 await testMacConnectionsAreManagedWithAnEphemeralControlToken();
+await testUnregisteredMacDisablesHostedImageCapture();
 await testMarkupUsesTheAgreedTerminology();
-console.log("workspace static behavior: 33 passed");
+console.log("workspace static behavior: 34 passed");

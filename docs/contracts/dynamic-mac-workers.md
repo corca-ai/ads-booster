@@ -1,12 +1,17 @@
 # Dynamic Mac Worker Contract
 
-Status: Implemented; one real prepared-Mac Codex-to-Appium canary remains operational acceptance.
+Status: Implemented baseline; one real prepared-Mac Codex-to-Appium canary remains operational acceptance.
+
+Candidate rollout status (2026-08-27): the feedback provenance migration and the broker-only
+zero-worker behavior described below are implemented on the current branch but are not deployed
+product behavior until the D1 migration and Worker release are applied, read back from
+`workspace.borca.ai`, and proven by the first real Mac canary.
 
 ## Problem
 
-Hosted native capture currently gives every participating Mac the same Cloudflare Queue pull token
-and callback token. The control plane cannot name, observe, drain, revoke, or deliberately replace
-one machine, and the public workspace cannot explain whether a queued image has any healthy worker.
+The legacy hosted capture path gave every participating Mac the same Cloudflare Queue pull token and
+callback token. It could not name, observe, drain, revoke, or deliberately replace one machine, and
+the public workspace could not explain whether a queued image had any healthy worker.
 
 ## Capability Contract
 
@@ -27,9 +32,10 @@ Appium PNG callback accepted by the current R2 boundary.
 - A sanitized public worker-status endpoint and workspace status surface.
 - A protected Mac connection manager in the hosted workspace for inventory, refresh, active/draining
   state, explicit two-step revocation, and one-time enrollment code plus target-Mac commands.
-- Legacy direct Queue pull remains available for non-hosted control-plane tasks and rollback. Hosted
-  workspace capture uses the worker broker once a non-revoked machine identity exists; degraded or
-  offline workers leave that task queued until a healthy claimant appears.
+- Legacy direct Queue pull remains available only for non-hosted simulation compatibility and
+  existing legacy task handling. Every new hosted workspace capture uses the worker broker. If no
+  non-revoked machine identity exists, the request fails before task creation; when registered
+  workers are merely degraded or offline, the task stays queued until a healthy claimant appears.
 - The Mac process uses the official Codex CLI as its only model harness. Each claimed task starts an
   ephemeral, read-only `codex exec` turn, validates the structured `WallpaperPlan`, and then hands
   the plan to the deterministic Appium boundary. The former in-package `trace-agent` model loop is
@@ -105,7 +111,8 @@ Appium PNG callback accepted by the current R2 boundary.
 - Heartbeat renewal extends only accepted pre-execution work and stops after the one-hour claim cap;
   post-barrier work has no automatic expiry.
 - The public workspace explains no-worker, queued, assigned, degraded, and offline conditions without
-  exposing credentials or detailed host inventory.
+  exposing credentials or detailed host inventory. A no-worker image request returns `503` and does
+  not accumulate an undeliverable capture task.
 - An operator can use the workspace UI to list, activate, drain, revoke, and prepare a replacement Mac
   without copying worker IDs into CLI commands; the target Mac still consumes the one-time code locally.
 - A fresh-installed worker can install/start/stop its LaunchAgent without hand-writing a plist.
@@ -150,7 +157,8 @@ fixed decision, success criterion, or acceptance boundary.
 - `cloudflare/migrations/0008_dynamic_mac_workers.sql` owns registry and lease persistence;
   `0009_worker_execution_barrier.sql` adds the post-Appium-start reassignment barrier;
   `0010_worker_callback_reservation.sql` atomically binds callback ID and normalized result digest to the current
-  worker lease before R2 or candidate mutation.
+  worker lease before R2 or candidate mutation; `0011_hosted_feedback_provenance.sql` adds reviewed
+  revision and generation/rule provenance without placing credentials in candidate or feedback rows.
 - `cloudflare/src/mac-workers.js` owns enrollment, token-hash auth, heartbeat, claim/ack, drain,
   revoke, callback ownership, and sanitized public status.
 - `worker_broker.py`, `worker_doctor.py`, and `worker_launchd.py` own the installed Mac boundary;

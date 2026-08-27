@@ -136,6 +136,49 @@ Use `-k` when one test name is sufficient.
 uv run pytest -q tests/service/test_service.py -k worker
 ```
 
+For the Mac updater and immutable release envelope, use this focused scope rather than the full
+suite:
+
+```bash
+uv run pytest -q \
+  tests/marketing/test_worker_update.py \
+  tests/marketing/test_worker_broker.py \
+  tests/marketing/test_bridge.py \
+  tests/cli/test_installer.py \
+  tests/cli/test_release_builder.py \
+  tests/cli/test_cli_compatibility.py
+```
+
+Then build the project wheel and dependency wheelhouse in a temporary directory, install them with
+`--no-index` into a fresh Python 3.14 environment, and resolve `trace-marketing` from that fresh
+environment for `version --json` and CLI help. This proves the candidate artifact only. Public
+release, shared-Mac bootstrap, reboot, heartbeat and Appium canary remain separate rollout gates.
+
+For hosted feedback learning and candidate-quality changes, use the source-owned Worker test plus
+the migration test. Build the workspace in a temporary copy so ignored or stale `cloudflare/dist`
+files in the worktree cannot masquerade as source behavior.
+
+```bash
+cd cloudflare
+npm run build
+node --check src/hosted-workspace.js
+node --test test/hosted-workspace.test.js
+cd ..
+uv run pytest -q tests/marketing/test_cloudflare_schema.py tests/marketing/test_native_capture.py
+```
+
+The focused cases must prove prompt/model/rule provenance, reviewed revision snapshots, three
+distinct rating-1–2 rejections in the same stage before activation, no free-form note injection,
+NULL-revision legacy feedback exclusion from rule evidence, feedback-dimension routing,
+selected-profile reference confinement, unique topics/captions/
+schedules/principles, five-to-seven timed Trace items, no-worker fail-fast without task creation,
+an explicit no-worker UI state without legacy Queue fallback copy, same-candidate image-retry
+guidance, and design/policy rule delivery through broker capture context.
+Inject feedback-insert, review-transition, candidate-insert, and candidate-queue failures to prove
+review evidence is atomic, storage errors do not re-call Workers AI, and broker tasks cannot survive
+a failed candidate transition. A production claim still requires a
+real Workers AI batch plus one registered-Mac capture and readback after deployment.
+
 Do not run the following commands without an explicit user request.
 
 ```bash

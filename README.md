@@ -5,6 +5,11 @@ worker that creates verified Trace wallpaper images with Codex CLI and Appium. C
 review state, account isolation, schedules, task leases, and artifacts remain hosted. Threads posting
 is intentionally not implemented.
 
+> Rollout note (2026-08-27): the feedback provenance, generated-batch quality gate, immediate image
+> retry guidance, and zero-worker fail-fast described below are implemented on the current candidate
+> branch but are not deployed product behavior until the D1 migration and Worker release are applied
+> and read back from `workspace.borca.ai`.
+
 ## Current product surfaces
 
 - Workspace: <https://workspace.borca.ai/>
@@ -19,10 +24,15 @@ does not use its OAuth store, Responses client, conversation memory, or tool loo
 ## Pipeline
 
 1. A teammate opens `workspace.borca.ai`, selects an account/country/profile, and generates or edits
-   candidates.
+   candidates. Generated batches are structurally validated and record prompt/model/feedback-rule
+   provenance. Repeated rating-1–2 rejections from three distinct revisions in the same review stage
+   activate only server-owned caption, concept, design, persona, or policy instructions; reviewer
+   notes are never injected automatically. A rejected image's stage-valid tag instructions also
+   guide that same candidate's immediate retry.
 2. Candidate selection creates a hosted capture task whose approved caption, hypothesis, references,
    creative direction, background intent, profile, and Trace items are immutable inputs. D1 assigns
-   one lease to a healthy enrolled Mac.
+   one lease to a healthy enrolled Mac. If no non-revoked Mac is registered, the request returns
+   `503` before creating a task instead of falling back to a shared Queue credential.
 3. The Mac starts a new ephemeral `codex exec` turn. The marketing context is sent over stdin and the
    final output must match the strict `WallpaperPlan` JSON schema.
 4. Code validates request ID, time zone, local event times, references, layout, and style. The

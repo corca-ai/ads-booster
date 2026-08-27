@@ -165,6 +165,17 @@
     "브랜드·정책 위험",
     "기타",
   ]);
+  const REVIEW_TAGS_BY_STAGE = Object.freeze({
+    caption: Object.freeze(REVIEW_TAGS.filter((tag) => ![
+      "이미지 품질·AI 티",
+      "앱 화면·데이터 오류",
+    ].includes(tag))),
+    image: Object.freeze(REVIEW_TAGS.filter((tag) => ![
+      "컨셉이 약함",
+      "기존 게시물과 중복",
+      "캡션 부적합",
+    ].includes(tag))),
+  });
   const DEFAULT_LANGUAGE = "en";
   const MAX_TRACE_ITEMS = 8;
 
@@ -195,7 +206,7 @@
         : "연결된 Mac이 이미지 작업을 받을 수 있습니다.", "success"],
       degraded: ["Mac 환경 점검 필요", "worker는 온라인이지만 Appium 준비 항목이 부족해 작업을 받지 않습니다.", "warning"],
       offline: ["Mac worker 오프라인", "작업은 Cloudflare에 대기하며 worker가 다시 켜지면 자동으로 이어집니다.", "danger"],
-      not_configured: ["Mac worker 미등록", "첫 worker를 등록하기 전에는 기존 Queue 호환 경로를 사용합니다.", "warning"],
+      not_configured: ["Mac worker 미등록", "Mac worker를 등록하기 전에는 이미지 캡처를 시작할 수 없습니다.", "warning"],
     }[macWorkerStatus.status] ?? ["Mac 상태 확인 불가", "잠시 후 다시 확인합니다.", "warning"]);
     if (title) title.textContent = presentation[0];
     if (copy) copy.textContent = presentation[1];
@@ -718,7 +729,7 @@
     const legend = document.createElement("legend");
     legend.textContent = "이유 태그 · 하나 이상";
     fieldset.append(legend);
-    const tagInputs = REVIEW_TAGS.map((tag, index) => {
+    const tagInputs = REVIEW_TAGS_BY_STAGE[stage].map((tag, index) => {
       const label = document.createElement("label");
       label.className = "review-tag";
       const input = document.createElement("input");
@@ -1196,8 +1207,8 @@
       return;
     }
     summary.textContent = feedbackSignal.rule_candidates.length
-      ? `반복 3회 이상 규칙 ${feedbackSignal.rule_candidates.length}개가 다음 생성에 자동 반영됩니다.`
-      : `반려 ${feedbackSignal.rejected_reviews}건이 누적되었습니다. 같은 태그가 3회 쌓이면 생성 규칙이 됩니다.`;
+      ? `같은 단계의 강한 반려로 확인된 규칙 ${feedbackSignal.rule_candidates.length}개가 다음 생성에 자동 반영됩니다.`
+      : `반려 ${feedbackSignal.rejected_reviews}건이 누적되었습니다. 같은 단계·태그의 1~2점 반려가 서로 다른 후보 revision에서 3회 확인되면 생성 규칙이 됩니다.`;
     tags.replaceChildren(...feedbackSignal.top_tags.slice(0, 6).map(({ tag, count }) =>
       badge("approval-badge", `${tag} · ${count}`)));
   };
