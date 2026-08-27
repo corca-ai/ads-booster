@@ -14,11 +14,6 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from ads_booster.candidate_generation import (
-    build_candidate_generator,
-    build_candidate_image_runner,
-)
-from ads_booster.config.settings import AgentSettings
 from ads_booster.marketing.bridge import MarketingBridge
 from ads_booster.marketing.cloudflare_queue import (
     CloudflareQueueClient,
@@ -26,15 +21,9 @@ from ads_booster.marketing.cloudflare_queue import (
     CloudflareQueueError,
     ControlPlaneCallbackClient,
 )
-from ads_booster.marketing.executors import (
-    ArtifactSimulationExecutor,
-    CandidatePipelineExecutor,
-)
+from ads_booster.marketing.executors import ArtifactSimulationExecutor
 from ads_booster.marketing.inbox import MarketingInbox
-from ads_booster.marketing.native_capture import (
-    HostedCaptureRoutingExecutor,
-    HostedWorkspaceCaptureExecutor,
-)
+from ads_booster.marketing.native_capture import HostedWorkspaceCaptureExecutor
 from ads_booster.marketing.service import (
     CredentialProvider,
     MarketingBridgeConfigStore,
@@ -53,9 +42,9 @@ from ads_booster.marketing.worker_broker import (
 )
 from ads_booster.marketing.worker_doctor import MacWorkerDoctorReport, inspect_mac_worker
 from ads_booster.marketing.worker_launchd import MacWorkerLaunchd, default_worker_plist_path
+from ads_booster.providers.codex_cli import resolve_codex_executable
 from ads_booster.service.worker import build_production_runner
 from ads_booster.transport.http import create_http_client
-from ads_booster.workspace import SqliteWorkspaceStore
 
 if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject
@@ -70,7 +59,6 @@ app.add_typer(worker_app, name="worker")
 
 class BridgeExecutor(StrEnum):
     SIMULATION = "simulation"
-    CANDIDATE_PIPELINE = "candidate-pipeline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,12 +130,7 @@ def bridge(
     poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
     executor: Annotated[
         BridgeExecutor,
-        typer.Option(
-            help=(
-                "simulation, or candidate-pipeline for real provider candidate generation "
-                "and native Appium capture; publication stays simulated"
-            )
-        ),
+        typer.Option(help="Simulation-only compatibility bridge."),
     ] = BridgeExecutor.SIMULATION,
 ) -> None:
     """Run the external Cloudflare Queue pull consumer.
@@ -175,7 +158,7 @@ def bridge(
 @app.command("bridge-configure")
 def bridge_configure(
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
-    executor: Annotated[BridgeExecutor, typer.Option()] = BridgeExecutor.CANDIDATE_PIPELINE,
+    executor: Annotated[BridgeExecutor, typer.Option()] = BridgeExecutor.SIMULATION,
     poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
     credential_provider: Annotated[
         CredentialProvider,
@@ -319,7 +302,7 @@ def worker_install_service(
     start: Annotated[bool, typer.Option("--start/--no-start")] = True,
 ) -> None:
     """Install a per-user LaunchAgent whose plist contains no worker credential."""
-    launchd = _worker_launchd(_home(home))
+    launchd = _worker_launchd(_home(home), require_codex=True)
     _stop_worker_launchd(launchd)
     launchd.install()
     typer.echo(f"plist: {launchd.plist_path}")
@@ -388,12 +371,17 @@ def worker_status(
         }
     except CloudflareQueueError:
         enrollment = {"state": "not_enrolled"}
-    report = inspect_mac_worker()
+    pinned_codex = launchd.installed_codex_executable()
+    report = inspect_mac_worker(codex_executable=pinned_codex, resolve_codex=False)
     typer.echo(
         json.dumps(
             {
                 "service": "running" if result.returncode == 0 else "stopped",
                 "plist": str(launchd.plist_path),
+                "codex_runtime": {
+                    "source": "launchagent",
+                    "executable": str(pinned_codex) if pinned_codex is not None else None,
+                },
                 "enrollment": enrollment,
                 "doctor": {"ready": report.ready, "summary": report.summary},
             },
@@ -481,26 +469,6 @@ def _run_bridge(runtime: BridgeRuntime) -> None:
     root = runtime.agent_home / "marketing-bridge"
     simulation = ArtifactSimulationExecutor(root / "artifacts")
     with create_http_client() as http:
-        active_executor = simulation
-        review_store = None
-        if runtime.executor is BridgeExecutor.CANDIDATE_PIPELINE:
-            settings = AgentSettings.from_environment()
-            store = SqliteWorkspaceStore(runtime.agent_home)
-            review_store = store
-            candidate_pipeline = CandidatePipelineExecutor(
-                generator=build_candidate_generator(settings, runtime.agent_home, store),
-                image_runner=build_candidate_image_runner(settings, runtime.agent_home, store),
-                store=store,
-                artifact_root=runtime.agent_home,
-                fallback=simulation,
-            )
-            active_executor = HostedCaptureRoutingExecutor(
-                hosted=HostedWorkspaceCaptureExecutor(
-                    runner=build_production_runner(runtime.agent_home, http),
-                    output_root=runtime.agent_home / "generated",
-                ),
-                fallback=candidate_pipeline,
-            )
         worker = MarketingBridge(
             queue=CloudflareQueueClient(
                 http,
@@ -516,8 +484,8 @@ def _run_bridge(runtime: BridgeRuntime) -> None:
                 runtime.worker_token,
             ),
             inbox=MarketingInbox(root),
-            executor=active_executor,
-            review_store=review_store,
+            executor=simulation,
+            review_store=None,
         )
         recovered = worker.recover()
         if recovered:
@@ -550,7 +518,11 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
         with create_http_client(read_timeout=60.0) as http:
             broker = WorkerBrokerClient(http, config, credential, heartbeat)
             executor = HostedWorkspaceCaptureExecutor(
-                runner=build_production_runner(agent_home, http),
+                runner=build_production_runner(
+                    agent_home,
+                    http,
+                    before_side_effect=broker.mark_execution_started,
+                ),
                 output_root=agent_home / "generated",
             )
             bridge = MarketingBridge(
@@ -587,7 +559,7 @@ def _heartbeat_loop(
             _ = stop.wait(15)
 
 
-def _worker_launchd(agent_home: Path) -> MacWorkerLaunchd:
+def _worker_launchd(agent_home: Path, *, require_codex: bool = False) -> MacWorkerLaunchd:
     if sys.platform != "darwin":
         message = "Mac worker LaunchAgent commands require macOS"
         raise typer.BadParameter(message)
@@ -595,8 +567,13 @@ def _worker_launchd(agent_home: Path) -> MacWorkerLaunchd:
     if not executable:
         message = "trace-marketing is not installed on PATH"
         raise typer.BadParameter(message)
+    codex_executable = resolve_codex_executable() if require_codex else None
+    if require_codex and codex_executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and run `codex login`"
+        raise typer.BadParameter(message)
     return MacWorkerLaunchd(
         executable=Path(executable),
+        codex_executable=codex_executable,
         agent_home=agent_home,
         plist_path=default_worker_plist_path(),
     )

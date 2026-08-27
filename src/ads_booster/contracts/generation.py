@@ -22,10 +22,11 @@ class PersonaProfile(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     persona_id: Identifier
+    display_name: Annotated[str, Field(min_length=1, max_length=80)] | None = None
     country: CountryCode
     locale: Locale
     age_group: Annotated[str, Field(min_length=1, max_length=40)] | None = None
-    occupation: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    occupation: Annotated[str, Field(min_length=1, max_length=500)] | None = None
     traits: Annotated[tuple[str, ...], Field(max_length=8)] = ()
     interests: Annotated[tuple[str, ...], Field(max_length=8)] = ()
 
@@ -35,7 +36,7 @@ class PromotionMaterial(BaseModel):
 
     promotion_material_id: Identifier
     feature: Annotated[str, Field(min_length=1, max_length=120)] | None = None
-    concept: Annotated[str, Field(min_length=1, max_length=120)]
+    concept: Annotated[str, Field(min_length=1, max_length=200)]
     tone: Annotated[tuple[str, ...], Field(max_length=8)] = ()
     caption: Annotated[str, Field(min_length=1, max_length=10_000)] | None = None
     hypothesis: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None

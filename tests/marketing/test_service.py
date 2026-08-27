@@ -29,7 +29,7 @@ def _config(
         account_id="cf-account",
         queue_id="queue-id",
         control_plane_url="https://worker.example.test",
-        executor="candidate-pipeline",
+        executor="simulation",
         poll_seconds=2.0,
         credential_provider=credential_provider,
         credential_command=credential_command,
@@ -104,6 +104,6 @@ def test_bridge_configure_writes_only_non_secret_worker_enrollment(
 
     assert result.exit_code == 0, result.stdout + str(result.exception)
     config = MarketingBridgeConfigStore(home).load()
-    assert config.executor == "candidate-pipeline"
+    assert config.executor == "simulation"
     assert config.credential_provider == "environment"
     assert "token" not in result.stdout.lower()

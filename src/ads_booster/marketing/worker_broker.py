@@ -143,6 +143,15 @@ class WorkerBrokerClient:
         )
         _ = _response_payload(response, operation="worker task acknowledgement")
 
+    def mark_execution_started(self, task_id: str) -> None:
+        response = _post_json(
+            self.http,
+            self._url("/v1/workers/tasks/executing"),
+            {"task_id": task_id},
+            self._headers(),
+        )
+        _ = _response_payload(response, operation="worker execution barrier")
+
     def deliver(self, callback: TaskCallback) -> None:
         response = _post_json(
             self.http,

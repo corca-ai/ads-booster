@@ -272,7 +272,7 @@ export function normalizeCandidateDraft(input) {
   }
   const caption = requiredString(input.caption, "caption", 10000);
   const hypothesis = requiredString(input.hypothesis, "hypothesis", 2000);
-  const refsUsed = stringList(input.refs_used, 16, 120);
+  const refsUsed = referenceIdList(input.refs_used);
   const principlesApplied = principleList(input.principles_applied);
   const imageInputs = normalizeImageInputs(input.image_inputs);
   const requestedPrompt = optionalString(input.appium_prompt ?? input.shooting_order, 10000);
@@ -350,6 +350,7 @@ export function normalizeContextProfile(input) {
   if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(personaId)) {
     throw new WorkspaceHttpError(400, "persona_id는 영문 소문자, 숫자, -, _만 사용할 수 있습니다.");
   }
+  const referenceIds = referenceIdList(input.reference_ids ?? []);
   return {
     country,
     name: requiredString(input.name, "name", 80),
@@ -358,7 +359,7 @@ export function normalizeContextProfile(input) {
     situation: requiredString(input.situation, "situation", 500),
     tone: requiredString(input.tone, "tone", 300),
     guidance: requiredString(input.guidance, "guidance", 2000),
-    reference_ids: stringList(input.reference_ids ?? [], 16, 120),
+    reference_ids: referenceIds,
   };
 }
 
@@ -1200,6 +1201,20 @@ async function generateCandidateImage(env, candidateId) {
   const now = new Date().toISOString();
   const nextRevision = candidate.revision + 1;
   const idempotencyKey = `hosted:${accountId(env)}:${candidateId}:${candidate.revision}`;
+  const referenceIds = [...new Set([
+    ...candidate.refs_used,
+    ...(candidate.context_profile?.reference_ids ?? []),
+  ])];
+  if (referenceIds.length > 16) {
+    throw new WorkspaceHttpError(400, "이미지 생성에 사용할 레퍼런스는 16개 이하여야 합니다.");
+  }
+  const creativeDirection = [candidate.shooting_order, candidate.context_profile?.guidance]
+    .filter(Boolean)
+    .join("\n\n");
+  const backgroundIntent = [
+    candidate.image_inputs.background_subject,
+    candidate.image_inputs.background_mood,
+  ].join(": ");
   const body = {
     schema_version: "1",
     task_id: taskId,
@@ -1214,6 +1229,10 @@ async function generateCandidateImage(env, candidateId) {
       country: candidate.country,
       topic: candidate.topic,
       caption: candidate.caption,
+      hypothesis: candidate.hypothesis,
+      reference_ids: referenceIds,
+      creative_direction: creativeDirection,
+      background_intent: backgroundIntent,
       appium_prompt: candidate.shooting_order,
       image_inputs: candidate.image_inputs,
       context_profile: candidate.context_profile,
@@ -1553,6 +1572,17 @@ function stringList(value, maxItems, maxLength) {
     throw new WorkspaceHttpError(400, `목록은 최대 ${maxItems}개까지 입력할 수 있습니다.`);
   }
   return value.map((item) => requiredString(item, "목록 항목", maxLength));
+}
+
+function referenceIdList(value) {
+  const identifiers = stringList(value, 16, 80);
+  if (identifiers.some((item) => !/[a-zA-Z0-9]/i.test(item[0]) || /[^a-zA-Z0-9._-]/i.test(item))) {
+    throw new WorkspaceHttpError(400, "레퍼런스 ID는 영문자·숫자로 시작하고 ., -, _만 사용할 수 있습니다.");
+  }
+  if (new Set(identifiers).size !== identifiers.length) {
+    throw new WorkspaceHttpError(400, "레퍼런스 ID는 중복될 수 없습니다.");
+  }
+  return identifiers;
 }
 
 function principleList(value) {

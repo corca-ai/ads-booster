@@ -1178,12 +1178,12 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
     display_name: "스튜디오 Mac",
     pool: "appium",
     state: workerState,
-    status: workerState === "active" ? "ready" : workerState,
+    status: workerState === "active" ? "busy" : workerState,
     capabilities: { native_appium: true },
     doctor: { ready: true, summary: "ready" },
     version: "0.2.3",
     last_seen_at: new Date().toISOString(),
-    current_task_id: null,
+    current_task_id: "task-1",
   });
   await loadLive(fixture, async (path, options = {}) => {
     calls.push([path, options]);
@@ -1231,8 +1231,8 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.equal(fixture.workerAdminLocked.hidden, true);
   assert.equal(fixture.workerAdminPanel.hidden, false);
   assert.equal(fixture.workerList.children.length, 1);
-  assert.ok(findByText(fixture.workerList.children[0], "작업 가능"));
-  assert.equal(fixture.workerAdminSummary.textContent, "전체 1대 · 작업 가능 1대 · 작업 중 0대 · 확인 필요 0대");
+  assert.ok(findByText(fixture.workerList.children[0], "작업 중"));
+  assert.equal(fixture.workerAdminSummary.textContent, "전체 1대 · 작업 가능 0대 · 작업 중 1대 · 확인 필요 0대");
 
   const protectedCalls = calls.filter(([path]) => path.startsWith("/v1/"));
   assert.ok(protectedCalls.length > 0);
@@ -1262,6 +1262,10 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   await findByText(row, "연결 폐기").click();
   const revoke = findByText(row, "폐기 확정");
   assert.ok(revoke, "revocation requires an explicit second action");
+  assert.ok(findByText(
+    row,
+    "스튜디오 Mac의 자격 증명을 폐기하고 현재 작업을 해제합니다. 콜백 반영 중이면 자격 증명 폐기가 거절되므로 Appium 결과를 먼저 확인하세요.",
+  ));
   await revoke.click();
   assert.equal(workerState, "revoked");
   assert.ok(findByText(fixture.workerList.children[0], "연결 폐기됨"));

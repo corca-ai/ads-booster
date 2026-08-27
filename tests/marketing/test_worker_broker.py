@@ -168,6 +168,7 @@ def test_broker_claim_ack_and_callback_use_only_the_worker_scoped_token() -> Non
                 }
             ),
             _response({"accepted": 1, "retried": 0}),
+            _response({"accepted": True, "duplicate": False}),
             _response({"accepted": True}, status=202),
         ]
     )
@@ -190,22 +191,61 @@ def test_broker_claim_ack_and_callback_use_only_the_worker_scoped_token() -> Non
 
     leases = client.pull()
     client.acknowledge(ack_lease_ids=(leases[0].lease_id,))
+    client.mark_execution_started(task.task_id)
     client.deliver(callback)
 
     assert leases[0].task == task
     assert [request[0] for request in http.requests] == [
         "https://workspace.example.test/v1/workers/tasks/claim",
         "https://workspace.example.test/v1/workers/tasks/ack",
+        "https://workspace.example.test/v1/workers/tasks/executing",
         "https://workspace.example.test/v1/workers/task-callbacks",
     ]
     assert all(request[2]["authorization"] == "Bearer worker-secret" for request in http.requests)
     assert all("queue" not in json.dumps(request).lower() for request in http.requests)
 
 
-def test_worker_launchagent_contains_no_credential_or_person_specific_path(tmp_path: Path) -> None:
+def test_launchd_lifecycle_resolution_does_not_require_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(marketing_cli.sys, "platform", "darwin")
+    executable = tmp_path / "trace-marketing"
+    monkeypatch.setattr(marketing_cli.shutil, "which", lambda _name: str(executable))
+
+    def unexpected_codex_lookup() -> Path | None:
+        message = "Codex lookup must not run for lifecycle-only commands"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(marketing_cli, "resolve_codex_executable", unexpected_codex_lookup)
+
+    launchd = marketing_cli._worker_launchd(tmp_path / "agent-home")
+
+    assert launchd.codex_executable is None
+
+
+def test_worker_launchagent_install_requires_a_codex_executable(tmp_path: Path) -> None:
+    launchd = MacWorkerLaunchd(
+        executable=tmp_path / "bin" / "trace-marketing",
+        agent_home=tmp_path / "agent-home",
+        plist_path=tmp_path / "worker.plist",
+    )
+
+    with pytest.raises(ValueError, match="Codex executable is required"):
+        launchd.install()
+
+
+def test_worker_launchagent_contains_no_credential_or_person_specific_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRACE_CODEX_MODEL", "gpt-oss-20b")
+    monkeypatch.setenv("TRACE_AGENT_DEVICE_UDID", "A" * 36)
+    monkeypatch.setenv("TRACE_MARKETING_CONTROL_TOKEN", "must-not-be-persisted")
     plist_path = tmp_path / "com.corca.trace-marketing-worker.plist"
     launchd = MacWorkerLaunchd(
         executable=tmp_path / "bin" / "trace-marketing",
+        codex_executable=tmp_path / "bin" / "codex",
         agent_home=tmp_path / "agent-home",
         plist_path=plist_path,
     )
@@ -222,6 +262,10 @@ def test_worker_launchagent_contains_no_credential_or_person_specific_path(tmp_p
     assert arguments[-2:] == ["worker", "service"]
     assert isinstance(environment, dict)
     assert environment["TRACE_AGENT_HOME"] == str((tmp_path / "agent-home").resolve())
+    assert environment["TRACE_CODEX_BIN"] == str((tmp_path / "bin" / "codex").resolve())
+    assert launchd.installed_codex_executable() == (tmp_path / "bin" / "codex").resolve()
+    assert environment["TRACE_CODEX_MODEL"] == "gpt-oss-20b"
+    assert environment["TRACE_AGENT_DEVICE_UDID"] == "A" * 36
     assert "usr/bin" in environment["PATH"]
     assert "token" not in plist_path.read_text().lower()
     assert "keychain" not in plist_path.read_text().lower()
@@ -292,10 +336,71 @@ def test_worker_admin_http_failure_is_a_runtime_error(
     assert "Usage:" not in result.stderr
 
 
+@pytest.mark.parametrize("case", ["missing-plist", "moved", "installed"])
+def test_worker_status_checks_the_launchagent_pinned_codex(
+    case: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pinned = None if case == "missing-plist" else tmp_path / case / "codex"
+    if case == "installed" and pinned is not None:
+        pinned.parent.mkdir()
+        pinned.touch()
+        pinned.chmod(0o700)
+    captured: list[Path | None] = []
+
+    class StatusLaunchd:
+        plist_path = tmp_path / "worker.plist"
+
+        @staticmethod
+        def status() -> object:
+            return type("Status", (), {"returncode": 1})()
+
+        @staticmethod
+        def installed_codex_executable() -> Path | None:
+            return pinned
+
+    def inspect_pinned(
+        *, codex_executable: Path | None = None, resolve_codex: bool = True,
+    ) -> MacWorkerDoctorReport:
+        assert resolve_codex is False
+        captured.append(codex_executable)
+        available = codex_executable is not None and codex_executable.is_file()
+        return MacWorkerDoctorReport(
+            ready=available,
+            summary="ready" if available else "missing: codex_cli",
+            checks={"codex_cli": available},
+            version="0.2.3",
+        )
+
+    monkeypatch.setattr(marketing_cli, "_worker_launchd", lambda _home: StatusLaunchd())
+    monkeypatch.setattr(marketing_cli, "inspect_mac_worker", inspect_pinned)
+    monkeypatch.setattr(
+        marketing_cli,
+        "resolve_codex_executable",
+        lambda: (_ for _ in ()).throw(AssertionError("ambient Codex lookup is forbidden")),
+    )
+
+    result = CliRunner().invoke(
+        marketing_cli.app, ["worker", "status", "--home", str(tmp_path / "agent")],
+    )
+
+    assert result.exit_code == 0
+    assert captured == [pinned]
+    payload = json.loads(result.stdout)
+    assert payload["codex_runtime"]["executable"] == (str(pinned) if pinned else None)
+    assert payload["doctor"]["ready"] is (case == "installed")
+
+
 def test_doctor_boots_the_selected_simulator_before_checking_trace(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     commands: list[tuple[str, ...]] = []
+    codex = tmp_path / "bin" / "codex"
+    codex.parent.mkdir()
+    codex.touch()
+    codex.chmod(0o700)
 
     def which(command: str) -> str | None:
         return f"/usr/local/bin/{command}" if command in {"xcrun", "appium"} else None
@@ -325,11 +430,17 @@ def test_doctor_boots_the_selected_simulator_before_checking_trace(
 
     monkeypatch.setattr("ads_booster.marketing.worker_doctor.platform.system", lambda: "Darwin")
     monkeypatch.setattr("ads_booster.marketing.worker_doctor.shutil.which", which)
+    monkeypatch.setattr(
+        "ads_booster.marketing.worker_doctor.resolve_codex_executable",
+        lambda: codex,
+    )
     monkeypatch.setattr("ads_booster.marketing.worker_doctor._run", run)
 
     report = inspect_mac_worker()
 
     assert report.ready is True
+    assert report.checks["codex_cli"] is True
+    assert report.checks["codex_authenticated"] is True
     assert ("/usr/local/bin/xcrun", "simctl", "boot", "simulator-1") in commands
     assert (
         "/usr/local/bin/xcrun",

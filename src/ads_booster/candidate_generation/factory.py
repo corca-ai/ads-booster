@@ -22,10 +22,8 @@ from ads_booster.candidate_generation.context_source import (
     default_context_directory,
 )
 from ads_booster.connectors.trace.v1.candidates import TraceCandidateConnector
-from ads_booster.connectors.trace.v1.composition import (
-    TraceConnectorApproval,
-    build_trace_v1_runner,
-)
+from ads_booster.connectors.trace.v1.codex_runtime import build_codex_trace_runner
+from ads_booster.connectors.trace.v1.composition import TraceConnectorApproval
 from ads_booster.marketing.native_capture import SimctlDeviceResolver
 from ads_booster.providers.codex import CodexResponsesClient
 from ads_booster.tools.models import ToolContext
@@ -101,4 +99,4 @@ class ProductionCandidateTraceRunner:
 
     def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
         with create_http_client(read_timeout=self.settings.candidate_timeout_seconds) as http:
-            return build_trace_v1_runner(self.home, http).run(bundle)
+            return build_codex_trace_runner(self.home, http).run(bundle)

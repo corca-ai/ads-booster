@@ -35,7 +35,7 @@ class MarketingBridgeServiceConfig(BaseModel):
     account_id: str = Field(min_length=1, max_length=128)
     queue_id: str = Field(min_length=1, max_length=256)
     control_plane_url: str = Field(pattern=r"^https://[^\s]+$")
-    executor: Literal["simulation", "candidate-pipeline"] = "candidate-pipeline"
+    executor: Literal["simulation"] = "simulation"
     poll_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
     credential_provider: CredentialProvider = CredentialProvider.ENVIRONMENT
     credential_command: tuple[str, ...] = ()

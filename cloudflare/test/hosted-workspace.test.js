@@ -342,6 +342,21 @@ test("an oversized reference selection is trimmed instead of blowing the prompt"
   assert.ok(inlined.length <= 5);
 });
 
+test("context profiles reject reference IDs the Mac contract cannot consume", () => {
+  const profile = { ...WORKSPACE_CONTEXT_PROFILES[0], reference_ids: ["invalid/reference"] };
+  assert.throws(
+    () => normalizeContextProfile(profile),
+    /레퍼런스 ID는/u,
+  );
+});
+
+test("candidate drafts reject reference IDs the Mac contract cannot consume", () => {
+  assert.throws(
+    () => normalizeCandidateDraft({ ...candidate(), refs_used: ["invalid/reference"] }),
+    /레퍼런스 ID는/u,
+  );
+});
+
 test("hosted context countries come from the packaged manifest", async () => {
   const response = await handleHostedWorkspace(
     new Request("https://workspace.example/api/context-countries"),
@@ -478,6 +493,11 @@ test("image generation queues a revision-scoped native Mac capture", async () =>
     capture_task_id: null,
     capture_error: null,
     capture_requested_at: null,
+    context_snapshot_json: JSON.stringify({
+      persona_id: "kr_student",
+      guidance: "과장 없이 실제 사용 장면을 보여준다.",
+      reference_ids: ["kr-020"],
+    }),
   }));
   const response = await handleHostedWorkspace(
     new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
@@ -495,6 +515,12 @@ test("image generation queues a revision-scoped native Mac capture", async () =>
   assert.equal(state.queuedTasks[0].payload.pipeline, "hosted_workspace_capture_v1");
   assert.equal(state.queuedTasks[0].payload.candidate_revision, 4);
   assert.equal(state.queuedTasks[0].payload.image_inputs.device_time, "07:20");
+  assert.equal(state.queuedTasks[0].payload.caption, "기존 캡션");
+  assert.equal(state.queuedTasks[0].payload.hypothesis, "기존 가설");
+  assert.deepEqual(state.queuedTasks[0].payload.reference_ids, ["kr-study-day", "kr-020"]);
+  assert.match(state.queuedTasks[0].payload.creative_direction, /기존 Appium 프롬프트/);
+  assert.match(state.queuedTasks[0].payload.creative_direction, /과장 없이 실제 사용 장면/);
+  assert.equal(state.queuedTasks[0].payload.background_intent, "scenery: 이른 아침 캠퍼스 창가");
   assert.equal(state.captureTasks.length, 1);
 });
 

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
+from ads_booster.providers.codex_cli import resolve_codex_executable
 from ads_booster.transport.json_types import JsonObject
 
 _PACKAGE_NAME: Final = "trace-appium-capture"
@@ -32,8 +37,17 @@ class MacWorkerDoctorReport:
         }
 
 
-def inspect_mac_worker() -> MacWorkerDoctorReport:
+def inspect_mac_worker(
+    *,
+    codex_executable: Path | None = None,
+    resolve_codex: bool = True,
+) -> MacWorkerDoctorReport:
     is_macos = platform.system() == "Darwin"
+    codex = resolve_codex_executable() if resolve_codex else codex_executable
+    codex_available = codex is not None and codex.is_file() and os.access(codex, os.X_OK)
+    codex_authenticated = (
+        codex_available and codex is not None and _run((str(codex), "login", "status")) is not None
+    )
     xcrun = shutil.which("xcrun")
     appium = shutil.which("appium")
     simulator_available = False
@@ -50,6 +64,8 @@ def inspect_mac_worker() -> MacWorkerDoctorReport:
         "xcuitest_driver": xcuitest_installed,
         "available_iphone_simulator": simulator_available,
         "trace_debug_build": trace_installed,
+        "codex_cli": codex_available,
+        "codex_authenticated": codex_authenticated,
     }
     missing = [name for name, passed in checks.items() if not passed]
     ready = not missing
