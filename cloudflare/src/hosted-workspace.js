@@ -1189,8 +1189,8 @@ function assertProfileCountry(profile, country) {
   }
 }
 
-function aiCandidates(result) {
-  let response = result?.response ?? result;
+export function aiCandidates(result) {
+  let response = result?.response ?? result?.choices?.[0]?.message?.content ?? result;
   if (typeof response === "string") response = JSON.parse(response);
   if (!response || typeof response !== "object" || !Array.isArray(response.candidates)) {
     throw new Error("candidates 배열이 없습니다.");
