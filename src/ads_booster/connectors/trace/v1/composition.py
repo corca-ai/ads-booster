@@ -41,6 +41,8 @@ from ads_booster.runtime.generate_one import (
     GenerateOneOptions,
     GenerateOneRunner,
 )
+from ads_booster.search.image.background import ImageSearchBackgroundFetcher
+from ads_booster.search.image.providers import create_image_search_provider
 from ads_booster.tools.models import ToolContext
 from ads_booster.transport.json_types import JsonObject
 
@@ -206,8 +208,13 @@ class TraceV1Composition:
 def build_trace_v1_runner(
     home: Path,
     http: HttpClient,
+    background_fetchers: BackgroundFetcherFactory | None = None,
 ) -> TraceV1GenerateOneRunner:
-    """Compose the installed service's Agent and Trace connector runtime."""
+    """Compose the installed service's Agent and Trace connector runtime.
+
+    `background_fetchers` chooses what stands behind the fetcher seam. Left unset, the
+    allowlisted stock-photo fetcher is used, which is what a caller with no opinion gets.
+    """
     settings = AgentSettings.from_environment(home)
     appium_server = os.environ.get("TRACE_AGENT_APPIUM_SERVER", _DEFAULT_APPIUM_SERVER)
     readiness = DefaultCaptureReadiness(appium_server=appium_server)
@@ -222,22 +229,33 @@ def build_trace_v1_runner(
         settings=settings,
         http=http,
         options=options,
-        # Imported here rather than at module scope: the candidate_generation package's
-        # composition root imports this module, so a top-level import would close the cycle.
-        background_fetchers=_judged_background_fetchers(http, settings),
+        background_fetchers=background_fetchers or _stock_background_fetchers(http),
         reference_root=home,
     ).build()
 
 
-def _judged_background_fetchers(
-    http: HttpClient,
-    settings: AgentSettings,
-) -> BackgroundFetcherFactory:
-    from ads_booster.candidate_generation.background_factory import (  # noqa: PLC0415
-        JudgedBackgroundFetcherFactory,
-    )
+@dataclass(frozen=True, slots=True)
+class _StockBackgroundFetchers:
+    """The allowlisted stock-photo fetcher, as a factory the runner can call per bundle."""
 
-    return JudgedBackgroundFetcherFactory(http=http, settings=settings)
+    http: HttpClient
+
+    def __call__(self, bundle: MarketingContextBundle) -> BackgroundFetcher:
+        del bundle
+        return ImageSearchBackgroundFetcher(
+            image_search=create_image_search_provider(
+                http=self.http,
+                provider_name=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
+                timeout_seconds=float(
+                    os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
+                ),
+            ),
+            http=self.http,
+        )
+
+
+def _stock_background_fetchers(http: HttpClient) -> BackgroundFetcherFactory:
+    return _StockBackgroundFetchers(http=http)
 
 
 def _failed_result(bundle: MarketingContextBundle) -> TraceRunResult:

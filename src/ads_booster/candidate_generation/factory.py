@@ -7,18 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from ads_booster.agent.memory import JsonlMemoryStore
-from ads_booster.agent.runs import AgentRunStore
 from ads_booster.auth.codex import CodexOAuth
 from ads_booster.auth.store import AuthStore
-from ads_booster.candidate_generation.agent_generator import (
-    CandidateAgent,
-    CandidateGenerator,
-)
-from ads_booster.candidate_generation.agent_image_runner import (
-    CandidateImageRunner,
-    CandidateImageStore,
-)
 from ads_booster.candidate_generation.background_factory import ProductionCandidateBackgrounds
 from ads_booster.candidate_generation.context_source import (
     REQUIRED_DOCUMENTS,
@@ -26,6 +16,12 @@ from ads_booster.candidate_generation.context_source import (
     default_context_directory,
 )
 from ads_booster.candidate_generation.instruction import SYSTEM_INSTRUCTION
+from ads_booster.candidate_generation.kernel import (
+    CandidateGenerator,
+    CandidateImageRunner,
+    build_judged_trace_runner,
+    build_kernel_candidate_generator,
+)
 from ads_booster.candidate_generation.local_image_runner import (
     CandidateImageOptions,
     LocalCandidateImageRunner,
@@ -34,18 +30,12 @@ from ads_booster.candidate_generation.script_generator import (
     CandidateWriter,
     ScriptCandidateGenerator,
 )
-from ads_booster.connectors.trace.v1.candidates import TraceCandidateConnector
-from ads_booster.connectors.trace.v1.composition import (
-    TraceConnectorApproval,
-    build_trace_v1_runner,
-)
 from ads_booster.default_assets import (
     default_iphone_ui_path,
     default_trace_components_path,
 )
 from ads_booster.marketing.native_capture import SimctlDeviceResolver
 from ads_booster.providers.codex import CodexResponsesClient
-from ads_booster.tools.models import ToolContext
 from ads_booster.transport.http import create_http_client
 
 COMPONENT_FIXTURE_ENVIRONMENT: Final = "TRACE_AGENT_TRACE_COMPONENTS"
@@ -55,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from ads_booster.agent.session import ModelClient
-    from ads_booster.candidate_generation.agent_generator import CandidateCreator
+    from ads_booster.candidate_generation.ports import CandidateCreator, CandidateImageStore
     from ads_booster.config.settings import AgentSettings
     from ads_booster.contracts.generation import MarketingContextBundle
     from ads_booster.contracts.results import TraceRunResult
@@ -108,18 +98,16 @@ def build_candidate_generator(
     home: Path,
     store: CandidateCreator,
 ) -> CandidateGenerator:
-    """Compose candidate generation over the durable Agent runtime."""
-    return CandidateGenerator(
-        store=store,
-        context_source=CandidateContextSource(default_context_directory(settings.workspace)),
-        connector_factory=TraceCandidateConnector,
-        agent=CandidateAgent(
-            runs=AgentRunStore(home / "core-agent"),
-            models=ProductionCandidateModels(settings),
-            settings=settings,
-            context=ToolContext(home, TraceConnectorApproval(), ()),
-            memory_store=JsonlMemoryStore(home / "core-agent" / "memory.jsonl"),
-        ),
+    """Compose candidate generation over the durable Agent runtime.
+
+    The wiring itself lives in `kernel/candidate_batch.py`; this only supplies the provider
+    source, so the shared composition root never names a run store or a connector.
+    """
+    return build_kernel_candidate_generator(
+        settings,
+        home,
+        store,
+        ProductionCandidateModels(settings),
     )
 
 
@@ -189,4 +177,4 @@ class ProductionCandidateTraceRunner:
 
     def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
         with create_http_client(read_timeout=self.settings.candidate_timeout_seconds) as http:
-            return build_trace_v1_runner(self.home, http).run(bundle)
+            return build_judged_trace_runner(self.home, http, self.settings).run(bundle)

@@ -1,3 +1,13 @@
+"""The image stage's two directions across the kernel boundary.
+
+Triggering composition turns a stored candidate into the connector's `MarketingContextBundle`
+and runs it; reviewing the result carries a human decision back to the durable Agent run
+that produced the image. Both name kernel and connector types, so both live here.
+
+The local composition this dispatches to when no capture device resolves is deliberately
+outside: it shares the `CandidateImageRunnerPort` contract and nothing else.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,7 +17,24 @@ from typing import TYPE_CHECKING, ClassVar, Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from ads_booster.candidate_generation.errors import CandidateImageStageError
+from ads_booster.agent.runs import (
+    AgentReview,
+    AgentRunId,
+    AgentRunNotFoundError,
+    AgentRunNotRunnableError,
+    AgentRunResumer,
+    AgentRunRevisionError,
+    AgentRunStore,
+    AgentRunTransitionError,
+)
+from ads_booster.candidate_generation.errors import (
+    CandidateImageStageError,
+    CandidateRunConflictError,
+)
+from ads_booster.candidate_generation.ports import (  # noqa: TC001 — dataclass field types
+    CandidateImageRunnerPort,
+    CandidateImageStore,
+)
 from ads_booster.contracts.generation import (
     MarketingContextBundle,
     PersonaProfile,
@@ -60,25 +87,57 @@ class _BackgroundArtifact(BaseModel):
 _BACKGROUND_ARTIFACT: TypeAdapter[_BackgroundArtifact] = TypeAdapter(_BackgroundArtifact)
 
 
-class CandidateImageStore(Protocol):
-    def get_candidate(
-        self, workspace_id: WorkspaceId, candidate_id: CandidateId
-    ) -> CandidateRecord: ...
-
-    def attach_candidate_image(
-        self,
-        workspace_id: WorkspaceId,
-        candidate_id: CandidateId,
-        attachment: CandidateImageAttachment,
-    ) -> CandidateRecord: ...
-
-
 class DeviceResolver(Protocol):
     def resolve(self) -> DeviceTarget: ...
 
 
-class CandidateImageRunnerPort(Protocol):
-    def generate(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> CandidateRecord: ...
+_KERNEL_RUN_ERRORS: Final = (
+    AgentRunNotFoundError,
+    AgentRunNotRunnableError,
+    AgentRunRevisionError,
+    AgentRunTransitionError,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunImageReview:
+    """Carries one image decision to the durable Agent run that produced the image.
+
+    Every way the run can refuse — gone, not resumable, wrong revision, wrong state — is
+    translated into one `CandidateRunConflictError`, so the workflow and the Web layer
+    never name a kernel error type. What they need to know is the same in all four cases:
+    this decision cannot be applied and the candidate has not moved.
+    """
+
+    runs: AgentRunStore
+
+    def review(
+        self,
+        agent_run_id: str,
+        *,
+        accepted: bool,
+        note: str | None,
+        at: float,
+    ) -> None:
+        try:
+            run = self.runs.get(AgentRunId(agent_run_id))
+            _ = AgentRunResumer(self.runs).review(
+                run.run_id,
+                AgentReview(
+                    expected_revision=run.revision,
+                    accepted=accepted,
+                    note=note,
+                    at=at,
+                ),
+            )
+        except _KERNEL_RUN_ERRORS as error:
+            raise CandidateRunConflictError from error
+
+
+def build_image_review(runs: AgentRunStore, at: float) -> AgentRunImageReview:
+    """Recover interrupted runs, then return the review adapter over the same store."""
+    _ = runs.recover_interrupted(at=at)
+    return AgentRunImageReview(runs=runs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +169,13 @@ class CandidateImageRunner:
                 raise CandidateImageStageError(message) from error
             return self.fallback.generate(workspace_id, candidate_id)
         bundle = _candidate_bundle(record, device, self.clock())
-        result = self.runner.run(bundle)
+        try:
+            result = self.runner.run(bundle)
+        except _KERNEL_RUN_ERRORS as error:
+            # A run that is already serving another request, or that the store refuses for
+            # any other reason, is a conflict rather than a crash — and it is named in our
+            # vocabulary so the Web layer never has to catch a kernel error.
+            raise CandidateRunConflictError from error
         if result.state is not TraceRunState.COMPLETED or result.output_image is None:
             detail = result.failure.message if result.failure is not None else result.state.value
             message = f"{_NATIVE_RUN_FAILED} — {detail}"

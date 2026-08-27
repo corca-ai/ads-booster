@@ -1,3 +1,11 @@
+"""Candidate handoff to the durable Agent kernel.
+
+This is one of three modules allowed to name `agent/runs` and `connectors/` types. It
+admits one Agent run for a candidate batch, drives the connector's tool loop, and turns
+whatever comes back into the same `CandidateCreate` rows the single-call engine writes.
+Replacing the execution kernel should mean rewriting this module, not the engine.
+"""
+
 from __future__ import annotations
 
 import time
@@ -7,6 +15,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.memory import JsonlMemoryStore
 from ads_booster.agent.runs import (
     AgentGoal,
     AgentRun,
@@ -20,12 +29,23 @@ from ads_booster.agent.runs import (
 )
 from ads_booster.agent.session import AgentError
 from ads_booster.auth.codex import OAuthError
+from ads_booster.candidate_generation.context_source import (
+    CandidateContextSource,
+    default_context_directory,
+)
 from ads_booster.candidate_generation.errors import (
     CandidateAuthRequiredError,
     CandidateFormatError,
     CandidateProviderError,
 )
+from ads_booster.candidate_generation.ports import (  # noqa: TC001 — dataclass field types
+    CandidateCreator,
+    CandidateModelSource,
+)
+from ads_booster.connectors.trace.v1.candidates import TraceCandidateConnector
+from ads_booster.connectors.trace.v1.composition import TraceConnectorApproval
 from ads_booster.providers.errors import ProviderError
+from ads_booster.tools.models import ToolContext
 from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import (
     CandidateContextDocument,
@@ -36,14 +56,11 @@ from ads_booster.workspace import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from contextlib import AbstractContextManager
+    from pathlib import Path
 
     from ads_booster.agent.memory import MemoryStore
-    from ads_booster.agent.session import ModelClient
-    from ads_booster.candidate_generation.context_source import CandidateContextSource
     from ads_booster.candidate_generation.models import CandidateContextBundle, CandidateDraft
     from ads_booster.config.settings import AgentSettings
-    from ads_booster.tools.models import ToolContext
     from ads_booster.workspace import CandidateRecord, WorkspaceId
 
 _CANDIDATE_TOOL: Final = "trace_propose_marketing_candidates"
@@ -53,10 +70,6 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 def _candidate_batch_id() -> str:
     return f"candidate-batch-{uuid4().hex}"
-
-
-class CandidateModelSource(Protocol):
-    def open(self) -> AbstractContextManager[ModelClient]: ...
 
 
 class CandidateAgentPort(Protocol):
@@ -69,19 +82,6 @@ class CandidateConnector(DomainConnector, Protocol):
 
 class CandidateConnectorFactory(Protocol):
     def __call__(self, context: CandidateContextBundle) -> CandidateConnector: ...
-
-
-class CandidateGeneratorPort(Protocol):
-    def generate(
-        self,
-        workspace_id: WorkspaceId,
-        *,
-        run_context: str | None = None,
-    ) -> tuple[CandidateRecord, ...]: ...
-
-
-class CandidateCreator(Protocol):
-    def create_candidate(self, value: CandidateCreate) -> CandidateRecord: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,4 +215,29 @@ def _create(
         shooting_order=draft.appium_prompt,
         persona_domain=draft.persona_domain,
         generation_provenance=provenance,
+    )
+
+
+def build_kernel_candidate_generator(
+    settings: AgentSettings,
+    home: Path,
+    store: CandidateCreator,
+    models: CandidateModelSource,
+) -> CandidateGenerator:
+    """Compose candidate generation over the durable Agent runtime.
+
+    Kept here rather than in `candidate_generation/factory.py` so the shared composition
+    root never has to name an `AgentRunStore`, a connector, or an approval policy.
+    """
+    return CandidateGenerator(
+        store=store,
+        context_source=CandidateContextSource(default_context_directory(settings.workspace)),
+        connector_factory=TraceCandidateConnector,
+        agent=CandidateAgent(
+            runs=AgentRunStore(home / "core-agent"),
+            models=models,
+            settings=settings,
+            context=ToolContext(home, TraceConnectorApproval(), ()),
+            memory_store=JsonlMemoryStore(home / "core-agent" / "memory.jsonl"),
+        ),
     )

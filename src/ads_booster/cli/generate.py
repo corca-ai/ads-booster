@@ -8,10 +8,9 @@ from typing import Annotated, ClassVar, Final, Literal, assert_never
 import typer
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from ads_booster.candidate_generation.background_factory import JudgedBackgroundFetcherFactory
+from ads_booster.candidate_generation.kernel import build_judged_trace_runner
 from ads_booster.capture.readiness import DefaultCaptureReadiness
 from ads_booster.config.settings import AgentSettings
-from ads_booster.connectors.trace.v1.composition import TraceV1Composition
 from ads_booster.contracts.generation import MarketingContextBundle
 from ads_booster.runtime.generate_one import (
     GenerateOneError,
@@ -60,22 +59,13 @@ def generate_one(
         readiness = DefaultCaptureReadiness(appium_server=options.appium_server)
         options = replace(options, capture_readiness=readiness)
         with create_http_client() as http:
-            settings = AgentSettings.from_environment(workspace)
-            result = (
-                TraceV1Composition(
-                    home=workspace / ".trace-agent",
-                    settings=settings,
-                    http=http,
-                    options=options,
-                    background_fetchers=JudgedBackgroundFetcherFactory(
-                        http=http,
-                        settings=settings,
-                    ),
-                    reference_root=workspace,
-                )
-                .build()
-                .run(bundle)
-            )
+            result = build_judged_trace_runner(
+                home=workspace / ".trace-agent",
+                http=http,
+                settings=AgentSettings.from_environment(workspace),
+                options=options,
+                reference_root=workspace,
+            ).run(bundle)
     except (GenerateOneError, OSError) as error:
         _emit_error(GENERATION_FAILED, GENERATION_FAILED, str(error), exit_code=1)
         return

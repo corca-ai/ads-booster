@@ -7,18 +7,13 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
-from ads_booster.agent.runs import (
-    AgentRunNotFoundError,
-    AgentRunNotRunnableError,
-    AgentRunRevisionError,
-    AgentRunTransitionError,
-)
 from ads_booster.candidate_generation import (
     CandidateAuthRequiredError,
     CandidateContextMissingError,
     CandidateFormatError,
     CandidateImageStageError,
     CandidateProviderError,
+    CandidateRunConflictError,
 )
 from ads_booster.candidate_generation.workflow import (
     CandidateReviewDecision,
@@ -210,7 +205,7 @@ class CandidateRouter:
                 raise HTTPException(status.HTTP_409_CONFLICT, _IMAGE_REVISION_CONFLICT) from error
             except CandidateImageStageError as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, error.message) from error
-            except AgentRunNotRunnableError as error:
+            except CandidateRunConflictError as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, _CORE_RUN_CONFLICT) from error
             return _response(record)
 
@@ -244,11 +239,7 @@ class CandidateRouter:
                 raise HTTPException(status.HTTP_409_CONFLICT, _IMAGE_REVISION_CONFLICT) from error
             except CandidateImageStageError as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, error.message) from error
-            except (
-                AgentRunNotFoundError,
-                AgentRunRevisionError,
-                AgentRunTransitionError,
-            ) as error:
+            except CandidateRunConflictError as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, _CORE_RUN_CONFLICT) from error
             return _response(record)
 

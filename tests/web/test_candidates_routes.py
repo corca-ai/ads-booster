@@ -13,7 +13,6 @@ from ads_booster.agent.runs import (
     AgentRun,
     AgentRunAlreadyExistsError,
     AgentRunId,
-    AgentRunNotRunnableError,
     AgentRunState,
     AgentRunStore,
     AgentRunUpdate,
@@ -26,6 +25,7 @@ from ads_booster.candidate_generation import (
     CandidateFormatError,
     CandidateGenerationError,
     CandidateImageStageError,
+    CandidateRunConflictError,
 )
 from ads_booster.web.app import create_app
 from ads_booster.workspace import (
@@ -523,9 +523,10 @@ def test_generate_image_reports_a_stage_failure_verbatim(tmp_path: Path) -> None
 
 
 def test_generate_image_reports_an_already_running_agent_as_a_conflict(tmp_path: Path) -> None:
-    # Given an image Agent run that is already serving another request
+    # Given an image run that is already serving another request. The kernel adapter is
+    # what turns the runtime's refusal into this error; see the image-stage tests.
     store = SqliteWorkspaceStore(tmp_path)
-    failure = AgentRunNotRunnableError(AgentRunId("candidate-running"), AgentRunState.RUNNING)
+    failure = CandidateRunConflictError()
     client = _client(tmp_path, store, "Trace team", image_runner=FakeImageRunner(failure=failure))
     approved = _caption_approved(client)
 
