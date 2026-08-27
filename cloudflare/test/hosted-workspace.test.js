@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  aiCandidates,
   candidateResponseSchema,
   contextForCountry,
   DEFAULT_WORKSPACE_AI_MODEL,
@@ -273,6 +274,15 @@ test("hosted candidate generation defaults to GPT-OSS 20B in code and deployment
 
   assert.equal(DEFAULT_WORKSPACE_AI_MODEL, "@cf/openai/gpt-oss-20b");
   assert.equal(config.vars.WORKSPACE_AI_MODEL, DEFAULT_WORKSPACE_AI_MODEL);
+});
+
+test("Workers AI chat completion output exposes the generated candidates", () => {
+  const expected = [candidate()];
+  const result = {
+    choices: [{ message: { content: JSON.stringify({ candidates: expected }) } }],
+  };
+
+  assert.deepEqual(aiCandidates(result), expected);
 });
 
 test("workspace context assets expose data-driven country profiles", () => {
