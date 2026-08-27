@@ -14,6 +14,7 @@ import {
   handleMacWorkerRequest,
   reserveWorkerTaskCallback,
 } from "./mac-workers.js";
+import { deploymentHealth } from "./deployment-health.js";
 
 import {
   accountName,
@@ -361,7 +362,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (request.method === "GET" && url.pathname === "/health") {
-        return Response.json({ ok: true });
+        return Response.json(deploymentHealth(env));
       }
       const macWorkerResponse = await handleMacWorkerRequest(
         request,

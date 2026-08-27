@@ -1,7 +1,7 @@
 # Shared Mac Worker Auto-Update Contract
 
-Status: Draft — the MVP is implemented locally and focused verification is in progress. No release
-has been published and no shared Mac has been changed under this contract.
+Status: Candidate — the MVP and merge automation are implemented on PR #47. No release has been
+published and no shared Mac has been changed under this contract.
 
 Last reviewed: 2026-08-27
 
@@ -29,8 +29,13 @@ production path; the published `v0.2.3` surface itself remains unsuitable and is
 
 On 2026-08-27, the repository immutable-releases API returned `404 Not Found`, which GitHub uses
 when immutable releases are not enabled. This is an explicit rollout blocker, not something the
-workflow bypasses: a repository administrator must enable immutable releases before the approved
-release run. The workflow rechecks the setting and fails before it creates a draft release.
+workflow bypasses: a repository administrator must enable immutable releases once before PR #47 is
+merged, then set the non-secret repository variable `TRACE_IMMUTABLE_RELEASES_ENABLED=true`. The
+variable is a pre-publication preparedness gate because the scoped `GITHUB_TOKEN` has no repository
+Administration permission; no administrator token is stored in Actions. The repository setting
+applies to future releases. The workflow verifies `immutable=true` immediately after publication
+and again through an unauthenticated public readback. If the setting drifted, the workflow removes
+only its exact newly-created mutable release and tag; the Mac updater never accepts that release.
 
 ## Fixed decisions
 
@@ -52,9 +57,19 @@ Only GitHub's public `releases/latest` response is eligible. The updater fails c
 locked wheelhouse so the Mac installs with `--no-index`; update time never resolves mutable PyPI
 content.
 
-The release workflow first checks `GET /repos/{owner}/{repo}/immutable-releases`. It refuses before
-creating a draft when immutability is not enabled. All assets are uploaded to a draft before it is
-published. An operator still approves tag/release creation.
+The release workflow runs its build, focused tests, and fresh offline install on pull requests with
+read-only repository permission. The build backend and release tooling are pinned. On `main`, the
+same check job builds and fresh-installs the envelope once, then transfers those exact three files to
+the write-scoped publication job. That job creates an annotated tag bound to the exact merge SHA,
+uploads all assets to a draft, attests them, publishes, and performs authenticated plus
+unauthenticated readback. The tag message and release body carry exact version/SHA ownership markers.
+A shared state resolver distinguishes only HTTP 404 from absence, classifies `new`, managed
+`repair`, and immutable `resume`, and retries transport or server errors. It removes only a marked
+draft or failed mutable publication, including the lost-POST-response case. A published immutable
+release is never deleted or moved; full and failed-job reruns recover its published bytes and resume
+digest, attestation, and public verification. The checked artifact ID crosses the job boundary, so a
+failed-job rerun does not guess from its newer run-attempt number. The merge itself is the release
+authorization—there is no version input or follow-up dispatch.
 
 ### Managed install layout
 
@@ -133,7 +148,13 @@ Legacy-to-managed migration is intentionally operator-drained:
    them when enrollment already exists; and
 5. after doctor and exact-version heartbeat succeed, bootstrap removes only strictly owned legacy
    plists. A fresh unenrolled Mac stops after verified product installation so the operator can
-   enroll it and run the displayed `bootstrap-managed` completion command.
+   consume the workspace's one-time code and run the displayed `finish-bootstrap` command.
+
+The protected workspace manager emits one copyable block that resolves the latest stable tag,
+downloads the installer from that immutable tag, enrolls the Mac without exposing the administrator
+token, and starts both services. The block is one fail-fast Bash execution unit, so it cannot consume
+the enrollment code after a failed lookup, install, or doctor. Nothing in the block hardcodes a
+worker ID or Simulator UDID. CI never SSHes to or pre-registers a Mac.
 
 Bootstrap preserves the enrollment credential and runtime directories. It removes a legacy
 `trace-agent`, `trace-ads`, or LaunchAgent only when the exact label and executable basename prove
@@ -169,9 +190,11 @@ Focused automated checks must prove:
 - plist and state/log fixtures contain no administrator, enrollment, or Codex credentials; and
 - a fresh isolated managed install exposes the documented CLI and survives a simulated reboot.
 
-Final production proof is separate from local acceptance. It requires a published immutable
-release self-applied by the shared Mac, reboot readback showing both LaunchAgents alive, the new
-version heartbeat, and one real Codex -> Appium -> callback canary.
+Merge completion proves the CI-owned GitHub Release and Cloudflare deployment surfaces. Each Mac is
+an independently registered dynamic consumer. After registration, reboot readback showing both
+LaunchAgents alive, the exact-version heartbeat, and one real Codex -> Appium -> callback canary are
+that machine's operational acceptance; they are not a CI-to-SSH release step or a prerequisite for
+registering another Mac.
 
 ## Deferred decisions
 

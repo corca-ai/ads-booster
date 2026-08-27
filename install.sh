@@ -42,8 +42,9 @@ Options:
   -h, --help              Show this help.
 
 Prerequisites:
-  Apple Silicon macOS, GitHub CLI, uv with local Python 3.14, enrolled worker credentials,
-  authenticated official Codex CLI, Appium/XCUITest, Xcode Simulator, and com.corca.Trace.
+  Apple Silicon macOS, GitHub CLI, uv with local Python 3.14, authenticated official Codex CLI,
+  Appium/XCUITest, Xcode Simulator, and com.corca.Trace. A fresh Mac may install before enrollment;
+  the worker credential is required only when starting the services.
   An operator must drain and stop any existing worker LaunchAgent before this one-time bootstrap.
 EOF
 }

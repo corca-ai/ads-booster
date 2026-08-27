@@ -1586,10 +1586,16 @@
       });
       const origin = window.location.origin.replace(/\/$/, "");
       const commands = [
+        "bash -euo pipefail <<'TRACE_MAC_BOOTSTRAP'",
+        "release=\"$(gh release view --repo corca-ai/ads-booster --json tagName --jq '.tagName')\"",
+        "curl -fsSL --proto '=https' --tlsv1.2 \"https://raw.githubusercontent.com/corca-ai/ads-booster/$release/install.sh\" | bash -s -- --tag \"$release\"",
+        "export PATH=\"$HOME/.local/share/trace-marketing/current/bin:$PATH\"",
         "trace-marketing worker doctor",
         `trace-marketing worker enroll --url ${origin} --code '${enrollment.enrollment_code}'`,
-        "trace-marketing worker install-service",
+        "trace-marketing worker finish-bootstrap --home \"$HOME/.trace-agent\" --install-root \"$HOME/.local/share/trace-marketing\" --uv \"$(command -v uv)\"",
         "trace-marketing worker status",
+        "trace-marketing worker updater-status",
+        "TRACE_MAC_BOOTSTRAP",
       ].join("\n");
       if (workerEnrollmentCode) workerEnrollmentCode.textContent = enrollment.enrollment_code;
       if (workerEnrollmentCommand) workerEnrollmentCommand.textContent = commands;

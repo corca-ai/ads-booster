@@ -51,7 +51,7 @@ history. Validated plans and terminal outcomes are request-scoped under
 ## Bootstrap an immutable Mac worker release
 
 ```bash
-release=vX.Y.Z
+release="$(gh release view --repo corca-ai/ads-booster --json tagName --jq '.tagName')"
 curl -fsSL --proto '=https' --tlsv1.2 \
   "https://raw.githubusercontent.com/corca-ai/ads-booster/$release/install.sh" |
   bash -s -- --tag "$release"
@@ -97,8 +97,11 @@ new task.
 
 ## Enroll a Mac
 
-The usual operator path is the protected Mac manager inside the workspace. It creates a short-lived,
-single-use enrollment command without putting the administrator token on the target Mac.
+The usual operator path is the protected Mac manager inside the workspace. It creates one copyable
+command block that resolves the latest stable release, performs the verified install, consumes a
+short-lived single-use enrollment code, and starts both the worker and updater. The block contains
+no administrator token, worker ID, committed device ID, or Codex credential. It runs in a fail-fast
+subshell, so a release lookup, install, or doctor failure cannot consume the enrollment code.
 
 The equivalent administrator CLI flow is:
 
@@ -114,8 +117,9 @@ credential, durable inbox/outbox, `codex-runs`, generated artifacts, and officia
 installs and verifies the worker and updater services automatically after the operator drains and
 stops the old worker.
 
-For a fresh Mac, bootstrap first. It deliberately stops after product installation because no
-credential exists. Use the returned code, then finish the one-time service transaction:
+For a fresh Mac, the copied manager block bootstraps first. Installation deliberately stops before
+service start because no machine credential exists; the next commands consume the code and finish
+the one-time service transaction:
 
 ```bash
 trace-marketing worker enroll \
@@ -153,6 +157,25 @@ new enrollment code, enroll it, and finish bootstrap. No source edit, committed 
 thread, or Cloudflare Queue-token rotation is required.
 
 ## Automatic release updates
+
+A repository administrator performs this one-time preparation before the first merge-authorized
+release. The token is used only by the operator's `gh` process and is not stored in Actions or on a
+Mac:
+
+```bash
+gh api --method PUT -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/corca-ai/ads-booster/immutable-releases
+gh variable set TRACE_IMMUTABLE_RELEASES_ENABLED --repo corca-ai/ads-booster --body true
+```
+
+A qualifying PR checks the release envelope and fresh offline installation on an arm64 GitHub
+runner. The checked bytes are transferred unchanged to the publication job. Merging to `main`
+derives the version from `pyproject.toml`, creates an annotated tag for the exact merge SHA, uploads
+and attests the three-asset envelope as a draft, publishes it as an immutable stable GitHub Release,
+and verifies it again through an unauthenticated public readback. A rerun resumes verification of an
+already-published exact immutable release. The same merge independently applies Cloudflare
+migrations, deploys the hosted workspace, and requires both health endpoints to report that exact
+merge SHA. No CI job connects to a team Mac.
 
 `com.corca.trace-marketing-updater` is separate from the KeepAlive worker and periodically runs a
 pull update. It accepts only a newer stable immutable release with the exact three-asset envelope,
@@ -245,8 +268,10 @@ uv run ruff check \
 For product proof, build the offline release envelope, install its wheelhouse into a fresh isolated
 environment, resolve `trace-marketing` from that installed PATH, and run `version --json` plus
 `worker doctor`. Worktree-only `uv run` success is development evidence, not fresh-install proof.
-Final rollout additionally requires the published release to self-apply on the shared Mac, reboot
-readback of both LaunchAgents, an exact-version heartbeat, and one Codex → Appium → callback canary.
+Merge automation completes the CI-owned release and hosted deployment surfaces. A Mac is an
+independently enrolled dynamic consumer; after its first registration, reboot readback, exact-version
+heartbeat, and one Codex → Appium → callback canary establish that machine's operational readiness
+without becoming a CI-to-Mac deployment path.
 
 ## Current limits
 

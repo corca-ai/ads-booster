@@ -45,6 +45,16 @@ in-package AgentSession, OAuth store, Responses client, memory, or tool loop. Ev
 is resolved normally for the same macOS user that owns the per-user LaunchAgent.
 
 The installed product is a versioned release tree, not a mutable checkout or in-place uv tool.
+Pull requests that change the installed product prove the focused updater suite, release envelope,
+and fresh offline install on a read-only arm64 runner. The exact checked bytes cross into a separate
+write-scoped publication job. A merge to `main` automatically creates the annotated exact-SHA tag,
+attested immutable GitHub Release, and unauthenticated public readback; a retry can resume proof of
+the already-published exact immutable release. A shared GitHub state resolver uses durable
+version/SHA markers to repair only workflow-owned draft or mutable partials and treats only HTTP 404
+as absence, so full-run and failed-job retries converge on the same `new` or `resume` state.
+Cloudflare migration/deploy remains a separate
+merge-triggered workflow and both health endpoints must report the deployed merge SHA. Neither
+workflow connects to a Mac.
 `com.corca.trace-marketing-worker` always enters through the atomic `current` symlink. A separate
 `com.corca.trace-marketing-updater` LaunchAgent pulls only a stable immutable GitHub Release,
 verifies its tag, commit and asset digests, installs it offline into staging, and requests a local
@@ -52,6 +62,10 @@ drain. The worker then stops remote claims while finishing durable local work an
 empty inbox/outbox plus no ambiguous Codex execution marker permits the updater to unload the
 worker, switch `current`, and require launchd, doctor, and exact-version accepted-heartbeat proof.
 Failure restores and re-verifies the previous last-known-good release.
+
+The protected workspace manager creates a short-lived one-time enrollment and renders a single
+copyable latest-release install/enroll/bootstrap block. Macs become revocable dynamic identities at
+runtime; no worker ID, Simulator UDID, administrator token, or host address is committed to CI.
 
 ## Installed commands
 

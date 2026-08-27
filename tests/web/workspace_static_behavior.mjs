@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -1269,7 +1278,58 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
     "trace-marketing worker enroll --url https://workspace.borca.ai --code 'trace-enroll_once'",
   ));
-  assert.ok(fixture.workerEnrollmentCommand.textContent.includes("trace-marketing worker install-service"));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "gh release view --repo corca-ai/ads-booster",
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "raw.githubusercontent.com/corca-ai/ads-booster/$release/install.sh",
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "trace-marketing worker finish-bootstrap",
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "trace-marketing worker updater-status",
+  ));
+  assert.match(
+    fixture.workerEnrollmentCommand.textContent,
+    /^bash -euo pipefail <<'TRACE_MAC_BOOTSTRAP'/u,
+  );
+  assert.match(fixture.workerEnrollmentCommand.textContent, /\nTRACE_MAC_BOOTSTRAP$/u);
+  assert.doesNotMatch(fixture.workerEnrollmentCommand.textContent, /worker install-service/u);
+
+  const fakeRoot = mkdtempSync(join(tmpdir(), "trace-enrollment-fail-fast-"));
+  const fakeBin = join(fakeRoot, "bin");
+  const traceLog = join(fakeRoot, "trace.log");
+  try {
+    mkdirSync(fakeBin);
+    const commands = {
+      gh: "#!/bin/sh\nprintf 'v0.3.0\\n'\n",
+      curl: "#!/bin/sh\nexit 42\n",
+      "trace-marketing": "#!/bin/sh\nprintf 'trace-marketing %s\\n' \"$*\" >> \"$TRACE_TEST_LOG\"\n",
+    };
+    for (const [name, source] of Object.entries(commands)) {
+      const target = join(fakeBin, name);
+      writeFileSync(target, source);
+      chmodSync(target, 0o755);
+    }
+    const failedInstall = spawnSync(
+      "/bin/bash",
+      ["-c", fixture.workerEnrollmentCommand.textContent],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: fakeRoot,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          TRACE_TEST_LOG: traceLog,
+        },
+      },
+    );
+    assert.notEqual(failedInstall.status, 0);
+    assert.throws(() => readFileSync(traceLog, "utf8"), /ENOENT/u);
+  } finally {
+    rmSync(fakeRoot, { recursive: true, force: true });
+  }
   await fixture.workerEnrollmentCommandCopy.click();
   assert.equal(fixture.clipboard.at(-1), fixture.workerEnrollmentCommand.textContent);
   assert.equal(fixture.workerEnrollmentCommandCopy.textContent, "명령 복사됨");

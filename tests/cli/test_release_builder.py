@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILDER = ROOT / "scripts" / "build-mac-worker-release.py"
 BOOTSTRAP = ROOT / "scripts" / "bootstrap-mac-worker.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "release-mac-worker.yml"
+DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-cloudflare.yml"
+PROJECT = ROOT / "pyproject.toml"
 
 
 def test_release_builder_emits_deterministic_exact_three_asset_envelope(tmp_path: Path) -> None:
@@ -64,18 +66,55 @@ def test_release_builder_rejects_version_not_matching_project_wheel(tmp_path: Pa
     assert "one exact project wheel" in completed.stderr
 
 
-def test_release_workflow_is_manual_arm64_attested_and_fails_without_immutability() -> None:
+def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
+    assert "pull_request:" in workflow
+    assert "push:" in workflow
+    assert "branches: [main]" in workflow
     assert "workflow_dispatch:" in workflow
-    assert "runs-on: macos-14" in workflow
-    assert "immutable-releases" in workflow
+    assert "inputs:" not in workflow
+    assert "runs-on: macos-15" in workflow
+    assert "macos-14" not in workflow
+    assert "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" in workflow
+    assert "tomllib.load" in workflow
+    assert "TRACE_IMMUTABLE_RELEASES_ENABLED" in workflow
+    assert "bump pyproject.toml before merge" in workflow
+    assert "scripts/github-release-state.py" in workflow
+    assert "--repair-managed-partials" in workflow
+    assert workflow.count("Build the offline arm64 release envelope once") == 1
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+    assert "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131" in workflow
+    assert "github.run_attempt" in workflow
+    assert "release_artifact_id: ${{ steps.release_artifact.outputs.artifact-id }}" in workflow
+    assert "artifact-ids: ${{ needs.check.outputs.release_artifact_id }}" in workflow
+    assert 'gh release download "v$RELEASE_VERSION"' in workflow
+    assert "repos/$RELEASE_REPOSITORY/git/tags" in workflow
+    assert "repos/$RELEASE_REPOSITORY/git/refs" in workflow
+    assert "generate_release_notes=true" in workflow
+    assert "'.immutable'" in workflow
+    assert "unauthenticated readback" in workflow
+    assert "trace-marketing-managed-release:$tag:$RELEASE_SHA" in workflow
+    assert "Managed trace-marketing release $tag at $RELEASE_SHA" in workflow
+    assert "Remove only this run's failed mutable or unpublished release state" in workflow
     assert "setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" in workflow
     assert "attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a" in workflow
     assert 'gh release verify "$tag"' in workflow
     assert 'gh release verify-asset "$tag"' in workflow
-    assert 'target "$RELEASE_SHA"' in workflow
+    assert '-f target_commitish="$RELEASE_SHA"' in workflow
     assert "SSH" not in workflow
+    assert 'requires = ["hatchling==1.32.0"]' in PROJECT.read_text(encoding="utf-8")
+
+
+def test_cloudflare_deploy_tracks_the_actual_packaged_static_sources() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "src/ads_booster/assets/context/**" in workflow
+    assert "src/ads_booster/web/static/**" in workflow
+    assert "src/trace_capture/" not in workflow
+    assert "TRACE_DEPLOY_SHA: ${{ github.sha }}" in workflow
+    assert ".commit_sha == $sha" in workflow
+    assert 'read_exact_health "https://workspace.borca.ai/health"' in workflow
 
 
 def _build(

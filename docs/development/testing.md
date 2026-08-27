@@ -145,14 +145,21 @@ uv run pytest -q \
   tests/marketing/test_worker_broker.py \
   tests/marketing/test_bridge.py \
   tests/cli/test_installer.py \
+  tests/cli/test_github_release_state.py \
   tests/cli/test_release_builder.py \
   tests/cli/test_cli_compatibility.py
 ```
 
 Then build the project wheel and dependency wheelhouse in a temporary directory, install them with
 `--no-index` into a fresh Python 3.14 environment, and resolve `trace-marketing` from that fresh
-environment for `version --json` and CLI help. This proves the candidate artifact only. Public
-release, shared-Mac bootstrap, reboot, heartbeat and Appium canary remain separate rollout gates.
+environment for `version --json` and CLI help. The pull-request workflow repeats these checks with
+read-only permissions. On `main`, the release job must additionally prove the annotated tag, exact
+merge SHA, transfer of the already fresh-installed bytes, immutable three-asset envelope,
+attestations, local asset digests, safe full-run and failed-job retry/resume behavior, strict
+404-versus-transport classification, and an unauthenticated public release readback. The hosted
+deploy check must read the exact merge SHA from both configured and custom health endpoints. A Mac
+remains a separately enrolled dynamic consumer; reboot, heartbeat, and Appium canary checks
+establish that Mac's operational readiness rather than gating CI release.
 
 For hosted feedback learning and candidate-quality changes, use the source-owned Worker test plus
 the migration test. Build the workspace in a temporary copy so ignored or stale `cloudflare/dist`

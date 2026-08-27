@@ -6,15 +6,15 @@ on:
     paths:
       - .github/workflows/deploy-cloudflare.yml
       - cloudflare/**
-      - src/trace_capture/assets/context/**
-      - src/trace_capture/web/static/**
+      - src/ads_booster/assets/context/**
+      - src/ads_booster/web/static/**
   push:
     branches: [main]
     paths:
       - .github/workflows/deploy-cloudflare.yml
       - cloudflare/**
-      - src/trace_capture/assets/context/**
-      - src/trace_capture/web/static/**
+      - src/ads_booster/assets/context/**
+      - src/ads_booster/web/static/**
   workflow_dispatch:
 
 concurrency:
@@ -65,6 +65,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CF_D1_DATABASE_ID: ${{ vars.CF_D1_DATABASE_ID }}
+      TRACE_DEPLOY_SHA: ${{ github.sha }}
       TRACE_MARKETING_HEALTH_URL: ${{ vars.TRACE_MARKETING_HEALTH_URL }}
 
     steps:
@@ -104,11 +105,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          response="$(curl --fail --silent --show-error \
-            --connect-timeout 10 --max-time 30 \
-            --retry 5 --retry-all-errors --retry-delay 3 \
-            "$TRACE_MARKETING_HEALTH_URL")"
-          test "$response" = '{"ok":true}'
+          read_exact_health() {
+            local url="$1"
+            local response=""
+            for attempt in {1..8}; do
+              response="$(curl --fail --silent --show-error \
+                --connect-timeout 10 --max-time 30 \
+                --retry 3 --retry-all-errors --retry-delay 3 \
+                "$url")"
+              if jq -e --arg sha "$TRACE_DEPLOY_SHA" \
+                '.ok == true and .commit_sha == $sha' <<<"$response" >/dev/null; then
+                printf '%s\n' "$response"
+                return 0
+              fi
+              sleep 5
+            done
+            echo "health endpoint did not expose deployed SHA $TRACE_DEPLOY_SHA: $url" >&2
+            return 1
+          }
+          response="$(read_exact_health "$TRACE_MARKETING_HEALTH_URL")"
 
           workspace_url="${TRACE_MARKETING_HEALTH_URL%/health}/"
           workspace="$(curl --fail --silent --show-error \
@@ -172,8 +187,4 @@ jobs:
             }
           ' "$workers"
 
-          custom_health="$(curl --fail --silent --show-error \
-            --connect-timeout 10 --max-time 30 \
-            --retry 8 --retry-all-errors --retry-delay 5 \
-            "https://workspace.borca.ai/health")"
-          test "$custom_health" = '{"ok":true}'
+          custom_health="$(read_exact_health "https://workspace.borca.ai/health")"

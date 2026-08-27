@@ -51,6 +51,7 @@ def test_installer_help_describes_native_install_controls() -> None:
     assert "Appium" in result.stdout
     assert "Xcode" in result.stdout
     assert "Codex CLI" in result.stdout
+    assert "fresh Mac may install before enrollment" in result.stdout
 
 
 def test_installer_dry_run_prints_managed_release_plan(tmp_path: Path) -> None:
