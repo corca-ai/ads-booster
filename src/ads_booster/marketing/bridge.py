@@ -53,10 +53,13 @@ class MarketingBridge:
     def recover(self) -> int:
         return self.inbox.recover_running()
 
-    def tick(self) -> bool:
-        try:
-            leases = self.queue.pull()
-        except CloudflareQueueError:
+    def tick(self, *, accept_remote: bool = True) -> bool:
+        if accept_remote:
+            try:
+                leases = self.queue.pull()
+            except CloudflareQueueError:
+                leases = ()
+        else:
             leases = ()
         ack: list[str] = []
         retry: list[str] = []

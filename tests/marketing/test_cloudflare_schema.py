@@ -117,3 +117,50 @@ def test_dynamic_mac_workers_have_revocable_identities_and_single_task_leases() 
         )
 
         assert task == ("worker_broker", "worker-1", "lease-1", "start", "accepted", 1)
+
+
+def test_hosted_feedback_keeps_reviewed_revision_and_generation_provenance() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
+        for migration in sorted(migration_root.glob("*.sql")):
+            _ = connection.executescript(migration.read_text())
+
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json,
+             generation_prompt_version, generation_prompt_sha256, generation_model,
+             feedback_rules_json, status, revision, created_at, updated_at)
+            VALUES ('candidate-1', 'trace_kr', 'auto', 'KR', 'topic', 'caption', 'hypothesis',
+                    '["kr-study-day"]', '[1]', 'prompt', '{}',
+                    'trace.workspace-generation.v2', ?, '@cf/openai/gpt-oss-20b', '[]',
+                    'awaiting_review', 3, 1, 1)""",
+            ("a" * 64,),
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_feedback_events
+            (event_id, account_id, candidate_id, stage, decision, rating, tags_json,
+             candidate_revision, candidate_snapshot_json, candidate_snapshot_sha256,
+             generation_prompt_version, generation_prompt_sha256, generation_model,
+             feedback_rules_json, created_at)
+            VALUES ('event-1', 'trace_kr', 'candidate-1', 'caption', 'rejected', 2,
+                    '["컨셉이 약함"]', 3, '{"candidate_revision":3}', ?,
+                    'trace.workspace-generation.v2', ?, '@cf/openai/gpt-oss-20b', '[]', 2)""",
+            ("b" * 64, "a" * 64),
+        )
+
+        feedback = connection.execute(
+            """SELECT candidate_revision, candidate_snapshot_sha256,
+                      generation_prompt_version, generation_prompt_sha256,
+                      generation_model, feedback_rules_json
+               FROM hosted_workspace_feedback_events WHERE event_id = 'event-1'"""
+        ).fetchone()
+
+        assert feedback == (
+            3,
+            "b" * 64,
+            "trace.workspace-generation.v2",
+            "a" * 64,
+            "@cf/openai/gpt-oss-20b",
+            "[]",
+        )

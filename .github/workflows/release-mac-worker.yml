@@ -1,0 +1,405 @@
+name: Release immutable Mac worker
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-mac-worker.yml
+      - install.sh
+      - pyproject.toml
+      - uv.lock
+      - scripts/bootstrap-mac-worker.py
+      - scripts/build-mac-worker-release.py
+      - scripts/github-release-state.py
+      - src/**
+      - tests/cli/test_cli_compatibility.py
+      - tests/cli/test_installer.py
+      - tests/cli/test_github_release_state.py
+      - tests/cli/test_release_builder.py
+      - tests/marketing/test_bridge.py
+      - tests/marketing/test_worker_broker.py
+      - tests/marketing/test_worker_update.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-mac-worker.yml
+      - install.sh
+      - pyproject.toml
+      - uv.lock
+      - scripts/bootstrap-mac-worker.py
+      - scripts/build-mac-worker-release.py
+      - scripts/github-release-state.py
+      - src/**
+      - tests/cli/test_cli_compatibility.py
+      - tests/cli/test_installer.py
+      - tests/cli/test_github_release_state.py
+      - tests/cli/test_release_builder.py
+      - tests/marketing/test_bridge.py
+      - tests/marketing/test_worker_broker.py
+      - tests/marketing/test_worker_update.py
+  workflow_dispatch:
+
+concurrency:
+  group: trace-marketing-release-${{ github.event.pull_request.number || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check immutable Mac release
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      release_artifact_id: ${{ steps.release_artifact.outputs.artifact-id }}
+      release_version: ${{ steps.identity.outputs.version }}
+    env:
+      RELEASE_EVENT: ${{ github.event_name }}
+      RELEASE_IMMUTABILITY_PREPARED: ${{ vars.TRACE_IMMUTABLE_RELEASES_ENABLED }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
+      RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out the exact candidate revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Install pinned uv release tooling
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.12.6
+
+      - name: Resolve and validate release identity
+        id: identity
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_IMMUTABILITY_PREPARED" != "true" ]]; then
+            echo "enable repository immutable releases and set TRACE_IMMUTABLE_RELEASES_ENABLED=true before merge" >&2
+            exit 1
+          fi
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(uname -m)" = "arm64"
+          state_args=()
+          if [[ "$RELEASE_EVENT" == "pull_request" ]]; then
+            state_args+=(--forbid-existing)
+          fi
+          if ! python scripts/github-release-state.py \
+            --repository "$RELEASE_REPOSITORY" \
+            --version "$version" \
+            --commit-sha "$RELEASE_SHA" \
+            "${state_args[@]}"; then
+            if [[ "$RELEASE_EVENT" == "pull_request" ]]; then
+              echo "v$version already exists; bump pyproject.toml before merge" >&2
+            fi
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --dev
+
+      - name: Run focused updater and installer checks
+        run: |
+          uv run pytest -q \
+            tests/marketing/test_worker_update.py \
+            tests/marketing/test_worker_broker.py \
+            tests/marketing/test_bridge.py \
+            tests/cli/test_installer.py \
+            tests/cli/test_github_release_state.py \
+            tests/cli/test_release_builder.py \
+            tests/cli/test_cli_compatibility.py
+
+      - name: Build the offline arm64 release envelope once
+        env:
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/wheelhouse build/release dist
+          uv export --locked --no-dev --no-emit-project --no-header \
+            --output-file build/requirements.lock
+          python -m pip download --disable-pip-version-check --only-binary=:all: \
+            --dest build/wheelhouse --requirement build/requirements.lock
+          uv build --wheel --out-dir dist
+          cp "dist/trace_appium_capture-$RELEASE_VERSION-"*.whl build/wheelhouse/
+          python scripts/build-mac-worker-release.py \
+            --version "$RELEASE_VERSION" \
+            --commit-sha "$RELEASE_SHA" \
+            --wheelhouse build/wheelhouse \
+            --requirements build/requirements.lock \
+            --bootstrap scripts/bootstrap-mac-worker.py \
+            --output build/release
+
+      - name: Prove a fresh offline product install
+        env:
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          fresh="$RUNNER_TEMP/trace-marketing-fresh-$RELEASE_VERSION"
+          uv venv --python 3.14 --no-python-downloads "$fresh"
+          uv pip install --python "$fresh/bin/python" --no-index \
+            --find-links build/wheelhouse "trace-appium-capture==$RELEASE_VERSION"
+          test "$("$fresh/bin/trace-marketing" version --json | \
+            python -c 'import json,sys; print(json.load(sys.stdin)["version"])')" = "$RELEASE_VERSION"
+          "$fresh/bin/trace-marketing" worker --help >/dev/null
+
+      - name: Transfer the exact checked release bytes
+        id: release_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trace-marketing-release-${{ env.RELEASE_SHA }}-${{ github.run_attempt }}
+          path: build/release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    name: Attest, publish, and read back
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    env:
+      RELEASE_REPOSITORY: ${{ github.repository }}
+      RELEASE_SHA: ${{ github.sha }}
+      RELEASE_VERSION: ${{ needs.check.outputs.release_version }}
+
+    steps:
+      - name: Check out the exact merged revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Set up Python 3.14 for release state recovery
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Resolve and repair managed GitHub release state
+        id: release_identity
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          python scripts/github-release-state.py \
+            --repository "$RELEASE_REPOSITORY" \
+            --version "$RELEASE_VERSION" \
+            --commit-sha "$RELEASE_SHA" \
+            --repair-managed-partials \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download the exact checked release bytes
+        if: steps.release_identity.outputs.state == 'new'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          artifact-ids: ${{ needs.check.outputs.release_artifact_id }}
+          merge-multiple: true
+          path: build/checked-release
+
+      - name: Select the checked bytes for a new release
+        if: steps.release_identity.outputs.state == 'new'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/release
+          cp build/checked-release/* build/release/
+
+      - name: Recover the published bytes for resumed proof
+        if: steps.release_identity.outputs.state == 'resume'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/release
+          gh release download "v$RELEASE_VERSION" --repo "$RELEASE_REPOSITORY" \
+            --dir build/release
+
+      - name: Verify the selected three-asset envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find build/release -type f | wc -l | tr -d ' ')" = 3
+          test -f build/release/trace-marketing-bootstrap.py
+          test -f "build/release/trace-marketing-macos-arm64-v$RELEASE_VERSION.tar.gz"
+          test -f build/release/trace-marketing-release.json
+          python - "$RELEASE_VERSION" "$RELEASE_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          payload = json.loads(pathlib.Path("build/release/trace-marketing-release.json").read_text())
+          if payload["version"] != sys.argv[1] or payload["commit_sha"] != sys.argv[2]:
+              raise SystemExit("transferred release manifest identity mismatch")
+          PY
+
+      - name: Create the owned annotated tag and exact draft release
+        if: steps.release_identity.outputs.state == 'new'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          tag_object_sha="$(gh api --method POST "repos/$RELEASE_REPOSITORY/git/tags" \
+            -f tag="$tag" \
+            -f message="Managed trace-marketing release $tag at $RELEASE_SHA" \
+            -f object="$RELEASE_SHA" -f type=commit --jq '.sha')"
+          gh api --method POST "repos/$RELEASE_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$tag" -f sha="$tag_object_sha" >/dev/null
+          release_body="<!-- trace-marketing-managed-release:$tag:$RELEASE_SHA -->"
+          release_json="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+            --method POST "repos/$RELEASE_REPOSITORY/releases" \
+            -f tag_name="$tag" -f target_commitish="$RELEASE_SHA" -f name="$tag" \
+            -f body="$release_body" \
+            -F draft=true -F prerelease=false -F generate_release_notes=true)"
+          release_id="$(jq -r '.id' <<<"$release_json")"
+          test "$release_id" != null
+          gh release upload "$tag" build/release/* --repo "$RELEASE_REPOSITORY"
+
+      - name: Attest all checked release assets
+        if: steps.release_identity.outputs.state == 'new'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: build/release/*
+
+      - name: Publish the new stable release
+        if: steps.release_identity.outputs.state == 'new'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "v$RELEASE_VERSION" --repo "$RELEASE_REPOSITORY" --draft=false --latest
+
+      - name: Verify or resume the exact immutable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          release_json=""
+          for attempt in {1..8}; do
+            if candidate="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$RELEASE_REPOSITORY/releases/tags/$tag")" && \
+                [[ "$(jq -r '.draft' <<<"$candidate")" == "false" && \
+                   "$(jq -r '.prerelease' <<<"$candidate")" == "false" && \
+                   "$(jq -r '.immutable' <<<"$candidate")" == "true" && \
+                   "$(jq -r '.target_commitish' <<<"$candidate")" == "$RELEASE_SHA" ]]; then
+              release_json="$candidate"
+              break
+            fi
+            sleep 3
+          done
+          test -n "$release_json"
+          test "$(jq -r '.draft' <<<"$release_json")" = false
+          test "$(jq -r '.prerelease' <<<"$release_json")" = false
+          test "$(jq -r '.immutable' <<<"$release_json")" = true
+          test "$(jq -r '.target_commitish' <<<"$release_json")" = "$RELEASE_SHA"
+          test "$(jq -r '[.assets[].name] | sort | join(" ")' <<<"$release_json")" = \
+            "trace-marketing-bootstrap.py trace-marketing-macos-arm64-$tag.tar.gz trace-marketing-release.json"
+          for asset in build/release/*; do
+            name="$(basename "$asset")"
+            expected="sha256:$(shasum -a 256 "$asset" | awk '{print $1}')"
+            actual="$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
+            test "$actual" = "$expected"
+          done
+          ref_json="$(gh api "repos/$RELEASE_REPOSITORY/git/ref/tags/$tag")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = tag
+          tag_object_sha="$(jq -r '.object.sha' <<<"$ref_json")"
+          tag_json="$(gh api "repos/$RELEASE_REPOSITORY/git/tags/$tag_object_sha")"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$RELEASE_SHA"
+          for attempt in {1..8}; do
+            if gh release verify "$tag" --repo "$RELEASE_REPOSITORY"; then
+              verified_release=1
+              break
+            fi
+            sleep 3
+          done
+          test "${verified_release:-0}" = 1
+          for asset in build/release/*; do
+            verified_asset=0
+            for attempt in {1..8}; do
+              if gh release verify-asset "$tag" "$asset" --repo "$RELEASE_REPOSITORY"; then
+                verified_asset=1
+                break
+              fi
+              sleep 3
+            done
+            test "$verified_asset" = 1
+          done
+
+      - name: Verify the public release through an unauthenticated readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          api="https://api.github.com/repos/$RELEASE_REPOSITORY/releases/tags/$tag"
+          release_json=""
+          for attempt in {1..8}; do
+            if candidate="$(curl --fail --silent --show-error --location \
+              --retry 3 --retry-all-errors --retry-delay 3 "$api")" && \
+                [[ "$(jq -r '.draft' <<<"$candidate")" == "false" && \
+                   "$(jq -r '.prerelease' <<<"$candidate")" == "false" && \
+                   "$(jq -r '.immutable' <<<"$candidate")" == "true" && \
+                   "$(jq -r '.target_commitish' <<<"$candidate")" == "$RELEASE_SHA" ]]; then
+              release_json="$candidate"
+              break
+            fi
+            sleep 3
+          done
+          test -n "$release_json"
+          test "$(jq -r '.draft' <<<"$release_json")" = false
+          test "$(jq -r '.prerelease' <<<"$release_json")" = false
+          test "$(jq -r '.immutable' <<<"$release_json")" = true
+          test "$(jq -r '.target_commitish' <<<"$release_json")" = "$RELEASE_SHA"
+          manifest_url="$(jq -r '.assets[] | select(.name == "trace-marketing-release.json") | .browser_download_url' <<<"$release_json")"
+          expected_digest="$(jq -r '.assets[] | select(.name == "trace-marketing-release.json") | .digest' <<<"$release_json")"
+          curl --fail --silent --show-error --location \
+            --retry 8 --retry-all-errors --retry-delay 3 \
+            "$manifest_url" --output "$RUNNER_TEMP/trace-marketing-release.json"
+          actual_digest="sha256:$(shasum -a 256 "$RUNNER_TEMP/trace-marketing-release.json" | awk '{print $1}')"
+          test "$actual_digest" = "$expected_digest"
+          python - "$RUNNER_TEMP/trace-marketing-release.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if payload["version"] != sys.argv[2] or payload["commit_sha"] != sys.argv[3]:
+              raise SystemExit("public release manifest identity mismatch")
+          PY
+
+      - name: Remove only this run's failed mutable or unpublished release state
+        if: failure() && steps.release_identity.outputs.state == 'new'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/github-release-state.py \
+            --repository "$RELEASE_REPOSITORY" \
+            --version "$RELEASE_VERSION" \
+            --commit-sha "$RELEASE_SHA" \
+            --repair-managed-partials

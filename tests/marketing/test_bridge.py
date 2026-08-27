@@ -101,7 +101,8 @@ class FakeExecutor:
 
 
 class UnknownSideEffectExecutor:
-    def execute(self, _task: MarketingTask) -> TaskResult:
+    def execute(self, task: MarketingTask) -> TaskResult:
+        _ = task
         failure_code = "native_appium_side_effect_unknown"
         raise MarketingExecutionError(
             failure_code,
@@ -207,6 +208,33 @@ def test_bridge_persists_before_ack_and_delivers_idempotent_callback(tmp_path: P
     assert queue.acks == [(("lease-1",), ())]
     assert [callback.callback_id for callback in callbacks.delivered] == ["task-1:completed"]
     assert inbox.pending_callbacks() == ()
+
+
+def test_drain_guard_stops_remote_claims_but_finishes_local_work(tmp_path: Path) -> None:
+    class ForbiddenRemoteQueue:
+        @staticmethod
+        def pull() -> tuple[QueueLease, ...]:
+            message = "remote pull must be disabled during update drain"
+            raise AssertionError(message)
+
+        @staticmethod
+        def acknowledge(
+            *,
+            ack_lease_ids: tuple[str, ...] = (),
+            retry_lease_ids: tuple[str, ...] = (),
+        ) -> None:
+            _ = (ack_lease_ids, retry_lease_ids)
+            message = "no remote lease should be acknowledged during update drain"
+            raise AssertionError(message)
+
+    callbacks = FakeCallbacks()
+    inbox = MarketingInbox(tmp_path)
+    _ = inbox.ingest(_task())
+    bridge = MarketingBridge(ForbiddenRemoteQueue(), callbacks, inbox, FakeExecutor())
+
+    assert bridge.tick(accept_remote=False)
+    assert [callback.callback_id for callback in callbacks.delivered] == ["task-1:completed"]
+    assert inbox.quiescence().ready
 
 
 def test_bridge_delivers_unknown_side_effect_without_collapsing_it(tmp_path: Path) -> None:

@@ -101,6 +101,9 @@ def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
             "run",
             "install-service",
             "status",
+            "update",
+            "finish-bootstrap",
+            "updater-status",
             "set-state",
             "revoke",
         )

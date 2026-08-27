@@ -2,6 +2,11 @@
 
 Status: Implemented for the pre-publication pipeline; live Threads publication remains disabled.
 
+Candidate rollout status (2026-08-27): the feedback provenance/learning rules, generated-batch
+validator, immediate image-retry guidance, and zero-worker fail-fast in this document are implemented
+in the current branch but remain pending D1 migration, Worker deployment, hosted readback, and the
+first real Mac canary.
+
 The control-plane, hosted/local simulation, simulation-only legacy Queue bridge, D1 Mac-worker
 broker, automatic workspace-review relay, portable worker enrollment, and deployment configuration
 are implemented. Hosted native capture runs only through `trace-marketing worker run` or its
@@ -15,15 +20,17 @@ account instruction. D1 stores profiles, immutable candidate context snapshots, 
 tasks, worker identities, and review revisions. After the first non-revoked worker is enrolled, caption
 approval leaves a task in the D1 broker and one healthy Mac claims its expiring lease without a
 Cloudflare Queue token. The worker performs native Appium capture and returns a digest-backed PNG
-for R2. A deployment with no broker worker retains legacy Queue dispatch. Live publication remains
-outside this hosted surface. Image approval ends at `submitted` without an
+for R2. When no non-revoked broker worker is registered, the image request fails before creating a
+capture task; new hosted captures never fall back to a shared legacy Queue token. Live publication
+remains outside this hosted surface. Image approval ends at `submitted` without an
 external side effect. Hosted candidates remain editable and deletable in every state; an edit
 invalidates prior approvals and image artifacts before returning to the first review gate.
 
 ## First milestone
 
-The first milestone is a pipeline that can run and be changed safely. It does not optimize generated
-content quality. The acceptance path is:
+The first milestone is a pipeline that can run and be changed safely. Generated content also passes
+a bounded structural quality gate and uses only controlled, provenance-backed feedback rules; it
+does not yet optimize against publication performance. The acceptance path is:
 
 1. create a versioned shared instruction;
 2. register a marketing account as data;
@@ -52,6 +59,7 @@ content quality. The acceptance path is:
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
 | hosted review workspace | Worker static assets, Workers AI, D1 broker, Mac worker, and R2 | the public URL needs no access ID; context/model/account selection stays data-driven while native capture crosses an explicit replaceable worker boundary |
 | hosted context registry | packaged manifest plus account-scoped D1 profiles | countries extend through reviewed documents/profile data; team profiles change without Worker source edits; candidate snapshots retain provenance |
+| hosted feedback learning | immutable reviewed-candidate snapshot plus controlled stage/tag rules | free-form reviewer text stays evidence for people, while only reviewed instructions enter later prompts or Mac creative direction |
 
 This combines ideas used by established harnesses: actor isolation from Akka/Orleans-style systems,
 durable workflow steps from Temporal-style systems, inbox/outbox delivery from event-driven systems,
@@ -85,6 +93,42 @@ A D1 profile alone cannot enable an unreviewed country. Hosted generation resolv
 country documents from the packaged manifest and fails with `409` when that country is absent. Each
 candidate persists the complete selected profile snapshot; editing or hiding the profile later does
 not rewrite already-generated evidence.
+
+## Hosted feedback learning and generation quality
+
+Every automatically generated batch records a prompt version and SHA-256, model identifier, and the
+exact active feedback-rule objects used for that batch. Each caption or image decision separately
+records the reviewed candidate ID and revision, a bounded candidate snapshot and digest, the
+generation provenance, rating, stage, tags, and optional reviewer note in the same D1 batch as its
+candidate-state transition. Either both persist or neither does. Editing a candidate clears its
+generation provenance because the edited revision no longer represents the recorded prompt.
+
+The automatic rule boundary is intentionally narrow:
+
+- the server owns a reviewed mapping from `(stage, rejection tag)` to a stable rule ID, quality
+  dimension, and instruction;
+- only rating 1–2 rejections count, and a rule activates only after the same stage and tag appear on
+  three distinct candidate revisions for the same account/profile scope;
+- every active controlled instruction reaches later candidate prompts; design and policy
+  instructions are also snapshotted on the candidate and reach the Mac `creative_direction`;
+- an image rejection immediately adds its stage-valid controlled tag instructions to that same
+  candidate's next capture attempt, without waiting for the three-review learning threshold;
+- free-form notes and the `기타` tag never become model instructions automatically;
+- the public feedback summary returns aggregate tags and controlled rules, not reviewer notes; and
+- approvals are retained as evidence but do not yet produce a positive-learning rule or mutate a
+  persona/profile without a separate reviewed promotion step.
+
+Generated batches must contain exactly four distinct topics and captions, two morning and two
+evening slots, selected-profile reference IDs only, at least one non-duplicated principle per
+candidate, and five to seven `HH:MM 제목` Trace items with a distinct schedule per candidate.
+Schema-conforming AI output that violates these cross-candidate invariants is rejected and retried
+once; it is never stored as an accepted candidate batch. Candidate persistence happens after the
+format retry boundary, so a D1 failure never triggers another model call.
+
+The hosted workspace is currently login-free, so reviewer identity and signal integrity are not
+strong enough for automatic profile mutation. Adding authenticated reviewer attribution, rule
+activation/deactivation controls, positive-signal learning, and experiment/metric attribution is a
+separate policy slice.
 
 ## Isolation and instructions
 
@@ -222,12 +266,16 @@ The first operating target after credentials and Cloudflare resources exist is:
   one prepared Mac run the displayed enroll and service commands for the generated
   `com.corca.trace-marketing-worker` LaunchAgent;
 - open the login-free `workspace.borca.ai` workbench and generate four context-grounded candidates;
+- confirm the batch has prompt/model/rule provenance and passes the cross-candidate quality gate;
 - approve a caption, observe D1 lease → execution barrier → native Mac/Appium → verified R2 PNG, and approve the image;
 - reach `submitted` while confirming no Threads or other publication call occurs; and
 - inspect the D1 capture correlation row and R2 digest metadata.
 
-The D1 broker worker is the only installed hosted native-capture path after enrollment. Legacy HTTP
-Queue pull remains a simulation-only compatibility path and does not invoke Codex or Appium. A broker worker may run on any prepared Mac; its generated LaunchAgent
+The D1 broker worker is the only installed hosted native-capture path. A conditional D1 batch checks
+for a non-revoked worker while it creates the task and advances the candidate revision; either both
+records commit or neither does. With no registered worker the hosted image request returns `503`
+without queueing. Legacy HTTP Queue pull remains a
+simulation-only compatibility path and does not invoke Codex or Appium. A broker worker may run on any prepared Mac; its generated LaunchAgent
 owns restart and its separate machine credential does not grant Cloudflare account or Queue access.
 
 Enabling real Threads publication is a separate target because platform capability and permission

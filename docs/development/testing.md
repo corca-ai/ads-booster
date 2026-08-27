@@ -14,7 +14,7 @@ boundaries, not the entire repository.
 For product behavior, prioritize a fresh installed `trace-marketing` environment over the source
 worktree.
 
-- Use an isolated install location and a new `TRACE_AGENT_HOME`.
+- Use an isolated versioned install root and a new `TRACE_AGENT_HOME`.
 - Resolve `trace-marketing` and `codex` from the installed PATH; do not substitute `uv run` or an activated project
   virtual environment for installed-product proof.
 - Verify `codex login status`, `trace-marketing worker doctor`, CLI exposure, state creation, and
@@ -136,6 +136,56 @@ Use `-k` when one test name is sufficient.
 uv run pytest -q tests/service/test_service.py -k worker
 ```
 
+For the Mac updater and immutable release envelope, use this focused scope rather than the full
+suite:
+
+```bash
+uv run pytest -q \
+  tests/marketing/test_worker_update.py \
+  tests/marketing/test_worker_broker.py \
+  tests/marketing/test_bridge.py \
+  tests/cli/test_installer.py \
+  tests/cli/test_github_release_state.py \
+  tests/cli/test_release_builder.py \
+  tests/cli/test_cli_compatibility.py
+```
+
+Then build the project wheel and dependency wheelhouse in a temporary directory, install them with
+`--no-index` into a fresh Python 3.14 environment, and resolve `trace-marketing` from that fresh
+environment for `version --json` and CLI help. The pull-request workflow repeats these checks with
+read-only permissions. On `main`, the release job must additionally prove the annotated tag, exact
+merge SHA, transfer of the already fresh-installed bytes, immutable three-asset envelope,
+attestations, local asset digests, safe full-run and failed-job retry/resume behavior, strict
+404-versus-transport classification, and an unauthenticated public release readback. The hosted
+deploy check must read the exact merge SHA from both configured and custom health endpoints. A Mac
+remains a separately enrolled dynamic consumer; reboot, heartbeat, and Appium canary checks
+establish that Mac's operational readiness rather than gating CI release.
+
+For hosted feedback learning and candidate-quality changes, use the source-owned Worker test plus
+the migration test. Build the workspace in a temporary copy so ignored or stale `cloudflare/dist`
+files in the worktree cannot masquerade as source behavior.
+
+```bash
+cd cloudflare
+npm run build
+node --check src/hosted-workspace.js
+node --test test/hosted-workspace.test.js
+cd ..
+uv run pytest -q tests/marketing/test_cloudflare_schema.py tests/marketing/test_native_capture.py
+```
+
+The focused cases must prove prompt/model/rule provenance, reviewed revision snapshots, three
+distinct rating-1–2 rejections in the same stage before activation, no free-form note injection,
+NULL-revision legacy feedback exclusion from rule evidence, feedback-dimension routing,
+selected-profile reference confinement, unique topics/captions/
+schedules/principles, five-to-seven timed Trace items, no-worker fail-fast without task creation,
+an explicit no-worker UI state without legacy Queue fallback copy, same-candidate image-retry
+guidance, and design/policy rule delivery through broker capture context.
+Inject feedback-insert, review-transition, candidate-insert, and candidate-queue failures to prove
+review evidence is atomic, storage errors do not re-call Workers AI, and broker tasks cannot survive
+a failed candidate transition. A production claim still requires a
+real Workers AI batch plus one registered-Mac capture and readback after deployment.
+
 Do not run the following commands without an explicit user request.
 
 ```bash
@@ -155,7 +205,7 @@ uv run basedpyright path/to/changed.py tests/<domain>/test_changed.py
 
 Run repository-wide Ruff, formatting, or BasedPyright only when the user explicitly requests it or
 when the tooling configuration being changed applies to the whole repository.
-Ruff and BasedPyright target the package's lowest declared runtime, Python 3.13, so formatting and
+Ruff and BasedPyright target the package's lowest declared runtime, Python 3.14, so formatting and
 type checking cannot silently introduce syntax that a supported fresh install cannot import.
 
 ## Selection by change type
@@ -174,7 +224,7 @@ type checking cannot silently introduce syntax that a supported fresh install ca
 | `web/` | Changed router, schema, command, and approval tests | Changed API and browser interaction against a running app, including slash commands and approval state |
 | `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
 | `capture/` | Changed adapter, wallpaper contract, worker, or provenance tests | Run the current Appium, Simulator, and Trace build. Inspect `LockScreenWallpaperSheet` controls for selected Photos background, row layout, style values, and Save; confirm the request-owned IANA time zone, structured UTC/all-day event times, event colors, and timed source `HH:MM` plus clean title reached automation input; inspect the resulting full `trace_wallpaper.png` and native manifest rather than a component fixture. |
-| `marketing/`, `cloudflare/` | Focused Python bridge/broker/native-capture, worker credential/LaunchAgent, Queue decoder, D1 migration/lease and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate`, compatibility `bridge --executor simulation --once`, and broker `worker doctor/status/run --once`; for broker changes enroll with a one-time code, prove separate mode-`0600` credential and secret-free plist, race two workers for one task, reclaim one expired pre-execution lease, prove a post-barrier lease cannot move to a replacement worker, race callback ID/result reservation against changed retries and revoke/reassignment, prove heartbeat renewal stops at the one-hour cap, and keep heartbeat visible during capture; for hosted UI/context changes exercise root, sanitized worker status, protected Mac manager unlock/list/active/drain/two-step revoke/enrollment-copy/close-clear behavior, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, D1 lease→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; native capture evidence includes the full wallpaper manifest, digest, request nonce, and device binding; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
+| `marketing/`, `cloudflare/` | Focused Python bridge/broker/native-capture, worker credential/LaunchAgent, updater/release, Queue decoder, D1 migration/lease and hosted-workspace tests plus `cd cloudflare && npm run check`; parse changed deployment/release workflows | Fresh-installed `trace-marketing simulate`, compatibility `bridge --executor simulation --once`, and broker `worker doctor/status/run --once`; updater changes additionally require a fresh offline wheelhouse install, mutable/tag/SHA/digest refusal, traversal refusal, busy inbox/outbox and ambiguous execution deferral without stop, atomic switch, injected launchd/doctor/heartbeat rollback, secret-free separate plists/state, and final published-release self-update plus reboot/exact-heartbeat readback; the first rollout also requires one real Codex→Appium→callback canary; for broker changes race two workers for one task, reclaim one expired pre-execution lease, prove a post-barrier lease cannot move to a replacement worker, race callback ID/result reservation against changed retries and revoke/reassignment, prove heartbeat renewal stops at the one-hour cap, and keep heartbeat visible during capture; for hosted UI/context changes exercise root, sanitized worker status, protected Mac manager unlock/list/active/drain/two-step revoke/enrollment-copy/close-clear behavior, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, D1 lease→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; native capture evidence includes the full wallpaper manifest, digest, request nonce, and device binding; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
 | `composition/` | Changed composer and artifact tests | This is a legacy component-composition surface. Open the generated image and inspect the changed layer or output. |
 | Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
 
