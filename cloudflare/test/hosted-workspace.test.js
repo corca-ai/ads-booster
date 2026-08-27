@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   candidateResponseSchema,
+  contextForCountry,
   generationPrompt,
   handleHostedWorkspace,
   nextDailyGenerationAt,
@@ -269,6 +270,63 @@ test("workspace context assets expose data-driven country profiles", () => {
   assert.deepEqual(new Set(WORKSPACE_CONTEXT_PROFILES.map(
     (profile) => normalizeContextProfile(profile).country,
   )), new Set(["BR", "DE", "FR", "JP", "KR", "TW", "US"]));
+});
+
+test("researched countries carry the archive's own principle documents", () => {
+  for (const country of ["KR", "JP", "TW"]) {
+    const documents = contextForCountry(WORKSPACE_CONTEXT, country);
+    assert.ok(documents.includes(`core/PRINCIPLES-${country}.md`));
+    assert.ok(documents.includes(`core/ELEMENTS-${country}.md`));
+    // The archive documents carry frontmatter the earlier paraphrased stubs never had.
+    assert.match(documents, new RegExp(`country: ${country}`));
+    assert.match(documents, /status: verified/);
+  }
+  const korean = contextForCountry(WORKSPACE_CONTEXT, "KR");
+  assert.ok(korean.includes("core/VOICE-KR.md"));
+  assert.ok(korean.includes("core/SHOOTING-KR.md"));
+});
+
+test("hypothesis markets carry no researched country documents", () => {
+  for (const country of ["US", "DE", "FR", "BR"]) {
+    const documents = contextForCountry(WORKSPACE_CONTEXT, country);
+    assert.ok(!documents.includes(`core/PRINCIPLES-${country}.md`));
+    assert.ok(documents.includes(`markets/${country}.md`));
+  }
+});
+
+test("every country is told how to read deprecated and unverified findings", () => {
+  for (const country of Object.keys(WORKSPACE_CONTEXT.countries)) {
+    const documents = contextForCountry(WORKSPACE_CONTEXT, country);
+    assert.ok(documents.includes("core/PIPELINE-SCOPE.md"));
+    assert.match(documents, /취소선/);
+    assert.match(documents, /자동 게시하지 않는다/);
+  }
+});
+
+test("the reference corpus ships whole but only named records reach the prompt", () => {
+  assert.equal(Object.keys(WORKSPACE_CONTEXT.referenceBodies.KR).length, 41);
+
+  const sceneProfile = WORKSPACE_CONTEXT_PROFILES.find((profile) => profile.country === "KR");
+  const withoutBodies = contextForCountry(WORKSPACE_CONTEXT, "KR", sceneProfile);
+  assert.ok(!withoutBodies.includes("[레퍼런스 본문:"));
+
+  const withBodies = contextForCountry(WORKSPACE_CONTEXT, "KR", {
+    ...sceneProfile,
+    reference_ids: ["kr-020", "kr-027"],
+  });
+  assert.ok(withBodies.includes("[레퍼런스 본문: kr-020]"));
+  assert.ok(withBodies.includes("[레퍼런스 본문: kr-027]"));
+});
+
+test("an oversized reference selection is trimmed instead of blowing the prompt", () => {
+  const ids = Object.keys(WORKSPACE_CONTEXT.referenceBodies.KR);
+  const documents = contextForCountry(WORKSPACE_CONTEXT, "KR", {
+    country: "KR",
+    reference_ids: ids,
+  });
+  const inlined = documents.match(/\[레퍼런스 본문: /g) ?? [];
+  assert.ok(inlined.length > 0);
+  assert.ok(inlined.length <= 5);
 });
 
 test("hosted context countries come from the packaged manifest", async () => {

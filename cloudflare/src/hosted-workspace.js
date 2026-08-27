@@ -4,6 +4,8 @@ const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const MAX_CANDIDATES = 200;
 const MAX_CONTEXT_PROFILES = 100;
+const MAX_REFERENCE_BODIES = 5;
+const MAX_REFERENCE_BODY_BYTES = 24_000;
 const MAX_HOSTED_ACCOUNTS = 100;
 const POSTING_SLOTS = new Set(["morning", "evening", "manual"]);
 export const REVIEW_TAGS = Object.freeze([
@@ -815,7 +817,7 @@ async function generateCandidates(env, contextRegistry, profile) {
   if (!env.AI || typeof env.AI.run !== "function") {
     throw new WorkspaceHttpError(503, "Cloudflare Workers AI 연결이 준비되지 않았습니다.");
   }
-  const contextDocuments = contextForCountry(contextRegistry, profile.country);
+  const contextDocuments = contextForCountry(contextRegistry, profile.country, profile);
   await claimGenerationWindow(env);
   const [sharedInstruction, account, learnedFeedback] = await Promise.all([
     loadSharedInstruction(env),
@@ -948,7 +950,7 @@ ${sharedInstruction || "추가 지침 없음"}
 ${learnedRules}`;
 }
 
-function contextForCountry(registry, country) {
+export function contextForCountry(registry, country, profile = null) {
   if (typeof registry === "string") return registry;
   const globalContext = typeof registry?.global === "string" ? registry.global : "";
   const countryContext = registry?.countries?.[country];
@@ -958,7 +960,40 @@ function contextForCountry(registry, country) {
       `${country} 국가 context 문서가 아직 등록되지 않았습니다. context manifest를 확장해 주세요.`,
     );
   }
-  return `${globalContext}\n\n${countryContext}`.trim();
+  const sections = [globalContext, countryContext];
+  const references = referenceBodiesForProfile(registry, country, profile);
+  if (references) sections.push(references);
+  return sections.join("\n\n").trim();
+}
+
+/**
+ * Only the reference records a persona names are inlined. The corpus is far larger than one prompt
+ * can carry, so an unbounded profile is trimmed rather than allowed to blow the context window.
+ */
+function referenceBodiesForProfile(registry, country, profile) {
+  const corpus = registry?.referenceBodies?.[country];
+  if (!corpus || !Array.isArray(profile?.reference_ids)) return "";
+  const sections = [];
+  let bytes = 0;
+  for (const id of profile.reference_ids) {
+    if (sections.length >= MAX_REFERENCE_BODIES) break;
+    const body = corpus[id];
+    if (typeof body !== "string" || !body.trim()) continue;
+    const section = `[레퍼런스 본문: ${id}]\n${body}`;
+    const size = utf8Length(section);
+    if (bytes + size > MAX_REFERENCE_BODY_BYTES) break;
+    bytes += size;
+    sections.push(section);
+  }
+  if (sections.length === 0) return "";
+  return `[선택한 레퍼런스 본문]
+문장 구조와 훅 전개 방식만 참고하고 문장이나 사실을 그대로 옮기지 마세요.
+
+${sections.join("\n\n")}`;
+}
+
+function utf8Length(text) {
+  return new TextEncoder().encode(text).length;
 }
 
 function configuredContextCountries(registry) {

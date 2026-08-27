@@ -247,8 +247,17 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
   account settings, profiles, candidates, and feedback must all use the same selected scope.
 - Keep the starter context canonical under `ads_booster/assets/context/` and generate the Worker
   module from it during the Cloudflare build instead of maintaining a second copy.
+- Keep `ORIGIN.md` as the source and verification record for every packaged context document.
+- Keep archive documents byte-identical, including frontmatter, and keep repository-owned operating
+  rules in `core/PIPELINE-SCOPE.md`, `references/KR/INDEX.md`, and `markets/*.md` rather than editing
+  archive documents.
+- Keep `references/KR/INDEX.md` (the scene index used by `profile.reference_ids`) distinct from
+  `references/KR/RESEARCH-INDEX.md` (the collected-record screening table).
 - Keep country document/profile membership in the context manifest. D1 may add account-scoped
   profiles, but a profile cannot generate for a country without reviewed packaged documents.
+- Keep whole-corpus injection out of the generation prompt. Reference bodies are selected by id and
+  bounded; a document set that must always be injected belongs in `documents` and under the build's
+  byte budget.
 - Store the selected profile snapshot on every hosted candidate; later profile edits must not change
   the candidate's generation provenance.
 - Keep the four-candidate morning/evening batch rule and repeated-feedback threshold in the hosted

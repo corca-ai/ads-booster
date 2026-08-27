@@ -811,10 +811,17 @@ a directory without `context/` no longer leaves the default candidate generator 
 The packaged documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are safe starter guidance,
 not a migration of team-owned persona knowledge. They keep a fresh install and hosted build runnable
 while the team replaces them with successful-account evidence. The context manifest owns country
-document and profile paths; adding a packaged country is a data change to the
-manifest/documents/profile JSON, not a Worker source edit. Custom account-scoped profiles live in
-D1. Generation fails with `409` when a selected country has no packaged documents rather than
-silently falling back to KR.
+document, asset, reference, and profile paths; adding a packaged country is a data change to the
+manifest/documents/profile JSON, not a Worker source edit. `ORIGIN.md` records provenance and
+verification status. Archive documents in `core/` and `references/KR/` stay byte-identical, including
+frontmatter, while repository-owned operating rules live in `core/PIPELINE-SCOPE.md`,
+`references/KR/INDEX.md`, and `markets/*.md`. `references/KR/INDEX.md` is the scene index used by
+`profile.reference_ids`; `references/KR/RESEARCH-INDEX.md` is the collected-record screening table.
+KR, JP, and TW contain collected and verified marketing documents; US, DE, FR, and BR remain
+unverified starter guidance and should be read as hypotheses. Country documents are injected in full
+under the 48,000-byte build budget, while reference bodies are selected by persona id and capped at
+five records and 24,000 bytes. Custom account-scoped profiles live in D1. Generation fails with
+`409` when a selected country has no packaged documents rather than silently falling back to KR.
 
 Hosted context endpoints are intentionally public with the rest of this workspace:
 
