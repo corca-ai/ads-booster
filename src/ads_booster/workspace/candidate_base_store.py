@@ -54,11 +54,13 @@ class CandidateBaseStore(WorkspaceRepositoryBase):
                     status,
                     now,
                     now,
+                    value.account_id,
                 ),
             )
         return CandidateRecord(
             workspace_id=value.workspace_id,
             candidate_id=candidate_id,
+            account_id=value.account_id,
             source=value.source,
             country=value.country,
             posting_slot=value.posting_slot,

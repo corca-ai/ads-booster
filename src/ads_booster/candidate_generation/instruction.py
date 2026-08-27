@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Final
 
 from ads_booster.workspace import (
     PERSONA_DOMAIN_LABELS,
+    CandidateAccountBrief,
     CandidateBackgroundSubject,
     CandidateHistoryEntry,
     CandidatePersonaDomain,
@@ -151,25 +152,69 @@ _RETRY: Final = """직전 응답은 형식 검증을 통과하지 못했습니�
 같은 요구사항으로 다시 만들되, 이번에는 JSON 배열만 정확한 형식으로 출력하세요."""
 
 
+_ACCOUNT_HEADER: Final = """[이 계정으로 씁니다]
+아래는 새로 만들 인물이 아니라 이미 운영 중인 계정입니다. 후보 {count}개 모두 이
+사람이 쓴 글이어야 합니다. 정체성을 새로 지어내지 말고, 소재만 서로 다르게 하세요.
+
+- 이름: {display_name} ({age}세, {region})
+- 직업: {occupation}
+- 컨셉: {concept}
+- 관심사: {interests}
+- 말투: {voice}
+- 생활 리듬: {life_rhythm}
+- 배경 취향: {background_subject} / {background_mood}
+
+규칙:
+1. persona_domain 은 {domain} 으로 고정합니다.
+2. 일정(trace_items)과 기기 시각은 이 사람의 생활 리듬에서 나와야 합니다.
+3. 배경 검색어는 이 사람의 배경 취향과 맞아야 합니다.
+4. 캡션의 화자는 이 사람이며, 말투 항목을 그대로 따릅니다."""
+
+
+def account_section(account: CandidateAccountBrief, *, count: int) -> str:
+    """Describe the account the batch is written as, in the terms generation must obey."""
+    return _ACCOUNT_HEADER.format(
+        count=count,
+        display_name=account.display_name,
+        age=account.age,
+        region=account.region,
+        occupation=account.occupation,
+        concept=account.concept,
+        interests=", ".join(account.interests),
+        voice=account.voice,
+        life_rhythm=account.life_rhythm,
+        background_subject=account.background_subject,
+        background_mood=account.background_mood,
+        domain=account.domain,
+    )
+
+
 def build_instruction(
     bundle: CandidateContextBundle,
     *,
     count: int,
     domains: tuple[CandidatePersonaDomain, ...] = (),
     history: tuple[CandidateHistoryEntry, ...] = (),
+    account: CandidateAccountBrief | None = None,
 ) -> str:
     """Assemble the single generation instruction from the loaded context documents.
 
     `domains` binds one candidate to one domain by position, and `history` shows the model
     what this workspace has already produced. Both are optional so a caller with no store
     behind it still gets a usable instruction.
+
+    `account` replaces the invent-a-person half of the job: when the batch is written for
+    an existing account, spreading it across domains would be the bug rather than the
+    feature, so the per-candidate domain assignment is dropped and the account's own domain
+    stands for the whole batch.
     """
     subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
     sections = [
         _ROLE.format(count=count),
         _RULES.format(count=count, subjects=subjects),
         _PERSONA,
-        *([_assignment_section(domains)] if domains else []),
+        *([account_section(account, count=count)] if account is not None else []),
+        *([_assignment_section(domains)] if domains and account is None else []),
         *([_history_section(history)] if history else []),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"

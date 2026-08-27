@@ -395,6 +395,44 @@ class CandidateHistoryEntry(FrozenModel):
     topic: str
 
 
+class CandidateAccountBrief(FrozenModel):
+    """An account flattened to what the generation instruction has to state.
+
+    Generation never needs the revision, the status, or the posting schedule, so it is
+    handed this instead of the record: the instruction is easier to read, and a change to
+    how accounts are stored does not reach into how they are described to the model.
+    """
+
+    display_name: str
+    age: int
+    region: str
+    occupation: str
+    concept: str
+    domain: CandidatePersonaDomain
+    interests: tuple[str, ...]
+    voice: str
+    life_rhythm: str
+    background_subject: CandidateBackgroundSubject
+    background_mood: str
+
+    @classmethod
+    def of(cls, record: MarketingAccountRecord) -> CandidateAccountBrief:
+        identity = record.identity
+        return cls(
+            display_name=identity.display_name,
+            age=identity.age,
+            region=identity.region,
+            occupation=identity.occupation,
+            concept=identity.concept,
+            domain=identity.domain,
+            interests=identity.interests,
+            voice=identity.voice,
+            life_rhythm=identity.life_rhythm,
+            background_subject=identity.taste.background_subject,
+            background_mood=identity.taste.background_mood,
+        )
+
+
 class CandidateImageInputs(FrozenModel):
     """Machine inputs the image stage needs to compose a lock-screen image.
 
@@ -449,6 +487,7 @@ class CandidateImageInputs(FrozenModel):
 
 
 class CandidateCreate(FrozenModel):
+    account_id: MarketingAccountId | None = None
     workspace_id: WorkspaceId
     source: CandidateSource
     country: CandidateCountry
@@ -469,6 +508,7 @@ class CandidateCreate(FrozenModel):
 class CandidateRecord(FrozenModel):
     workspace_id: WorkspaceId
     candidate_id: CandidateId
+    account_id: MarketingAccountId | None = None
     source: CandidateSource
     country: str
     posting_slot: CandidatePostingSlot

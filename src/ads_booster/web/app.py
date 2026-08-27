@@ -102,6 +102,7 @@ def create_app(
     app.include_router(
         CandidateRouter(
             CandidateWorkflow(store, active_generator, active_image_runner, image_review),
+            store,
             current_principal,
             home,
         ).build()

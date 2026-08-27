@@ -2088,7 +2088,11 @@
             body: JSON.stringify({ context_profile_id: profile?.profile_id ?? null }),
           }
         : { method: "POST" };
-      const created = await request("/api/candidates/generate", options);
+      // The account is the concept the batch is written as, so it travels with the request.
+      const generatePath = currentAccount
+        ? `/api/candidates/generate?account_id=${encodeURIComponent(currentAccount.account_id)}`
+        : "/api/candidates/generate";
+      const created = await request(generatePath, options);
       await loadCandidates();
       setNotice(autogenNotice(created));
     } catch (error) {

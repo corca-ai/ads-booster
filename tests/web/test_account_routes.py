@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from fastapi.testclient import TestClient
@@ -13,6 +14,27 @@ from ads_booster.workspace import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ads_booster.workspace import CandidateRecord, MarketingAccountRecord, WorkspaceId
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingGenerator:
+    """Stands in for generation so the test can see which account reached it."""
+
+    seen_accounts: list[MarketingAccountRecord | None] = field(default_factory=list)
+
+    def generate(
+        self,
+        workspace_id: WorkspaceId,
+        *,
+        run_context: str | None = None,
+        account: MarketingAccountRecord | None = None,
+    ) -> tuple[CandidateRecord, ...]:
+        del workspace_id, run_context
+        self.seen_accounts.append(account)
+        return ()
+
 
 _SCHEDULE: dict[str, Any] = {"language": "ko", "timezone": "Asia/Seoul"}
 _IDENTITY: dict[str, Any] = {
@@ -129,3 +151,50 @@ def test_accounts_require_an_authenticated_member(tmp_path: Path) -> None:
     )
 
     assert client.get("/api/accounts").status_code == 401
+
+
+def test_generation_is_written_as_the_chosen_account(tmp_path: Path) -> None:
+    """The account a batch is generated for reaches the generator, not just the URL."""
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace = store.create_workspace("Trace")
+    member = store.create_member(workspace.workspace.workspace_id, "Ada")
+    generator = RecordingGenerator()
+    client = TestClient(
+        create_app(tmp_path, session_secret=b"s" * 32, candidate_generator=generator),
+        base_url="https://test",
+    )
+    _login(client, workspace, member)
+    created = client.post(
+        "/api/accounts",
+        json={"country": "KR", "identity": _IDENTITY, "schedule": _SCHEDULE},
+    ).json()
+
+    response = client.post(
+        f"/api/candidates/generate?account_id={created['account_id']}",
+    )
+
+    assert response.status_code == 201
+    assert generator.seen_accounts[-1] is not None
+    assert generator.seen_accounts[-1].account_id == created["account_id"]
+    assert generator.seen_accounts[-1].identity.occupation == "병동 간호사"
+
+
+def test_generation_without_an_account_stays_workspace_wide(tmp_path: Path) -> None:
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace = store.create_workspace("Trace")
+    member = store.create_member(workspace.workspace.workspace_id, "Ada")
+    generator = RecordingGenerator()
+    client = TestClient(
+        create_app(tmp_path, session_secret=b"s" * 32, candidate_generator=generator),
+        base_url="https://test",
+    )
+    _login(client, workspace, member)
+
+    assert client.post("/api/candidates/generate").status_code == 201
+    assert generator.seen_accounts == [None]
+
+
+def test_generating_for_an_unknown_account_is_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    assert client.post("/api/candidates/generate?account_id=missing").status_code == 404

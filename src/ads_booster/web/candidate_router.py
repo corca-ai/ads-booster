@@ -33,11 +33,16 @@ from ads_booster.workspace import (
     CandidateRecord,
     CandidateSource,
     CandidateStateError,
+    MarketingAccountId,
+    MarketingAccountReader,
+    MarketingAccountRecord,
     RevisionConflictError,
     ScopedRecordNotFoundError,
+    WorkspaceId,
 )
 
 _CANDIDATE_NOT_FOUND: Final = "candidate not found"
+_ACCOUNT_NOT_FOUND: Final = "marketing account not found"
 _WRONG_IMAGE_STAGE: Final = "candidate is not caption approved"
 _NO_IMAGE_TO_REVIEW: Final = "candidate has no image awaiting review"
 _IMAGE_REVISION_CONFLICT: Final = "candidate revision conflict"
@@ -66,8 +71,22 @@ def _remove_artifacts(image_root: Path, candidate_id: CandidateId) -> None:
 @dataclass(frozen=True, slots=True)
 class CandidateRouter:
     workflow: CandidateWorkflow
+    accounts: MarketingAccountReader
     current_principal: CurrentPrincipal
     image_root: Path
+
+    def _account(
+        self,
+        workspace_id: WorkspaceId,
+        account_id: MarketingAccountId | None,
+    ) -> MarketingAccountRecord | None:
+        """Resolve the account a batch is written as, or nothing for a workspace-wide run."""
+        if account_id is None:
+            return None
+        try:
+            return self.accounts.get_account(workspace_id, account_id)
+        except ScopedRecordNotFoundError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, _ACCOUNT_NOT_FOUND) from error
 
     def build(self) -> APIRouter:
         router = APIRouter(prefix="/api/candidates", tags=["candidates"])
@@ -118,9 +137,13 @@ class CandidateRouter:
         )
         def generate_candidates(
             principal: Annotated[Principal, Depends(current_principal)],
+            account_id: MarketingAccountId | None = None,
         ) -> list[CandidateResponse]:
+            # Generating for an account is the normal path; the workspace-wide batch stays
+            # for a surface with no account chosen yet.
+            account = self._account(principal.workspace_id, account_id)
             try:
-                records = self.workflow.generate(principal.workspace_id)
+                records = self.workflow.generate(principal.workspace_id, account)
             except (CandidateContextMissingError, CandidateAuthRequiredError) as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, error.message) from error
             except (CandidateProviderError, CandidateFormatError) as error:

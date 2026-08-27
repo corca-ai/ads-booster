@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         CandidateId,
         CandidateImageAttachment,
         CandidateRecord,
+        MarketingAccountRecord,
         WorkspaceId,
     )
 
@@ -37,6 +38,7 @@ class CandidateGeneratorPort(Protocol):
         workspace_id: WorkspaceId,
         *,
         run_context: str | None = None,
+        account: MarketingAccountRecord | None = None,
     ) -> tuple[CandidateRecord, ...]: ...
 
 

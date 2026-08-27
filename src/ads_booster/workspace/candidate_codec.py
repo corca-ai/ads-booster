@@ -15,6 +15,7 @@ from ads_booster.workspace.models import (
     CandidateRecord,
     CandidateSource,
     CandidateStatus,
+    MarketingAccountId,
     WorkspaceId,
 )
 
@@ -46,6 +47,7 @@ type CandidateRow = tuple[
     int,
     float,
     float,
+    str | None,
 ]
 
 CANDIDATE_RECORD: Final = "candidate"
@@ -54,7 +56,7 @@ SELECT workspace_id, candidate_id, source, country, topic, persona_domain, capti
        refs_used_json, principles_applied_json, shooting_order, image_inputs_json, ai_verdict,
        image_path, image_sha256, agent_run_id, generation_provenance_json,
        background_provenance_json, posting_slot, status, review_note, revision, created_at,
-       updated_at
+       updated_at, account_id
 FROM candidates
 """
 INSERT_CANDIDATE: Final = """
@@ -63,8 +65,8 @@ INSERT INTO candidates (
     refs_used_json, principles_applied_json, shooting_order, image_inputs_json, ai_verdict,
     image_path, image_sha256, agent_run_id, generation_provenance_json,
     background_provenance_json, posting_slot, status, review_note, revision, created_at,
-    updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, NULL, 1, ?, ?)
+    updated_at, account_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, NULL, 1, ?, ?, ?)
 """
 NEWEST_FIRST: Final = " ORDER BY created_at DESC, candidate_id DESC"
 SELECT_STATUS: Final = "SELECT status FROM candidates WHERE workspace_id = ? AND candidate_id = ?"
@@ -147,4 +149,5 @@ def candidate_from_row(row: CandidateRow) -> CandidateRecord:
         revision=row[21],
         created_at=row[22],
         updated_at=row[23],
+        account_id=None if row[24] is None else MarketingAccountId(row[24]),
     )

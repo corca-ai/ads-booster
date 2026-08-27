@@ -27,12 +27,15 @@ from ads_booster.candidate_generation.instruction import (
 from ads_booster.candidate_generation.parsing import parse_candidate_drafts
 from ads_booster.providers.errors import ProviderError
 from ads_booster.workspace import (
+    CandidateAccountBrief,
     CandidateContextDocument,
     CandidateCreate,
     CandidateGenerationProvenance,
     CandidateHistoryEntry,
     CandidatePersonaDomain,
     CandidateSource,
+    MarketingAccountId,
+    MarketingAccountRecord,
 )
 
 if TYPE_CHECKING:
@@ -117,19 +120,35 @@ class ScriptCandidateGenerator:
         workspace_id: WorkspaceId,
         *,
         run_context: str | None = None,
+        account: MarketingAccountRecord | None = None,
     ) -> tuple[CandidateRecord, ...]:
+        """Write one batch, either for an account or for the workspace at large.
+
+        With an account the batch is that one person writing about different things, so
+        coverage stops choosing domains and the account's own domain applies to all of
+        them. Without one the previous behaviour stands: spread the batch across the
+        domains this workspace has covered least.
+        """
         del run_context
         bundle = self.context_source.load()
-        domains = assign_domains(
-            self.store.count_candidate_domains(workspace_id), self.count, self.shuffle
+        brief = None if account is None else CandidateAccountBrief.of(account)
+        domains = (
+            (brief.domain,) * self.count
+            if brief is not None
+            else assign_domains(
+                self.store.count_candidate_domains(workspace_id), self.count, self.shuffle
+            )
         )
         history = self.store.recent_candidate_history(workspace_id, self.history_limit)
-        instruction = build_instruction(bundle, count=self.count, domains=domains, history=history)
+        instruction = build_instruction(
+            bundle, count=self.count, domains=domains, history=history, account=brief
+        )
         provenance = self._provenance(bundle, instruction, domains)
+        account_id = None if account is None else account.account_id
         with self.models.open() as client:
             drafts = self._drafts(client, instruction, domains)
         return tuple(
-            self.store.create_candidate(self._create(workspace_id, draft, provenance))
+            self.store.create_candidate(self._create(workspace_id, draft, provenance, account_id))
             for draft in drafts
         )
 
@@ -195,8 +214,10 @@ class ScriptCandidateGenerator:
         workspace_id: WorkspaceId,
         draft: CandidateDraft,
         provenance: CandidateGenerationProvenance,
+        account_id: MarketingAccountId | None = None,
     ) -> CandidateCreate:
         return CandidateCreate(
+            account_id=account_id,
             workspace_id=workspace_id,
             source=CandidateSource.AUTO,
             country=draft.country,

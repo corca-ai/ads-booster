@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # noqa: SIZE_OK -- the two-stage candidate journey shares authenticated route fixtures
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -35,6 +35,7 @@ from ads_booster.workspace import (
     CandidateImageInputs,
     CandidateSource,
     CandidateStatus,
+    MarketingAccountRecord,
     ProvisionedMember,
     ProvisionedWorkspace,
     SqliteWorkspaceStore,
@@ -56,13 +57,17 @@ class FakeGenerator:
     store: SqliteWorkspaceStore | None = None
     failure: CandidateGenerationError | None = None
 
+    seen_accounts: list[MarketingAccountRecord | None] = field(default_factory=list)
+
     def generate(
         self,
         workspace_id: WorkspaceId,
         *,
         run_context: str | None = None,
+        account: MarketingAccountRecord | None = None,
     ) -> tuple[CandidateRecord, ...]:
         del run_context
+        self.seen_accounts.append(account)
         if self.failure is not None:
             raise self.failure
         assert self.store is not None
