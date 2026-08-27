@@ -100,6 +100,15 @@ class FakeExecutor:
         return TaskResult(status=TaskStatus.SUCCEEDED, output={"task_id": task.task_id})
 
 
+class UnknownSideEffectExecutor:
+    def execute(self, _task: MarketingTask) -> TaskResult:
+        failure_code = "native_appium_side_effect_unknown"
+        raise MarketingExecutionError(
+            failure_code,
+            unknown_side_effect=True,
+        )
+
+
 @dataclass(slots=True)  # noqa: MUTABLE_OK
 class FailingQueue:
     failure: str
@@ -198,6 +207,23 @@ def test_bridge_persists_before_ack_and_delivers_idempotent_callback(tmp_path: P
     assert queue.acks == [(("lease-1",), ())]
     assert [callback.callback_id for callback in callbacks.delivered] == ["task-1:completed"]
     assert inbox.pending_callbacks() == ()
+
+
+def test_bridge_delivers_unknown_side_effect_without_collapsing_it(tmp_path: Path) -> None:
+    task = _task()
+    callbacks = FakeCallbacks()
+    bridge = MarketingBridge(
+        queue=FakeQueue(
+            (QueueLease(message_id="message-1", lease_id="lease-1", attempts=1, task=task),)
+        ),
+        callbacks=callbacks,
+        inbox=MarketingInbox(tmp_path),
+        executor=UnknownSideEffectExecutor(),
+    )
+
+    assert bridge.tick()
+    assert callbacks.delivered[0].result.status is TaskStatus.UNKNOWN_SIDE_EFFECT
+    assert callbacks.delivered[0].result.failure_code == "native_appium_side_effect_unknown"
 
 
 def test_bridge_recovers_a_claimed_task_after_restart(tmp_path: Path) -> None:

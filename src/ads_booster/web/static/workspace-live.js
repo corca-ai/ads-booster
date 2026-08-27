@@ -483,7 +483,9 @@
         const confirmation = document.createElement("div");
         confirmation.className = "worker-revoke-confirm";
         const explanation = document.createElement("p");
-        explanation.textContent = `${worker.display_name}의 자격 증명을 폐기합니다. 이 Mac을 다시 쓰려면 새 코드로 등록해야 합니다.`;
+        explanation.textContent = worker.current_task_id
+          ? worker.display_name + "의 자격 증명을 폐기하고 현재 작업을 해제합니다. 콜백 반영 중이면 자격 증명 폐기가 거절되므로 Appium 결과를 먼저 확인하세요."
+          : worker.display_name + "의 자격 증명을 폐기합니다. 이 Mac을 다시 쓰려면 새 코드로 등록해야 합니다.";
         const confirm = document.createElement("button");
         confirm.className = "button button-secondary candidate-row__action--danger";
         confirm.type = "button";

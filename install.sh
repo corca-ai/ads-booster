@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 
 readonly PACKAGE_NAME="trace-appium-capture"
-readonly CLI_NAME="trace-ads"
+readonly CLI_NAME="trace-marketing"
 readonly REPOSITORY_URL="${TRACE_ADS_REPOSITORY:-https://github.com/corca-ai/ads-booster.git}"
 readonly DEFAULT_REF="${TRACE_ADS_REF:-main}"
 readonly PYTHON_VERSION="${TRACE_ADS_PYTHON:-3.14}"
@@ -15,32 +15,29 @@ readonly HOME_DIRECTORY="${HOME:?HOME is required}"
 
 bin_directory="${TRACE_ADS_BIN_DIR:-$HOME_DIRECTORY/.local/bin}"
 source_override="${TRACE_ADS_SOURCE:-}"
-workspace_name="${TRACE_AGENT_WORKSPACE_NAME:-}"
 ref="$DEFAULT_REF"
 ref_was_set=0
 dry_run=0
 shell_update=1
-workspace_service=0
-cloudflared_install=1
 resolved_source=""
 uv_path=""
 shell_rc=""
 
 die() {
-    printf 'trace-ads installer: %s\n' "$*" >&2
+    printf 'trace-marketing installer: %s\n' "$*" >&2
     exit 1
 }
 
 info() {
-    printf 'trace-ads installer: %s\n' "$*" >&2
+    printf 'trace-marketing installer: %s\n' "$*" >&2
 }
 
 print_help() {
     cat <<'EOF'
-Install trace-ads into a user-owned uv tool environment. This installer installs the
-CLI only; start the workspace later with `trace-agent workspace start`. Native capture
-prerequisites remain manual: Appium with XCUITest, Xcode Simulator, and a Trace_iOS
-Debug build installed as com.corca.Trace.
+Install the Trace Mac worker CLI into a user-owned uv tool environment. The hosted workspace
+continues to run on Cloudflare. Native capture prerequisites remain manual: an authenticated
+official Codex CLI, Appium with XCUITest, Xcode Simulator, and a Trace_iOS Debug build installed
+as com.corca.Trace.
 
 Usage:
   install.sh [options]
@@ -51,10 +48,6 @@ Options:
   --bin-dir <path>        User bin directory (default: ~/.local/bin).
   --dry-run               Print the install plan without changing the system.
   --no-shell-update       Do not append the bin directory to zsh/bash startup files.
-  --workspace-service     Also start the macOS launchd workspace service now.
-  --no-workspace-service  Keep the workspace service stopped (default).
-  --no-cloudflared-install Do not install cloudflared automatically when missing.
-  --workspace-name <name> Workspace name for first-time workspace setup.
   -h, --help              Show this help.
 
 Environment:
@@ -153,7 +146,7 @@ find_uv() {
 }
 
 print_plan() {
-    printf 'trace-ads installer (dry run)\n'
+    printf 'trace-marketing installer (dry run)\n'
     printf '  source: %s\n' "$resolved_source"
     printf '  python: %s\n' "$PYTHON_VERSION"
     printf '  bin directory: %s\n' "$bin_directory"
@@ -164,49 +157,13 @@ print_plan() {
     else
         printf '  shell PATH: unchanged\n'
     fi
-    if [[ "$workspace_service" == "1" ]]; then
-        printf '  workspace service: macOS launchd + cloudflared tunnel\n'
-        if [[ -n "$workspace_name" ]]; then
-            printf '  workspace name: %s\n' "$workspace_name"
-        else
-            printf '  workspace name: prompt on first macOS setup\n'
-        fi
-        if [[ "$cloudflared_install" == "1" ]]; then
-            printf '  cloudflared: install with Homebrew on macOS when missing\n'
-        else
-            printf '  cloudflared: automatic install disabled\n'
-        fi
-    else
-        printf '  workspace service: not started (run trace-agent workspace start)\n'
-    fi
+    printf '  Mac worker service: configure after enrollment with trace-marketing worker install-service\n'
 }
 
-ensure_cloudflared() {
-    if [[ "$workspace_service" != "1" || "$cloudflared_install" != "1" ]]; then
-        return
-    fi
-    if command -v cloudflared >/dev/null 2>&1; then
-        return
-    fi
-
-    case "$(uname -s)" in
-        Darwin)
-            if ! command -v brew >/dev/null 2>&1; then
-                die "cloudflared is missing; install Homebrew or use --no-workspace-service"
-            fi
-            info "cloudflared not found; installing it with Homebrew"
-            brew install cloudflared
-            command -v cloudflared >/dev/null 2>&1 || die "cloudflared installation failed"
-            ;;
-        *)
-            info "cloudflared auto-install is supported on macOS only; local fallback remains available"
-            ;;
-    esac
-}
 
 configure_shell_path() {
     local shell_name="${SHELL##*/}"
-    local marker="# trace-ads installer"
+    local marker="# trace-marketing installer"
     local escaped_bin_directory=""
     local path_line=""
 
@@ -243,15 +200,6 @@ while (($# > 0)); do
             source_override="${1#*=}"
             shift
             ;;
-        --workspace-name)
-            (($# >= 2)) || die "--workspace-name requires a value"
-            workspace_name="$2"
-            shift 2
-            ;;
-        --workspace-name=*)
-            workspace_name="${1#*=}"
-            shift
-            ;;
         --ref)
             (($# >= 2)) || die "--ref requires a value"
             ref="$2"
@@ -280,17 +228,8 @@ while (($# > 0)); do
             shell_update=0
             shift
             ;;
-        --no-workspace-service)
-            workspace_service=0
-            shift
-            ;;
-        --workspace-service)
-            workspace_service=1
-            shift
-            ;;
-        --no-cloudflared-install)
-            cloudflared_install=0
-            shift
+        --workspace-service|--no-workspace-service|--workspace-name|--workspace-name=*|--no-cloudflared-install)
+            die "$1 was removed; use trace-marketing worker enrollment and service commands"
             ;;
         -h|--help)
             print_help
@@ -323,38 +262,8 @@ export PATH="$bin_directory:$PATH"
 [[ -x "$bin_directory/$CLI_NAME" ]] || die "installation completed but $CLI_NAME was not created in $bin_directory"
 "$bin_directory/$CLI_NAME" --help >/dev/null || die "$CLI_NAME verification failed"
 configure_shell_path
-ensure_cloudflared
 
-if [[ "$workspace_service" == "1" && "$(uname -s)" == "Darwin" ]]; then
-    agent_home="${TRACE_AGENT_HOME:-$HOME_DIRECTORY/.trace-agent}"
-    if [[ ! -f "$agent_home/service.json" && -z "$workspace_name" ]]; then
-        if [[ -r /dev/tty ]]; then
-            read -r -p "Workspace name: " workspace_name < /dev/tty
-        else
-            die "first workspace setup needs --workspace-name or TRACE_AGENT_WORKSPACE_NAME"
-        fi
-    fi
-fi
-
-if [[ "$workspace_service" == "1" ]]; then
-    case "$(uname -s)" in
-        Darwin)
-            info "installing and starting the macOS workspace service with cloudflared"
-            service_args=(service install --tunnel cloudflared)
-            if [[ -n "$workspace_name" ]]; then
-                service_args+=(--workspace-name "$workspace_name")
-            fi
-            if ! "$bin_directory/trace-agent" "${service_args[@]}"; then
-                die "workspace service installation failed"
-            fi
-            ;;
-        *)
-            info "workspace service auto-start skipped: launchd is available only on macOS"
-            ;;
-    esac
-else
-    info "workspace service not started; run trace-agent workspace start when ready"
-fi
+info "Mac worker service not started; enroll first, then run trace-marketing worker install-service"
 
 printf '\nInstalled %s\n' "$CLI_NAME"
 printf '  executable: %s/%s\n' "$bin_directory" "$CLI_NAME"

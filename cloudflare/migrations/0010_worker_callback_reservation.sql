@@ -1,0 +1,7 @@
+ALTER TABLE hosted_workspace_capture_tasks ADD COLUMN callback_reservation_id TEXT;
+ALTER TABLE hosted_workspace_capture_tasks ADD COLUMN callback_reserved_at TEXT;
+ALTER TABLE hosted_workspace_capture_tasks ADD COLUMN callback_result_sha256 TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS hosted_workspace_capture_tasks_callback_reservation
+ON hosted_workspace_capture_tasks (callback_reservation_id)
+WHERE callback_reservation_id IS NOT NULL;

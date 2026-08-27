@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertHostedCallbackTransport,
   claimWorkerTasks,
   handleMacWorkerRequest,
   hasRegisteredBrokerWorker,
   heartbeatWorker,
+  markWorkerTaskExecuting,
   publicWorkerStatus,
+  reserveWorkerTaskCallback,
+  revokeWorker,
   workerOperationalStatus,
 } from "../src/mac-workers.js";
 
@@ -32,6 +36,10 @@ function task(overrides = {}) {
     lease_expires_at: null,
     lease_started_at: null,
     lease_accepted_at: null,
+    execution_started_at: null,
+    callback_reservation_id: null,
+    callback_reserved_at: null,
+    callback_result_sha256: null,
     attempt_count: 0,
     created_at: "2026-08-26T00:00:00.000Z",
     ...overrides,
@@ -74,6 +82,9 @@ class ClaimStatement {
   }
 
   async first() {
+    if (this.sql.includes("SELECT worker_id, execution_started_at")) {
+      return this.db.tasks.get(this.values[0]) ?? null;
+    }
     if (this.sql.includes("SELECT current_task_id FROM mac_workers")) {
       return this.db.workers.get(this.values[0]) ?? null;
     }
@@ -81,7 +92,8 @@ class ClaimStatement {
       const [workerId, now] = this.values;
       return [...this.db.tasks.values()].find((row) =>
         row.worker_id === workerId && row.dispatch_mode === "worker_broker" &&
-        row.state === "queued" && !row.callback_id && row.lease_expires_at > now
+        row.state === "queued" && !row.callback_id && !row.execution_started_at &&
+        row.lease_expires_at > now
       ) ?? null;
     }
     if (this.sql.includes("SELECT task_id FROM hosted_workspace_capture_tasks") &&
@@ -89,7 +101,7 @@ class ClaimStatement {
       const [now] = this.values;
       return [...this.db.tasks.values()].find((row) =>
         row.dispatch_mode === "worker_broker" && row.state === "queued" && !row.callback_id &&
-        (!row.worker_id || !row.lease_expires_at || row.lease_expires_at <= now)
+        !row.execution_started_at && (!row.worker_id || !row.lease_expires_at || row.lease_expires_at <= now)
       ) ?? null;
     }
     if (this.sql.includes("FROM hosted_workspace_capture_tasks") &&
@@ -109,13 +121,28 @@ class ClaimStatement {
   }
 
   async run() {
+    if (this.sql.includes("SET execution_started_at = ?")) {
+      const [startedAt, updatedAt, taskId, workerId, now] = this.values;
+      const row = this.db.tasks.get(taskId);
+      if (!row || row.worker_id !== workerId || row.dispatch_mode !== "worker_broker" ||
+          row.state !== "queued" || row.callback_id || row.execution_started_at ||
+          !row.lease_accepted_at || !row.lease_expires_at || row.lease_expires_at <= now) {
+        return { meta: { changes: 0 } };
+      }
+      Object.assign(row, {
+        execution_started_at: startedAt,
+        lease_expires_at: null,
+        updated_at: updatedAt,
+      });
+      return { meta: { changes: 1 } };
+    }
     if (this.sql.includes("SET worker_id = ?, lease_id = ?")) {
       const [workerId, leaseId, expiresAt, startedAt, updatedAt, taskId, now,
         ownerWorkerId, reservation] = this.values;
       const row = this.db.tasks.get(taskId);
       const owner = this.db.workers.get(ownerWorkerId);
       if (!row || row.dispatch_mode !== "worker_broker" || row.state !== "queued" ||
-          row.callback_id || (row.worker_id && row.lease_expires_at && row.lease_expires_at > now) ||
+          row.callback_id || row.execution_started_at || (row.worker_id && row.lease_expires_at && row.lease_expires_at > now) ||
           owner?.state !== "active" || owner.current_task_id !== reservation) {
         return { meta: { changes: 0 } };
       }
@@ -291,6 +318,150 @@ class HeartbeatStatement {
   }
 }
 
+class CallbackReservationDb {
+  constructor(taskRow) {
+    this.task = { ...taskRow };
+    this.worker = worker(taskRow.worker_id ?? "worker-1", { current_task_id: taskRow.task_id });
+  }
+
+  prepare(sql) {
+    const db = this;
+    return {
+      values: [],
+      bind(...values) { this.values = values; return this; },
+      async run() {
+        if (sql.includes("SET callback_reservation_id = ?")) {
+          const [reservationId, reservedAt, resultDigest, updatedAt, taskId, workerId, leaseId] = this.values;
+          if (db.task.task_id !== taskId || db.task.worker_id !== workerId ||
+              db.task.lease_id !== leaseId || db.task.dispatch_mode !== "worker_broker" ||
+              db.task.state !== "queued" || db.task.callback_id || !db.task.execution_started_at ||
+              db.task.callback_reservation_id) {
+            return { meta: { changes: 0 } };
+          }
+          Object.assign(db.task, {
+            callback_reservation_id: reservationId, callback_reserved_at: reservedAt,
+            callback_result_sha256: resultDigest, updated_at: updatedAt,
+          });
+          return { meta: { changes: 1 } };
+        }
+        if (sql.includes("UPDATE mac_workers SET state = 'revoked'")) {
+          if (db.task.callback_reservation_id && !db.task.callback_id) {
+            return { meta: { changes: 0 } };
+          }
+          Object.assign(db.worker, { state: "revoked", token_sha256: null, current_task_id: null });
+          return { meta: { changes: 1 } };
+        }
+        if (sql.includes("SET worker_id = NULL")) {
+          if (db.task.callback_reservation_id) return { meta: { changes: 0 } };
+          Object.assign(db.task, { worker_id: null, lease_id: null });
+          return { meta: { changes: 1 } };
+        }
+        throw new Error("unexpected callback reservation run SQL");
+      },
+      async first() {
+        if (sql.includes("SELECT current_task_id FROM mac_workers")) return db.worker;
+        if (sql.includes("SELECT worker_id, lease_id, state, callback_id")) return db.task;
+        throw new Error("unexpected callback reservation first SQL");
+      },
+    };
+  }
+
+  async batch(statements) {
+    return Promise.all(statements.map((statement) => statement.run()));
+  }
+}
+
+test("revocation and reassignment wins before a stale callback can reserve side effects", async () => {
+  const original = task({
+    worker_id: "worker-1",
+    lease_id: "lease-1",
+    execution_started_at: "2026-08-26T00:05:00.000Z",
+  });
+  const db = new CallbackReservationDb(original);
+  db.task.worker_id = "worker-2";
+  db.task.lease_id = "lease-2";
+  db.task.execution_started_at = "2026-08-26T00:06:00.000Z";
+
+  await assert.rejects(
+    reserveWorkerTaskCallback(
+      db, worker("worker-1"), original, "task-1:completed", "{\"status\":\"succeeded\"}",
+    ),
+    /worker no longer owns the callback lease/u,
+  );
+
+  assert.equal(db.task.callback_reservation_id, null);
+});
+
+test("a callback reservation wins before revocation can release the task", async () => {
+  const current = task({
+    worker_id: "worker-1",
+    lease_id: "lease-1",
+    execution_started_at: "2026-08-26T00:05:00.000Z",
+  });
+  const db = new CallbackReservationDb(current);
+
+  const reserved = await reserveWorkerTaskCallback(
+    db, worker("worker-1"), current, "task-1:completed", "{\"status\":\"succeeded\"}",
+  );
+  const releaseAllowed = db.task.callback_reservation_id === null;
+
+  assert.deepEqual(reserved, { duplicate: false, retry: false });
+  assert.equal(releaseAllowed, false);
+  assert.equal(db.task.worker_id, "worker-1");
+});
+
+test("a reserved callback rejects changed results and accepts an identical partial retry", async () => {
+  const current = task({
+    worker_id: "worker-1", lease_id: "lease-1",
+    execution_started_at: "2026-08-26T00:05:00.000Z",
+  });
+  const db = new CallbackReservationDb(current);
+  const owner = worker("worker-1");
+
+  await reserveWorkerTaskCallback(db, owner, current, "task-1:completed", "result-a");
+  await assert.rejects(
+    reserveWorkerTaskCallback(db, owner, current, "task-1:completed", "result-b"),
+    /callback lease or result/u,
+  );
+  const retry = await reserveWorkerTaskCallback(
+    db, owner, current, "task-1:completed", "result-a",
+  );
+
+  assert.deepEqual(retry, { duplicate: false, retry: true });
+});
+
+test("revocation defers credential invalidation until a reserved callback can retry", async () => {
+  const current = task({
+    worker_id: "worker-1", lease_id: "lease-1",
+    execution_started_at: "2026-08-26T00:05:00.000Z",
+  });
+  const db = new CallbackReservationDb(current);
+  const owner = worker("worker-1");
+  await reserveWorkerTaskCallback(db, owner, current, "task-1:completed", "result-a");
+
+  await assert.rejects(revokeWorker(db, "worker-1"), /callback application is in progress/u);
+  const retry = await reserveWorkerTaskCallback(
+    db, owner, current, "task-1:completed", "result-a",
+  );
+
+  assert.equal(db.worker.state, "active");
+  assert.deepEqual(retry, { duplicate: false, retry: true });
+});
+
+test("hosted callback transport cannot cross broker and legacy ownership", () => {
+  assert.throws(
+    () => assertHostedCallbackTransport(task({ dispatch_mode: "worker_broker" }), null),
+    /assigned worker callback/u,
+  );
+  assert.throws(
+    () => assertHostedCallbackTransport(task({ dispatch_mode: "legacy_queue" }), worker("worker-1")),
+    /does not accept a worker-scoped callback/u,
+  );
+  assert.doesNotThrow(
+    () => assertHostedCallbackTransport(task({ dispatch_mode: "worker_broker" }), worker("worker-1")),
+  );
+});
+
 test("a draining identity keeps new hosted captures on the broker transport", async () => {
   const rows = [worker("worker-draining", { state: "draining" })];
   const db = {
@@ -348,7 +519,7 @@ test("a degraded doctor result is visible without leaking its detailed checks", 
   assert.equal(status, "degraded");
 });
 
-test("heartbeat renews a live claim while leaving a one-hour execution cap", async () => {
+test("heartbeat renews pre-execution work only within the one-hour claim cap", async () => {
   const now = new Date("2026-08-26T00:10:00.000Z");
   const workerRow = worker("worker-1", { current_task_id: "task-1" });
   const db = new HeartbeatDb(workerRow, task({
@@ -413,6 +584,39 @@ test("an expired task lease can move to a replacement worker", async () => {
   assert.equal(leases.length, 1);
   assert.equal(db.tasks.get("task-1").worker_id, "worker-2");
   assert.equal(db.tasks.get("task-1").attempt_count, 2);
+});
+
+test("an execution barrier prevents automatic reassignment after Appium starts", async () => {
+  const startedAt = new Date("2026-08-26T00:05:00.000Z");
+  const owner = worker("worker-1", { current_task_id: "task-1" });
+  const replacement = worker("worker-2");
+  const db = new ClaimDb(
+    [owner, replacement],
+    [task({
+      worker_id: "worker-1",
+      lease_id: "lease-1",
+      lease_expires_at: "2026-08-26T00:10:00.000Z",
+      lease_started_at: "2026-08-26T00:00:00.000Z",
+      lease_accepted_at: "2026-08-26T00:00:30.000Z",
+      attempt_count: 1,
+    })],
+  );
+
+  const barrier = await markWorkerTaskExecuting(db, owner, "task-1", startedAt);
+  const duplicate = await markWorkerTaskExecuting(db, owner, "task-1", startedAt);
+  const leases = await claimWorkerTasks(
+    db,
+    replacement,
+    new Date("2026-08-26T02:00:00.000Z"),
+  );
+
+  assert.deepEqual(barrier, { accepted: true, duplicate: false });
+  assert.deepEqual(duplicate, { accepted: true, duplicate: true });
+  assert.equal(db.tasks.get("task-1").execution_started_at, startedAt.toISOString());
+  assert.equal(db.tasks.get("task-1").lease_expires_at, null);
+  assert.deepEqual(leases, []);
+  assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+  assert.equal(db.tasks.get("task-1").attempt_count, 1);
 });
 
 test("one worker identity cannot concurrently claim two tasks", async () => {

@@ -2,13 +2,11 @@
 
 Status: Implemented for the pre-publication pipeline; live Threads publication remains disabled.
 
-The control-plane, hosted/local simulation, legacy Queue bridge, D1 Mac-worker broker, automatic
-workspace-review relay, portable worker enrollment, and deployment configuration are implemented.
-The legacy bridge can opt
-into the installed candidate pipeline added by PR #22: provider generation writes reviewable
-candidates and the search-based image stage composes only caption-approved candidates. Real Threads
-publication and live metrics readback remain unverified. Simulation output must not be represented
-as a published post.
+The control-plane, hosted/local simulation, simulation-only legacy Queue bridge, D1 Mac-worker
+broker, automatic workspace-review relay, portable worker enrollment, and deployment configuration
+are implemented. Hosted native capture runs only through `trace-marketing worker run` or its
+LaunchAgent service. Real Threads publication and live metrics readback remain unverified.
+Simulation output must not be represented as a published post.
 
 One login-free hosted review workspace is also implemented at the Worker root. It is deliberately
 public, fixed to the configured public account, and separate from token-protected `/v1` operations.
@@ -52,7 +50,6 @@ content quality. The acceptance path is:
 | worker enrollment and secrets | one-time code, token hash in D1, separate mode-`0600` machine credential, secret-free LaunchAgent | any prepared Mac can join without a Cloudflare account/Queue token, person login, fixed UDID, or macOS Keychain binding |
 | artifacts | R2 in cloud, digest-backed local worker files | large payloads do not become workflow state and provenance remains inspectable |
 | channel behavior | task-kind handler/adapter | simulation and live Threads behavior share a contract without sharing credentials |
-| installed candidate journey | optional local executor selected at bridge startup | the default remains simulation; enabling the installed pipeline does not silently enable publication |
 | hosted review workspace | Worker static assets, Workers AI, D1 broker, Mac worker, and R2 | the public URL needs no access ID; context/model/account selection stays data-driven while native capture crosses an explicit replaceable worker boundary |
 | hosted context registry | packaged manifest plus account-scoped D1 profiles | countries extend through reviewed documents/profile data; team profiles change without Worker source edits; candidate snapshots retain provenance |
 
@@ -94,8 +91,7 @@ not rewrite already-generated evidence.
 - D1 contains account configuration and an opaque credential reference, never the credential value.
 - One named Durable Object owns each account's private learned memory.
 - An account may carry an opaque local `workspace_id`. The control plane forwards it to the selected worker but
-  never uses it to read another workspace; the installed candidate executor requires the referenced
-  workspace to already exist in the local Trace store.
+  never uses it to read another workspace. It is compatibility metadata and does not select a hidden production executor.
 - Shared instructions are immutable revisions. Every run records the selected revision and a digest
   of the resulting context snapshot in R2.
 - Legacy Queue and callback credentials are injected by a supervisor or external secret command.
@@ -103,9 +99,11 @@ not rewrite already-generated evidence.
   D1, and its plaintext value lives in a separate local mode-`0600` file. Neither path includes a
   credential in task payloads, callbacks, artifacts, ordinary logs, or LaunchAgent plist.
 - A callback is accepted only when task, run, account, and task kind all match the stored task.
-- A hosted capture callback additionally requires its assigned worker when brokered, candidate
-  revision, callback ID, PNG type, native provenance, byte limit, and SHA-256 to match. Changed,
-  revoked, or stale callbacks cannot advance the candidate.
+- A brokered hosted callback validates its payload and then atomically reserves its callback ID and normalized result digest against the current worker
+  and lease before any R2 or candidate mutation. Revocation/reassignment wins if it commits first;
+  once reserved, changed content is rejected and revocation waits for an identical retry to complete.
+  Candidate revision, callback ID, PNG type, native provenance, byte limit, and SHA-256 must also
+  match, so changed or stale callbacks cannot advance the candidate.
 
 ## Run and failure states
 
@@ -119,13 +117,10 @@ scheduled -> context_snapshot -> research -> planning -> candidate_generation
 -> published -> observing -> evaluated -> memory_committed -> completed
 ```
 
-The first approval selects caption-approved candidate IDs. With the installed candidate executor,
-the operator reviews all captions in the existing Trace workspace; the bridge then sends one durable
-approval containing the accepted IDs, or rejects the run if none were accepted. The image stage
-moves those candidates to image review, and the second approval is sent automatically only after the
-operator approves every selected image in that workspace. Rejecting every caption terminates the
-run at `rejected`. Rejecting an image returns that candidate to the composition stage and emits no
-publication decision; an explicit control-plane rejection at either Workflow gate terminates the run.
+The Workflow contract keeps two human gates around capture and publication, while the current
+login-free hosted workspace implements caption approval followed by native image review. Hosted
+image approval ends at `submitted`; no installed bridge converts it into a publication decision. An
+explicit control-plane rejection at either Workflow gate terminates that separate run.
 Verified failures terminate at `failed`. If a publication request times out after it may have reached
 a channel, the run terminates at `unknown_side_effect`; it is not retried until an operator reads
 back channel state.
@@ -161,10 +156,12 @@ Hosted broker delivery reuses the same local durability contract with a differen
 2. doctor status is refreshed on claim and degraded workers receive no task;
 3. a conditional D1 update gives exactly one worker an initial two-minute lease;
 4. successful local inbox insertion extends the accepted lease to fifteen minutes;
-5. a dedicated heartbeat continues while Appium executes synchronously and renews the lease for at
-   most one hour from its original claim;
-6. retry or revocation clears ownership, and expiry lets a different healthy worker reclaim it; and
-7. callback acceptance checks the current D1 owner before the existing candidate/digest boundary.
+5. planning and other pre-side-effect work keeps that lease renewable for at most one hour;
+6. immediately before Appium, the worker records `execution_started_at` in D1, removes lease expiry,
+   and only then writes its local execution marker;
+7. an expired pre-execution lease may move to a healthy worker, but post-barrier work stays with its
+   original owner until a callback or explicit operator revocation releases it; and
+8. callback acceptance checks the current D1 owner before the existing candidate/digest boundary.
 
 The public `/api/workers/status` projection contains only team-visible aliases, pools, aggregate
 counts, and ready/busy/degraded/offline states. One-time code creation, full inventory, state changes,
@@ -199,29 +196,22 @@ task callback timeouts transition the run to `failed`. Observation settings are 
 since publication; the Workflow converts them to relative sleeps so `5,10,15` samples at minutes 5,
 10, and 15 rather than 5, 15, and 30.
 
-## Installed candidate executor
+## Installed Mac executor
 
-`trace-marketing bridge --executor candidate-pipeline`, or the supervisor-friendly `trace-marketing
-bridge-configure` plus `trace-marketing bridge-service`, replaces only candidate generation and image
-capture task handlers. Research, publication, and metrics remain explicitly simulated. The executor:
+`trace-marketing worker run` and the LaunchAgent-only `trace-marketing worker service` are the only
+installed production composition for hosted native capture. They claim D1 leases, invoke the official
+Codex CLI for a schema-constrained wallpaper plan, cross the deterministic Appium boundary, and
+deliver a provenance-checked callback. `trace-marketing bridge` and `bridge-service` remain
+simulation-only compatibility commands; they never invoke the former custom candidate agent, Codex
+OAuth/Responses stack, or native capture.
 
-1. requires `workspace_id` in the account configuration;
-2. adds the versioned shared instruction, account-private memory, and research output to the provider
-   generation request;
-3. writes generated candidates into the existing workspace candidate store;
-4. accepts only candidate IDs selected at the first approval gate;
-5. uses PR #22's provenance-checked search background and deterministic image composer; and
-6. refuses publication unless every selected candidate has reached `submitted` through the existing
-   image review gate.
-
-Tasks carrying `pipeline=hosted_workspace_capture_v1` are routed ahead of the legacy local-candidate
-handler. `trace-marketing worker run` composes only this hosted executor behind the D1 broker; it
-does not poll or deliver the unrelated Workflow review contract. The executor discovers a booted or
-available iPhone Simulator on each compatible Mac,
-builds a typed marketing context from the immutable hosted snapshot, runs the production Appium
-capture/composition path, and places the final PNG plus digest in the durable callback outbox. A
-fixed UDID is optional, not part of enrollment. The legacy local candidate image handler remains an
-offline fixture path for its existing workspace journey and is never represented as native.
+Tasks carrying `pipeline=hosted_workspace_capture_v1` preserve the approved caption, hypothesis,
+validated textual reference IDs, creative direction, background intent, the full topic, complete
+profile strings and Trace items in the typed Codex
+input. They discover a booted or available iPhone
+Simulator on each compatible Mac, build a typed marketing context from the immutable hosted
+snapshot, run the production Codex-to-Appium capture path, and place the final PNG plus digest in
+the durable callback outbox. A fixed UDID is optional, not part of enrollment.
 
 ## First operating target
 
@@ -232,13 +222,12 @@ The first operating target after credentials and Cloudflare resources exist is:
   one prepared Mac run the displayed enroll and service commands for the generated
   `com.corca.trace-marketing-worker` LaunchAgent;
 - open the login-free `workspace.borca.ai` workbench and generate four context-grounded candidates;
-- approve a caption, observe D1 lease → native Mac/Appium → verified R2 PNG, and approve the image;
+- approve a caption, observe D1 lease → execution barrier → native Mac/Appium → verified R2 PNG, and approve the image;
 - reach `submitted` while confirming no Threads or other publication call occurs; and
 - inspect the D1 capture correlation row and R2 digest metadata.
 
-The D1 broker worker is the primary hosted native-capture path after enrollment. Legacy HTTP Queue
-pull remains required for a control-plane account that opts into a local `workspace_id` and as a
-pre-enrollment rollback path. A broker worker may run on any prepared Mac; its generated LaunchAgent
+The D1 broker worker is the only installed hosted native-capture path after enrollment. Legacy HTTP
+Queue pull remains a simulation-only compatibility path and does not invoke Codex or Appium. A broker worker may run on any prepared Mac; its generated LaunchAgent
 owns restart and its separate machine credential does not grant Cloudflare account or Queue access.
 
 Enabling real Threads publication is a separate target because platform capability and permission

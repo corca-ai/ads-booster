@@ -41,11 +41,15 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       const worker = await requireWorker(request, env.DB);
       return Response.json(await acknowledgeWorkerLeases(env.DB, worker, await readJson(request)));
     }
+    if (request.method === "POST" && url.pathname === "/v1/workers/tasks/executing") {
+      const worker = await requireWorker(request, env.DB);
+      const body = await readJson(request);
+      return Response.json(await markWorkerTaskExecuting(env.DB, worker, body.task_id));
+    }
     if (request.method === "POST" && url.pathname === "/v1/workers/task-callbacks") {
       const worker = await requireWorker(request, env.DB);
       const callback = await readJson(request, MAX_WORKER_CALLBACK_BYTES);
-      await assertWorkerOwnsTask(env.DB, worker, callback.task_id);
-      const result = await receiveTaskCallback(callback);
+      const result = await receiveTaskCallback(callback, { worker_id: worker.worker_id });
       await env.DB.batch([
         env.DB.prepare(
           `UPDATE mac_workers SET current_task_id = NULL, updated_at = ?
@@ -139,7 +143,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
     `SELECT task_id, task_json, lease_id, attempt_count
      FROM hosted_workspace_capture_tasks
      WHERE worker_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
-       AND callback_id IS NULL AND lease_expires_at > ?
+       AND callback_id IS NULL AND execution_started_at IS NULL AND lease_expires_at > ?
      ORDER BY created_at LIMIT 1`,
   ).bind(worker.worker_id, now.toISOString()).first();
   if (current) return [leaseResponse(current)];
@@ -155,6 +159,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
     const task = await db.prepare(
       `SELECT task_id FROM hosted_workspace_capture_tasks
        WHERE dispatch_mode = 'worker_broker' AND state = 'queued' AND callback_id IS NULL
+         AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
        ORDER BY created_at LIMIT 1`,
     ).bind(now.toISOString()).first();
@@ -171,6 +176,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
            attempt_count = attempt_count + 1, updated_at = ?
        WHERE task_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
          AND callback_id IS NULL
+         AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND EXISTS (SELECT 1 FROM mac_workers
                      WHERE worker_id = ? AND state = 'active' AND current_task_id = ?)`,
@@ -341,8 +347,8 @@ export async function heartbeatWorker(db, worker, body, clock = new Date()) {
     db.prepare(
       `UPDATE hosted_workspace_capture_tasks SET lease_expires_at = ?, updated_at = ?
        WHERE worker_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
-         AND callback_id IS NULL AND lease_started_at IS NOT NULL
-         AND lease_started_at > ?`,
+         AND callback_id IS NULL AND execution_started_at IS NULL
+         AND lease_started_at IS NOT NULL AND lease_started_at > ?`,
     ).bind(renewedUntil, now, worker.worker_id, maximumStartedAt),
   ]);
   if (updated.meta.changes !== 1) throw new WorkerHttpError(401, "worker was revoked");
@@ -362,7 +368,8 @@ async function acknowledgeWorkerLeases(db, worker, body) {
       `UPDATE hosted_workspace_capture_tasks
        SET lease_accepted_at = ?, lease_expires_at = ?, updated_at = ?
        WHERE lease_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
-         AND state = 'queued' AND callback_id IS NULL AND lease_expires_at > ?`,
+         AND state = 'queued' AND callback_id IS NULL
+         AND execution_started_at IS NULL AND lease_expires_at > ?`,
     ).bind(
       now.toISOString(),
       new Date(now.getTime() + ACCEPTED_LEASE_SECONDS * 1000).toISOString(),
@@ -377,13 +384,14 @@ async function acknowledgeWorkerLeases(db, worker, body) {
     const task = await db.prepare(
       `SELECT task_id FROM hosted_workspace_capture_tasks
        WHERE lease_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
-         AND state = 'queued' AND callback_id IS NULL`,
+         AND state = 'queued' AND callback_id IS NULL AND execution_started_at IS NULL`,
     ).bind(leaseId, worker.worker_id).first();
     if (!task) continue;
     const result = await db.prepare(
       `UPDATE hosted_workspace_capture_tasks
        SET worker_id = NULL, lease_id = NULL, lease_expires_at = NULL,
-           lease_started_at = NULL, lease_accepted_at = NULL, updated_at = ?
+           lease_started_at = NULL, lease_accepted_at = NULL, execution_started_at = NULL,
+           updated_at = ?
        WHERE task_id = ? AND lease_id = ? AND worker_id = ? AND state = 'queued'`,
     ).bind(now.toISOString(), task.task_id, leaseId, worker.worker_id).run();
     if (result.meta.changes === 1) {
@@ -400,20 +408,80 @@ async function acknowledgeWorkerLeases(db, worker, body) {
   return { accepted, retried };
 }
 
-async function assertWorkerOwnsTask(db, worker, taskId) {
-  if (typeof taskId !== "string" || !taskId) {
+export async function markWorkerTaskExecuting(db, worker, taskId, clock = new Date()) {
+  if (typeof taskId !== "string" || !taskId || taskId.length > 128) {
     throw new WorkerHttpError(400, "task_id is required");
   }
-  const task = await db.prepare(
-    `SELECT worker_id, dispatch_mode, state, callback_id
-     FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
+  const now = clock.toISOString();
+  const updated = await db.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET execution_started_at = ?, lease_expires_at = NULL, updated_at = ?
+     WHERE task_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
+       AND state = 'queued' AND callback_id IS NULL AND execution_started_at IS NULL
+       AND lease_accepted_at IS NOT NULL AND lease_expires_at > ?`,
+  ).bind(now, now, taskId, worker.worker_id, now).run();
+  if (updated.meta.changes === 1) return { accepted: true, duplicate: false };
+  const existing = await db.prepare(
+    `SELECT worker_id, execution_started_at FROM hosted_workspace_capture_tasks
+     WHERE task_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
+       AND callback_id IS NULL`,
   ).bind(taskId).first();
-  if (!task) throw new WorkerHttpError(404, "task not found");
-  if (task.dispatch_mode !== "worker_broker" || task.worker_id !== worker.worker_id) {
-    throw new WorkerHttpError(409, "worker does not own this task");
+  if (existing?.worker_id === worker.worker_id && existing.execution_started_at) {
+    return { accepted: true, duplicate: true };
   }
-  if (task.state !== "queued" && !task.callback_id) {
-    throw new WorkerHttpError(409, "task is not accepting a callback");
+  throw new WorkerHttpError(409, "task is not ready for native execution");
+}
+
+export async function reserveWorkerTaskCallback(
+  db,
+  worker,
+  task,
+  callbackId,
+  resultJson,
+  clock = new Date(),
+) {
+  if (typeof callbackId !== "string" || !callbackId || !task?.lease_id) {
+    throw new WorkerHttpError(409, "worker callback has no current lease");
+  }
+  const now = clock.toISOString();
+  const resultDigest = await sha256(resultJson);
+  const reserved = await db.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET callback_reservation_id = ?, callback_reserved_at = ?,
+         callback_result_sha256 = ?, updated_at = ?
+     WHERE task_id = ? AND worker_id = ? AND lease_id = ?
+       AND dispatch_mode = 'worker_broker' AND state = 'queued'
+       AND callback_id IS NULL AND execution_started_at IS NOT NULL
+       AND callback_reservation_id IS NULL`,
+  ).bind(
+    callbackId, now, resultDigest, now, task.task_id, worker.worker_id, task.lease_id,
+  ).run();
+  if (reserved.meta.changes === 1) return { duplicate: false, retry: false };
+  const current = await db.prepare(
+    `SELECT worker_id, lease_id, state, callback_id, result_json,
+            callback_reservation_id, callback_result_sha256
+     FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
+  ).bind(task.task_id).first();
+  if (current?.callback_id === callbackId && current.result_json === resultJson) {
+    return { duplicate: true, retry: false };
+  }
+  if (
+    current?.worker_id === worker.worker_id && current.lease_id === task.lease_id &&
+    current.state === "queued" && !current.callback_id &&
+    current.callback_reservation_id === callbackId &&
+    current.callback_result_sha256 === resultDigest
+  ) {
+    return { duplicate: false, retry: true };
+  }
+  throw new WorkerHttpError(409, "worker no longer owns the callback lease or result");
+}
+
+export function assertHostedCallbackTransport(task, worker) {
+  if (task.dispatch_mode === "worker_broker" && !worker) {
+    throw new WorkerHttpError(409, "broker task requires its assigned worker callback");
+  }
+  if (task.dispatch_mode !== "worker_broker" && worker) {
+    throw new WorkerHttpError(409, "legacy task does not accept a worker-scoped callback");
   }
 }
 
@@ -425,7 +493,8 @@ async function clearStaleWorkerAssignment(db, workerId, now) {
   const task = await db.prepare(
     `SELECT task_id FROM hosted_workspace_capture_tasks
      WHERE task_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
-       AND state = 'queued' AND callback_id IS NULL AND lease_expires_at > ?`,
+       AND state = 'queued' AND callback_id IS NULL
+       AND (execution_started_at IS NOT NULL OR lease_expires_at > ?)`,
   ).bind(worker.current_task_id, workerId, now.toISOString()).first();
   if (task) return;
   await db.prepare(
@@ -462,26 +531,40 @@ async function setWorkerState(db, workerId, body) {
   return { worker_id: workerId, state };
 }
 
-async function revokeWorker(db, workerId) {
+export async function revokeWorker(db, workerId) {
   const now = new Date().toISOString();
   const worker = await db.prepare(
     "SELECT current_task_id FROM mac_workers WHERE worker_id = ? AND state != 'revoked'",
   ).bind(workerId).first();
   if (!worker) throw new WorkerHttpError(404, "worker not found");
-  await db.batch([
+  const [revoked, released] = await db.batch([
     db.prepare(
       `UPDATE mac_workers SET state = 'revoked', token_sha256 = NULL,
-       current_task_id = NULL, updated_at = ? WHERE worker_id = ? AND state != 'revoked'`,
-    ).bind(now, workerId),
+       current_task_id = NULL, updated_at = ? WHERE worker_id = ? AND state != 'revoked'
+       AND NOT EXISTS (
+         SELECT 1 FROM hosted_workspace_capture_tasks
+         WHERE worker_id = ? AND callback_reservation_id IS NOT NULL AND callback_id IS NULL
+       )`,
+    ).bind(now, workerId, workerId),
     db.prepare(
       `UPDATE hosted_workspace_capture_tasks
        SET worker_id = NULL, lease_id = NULL, lease_expires_at = NULL,
-           lease_started_at = NULL, lease_accepted_at = NULL, updated_at = ?
+           lease_started_at = NULL, lease_accepted_at = NULL, execution_started_at = NULL,
+           updated_at = ?
        WHERE worker_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
-         AND callback_id IS NULL`,
+         AND callback_id IS NULL AND callback_reservation_id IS NULL`,
     ).bind(now, workerId),
   ]);
-  return { worker_id: workerId, state: "revoked", released_task_id: worker.current_task_id ?? null };
+  if (revoked.meta.changes !== 1) {
+    throw new WorkerHttpError(409, "callback application is in progress; retry revocation later");
+  }
+  const releasedTaskId = released.meta.changes === 1 ? worker.current_task_id ?? null : null;
+  return {
+    worker_id: workerId,
+    state: "revoked",
+    released_task_id: releasedTaskId,
+    retained_task_id: releasedTaskId ? null : worker.current_task_id ?? null,
+  };
 }
 
 function leaseResponse(row) {
