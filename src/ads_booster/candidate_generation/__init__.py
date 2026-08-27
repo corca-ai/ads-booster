@@ -12,6 +12,7 @@ from ads_booster.candidate_generation.agent_image_runner import (
 )
 from ads_booster.candidate_generation.context_source import (
     CONTEXT_DIR_ENVIRONMENT,
+    REQUIRED_DOCUMENTS,
     CandidateContextSource,
     default_context_directory,
 )
@@ -27,11 +28,24 @@ from ads_booster.candidate_generation.factory import (
     ProductionCandidateModels,
     build_candidate_generator,
     build_candidate_image_runner,
+    build_script_candidate_generator,
+)
+from ads_booster.candidate_generation.instruction import (
+    SYSTEM_INSTRUCTION,
+    build_instruction,
+    build_retry_instruction,
 )
 from ads_booster.candidate_generation.models import (
     CandidateContextBundle,
     CandidateDocument,
     CandidateDraft,
+)
+from ads_booster.candidate_generation.parsing import parse_candidate_drafts, strip_json_fence
+from ads_booster.candidate_generation.script_generator import (
+    CandidateWriter,
+    ScriptCandidateGenerator,
+    assign_domains,
+    default_domain_shuffle,
 )
 from ads_booster.candidate_generation.workflow import (
     CandidateReviewDecision,
@@ -40,6 +54,8 @@ from ads_booster.candidate_generation.workflow import (
 
 __all__ = [
     "CONTEXT_DIR_ENVIRONMENT",
+    "REQUIRED_DOCUMENTS",
+    "SYSTEM_INSTRUCTION",
     "CandidateAgent",
     "CandidateAgentPort",
     "CandidateAuthRequiredError",
@@ -60,8 +76,17 @@ __all__ = [
     "CandidateProviderError",
     "CandidateReviewDecision",
     "CandidateWorkflow",
+    "CandidateWriter",
     "ProductionCandidateModels",
+    "ScriptCandidateGenerator",
+    "assign_domains",
     "build_candidate_generator",
     "build_candidate_image_runner",
+    "build_instruction",
+    "build_retry_instruction",
+    "build_script_candidate_generator",
     "default_context_directory",
+    "default_domain_shuffle",
+    "parse_candidate_drafts",
+    "strip_json_fence",
 ]

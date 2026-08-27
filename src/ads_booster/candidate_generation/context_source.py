@@ -13,6 +13,18 @@ CONTEXT_DIR_ENVIRONMENT: Final = "TRACE_AGENT_CONTEXT_DIR"
 CONTEXT_DIRECTORY_NAME: Final = "context"
 _MARKDOWN_PATTERN: Final = "*.md"
 _READ_ERRORS: Final = (OSError, UnicodeDecodeError)
+# The documents the single-call script engine assembles, in the order it sends them. The
+# whole corpus cannot go into one instruction — the KR reference folder alone is dozens of
+# files — so that engine names the six it reasons from and fails loudly if one is absent.
+# The tool-loop connector leaves this empty and discovers every readable document instead.
+REQUIRED_DOCUMENTS: Final = (
+    "core/PRINCIPLES-GLOBAL.md",
+    "core/PRINCIPLES-KR.md",
+    "core/ELEMENTS-KR.md",
+    "core/VOICE-KR.md",
+    "core/FACTS.md",
+    "references/KR/INDEX.md",
+)
 
 
 def default_context_directory(workspace: Path) -> Path:
@@ -26,16 +38,26 @@ def default_context_directory(workspace: Path) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class CandidateContextSource:
-    """Discovers the workspace's readable marketing context documents."""
+    """Reads the workspace's marketing context documents.
+
+    With `required` set, exactly those relative paths are read, in that order, and any one
+    of them missing fails the load. With `required` empty, every readable markdown document
+    under the directory is discovered instead.
+    """
 
     directory: Path
+    required: tuple[str, ...] = ()
 
     def load(self) -> CandidateContextBundle:
         if not self.directory.is_dir():
             raise CandidateContextMissingError(self.directory)
         documents: list[CandidateDocument] = []
         unreadable: list[str] = []
-        paths = sorted(self.directory.rglob(_MARKDOWN_PATTERN))
+        paths = (
+            [self.directory / relative_path for relative_path in self.required]
+            if self.required
+            else sorted(self.directory.rglob(_MARKDOWN_PATTERN))
+        )
         for path in paths:
             relative_path = path.relative_to(self.directory).as_posix()
             text = None if path.is_symlink() or not path.is_file() else _read(path)

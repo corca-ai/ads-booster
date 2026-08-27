@@ -15,8 +15,8 @@ from ads_booster.candidate_generation import (
     CandidateGeneratorPort,
     CandidateImageRunnerPort,
     CandidateWorkflow,
-    build_candidate_generator,
     build_candidate_image_runner,
+    build_script_candidate_generator,
 )
 from ads_booster.config.settings import AgentSettings
 from ads_booster.service.state import ServiceStateStore
@@ -68,8 +68,12 @@ def create_app(
     )
     agent_runs = AgentRunStore(home / "core-agent")
     _ = agent_runs.recover_interrupted(at=clock())
+    # The single-call script engine owns caption generation: it carries the Korean
+    # instruction rules the team writes candidates against, and the reviewer screens are
+    # built around what it records. `build_candidate_generator` still composes the
+    # Agent-kernel connector path for callers that want the tool loop; it is not the default.
     active_generator = (
-        build_candidate_generator(settings, home, store)
+        build_script_candidate_generator(settings, store)
         if candidate_generator is None
         else candidate_generator
     )

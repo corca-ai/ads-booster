@@ -18,8 +18,14 @@ from ads_booster.candidate_generation.agent_image_runner import (
     CandidateImageStore,
 )
 from ads_booster.candidate_generation.context_source import (
+    REQUIRED_DOCUMENTS,
     CandidateContextSource,
     default_context_directory,
+)
+from ads_booster.candidate_generation.instruction import SYSTEM_INSTRUCTION
+from ads_booster.candidate_generation.script_generator import (
+    CandidateWriter,
+    ScriptCandidateGenerator,
 )
 from ads_booster.connectors.trace.v1.candidates import TraceCandidateConnector
 from ads_booster.connectors.trace.v1.composition import (
@@ -44,19 +50,44 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ProductionCandidateModels:
-    """Opens one provider client per generation run, using the host OAuth credential."""
+    """Opens one provider client per generation run, using the host OAuth credential.
+
+    `instructions` overrides the client's default system prompt. The Agent-kernel path
+    leaves it unset and keeps the tool-using agent prompt; the single-call script engine
+    supplies its own, because a run with no tools has nothing to say about tool policy.
+    """
 
     settings: AgentSettings
+    instructions: str | None = None
 
     @contextmanager
     def open(self) -> Generator[ModelClient]:
         with create_http_client(read_timeout=self.settings.candidate_timeout_seconds) as http:
-            yield CodexResponsesClient(
+            client = CodexResponsesClient(
                 http=http,
                 oauth=CodexOAuth(http=http, store=AuthStore.default()),
                 model=self.settings.model,
                 reasoning_effort=self.settings.reasoning_effort,
             )
+            if self.instructions is not None:
+                client.instructions = self.instructions
+            yield client
+
+
+def build_script_candidate_generator(
+    settings: AgentSettings,
+    store: CandidateWriter,
+) -> ScriptCandidateGenerator:
+    """Compose the single-call generation engine from settings and the context directory."""
+    return ScriptCandidateGenerator(
+        store=store,
+        models=ProductionCandidateModels(settings, instructions=SYSTEM_INSTRUCTION),
+        context_source=CandidateContextSource(
+            default_context_directory(settings.workspace),
+            required=REQUIRED_DOCUMENTS,
+        ),
+        model=settings.model,
+    )
 
 
 def build_candidate_generator(

@@ -9,6 +9,7 @@ from ads_booster.workspace import (
     CandidateCountry,
     CandidateHypothesis,
     CandidateImageInputs,
+    CandidatePersonaDomain,
     CandidatePostingSlot,
     CandidatePrinciple,
     CandidateReference,
@@ -22,11 +23,20 @@ class GenerationModel(BaseModel):
 
 
 class CandidateDraft(GenerationModel):
-    """One model-authored candidate accepted by the Trace connector tool schema."""
+    """One model-authored candidate, from either generator.
+
+    The script engine binds `persona_domain` to the coverage assignment it made before the
+    call and leaves `posting_slot` at its default; the Trace connector chooses the slot from
+    its context and leaves the domain unset. Both fields therefore carry a default so one
+    draft type can serve both paths.
+    """
 
     topic: CandidateTopic
     country: CandidateCountry
-    posting_slot: CandidatePostingSlot
+    posting_slot: CandidatePostingSlot = CandidatePostingSlot.MANUAL
+    # Assigned by the caller before the call, not chosen by the model: coverage only means
+    # something if the label comes from the fixed vocabulary the counts are kept over.
+    persona_domain: CandidatePersonaDomain | None = None
     caption: CandidateCaption
     hypothesis: CandidateHypothesis
     image_inputs: CandidateImageInputs
