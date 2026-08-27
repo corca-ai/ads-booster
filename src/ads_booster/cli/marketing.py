@@ -524,6 +524,7 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     before_side_effect=broker.mark_execution_started,
                 ),
                 output_root=agent_home / "generated",
+                plan_root=agent_home / "codex-runs",
             )
             bridge = MarketingBridge(
                 queue=broker,

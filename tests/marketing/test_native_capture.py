@@ -5,7 +5,7 @@ import json
 import subprocess
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -31,14 +31,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.contracts.generation import MarketingContextBundle
+    from ads_booster.providers.codex_cli import CodexCli
 
 
 class RecordingCodexClient:
     def __init__(self) -> None:
-        self.prompt = ""
+        self.prompt: str = ""
 
     def generate_json(
-        self, prompt: str, schema: dict[str, object], *, images: tuple[Path, ...] = (),
+        self,
+        prompt: str,
+        schema: dict[str, object],
+        *,
+        images: tuple[Path, ...] = (),
     ) -> dict[str, object]:
         _ = (schema, images)
         self.prompt = prompt
@@ -151,7 +156,34 @@ def test_hosted_capture_returns_digest_backed_png_for_cloudflare(tmp_path: Path)
     executor = HostedWorkspaceCaptureExecutor(
         runner=runner,
         output_root=tmp_path / "generated",
+        plan_root=tmp_path / "codex-runs",
         device_resolver=FakeDeviceResolver(),
+    )
+
+    request_id = _task().task_id
+    plan_root = tmp_path / "codex-runs" / request_id
+    plan_root.mkdir(parents=True)
+    plan_path = plan_root / "plan.json"
+    _ = plan_path.write_text(plan().model_copy(update={"request_id": request_id}).model_dump_json())
+    background_image = b"normalized-background-png"
+    background_image_path = tmp_path / "generated" / request_id / "inputs" / "background.png"
+    background_image_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = background_image_path.write_bytes(background_image)
+    background_path = tmp_path / "generated" / request_id / "inputs" / "background-source.json"
+    background_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = background_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "trace.background-search.v1",
+                "query": "Seoul campus morning",
+                "provider": "image-search",
+                "source_url": "https://www.pexels.com/photo/background",
+                "image_url": "https://images.pexels.com/background.png",
+                "artifact_sha256": sha256(background_image).hexdigest(),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     )
 
     result = executor.execute(_task())
@@ -159,6 +191,35 @@ def test_hosted_capture_returns_digest_backed_png_for_cloudflare(tmp_path: Path)
     assert result.output["capture_source"] == "native_appium"
     assert result.output["image_sha256"] == sha256(image).hexdigest()
     assert base64.b64decode(str(result.output["image_base64"])) == image
+    provenance = cast("dict[str, object]", result.output["generation_provenance"])
+    plan_receipt = cast("dict[str, object]", provenance["plan"])
+    background_receipt = cast("dict[str, object]", provenance["background"])
+    assert provenance["schema_version"] == "trace.hosted-generation-provenance.v1"
+    assert plan_receipt["request_id"] == request_id
+    assert (
+        provenance["plan_sha256"]
+        == sha256(
+            json.dumps(
+                plan_receipt,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    )
+    assert background_receipt["source_url"] == "https://www.pexels.com/photo/background"
+    assert background_receipt["artifact_sha256"] == sha256(background_image).hexdigest()
+    assert (
+        provenance["background_sha256"]
+        == sha256(
+            json.dumps(
+                background_receipt,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    )
     assert runner.bundle is not None
     assert runner.bundle.persona.persona_id == "kr_student"
     assert runner.bundle.promotion_material.trace_items == ("09:00 통계학", "13:00 스터디")
@@ -179,7 +240,10 @@ def test_hosted_capture_returns_digest_backed_png_for_cloudflare(tmp_path: Path)
     assert runner.bundle.persona.traits == (_LONG_TONE,)
     assert runner.bundle.persona.interests == (_LONG_SITUATION,)
     client = RecordingCodexClient()
-    _ = CodexWallpaperPlanner(client=client, reference_root=tmp_path).plan(runner.bundle)
+    _ = CodexWallpaperPlanner(
+        client=cast("CodexCli", cast("object", client)),
+        reference_root=tmp_path,
+    ).plan(runner.bundle)
     assert _LONG_TOPIC in client.prompt
     assert "한국 대학생 프로필" in client.prompt
     assert _LONG_AUDIENCE in client.prompt
@@ -200,6 +264,44 @@ def test_hosted_capture_preserves_an_unknown_native_side_effect(tmp_path: Path) 
 
     assert failure.value.failure_code == "native_appium_side_effect_unknown"
     assert failure.value.unknown_side_effect is True
+
+
+def test_hosted_capture_rejects_tampered_background_provenance(tmp_path: Path) -> None:
+    image = b"\x89PNG\r\n\x1a\ntrace-native-image"
+    runner = FakeNativeRunner(tmp_path / "generated", image)
+    request_id = _task().task_id
+    plan_root = tmp_path / "codex-runs" / request_id
+    plan_root.mkdir(parents=True)
+    _ = (plan_root / "plan.json").write_text(
+        plan().model_copy(update={"request_id": request_id}).model_dump_json()
+    )
+    inputs = tmp_path / "generated" / request_id / "inputs"
+    inputs.mkdir(parents=True)
+    _ = (inputs / "background.png").write_bytes(b"actual-background")
+    _ = (inputs / "background-source.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "trace.background-search.v1",
+                "query": "Seoul campus morning",
+                "provider": "image-search",
+                "image_url": "https://images.pexels.com/background.png",
+                "source_url": "https://www.pexels.com/photo/background",
+                "artifact_sha256": sha256(b"different-background").hexdigest(),
+            }
+        )
+    )
+    executor = HostedWorkspaceCaptureExecutor(
+        runner=runner,
+        output_root=tmp_path / "generated",
+        plan_root=tmp_path / "codex-runs",
+        device_resolver=FakeDeviceResolver(),
+    )
+
+    with pytest.raises(
+        MarketingExecutionError,
+        match="native_capture_background_artifact_digest_mismatch",
+    ):
+        _ = executor.execute(_task())
 
 
 def test_hosted_capture_rejects_an_invalid_candidate_contract(tmp_path: Path) -> None:

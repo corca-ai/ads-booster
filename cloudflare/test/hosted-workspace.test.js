@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -13,6 +14,7 @@ import {
   normalizeContextProfile,
   normalizeHostedAccount,
   normalizeReviewFeedback,
+  summarizeFeedbackRows,
 } from "../src/hosted-workspace.js";
 import {
   WORKSPACE_CONTEXT,
@@ -59,6 +61,8 @@ function candidateRow(overrides = {}) {
     generation_batch_id: "batch-1",
     last_review_rating: 5,
     last_review_tags_json: "[]",
+    last_review_stage: null,
+    generation_provenance_json: null,
     image_key: "workspace/trace_demo_kr/candidates/candidate-1.svg",
     image_sha256: "sha256",
     status: "submitted",
@@ -70,12 +74,20 @@ function candidateRow(overrides = {}) {
   };
 }
 
-function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false) {
+function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false, learnedRules = []) {
   let row = { ...initial };
   const deletedArtifacts = [];
   const queuedTasks = [];
   const captureTasks = [];
+  const feedbackEvents = [];
+  let reviewBatchCount = 0;
   const DB = {
+    async batch(statements) {
+      reviewBatchCount += 1;
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
+    },
     prepare(sql) {
       return {
         bind(...values) {
@@ -99,9 +111,31 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
                   revision: 1,
                 };
               }
+              if (sql.includes("COUNT(DISTINCT candidate_id)")) {
+                const [targetAccountId, profileScope, stage, tag] = values;
+                const candidateIds = new Set(feedbackEvents.filter((event) => (
+                  event.account_id === targetAccountId &&
+                  (event.context_profile_id ?? "") === profileScope &&
+                  event.stage === stage &&
+                  event.decision === "rejected" &&
+                  event.tags.includes(tag)
+                )).map((event) => event.candidate_id));
+                return { evidence_count: candidateIds.size };
+              }
+              if (sql.includes("FROM hosted_workspace_feedback_rules")) {
+                const ruleId = values.at(-1);
+                const rule = learnedRules.find((entry) => entry.rule_id === ruleId);
+                return rule ? { ...rule } : null;
+              }
               if (!sql.includes("SELECT * FROM hosted_workspace_candidates")) return null;
               const [accountId, candidateId] = values;
               return row?.account_id === accountId && row?.candidate_id === candidateId ? { ...row } : null;
+            },
+            async all() {
+              if (sql.includes("FROM hosted_workspace_feedback_rules")) {
+                return { results: learnedRules };
+              }
+              throw new Error(`unexpected SQL: ${sql}`);
             },
             async run() {
               if (sql.includes("INSERT OR IGNORE INTO hosted_workspace_accounts")) {
@@ -151,6 +185,110 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
                 };
                 return { meta: { changes: 1 } };
               }
+              if (sql.includes("last_review_stage = 'caption'")) {
+                const [status, note, rating, tagsJson, updatedAt, accountId, candidateId, from, revision] = values;
+                if (
+                  !row || row.account_id !== accountId || row.candidate_id !== candidateId ||
+                  row.status !== from || row.revision !== revision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                row = {
+                  ...row,
+                  status,
+                  review_note: note,
+                  last_review_rating: rating,
+                  last_review_tags_json: tagsJson,
+                  last_review_stage: "caption",
+                  revision: row.revision + 1,
+                  updated_at: updatedAt,
+                };
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("last_review_stage = 'image'")) {
+                const [
+                  status,
+                  note,
+                  imageKey,
+                  imageSha256,
+                  rating,
+                  tagsJson,
+                  updatedAt,
+                  accountId,
+                  candidateId,
+                  from,
+                  revision,
+                ] = values;
+                if (
+                  !row || row.account_id !== accountId || row.candidate_id !== candidateId ||
+                  row.status !== from || row.revision !== revision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                row = {
+                  ...row,
+                  status,
+                  review_note: note,
+                  image_key: imageKey,
+                  image_sha256: imageSha256,
+                  last_review_rating: rating,
+                  last_review_tags_json: tagsJson,
+                  last_review_stage: "image",
+                  revision: row.revision + 1,
+                  updated_at: updatedAt,
+                };
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("INSERT INTO hosted_workspace_feedback_events")) {
+                const [
+                  eventId,
+                  targetAccountId,
+                  candidateId,
+                  contextProfileId,
+                  stage,
+                  decision,
+                  rating,
+                  tagsJson,
+                  note,
+                  createdAt,
+                  candidateRevision,
+                  captureTaskId,
+                  artifactSha256,
+                  generationProvenanceJson,
+                  contextSnapshotJson,
+                  contextSnapshotSha256,
+                  expectedAccountId,
+                  expectedCandidateId,
+                  expectedStatus,
+                  expectedRevision,
+                ] = values;
+                if (
+                  !row || row.account_id !== expectedAccountId ||
+                  row.candidate_id !== expectedCandidateId || row.status !== expectedStatus ||
+                  row.revision !== expectedRevision
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                feedbackEvents.push({
+                  event_id: eventId,
+                  account_id: targetAccountId,
+                  candidate_id: candidateId,
+                  context_profile_id: contextProfileId,
+                  stage,
+                  decision,
+                  rating,
+                  tags: JSON.parse(tagsJson),
+                  note,
+                  created_at: createdAt,
+                  candidate_revision: candidateRevision,
+                  capture_task_id: captureTaskId,
+                  artifact_sha256: artifactSha256,
+                  generation_provenance_json: generationProvenanceJson,
+                  context_snapshot_json: contextSnapshotJson,
+                  context_snapshot_sha256: contextSnapshotSha256,
+                });
+                return { meta: { changes: 1 } };
+              }
               if (sql.includes("INSERT INTO hosted_workspace_capture_tasks")) {
                 captureTasks.push(values);
                 return { meta: { changes: 1 } };
@@ -175,6 +313,16 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
                 return { meta: { changes: 1 } };
               }
               if (sql.includes("SET last_dispatched_at = ?")) {
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("UPDATE hosted_workspace_feedback_rules SET enabled")) {
+                const [enabled, updatedAt, targetAccountId, ruleId] = values;
+                const rule = learnedRules.find(
+                  (entry) => entry.rule_id === ruleId && targetAccountId === "trace_demo_kr",
+                );
+                if (!rule) return { meta: { changes: 0 } };
+                rule.enabled = enabled;
+                rule.updated_at = updatedAt;
                 return { meta: { changes: 1 } };
               }
               if (sql.includes("DELETE FROM hosted_workspace_candidates")) {
@@ -210,6 +358,8 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
     deletedArtifacts,
     queuedTasks,
     captureTasks,
+    feedbackEvents,
+    reviewBatchCount: () => reviewBatchCount,
     row: () => row,
   };
 }
@@ -405,6 +555,27 @@ test("review feedback requires structured rejection reasons", () => {
   );
 });
 
+test("learned feedback requires three independent candidates and keeps stage and target", () => {
+  const summary = summarizeFeedbackRows([
+    { candidate_id: "same", stage: "image", tags_json: JSON.stringify(["이미지 품질·AI 티"]), note: null },
+    { candidate_id: "same", stage: "image", tags_json: JSON.stringify(["이미지 품질·AI 티"]), note: null },
+    { candidate_id: "second", stage: "image", tags_json: JSON.stringify(["이미지 품질·AI 티"]), note: null },
+    { candidate_id: "third", stage: "image", tags_json: JSON.stringify(["이미지 품질·AI 티"]), note: "피부 질감이 인공적임" },
+    { candidate_id: "caption-one", stage: "caption", tags_json: JSON.stringify(["캡션 부적합"]), note: null },
+  ]);
+
+  assert.equal(summary.rejected_reviews, 5);
+  assert.deepEqual(summary.rule_candidates, [{
+    stage: "image",
+    target: "visual_quality",
+    tag: "이미지 품질·AI 티",
+    evidence_count: 3,
+    instruction: "합성 티, 비현실적 질감, 과도한 보정을 피하고 자연스러운 이미지 품질을 우선할 것",
+  }]);
+  assert.equal(summary.top_tags[0].event_count, 4);
+  assert.equal(summary.top_tags[0].candidate_count, 3);
+});
+
 test("daily generation follows the account timezone", () => {
   const after = new Date("2026-08-26T00:00:00.000Z");
   assert.equal(
@@ -425,6 +596,19 @@ test("generation prompt binds the selected persona and country", () => {
     schema.properties.candidates.items.properties.image_inputs.properties.language.enum,
     ["ko"],
   );
+});
+
+test("candidate generation receives caption rules but not image-only rules", () => {
+  const profile = WORKSPACE_CONTEXT_PROFILES[1];
+  const prompt = generationPrompt("기본 원리", "계정 지침", profile, null, {
+    rule_candidates: [
+      { stage: "caption", instruction: "캡션 훅을 구체화할 것" },
+      { stage: "image", instruction: "이미지 질감을 자연스럽게 만들 것" },
+    ],
+  });
+
+  assert.match(prompt, /캡션 훅을 구체화할 것/);
+  assert.doesNotMatch(prompt, /이미지 질감을 자연스럽게 만들 것/);
 });
 
 test("editing a submitted candidate invalidates approval and removes its preview", async () => {
@@ -524,6 +708,154 @@ test("image generation queues a revision-scoped native Mac capture", async () =>
   assert.equal(state.captureTasks.length, 1);
 });
 
+test("an image rejection is injected into the next capture without mutating the persona", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 8,
+    capture_state: null,
+    capture_task_id: "previous-task",
+    capture_error: null,
+    capture_requested_at: null,
+    last_review_stage: "image",
+    last_review_rating: 2,
+    last_review_tags_json: JSON.stringify(["앱 화면·데이터 오류"]),
+    review_note: "일정 시간이 캡션과 다름",
+    context_snapshot_json: JSON.stringify({
+      profile_id: "profile-1",
+      persona_id: "kr_student",
+      guidance: "원래 페르소나 지침",
+      reference_ids: [],
+    }),
+  }), false, [{
+    rule_id: "rule-1",
+    stage: "image",
+    target: "app_screen",
+    tag: "앱 화면·데이터 오류",
+    instruction: "Trace 일정과 표시 시각을 입력 데이터와 정확히 일치시킬 것",
+    evidence_count: 4,
+    enabled: 1,
+  }]);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", { method: "POST" }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 201);
+  const payload = state.queuedTasks[0].payload;
+  assert.deepEqual(payload.revision_feedback, {
+    stage: "image",
+    rating: 2,
+    tags: ["앱 화면·데이터 오류"],
+    note: "일정 시간이 캡션과 다름",
+    source_capture_task_id: "previous-task",
+  });
+  assert.match(payload.creative_direction, /직전 이미지 반려/);
+  assert.match(payload.creative_direction, /평점: 2\/5/);
+  assert.match(payload.creative_direction, /일정 시간이 캡션과 다름/);
+  assert.match(payload.creative_direction, /반복 피드백 규칙/);
+  assert.equal(payload.context_profile.guidance, "원래 페르소나 지침");
+});
+
+test("an image review atomically stores candidate, artifact, provenance, and persona evidence", async () => {
+  const contextSnapshot = {
+    profile_id: "profile-1",
+    persona_id: "kr_student",
+    guidance: "실제 학생의 일정 관리 장면을 보여준다.",
+    reference_ids: ["kr-020"],
+  };
+  const contextSnapshotJson = JSON.stringify(contextSnapshot);
+  const provenance = {
+    schema_version: "trace.hosted-generation-provenance.v1",
+    plan_sha256: "a".repeat(64),
+    background_sha256: "b".repeat(64),
+  };
+  const state = candidateEnvironment(candidateRow({
+    status: "image_awaiting_review",
+    revision: 6,
+    image_key: "workspace/trace_demo_kr/candidates/candidate-1.png",
+    image_sha256: "c".repeat(64),
+    capture_task_id: "task-1",
+    generation_provenance_json: JSON.stringify(provenance),
+    context_profile_id: "profile-1",
+    context_snapshot_json: contextSnapshotJson,
+  }));
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/review-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accepted: false,
+        expected_revision: 6,
+        rating: 2,
+        tags: ["이미지 품질·AI 티"],
+        note: "피부 질감이 인공적임",
+      }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(state.reviewBatchCount(), 1);
+  assert.equal(state.row().status, "caption_approved");
+  assert.equal(state.row().revision, 7);
+  assert.equal(state.row().image_key, null);
+  assert.deepEqual(state.deletedArtifacts, ["workspace/trace_demo_kr/candidates/candidate-1.png"]);
+  assert.equal(state.feedbackEvents.length, 1);
+  assert.deepEqual(state.feedbackEvents[0], {
+    event_id: "trace_demo_kr:candidate-1:image:6",
+    account_id: "trace_demo_kr",
+    candidate_id: "candidate-1",
+    context_profile_id: "profile-1",
+    stage: "image",
+    decision: "rejected",
+    rating: 2,
+    tags: ["이미지 품질·AI 티"],
+    note: "피부 질감이 인공적임",
+    created_at: state.feedbackEvents[0].created_at,
+    candidate_revision: 6,
+    capture_task_id: "task-1",
+    artifact_sha256: "c".repeat(64),
+    generation_provenance_json: JSON.stringify(provenance),
+    context_snapshot_json: contextSnapshotJson,
+    context_snapshot_sha256: createHash("sha256").update(contextSnapshotJson).digest("hex"),
+  });
+});
+
+test("a learned rule can be disabled without deleting its evidence", async () => {
+  const rules = [{
+    rule_id: "rule-1",
+    stage: "image",
+    target: "visual_quality",
+    tag: "이미지 품질·AI 티",
+    instruction: "자연스러운 이미지 품질을 우선할 것",
+    evidence_count: 3,
+    enabled: 1,
+    updated_at: 1,
+  }];
+  const state = candidateEnvironment(candidateRow(), false, rules);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/feedback-rules/rule-1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).enabled, false);
+  assert.equal(rules[0].enabled, 0);
+  assert.equal(rules[0].evidence_count, 3);
+});
+
 test("an enrolled Mac sends new hosted captures through the D1 worker broker", async () => {
   const state = candidateEnvironment(candidateRow({
     status: "caption_approved",
@@ -559,7 +891,7 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /오늘 후보 4개 생성/);
   assert.match(markup, /data-account-select/);
   assert.match(markup, /오전 2개·저녁 2개 후보 자동 생성/);
-  assert.match(markup, /다음 생성에 반영되는 신호/);
+  assert.match(markup, /다음 생성에 반영되는 학습 규칙/);
   assert.match(markup, /data-context-select/);
   assert.match(markup, /data-stat-review/);
   assert.match(markup, /href="#workspace-content">워크스페이스로 건너뛰기/);

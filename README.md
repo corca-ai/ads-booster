@@ -31,12 +31,18 @@ does not use its OAuth store, Responses client, conversation memory, or tool loo
 5. The deterministic runner finds an approved background and drives the real Trace Simulator app
    through Appium. A request-bound export, digest, nonce, device binding, and PNG provenance are
    verified.
-6. The callback stores the verified image in R2 and exposes it for human review. Approval reaches
-   `submitted`; no external social post is created.
+6. The callback stores the verified image in R2 and binds the exact wallpaper plan plus background
+   source provenance to that candidate attempt before exposing it for human review.
+7. Approval reaches `submitted`. Rejection sends its structured tags, rating, and note into the next
+   image attempt immediately. A stage/target rule is learned only after the same signal appears on
+   three different candidates; teammates can inspect or disable it without rewriting the profile.
+   No external social post is created.
 
 Codex threads are ephemeral per task, so two accounts and two Macs do not share conversation
 history. Validated plans and terminal outcomes are request-scoped under
 `$TRACE_AGENT_HOME/codex-runs`; prompts, Codex responses, and auth data are not persisted there.
+The staged prompt, persona, structure, and evaluation roadmap is documented in
+[`docs/plans/creative-quality-development.md`](docs/plans/creative-quality-development.md).
 
 ## Install the Mac worker CLI
 
@@ -195,3 +201,5 @@ not fresh-install proof.
   worker autoscaling are deferred.
 - A real prepared-Mac canary is still required to prove the complete Codex → Appium → R2 round trip
   after deployment.
+- Feedback rules currently learn from human caption/image review only. Post-publication outcome
+  metrics remain unavailable while publication is disabled.

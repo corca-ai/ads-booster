@@ -60,11 +60,16 @@ temporarily for source compatibility tests, but no production Mac or installer p
    authentication.
 2. Cloudflare Workers AI generates context-grounded candidates using `WORKSPACE_AI_MODEL`.
 3. A teammate may edit or delete submitted candidates. Candidate approval creates a version-bound
-   capture task.
+   capture task. An image retry also carries the immediately preceding image rejection plus enabled
+   image-stage rules; neither layer mutates the saved profile snapshot.
 4. D1 assigns one lease to an active worker whose heartbeat doctor is ready. Offline, degraded,
    draining, and revoked workers receive no new task.
-5. The Workflow waits for the callback and then for human image approval. Approval reaches
-   `submitted`; Threads publication remains outside the runtime.
+5. The callback binds the validated wallpaper plan, searched-background provenance, task ID,
+   candidate revision, and image digest to the candidate attempt before human image review.
+6. Approval reaches `submitted`. Rejection remains tied to that attempt and returns the candidate to
+   `caption_approved`; its correction is consumed by the next capture. D1 promotes a rule only when
+   the same stage/target signal occurs on three distinct candidates. Rules remain separately
+   inspectable and reversible. Threads publication remains outside the runtime.
 
 ## Mac planning and capture flow
 
@@ -85,7 +90,9 @@ temporarily for source compatibility tests, but no production Mac or installer p
 7. `GenerateOneRunner` downloads an approved background with provenance, then Appium drives the Trace
    wallpaper editor. Capture code validates the export nonce, request digest, bundle ID, device,
    artifact role, dimensions, and PNG digest.
-8. The worker's local outbox delivers the authenticated callback. After payload validation,
+8. The worker reads back and validates the request-scoped `plan.json` and
+   `background-source.json`, includes their content and digests in the authenticated callback, and
+   delivers it through the local outbox. After payload validation,
    Cloudflare atomically reserves the callback ID plus normalized result digest against the current
    worker and lease before writing R2 or changing candidate state. An identical partial retry may
    continue; changed content is rejected, and revocation waits until the reservation completes.
@@ -139,6 +146,9 @@ Prompts, raw Codex responses, Codex threads, auth tokens, and auth-cache files a
 - An unhealthy worker cannot claim a new task; a stale or revoked worker cannot complete a lost lease.
 - Model output cannot invoke Appium until it passes the deterministic `WallpaperPlan` checks.
 - Generated images require native provenance and human review.
+- Feedback cannot silently rewrite canonical account, profile, or candidate context. Immediate retry
+  corrections are attempt-scoped, and durable rules require evidence from distinct candidates and
+  can be disabled by a teammate.
 - A D1 execution barrier prevents lease expiry from reassigning work after Appium begins; a second
   D1 callback reservation binds result content and linearizes callback application against explicit
   revocation/replacement.

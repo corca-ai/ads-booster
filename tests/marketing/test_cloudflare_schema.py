@@ -117,3 +117,38 @@ def test_dynamic_mac_workers_have_revocable_identities_and_single_task_leases() 
         )
 
         assert task == ("worker_broker", "worker-1", "lease-1", "start", "accepted", 1)
+
+
+def test_feedback_rules_are_scoped_and_reversible() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
+        for migration in sorted(migration_root.glob("*.sql")):
+            _ = connection.executescript(migration.read_text())
+
+        rows = cast(
+            "list[tuple[int, str, str, int, object, object]]",
+            connection.execute("PRAGMA table_info(hosted_workspace_feedback_events)").fetchall(),
+        )
+        columns = {row[1] for row in rows}
+        assert {
+            "candidate_revision",
+            "capture_task_id",
+            "artifact_sha256",
+            "generation_provenance_json",
+            "context_snapshot_json",
+            "context_snapshot_sha256",
+        } <= columns
+
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_feedback_rules
+            (rule_id, account_id, profile_scope, stage, target, tag, instruction,
+             evidence_count, enabled, created_at, updated_at)
+            VALUES ('rule-1', 'trace_kr', 'profile-1', 'image', 'visual_quality',
+                    '이미지 품질·AI 티', '자연스러운 이미지 품질을 우선할 것', 3, 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            "UPDATE hosted_workspace_feedback_rules SET enabled = 0 WHERE rule_id = 'rule-1'"
+        )
+        assert connection.execute(
+            "SELECT enabled FROM hosted_workspace_feedback_rules WHERE rule_id = 'rule-1'"
+        ).fetchone() == (0,)

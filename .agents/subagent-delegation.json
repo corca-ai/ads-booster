@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "bounded_review_delegation": "granted",
+  "scopes": [
+    "critique"
+  ],
+  "recorded_by": "user",
+  "note": "User approved one bounded fresh-eye critique reviewer before PR on 2026-08-27."
+}

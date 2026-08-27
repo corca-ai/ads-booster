@@ -1191,15 +1191,55 @@
     const tags = one("[data-feedback-tags]");
     if (!summary || !tags) return;
     if (!feedbackSignal || feedbackSignal.rejected_reviews === 0) {
-      summary.textContent = "아직 누적된 반려 신호가 없습니다. 반려 태그는 같은 계정·페르소나의 다음 생성에 사용됩니다.";
+      summary.textContent = "아직 누적된 반려 신호가 없습니다. 서로 다른 후보 3개에서 같은 태그가 반복되면 단계·대상별 규칙으로 승격됩니다.";
       tags.replaceChildren();
       return;
     }
-    summary.textContent = feedbackSignal.rule_candidates.length
-      ? `반복 3회 이상 규칙 ${feedbackSignal.rule_candidates.length}개가 다음 생성에 자동 반영됩니다.`
-      : `반려 ${feedbackSignal.rejected_reviews}건이 누적되었습니다. 같은 태그가 3회 쌓이면 생성 규칙이 됩니다.`;
-    tags.replaceChildren(...feedbackSignal.top_tags.slice(0, 6).map(({ tag, count }) =>
-      badge("approval-badge", `${tag} · ${count}`)));
+    const enabledRules = feedbackSignal.rules.filter((rule) => rule.enabled);
+    summary.textContent = feedbackSignal.rules.length
+      ? `학습 규칙 ${feedbackSignal.rules.length}개 중 ${enabledRules.length}개가 활성화되어 있습니다. 원본 페르소나와 컨텍스트는 변경하지 않습니다.`
+      : `반려 ${feedbackSignal.rejected_reviews}건이 누적되었습니다. 서로 다른 후보 3개에서 반복되면 생성 규칙이 됩니다.`;
+    if (feedbackSignal.rules.length === 0) {
+      tags.replaceChildren(...feedbackSignal.top_tags.slice(0, 6).map(({ tag, candidate_count: count }) =>
+        badge("approval-badge", `${tag} · 후보 ${count}`)));
+      return;
+    }
+    tags.replaceChildren(...feedbackSignal.rules.map((rule) => {
+      const row = document.createElement("div");
+      row.className = `feedback-rule${rule.enabled ? "" : " is-disabled"}`;
+      const copy = document.createElement("div");
+      copy.className = "feedback-rule__copy";
+      const meta = document.createElement("span");
+      meta.className = "eyebrow";
+      meta.textContent = `${rule.stage === "image" ? "이미지" : "캡션"} · ${rule.target} · 후보 ${rule.evidence_count}`;
+      const instruction = document.createElement("span");
+      instruction.textContent = rule.instruction;
+      copy.append(meta, instruction);
+      const toggle = document.createElement("button");
+      toggle.className = "button button-quiet feedback-rule__toggle";
+      toggle.type = "button";
+      toggle.textContent = rule.enabled ? "끄기" : "켜기";
+      toggle.setAttribute("aria-pressed", String(rule.enabled));
+      toggle.addEventListener("click", () => toggleFeedbackRule(rule, toggle));
+      row.append(copy, toggle);
+      return row;
+    }));
+  };
+
+  const toggleFeedbackRule = async (rule, button) => {
+    button.disabled = true;
+    try {
+      await request(`/api/feedback-rules/${encodeURIComponent(rule.rule_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !rule.enabled }),
+      });
+      await loadFeedbackSummary();
+      setNotice(`피드백 규칙을 ${rule.enabled ? "비활성화" : "활성화"}했습니다.`);
+    } catch (error) {
+      setNotice(error.message);
+      button.disabled = false;
+    }
   };
 
   const loadFeedbackSummary = async () => {

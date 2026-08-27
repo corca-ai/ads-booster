@@ -42,7 +42,7 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 
 | Package | Owns | Must not own |
 | --- | --- | --- |
-| `marketing/` | Cloudflare task/callback contracts, D1 broker client and remote execution barrier, machine credential file, durable local inbox/outbox, doctor, LaunchAgent, hosted capture routing | Codex auth, prompt history, Appium implementation, plaintext admin or Queue secrets |
+| `marketing/` | Cloudflare task/callback contracts, D1 broker client and remote execution barrier, machine credential file, durable local inbox/outbox, doctor, LaunchAgent, hosted capture routing, validated plan/background callback projection | Codex auth, prompt history, Appium implementation, plaintext admin or Queue secrets |
 | `connectors/trace/v1/codex_runtime.py` | Trace prompt construction, reference validation/attachment, structured-plan validation handoff, request-scoped plan/result state, unknown-side-effect barrier, production runner composition | Codex authentication, hosted account state, direct Appium commands |
 | `providers/codex_cli.py` | Official `codex exec` argv, stdin, schema/output temporary files, timeout/error sanitization, executable resolution | Trace domain rules, auth copying, conversation persistence, model-tool dispatch |
 | `contracts/` | Versioned marketing context, `WallpaperPlan`, run result and capture provenance models | Filesystem, subprocess, HTTP or database access |
@@ -52,7 +52,7 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 | `search/` | Approved image search and normalized background artifacts/provenance | Model execution or review transitions |
 | `service/worker.py` | Production runner selection and legacy automation worker composition | Provider implementation details |
 | `cli/marketing.py` | Typer parsing, operator output and dependency composition | Durable transition policy or secret persistence |
-| `cloudflare/` | Public assets/API, account/context/candidate state, Workers AI candidates, Workflow waits, D1 worker registry/leases/execution barriers, callbacks and R2 | Mac Codex credentials or Appium execution |
+| `cloudflare/` | Public assets/API, account/context/candidate state, Workers AI candidates, review-event provenance, stage/target feedback rules, Workflow waits, D1 worker registry/leases/execution barriers, callbacks and R2 | Mac Codex credentials, Appium execution, or automatic mutation of canonical profiles |
 
 Legacy packages such as `agent/`, `auth/`, `web/`, `automation/`, `tools/`, and the custom Responses
 provider remain in source for non-production compatibility paths. They are not installed as
@@ -96,6 +96,9 @@ singletons or import side effects.
 - A marker without a terminal result means `unknown_side_effect`; never automatically repeat it.
 - A completed result is replayable and must keep its native provenance and digest unchanged.
 - The Cloudflare callback and R2 boundary remains authoritative for hosted review state.
+- `marketing/native_capture.py` owns the strict projection of request-scoped plan and background
+  provenance into callbacks; Cloudflare owns attempt linkage, feedback evidence, rule promotion, and
+  rule enablement.
 
 ## File placement
 

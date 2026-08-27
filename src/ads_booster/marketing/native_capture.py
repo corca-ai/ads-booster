@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import subprocess
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, Final, Protocol
+from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -18,6 +20,7 @@ from ads_booster.contracts.generation import (
 )
 from ads_booster.contracts.models import DeviceKind, DeviceTarget
 from ads_booster.contracts.run import TraceRunState
+from ads_booster.contracts.wallpaper import WallpaperPlan
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskResult, TaskStatus
 from ads_booster.transport.json_types import JsonObject
@@ -30,6 +33,7 @@ if TYPE_CHECKING:
 
 _PIPELINE: Final = "hosted_workspace_capture_v1"
 _MAX_IMAGE_BYTES: Final = 16 * 1024 * 1024
+_MAX_PROVENANCE_BYTES: Final = 256 * 1024
 _LOCALES: Final = {
     "BR": "pt-BR",
     "DE": "de-DE",
@@ -102,6 +106,7 @@ class SimctlDeviceResolver:
 class HostedWorkspaceCaptureExecutor:
     runner: GenerateOnePort
     output_root: Path
+    plan_root: Path | None = None
     device_resolver: DeviceResolver = SimctlDeviceResolver()
 
     def execute(self, task: MarketingTask) -> TaskResult:
@@ -134,6 +139,7 @@ class HostedWorkspaceCaptureExecutor:
         digest = sha256(image).hexdigest()
         if result.output_image_sha256 != digest:
             raise MarketingExecutionError("native_capture_artifact_digest_mismatch")
+        generation_provenance = self._generation_provenance(request_id)
         return TaskResult(
             status=TaskStatus.SUCCEEDED,
             output={
@@ -145,8 +151,71 @@ class HostedWorkspaceCaptureExecutor:
                 "image_base64": base64.b64encode(image).decode("ascii"),
                 "capture_source": "native_appium",
                 "native_export_binding_verified": True,
+                "generation_provenance": generation_provenance,
             },
         )
+
+    def _generation_provenance(self, request_id: str) -> JsonObject:
+        if self.plan_root is None:
+            raise MarketingExecutionError("native_capture_plan_root_unconfigured")
+        plan_path = self.plan_root / request_id / "plan.json"
+        background_path = self.output_root / request_id / "inputs" / "background-source.json"
+        try:
+            plan = WallpaperPlan.model_validate_json(_read_provenance_file(plan_path))
+            background = _JSON_OBJECT.validate_json(_read_provenance_file(background_path))
+        except (OSError, ValidationError, ValueError) as error:
+            raise MarketingExecutionError("native_capture_generation_provenance_invalid") from error
+        if plan.request_id != request_id:
+            raise MarketingExecutionError("native_capture_generation_provenance_mismatch")
+        background_artifact = self.output_root / request_id / "inputs" / "background.png"
+        _validate_background_provenance(background, background_artifact)
+        plan_payload = plan.model_dump(mode="json")
+        plan_canonical = _canonical_json(plan_payload)
+        background_canonical = _canonical_json(background)
+        return {
+            "schema_version": "trace.hosted-generation-provenance.v1",
+            "plan_sha256": sha256(plan_canonical).hexdigest(),
+            "plan": plan_payload,
+            "background_sha256": sha256(background_canonical).hexdigest(),
+            "background": background,
+        }
+
+
+def _read_provenance_file(path: Path) -> bytes:
+    payload = path.read_bytes()
+    if not payload or len(payload) > _MAX_PROVENANCE_BYTES:
+        raise ValueError("generation provenance file size is invalid")
+    return payload
+
+
+def _validate_background_provenance(background: JsonObject, artifact_path: Path) -> None:
+    expected_fields = {
+        "schema_version",
+        "query",
+        "provider",
+        "image_url",
+        "source_url",
+        "artifact_sha256",
+    }
+    if set(background) != expected_fields or background.get("schema_version") != (
+        "trace.background-search.v1"
+    ):
+        raise MarketingExecutionError("native_capture_background_provenance_invalid")
+    _ = _required_text(background, "query", 1_000)
+    _ = _required_text(background, "provider", 100)
+    for field in ("image_url", "source_url"):
+        parsed = urlsplit(_required_text(background, field, 4_096))
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise MarketingExecutionError("native_capture_background_provenance_invalid")
+    expected_digest = _required_text(background, "artifact_sha256", 64)
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+        raise MarketingExecutionError("native_capture_background_provenance_invalid")
+    try:
+        actual_digest = sha256(artifact_path.read_bytes()).hexdigest()
+    except OSError as error:
+        raise MarketingExecutionError("native_capture_background_artifact_missing") from error
+    if expected_digest != actual_digest:
+        raise MarketingExecutionError("native_capture_background_artifact_digest_mismatch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,3 +375,12 @@ def _required_integer(payload: JsonObject, key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise MarketingExecutionError(f"native_capture_{key}_invalid")
     return value
+
+
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()

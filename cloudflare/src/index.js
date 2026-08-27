@@ -2,6 +2,7 @@ import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
 import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
 import {
+  assertHostedCaptureLinkage,
   MAX_HOSTED_CAPTURE_CALLBACK_BYTES,
   prepareHostedCaptureResult,
 } from "./hosted-capture-result.js";
@@ -722,7 +723,10 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
   }
   const { status, image, image_digest: imageDigest, stored_result: storedResult } = prepared;
   let imageKey = null;
+  let generationProvenance = null;
   if (status === "succeeded") {
+    assertHostedCaptureLinkage(storedResult?.output, task);
+    generationProvenance = storedResult?.output?.generation_provenance ?? null;
     imageKey = `workspace/${task.account_id}/candidates/${task.candidate_id}/${task.task_id}.png`;
   }
   const storedResultJson = JSON.stringify(storedResult);
@@ -754,7 +758,7 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
     const applied = await env.DB.prepare(
       `UPDATE hosted_workspace_candidates
        SET status = 'image_awaiting_review', image_key = ?, image_sha256 = ?,
-           capture_state = NULL, capture_error = NULL,
+           generation_provenance_json = ?, capture_state = NULL, capture_error = NULL,
            revision = revision + 1, updated_at = ?
        WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved'
          AND capture_state = 'queued' AND capture_task_id = ? AND revision = ?`,
@@ -762,6 +766,7 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
       .bind(
         imageKey,
         imageDigest,
+        generationProvenance ? JSON.stringify(generationProvenance) : null,
         Date.now() / 1000,
         task.account_id,
         task.candidate_id,

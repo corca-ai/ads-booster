@@ -944,6 +944,32 @@ textarea:focus-visible {
   margin: 0;
 }
 
+.feedback-rule-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-block-start: var(--space-3);
+}
+
+.feedback-rule {
+  align-items: center;
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-3);
+}
+
+.feedback-rule.is-disabled { opacity: .58; }
+
+.feedback-rule__copy {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.feedback-rule__toggle { flex: 0 0 auto; }
+
 [data-candidate-form] [aria-invalid="true"] { border-color: var(--color-danger); }
 
 .candidate-list {

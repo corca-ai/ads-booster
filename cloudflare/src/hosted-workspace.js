@@ -21,6 +21,44 @@ export const REVIEW_TAGS = Object.freeze([
   "브랜드·정책 위험",
   "기타",
 ]);
+const FEEDBACK_RULES = Object.freeze({
+  "이미지 품질·AI 티": {
+    target: "visual_quality",
+    instruction: "합성 티, 비현실적 질감, 과도한 보정을 피하고 자연스러운 이미지 품질을 우선할 것",
+  },
+  "앱 화면·데이터 오류": {
+    target: "app_screen",
+    instruction: "Trace 일정과 표시 시각을 입력 데이터와 정확히 일치시킬 것",
+  },
+  "국가·언어 부적합": {
+    target: "locale",
+    instruction: "선택 국가의 언어, 시간 표기, 생활 맥락을 일관되게 적용할 것",
+  },
+  "계정 페르소나 불일치": {
+    target: "persona",
+    instruction: "선택된 계정 페르소나의 대상, 상황, 문체에서 벗어나지 말 것",
+  },
+  "컨셉이 약함": {
+    target: "concept",
+    instruction: "사용 장면과 효용이 한눈에 드러나는 구체적인 컨셉을 만들 것",
+  },
+  "기존 게시물과 중복": {
+    target: "concept",
+    instruction: "기존 게시물과 다른 상황, 훅, 시각 구성을 선택할 것",
+  },
+  "캡션 부적합": {
+    target: "caption",
+    instruction: "캡션의 훅, 정보량, 문체를 계정 맥락에 맞게 다듬을 것",
+  },
+  "브랜드·정책 위험": {
+    target: "brand_policy",
+    instruction: "검증되지 않은 기능 주장과 브랜드·정책 위험 요소를 제거할 것",
+  },
+  "기타": {
+    target: "general",
+    instruction: "반복된 상세 반려 사유를 확인하고 같은 실패 패턴을 피할 것",
+  },
+});
 const ALLOWED_BACKGROUND_SUBJECTS = new Set([
   "scenery",
   "character_kitty",
@@ -110,6 +148,15 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     }
     if (request.method === "GET" && url.pathname === "/api/feedback-summary") {
       return json(await feedbackSummary(scopedEnv, url.searchParams.get("context_profile_id")));
+    }
+    const feedbackRuleRoute = url.pathname.match(/^\/api\/feedback-rules\/([^/]+)$/);
+    if (feedbackRuleRoute && request.method === "PATCH") {
+      const body = await readJson(request);
+      return json(await updateFeedbackRule(
+        scopedEnv,
+        decodeURIComponent(feedbackRuleRoute[1]),
+        booleanField(body?.enabled, "enabled"),
+      ));
     }
     if (request.method === "GET" && url.pathname === "/api/candidates") {
       return json(await listCandidates(scopedEnv));
@@ -925,8 +972,11 @@ export function generationPrompt(
 ) {
   const morningTime = account?.morning_time ?? "07:30";
   const eveningTime = account?.evening_time ?? "19:30";
-  const learnedRules = learnedFeedback?.rule_candidates?.length
-    ? learnedFeedback.rule_candidates.map((rule) => `- ${rule}`).join("\n")
+  const captionRules = learnedFeedback?.rule_candidates?.filter(
+    (rule) => typeof rule !== "object" || rule.stage === "caption",
+  ) ?? [];
+  const learnedRules = captionRules.length
+    ? captionRules.map((rule) => `- ${rule.instruction ?? rule}`).join("\n")
     : "- 아직 3회 이상 반복된 반려 규칙 없음";
   return `아래 Trace context, 계정 지침, 선택한 국가·페르소나 컨텍스트만 근거로 서로 다른 게시물 후보 4개를 만드세요.
 posting_slot=morning 후보 2개, posting_slot=evening 후보 2개를 정확히 만드세요.
@@ -1104,7 +1154,8 @@ async function updateCandidate(env, candidateId, revision, draft, requestedProfi
          ai_verdict = NULL, status = 'awaiting_review', review_note = NULL, image_key = NULL,
          image_sha256 = NULL, capture_state = NULL, capture_task_id = NULL,
          capture_error = NULL, capture_requested_at = NULL,
-         last_review_rating = NULL, last_review_tags_json = '[]',
+         last_review_rating = NULL, last_review_tags_json = '[]', last_review_stage = NULL,
+         generation_provenance_json = NULL,
          revision = revision + 1, updated_at = ?
      WHERE account_id = ? AND candidate_id = ? AND revision = ?`,
   )
@@ -1168,16 +1219,11 @@ async function reviewCandidate(env, candidateId, body) {
   if (current.status !== "awaiting_review") {
     throw new WorkspaceHttpError(409, "검수 대기 중인 캡션·주제를 찾을 수 없습니다.");
   }
+  if (current.revision !== revision) {
+    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
+  }
   const status = accepted ? "caption_approved" : "rejected";
-  await transitionCandidate(
-    env,
-    candidateId,
-    revision,
-    "awaiting_review",
-    status,
-    feedback,
-  );
-  await recordFeedbackEvent(env, current, "caption", accepted, feedback);
+  await persistCandidateReview(env, current, "caption", "awaiting_review", status, accepted, feedback);
   return requireCandidate(env, candidateId);
 }
 
@@ -1208,7 +1254,32 @@ async function generateCandidateImage(env, candidateId) {
   if (referenceIds.length > 16) {
     throw new WorkspaceHttpError(400, "이미지 생성에 사용할 레퍼런스는 16개 이하여야 합니다.");
   }
-  const creativeDirection = [candidate.shooting_order, candidate.context_profile?.guidance]
+  const revisionFeedback = candidate.last_review_stage === "image" && candidate.review_tags.length
+    ? {
+        stage: "image",
+        rating: candidate.review_rating,
+        tags: candidate.review_tags,
+        note: candidate.review_note,
+        source_capture_task_id: candidate.capture_task_id,
+      }
+    : null;
+  const learnedRules = await activeFeedbackRules(
+    env,
+    candidate.context_profile?.profile_id ?? null,
+    "image",
+  );
+  const immediateCorrection = revisionFeedback
+    ? `[직전 이미지 반려 보정]\n평점: ${revisionFeedback.rating}/5\n태그: ${revisionFeedback.tags.join(", ")}\n상세: ${revisionFeedback.note || "상세 메모 없음"}`
+    : "";
+  const learnedCorrection = learnedRules.length
+    ? `[반복 피드백 규칙]\n${learnedRules.map((rule) => `- ${rule.instruction}`).join("\n")}`
+    : "";
+  const creativeDirection = [
+    candidate.shooting_order,
+    candidate.context_profile?.guidance,
+    immediateCorrection,
+    learnedCorrection,
+  ]
     .filter(Boolean)
     .join("\n\n");
   const backgroundIntent = [
@@ -1236,6 +1307,14 @@ async function generateCandidateImage(env, candidateId) {
       appium_prompt: candidate.shooting_order,
       image_inputs: candidate.image_inputs,
       context_profile: candidate.context_profile,
+      revision_feedback: revisionFeedback,
+      learned_feedback_rules: learnedRules.map((rule) => ({
+        rule_id: rule.rule_id,
+        target: rule.target,
+        tag: rule.tag,
+        instruction: rule.instruction,
+        evidence_count: rule.evidence_count,
+      })),
     },
     created_at: now,
     credential_ref: null,
@@ -1312,32 +1391,20 @@ async function reviewCandidateImage(env, candidateId, body) {
   if (current.status !== "image_awaiting_review") {
     throw new WorkspaceHttpError(409, "검수 대기 중인 이미지를 찾을 수 없습니다.");
   }
-  const status = accepted ? "submitted" : "caption_approved";
-  const result = await env.DB.prepare(
-    `UPDATE hosted_workspace_candidates
-     SET status = ?, review_note = ?, image_key = ?, image_sha256 = ?,
-         last_review_rating = ?, last_review_tags_json = ?,
-         revision = revision + 1, updated_at = ?
-     WHERE account_id = ? AND candidate_id = ? AND status = 'image_awaiting_review' AND revision = ?`,
-  )
-    .bind(
-      status,
-      feedback.note || null,
-      accepted ? current.image_path : null,
-      accepted ? current.image_sha256 : null,
-      feedback.rating,
-      JSON.stringify(feedback.tags),
-      Date.now() / 1000,
-      accountId(env),
-      candidateId,
-      revision,
-    )
-    .run();
-  if (result.meta.changes !== 1) {
+  if (current.revision !== revision) {
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
   }
-  await recordFeedbackEvent(env, current, "image", accepted, feedback);
-  if (!accepted && current.image_path) await env.ARTIFACTS.delete(current.image_path);
+  const status = accepted ? "submitted" : "caption_approved";
+  await persistCandidateReview(
+    env,
+    current,
+    "image",
+    "image_awaiting_review",
+    status,
+    accepted,
+    feedback,
+  );
+  if (!accepted) await deleteCandidateArtifact(env, current.image_path);
   return requireCandidate(env, candidateId);
 }
 
@@ -1353,32 +1420,6 @@ async function readCandidateImage(env, candidateId) {
       "cache-control": "public, max-age=300",
     },
   });
-}
-
-async function transitionCandidate(env, candidateId, revision, from, to, feedback) {
-  const result = await env.DB.prepare(
-    `UPDATE hosted_workspace_candidates
-     SET status = ?, review_note = ?, last_review_rating = ?, last_review_tags_json = ?,
-         revision = revision + 1, updated_at = ?
-     WHERE account_id = ? AND candidate_id = ? AND status = ? AND revision = ?`,
-  )
-    .bind(
-      to,
-      feedback.note || null,
-      feedback.rating,
-      JSON.stringify(feedback.tags),
-      Date.now() / 1000,
-      accountId(env),
-      candidateId,
-      from,
-      revision,
-    )
-    .run();
-  if (result.meta.changes !== 1) {
-    const existing = await findCandidate(env, candidateId);
-    if (!existing) throw new WorkspaceHttpError(404, "후보를 찾을 수 없습니다.");
-    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
-  }
 }
 
 export function normalizeReviewFeedback(input, accepted) {
@@ -1407,36 +1448,119 @@ export function normalizeReviewFeedback(input, accepted) {
   return { rating, tags: accepted ? [] : tags, note };
 }
 
-async function recordFeedbackEvent(env, candidate, stage, accepted, feedback) {
-  await env.DB.prepare(
-    `INSERT INTO hosted_workspace_feedback_events
-      (event_id, account_id, candidate_id, context_profile_id, stage, decision,
-       rating, tags_json, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      crypto.randomUUID(),
-      accountId(env),
-      candidate.candidate_id,
-      candidate.context_profile?.profile_id ?? null,
-      stage,
-      accepted ? "approved" : "rejected",
+async function persistCandidateReview(env, candidate, stage, from, to, accepted, feedback) {
+  const now = Date.now() / 1000;
+  const nextRevision = candidate.revision + 1;
+  const profileSnapshot = candidate.context_profile
+    ? JSON.stringify(candidate.context_profile)
+    : null;
+  const profileSnapshotSha256 = profileSnapshot ? await sha256(profileSnapshot) : null;
+  const eventId = `${accountId(env)}:${candidate.candidate_id}:${stage}:${candidate.revision}`;
+  const candidateUpdate = stage === "image"
+    ? env.DB.prepare(
+      `UPDATE hosted_workspace_candidates
+       SET status = ?, review_note = ?, image_key = ?, image_sha256 = ?,
+           last_review_rating = ?, last_review_tags_json = ?, last_review_stage = 'image',
+           revision = revision + 1, updated_at = ?
+       WHERE account_id = ? AND candidate_id = ? AND status = ? AND revision = ?`,
+    ).bind(
+      to,
+      feedback.note || null,
+      accepted ? candidate.image_path : null,
+      accepted ? candidate.image_sha256 : null,
       feedback.rating,
       JSON.stringify(feedback.tags),
-      feedback.note || null,
-      Date.now() / 1000,
+      now,
+      accountId(env),
+      candidate.candidate_id,
+      from,
+      candidate.revision,
     )
-    .run();
+    : env.DB.prepare(
+      `UPDATE hosted_workspace_candidates
+       SET status = ?, review_note = ?, last_review_rating = ?, last_review_tags_json = ?,
+           last_review_stage = 'caption', revision = revision + 1, updated_at = ?
+       WHERE account_id = ? AND candidate_id = ? AND status = ? AND revision = ?`,
+    ).bind(
+      to,
+      feedback.note || null,
+      feedback.rating,
+      JSON.stringify(feedback.tags),
+      now,
+      accountId(env),
+      candidate.candidate_id,
+      from,
+      candidate.revision,
+    );
+  const eventInsert = env.DB.prepare(
+    `INSERT INTO hosted_workspace_feedback_events
+      (event_id, account_id, candidate_id, context_profile_id, stage, decision,
+       rating, tags_json, note, created_at, candidate_revision, capture_task_id,
+       artifact_sha256, generation_provenance_json, context_snapshot_json,
+       context_snapshot_sha256)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     WHERE EXISTS (
+       SELECT 1 FROM hosted_workspace_candidates
+       WHERE account_id = ? AND candidate_id = ? AND status = ? AND revision = ?
+     )`,
+  ).bind(
+    eventId,
+    accountId(env),
+    candidate.candidate_id,
+    candidate.context_profile?.profile_id ?? null,
+    stage,
+    accepted ? "approved" : "rejected",
+    feedback.rating,
+    JSON.stringify(feedback.tags),
+    feedback.note || null,
+    now,
+    candidate.revision,
+    candidate.capture_task_id,
+    candidate.image_sha256,
+    candidate.generation_provenance ? JSON.stringify(candidate.generation_provenance) : null,
+    profileSnapshot,
+    profileSnapshotSha256,
+    accountId(env),
+    candidate.candidate_id,
+    to,
+    nextRevision,
+  );
+  let results;
+  try {
+    results = await env.DB.batch([candidateUpdate, eventInsert]);
+  } catch (error) {
+    const existing = await findCandidate(env, candidate.candidate_id);
+    if (!existing) throw new WorkspaceHttpError(404, "후보를 찾을 수 없습니다.");
+    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
+  }
+  if (results[0]?.meta?.changes !== 1 || results[1]?.meta?.changes !== 1) {
+    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
+  }
+  if (!accepted) {
+    try {
+      await refreshFeedbackRules(
+        env,
+        candidate.context_profile?.profile_id ?? null,
+        stage,
+        feedback.tags,
+      );
+    } catch (error) {
+      console.error("hosted workspace feedback rule refresh failed", {
+        event_id: eventId,
+        message: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+  }
 }
 
 async function feedbackSummary(env, requestedProfileId) {
   const profileId = optionalString(requestedProfileId, 100) || null;
   const query = profileId
-    ? `SELECT tags_json, note, rating, stage, created_at
+    ? `SELECT candidate_id, tags_json, note, rating, stage, created_at
        FROM hosted_workspace_feedback_events
        WHERE account_id = ? AND context_profile_id = ? AND decision = 'rejected'
        ORDER BY created_at DESC LIMIT 200`
-    : `SELECT tags_json, note, rating, stage, created_at
+    : `SELECT candidate_id, tags_json, note, rating, stage, created_at
        FROM hosted_workspace_feedback_events
        WHERE account_id = ? AND decision = 'rejected'
        ORDER BY created_at DESC LIMIT 200`;
@@ -1444,24 +1568,144 @@ async function feedbackSummary(env, requestedProfileId) {
   const result = profileId
     ? await statement.bind(accountId(env), profileId).all()
     : await statement.bind(accountId(env)).all();
-  const counts = new Map();
+  const summary = summarizeFeedbackRows(result.results);
+  if (profileId) {
+    for (const candidate of summary.rule_candidates) {
+      await upsertFeedbackRule(env, profileId, candidate);
+    }
+  }
+  const rules = await activeAndDisabledFeedbackRules(env, profileId);
+  return {
+    ...summary,
+    rules,
+    rule_candidates: rules.filter((rule) => rule.enabled),
+  };
+}
+
+export function summarizeFeedbackRows(rows) {
+  const tagCounts = new Map();
+  const grouped = new Map();
   const recentNotes = [];
-  for (const row of result.results) {
+  for (const row of rows) {
     const tags = JSON.parse(row.tags_json);
-    for (const tag of tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    for (const tag of tags) {
+      const rule = FEEDBACK_RULES[tag] ?? FEEDBACK_RULES["기타"];
+      const tagState = tagCounts.get(tag) ?? { event_count: 0, candidates: new Set() };
+      tagState.event_count += 1;
+      tagState.candidates.add(row.candidate_id);
+      tagCounts.set(tag, tagState);
+      const key = `${row.stage}\u0000${rule.target}\u0000${tag}`;
+      const state = grouped.get(key) ?? {
+        stage: row.stage,
+        target: rule.target,
+        tag,
+        candidates: new Set(),
+        instruction: rule.instruction,
+      };
+      state.candidates.add(row.candidate_id);
+      grouped.set(key, state);
+    }
     if (row.note && recentNotes.length < 5) recentNotes.push(row.note);
   }
-  const topTags = [...counts.entries()]
-    .map(([tag, count]) => ({ tag, count }))
-    .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag));
+  const topTags = [...tagCounts.entries()]
+    .map(([tag, state]) => ({
+      tag,
+      event_count: state.event_count,
+      candidate_count: state.candidates.size,
+      count: state.candidates.size,
+    }))
+    .sort((left, right) => right.candidate_count - left.candidate_count || left.tag.localeCompare(right.tag));
+  const ruleCandidates = [...grouped.values()]
+    .filter((state) => state.candidates.size >= 3)
+    .map((state) => ({
+      stage: state.stage,
+      target: state.target,
+      tag: state.tag,
+      evidence_count: state.candidates.size,
+      instruction: state.instruction,
+    }))
+    .sort((left, right) => right.evidence_count - left.evidence_count || left.tag.localeCompare(right.tag));
   return {
-    rejected_reviews: result.results.length,
+    rejected_reviews: rows.length,
     top_tags: topTags,
-    rule_candidates: topTags
-      .filter(({ count }) => count >= 3)
-      .map(({ tag, count }) => `“${tag}” 반려가 ${count}회 누적됨 — 같은 패턴을 피할 것`),
+    rule_candidates: ruleCandidates,
     recent_notes: recentNotes,
   };
+}
+
+async function refreshFeedbackRules(env, profileId, stage, tags) {
+  const profileScope = profileId ?? "";
+  for (const tag of tags) {
+    const rule = FEEDBACK_RULES[tag] ?? FEEDBACK_RULES["기타"];
+    const evidence = await env.DB.prepare(
+      `SELECT COUNT(DISTINCT candidate_id) AS evidence_count
+       FROM hosted_workspace_feedback_events AS events
+       WHERE account_id = ? AND COALESCE(context_profile_id, '') = ?
+         AND stage = ? AND decision = 'rejected'
+         AND EXISTS (SELECT 1 FROM json_each(events.tags_json) WHERE value = ?)`,
+    ).bind(accountId(env), profileScope, stage, tag).first();
+    const count = Number(evidence?.evidence_count ?? 0);
+    if (count < 3) continue;
+    await upsertFeedbackRule(env, profileScope, {
+      stage,
+      target: rule.target,
+      tag,
+      instruction: rule.instruction,
+      evidence_count: count,
+    });
+  }
+}
+
+async function upsertFeedbackRule(env, profileScope, rule) {
+  const now = Date.now() / 1000;
+  await env.DB.prepare(
+    `INSERT INTO hosted_workspace_feedback_rules
+     (rule_id, account_id, profile_scope, stage, target, tag, instruction,
+      evidence_count, enabled, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+     ON CONFLICT(account_id, profile_scope, stage, target, tag) DO UPDATE SET
+       instruction = excluded.instruction,
+       evidence_count = excluded.evidence_count,
+       updated_at = excluded.updated_at`,
+  ).bind(
+    crypto.randomUUID(), accountId(env), profileScope, rule.stage, rule.target, rule.tag,
+    rule.instruction, rule.evidence_count, now, now,
+  ).run();
+}
+
+async function activeAndDisabledFeedbackRules(env, profileId) {
+  const result = await env.DB.prepare(
+    `SELECT rule_id, stage, target, tag, instruction, evidence_count, enabled, updated_at
+     FROM hosted_workspace_feedback_rules
+     WHERE account_id = ? AND profile_scope = ?
+     ORDER BY enabled DESC, evidence_count DESC, updated_at DESC`,
+  ).bind(accountId(env), profileId ?? "").all();
+  return result.results.map((row) => ({ ...row, enabled: row.enabled === 1 }));
+}
+
+async function activeFeedbackRules(env, profileId, stage) {
+  const result = await env.DB.prepare(
+    `SELECT rule_id, stage, target, tag, instruction, evidence_count, enabled, updated_at
+     FROM hosted_workspace_feedback_rules
+     WHERE account_id = ? AND profile_scope = ? AND stage = ? AND enabled = 1
+     ORDER BY evidence_count DESC, updated_at DESC`,
+  ).bind(accountId(env), profileId ?? "", stage).all();
+  return result.results.map((row) => ({ ...row, enabled: true }));
+}
+
+async function updateFeedbackRule(env, ruleId, enabled) {
+  const result = await env.DB.prepare(
+    `UPDATE hosted_workspace_feedback_rules SET enabled = ?, updated_at = ?
+     WHERE account_id = ? AND rule_id = ?`,
+  ).bind(enabled ? 1 : 0, Date.now() / 1000, accountId(env), ruleId).run();
+  if (result.meta.changes !== 1) {
+    throw new WorkspaceHttpError(404, "피드백 규칙을 찾을 수 없습니다.");
+  }
+  const row = await env.DB.prepare(
+    `SELECT rule_id, stage, target, tag, instruction, evidence_count, enabled, updated_at
+     FROM hosted_workspace_feedback_rules WHERE account_id = ? AND rule_id = ?`,
+  ).bind(accountId(env), ruleId).first();
+  return { ...row, enabled: row.enabled === 1 };
 }
 
 async function requireCandidate(env, candidateId) {
@@ -1506,6 +1750,10 @@ function candidateFromRow(row) {
     review_note: row.review_note,
     review_rating: row.last_review_rating ?? null,
     review_tags: JSON.parse(row.last_review_tags_json ?? "[]"),
+    last_review_stage: row.last_review_stage ?? null,
+    generation_provenance: row.generation_provenance_json
+      ? JSON.parse(row.generation_provenance_json)
+      : null,
     revision: row.revision,
     created_at: row.created_at,
     updated_at: row.updated_at,

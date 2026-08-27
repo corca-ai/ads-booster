@@ -12,13 +12,15 @@ One login-free hosted review workspace is also implemented at the Worker root. I
 public, fixed to the configured public account, and separate from token-protected `/v1` operations.
 Workers AI reads the selected D1 country/persona profile, matching packaged country context, and the
 account instruction. D1 stores profiles, immutable candidate context snapshots, candidates, capture
-tasks, worker identities, and review revisions. After the first non-revoked worker is enrolled, caption
+tasks, worker identities, review revisions, attempt provenance, and reversible feedback rules. After the first non-revoked worker is enrolled, caption
 approval leaves a task in the D1 broker and one healthy Mac claims its expiring lease without a
 Cloudflare Queue token. The worker performs native Appium capture and returns a digest-backed PNG
 for R2. A deployment with no broker worker retains legacy Queue dispatch. Live publication remains
 outside this hosted surface. Image approval ends at `submitted` without an
 external side effect. Hosted candidates remain editable and deletable in every state; an edit
-invalidates prior approvals and image artifacts before returning to the first review gate.
+invalidates prior approvals and image artifacts before returning to the first review gate. Human
+rejection never rewrites the canonical account or profile: it is an attempt-scoped correction first,
+then a separate learned rule only after independent evidence reaches the promotion threshold.
 
 ## First milestone
 
@@ -211,7 +213,30 @@ profile strings and Trace items in the typed Codex
 input. They discover a booted or available iPhone
 Simulator on each compatible Mac, build a typed marketing context from the immutable hosted
 snapshot, run the production Codex-to-Appium capture path, and place the final PNG plus digest in
-the durable callback outbox. A fixed UDID is optional, not part of enrollment.
+the durable callback outbox. The callback additionally projects the validated request-scoped
+`WallpaperPlan` and searched-background provenance with their digests. During rollout, Cloudflare
+accepts an older otherwise verified callback without this optional projection, but records the
+candidate attempt with unavailable generation provenance instead of inventing it. A fixed UDID is
+optional, not part of enrollment.
+
+## Creative feedback contract
+
+Caption and image decisions are immutable review events scoped by account, candidate, profile
+snapshot, stage, rating, tags, note, and candidate revision. Image events also retain the capture
+task ID, artifact digest, and generation provenance available on the reviewed attempt. The candidate
+transition and immutable event insert commit in one D1 batch; a failed rule refresh never discards
+the event and is repaired from persisted evidence on the next profile feedback-summary read.
+
+An image rejection moves the candidate back to `caption_approved`. Its structured feedback is added
+to the next capture task and rendered into `creative_direction`, so both the hosted receipt and the
+Mac planning prompt carry the same correction. That immediate correction applies to one candidate;
+it does not need a repetition threshold.
+
+Durable feedback rules are separate D1 rows. Evidence is grouped by profile scope, review stage,
+target, and tag, and counts distinct candidate IDs rather than raw events. Three distinct candidates
+promote the deterministic instruction. Caption-stage rules affect hosted candidate generation;
+image-stage rules affect Mac image planning. Disabled rules remain inspectable but are omitted from
+prompts. Re-enabling a rule does not modify historical events, candidate snapshots, or profiles.
 
 ## First operating target
 
