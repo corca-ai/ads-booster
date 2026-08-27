@@ -24,6 +24,7 @@ from ads_booster.candidate_generation import (
 from ads_booster.providers.codex import ModelTurn
 from ads_booster.providers.errors import ProviderError
 from ads_booster.workspace import (
+    CandidateAccountBrief,
     CandidateBackgroundSubject,
     CandidateCreate,
     CandidateHistoryEntry,
@@ -211,6 +212,102 @@ def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -
     assert "5~7개를 권장합니다" in instruction
     assert "모호어 대신 실제로 보이는 것을" in instruction
     assert "실제로 잠금화면에 설정해뒀을 법한 배경" in instruction
+
+
+def test_instruction_keeps_the_job_out_of_the_schedule_and_the_caption(
+    tmp_path: Path,
+) -> None:
+    """Occupation is background, not subject matter.
+
+    The reference corpus is what settles this: the same lock-screen material reached 76x
+    fewer people once the caption spoke as the maker (kr-032 against kr-026), and the
+    maker story collapses 35x on its second use (kr-020 to kr-029). So a developer account
+    has to post about its life, not about building the product it is advertising.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    assert "직무 작업을 일정으로 늘어놓지 마세요" in instruction
+    assert "업무 티켓이 아닙니다" in instruction
+    assert "22:00 PR 리뷰" in instruction
+    assert "앱을 만든 사람의 목소리가 아니라 앱을 쓰는 사람의 목소리" in instruction
+    assert "제품·개발 용어를 캡션에 쓰지 마세요" in instruction
+    assert "메이커 화법을 쓰지 마세요" in instruction
+    assert "kr-032 대 kr-026" in instruction
+    assert "kr-020 → kr-029" in instruction
+    assert "직업은 이 사람의 배경이지 글의 소재가 아닙니다" in instruction
+
+
+def test_the_account_block_supplies_a_person_without_dictating_the_prose(
+    tmp_path: Path,
+) -> None:
+    """An account says who is writing and what they can write about — never how.
+
+    Style belongs to the reference corpus, which weighs each voice hypothesis against its
+    counter-examples. A one-line instruction here would quietly outrank all of it, and did:
+    the first accounts shipped a voice field and every caption opened by introducing itself.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+    account = CandidateAccountBrief(
+        display_name="김도현",
+        age=29,
+        region="서울 성동구",
+        occupation="백엔드 개발자",
+        concept="야근과 직관 사이에서 잠금화면 일정으로 버티는 4년차 개발자",
+        domain=CandidatePersonaDomain.SPORTS_FAN,
+        interests=("KIA 타이거즈", "주말 러닝"),
+        life_rhythm="평일 10시 출근, 주말 오전 러닝",
+        background_subject=CandidateBackgroundSubject.SPORTS_TEAM,
+        background_mood="야간 경기 조명이 켜진 외야 관중석",
+    )
+
+    # When
+    instruction = build_instruction(bundle, count=3, account=account)
+
+    # Then
+    assert "[이 계정으로 씁니다]" in instruction
+    assert "김도현" in instruction
+    assert "자기소개나 직업 소개로 캡션을 시작하지 마세요" in instruction
+    assert "컨셉 문장을 캡션에 그대로 옮겨 쓰지 마세요" in instruction
+    assert "직업은 이 사람이 어떤 시간을 사는지 알려줄 뿐" in instruction
+    assert "문체·어미·길이는 이 블록이 정하지 않습니다" in instruction
+    assert "말투:" not in instruction
+
+
+def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> None:
+    """Spreading one account's batch across domains would contradict the account."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+    account = CandidateAccountBrief(
+        display_name="김도현",
+        age=29,
+        region="서울 성동구",
+        occupation="백엔드 개발자",
+        concept="야근과 직관 사이에서 버티는 개발자",
+        domain=CandidatePersonaDomain.SPORTS_FAN,
+        interests=("KIA 타이거즈",),
+        life_rhythm="평일 10시 출근",
+        background_subject=CandidateBackgroundSubject.SPORTS_TEAM,
+        background_mood="야간 경기 조명이 켜진 외야 관중석",
+    )
+
+    # When
+    instruction = build_instruction(
+        bundle,
+        count=3,
+        domains=(CandidatePersonaDomain.PARENTING,) * 3,
+        account=account,
+    )
+
+    # Then
+    assert "누적 커버리지가 가장 적은 순서로" not in instruction
+    assert "persona_domain 은 sports_fan 으로 고정합니다." in instruction
+    assert "계정 블록이 있으면 그 계정의 도메인" in instruction
 
 
 def _assert_persona_specificity_block(instruction: str) -> None:
