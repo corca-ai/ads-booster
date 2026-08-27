@@ -45,6 +45,9 @@ class CandidateWorkflow:
     def create(self, value: CandidateCreate) -> CandidateRecord:
         return self.store.create_candidate(value)
 
+    def delete(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> None:
+        return self.store.delete_candidate(workspace_id, candidate_id)
+
     def generate(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
         return self.generator.generate(workspace_id)
 

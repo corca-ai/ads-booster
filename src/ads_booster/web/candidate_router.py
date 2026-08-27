@@ -1,3 +1,4 @@
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003
@@ -47,10 +48,24 @@ _NO_IMAGE_TO_REVIEW: Final = "candidate has no image awaiting review"
 _IMAGE_REVISION_CONFLICT: Final = "candidate revision conflict"
 _CORE_RUN_CONFLICT: Final = "candidate Agent run conflict"
 _NO_IMAGE: Final = "candidate image not found"
+_CANDIDATE_DIRECTORY: Final = "candidates"
 
 
 def _response(record: CandidateRecord) -> CandidateResponse:
     return CandidateResponse.model_validate(record, from_attributes=True)
+
+
+def _remove_artifacts(image_root: Path, candidate_id: CandidateId) -> None:
+    """Best-effort removal of one candidate's artifact directory.
+
+    The path is resolved and confirmed to sit under the image root before anything is
+    removed, so a candidate id that is not what it claims to be cannot reach outside it.
+    """
+    root = image_root.resolve()
+    directory = (root / _CANDIDATE_DIRECTORY / candidate_id).resolve()
+    if not directory.is_relative_to(root) or not directory.is_dir():
+        return
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +77,7 @@ class CandidateRouter:
     def build(self) -> APIRouter:
         router = APIRouter(prefix="/api/candidates", tags=["candidates"])
         self._register_candidate_routes(router)
+        self._register_candidate_delete(router)
         self._register_image_generation(router)
         self._register_image_review(router)
         self._register_image_read(router)
@@ -89,6 +105,7 @@ class CandidateRouter:
                         country=payload.country,
                         posting_slot=payload.posting_slot,
                         topic=payload.topic,
+                        persona_domain=payload.persona_domain,
                         caption=payload.caption,
                         hypothesis=payload.hypothesis,
                         image_inputs=payload.image_inputs,
@@ -147,6 +164,29 @@ class CandidateRouter:
             return _response(record)
 
         _ = (create_candidate, generate_candidates, list_candidates, review_candidate)
+
+    def _register_candidate_delete(self, router: APIRouter) -> None:
+        current_principal = self.current_principal
+
+        @router.delete("/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
+        def delete_candidate(
+            candidate_id: CandidateId,
+            principal: Annotated[Principal, Depends(current_principal)],
+        ) -> None:
+            """Delete one candidate and the artifacts it composed, at any stage.
+
+            The row is removed first: it is the record the reviewer asked to be rid of, and
+            a leftover directory is a housekeeping problem rather than a reason to keep a
+            candidate the reviewer already dismissed. No revision is expected, because
+            deletion is not a review outcome another writer can race.
+            """
+            try:
+                self.workflow.delete(principal.workspace_id, candidate_id)
+            except ScopedRecordNotFoundError as error:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, _CANDIDATE_NOT_FOUND) from error
+            _remove_artifacts(self.image_root, candidate_id)
+
+        _ = delete_candidate
 
     def _register_image_generation(self, router: APIRouter) -> None:
         current_principal = self.current_principal

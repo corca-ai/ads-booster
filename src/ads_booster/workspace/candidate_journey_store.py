@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, NoReturn
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.workspace.candidate_base_store import CandidateBaseStore
-from ads_booster.workspace.candidate_codec import CANDIDATE_RECORD, SELECT_STATUS
+from ads_booster.workspace.candidate_codec import (
+    CANDIDATE_RECORD,
+    SELECT_STATUS,
+    dump_background_provenance,
+    load_persona_domain,
+)
 from ads_booster.workspace.errors import (
     CandidateAlreadyReviewedError,
     CandidateStateError,
@@ -15,9 +20,11 @@ from ads_booster.workspace.errors import (
     WorkspaceStoreCorruptionError,
 )
 from ads_booster.workspace.models import (
+    CandidateHistoryEntry,
     CandidateId,
     CandidateImageAttachment,
     CandidateRecord,
+    CandidateSource,
     CandidateStatus,
     WorkspaceId,
 )
@@ -29,6 +36,78 @@ _STATUS_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 
 
 class CandidateStore(CandidateBaseStore):
+    def count_candidate_domains(self, workspace_id: WorkspaceId) -> dict[str, int]:
+        """Count how many generated candidates each persona domain already has.
+
+        Only AUTO rows are counted: coverage is a property of what the generator has been
+        producing, and a workspace that hand-wrote ten manual candidates in one domain has
+        not thereby exhausted it. Domains with no rows are simply absent from the result;
+        the caller knows the full vocabulary and treats a missing key as zero.
+        """
+        with self._database.connect() as connection:
+            cursor: SqliteCursor = connection.execute(
+                """
+                SELECT persona_domain, COUNT(*) FROM candidates
+                WHERE workspace_id = ? AND source = ? AND persona_domain IS NOT NULL
+                GROUP BY persona_domain
+                """,
+                (workspace_id, CandidateSource.AUTO),
+            )
+            counts: dict[str, int] = {}
+            for row in cursor.fetchall():
+                match row:
+                    case (str() as domain, int() as total):
+                        counts[domain] = total
+                    case _:
+                        continue
+        return counts
+
+    def recent_candidate_history(
+        self, workspace_id: WorkspaceId, limit: int
+    ) -> tuple[CandidateHistoryEntry, ...]:
+        """Return the newest generated candidates as (domain, topic), newest first."""
+        with self._database.connect() as connection:
+            cursor: SqliteCursor = connection.execute(
+                """
+                SELECT persona_domain, topic FROM candidates
+                WHERE workspace_id = ? AND source = ?
+                ORDER BY created_at DESC, candidate_id DESC
+                LIMIT ?
+                """,
+                (workspace_id, CandidateSource.AUTO, limit),
+            )
+            entries: list[CandidateHistoryEntry] = []
+            for row in cursor.fetchall():
+                match row:
+                    case ((str() | None) as domain, str() as topic):
+                        entries.append(
+                            CandidateHistoryEntry(
+                                persona_domain=load_persona_domain(domain),
+                                topic=topic,
+                            )
+                        )
+                    case _:
+                        continue
+        return tuple(entries)
+
+    def delete_candidate(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> None:
+        """Remove one candidate from its own workspace, whatever stage it had reached.
+
+        Deletion is not a review outcome, so no revision is expected and no status is
+        required: a reviewer removing a candidate has already decided, and a row that
+        moved stages between the click and the call should still go.
+        """
+        with self._database.connect(write=True) as connection:
+            result = connection.execute(
+                "DELETE FROM candidates WHERE workspace_id = ? AND candidate_id = ?",
+                (workspace_id, candidate_id),
+            )
+            if result.rowcount == 0:
+                raise ScopedRecordNotFoundError(
+                    record_type=CANDIDATE_RECORD,
+                    record_id=candidate_id,
+                )
+
     def review_candidate(
         self,
         workspace_id: WorkspaceId,
@@ -76,7 +155,8 @@ class CandidateStore(CandidateBaseStore):
             result = connection.execute(
                 """
                 UPDATE candidates
-                SET image_path = ?, image_sha256 = ?, agent_run_id = ?, status = ?,
+                SET image_path = ?, image_sha256 = ?, agent_run_id = ?,
+                    background_provenance_json = ?, status = ?,
                     review_note = NULL, revision = revision + 1, updated_at = ?
                 WHERE workspace_id = ? AND candidate_id = ? AND revision = ? AND status = ?
                 """,
@@ -84,6 +164,7 @@ class CandidateStore(CandidateBaseStore):
                     attachment.path,
                     attachment.sha256,
                     attachment.agent_run_id,
+                    dump_background_provenance(attachment.background_provenance),
                     CandidateStatus.IMAGE_AWAITING_REVIEW,
                     now,
                     workspace_id,
@@ -122,12 +203,15 @@ class CandidateStore(CandidateBaseStore):
                 UPDATE candidates
                 SET status = ?, review_note = ?, image_path = CASE WHEN ? THEN image_path END,
                     image_sha256 = CASE WHEN ? THEN image_sha256 END,
+                    background_provenance_json =
+                        CASE WHEN ? THEN background_provenance_json END,
                     revision = revision + 1, updated_at = ?
                 WHERE workspace_id = ? AND candidate_id = ? AND revision = ? AND status = ?
                 """,
                 (
                     status,
                     note,
+                    accepted,
                     accepted,
                     accepted,
                     now,

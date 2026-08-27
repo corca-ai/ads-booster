@@ -13,11 +13,14 @@ from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import (
     AssetId,
     AssetRelativePath,
+    CandidateBackgroundProvenance,
     CandidateCaption,
     CandidateCountry,
+    CandidateGenerationProvenance,
     CandidateHypothesis,
     CandidateId,
     CandidateImageInputs,
+    CandidatePersonaDomain,
     CandidatePostingSlot,
     CandidatePrinciple,
     CandidateReference,
@@ -238,6 +241,7 @@ class CandidateCreateRequest(WebModel):
     topic: CandidateTopic
     country: CandidateCountry
     posting_slot: CandidatePostingSlot = CandidatePostingSlot.MANUAL
+    persona_domain: CandidatePersonaDomain | None = None
     caption: CandidateCaption
     hypothesis: CandidateHypothesis
     image_inputs: CandidateImageInputs
@@ -263,6 +267,7 @@ class CandidateResponse(WebModel):
     country: str
     posting_slot: CandidatePostingSlot
     topic: str
+    persona_domain: CandidatePersonaDomain | None
     caption: str
     hypothesis: str
     refs_used: tuple[str, ...]
@@ -273,6 +278,8 @@ class CandidateResponse(WebModel):
     image_path: str | None
     image_sha256: str | None
     agent_run_id: str | None
+    generation_provenance: CandidateGenerationProvenance | None
+    background_provenance: CandidateBackgroundProvenance | None
     status: CandidateStatus
     review_note: str | None
     revision: int

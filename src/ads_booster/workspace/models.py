@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from pathlib import PurePosixPath
-from typing import Annotated, ClassVar, NewType
+from typing import Annotated, ClassVar, Final, NewType
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
@@ -136,6 +136,68 @@ class CandidatePostingSlot(StrEnum):
 
 
 @unique
+class CandidateBackgroundSubject(StrEnum):
+    """Background subject vocabulary the operator's AXES document defines."""
+
+    CHARACTER_KITTY = "character_kitty"
+    CHARACTER_OTHER = "character_other"
+    FAMILY_PHOTO = "family_photo"
+    PERSON = "person"
+    PET = "pet"
+    SCENERY = "scenery"
+    MINIMAL = "minimal"
+    SPORTS_TEAM = "sports_team"
+    NONE = "none"
+
+
+@unique
+class CandidatePersonaDomain(StrEnum):
+    """The fixed vocabulary of persona domains one generated candidate can belong to.
+
+    The domain is what coverage is counted over, so it has to be a closed set: a model free
+    to invent its own labels would report perfect variety while writing the same three
+    genres. Manual candidates and rows written before the field existed carry `None`.
+    """
+
+    SPORTS_FAN = "sports_fan"
+    IDOL_FANDOM = "idol_fandom"
+    EXAM_PREPPER = "exam_prepper"
+    PARENTING = "parenting"
+    OFFICE_WORKER = "office_worker"
+    FITNESS_CREW = "fitness_crew"
+    PET_OWNER = "pet_owner"
+    CERT_STUDENT = "cert_student"
+    SMALL_BUSINESS = "small_business"
+
+
+PERSONA_DOMAIN_LABELS: Final = {
+    CandidatePersonaDomain.SPORTS_FAN: "스포츠 팬",
+    CandidatePersonaDomain.IDOL_FANDOM: "아이돌·밴드 팬덤",
+    CandidatePersonaDomain.EXAM_PREPPER: "수험생",
+    CandidatePersonaDomain.PARENTING: "육아",
+    CandidatePersonaDomain.OFFICE_WORKER: "직군 직장인",
+    CandidatePersonaDomain.FITNESS_CREW: "러닝·등산 크루",
+    CandidatePersonaDomain.PET_OWNER: "반려동물 보호자",
+    CandidatePersonaDomain.CERT_STUDENT: "자격증 준비생",
+    CandidatePersonaDomain.SMALL_BUSINESS: "자영업",
+}
+
+
+@unique
+class CandidateImagePipeline(StrEnum):
+    """Which composition path actually produced a candidate's image.
+
+    The native path drives a real device through Appium and exports the Trace wallpaper;
+    the local fallback merges the packaged component fixture with the packaged iPhone UI
+    on a host that has no capture environment. A reviewer has to be able to tell the two
+    apart, because only the native path renders the candidate's own schedule and clock.
+    """
+
+    NATIVE = "native"
+    LOCAL_FALLBACK = "local_fallback"
+
+
+@unique
 class CandidateStatus(StrEnum):
     """Position of a candidate on the three-stage approval journey.
 
@@ -166,8 +228,154 @@ CandidateReviewNote = Annotated[str, Field(min_length=1, max_length=2_000)]
 CandidateScheduleItem = Annotated[str, Field(min_length=1, max_length=80)]
 CandidateDeviceTime = Annotated[str, Field(pattern=r"^\d{2}:\d{2}$")]
 CandidateBackgroundIntent = Annotated[str, Field(min_length=1, max_length=500)]
+CandidateBackgroundMood = Annotated[str, Field(min_length=1, max_length=40)]
+CandidateBackgroundSearchQuery = Annotated[str, Field(min_length=1, max_length=200)]
+CandidateSearchProvider = Annotated[str, Field(min_length=1, max_length=64)]
+CandidateSearchedQuery = Annotated[str, Field(min_length=1, max_length=1_000)]
+CandidateSourceUrl = Annotated[str, Field(min_length=1, max_length=4_096)]
 CandidateLanguage = Annotated[str, Field(pattern=r"^[a-z]{2}$")]
 CandidateImageDigest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+CandidateContextRelativePath = Annotated[str, Field(min_length=1, max_length=1_024)]
+CandidateGenerationModel = Annotated[str, Field(min_length=1, max_length=200)]
+CandidateBackgroundImageId = Annotated[str, Field(min_length=1, max_length=32)]
+CandidateJudgeNote = Annotated[str, Field(max_length=500)]
+CandidateJudgeReason = Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class CandidateContextDocument(FrozenModel):
+    """One context document a generation run read, with the byte size it contributed."""
+
+    relative_path: CandidateContextRelativePath
+    size_bytes: int = Field(ge=0)
+
+
+class CandidateGenerationProvenance(FrozenModel):
+    """What one auto-generation batch actually read and asked for, recorded while it ran.
+
+    Every field is a fact the run observed: the context documents assembled into the
+    instruction with their UTF-8 byte sizes, the model id the run requested, the total
+    instruction length, and the moment the provider call was made. Manual candidates and
+    rows written before this record existed carry `None`.
+    """
+
+    documents: Annotated[tuple[CandidateContextDocument, ...], Field(max_length=64)]
+    model: CandidateGenerationModel
+    instruction_chars: int = Field(ge=0)
+    generated_at: float
+    # The domains this batch was told to write, one per candidate, chosen from the running
+    # coverage counts. Batches generated before the assignment existed carry an empty tuple.
+    assigned_domains: Annotated[tuple[CandidatePersonaDomain, ...], Field(max_length=16)] = ()
+    # Set when the batch came from the Agent-kernel connector rather than the single-call
+    # script engine, so a reviewer can tell which generator wrote the caption in front of them.
+    agent_run_id: str | None = Field(default=None, max_length=200)
+
+
+@unique
+class CandidateBackgroundGrade(StrEnum):
+    """One rubric grade the background judge gave a surviving image."""
+
+    HIGH = "상"
+    MID = "중"
+    LOW = "하"
+
+
+class CandidateBackgroundGrades(FrozenModel):
+    """The three rubric grades one surviving background image was given."""
+
+    authenticity: CandidateBackgroundGrade
+    persona_fit: CandidateBackgroundGrade
+    background_fit: CandidateBackgroundGrade
+
+
+class CandidateBackgroundReview(FrozenModel):
+    """One image the judge looked at, and what it decided about that image.
+
+    A gated image carries `gate_reason` and no grades; a surviving image carries `grades`
+    and the `score` they add up to. Both carry the source they came from, so a reviewer can
+    open the page the judge was judging.
+    """
+
+    image_id: CandidateBackgroundImageId
+    image_url: CandidateSourceUrl
+    source_url: CandidateSourceUrl
+    gated: bool
+    gate_reason: CandidateJudgeReason | None = None
+    grades: CandidateBackgroundGrades | None = None
+    score: int | None = Field(default=None, ge=0, le=9)
+    note: CandidateJudgeNote = ""
+
+
+@unique
+class CandidateQuerySource(StrEnum):
+    """Where one query in the background search ladder came from."""
+
+    ORIGINAL = "original"
+    BROADENED = "broadened"
+    REWRITTEN = "rewritten"
+
+
+class CandidateBackgroundAttempt(FrozenModel):
+    """One query the background search actually ran, and what came back for it.
+
+    A model-authored query naming a specific person or character can legitimately return
+    nothing, so the stage walks a short ladder of queries. Recording every rung is what
+    lets a reviewer tell "nobody has published this photo" apart from "the search worked
+    and the images were unusable".
+    """
+
+    query: CandidateSearchedQuery
+    source: CandidateQuerySource
+    results: int = Field(ge=0)
+    passed_filters: int = Field(ge=0)
+    filtered_stock: int = Field(default=0, ge=0)
+
+
+class CandidateBackgroundJudgment(FrozenModel):
+    """The full judgment behind the background that was actually used.
+
+    Every image the collection step gathered appears in `reviews`, whether it was gated or
+    graded, so the record shows what the winner beat rather than only that it won. A run
+    that had to rewrite its query records both queries. Candidates composed before the
+    judge existed carry `None`.
+    """
+
+    reviews: Annotated[tuple[CandidateBackgroundReview, ...], Field(min_length=1, max_length=16)]
+    chosen_id: CandidateBackgroundImageId
+    reason: CandidateJudgeReason
+    model: CandidateGenerationModel
+    query: CandidateSearchedQuery
+    rewritten_query: CandidateSearchedQuery | None = None
+    # Every query the ladder ran, in order. Rows written before the ladder existed carry an
+    # empty tuple and render from `query`/`rewritten_query` alone.
+    attempts: Annotated[tuple[CandidateBackgroundAttempt, ...], Field(max_length=8)] = ()
+    tie_broken: bool = False
+    # True when the tie-break was asked in both orders and they named different images, so
+    # the graded totals decided instead. The pairwise call ran; it just did not agree with
+    # itself, and a reviewer should be able to see that rather than infer a clean win.
+    tie_break_inconsistent: bool = False
+
+
+class CandidateBackgroundProvenance(FrozenModel):
+    """Where the background actually behind one composed candidate image came from.
+
+    Recorded by the image stage while it runs: the query that was searched, the provider
+    that answered, the image file that was downloaded, the page that published it, the
+    digest of the bytes written to disk, and which composition path consumed them.
+    Candidates composed before this record existed, and candidates with no image yet,
+    carry `None`.
+    """
+
+    query: CandidateSearchedQuery
+    provider: CandidateSearchProvider
+    image_url: CandidateSourceUrl
+    source_url: CandidateSourceUrl
+    sha256: CandidateImageDigest
+    # Written by the AI background judge. Rows composed before the judge existed, and the
+    # stock-allowlist fetcher that takes the first usable hit, carry `None`.
+    judgment: CandidateBackgroundJudgment | None = None
+    # Which composition path ran. Rows written before the fallback existed carry `NATIVE`,
+    # which is what they were: the native path was the only one there was.
+    pipeline: CandidateImagePipeline = CandidateImagePipeline.NATIVE
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,30 +384,65 @@ class CandidateImageAttachment:
     sha256: str
     agent_run_id: str
     expected_revision: int
+    background_provenance: CandidateBackgroundProvenance | None = None
+
+
+class CandidateHistoryEntry(FrozenModel):
+    """One recent candidate, reduced to what the next batch needs to avoid repeating it."""
+
+    persona_domain: CandidatePersonaDomain | None
+    topic: str
 
 
 class CandidateImageInputs(FrozenModel):
-    """Machine inputs the image stage needs to compose a lock-screen image."""
+    """Machine inputs the image stage needs to compose a lock-screen image.
+
+    `background_subject` and `background_mood` are the canonical pair: the subject is drawn
+    from a closed vocabulary so the judge and the search can both reason about it, and the
+    mood is the concrete phrase the generating model wrote. `background_intent` is the
+    single free-text field the Trace connector's native path reads; it is derived from the
+    pair when a writer does not supply it, so both generators can feed the same downstream.
+    """
 
     trace_items: Annotated[tuple[CandidateScheduleItem, ...], Field(min_length=1, max_length=8)]
     device_time: CandidateDeviceTime
+    background_subject: CandidateBackgroundSubject
+    background_mood: CandidateBackgroundMood
     background_intent: CandidateBackgroundIntent
     language: CandidateLanguage
+    # Authored by the generating model as a concrete scene phrase, and the query the open-web
+    # background search actually runs. Rows written before the field existed carry `None`, and
+    # the image stage falls back to the mechanical query built from subject, mood, and topic.
+    background_search_query: CandidateBackgroundSearchQuery | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_background_fields(cls, value: JsonValue) -> JsonValue:
-        if not isinstance(value, dict) or "background_intent" in value:
+    def reconcile_background_fields(cls, value: JsonValue) -> JsonValue:
+        """Accept either half of the background contract and fill in the other.
+
+        Rows the script engine wrote carry the subject/mood pair; rows the Agent-kernel
+        connector wrote carry only `background_intent`. Neither is discarded: the pair
+        composes an intent for the native path, and a lone intent is kept verbatim as the
+        mood under the `none` subject, which is exactly what "no vocabulary term was
+        recorded" means.
+        """
+        if not isinstance(value, dict):
             return value
         subject = value.get("background_subject")
         mood = value.get("background_mood")
-        if not isinstance(subject, str) or not isinstance(mood, str):
+        intent = value.get("background_intent")
+        has_pair = isinstance(subject, str) and isinstance(mood, str)
+        if has_pair and isinstance(intent, str):
             return value
-        migrated = dict(value)
-        _ = migrated.pop("background_subject", None)
-        _ = migrated.pop("background_mood", None)
-        migrated["background_intent"] = f"{subject}: {mood}"
-        return migrated
+        reconciled = dict(value)
+        if has_pair:
+            reconciled["background_intent"] = f"{subject}: {mood}"
+            return reconciled
+        if not isinstance(intent, str):
+            return value
+        reconciled["background_subject"] = CandidateBackgroundSubject.NONE.value
+        reconciled["background_mood"] = intent[:40]
+        return reconciled
 
 
 class CandidateCreate(FrozenModel):
@@ -208,6 +451,7 @@ class CandidateCreate(FrozenModel):
     country: CandidateCountry
     posting_slot: CandidatePostingSlot = CandidatePostingSlot.MANUAL
     topic: CandidateTopic
+    persona_domain: CandidatePersonaDomain | None = None
     caption: CandidateCaption
     hypothesis: CandidateHypothesis
     refs_used: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
@@ -216,6 +460,7 @@ class CandidateCreate(FrozenModel):
     image_inputs: CandidateImageInputs
     ai_verdict: CandidateVerdict | None = None
     image_path: CandidateImagePath | None = None
+    generation_provenance: CandidateGenerationProvenance | None = None
 
 
 class CandidateRecord(FrozenModel):
@@ -225,6 +470,7 @@ class CandidateRecord(FrozenModel):
     country: str
     posting_slot: CandidatePostingSlot
     topic: str
+    persona_domain: CandidatePersonaDomain | None
     caption: str
     hypothesis: str
     refs_used: tuple[str, ...]
@@ -235,6 +481,8 @@ class CandidateRecord(FrozenModel):
     image_path: str | None
     image_sha256: str | None
     agent_run_id: str | None
+    generation_provenance: CandidateGenerationProvenance | None
+    background_provenance: CandidateBackgroundProvenance | None
     status: CandidateStatus
     review_note: str | None
     revision: int = Field(ge=1)

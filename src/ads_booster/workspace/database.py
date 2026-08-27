@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     country TEXT NOT NULL,
     posting_slot TEXT NOT NULL DEFAULT 'manual',
     topic TEXT NOT NULL,
+    persona_domain TEXT,
     caption TEXT NOT NULL,
     hypothesis TEXT NOT NULL,
     refs_used_json TEXT NOT NULL,
@@ -75,6 +76,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     image_path TEXT,
     image_sha256 TEXT,
     agent_run_id TEXT,
+    generation_provenance_json TEXT,
+    background_provenance_json TEXT,
     status TEXT NOT NULL,
     review_note TEXT,
     revision INTEGER NOT NULL,
@@ -105,6 +108,13 @@ _ADD_CANDIDATE_COLUMNS: Final = {
     "agent_run_id": "ALTER TABLE candidates ADD COLUMN agent_run_id TEXT",
     "posting_slot": (
         "ALTER TABLE candidates ADD COLUMN posting_slot TEXT NOT NULL DEFAULT 'manual'"
+    ),
+    "persona_domain": "ALTER TABLE candidates ADD COLUMN persona_domain TEXT",
+    "generation_provenance_json": (
+        "ALTER TABLE candidates ADD COLUMN generation_provenance_json TEXT"
+    ),
+    "background_provenance_json": (
+        "ALTER TABLE candidates ADD COLUMN background_provenance_json TEXT"
     ),
 }
 _BACKFILL_CANDIDATE_TOPIC: Final = "UPDATE candidates SET topic = ? WHERE topic = ''"
@@ -149,8 +159,12 @@ def _migrate_candidates(connection: sqlite3.Connection) -> None:
 
     Every step is idempotent so they can run on every open: `topic` became a required
     reviewable field after the first candidates were stored, the image stage added nullable
-    `image_inputs_json` and `image_sha256` columns, and single-stage "accepted" rows mean the
-    same thing as the first journey stage.
+    `image_inputs_json` and `image_sha256` columns, generation provenance and the judged
+    open-web background added nullable `generation_provenance_json` and
+    `background_provenance_json` columns, coverage-based assignment added a nullable
+    `persona_domain` that stays NULL for manual and pre-assignment rows, and single-stage
+    "accepted" rows mean the same thing as the first journey stage. Every addition is a
+    nullable column, so a database written by an older build stays readable by this one.
     """
     cursor: SqliteCursor = connection.execute("PRAGMA table_info(candidates)")
     rows: list[SqliteRow] = cursor.fetchall()
