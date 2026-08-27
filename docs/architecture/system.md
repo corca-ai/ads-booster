@@ -21,11 +21,14 @@ Package ownership, dependency direction, composition roots, and code placement b
 ## System summary
 
 `ads-booster` is a local-first Python package for operating a Trace marketing agent and producing
-layered Trace lock-screen marketing images. It exposes three primary product surfaces:
+Trace-rendered lock-screen wallpaper PNGs. It exposes three primary product surfaces:
 
 - a standalone agent through the `trace-ads` TUI or plain REPL;
 - a local team workspace through `trace-agent serve` and its FastAPI browser/API surface;
-- a deterministic generation pipeline through `trace-agent generate-one` and `trace-run`.
+- a deterministic full-wallpaper generation pipeline through `trace-agent generate-one`.
+
+`trace-run` remains an installed legacy component-capture and composition CLI, not part of the
+primary generation surface.
 
 The optional Cloudflare deployment adds a fourth surface: one login-free hosted candidate workspace
 served from the control-plane Worker root. It contains switchable logical account silos and is
@@ -64,11 +67,11 @@ flowchart LR
     end
 
     subgraph Generation[Generation runtime]
-        PLANNER[ScenePlanner]
+        PLANNER[WallpaperPlan validation]
         SEARCH[Approved image search and download]
         TRACERUN[TraceRunRunner]
-        CAPTURE[Appium Trace setup and native export]
-        COMPOSE[Deterministic three-layer composition]
+        CAPTURE[Appium drives Trace wallpaper editor]
+        EXPORT[Trace full-wallpaper export and validation]
     end
 
     TUI --> SESSION
@@ -92,7 +95,7 @@ flowchart LR
     ONE --> TRACERUN
     RUN --> TRACERUN
     TRACERUN --> CAPTURE
-    TRACERUN --> COMPOSE
+    TRACERUN --> EXPORT
 ```
 
 ## Runtime entry points
@@ -101,12 +104,12 @@ The installed commands are declared in `pyproject.toml`.
 
 | Command | Composition root | Responsibility |
 | --- | --- | --- |
-| `trace-ads` | `src/trace_capture/cli/agent.py` | Start the Textual TUI or plain REPL, authenticate, select the model, and compose the agent session. |
-| `trace-agent` | `src/trace_capture/cli/agent.py` | Compatibility alias for `trace-ads`; also owns `generate-one`, `serve`, `workspace`, and `service` subcommands. |
-| `trace-capture` | `src/trace_capture/cli/capture.py` | Execute a typed native component-capture job. |
-| `trace-compose` | `src/trace_capture/cli/compose.py` | Compose validated background, Trace component, and iPhone system-UI layers. |
-| `trace-run` | `src/trace_capture/cli/trace_run.py` | Execute or resume the durable capture, staging, and composition state machine. |
-| `trace-marketing` | `src/trace_capture/cli/marketing.py` | Prove the account loop, run the legacy Queue bridge, or enroll and supervise a replaceable D1-backed Mac/Appium worker. |
+| `trace-ads` | `src/ads_booster/cli/agent.py` | Start the Textual TUI or plain REPL, authenticate, select the model, and compose the agent session. |
+| `trace-agent` | `src/ads_booster/cli/agent.py` | Compatibility alias for `trace-ads`; also owns `generate-one`, `serve`, `workspace`, and `service` subcommands. |
+| `trace-capture` | `src/ads_booster/cli/capture.py` | Legacy: execute a typed native component-capture job. |
+| `trace-compose` | `src/ads_booster/cli/compose.py` | Legacy: compose validated background, Trace component, and iPhone system-UI layers. |
+| `trace-run` | `src/ads_booster/cli/trace_run.py` | Legacy: execute or resume the component capture, staging, and composition state machine. |
+| `trace-marketing` | `src/ads_booster/cli/marketing.py` | Prove the account loop, run the legacy Queue bridge, or enroll and supervise a replaceable D1-backed Mac/Appium worker. |
 
 CLI modules parse input and compose dependencies. Business transitions and artifact validation
 belong in `runtime/`, `automation/`, `capture/`, and `composition/`, not in Typer callbacks.
@@ -130,7 +133,8 @@ runtime, memory store, and approval implementation.
    model-identity questions from the same model selection that builds the request; it does not claim
    to observe opaque provider-side routing beyond that requested model.
 4. If the provider returns function calls, `ToolRegistry` executes them through `ToolContext` and
-   appends typed call results to canonical history.
+   appends typed call results to canonical history. Text tools return string outputs; `image_view`
+   returns an approved, validated Responses content array containing image pixels.
 5. The loop continues until the provider returns a final text response. Provider context overflow
    is handled by the one explicit compaction retry described below.
 6. The TUI or REPL persists the canonical session history through `JsonSessionStore`.
@@ -139,9 +143,11 @@ Compaction changes the provider projection, not the canonical session history. C
 summaries are appended to the JSONL memory store. A provider context-overflow response permits one
 forced-compaction retry for the current turn.
 
-The default tool registry exposes filesystem, shell, browser, Web search, image search, and
-TraceRun capabilities. Mutating filesystem, shell, browser, and TraceRun operations cross explicit
-approval boundaries. Tool paths must remain inside the selected agent workspace.
+The default tool registry exposes filesystem, local-image viewing, shell, browser, Web search,
+image search, and TraceRun capabilities. Mutating filesystem, local-image viewing, shell, browser,
+and TraceRun operations cross explicit approval boundaries. Filesystem and command paths must remain
+inside the selected agent workspace. `image_view` also accepts an explicitly supplied absolute path;
+it validates PNG, JPEG, or WebP bytes and size before sending them to the selected model.
 
 The default model instruction makes environment preparation agent-owned: when Trace capture, image
 generation, or visual QA needs an installed but inactive local dependency, the agent inspects it,
@@ -158,33 +164,59 @@ live agent state; the current two-tab browser surface does not render those cont
 
 ## Generation and TraceRun flow
 
-`GenerateOneRunner` turns one `MarketingContextBundle` into one versioned `TraceRunRequest`.
+CLI and scheduled campaign generation submit one `AgentGoal` with a frozen
+`MarketingContextBundle` to the durable Agent run store. The run selects connector identity
+`trace-marketing` at exact version `1.0.0` from `connectors/trace/v1` and exposes only its allowed
+semantic capability.
 
-1. `ScenePlanner` derives a locale, reference date, Trace items, variation direction, and image
-   search query from the persona and promotion material. Promotion-owned `trace_items` take precedence
-   over compatibility scene defaults.
-2. The search adapter restricts results to approved public-source domains, downloads a readable
+1. `AgentRuntime` loads the goal, connector version, tool policy, canonical history, latest memory,
+   and structured persona/promotion/reference context into one `AgentSession`.
+2. The model calls `trace_generate_marketing_image` with a complete strict `WallpaperPlan`: one
+   explicit IANA time zone, background query, supplied reference IDs, row layouts, component titles,
+   colored calendar events, and supported Trace visual style values. Events are either all-day or
+   have unambiguous UTC start and end times. Agent code does not select those creative values from
+   persona-specific tables.
+3. The Trace connector verifies request ownership, source references, event coverage, native layout
+   constraints, and the scheduled run's side-effect authority. For every timed event, it converts
+   UTC only through `WallpaperPlan.time_zone` and requires the promotion `trace_item` to be that
+   local `HH:MM` plus the event's clean title. This rejects a wrong UTC conversion or time repeated
+   inside the title before Trace renders it.
+4. The search adapter restricts results to approved public-source domains, downloads a readable
    background, normalizes it to PNG, and records URL and digest provenance.
-3. The runner creates versioned capture and composition contracts.
-4. `TraceRunRunner` executes the fixed capability sequence:
-   `capture -> stage_components -> compose`.
-5. The capture port opens a Trace setup session, enters the three planned titles through Appium,
-   saves the native configuration, then opens a request-bound export session.
-6. The staging step verifies the captured artifact and its SHA-256 digest before copying it into
-   the composition job.
-7. The runner stages the packaged clean iPhone system-UI asset beside the searched background.
-8. The deterministic compositor writes the declared final canvas from the searched background,
-   fresh transparent Trace component export, and sanitized system UI.
+5. `GenerateOneRunner.run_plan` creates a request-bound wallpaper capture contract without
+   rewriting the model-authored plan.
+6. The capture adapter clears a prior export, imports the normalized background with `simctl`
+   Photos, and opens Trace with export binding metadata only. No card, row, title, time, all-day,
+   or event-color payload is passed in launch arguments. Repeated Simulator captures reuse the
+   installed WebDriverAgent instead of forcing an Xcode rebuild before every UI session; the Appium
+   session and all later UI commands remain bounded by the capture deadline.
+7. Appium uses Trace's real calendar, event, and `LockScreenWallpaperSheet` controls to create the
+   request-owned data and set every visual value from the plan. Calendar/event content, including
+   the explicit plan time zone, is entered through the UI; neither Trace nor Python may fall back
+   to the Mac or Simulator time zone.
+8. Save invokes Trace's `renderWallpaper` path, which writes `trace_wallpaper.png` and its native
+   binding manifest into the App Group.
+9. The collector copies the full wallpaper to the run output and validates opaque PNG bytes,
+   SHA-256, request digest, nonce, device binding, dimensions, and manifest before accepting it.
+10. `outputs/final.png` is that verified Trace export. `TraceRunResult` uses
+    `trace.run-result.v2` and moves the Agent run to `awaiting_approval` for human review.
 
-TraceRun records transitions in an append-only JSONL journal. A resumed journal that stopped while
+Agent runs persist goal, connector/tool policy, history, observations, revision, and lifecycle
+in `agent-runs.sqlite3`. TraceRun records mechanical transitions in an append-only JSONL journal.
+A newly constructed workspace process requeues Agent runs inherited in `running` with a durable
+`service_restart` failure observation before it accepts requests. This recovers work interrupted by
+the previous process while same-process duplicate requests still receive a conflict. The nested
+TraceRun journal remains authoritative for external side effects and still resolves an interrupted
+capability as `unknown_side_effect` instead of invoking it again.
+A resumed TraceRun journal that stopped while
 awaiting an external tool moves to `unknown_side_effect` instead of repeating an operation whose
 effect cannot be proven. Run identity, idempotency key, paths, digests, and state transitions are
 validated before completion is reported.
 
-The pipeline captures a fresh Trace component export for each run. It does not set a custom
-Simulator wallpaper, call an image-generation model, add Trace branding to the system layer, or
-require a physical iPhone. The deterministic compositor serves both `generate-one` and the
-lower-level offline `trace-compose` command.
+The primary pipeline captures a fresh full Trace wallpaper export for each run. It does not call an
+image-generation model, set a physical iPhone wallpaper, or claim an iOS lock-screen screenshot.
+`trace-capture`, `trace-run`, and `trace-compose` retain their separate legacy component-export and
+offline-composition contracts; they are not part of `generate-one`.
 
 ## Team workspace and Web flow
 
@@ -261,31 +293,24 @@ transition requires the current revision and the expected source status, so a st
 decision fails with a conflict instead of overwriting the first one. Publishing a submitted post
 stays a human action outside this runtime.
 
-### Candidate image composition
+### Candidate wallpaper generation
 
-The image stage runs synchronously inside the web process and never drives a device. Its three
-layers come from:
+The image stage synchronously submits the approved candidate to the same durable Agent and
+Trace v1 connector used by campaign generation. Its primary artifact comes from:
 
-| Layer | Source | Verified by |
+| Input or artifact | Source | Verified by |
 | --- | --- | --- |
 | Background | `search/image/` fetches one image from the Pexels/Unsplash/Pixabay allowlist | Approved source host, decodable bytes, minimum edge, recorded digest |
-| Trace components | The packaged offline fixture `trace_capture/assets/trace-components.png` | Read as a local artifact through `LocalArtifactCapturePort` |
-| iPhone UI | The packaged `trace_capture/assets/iphone-ui.png` | Normalized and required to leave transparent canvas |
+| Calendar/event content | Request-owned automation input | Explicit IANA time zone; strict UTC/all-day, event-color, and local `HH:MM` plus clean-title source validation |
+| Visual configuration | Real `LockScreenWallpaperSheet` Appium interaction | Required editor accessibility controls and plan values |
+| Final wallpaper | Request-bound `trace_wallpaper.png` rendered by Trace | PNG bytes, native manifest, request digest, nonce, device binding, and artifact digest |
 
-Both local layers are packaged assets resolved through `importlib.resources`, so the stage never
-depends on the directory the service was started from; `TRACE_AGENT_TRACE_COMPONENTS` and
-`TRACE_AGENT_IPHONE_UI` override them for a local experiment.
-
-`LocalComposePort` merges them with the same deterministic composer the native path uses, and the
-run writes `inputs/background-source.json` next to the background so the searched provider, source
-URL, and artifact digest stay auditable. The composed image and its SHA-256 are recorded on the
-candidate and served by `/api/candidates/{candidate_id}/image` to the owning workspace only.
-
-Because the Trace component layer is a fixture rather than a native export, the candidate's own
-schedule items and device time are recorded on the run request but are **not** rendered into the
-image; the fixture's own calendar and clock appear instead. Rendering the candidate's schedule
-needs the native Appium capture path, which this stage does not use. A failed run leaves the
-candidate at `caption_approved` with a Korean message and writes no image.
+The connector receives only facts present in the candidate snapshot. Missing persona attributes
+remain absent instead of being filled with creative defaults. The Agent authors the wallpaper plan;
+the connector validates it and delegates mechanical background import, editor interaction, and
+opaque native-export verification. The Web route confines `outputs/final.png` beneath the Agent run
+root and checks its SHA-256 before moving the candidate to image review. Any environment,
+generation, provenance, path, or digest failure leaves the candidate at `caption_approved`.
 
 Opening the workspace database runs two idempotent candidate migrations: rows written under the
 earlier single-stage `accepted` status are rewritten to `caption_approved`, which carries the same
@@ -294,28 +319,27 @@ column with the placeholder value `(주제 미기록)`.
 
 ## Automatic candidate generation
 
-`POST /api/candidates/generate` is the second candidate entrance. `candidate_generation/` runs it as
-script assembly rather than an agent loop:
+`POST /api/candidates/generate` is the second candidate entrance. `candidate_generation/` admits a
+durable Agent goal and uses the Trace v1 connector:
 
 1. Resolve the context directory from `TRACE_AGENT_CONTEXT_DIR`, or `<serve workspace>/context`.
-2. Read a fixed Korean document set — `core/PIPELINE-SCOPE.md`, `core/PRINCIPLES-GLOBAL.md`,
-   `core/PRINCIPLES-KR.md`, `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`, `core/SHOOTING-KR.md`,
-   `core/FACTS.md`, and `references/KR/INDEX.md`. An absent directory, or any absent or blank
-   document, fails the run before any provider call and names what is missing.
-3. Assemble one instruction from those documents, the hard rules, and the strict output contract.
-4. Make one non-streaming Responses call through the same `auth/`, `providers/`, and `transport/`
-   boundary the chat surface uses, with its read timeout widened to
-   `TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS`.
-5. Parse the response as a JSON array of exactly three candidates, tolerating a markdown code fence.
-   One failed validation is retried once with the validation error appended; a second failure ends
-   the run.
-6. Write all three candidates as `source=auto`, `status=awaiting_review`, or write nothing.
+2. Discover every readable Markdown document below the selected context directory. A new domain can
+   add its own directory without changing Python constants; an absent directory, unreadable file,
+   symlink, or empty document fails before any provider call and names what is unusable.
+3. Snapshot the discovered documents, workspace scope, and optional control-plane context into
+   `AgentGoal.context`.
+4. The connector injects the read-only documents as projection context and exposes only
+   `trace_propose_marketing_candidates` for this run.
+5. The model authors the complete typed candidates, including country, posting slot, background
+   intent, and Appium direction. Invalid fields or duplicate topics return as tool observations, and
+   the normal completion-driven loop can revise them without a fixed retry count.
+6. A successful tool call returns the validated batch, the application stores it as `source=auto`,
+   `status=awaiting_review`, and the Agent run completes durably.
 
-The run has no tools, no web search, and no file writes; the context documents are read-only inputs.
-It is a synchronous request handled in the FastAPI threadpool, so the browser waits for it. Failure
-modes are typed and mapped to a status with an operator-facing Korean message: missing context or a
-missing provider credential answer `409`, and a provider or format failure answers `502`. Only
-Korean candidates are produced in this version.
+The run has no publishing or filesystem-writing capability. It is a synchronous request handled in
+the FastAPI threadpool, so the browser waits for it. Failure modes are typed and mapped to a status
+with an operator-facing Korean message: missing context or a missing provider credential answer
+`409`, and a provider failure answers `502`.
 
 ## Automation queue
 
@@ -343,14 +367,16 @@ submitted -> claimed -> running -> review -> accepted
 - Claims use bounded leases and optimistic revisions.
 - `GenerateOneWorker` verifies run identity, idempotency key, artifact location, and artifact digest
   before moving a result to `review`.
-- Human review moves a record to `accepted` or `rejected`.
+- Human approval completes both the queue record and linked Agent run. Rejection invalidates the
+  artifact, records feedback on the same Agent run, and requeues the same goal for replanning.
 
 `AutomationServiceWorker` first lets the campaign producer supply the next safe variation, then
 polls the durable queue inside the service lifespan. It uses `QueueScheduler` to claim one due
 record and runs `GenerateOneWorker` in a worker thread so the
 event loop can continue serving HTTP requests. The production worker builds the same
-`GenerateOneRunner` used by the one-shot CLI, with service-owned artifact, journal, and capture
-roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
+Agent + Trace connector composition used by the one-shot CLI, with service-owned run,
+artifact, journal, and capture roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling
+task.
 
 ## Local state and artifacts
 
@@ -364,6 +390,9 @@ roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
 | `$TRACE_AGENT_HOME/auth.json` | `auth/` | OAuth credential data, protected with file mode `0600` |
 | `$TRACE_AGENT_HOME/sessions/` | `agent/` | Standalone TUI and REPL canonical histories, one protected JSON file per session |
 | `$TRACE_AGENT_HOME/memory.jsonl` | `agent/` | Append-only context-compaction summaries |
+| `$TRACE_AGENT_HOME/core-agent/agent-runs.sqlite3` | `agent/` | Durable goals, exact connector identity/version, tool policy, canonical history, observations, revisions, and lifecycle state |
+| `$TRACE_AGENT_HOME/core-agent/memory.jsonl` | `agent/` | Durable-run context-compaction summaries; the path name remains compatible with existing installations |
+| `$TRACE_AGENT_HOME/web-memory/*.jsonl` | `web/`, `agent/` | Private-chat compaction summaries scoped by a hash of workspace and member IDs |
 | `$TRACE_AGENT_HOME/marketing-bridge/marketing-bridge.sqlite3` | `marketing/` | Durable remote-task inbox, callback outbox, run/candidate review linkage, and approval outbox |
 | `$TRACE_AGENT_HOME/marketing-bridge/service.json` | `marketing/` | Non-secret bridge endpoint, Queue ID, executor, and polling configuration |
 | `$TRACE_AGENT_HOME/marketing-bridge/artifacts/` | `marketing/` | Digest-backed simulation artifacts or adapter-owned task artifacts |
@@ -372,22 +401,21 @@ roots below `TRACE_AGENT_HOME`. Service shutdown cancels the polling task.
 | `$TRACE_AGENT_HOME/marketing-worker/runtime/` | `marketing/` | D1-broker task inbox and terminal callback outbox used across worker restarts |
 | `$TRACE_AGENT_HOME/marketing-simulation/` | `marketing/` | Local control-plane proof, with one separate SQLite memory file per account |
 | `$TRACE_AGENT_HOME/logs/` | `service/`, `tunnel/` | Protected workspace and tunnel logs |
-| `TRACE_AGENT_CONTEXT_DIR`, `<serve workspace>/context/`, or packaged `assets/context/` | `candidate_generation/` | Explicit, workspace-owned, or starter Korean principle, element, voice, fact, and reference documents, read only |
+| `TRACE_AGENT_CONTEXT_DIR`, `<serve workspace>/context/`, or packaged `assets/context/` | `candidate_generation/` | Recursively discovered workspace or starter Markdown context for any marketing domain, read only |
 
-Generation artifacts are separate from service metadata. By default, the standalone
-`generate-one` command writes the job tree, TraceRun journal, and capture output below
-`.trace-agent/generated/`, `.trace-agent/state/`, and `.trace-agent/capture/` relative to the
-invoking workspace. The service worker uses `$TRACE_AGENT_HOME/generated/`,
-`$TRACE_AGENT_HOME/state/`, and `$TRACE_AGENT_HOME/capture/`. `trace-run` also accepts explicit
-state and capture roots.
+Generation artifacts are separate from service metadata. By default, standalone `generate-one`
+writes its request-owned background input, `outputs/final.png`, and wallpaper manifest below
+`.trace-agent/generated/` relative to the invoking workspace. The service worker uses
+`$TRACE_AGENT_HOME/generated/`. The legacy `trace-run` CLI retains separate state and capture roots
+for its component-composition job journal.
 
 ## External boundaries
 
 | External dependency | Adapter or boundary | Contract |
 | --- | --- | --- |
-| ChatGPT/Codex-compatible Responses service | `auth/`, `providers/`, `transport/` | OAuth credential, model responses, tool calls, one-call candidate generation, and provider-reported usage |
-| Appium 3 and XCUITest | `capture/` | Validated server URL, Simulator/Appium readiness, Trace UI component setup, request-bound export, and captured artifact provenance |
-| Trace iOS debug app | `capture/` | Installed `com.corca.Trace` build with the request-bound component-export trigger |
+| ChatGPT/Codex-compatible Responses service | `auth/`, `providers/`, `transport/` | OAuth credential, model responses, completion-driven tool calls, and provider-reported usage |
+| Appium 3 and XCUITest | `capture/` | Validated server URL, Simulator/Appium readiness, Photos import, real Trace wallpaper-editor controls, request-bound full export, and captured artifact provenance |
+| Trace iOS debug app | `capture/` | Installed `com.corca.Trace` build with request-bound wallpaper export and `LockScreenWallpaperSheet` accessibility controls |
 | Browser automation | `tools/browser.py` | External `agent-browser` command with approval for mutating actions |
 | Web and image search | `tools/`, `search/` provider adapters | Normalized source results; generation downloads only approved image-source domains and stores provenance |
 | cloudflared | `tunnel/` | Default live `trycloudflare.com` URL request; failure leaves the loopback service available |
@@ -509,15 +537,15 @@ credential required by Wrangler.
 
 The bridge defaults to an explicitly labeled simulation executor. Its opt-in `candidate-pipeline`
 executor maps an account's opaque local `workspace_id` to the existing provider candidate generator
-and PR #22 search/composition image runner. Generated candidates remain in the existing workspace
-review journey: captions must reach `caption_approved` before capture, and composed images must reach
+and the search/full-wallpaper image runner. Generated candidates remain in the existing workspace
+review journey: captions must reach `caption_approved` before capture, and generated wallpaper images must reach
 `submitted` before the publication task can cross the adapter boundary. Research, publication, and
 metrics still use the simulation executor in this mode. Live Threads publication remains
 capability-gated and is not enabled or claimed. See
 [Dynamic Cloudflare Marketing Loop Contract](../contracts/cloudflare-marketing-loop.md).
 
-The base CLI, TUI, Web shell, and offline composition do not require native capture dependencies.
-Generation that includes Trace component capture requires full Xcode, an available Simulator, the Trace
+The base CLI, TUI, Web shell, and legacy offline composition do not require native capture dependencies.
+Full-wallpaper generation requires full Xcode, an available Simulator, the Trace
 debug build, Appium, and the XCUITest driver. The agent starts installed but inactive Simulator and
 Appium processes, but does not install the missing Trace build or driver.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlsplit
 
-from trace_capture.auth.browser import build_authorization_url
+from ads_booster.auth.browser import build_authorization_url
 
 
 def test_browser_authorization_url_uses_supported_codex_pkce_parameters() -> None:

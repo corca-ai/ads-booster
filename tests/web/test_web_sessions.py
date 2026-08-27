@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK -- chat, command, approval, and concurrency cases share session fixtures
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -9,29 +10,32 @@ from typing import TYPE_CHECKING, final
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 
-from trace_capture.config.settings import AgentSettings
-from trace_capture.providers.codex import FunctionCall, ModelTurn
-from trace_capture.providers.errors import ProviderError
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.models import ApprovalPort, ToolContext
-from trace_capture.tools.registry import ToolRegistry
-from trace_capture.web.app import create_app
-from trace_capture.web.chat_factory import (
+from ads_booster.agent.memory import JsonlMemoryStore
+from ads_booster.config.settings import AgentSettings
+from ads_booster.providers.codex import FunctionCall, ModelTurn
+from ads_booster.providers.errors import ProviderError
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.models import ApprovalPort, ToolContext
+from ads_booster.tools.registry import ToolRegistry
+from ads_booster.web.app import create_app
+from ads_booster.web.chat_factory import (
     AgentComponents,
     WebAgentSessionFactory,
 )
-from trace_capture.web.schemas import (
+from ads_booster.web.schemas import (
     ChatCommandResponse,
     ChatErrorEnvelope,
     ChatResponse,
     SessionResponse,
 )
-from trace_capture.workspace import (
+from ads_booster.workspace import (
     ContextCreate,
     ContextKind,
+    MemberId,
     ProvisionedMember,
     ProvisionedWorkspace,
     SqliteWorkspaceStore,
+    WorkspaceId,
 )
 
 if TYPE_CHECKING:
@@ -40,8 +44,8 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @final
@@ -124,6 +128,25 @@ def _app_with_model(root: Path, model: InMemoryModelClient) -> FastAPI:
     settings = _settings(root)
     factory = WebAgentSessionFactory(settings, InMemoryAgentComponents(model, root))
     return create_app(root, session_secret=b"s" * 32, chat_factory=factory)
+
+
+def test_web_memory_is_persistent_and_private_to_workspace_member_scope(tmp_path: Path) -> None:
+    # Given one Web agent factory with two private member scopes
+    factory = WebAgentSessionFactory(
+        _settings(tmp_path),
+        InMemoryAgentComponents(InMemoryModelClient(), tmp_path),
+        memory_root=tmp_path / "web-memory",
+    )
+
+    # When each member resolves its memory store
+    first = factory.memory_store(WorkspaceId("workspace-a"), MemberId("member-a"))
+    second = factory.memory_store(WorkspaceId("workspace-a"), MemberId("member-b"))
+
+    # Then both are durable files and no member shares a compaction stream
+    assert isinstance(first, JsonlMemoryStore)
+    assert isinstance(second, JsonlMemoryStore)
+    assert first.path != second.path
+    assert first.path.parent == tmp_path / "web-memory"
 
 
 def _login(

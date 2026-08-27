@@ -1,0 +1,662 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import time
+from contextlib import suppress
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+from threading import Event, Lock, Thread
+from typing import TYPE_CHECKING, Annotated
+
+import typer
+
+from ads_booster.candidate_generation import (
+    build_candidate_generator,
+    build_candidate_image_runner,
+)
+from ads_booster.config.settings import AgentSettings
+from ads_booster.marketing.bridge import MarketingBridge
+from ads_booster.marketing.cloudflare_queue import (
+    CloudflareQueueClient,
+    CloudflareQueueConfig,
+    CloudflareQueueError,
+    ControlPlaneCallbackClient,
+)
+from ads_booster.marketing.executors import (
+    ArtifactSimulationExecutor,
+    CandidatePipelineExecutor,
+)
+from ads_booster.marketing.inbox import MarketingInbox
+from ads_booster.marketing.native_capture import (
+    HostedCaptureRoutingExecutor,
+    HostedWorkspaceCaptureExecutor,
+)
+from ads_booster.marketing.service import (
+    CredentialProvider,
+    MarketingBridgeConfigStore,
+    MarketingBridgeServiceConfig,
+    MarketingBridgeServiceError,
+    resolve_bridge_credentials,
+)
+from ads_booster.marketing.simulator import LocalMarketingControlPlane, MarketingAccount
+from ads_booster.marketing.worker_broker import (
+    MacWorkerConfig,
+    MacWorkerCredential,
+    MacWorkerStore,
+    WorkerBrokerClient,
+    enroll_mac_worker,
+    normalize_control_plane_origin,
+)
+from ads_booster.marketing.worker_doctor import MacWorkerDoctorReport, inspect_mac_worker
+from ads_booster.marketing.worker_launchd import MacWorkerLaunchd, default_worker_plist_path
+from ads_booster.service.worker import build_production_runner
+from ads_booster.transport.http import create_http_client
+from ads_booster.workspace import SqliteWorkspaceStore
+
+if TYPE_CHECKING:
+    from ads_booster.transport.json_types import JsonObject
+
+_HTTP_SUCCESS_MIN = 200
+_HTTP_SUCCESS_MAX = 300
+
+app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
+worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
+app.add_typer(worker_app, name="worker")
+
+
+class BridgeExecutor(StrEnum):
+    SIMULATION = "simulation"
+    CANDIDATE_PIPELINE = "candidate-pipeline"
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeRuntime:
+    agent_home: Path
+    account_id: str
+    queue_id: str
+    queue_token: str
+    control_plane_url: str
+    worker_token: str
+    once: bool
+    poll_seconds: float
+    executor: BridgeExecutor
+
+
+@dataclass(slots=True)
+class DoctorHeartbeat:
+    report: MacWorkerDoctorReport
+    checked_at: float
+    refresh_seconds: float = 30.0
+    lock: Lock = field(default_factory=Lock)
+
+    def __call__(self) -> JsonObject:
+        with self.lock:
+            now = time.monotonic()
+            if now - self.checked_at >= self.refresh_seconds:
+                self.report = inspect_mac_worker()
+                self.checked_at = now
+            return self.report.heartbeat()
+
+
+@app.command("simulate")
+def simulate(
+    account_id: Annotated[str, typer.Option(help="Stable lower-case marketing account ID.")],
+    country: Annotated[str, typer.Option(help="Country or locale code.")] = "KR",
+    home: Annotated[
+        Path | None,
+        typer.Option(help="Simulation state root; defaults under TRACE_AGENT_HOME."),
+    ] = None,
+    auto_approve: Annotated[
+        bool,
+        typer.Option(help="Exercise the approval event and complete the simulated loop."),
+    ] = False,
+) -> None:
+    root = _home(home) / "marketing-simulation"
+    control = LocalMarketingControlPlane(root)
+    _ = control.register_account(MarketingAccount(account_id=account_id, country=country))
+    run = control.start_run(account_id, auto_approve=auto_approve)
+    typer.echo(run.model_dump_json(indent=2))
+
+
+@app.command("bridge")
+def bridge(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    once: Annotated[bool, typer.Option(help="Pull and process at most one local task.")] = False,
+    poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
+    executor: Annotated[
+        BridgeExecutor,
+        typer.Option(
+            help=(
+                "simulation, or candidate-pipeline for real provider candidate generation "
+                "and native Appium capture; publication stays simulated"
+            )
+        ),
+    ] = BridgeExecutor.SIMULATION,
+) -> None:
+    """Run the external Cloudflare Queue pull consumer.
+
+    Required secrets are read from the environment and never persisted by the bridge.
+    The default executor is explicitly simulation-only; production task handlers are
+    registered in the composition root as they are enabled.
+    """
+    agent_home = _home(home)
+    _run_bridge(
+        BridgeRuntime(
+            agent_home=agent_home,
+            account_id=_required("CLOUDFLARE_ACCOUNT_ID"),
+            queue_id=_required("TRACE_MARKETING_QUEUE_ID"),
+            queue_token=_required("TRACE_MARKETING_QUEUE_TOKEN"),
+            control_plane_url=_required("TRACE_MARKETING_CONTROL_PLANE_URL"),
+            worker_token=_required("TRACE_MARKETING_WORKER_TOKEN"),
+            once=once,
+            poll_seconds=poll_seconds,
+            executor=executor,
+        )
+    )
+
+
+@app.command("bridge-configure")
+def bridge_configure(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    executor: Annotated[BridgeExecutor, typer.Option()] = BridgeExecutor.CANDIDATE_PIPELINE,
+    poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
+    credential_provider: Annotated[
+        CredentialProvider,
+        typer.Option(help="environment, or command for an external secret manager."),
+    ] = CredentialProvider.ENVIRONMENT,
+    credential_command: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--credential-command",
+            help="One argv item; repeat to build the external secret command without a shell.",
+        ),
+    ] = None,
+) -> None:
+    """Write portable non-secret enrollment for a worker on any computer."""
+    agent_home = _home(home)
+    try:
+        config = MarketingBridgeServiceConfig(
+            account_id=_required("CLOUDFLARE_ACCOUNT_ID"),
+            queue_id=_required("TRACE_MARKETING_QUEUE_ID"),
+            control_plane_url=_required("TRACE_MARKETING_CONTROL_PLANE_URL"),
+            executor=executor.value,
+            poll_seconds=poll_seconds,
+            credential_provider=credential_provider,
+            credential_command=tuple(credential_command or ()),
+        )
+        MarketingBridgeConfigStore(agent_home).save(config)
+    except (MarketingBridgeServiceError, ValueError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(f"worker config: {MarketingBridgeConfigStore(agent_home).path}")
+    typer.echo(f"credential provider: {config.credential_provider}")
+
+
+@app.command("bridge-service", hidden=True)
+def bridge_service() -> None:
+    """Portable supervisor entrypoint with externally injected credentials."""
+    agent_home = _home(None)
+    try:
+        config = MarketingBridgeConfigStore(agent_home).load()
+        credentials = resolve_bridge_credentials(config)
+    except MarketingBridgeServiceError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
+    _run_bridge(
+        BridgeRuntime(
+            agent_home=agent_home,
+            account_id=config.account_id,
+            queue_id=config.queue_id,
+            queue_token=credentials.queue_token,
+            control_plane_url=config.control_plane_url,
+            worker_token=credentials.worker_token,
+            once=False,
+            poll_seconds=config.poll_seconds,
+            executor=BridgeExecutor(config.executor),
+        )
+    )
+
+
+@worker_app.command("create-enrollment")
+def worker_create_enrollment(
+    url: Annotated[str, typer.Option(help="Deployed Cloudflare workspace origin.")],
+    name: Annotated[str, typer.Option(help="Team-visible worker alias.")],
+    pool: Annotated[str, typer.Option(help="Capability pool used for task routing.")] = "appium",
+    ttl_seconds: Annotated[int, typer.Option(min=60, max=3600)] = 600,
+) -> None:
+    """Create a single-use enrollment code without exposing the control token to the Mac."""
+    payload = _admin_post(
+        url,
+        "/v1/worker-enrollments",
+        {"display_name": name, "pool": pool, "ttl_seconds": ttl_seconds},
+    )
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@worker_app.command("enroll")
+def worker_enroll(
+    url: Annotated[str, typer.Option(help="Deployed Cloudflare workspace origin.")],
+    code: Annotated[str, typer.Option(help="Single-use code from create-enrollment.")],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    poll_seconds: Annotated[float, typer.Option(min=0.5, max=60.0)] = 2.0,
+) -> None:
+    """Bind this Mac to a revocable machine identity stored outside macOS Keychain."""
+    report = inspect_mac_worker()
+    try:
+        with create_http_client() as http:
+            config, credential = enroll_mac_worker(
+                http,
+                control_plane_url=_https_origin(url),
+                enrollment_code=code,
+                heartbeat=report.heartbeat(),
+                poll_seconds=poll_seconds,
+            )
+        store = MacWorkerStore(_home(home))
+        store.save(config, credential)
+    except (CloudflareQueueError, ValueError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(f"enrolled: {config.display_name} ({config.worker_id})")
+    typer.echo(f"credential: {store.credential_path} (mode 0600, no Keychain binding)")
+    typer.echo(f"doctor: {report.summary}")
+
+
+@worker_app.command("doctor")
+def worker_doctor() -> None:
+    """Inspect the native Appium boundary without claiming a remote task."""
+    report = inspect_mac_worker()
+    typer.echo(
+        json.dumps(
+            {
+                "ready": report.ready,
+                "summary": report.summary,
+                "version": report.version,
+                "checks": report.checks,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    if not report.ready:
+        raise typer.Exit(code=1)
+
+
+@worker_app.command("run")
+def worker_run(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    once: Annotated[bool, typer.Option(help="Poll and process at most one task.")] = False,
+) -> None:
+    """Run the D1-backed worker in the foreground."""
+    _run_mac_worker(_home(home), once=once)
+
+
+@worker_app.command("service", hidden=True)
+def worker_service() -> None:
+    """Stable launchd entrypoint using the enrolled machine credential file."""
+    _run_mac_worker(_home(None), once=False)
+
+
+@worker_app.command("install-service")
+def worker_install_service(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    start: Annotated[bool, typer.Option("--start/--no-start")] = True,
+) -> None:
+    """Install a per-user LaunchAgent whose plist contains no worker credential."""
+    launchd = _worker_launchd(_home(home))
+    _stop_worker_launchd(launchd)
+    launchd.install()
+    typer.echo(f"plist: {launchd.plist_path}")
+    if not start:
+        return
+    result = launchd.start()
+    if result.returncode != 0:
+        typer.echo(_process_error("launchctl bootstrap failed", result), err=True)
+        raise typer.Exit(code=1)
+    typer.echo("worker service: running")
+
+
+@worker_app.command("start")
+def worker_start(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    launchd = _worker_launchd(_home(home))
+    if not launchd.plist_path.is_file():
+        typer.echo("worker plist is not installed; run worker install-service", err=True)
+        raise typer.Exit(code=1)
+    result = launchd.start()
+    if result.returncode != 0:
+        typer.echo(_process_error("launchctl bootstrap failed", result), err=True)
+        raise typer.Exit(code=1)
+    typer.echo("worker service: running")
+
+
+@worker_app.command("stop")
+def worker_stop(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    _stop_worker_launchd(_worker_launchd(_home(home)))
+    typer.echo("worker service: stopped")
+
+
+@worker_app.command("restart")
+def worker_restart(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    launchd = _worker_launchd(_home(home))
+    _stop_worker_launchd(launchd)
+    if not launchd.plist_path.is_file():
+        typer.echo("worker plist is not installed; run worker install-service", err=True)
+        raise typer.Exit(code=1)
+    result = launchd.start()
+    if result.returncode != 0:
+        typer.echo(_process_error("launchctl bootstrap failed", result), err=True)
+        raise typer.Exit(code=1)
+    typer.echo("worker service: restarted")
+
+
+@worker_app.command("status")
+def worker_status(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    root = _home(home)
+    launchd = _worker_launchd(root)
+    result = launchd.status()
+    try:
+        config, _credential = MacWorkerStore(root).load()
+        enrollment: JsonObject = {
+            "worker_id": config.worker_id,
+            "display_name": config.display_name,
+            "pool": config.pool,
+            "control_plane_url": config.control_plane_url,
+        }
+    except CloudflareQueueError:
+        enrollment = {"state": "not_enrolled"}
+    report = inspect_mac_worker()
+    typer.echo(
+        json.dumps(
+            {
+                "service": "running" if result.returncode == 0 else "stopped",
+                "plist": str(launchd.plist_path),
+                "enrollment": enrollment,
+                "doctor": {"ready": report.ready, "summary": report.summary},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@worker_app.command("uninstall-service")
+def worker_uninstall_service(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    launchd = _worker_launchd(_home(home))
+    _stop_worker_launchd(launchd)
+    if launchd.plist_path.exists():
+        launchd.plist_path.unlink()
+    typer.echo("worker service: uninstalled; enrollment credential was preserved")
+
+
+@worker_app.command("set-state")
+def worker_set_state(
+    state: Annotated[str, typer.Option(help="active or draining")],
+    url: Annotated[
+        str | None,
+        typer.Option(help="Cloudflare origin for remote administration."),
+    ] = None,
+    worker_id: Annotated[
+        str | None,
+        typer.Option(help="Worker ID from `worker list`; defaults to this Mac."),
+    ] = None,
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    if state not in {"active", "draining"}:
+        message = "state must be active or draining"
+        raise typer.BadParameter(message)
+    target_url, target_worker_id = _worker_admin_target(_home(home), url, worker_id)
+    payload = _admin_post(
+        target_url,
+        f"/v1/workers/{target_worker_id}/state",
+        {"state": state},
+    )
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@worker_app.command("revoke")
+def worker_revoke(
+    url: Annotated[
+        str | None,
+        typer.Option(help="Cloudflare origin for remote administration."),
+    ] = None,
+    worker_id: Annotated[
+        str | None,
+        typer.Option(help="Worker ID from `worker list`; defaults to this Mac."),
+    ] = None,
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    """Revoke this machine remotely; local files stay available for diagnosis."""
+    target_url, target_worker_id = _worker_admin_target(_home(home), url, worker_id)
+    payload = _admin_post(
+        target_url,
+        f"/v1/workers/{target_worker_id}/revoke",
+        {},
+    )
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@worker_app.command("list")
+def worker_list(
+    url: Annotated[str, typer.Option(help="Deployed Cloudflare workspace origin.")],
+) -> None:
+    token = _required("TRACE_MARKETING_CONTROL_TOKEN")
+    with create_http_client() as http:
+        response = http.get(
+            f"{_https_origin(url)}/v1/workers",
+            {"authorization": f"Bearer {token}"},
+        )
+    if not _HTTP_SUCCESS_MIN <= response.status_code < _HTTP_SUCCESS_MAX:
+        typer.echo(f"worker list failed with HTTP {response.status_code}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(response.json_object(), ensure_ascii=False, indent=2))
+
+
+def _run_bridge(runtime: BridgeRuntime) -> None:
+    root = runtime.agent_home / "marketing-bridge"
+    simulation = ArtifactSimulationExecutor(root / "artifacts")
+    with create_http_client() as http:
+        active_executor = simulation
+        review_store = None
+        if runtime.executor is BridgeExecutor.CANDIDATE_PIPELINE:
+            settings = AgentSettings.from_environment()
+            store = SqliteWorkspaceStore(runtime.agent_home)
+            review_store = store
+            candidate_pipeline = CandidatePipelineExecutor(
+                generator=build_candidate_generator(settings, runtime.agent_home, store),
+                image_runner=build_candidate_image_runner(settings, runtime.agent_home, store),
+                store=store,
+                artifact_root=runtime.agent_home,
+                fallback=simulation,
+            )
+            active_executor = HostedCaptureRoutingExecutor(
+                hosted=HostedWorkspaceCaptureExecutor(
+                    runner=build_production_runner(runtime.agent_home, http),
+                    output_root=runtime.agent_home / "generated",
+                ),
+                fallback=candidate_pipeline,
+            )
+        worker = MarketingBridge(
+            queue=CloudflareQueueClient(
+                http,
+                CloudflareQueueConfig(
+                    account_id=runtime.account_id,
+                    queue_id=runtime.queue_id,
+                    api_token=runtime.queue_token,
+                ),
+            ),
+            callbacks=ControlPlaneCallbackClient(
+                http,
+                runtime.control_plane_url,
+                runtime.worker_token,
+            ),
+            inbox=MarketingInbox(root),
+            executor=active_executor,
+            review_store=review_store,
+        )
+        recovered = worker.recover()
+        if recovered:
+            typer.echo(f"recovered {recovered} interrupted task(s)")
+        while True:
+            active = worker.tick()
+            if runtime.once:
+                return
+            if not active:
+                time.sleep(runtime.poll_seconds)
+
+
+def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
+    try:
+        config, credential = MacWorkerStore(agent_home).load()
+    except CloudflareQueueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
+    heartbeat = DoctorHeartbeat(report=inspect_mac_worker(), checked_at=time.monotonic())
+    root = agent_home / "marketing-worker" / "runtime"
+    heartbeat_stop = Event()
+    heartbeat_thread = Thread(
+        target=_heartbeat_loop,
+        args=(config, credential, heartbeat, heartbeat_stop),
+        name="trace-marketing-heartbeat",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+    try:
+        with create_http_client(read_timeout=60.0) as http:
+            broker = WorkerBrokerClient(http, config, credential, heartbeat)
+            executor = HostedWorkspaceCaptureExecutor(
+                runner=build_production_runner(agent_home, http),
+                output_root=agent_home / "generated",
+            )
+            bridge = MarketingBridge(
+                queue=broker,
+                callbacks=broker,
+                inbox=MarketingInbox(root),
+                executor=executor,
+            )
+            recovered = bridge.recover()
+            if recovered:
+                typer.echo(f"recovered {recovered} interrupted task(s)")
+            while True:
+                active = bridge.tick()
+                if once:
+                    return
+                if not active:
+                    time.sleep(config.poll_seconds)
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=5)
+
+
+def _heartbeat_loop(
+    config: MacWorkerConfig,
+    credential: MacWorkerCredential,
+    heartbeat: DoctorHeartbeat,
+    stop: Event,
+) -> None:
+    with create_http_client() as http:
+        client = WorkerBrokerClient(http, config, credential, heartbeat)
+        while not stop.is_set():
+            with suppress(CloudflareQueueError):
+                client.heartbeat_once()
+            _ = stop.wait(15)
+
+
+def _worker_launchd(agent_home: Path) -> MacWorkerLaunchd:
+    if sys.platform != "darwin":
+        message = "Mac worker LaunchAgent commands require macOS"
+        raise typer.BadParameter(message)
+    executable = shutil.which("trace-marketing")
+    if not executable:
+        message = "trace-marketing is not installed on PATH"
+        raise typer.BadParameter(message)
+    return MacWorkerLaunchd(
+        executable=Path(executable),
+        agent_home=agent_home,
+        plist_path=default_worker_plist_path(),
+    )
+
+
+def _admin_post(url: str, path: str, payload: JsonObject) -> JsonObject:
+    token = _required("TRACE_MARKETING_CONTROL_TOKEN")
+    with create_http_client() as http:
+        response = http.post_json(
+            f"{_https_origin(url)}{path}",
+            payload,
+            {
+                "authorization": f"Bearer {token}",
+                "content-type": "application/json",
+            },
+        )
+    if not _HTTP_SUCCESS_MIN <= response.status_code < _HTTP_SUCCESS_MAX:
+        message = f"Mac worker admin request failed with HTTP {response.status_code}"
+        raise typer.BadParameter(message)
+    return response.json_object()
+
+
+def _load_worker(agent_home: Path) -> tuple[MacWorkerConfig, MacWorkerCredential]:
+    try:
+        return MacWorkerStore(agent_home).load()
+    except CloudflareQueueError as error:
+        raise typer.BadParameter(str(error)) from error
+
+
+def _worker_admin_target(
+    agent_home: Path,
+    url: str | None,
+    worker_id: str | None,
+) -> tuple[str, str]:
+    if url is None and worker_id is None:
+        config, _credential = _load_worker(agent_home)
+        return config.control_plane_url, config.worker_id
+    if url is None or worker_id is None:
+        message = "url and worker-id must be provided together"
+        raise typer.BadParameter(message)
+    return _https_origin(url), worker_id
+
+
+def _https_origin(value: str) -> str:
+    try:
+        return normalize_control_plane_origin(value)
+    except ValueError as error:
+        message = "url must be an HTTPS origin without a path"
+        raise typer.BadParameter(message) from error
+
+
+def _stop_worker_launchd(launchd: MacWorkerLaunchd) -> None:
+    _ = launchd.stop()
+    if not launchd.wait_until_stopped():
+        typer.echo("worker service did not finish stopping; retry the command", err=True)
+        raise typer.Exit(code=1)
+
+
+def _process_error(prefix: str, result: object) -> str:
+    return_code = getattr(result, "returncode", "unknown")
+    stderr = str(getattr(result, "stderr", "")).strip()
+    return f"{prefix} ({return_code}){f': {stderr}' if stderr else ''}"
+
+
+def _home(configured: Path | None) -> Path:
+    if configured is not None:
+        return configured.expanduser()
+    value = os.environ.get("TRACE_AGENT_HOME")
+    return Path(value).expanduser() if value else Path.home() / ".trace-agent"
+
+
+def _required(name: str) -> str:
+    value = os.environ.get(name)
+    if value:
+        return value
+    raise typer.BadParameter(f"required environment variable is missing: {name}")

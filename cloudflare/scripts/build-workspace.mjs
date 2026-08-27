@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const cloudflareRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(cloudflareRoot, "..");
-const webStaticRoot = resolve(repoRoot, "src/trace_capture/web/static");
-const contextRoot = resolve(repoRoot, "src/trace_capture/assets/context");
+const webStaticRoot = resolve(repoRoot, "src/ads_booster/web/static");
+const contextRoot = resolve(repoRoot, "src/ads_booster/assets/context");
 const outputRoot = resolve(cloudflareRoot, "dist");
 const contextManifestPath = resolve(contextRoot, "profiles/manifest.json");
 const MAX_CONTEXT_BYTES = 48_000;

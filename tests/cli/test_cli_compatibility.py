@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
 
-from trace_capture.cli.agent import app
-from trace_capture.cli.marketing import app as marketing_app
-from trace_capture.default_assets import default_iphone_ui_path
+from ads_booster.cli.agent import app
+from ads_booster.cli.marketing import app as marketing_app
+from ads_booster.default_assets import default_iphone_ui_path
 
 if TYPE_CHECKING:
     import pytest
@@ -56,30 +56,35 @@ def test_agent_auth_status_uses_a_clean_home_without_printing_credentials(
     assert "Bearer" not in result.stdout
 
 
-def test_generate_one_help_keeps_context_and_iphone_ui_without_image_model_contract() -> None:
+def test_generate_one_help_exposes_only_live_wallpaper_inputs() -> None:
     # Given the context-driven one-shot command
     result = CliRunner().invoke(app, ["generate-one", "--help"])
 
     # When its help is rendered
-    # Then the context and system UI inputs remain visible without Image Model options
+    # Then only the context, output, Appium, and timeout controls remain visible
     assert result.exit_code == 0
     assert "--context-file" in result.stdout
-    assert "--image-model" not in result.stdout
-    assert "--iphone-ui" in result.stdout
+    assert "--output-root" in result.stdout
+    assert "--appium-server" in result.stdout
+    assert "--timeout-seconds" in result.stdout
+    assert all(
+        option not in result.stdout
+        for option in ("--image-model", "--iphone-ui", "--state-root", "--capture-output-root")
+    )
 
 
 def test_default_iphone_ui_asset_is_available_to_the_installed_cli() -> None:
     assert default_iphone_ui_path().is_file()
 
 
-def test_package_source_parses_on_the_declared_python_313_floor() -> None:
-    package_root = Path(__file__).parents[2] / "src" / "trace_capture"
+def test_package_source_parses_on_the_declared_python_314_floor() -> None:
+    package_root = Path(__file__).parents[2] / "src" / "ads_booster"
 
     for source in sorted(package_root.rglob("*.py")):
         _ = ast.parse(
             source.read_text(encoding="utf-8"),
             filename=str(source),
-            feature_version=(3, 13),
+            feature_version=(3, 14),
         )
 
 
@@ -123,7 +128,7 @@ def test_worker_stop_treats_an_already_missing_launchd_service_as_stopped(
     def launchd_for(_home: Path) -> MissingLaunchdService:
         return missing
 
-    monkeypatch.setattr("trace_capture.cli.marketing._worker_launchd", launchd_for)
+    monkeypatch.setattr("ads_booster.cli.marketing._worker_launchd", launchd_for)
 
     result = CliRunner().invoke(marketing_app, ["worker", "stop", "--home", str(tmp_path)])
 

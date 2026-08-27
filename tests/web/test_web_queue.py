@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK -- campaign and queue routes share authenticated context fixtures
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -9,16 +10,26 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import TypeAdapter
 
-from trace_capture.automation import (
+from ads_booster.agent.runs import (
+    AgentGoal,
+    AgentRun,
+    AgentRunId,
+    AgentRunState,
+    AgentRunStore,
+    AgentRunUpdate,
+    ConnectorId,
+    ToolPolicy,
+)
+from ads_booster.automation import (
     AutomationQueue,
     CampaignRecord,
     CampaignState,
     QueueRecord,
     QueueState,
 )
-from trace_capture.automation.models import QueueCompletion
-from trace_capture.web.app import create_app
-from trace_capture.workspace import (
+from ads_booster.automation.models import QueueCompletion
+from ads_booster.web.app import create_app
+from ads_booster.workspace import (
     AssetCreate,
     ContextCreate,
     ContextKind,
@@ -29,6 +40,8 @@ from trace_capture.workspace import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ads_booster.transport.json_types import JsonObject
 
 
 def _login(client: TestClient, workspace: ProvisionedWorkspace, member: ProvisionedMember) -> None:
@@ -44,7 +57,7 @@ def _login(client: TestClient, workspace: ProvisionedWorkspace, member: Provisio
     assert response.status_code == 200
 
 
-def _bundle(request_id: str = "manual-web") -> dict[str, object]:
+def _bundle(request_id: str = "manual-web") -> JsonObject:
     return {
         "schema_version": "trace.marketing-context.v1",
         "request_id": request_id,
@@ -210,12 +223,15 @@ def test_authenticated_member_can_start_continuous_campaign_from_saved_contexts(
     assert TypeAdapter(tuple[CampaignRecord, ...]).validate_json(listed.content) == (campaign,)
 
 
-def test_review_endpoint_accepts_fixture_result_and_rejects_stale_revision(tmp_path: Path) -> None:
+def test_review_endpoint_completes_the_linked_core_run_and_rejects_stale_revision(
+    tmp_path: Path,
+) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace = store.create_workspace("Trace team")
     member = store.create_member(workspace.workspace.workspace_id, "Ada")
     queue = AutomationQueue(tmp_path)
+    agent_runs = AgentRunStore(tmp_path / "core-agent")
     client = TestClient(create_app(tmp_path, session_secret=b"s" * 32), base_url="https://test")
     _login(client, workspace, member)
     created_response = client.post(
@@ -231,10 +247,40 @@ def test_review_endpoint_accepts_fixture_result_and_rejects_stale_revision(tmp_p
         expected_revision=claimed.revision,
         now=datetime.now(UTC),
     )
+    agent_queued = agent_runs.create(
+        AgentRun(
+            run_id=AgentRunId("review-web"),
+            connector_id=ConnectorId("trace-marketing"),
+            connector_version="1.0.0",
+            goal=AgentGoal(
+                objective="Create one reviewable image",
+                success_criteria=("human review",),
+            ),
+            tool_policy=ToolPolicy(allow=("trace_generate_marketing_image",)),
+        ),
+        now=1.0,
+    )
+    agent_running = agent_runs.update(
+        agent_queued.run_id,
+        AgentRunUpdate(
+            expected_revision=agent_queued.revision,
+            state=AgentRunState.RUNNING,
+            at=2.0,
+        ),
+    )
+    agent_waiting = agent_runs.update(
+        agent_running.run_id,
+        AgentRunUpdate(
+            expected_revision=agent_running.revision,
+            state=AgentRunState.AWAITING_APPROVAL,
+            at=3.0,
+        ),
+    )
     review = queue.finish(
         running,
         completion=QueueCompletion(
             state=QueueState.REVIEW,
+            run_id="review-web",
             artifact_path="fixtures/final.png",
             artifact_sha256="a" * 64,
         ),
@@ -255,6 +301,7 @@ def test_review_endpoint_accepts_fixture_result_and_rejects_stale_revision(tmp_p
     # Then
     assert accepted.status_code == 200
     assert QueueRecord.model_validate_json(accepted.content).state is QueueState.ACCEPTED
+    assert agent_runs.get(agent_waiting.run_id).state is AgentRunState.COMPLETED
     assert stale.status_code == 409
 
 

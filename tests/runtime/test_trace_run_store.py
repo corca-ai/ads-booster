@@ -4,13 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from trace_capture.contracts.run import TraceRunEvent
-from trace_capture.runtime.trace_run import (
+from ads_booster.contracts.run import TraceRunEvent
+from ads_booster.runtime.trace_run import (
     IdempotencyConflictError,
     TraceRunRequest,
     TraceRunState,
 )
-from trace_capture.runtime.trace_run_store import JsonlTraceRunStore, TraceRunRecord
+from ads_booster.runtime.trace_run_store import JsonlTraceRunStore, TraceRunRecord
 
 from .test_trace_run import make_request
 
@@ -102,6 +102,29 @@ def test_store_when_different_keys_create_different_runs_then_both_bindings_surv
     assert first_record.run_id == "run-01"
     assert second_record.run_id == "run-02"
     assert first_record.idempotency_key != second_record.idempotency_key
+
+
+def test_store_when_a_sibling_has_legacy_event_fields_then_a_new_key_can_start(
+    tmp_path: Path,
+) -> None:
+    # Given a legacy sibling journal with a valid identity but obsolete later event fields
+    root = tmp_path / "state"
+    store = JsonlTraceRunStore(root=root)
+    _ = store.begin(make_request(run_id="legacy-run"))
+    journal = root / "legacy-run" / "transitions.jsonl"
+    first_line = journal.read_text(encoding="utf-8").splitlines()[0]
+    legacy_line = first_line.replace(
+        '"capture_provenance":null',
+        '"capture_provenance":{"source":"offline_fixture"}',
+    )
+    _ = journal.write_text(f"{first_line}\n{legacy_line}\n", encoding="utf-8")
+
+    # When an unrelated idempotency key starts a new run
+    record = store.begin(make_request(run_id="new-run"))
+
+    # Then the legacy non-identity fields do not block the independent run
+    assert record.run_id == "new-run"
+    assert record.state is TraceRunState.QUEUED
 
 
 def test_store_when_same_key_begins_concurrently_then_compare_and_scan_allows_one_binding(

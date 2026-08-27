@@ -6,25 +6,25 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from textual.widgets import Input, Static
 
-from trace_capture.agent.session import AgentSession
-from trace_capture.agent.tui import TraceAgentTui
-from trace_capture.agent.tui_approval import PermissionMode, TuiApproval
-from trace_capture.agent.tui_commands import (
+from ads_booster.agent.session import AgentSession
+from ads_booster.agent.tui import TraceAgentTui
+from ads_booster.agent.tui_approval import PermissionMode, TuiApproval
+from ads_booster.agent.tui_commands import (
     command_completion,
     command_preview,
     command_suggestions,
     handle_tui_command,
     is_known_command,
 )
-from trace_capture.providers.codex import ModelTurn
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import ToolRegistry
+from ads_booster.providers.codex import ModelTurn
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trace_capture.agent.control import AgentControlPort
+    from ads_booster.agent.control import AgentControlPort
 
 
 @dataclass(frozen=True, slots=True)

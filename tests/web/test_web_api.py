@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK -- authenticated workspace API scenarios share provisioning fixtures
 import base64
 import io
 from typing import TYPE_CHECKING
@@ -7,9 +8,20 @@ from typing import TYPE_CHECKING
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from trace_capture.web.app import create_app
-from trace_capture.web.schemas import AssetResponse, ContextResponse
-from trace_capture.workspace import (
+from ads_booster.agent.runs import (
+    AgentGoal,
+    AgentRun,
+    AgentRunId,
+    AgentRunState,
+    AgentRunStore,
+    AgentRunUpdate,
+    ConnectorId,
+    ObservationKind,
+    ToolPolicy,
+)
+from ads_booster.web.app import create_app
+from ads_booster.web.schemas import AssetResponse, ContextResponse
+from ads_booster.workspace import (
     AssetCreate,
     ContextCreate,
     ContextKind,
@@ -53,6 +65,41 @@ def test_health_is_available_without_authentication(tmp_path: Path) -> None:
     # Then
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_workspace_start_requeues_an_interrupted_agent_run(tmp_path: Path) -> None:
+    # Given the previous workspace process stopped while an Agent run was executing
+    store = AgentRunStore(tmp_path / "core-agent")
+    queued = store.create(
+        AgentRun(
+            run_id=AgentRunId("candidate-interrupted-r2"),
+            connector_id=ConnectorId("trace-marketing"),
+            connector_version="1.0.0",
+            goal=AgentGoal(
+                objective="Create one marketing image",
+                success_criteria=("artifact awaits review",),
+            ),
+            tool_policy=ToolPolicy(allow=("trace_generate_marketing_image",)),
+        ),
+        now=10.0,
+    )
+    _ = store.update(
+        queued.run_id,
+        AgentRunUpdate(
+            expected_revision=queued.revision,
+            state=AgentRunState.RUNNING,
+            at=11.0,
+        ),
+    )
+
+    # When a new workspace application process starts
+    _ = create_app(tmp_path, session_secret=b"s" * 32, clock=lambda: 12.0)
+
+    # Then the interrupted run is queued for an explicit user retry
+    recovered = store.get(queued.run_id)
+    assert recovered.state is AgentRunState.QUEUED
+    assert recovered.observations[-1].kind is ObservationKind.FAILURE
+    assert recovered.observations[-1].data == {"reason": "service_restart"}
 
 
 def test_authenticated_member_can_upload_reference_image(tmp_path: Path) -> None:
@@ -348,34 +395,6 @@ def test_sessions_are_private_to_authenticated_member(tmp_path: Path) -> None:
     assert listed.json() == []
     assert loaded.status_code == 404
     assert "do not leak" not in loaded.text
-
-
-def test_run_list_contract_is_authenticated_and_scoped_without_a_storage_seam(
-    tmp_path: Path,
-) -> None:
-    # Given
-    store = SqliteWorkspaceStore(tmp_path)
-    workspace = store.create_workspace("Trace team")
-    first_member = store.create_member(workspace.workspace.workspace_id, "Ada")
-    second_member = store.create_member(workspace.workspace.workspace_id, "Grace")
-    app = create_app(tmp_path, session_secret=b"s" * 32)
-    first_client = TestClient(app, base_url="https://testserver")
-    second_client = TestClient(app, base_url="https://testserver")
-    anonymous_client = TestClient(app, base_url="https://testserver")
-    _ = _login_provisioned(first_client, workspace, first_member)
-    _ = _login_provisioned(second_client, workspace, second_member)
-
-    # When
-    first_response = first_client.get("/api/runs")
-    second_response = second_client.get("/api/runs")
-    anonymous_response = anonymous_client.get("/api/runs")
-
-    # Then
-    assert first_response.status_code == 200
-    assert first_response.json() == []
-    assert second_response.status_code == 200
-    assert second_response.json() == []
-    assert anonymous_response.status_code == 401
 
 
 def test_expired_tampered_and_revoked_sessions_fail_closed(tmp_path: Path) -> None:

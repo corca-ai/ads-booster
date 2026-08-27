@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from trace_capture.search.text.providers import DdgsSearchProvider
+from ads_booster.search.text.providers import DdgsSearchProvider
 
 if TYPE_CHECKING:
     import pytest
@@ -34,8 +34,8 @@ def test_ddgs_provider_reads_cli_json_output_file(
         assert str(output_path) == argv[argv.index("--output") + 1]
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setattr("trace_capture.search.text.providers.shutil.which", locate)
-    monkeypatch.setattr("trace_capture.search.text.providers.subprocess.run", run)
+    monkeypatch.setattr("ads_booster.search.text.providers.shutil.which", locate)
+    monkeypatch.setattr("ads_booster.search.text.providers.subprocess.run", run)
 
     # When the provider invokes the executable
     result = DdgsSearchProvider(timeout_seconds=5).search("Trace", 1)

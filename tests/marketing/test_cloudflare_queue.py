@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import TypeAdapter
 
-from trace_capture.marketing.cloudflare_queue import (
+from ads_booster.marketing.cloudflare_queue import (
     CloudflareQueueClient,
     CloudflareQueueConfig,
     CloudflareQueueError,
     ControlPlaneCallbackClient,
 )
-from trace_capture.marketing.models import (
+from ads_booster.marketing.models import (
     ApprovalDecision,
     ApprovalPhase,
     MarketingTask,
@@ -25,8 +25,8 @@ from trace_capture.marketing.models import (
     TaskResult,
     TaskStatus,
 )
-from trace_capture.transport.http import HttpResponse
-from trace_capture.transport.json_types import JsonObject
+from ads_booster.transport.http import HttpResponse
+from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

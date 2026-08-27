@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK -- the two-stage candidate journey shares authenticated route fixtures
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -7,18 +8,30 @@ from typing import TYPE_CHECKING
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 
-from trace_capture.candidate_generation import (
+from ads_booster.agent.runs import (
+    AgentGoal,
+    AgentRun,
+    AgentRunAlreadyExistsError,
+    AgentRunId,
+    AgentRunNotRunnableError,
+    AgentRunState,
+    AgentRunStore,
+    AgentRunUpdate,
+    ConnectorId,
+    ToolPolicy,
+)
+from ads_booster.candidate_generation import (
     CandidateAuthRequiredError,
     CandidateContextMissingError,
     CandidateFormatError,
     CandidateGenerationError,
     CandidateImageStageError,
 )
-from trace_capture.web.app import create_app
-from trace_capture.workspace import (
-    CandidateBackgroundSubject,
+from ads_booster.web.app import create_app
+from ads_booster.workspace import (
     CandidateCreate,
     CandidateId,
+    CandidateImageAttachment,
     CandidateImageInputs,
     CandidateSource,
     CandidateStatus,
@@ -27,12 +40,13 @@ from trace_capture.workspace import (
     SqliteWorkspaceStore,
 )
 
-from trace_capture.web.schemas import CandidateResponse  # isort: skip
+from ads_booster.web.schemas import CandidateResponse  # isort: skip
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trace_capture.workspace import CandidateRecord, WorkspaceId
+    from ads_booster.transport.json_types import JsonObject
+    from ads_booster.workspace import CandidateRecord, WorkspaceId
 
 _CANDIDATES = TypeAdapter(tuple[CandidateResponse, ...])
 
@@ -42,7 +56,13 @@ class FakeGenerator:
     store: SqliteWorkspaceStore | None = None
     failure: CandidateGenerationError | None = None
 
-    def generate(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
+    def generate(
+        self,
+        workspace_id: WorkspaceId,
+        *,
+        run_context: str | None = None,
+    ) -> tuple[CandidateRecord, ...]:
+        del run_context
         if self.failure is not None:
             raise self.failure
         assert self.store is not None
@@ -58,8 +78,7 @@ class FakeGenerator:
                     image_inputs=CandidateImageInputs(
                         trace_items=("09:00 통계학 2교시", "13:00 스터디"),
                         device_time="07:20",
-                        background_subject=CandidateBackgroundSubject.SCENERY,
-                        background_mood="늦은 밤 책상 위 스탠드 불빛",
+                        background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
                         language="ko",
                     ),
                     refs_used=("kr-001",),
@@ -95,6 +114,40 @@ class FakeImageRunner:
             raise self.failure
         assert self.store is not None
         record = self.store.get_candidate(workspace_id, candidate_id)
+        run_id = AgentRunId(f"candidate-{candidate_id}-r{record.revision}")
+        agent_runs = AgentRunStore(self.store.database_path.parent / "core-agent")
+        try:
+            queued = agent_runs.create(
+                AgentRun(
+                    run_id=run_id,
+                    connector_id=ConnectorId("trace-marketing"),
+                    connector_version="1.0.0",
+                    goal=AgentGoal(
+                        objective="Create one candidate image",
+                        success_criteria=("human review",),
+                    ),
+                    tool_policy=ToolPolicy(allow=("trace_generate_marketing_image",)),
+                ),
+                now=1.0,
+            )
+            running = agent_runs.update(
+                run_id,
+                AgentRunUpdate(
+                    expected_revision=queued.revision,
+                    state=AgentRunState.RUNNING,
+                    at=2.0,
+                ),
+            )
+            _ = agent_runs.update(
+                run_id,
+                AgentRunUpdate(
+                    expected_revision=running.revision,
+                    state=AgentRunState.AWAITING_APPROVAL,
+                    at=3.0,
+                ),
+            )
+        except AgentRunAlreadyExistsError:
+            _ = agent_runs.get(run_id)
         relative = f"candidates/{candidate_id}/r{record.revision}/outputs/final.png"
         path = self.store.database_path.parent / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,9 +155,12 @@ class FakeImageRunner:
         return self.store.attach_candidate_image(
             workspace_id,
             candidate_id,
-            image_path=relative,
-            image_sha256=sha256(self.image_bytes).hexdigest(),
-            expected_revision=record.revision,
+            CandidateImageAttachment(
+                path=relative,
+                sha256=sha256(self.image_bytes).hexdigest(),
+                agent_run_id=run_id,
+                expected_revision=record.revision,
+            ),
         )
 
 
@@ -140,10 +196,11 @@ def _caption_approved(client: TestClient) -> CandidateResponse:
     return CandidateResponse.model_validate_json(reviewed.content)
 
 
-def _payload(caption: str = "시험 기간엔 잠금화면부터 바꾼다") -> dict[str, object]:
+def _payload(caption: str = "시험 기간엔 잠금화면부터 바꾼다") -> JsonObject:
     return {
         "topic": "시험기간 일정 관리 — 잠금화면 데모로 공감 훅",
         "country": "JP",
+        "posting_slot": "evening",
         "caption": caption,
         "hypothesis": "1인칭 감탄이 저장률을 올린다",
         "image_inputs": {
@@ -173,6 +230,7 @@ def test_manual_candidate_is_created_and_listed_for_the_workspace(tmp_path: Path
     record = CandidateResponse.model_validate_json(created.content)
     assert record.source is CandidateSource.MANUAL
     assert record.topic == "시험기간 일정 관리 — 잠금화면 데모로 공감 훅"
+    assert record.posting_slot == "evening"
     assert record.status is CandidateStatus.AWAITING_REVIEW
     assert record.refs_used == ("ref-a", "ref-b")
     assert record.principles_applied == (1, 4)
@@ -464,6 +522,21 @@ def test_generate_image_reports_a_stage_failure_verbatim(tmp_path: Path) -> None
     assert response.json() == {"detail": failure.message}
 
 
+def test_generate_image_reports_an_already_running_agent_as_a_conflict(tmp_path: Path) -> None:
+    # Given an image Agent run that is already serving another request
+    store = SqliteWorkspaceStore(tmp_path)
+    failure = AgentRunNotRunnableError(AgentRunId("candidate-running"), AgentRunState.RUNNING)
+    client = _client(tmp_path, store, "Trace team", image_runner=FakeImageRunner(failure=failure))
+    approved = _caption_approved(client)
+
+    # When the same image generation is requested again
+    response = client.post(f"/api/candidates/{approved.candidate_id}/generate-image")
+
+    # Then the API returns JSON instead of leaking a plain-text server error
+    assert response.status_code == 409
+    assert response.json() == {"detail": "candidate Agent run conflict"}
+
+
 def test_image_approval_submits_and_rejection_returns_for_a_new_image(tmp_path: Path) -> None:
     # Given two composed candidates
     store = SqliteWorkspaceStore(tmp_path)
@@ -501,6 +574,11 @@ def test_image_approval_submits_and_rejection_returns_for_a_new_image(tmp_path: 
     assert returned.status is CandidateStatus.CAPTION_APPROVED
     assert returned.review_note == "배경이 너무 어둡습니다"
     assert returned.image_path is None
+    agent_runs = AgentRunStore(tmp_path / "core-agent")
+    assert submitted.agent_run_id is not None
+    assert returned.agent_run_id is not None
+    assert agent_runs.get(AgentRunId(submitted.agent_run_id)).state is AgentRunState.COMPLETED
+    assert agent_runs.get(AgentRunId(returned.agent_run_id)).state is AgentRunState.QUEUED
 
 
 def test_image_review_requires_a_candidate_at_the_image_gate(tmp_path: Path) -> None:

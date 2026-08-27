@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from trace_capture.capture.appium_adapter import WebDriverSession, build_xcuitest_options
-from trace_capture.capture.capture_safety import CaptureControl
+from ads_booster.capture.appium_session import WebDriverSession, build_xcuitest_options
+from ads_booster.capture.capture_safety import CaptureControl
 
 from .test_appium_adapter import AdvancingClock, RecordingWebDriver, capture_request
 

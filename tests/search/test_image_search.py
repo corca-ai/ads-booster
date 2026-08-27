@@ -3,23 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from trace_capture.agent.session import AgentSession
-from trace_capture.providers.codex import FunctionCall, ModelTurn
-from trace_capture.search.image.contracts import (
+from ads_booster.agent.session import AgentSession
+from ads_booster.providers.codex import FunctionCall, ModelTurn
+from ads_booster.search.image.contracts import (
     ImageSearchResponse,
     ImageSearchResult,
 )
-from trace_capture.search.image.providers import UnavailableImageSearchProvider
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.image_search import ImageSearchTool
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import default_registry
+from ads_booster.search.image.providers import UnavailableImageSearchProvider
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.image_search import ImageSearchTool
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import default_registry
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from pydantic import TypeAdapter
 
-from trace_capture.marketing.models import (
+from ads_booster.marketing.models import (
     MarketingTask,
     TaskCallback,
     TaskKind,
     TaskResult,
     TaskStatus,
 )
-from trace_capture.marketing.worker_broker import (
+from ads_booster.marketing.worker_broker import (
     MacWorkerConfig,
     MacWorkerCredential,
     MacWorkerStore,
@@ -25,10 +25,10 @@ from trace_capture.marketing.worker_broker import (
     enroll_mac_worker,
     normalize_control_plane_origin,
 )
-from trace_capture.marketing.worker_doctor import inspect_mac_worker
-from trace_capture.marketing.worker_launchd import MacWorkerLaunchd
-from trace_capture.transport.http import HttpResponse
-from trace_capture.transport.json_types import JsonObject
+from ads_booster.marketing.worker_doctor import inspect_mac_worker
+from ads_booster.marketing.worker_launchd import MacWorkerLaunchd
+from ads_booster.transport.http import HttpResponse
+from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -255,9 +255,9 @@ def test_doctor_boots_the_selected_simulator_before_checking_trace(
             return '{"xcuitest": {}}'
         return ""
 
-    monkeypatch.setattr("trace_capture.marketing.worker_doctor.platform.system", lambda: "Darwin")
-    monkeypatch.setattr("trace_capture.marketing.worker_doctor.shutil.which", which)
-    monkeypatch.setattr("trace_capture.marketing.worker_doctor._run", run)
+    monkeypatch.setattr("ads_booster.marketing.worker_doctor.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("ads_booster.marketing.worker_doctor.shutil.which", which)
+    monkeypatch.setattr("ads_booster.marketing.worker_doctor._run", run)
 
     report = inspect_mac_worker()
 

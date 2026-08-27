@@ -1,50 +1,52 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK -- service lifecycle and launchd scenarios share host fixtures
 import stat
 import subprocess
 from datetime import UTC, datetime
 from hashlib import sha256
 from threading import Event
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, TypedDict, Unpack, final
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from trace_capture.automation import (
+from ads_booster.automation import (
     AutomationQueue,
     CampaignCreate,
     CampaignStore,
     QueueRecord,
     QueueState,
 )
-from trace_capture.cli.agent import app
-from trace_capture.contracts import TraceRunResult
-from trace_capture.contracts.generation import MarketingContextBundle
-from trace_capture.contracts.run import TraceRunState
-from trace_capture.runtime.generate_one import GenerateOneOptions
-from trace_capture.search.image.background import BackgroundSearchError
-from trace_capture.service.launchd import (
+from ads_booster.cli.agent import app
+from ads_booster.contracts import TraceRunResult
+from ads_booster.contracts.generation import MarketingContextBundle
+from ads_booster.contracts.run import TraceRunState
+from ads_booster.service.launchd import (
     LaunchdConfig,
     bootstrap_launchd_service,
     install_plist,
     stop_launchd_service,
 )
-from trace_capture.service.runtime import create_service_app
-from trace_capture.service.state import ServiceState, ServiceStateStore, ensure_workspace
-from trace_capture.service.worker import ProductionGenerateOneRunner, ServiceWorkerConfig
-from trace_capture.workspace import MemberId, SqliteWorkspaceStore, WorkspaceId
+from ads_booster.service.runtime import create_service_app
+from ads_booster.service.state import ServiceState, ServiceStateStore, ensure_workspace
+from ads_booster.service.worker import ServiceWorkerConfig
+from ads_booster.workspace import MemberId, SqliteWorkspaceStore, WorkspaceId
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
 
-    from trace_capture.search.image.background import SearchedBackground
+
+class RunKwargs(TypedDict, total=False):
+    check: bool
+    capture_output: bool
+    text: bool
+    timeout: float
 
 
 _NOW = datetime(2026, 8, 24, 3, 0, tzinfo=UTC)
-_FIXTURE_BACKGROUND_FAILED = "fixture_background_failed"
-_FIXTURE_BACKGROUND_MESSAGE = "fixture background failure"
 
 
 def _bundle(request_id: str) -> MarketingContextBundle:
@@ -103,13 +105,6 @@ class _LifecycleFixtureRunner:
             output_image="outputs/final.png",
             output_image_sha256=sha256(b"fixture-output").hexdigest(),
         )
-
-
-@final
-class _FailingBackgroundFetcher:
-    def fetch(self, query: str, destination: Path) -> SearchedBackground:
-        del query, destination
-        raise BackgroundSearchError(_FIXTURE_BACKGROUND_FAILED, _FIXTURE_BACKGROUND_MESSAGE)
 
 
 def test_generation_route_feeds_the_persistent_worker_to_review(tmp_path: Path) -> None:
@@ -211,33 +206,6 @@ def test_service_worker_when_finite_campaign_is_active_then_it_generates_every_v
     assert member.member.workspace_id == campaign.workspace_id
 
 
-def test_production_runner_when_background_search_fails_then_it_returns_a_failed_result(
-    tmp_path: Path,
-) -> None:
-    # Given production generation options and a background search failure
-    system_ui = tmp_path / "system-ui.png"
-    _ = system_ui.write_bytes(b"fixture-system-ui")
-    runner = ProductionGenerateOneRunner(
-        options=GenerateOneOptions(
-            output_root=tmp_path / "generated",
-            state_root=tmp_path / "state",
-            capture_output_root=tmp_path / "capture",
-            iphone_ui_path=system_ui,
-            appium_server="http://127.0.0.1:4723",
-            timeout_seconds=30,
-        ),
-        background_fetcher=_FailingBackgroundFetcher(),
-    )
-
-    # When the service runs one generation attempt
-    result = runner.run(_bundle("background-search-failure"))
-
-    # Then the failure is returned to the durable worker instead of terminating the service task
-    assert result.state is TraceRunState.FAILED
-    assert result.run_id == "background-search-failure"
-    assert result.idempotency_key == "background-search-failure-v1"
-
-
 def test_service_state_round_trips_the_live_public_url(tmp_path: Path) -> None:
     # Given a service state with a live tunnel URL
     state_store = ServiceStateStore(tmp_path)
@@ -265,7 +233,7 @@ def test_service_install_defaults_to_cloudflared_workspace_access(
     def fake_which(name: str) -> str | None:
         return str(tmp_path / "bin" / name) if name == "trace-agent" else None
 
-    monkeypatch.setattr("trace_capture.service.cli.shutil.which", fake_which)
+    monkeypatch.setattr("ads_booster.service.cli.shutil.which", fake_which)
     plist_path = tmp_path / "com.corca.trace-agent.plist"
 
     # When the service is installed without specifying a tunnel
@@ -305,7 +273,7 @@ def test_launchd_bootstrap_retries_transient_teardown_error(
 
     def fake_run(
         _args: list[str],
-        **_kwargs: object,
+        **_kwargs: Unpack[RunKwargs],
     ) -> subprocess.CompletedProcess[str]:
         nonlocal attempts
         attempts += 1
@@ -321,8 +289,8 @@ def test_launchd_bootstrap_retries_transient_teardown_error(
     def no_wait(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("trace_capture.service.launchd.subprocess.run", fake_run)
-    monkeypatch.setattr("trace_capture.service.launchd.time.sleep", no_wait)
+    monkeypatch.setattr("ads_booster.service.launchd.subprocess.run", fake_run)
+    monkeypatch.setattr("ads_booster.service.launchd.time.sleep", no_wait)
 
     # When the workspace service is bootstrapped
     result = bootstrap_launchd_service("gui/501", tmp_path / "service.plist")
@@ -339,7 +307,7 @@ def test_launchd_stop_waits_until_previous_job_is_unloaded(
 
     def fake_run(
         args: list[str],
-        **_kwargs: object,
+        **_kwargs: Unpack[RunKwargs],
     ) -> subprocess.CompletedProcess[str]:
         nonlocal probes
         if args[1] == "bootout":
@@ -357,8 +325,8 @@ def test_launchd_stop_waits_until_previous_job_is_unloaded(
     def no_wait(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("trace_capture.service.launchd.subprocess.run", fake_run)
-    monkeypatch.setattr("trace_capture.service.launchd.time.sleep", no_wait)
+    monkeypatch.setattr("ads_booster.service.launchd.subprocess.run", fake_run)
+    monkeypatch.setattr("ads_booster.service.launchd.time.sleep", no_wait)
 
     unloaded = stop_launchd_service("gui/501", "com.corca.trace-agent")
 
@@ -401,7 +369,7 @@ def test_service_install_workspace_name_updates_existing_workspace(
         return str(tmp_path / "bin" / name) if name == "trace-agent" else None
 
     monkeypatch.setattr(
-        "trace_capture.service.cli.shutil.which",
+        "ads_booster.service.cli.shutil.which",
         fake_which,
     )
     plist_path = tmp_path / "com.corca.trace-agent.plist"

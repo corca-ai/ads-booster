@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from trace_capture.capture.capture_safety import path_has_symlink_component
+from ads_booster.capture.capture_safety import path_has_symlink_component
 
 
 @pytest.mark.parametrize(
