@@ -22,6 +22,7 @@ from ads_booster.workspace.models import (
     CandidateId,
     CandidateRecord,
     CandidateStatus,
+    MarketingAccountId,
     WorkspaceId,
 )
 
@@ -101,12 +102,23 @@ class CandidateBaseStore(WorkspaceRepositoryBase):
             )
         return candidate_from_row(row)
 
-    def list_candidates(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
+    def list_candidates(
+        self,
+        workspace_id: WorkspaceId,
+        *,
+        account_id: MarketingAccountId | None = None,
+    ) -> tuple[CandidateRecord, ...]:
+        """List the workspace's candidates, or only the ones one account wrote.
+
+        An account is a person with its own posting record, so its screens must not show
+        another account's drafts. With no account the whole workspace is returned, which is
+        what the pre-account rows and the workspace-wide batch still need.
+        """
         with self._database.connect() as connection:
-            cursor: SqliteCursor = connection.execute(
-                f"{SELECT_CANDIDATE} WHERE workspace_id = ?{NEWEST_FIRST}",
-                (workspace_id,),
-            )
+            scope = "" if account_id is None else " AND account_id = ?"
+            query = f"{SELECT_CANDIDATE} WHERE workspace_id = ?{scope}{NEWEST_FIRST}"
+            parameters = (workspace_id,) if account_id is None else (workspace_id, account_id)
+            cursor: SqliteCursor = connection.execute(query, parameters)
             rows: list[CandidateRecord] = []
             while (row := fetch_candidate(cursor)) is not None:
                 rows.append(candidate_from_row(row))

@@ -1614,9 +1614,10 @@ const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
       },
     },
   ];
+  const listed = [];
   await loadLive(fixture, async (path) => {
     if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
-    if (path === "/api/candidates") return response(200, []);
+    if (path.startsWith("/api/candidates")) { listed.push(path); return response(200, []); }
     throw new Error(`unexpected path: ${path}`);
   });
 
@@ -1634,6 +1635,9 @@ const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
   assert.equal(fixture.accountWorkspace.hidden, false);
   assert.equal(fixture.accountCurrentName.textContent, "박세나");
   assert.match(fixture.notice.textContent, /박세나 계정으로 작업합니다/);
+  // The first load is workspace-wide because no account is open yet; opening one scopes
+  // the list to it, so another account's drafts never appear on its screens.
+  assert.deepEqual(listed, ["/api/candidates", "/api/candidates?account_id=acc-1"]);
 
   await fixture.accountBack.click();
   assert.equal(fixture.accountHome.hidden, false);

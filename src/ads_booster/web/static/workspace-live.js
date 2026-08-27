@@ -1237,7 +1237,11 @@
   };
 
   const loadCandidates = async () => {
-    const records = await request("/api/candidates");
+    // Scoped to the open account: another account's drafts are another person's.
+    const listPath = currentAccount
+      ? `/api/candidates?account_id=${encodeURIComponent(currentAccount.account_id)}`
+      : "/api/candidates";
+    const records = await request(listPath);
     candidateRecords = records;
     renderCandidateList();
     renderPipelineStats();

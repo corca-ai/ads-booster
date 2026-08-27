@@ -103,8 +103,10 @@ class CandidateRouter:
         @router.get("", response_model=list[CandidateResponse])
         def list_candidates(
             principal: Annotated[Principal, Depends(current_principal)],
+            account_id: MarketingAccountId | None = None,
         ) -> list[CandidateResponse]:
-            return [_response(record) for record in self.workflow.list(principal.workspace_id)]
+            records = self.workflow.list(principal.workspace_id, account_id)
+            return [_response(record) for record in records]
 
         @router.post("", response_model=CandidateResponse, status_code=status.HTTP_201_CREATED)
         def create_candidate(

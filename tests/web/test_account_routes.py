@@ -7,6 +7,10 @@ from fastapi.testclient import TestClient
 
 from ads_booster.web.app import create_app
 from ads_booster.workspace import (
+    CandidateCreate,
+    CandidateImageInputs,
+    CandidateSource,
+    MarketingAccountId,
     ProvisionedMember,
     ProvisionedWorkspace,
     SqliteWorkspaceStore,
@@ -198,3 +202,47 @@ def test_generating_for_an_unknown_account_is_not_found(tmp_path: Path) -> None:
     client = _client(tmp_path)
 
     assert client.post("/api/candidates/generate?account_id=missing").status_code == 404
+
+
+def test_each_account_sees_only_its_own_candidates(tmp_path: Path) -> None:
+    """Two accounts in one workspace must not share a draft list."""
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace = store.create_workspace("Trace")
+    member = store.create_member(workspace.workspace.workspace_id, "Ada")
+    client = TestClient(create_app(tmp_path, session_secret=b"s" * 32), base_url="https://test")
+    _login(client, workspace, member)
+    first = client.post(
+        "/api/accounts",
+        json={"country": "KR", "identity": _IDENTITY, "schedule": _SCHEDULE},
+    ).json()
+    second_identity = {**_IDENTITY, "display_name": "이서진", "occupation": "1인 개발자"}
+    second = client.post(
+        "/api/accounts",
+        json={"country": "KR", "identity": second_identity, "schedule": _SCHEDULE},
+    ).json()
+
+    store.create_candidate(
+        CandidateCreate(
+            workspace_id=workspace.workspace.workspace_id,
+            account_id=MarketingAccountId(first["account_id"]),
+            source=CandidateSource.AUTO,
+            country="KR",
+            topic="첫 계정의 주제",
+            caption="첫 계정의 캡션",
+            hypothesis="가설",
+            shooting_order="",
+            image_inputs=CandidateImageInputs(
+                trace_items=("19:00 직관",),
+                device_time="18:10",
+                background_intent="야간 경기 조명이 켜진 외야 관중석",
+                language="ko",
+            ),
+        )
+    )
+
+    mine = client.get(f"/api/candidates?account_id={first['account_id']}").json()
+    theirs = client.get(f"/api/candidates?account_id={second['account_id']}").json()
+
+    assert [record["topic"] for record in mine] == ["첫 계정의 주제"]
+    assert theirs == []
+    assert len(client.get("/api/candidates").json()) == 1

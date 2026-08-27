@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from ads_booster.contracts.generation import MarketingContextBundle
+    from ads_booster.contracts.results import TraceRunResult
     from ads_booster.transport.http import HttpClient
 
 _DEFAULT_POLL_INTERVAL_SECONDS: Final = 0.25
@@ -92,10 +94,32 @@ def create_service_worker(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LazyCodexRunner:
+    """Builds the Codex runner on first use instead of at service start.
+
+    Resolving the `codex` executable is part of constructing that runner, so building it
+    eagerly made an operator Mac without Codex unable to start the workspace at all — the
+    caption review screens, which never touch Codex, went down with it. Deferring the
+    construction keeps the failure where it belongs: the first request that actually asks
+    for a native image, reported as the same typed error as before.
+    """
+
+    home: Path
+    http: HttpClient
+    before_side_effect: Callable[[str], None] | None = None
+
+    def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
+        runner = build_codex_trace_runner(
+            self.home, self.http, before_side_effect=self.before_side_effect
+        )
+        return runner.run(bundle)
+
+
 def build_production_runner(
     home: Path,
     http: HttpClient,
     *,
     before_side_effect: Callable[[str], None] | None = None,
 ) -> GenerateOnePort:
-    return build_codex_trace_runner(home, http, before_side_effect=before_side_effect)
+    return LazyCodexRunner(home, http, before_side_effect)

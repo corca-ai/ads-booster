@@ -10,6 +10,7 @@ from ads_booster.workspace import (
     CandidateRecord,
     CandidateStateError,
     CandidateStatus,
+    MarketingAccountId,
     MarketingAccountRecord,
     RevisionConflictError,
     SqliteWorkspaceStore,
@@ -42,8 +43,12 @@ class CandidateWorkflow:
     image_runner: CandidateImageRunnerPort
     image_review: ImageReviewPort
 
-    def list(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
-        return self.store.list_candidates(workspace_id)
+    def list(
+        self,
+        workspace_id: WorkspaceId,
+        account_id: MarketingAccountId | None = None,
+    ) -> tuple[CandidateRecord, ...]:
+        return self.store.list_candidates(workspace_id, account_id=account_id)
 
     def create(self, value: CandidateCreate) -> CandidateRecord:
         return self.store.create_candidate(value)
