@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from trace_capture.contracts import MarketingCompositeJob
+from ads_booster.contracts import MarketingCompositeJob
 
 VALID_COMPOSITE_JOB = """
 {

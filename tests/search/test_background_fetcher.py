@@ -7,15 +7,15 @@ from typing import TYPE_CHECKING, NoReturn
 
 from PIL import Image
 
-from trace_capture.search.image.background import ImageSearchBackgroundFetcher
-from trace_capture.search.image.contracts import ImageSearchResponse, ImageSearchResult
-from trace_capture.transport.http import HttpResponse
+from ads_booster.search.image.background import ImageSearchBackgroundFetcher
+from ads_booster.search.image.contracts import ImageSearchResponse, ImageSearchResult
+from ads_booster.transport.http import HttpResponse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.transport.json_types import JsonObject
 
 _IMAGE_MODEL_CALL_MESSAGE = "background search must not call an image model"
 _POST_MESSAGE = "background search must not post data"

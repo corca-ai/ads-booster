@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const staticRoot = join(root, "src", "trace_capture", "web", "static");
+const staticRoot = join(root, "src", "ads_booster", "web", "static");
 const liveSource = readFileSync(join(staticRoot, "workspace-live.js"), "utf8");
 
 class FakeElement {

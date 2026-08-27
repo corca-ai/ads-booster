@@ -6,25 +6,25 @@ from typing import TYPE_CHECKING
 import pytest
 from textual.widgets import Input, OptionList, RichLog
 
-from trace_capture.agent.repl import Repl
-from trace_capture.agent.session import AgentSession
-from trace_capture.agent.session_store import (
+from ads_booster.agent.repl import Repl
+from ads_booster.agent.session import AgentSession
+from ads_booster.agent.session_store import (
     JsonSessionStore,
     SessionManager,
     SessionNotFoundError,
 )
-from trace_capture.agent.tui import TraceAgentTui
-from trace_capture.agent.tui_approval import TuiApproval
-from trace_capture.providers.codex import ModelTurn
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import ToolRegistry
+from ads_booster.agent.tui import TraceAgentTui
+from ads_booster.agent.tui_approval import TuiApproval
+from ads_booster.providers.codex import ModelTurn
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)

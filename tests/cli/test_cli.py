@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
 
+from ads_booster.cli.capture import CliErrorPayload, JobLoadErrorCode, app
+from ads_booster.contracts import CaptureResult, ErrorCode
 from tests.capture.test_worker import JOB_JSON
-from trace_capture.cli.capture import CliErrorPayload, JobLoadErrorCode, app
-from trace_capture.contracts import CaptureResult, ErrorCode
 
 if TYPE_CHECKING:
     from pathlib import Path

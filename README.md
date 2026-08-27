@@ -1,9 +1,9 @@
 # Trace Marketing Agent Runtime
 
-This repository builds Trace marketing images without setting a real iOS wallpaper. It retrieves
-a licensed-source background from image search, configures native Trace components through Appium,
-and deterministically composites those layers with a clean iPhone system-UI asset through a durable,
-idempotent `TraceRun` state machine.
+This repository creates Trace marketing wallpapers without setting a real iOS wallpaper. The primary
+generation path searches for a background, imports it into an iOS Simulator, drives Trace's real
+lock-screen wallpaper editor through Appium, and collects Trace's own request-bound full-wallpaper
+export through a durable, idempotent `TraceRun` state machine.
 
 The standalone agent can perform read-only web and image searches when asked, but it does not
 automatically research trends, invent personas, write campaign copy, publish to Notion or Threads,
@@ -37,8 +37,8 @@ Use `--dry-run` to inspect the plan. `--ref <git-ref>` selects a GitHub ref, whi
 `--bin-dir <absolute-path>` changes the user bin directory. The installer updates only
 the current user's zsh or bash startup file; `--no-shell-update` disables that change.
 It does not install Xcode, Appium, the XCUITest driver, or the separate `Trace_iOS`
-debug build required by the native capture path. Prepare those prerequisites manually
-only when you need Trace automation; the CLI and offline composition do not require them.
+debug build required by native wallpaper automation. Prepare those prerequisites manually
+only when you need Trace automation; the legacy offline composition commands do not require them.
 
 ## Standalone agent shell
 
@@ -52,7 +52,7 @@ uv sync
 source .venv/bin/activate
 # OpenAI ChatGPT / Codex OAuth 로그인
 trace-ads auth login
-trace-ads --model gpt-5.5
+trace-ads --model gpt-5.6-luna
 ```
 
 실제 터미널에서 `trace-ads`를 실행하면 대화 영역, 도구 상태, 승인 패널이 있는
@@ -68,7 +68,7 @@ REPL을 사용하며, 어느 환경에서나 `trace-ads --plain`으로 명시할
 /auth login                    OpenAI ChatGPT / Codex 브라우저 OAuth 로그인
 /auth status                   OpenAI OAuth 로그인 상태
 /auth logout                   저장된 OAuth credential 삭제
-/model [model-id]              현재 모델 확인 또는 변경 (예: gpt-5.5)
+/model [model-id]              현재 모델 확인 또는 변경 (예: gpt-5.6-luna)
 /permission [ask|yolo]         승인 모드 확인 또는 변경 (기본값: yolo)
 /new                          현재 세션을 보존하고 새 세션 시작
 /clear                         현재 세션을 삭제하고 새 세션 시작
@@ -94,7 +94,7 @@ plain REPL에서는 목록에 표시된 ID를 `/session [session-id]`로 입력�
 
 `/model`을 입력하면 현재 provider의 사용 가능한 모델 목록을 불러옵니다. 목록에서
 위/아래 방향키와 Enter로 모델을 선택할 수 있으며, `/model [model-id]`로 직접 지정할
-수도 있습니다. (예: `gpt-5.5`, `gpt-5.4`).
+수도 있습니다. (예: `gpt-5.6-luna`, `gpt-5.6-terra`).
 선택한 모델이 추론 강도를 제공하면 이어서 `low`, `medium`, `high`,
 `xhigh` 같은 effort 목록이 표시되고, 선택값은 현재 TUI 세션의 provider 요청에
 즉시 반영됩니다.
@@ -110,17 +110,35 @@ The first context-driven capture path is available directly from the standalone 
 
 ```bash
 trace-agent generate-one \
-  --context-file appium/jobs/composite/mock-contexts/jp-student-exam.json
+  --context-file path/to/marketing-context.json
 ```
 
-The command parses the persona and promotion-material context, searches approved public image
-sources for a background, verifies and normalizes the selected file to PNG, then prepares the native
-runtime by opening and booting the selected Simulator and starting Appium when they are installed
-but inactive. Appium enters the three current Trace component titles through the Trace setup UI,
-saves that configuration, and requests a fresh request-bound native component export. The final
-image is a deterministic three-layer composition: searched background, native Trace components,
-and the packaged iPhone system UI. It does not call an image-generation model, reuse a prior Trace
-component artifact, add Trace branding, or require a separately authored `trace-run` job.
+The command admits a durable Agent goal from the persona, promotion material, references, and
+variation context. Using the existing ChatGPT/Codex OAuth credential, the model must call the
+restricted Trace connector with one complete strict `trace.wallpaper-plan.v1`. The plan supplies an
+explicit IANA `time_zone`, background query, reference IDs, rows and supported layouts, per-event
+colors, UTC timed or all-day calendar events, and only visual styles the Trace editor supports. The
+renderer converts timed events only with this plan-owned time zone; it never reads the Mac or
+Simulator's ambient time zone. Code validates those inputs; it does not replace them with locale or
+occupation templates.
+
+For a timed event, the promotion-owned source `trace_item` must match the plan time zone's local
+`HH:MM` followed by the event's clean title. The event title itself contains no duplicated time text,
+so Trace renders one authoritative local time from the UTC instant and plan time zone.
+
+The connector searches approved public image sources, normalizes the selected background to PNG,
+and imports it into the selected Simulator with `simctl addmedia`. Only opaque export-binding
+metadata is passed at Trace launch. Appium creates the request-owned calendars and events through
+Trace's real UI. In the debug automation build, ISO date inputs and exact-title calendar lookup
+are native Trace controls; normal users retain the standard DatePicker/menu surfaces. Appium then
+uses `LockScreenWallpaperSheet` controls to choose that imported photo and
+set layout, text/header/cell colors, font, opacity, height, title wrapping, scale, brightness, blur,
+dimming, and Save. Trace renders the full wallpaper and writes a request-bound
+`trace_wallpaper.png` plus native manifest. Python treats that
+PNG as opaque: it validates its bytes, digest, request binding, nonce, device, and manifest before
+writing `outputs/final.png` and a `trace.run-result.v2`. The connector then leaves the Agent run
+awaiting human approval. The model performs text/tool planning, not image synthesis. This produces a
+Trace wallpaper PNG, not a physical iPhone lock-screen screenshot with iOS system UI.
 
 ## Team workspace service
 
@@ -219,7 +237,7 @@ Use an absolute path when configuring a dedicated Mac:
 | `$TRACE_AGENT_HOME/logs/` | Protected service and optional cloudflared logs |
 
 The one-shot generation command keeps its default run artifacts relative to the checkout that
-invokes it: `.trace-agent/generated/`, `.trace-agent/state/`, and `.trace-agent/capture/`.
+invokes it: `.trace-agent/generated/`.
 The workspace queue stores queue metadata under `TRACE_AGENT_HOME`; the configured worker owns
 the generated artifact root and records only verified run/artifact references in the queue.
 
@@ -227,7 +245,8 @@ The relevant environment overrides are:
 
 ```text
 TRACE_AGENT_HOME              # default: ~/.trace-agent
-TRACE_AGENT_MODEL             # default: gpt-5.5
+TRACE_AGENT_MODEL             # default: gpt-5.6-luna
+TRACE_AGENT_REASONING_EFFORT  # default: xhigh
 TRACE_AGENT_CONTEXT_DIR       # default: <serve working directory>/context
 TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS  # default: 240
 TRACE_AGENT_MEMORY_FILE       # default: $TRACE_AGENT_HOME/memory.jsonl
@@ -236,8 +255,6 @@ TRACE_AGENT_WEB_SEARCH_PROVIDER
 TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS
 TRACE_AGENT_BROWSER_COMMAND
 TRACE_AGENT_APPIUM_SERVER       # default: http://127.0.0.1:4723
-TRACE_AGENT_IPHONE_UI           # default: packaged clean iPhone system UI asset
-TRACE_AGENT_TRACE_COMPONENTS    # default: packaged Trace component fixture asset
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 ```
 
@@ -251,7 +268,7 @@ collapsed form for pasting one candidate by hand — 주제/컨셉 comes first a
 is a KR/JP/TW/US dropdown that defaults to KR. Below the block the tab lists every candidate in the
 workspace, newest first, with the topic as its main line and the caption's first line beneath it.
 The 캡션·주제 승인 tab shows one card per candidate that is still awaiting a decision: the topic is
-the card headline, the caption sits directly under it, and the composed image when one exists,
+the card headline, the caption sits directly under it, and the generated wallpaper when one exists,
 hypothesis, applied principles, references, the recorded AI verdict, and the Appium prompt follow.
 One approve/reject pair decides the topic and the caption together — there is no separate per-field
 gate.
@@ -271,42 +288,44 @@ implemented; ③ is reached by approving the image, and posting itself stays man
 The 캡션·주제 승인 tab holds both gates. `① 캡션·주제` lists candidates awaiting the first decision.
 `② 이미지` lists candidates that passed it: a `caption_approved` card offers `이미지 생성` and
 shows `이미지 생성 중… (1~3분)` while the request runs, and an `image_awaiting_review` card shows the
-composed image with the topic and caption beside `승인` and `반려` plus a reason field. A
-rejection returns the candidate to `caption_approved` with the note, so a new image can be composed.
+generated wallpaper with the topic and caption beside `승인` and `반려` plus a reason field. A
+rejection returns the candidate to `caption_approved` with the note, so a new wallpaper can be generated.
 
 Opening the workspace database runs two idempotent migrations for rows written before these
 fields existed: `accepted` becomes `caption_approved`, and candidates stored before `topic` was
 required are backfilled with the placeholder `(주제 미기록)` so the required field holds. Posting
 stays manual and outside this runtime.
 
-후보 자동 생성 is wired to the built-in agent. One click assembles the operator's context
-documents into a single provider call and stores three Korean candidates as `source=auto`, awaiting
-caption approval like any manual candidate. The button disables itself and shows
+후보 자동 생성 is wired to the durable Agent. One click snapshots the operator's context
+documents and gives the Trace v1 connector only the typed
+`trace_propose_marketing_candidates` capability. The model can inspect the context, revise invalid
+tool arguments, and stores a useful set of distinct candidates as `source=auto`, awaiting caption
+approval like any manual candidate. The button disables itself and shows
 `생성 중… (1~3분 소요)` while the request runs, then refreshes the list. It needs two things:
 
-- **Run the service from the folder that holds `context/`.** The generator reads
-  `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points elsewhere, and it needs
-  `core/PRINCIPLES-GLOBAL.md`, `core/PRINCIPLES-KR.md`, `core/ELEMENTS-KR.md`, `core/VOICE-KR.md`,
-  `core/FACTS.md`, and `references/KR/INDEX.md`. A missing folder or file stops the run before any
-  model call and the browser shows which one.
+- **Provide context Markdown.** The generator reads
+  every Markdown file below `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points
+  elsewhere; when neither exists it uses the packaged starter context. New domain directories are
+  discovered automatically. A missing directory, blank file, unreadable file, or symlink stops the
+  run before any model call and the browser names what is unusable.
 - **A logged-in agent credential.** Run `trace-agent auth login` in the terminal first; without it
   the button reports `AI 로그인이 필요합니다`.
 
-This version is deliberately simple: one non-streaming call per click, no tool loop and no web
-search, exactly three candidates, Korean only. The model must answer with a strict JSON array; one
-malformed answer is retried once with the validation error, and a second failure stores nothing and
-reports `AI 응답이 형식을 통과하지 못했습니다`. The generated `appium_prompt` is stored as the
-candidate's Appium 프롬프트.
+The Agent run owns the provider/tool loop rather than parsing prose or a fenced JSON response.
+The connector validates the candidate schema and distinct topics while country, posting slot,
+background intent, and creative direction remain model decisions grounded in the supplied context;
+typed tool failures return to the model for replanning without a hard-coded retry count. The
+generated `appium_prompt` is stored as the candidate's Appium 프롬프트.
 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/candidates` | List the authenticated member's workspace candidates, newest first |
 | `POST /api/candidates` | Create a manual candidate from `topic`, `country`, `caption`, `hypothesis`, `image_inputs`, and optional `refs_used`/`principles_applied`/`shooting_order`; the server forces `source=manual` and `status=awaiting_review` |
-| `POST /api/candidates/generate` | Assemble `context/` into one provider call and store three `source=auto` candidates, or store nothing; `409` for a missing context folder or credential, `502` for a provider or format failure |
+| `POST /api/candidates/generate` | Run a context-grounded Agent goal and store its distinct `source=auto` candidates through the typed Trace connector; `409` for a missing context folder or credential, `502` for a provider failure |
 | `POST /api/candidates/{candidate_id}/review` | Stage-one decision on topic and caption together: `caption_approved` or `rejected`, with an optional note and an `expected_revision` guard |
-| `POST /api/candidates/{candidate_id}/generate-image` | Stage-two composition: search a background, compose the lock-screen image, and move a `caption_approved` candidate to `image_awaiting_review`; `409` for the wrong stage, a stale revision, or a failed run |
+| `POST /api/candidates/{candidate_id}/generate-image` | Stage-two wallpaper generation: search and import a background, configure Trace's real wallpaper editor, collect its verified full PNG, and move a `caption_approved` candidate to `image_awaiting_review`; `409` for the wrong stage, a stale revision, or a failed run |
 | `POST /api/candidates/{candidate_id}/review-image` | Stage-two decision: `submitted`, or back to `caption_approved` with the note; `409` for the wrong stage or a stale revision |
-| `GET /api/candidates/{candidate_id}/image` | Serve the composed PNG to the owning workspace; `404` when the candidate has no image |
+| `GET /api/candidates/{candidate_id}/image` | Serve the verified Trace wallpaper PNG to the owning workspace; `404` when the candidate has no image |
 
 Every decision carries the candidate's current revision and only applies from the expected stage. A
 stale revision or a repeated decision returns `409`, an unknown candidate returns `404`, and
@@ -320,28 +339,28 @@ selected country.
 
 #### What the image stage needs
 
-`이미지 생성` composes the image in the web process without Appium or a simulator, from three
-layers: a background from the external image search allowlist (Pexels/Unsplash/Pixabay), the
-packaged Trace component fixture, and the packaged iPhone UI asset. The searched background's
-provider, source URL, and digest are written to `inputs/background-source.json` beside it.
+`이미지 생성`은 후보의 승인된 컨텍스트를 durable Agent run으로 스냅샷하고 `trace-marketing`
+version `1.0.0` connector를 실행합니다. 모델은 strict wallpaper plan의 IANA `time_zone`, 카드
+제목, UTC timed 또는 all-day 일정, 이벤트 색상, 지원되는 row layout·style, 배경 검색 의도를
+매번 새로 결정합니다. timed 일정의 source `trace_item`은 그 시간대의 local `HH:MM`과 time
+prefix 없는 title이 일치해야 합니다. Trace connector는 실제 Simulator/Appium editor interaction과
+full-wallpaper export provenance를 검증합니다. 주어지지 않은 연령·직업 같은 페르소나 사실은
+기본값으로 꾸며내지 않습니다.
 
 - **An image search route.** The stage uses the same provider selection as `trace-generate-one`:
   install `ddgs`, or set `BRAVE_SEARCH_API_KEY`. `TRACE_AGENT_WEB_SEARCH_PROVIDER` and
   `TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS` override the choice and its timeout. Without a working
-  route the browser reports `배경 이미지를 찾지 못했습니다` and the candidate stays `caption_approved`.
-- **Nothing else.** The Trace component fixture and the iPhone UI both ship inside the installed
-  package, so the stage works from whatever directory the service was started in — including a
-  knowledge folder that holds only `context/`. `TRACE_AGENT_TRACE_COMPONENTS` and
-  `TRACE_AGENT_IPHONE_UI` override them with an absolute or working-directory-relative path; a
-  missing override file stops the run before any search and is reported with the environment
-  variable that set it.
+  route the browser reports a typed generation failure and the candidate stays `caption_approved`.
+- **A native Trace wallpaper route.** A usable iPhone Simulator, Appium/WDA, and the Trace build
+  are resolved at execution time. The normalized searched image enters Simulator Photos; the
+  request-owned calendar/event data starts Trace, and Appium configures the real editor's visual
+  controls before Save. The request-bound full wallpaper manifest must verify before review can
+  advance. This is not a physical iPhone or iOS lock-screen screenshot route.
 
-Because the Trace component layer is that fixture and not a fresh native export, the candidate's own
-schedule items and device time are recorded on the run but are **not** drawn into the image — the
-fixture's calendar and clock appear instead. Rendering a candidate's own schedule needs the native
-Appium capture environment, which this stage does not use. Artifacts are written under
-`$TRACE_AGENT_HOME/candidates/<candidate-id>/r<revision>/`, and the composed image's path and
-SHA-256 are recorded on the candidate.
+Artifacts are written under
+`$TRACE_AGENT_HOME/generated/candidate-<candidate-id>-r<revision>/`. The candidate stores the final
+relative path and SHA-256 only after Agent, native provenance, path confinement, and digest
+checks pass.
 
 ### Continuous campaign and review flow
 
@@ -350,8 +369,9 @@ This flow is API-only after the two-tab restructure: the browser no longer has t
 through the API.
 
 Save a persona as `PersonaProfile` JSON and a promotion as `PromotionMaterial` JSON through
-`/api/contexts`. A promotion may include exactly three `trace_items` to control the native Trace
-copy. Upload optional visual references, then reference those records when creating a campaign
+`/api/contexts`. A promotion may include one to eight `trace_items`. The planner turns them into
+persona-specific Trace card headers, grouped event lists, and a native row layout before capture.
+Upload optional visual references, then reference those records when creating a campaign
 through `/api/campaigns`. Choose a finite count or leave continuous production enabled. The campaign freezes those inputs and the service creates one
 uniquely identified variation at a time. Stopping a campaign prevents future variations without
 erasing work already submitted or running. A known image-search, filesystem, or Appium
@@ -419,7 +439,8 @@ or `generate-one` run also needs:
 - network access to DDGS image search or `BRAVE_SEARCH_API_KEY` for the approved background-source search
 - Xcode and an available iOS Simulator
 - a Debug Trace build installed as `com.corca.Trace`
-- the request-bound Trace component-export trigger from the sibling `Trace_iOS` checkout
+- the request-bound Trace wallpaper-export trigger and `LockScreenWallpaperSheet` accessibility
+  controls from the sibling `Trace_iOS` checkout
 - Appium 3 with the XCUITest driver, normally at `http://127.0.0.1:4723`
 
 The installer does not install Xcode, Appium, the XCUITest driver, or the Trace Debug build.
@@ -492,6 +513,9 @@ The built-in tools are:
   Brave when `BRAVE_SEARCH_API_KEY` is configured, returning normalized source URLs
 - `image_search` through the same provider setting, returning image URLs, thumbnails,
   source pages, and available dimensions
+- approval-gated `image_view` for inspecting local PNG, JPEG, and WebP pixels; relative paths stay
+  inside the selected workspace, while an explicitly supplied absolute path can be approved and sent
+  to the selected model
 - approval-gated `trace_run` for the existing Appium/staging/composition workflow
 
 For Trace capture, searched-background generation, and visual QA, the agent first inspects the local runtime. It
@@ -500,9 +524,15 @@ without asking the user. It does not install missing software or start these ser
 work. A missing Trace Debug build remains a typed prerequisite failure.
 
 Use `--workspace <directory>` to change the file and command boundary and
-`TRACE_AGENT_MODEL` to select the Codex-compatible model identifier.
+`TRACE_AGENT_MODEL` selects the Codex-compatible model identifier and
+`TRACE_AGENT_REASONING_EFFORT` selects its reasoning effort. The installed default is
+`gpt-5.6-luna` with `xhigh`.
 
-## Runtime boundary
+## Legacy component capture and composition boundary
+
+`trace-run`, `trace-capture`, and `trace-compose` retain the component-export and three-layer
+composition workflow below for existing standalone jobs. `trace-agent generate-one` does not use
+this workflow; it follows the full-wallpaper route documented above.
 
 ```text
 upstream marketing context / trace.run-job.v1
@@ -510,7 +540,7 @@ upstream marketing context / trace.run-job.v1
         v
      trace-run --> TraceRun journal (append-only JSONL)
         |
-        +--> trace.capture --> Appium + Trace native component export
+        +--> trace_capture --> Appium + Trace native component export
         |
         +--> stage verified component artifact
         |
@@ -521,7 +551,7 @@ Layer order is fixed:
 
 1. Background photo
 2. Trace component PNG
-3. iPhone system UI PNG
+3. Request-derived iPhone system UI PNG
 
 The worker never asks Simulator to display a custom wallpaper. A physical iPhone is
 not required.
@@ -555,28 +585,18 @@ uv sync
 server when they are inactive. Run `appium --port 4723` manually only for lower-level capture
 commands such as `trace-capture` or `trace-run`.
 
-## Run the complete local workflow
+## Run the complete legacy local workflow
 
-With a native Trace debug build installed, this command uses the hardened Appium
+With a native Trace debug build installed, this command uses the legacy hardened Appium component
 capture path and then composes the final image:
 
 ```bash
 uv run trace-run \
-  --job appium/jobs/composite/trace-run-example.json \
+  --job path/to/trace-run-job.json \
   --state-root .trace-runs \
-  --capture-output-root appium/jobs/composite/captures \
+  --capture-output-root path/to/captures \
   --appium-server http://127.0.0.1:4723 \
   --timeout-seconds 120
-```
-
-For an offline smoke test, replace Appium with the checked temporary component
-fixture. The fixture path must differ from the declared staging destination:
-
-```bash
-uv run trace-run \
-  --job appium/jobs/composite/trace-run-example.json \
-  --component-artifact appium/jobs/composite/inputs/trace-components-fixture.png \
-  --state-root .trace-runs-smoke
 ```
 
 Re-running the same `run_id`, `idempotency_key`, and input returns the durable terminal
@@ -592,15 +612,16 @@ are flushed and `fsync`ed before each capability side effect.
 
 ### 1. Export Trace components
 
-The capture job starts a Trace setup session, enters the request's three component titles through
-Appium, then starts a request-bound export session. Trace writes a native transparent
+The capture job starts Trace's actual lock-screen editor with the request payload. The app creates
+one or two component rows from one to eight items, and Appium commits the same editor through its
+native save control before collecting the request-bound export. Trace writes a native transparent
 `trace_components.png` plus `trace_components.manifest.json` into its App Group, and the worker
 collects both.
 
 ```bash
 uv run trace-capture \
-  --job appium/jobs/composite/component-export.json \
-  --output-root appium/jobs/composite/work \
+  --job path/to/component-capture-job.json \
+  --output-root path/to/work \
   --appium-server http://127.0.0.1:4723 \
   --timeout-seconds 120
 ```
@@ -614,14 +635,13 @@ delayed native publication does not expire the WebDriver session before cleanup.
 Expected artifact:
 
 ```text
-appium/jobs/composite/work/component-export/trace-components.png
-appium/jobs/composite/work/component-export/trace-components.manifest.json
+path/to/work/component-export/trace-components.png
+path/to/work/component-export/trace-components.manifest.json
 ```
 
 If the native manifest is missing or does not match the request digest, nonce, Trace
 bundle, Simulator UDID, role, canvas, and artifact hash, capture fails with
-`export_unverified` or `export_invalid`. The offline `--component-artifact` override is
-for local fixture smoke tests only.
+`export_unverified` or `export_invalid`.
 
 If the Trace debug export itself fails, it publishes
 `trace_components.error.json`; the collector returns `export_failed` immediately instead
@@ -635,25 +655,26 @@ Simulator UDID; the `session_id` in capture provenance is the Appium-side identi
 
 ```bash
 uv run trace-compose \
-  --job appium/jobs/composite/example.json
+  --job path/to/composite-job.json
 ```
 
 Expected artifacts:
 
 ```text
-appium/jobs/composite/outputs/final-marketing.png
-appium/jobs/composite/outputs/jp-night-city-calendar-iphone-ui.png
-appium/jobs/composite/outputs/composite-result.json
+path/to/outputs/final-marketing.png
+path/to/outputs/normalized-iphone-ui.png
+path/to/outputs/composite-result.json
 ```
 
-The compositor crops the searched background photo to the requested canvas, normalizes the clean
-iPhone system UI asset to alpha, resizes every layer consistently, and applies the fixed order.
+The runtime renders the requested locale, date, and time into the system UI icon template. The
+compositor crops the searched background photo to the requested canvas, normalizes that rendered
+system UI to alpha, resizes every layer consistently, and applies the fixed order.
 
 ## Contracts
 
 ### Component export
 
-`trace.capture-job.v1` configures the Simulator, Appium-entered Trace component titles, and
+`trace_capture-job.v1` configures the Simulator, Appium-entered Trace component titles, and
 component export.
 The only supported capture target is `trace_components`.
 For component-only capture, `background_image` may be omitted; the background remains
@@ -666,7 +687,7 @@ manifest/artifact validator rejects a self-consistent export with the wrong canv
 Successful scene results contain provenance:
 
 - deterministic request SHA-256
-- capture source (`native_appium` or `offline_fixture`)
+- capture source (`native_appium`)
 - per-capture native export nonce and request/device binding
 - collected artifact SHA-256 and byte size
 - expected Trace bundle ID and target Simulator UDID
@@ -678,9 +699,8 @@ new file to be fresh, and accepts only a readable RGBA PNG with at least 20% ful
 transparent pixels and at least 1% visible pixels. Cleanup errors are recorded without
 replacing the primary capture failure.
 
-`trace-run` carries this capture provenance into its result and journal. An offline
-fixture can therefore be used for deterministic smoke tests without being represented
-as a native Appium export.
+`trace-run` carries this request-bound native provenance into its result and journal; production
+capture has no local artifact bypass.
 
 ### Trace run
 
@@ -701,8 +721,7 @@ replay/error output remain scoped to the requested run directory.
 ### Marketing composition
 
 `trace.marketing-composite-job.v2` requires background and Trace component paths. `iphone_ui` is
-optional for lower-level composition commands and is included by `generate-one` from the packaged
-clean system-UI asset.
+optional for lower-level legacy composition commands. `generate-one` does not use this contract.
 
 ```json
 {
@@ -773,9 +792,10 @@ profile as an immutable snapshot, so later profile edits do not rewrite its gene
 
 Caption approval, native Mac/Appium capture, and image approval use the same review tab. `이미지 생성`
 creates a revision-scoped Queue task. An enrolled Mac dynamically selects a booted or available iPhone
-Simulator, starts Appium when installed but inactive, captures a fresh Trace component, composes the
-final PNG, and sends a digest-backed result to the protected callback API. The Worker verifies the
-digest before storing the PNG in R2. Offline workers leave the card visibly queued; verified failures
+Simulator, starts Appium when installed but inactive, imports the searched background, drives Trace's
+wallpaper editor, collects a fresh full Trace wallpaper PNG and manifest, and sends a digest-backed
+result to the protected callback API. The Worker verifies the digest before storing the PNG in R2.
+Offline workers leave the card visibly queued; verified failures
 show a stable code and a retry button. Image approval
 ends at `submitted` (게시 준비 완료); it does not call Threads or another publishing API. Candidate
 filters make review, image, ready, and rejected queues visible. Every hosted candidate, including
@@ -788,10 +808,7 @@ account/persona become an account-scoped rule candidate and are injected into it
 The packaged context is also the local generator's fallback. `TRACE_AGENT_CONTEXT_DIR` remains the
 explicit override, and an existing `<serve workspace>/context` still takes precedence; starting from
 a directory without `context/` no longer leaves the default candidate generator empty.
-The repository did not previously contain a production country/account/persona context library:
-the JSON files under `appium/jobs/**/mock-contexts/` are capture fixtures, and PR #21 expected the
-operator to supply the six markdown files in an untracked local `context/` directory. The packaged
-documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are therefore safe starter guidance,
+The packaged documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are safe starter guidance,
 not a migration of team-owned persona knowledge. They keep a fresh install and hosted build runnable
 while the team replaces them with successful-account evidence. The context manifest owns country
 document and profile paths; adding a packaged country is a data change to the
@@ -913,11 +930,11 @@ revision; operators do not run it separately during the normal merge path.
 Account registration currently accepts only `adapter_mode: "simulation"`; `"live"` fails closed
 until a reviewed publication adapter and readback path are present.
 
-## Sample asset status
+## Legacy sample asset status
 
-The checked sample final image demonstrates the deterministic three-layer composition pipeline.
-The context-driven path requires a current Trace debug build and performs a fresh Appium setup and
-native export for every run.
+The checked sample final image demonstrates the legacy deterministic three-layer composition
+pipeline. The current context-driven path instead performs a fresh full-wallpaper export for every
+run.
 
 ## Exit codes
 
@@ -940,23 +957,22 @@ uv run pytest
 
 | Path | Purpose |
 | --- | --- |
-| `src/trace_capture/agent/` | REPL and standalone agent loop |
-| `src/trace_capture/auth/` | ChatGPT/Codex OAuth, refresh, and credential store |
-| `src/trace_capture/automation/` | Durable campaigns, variation producer, queue, scheduler, and GenerateOne worker adapter |
-| `src/trace_capture/providers/` | Codex-compatible Responses transport and model contracts |
-| `src/trace_capture/search/` | Text/image search contracts and external provider adapters |
-| `src/trace_capture/service/` | Foreground workspace server, launchd plist, and service status |
-| `src/trace_capture/tools/` | Workspace, shell, browser, and Trace capability tools |
-| `src/trace_capture/tunnel/` | Optional cloudflared public-URL boundary |
-| `src/trace_capture/web/` | Authenticated workspace API and static browser shell |
-| `src/trace_capture/workspace/` | Local SQLite workspace, context, member, and private-session stores |
-| `src/trace_capture/capture/` | XCUITest/Appium capture and native artifact validation |
-| `src/trace_capture/composition/` | Layer normalization and deterministic PNG composition |
-| `src/trace_capture/contracts/` | Versioned capture, composition, and run contracts |
-| `src/trace_capture/runtime/` | TraceRun state machine, journal, locks, and replay |
-| `src/trace_capture/marketing/` | Cloudflare task contract, durable worker inbox/outboxes, and local loop proof |
-| `src/trace_capture/cli/` | `trace-ads`, `trace-marketing`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
+| `src/ads_booster/agent/` | REPL and standalone agent loop |
+| `src/ads_booster/auth/` | ChatGPT/Codex OAuth, refresh, and credential store |
+| `src/ads_booster/automation/` | Durable campaigns, variation producer, queue, scheduler, and GenerateOne worker adapter |
+| `src/ads_booster/providers/` | Codex-compatible Responses transport and model contracts |
+| `src/ads_booster/search/` | Text/image search contracts and external provider adapters |
+| `src/ads_booster/service/` | Foreground workspace server, launchd plist, and service status |
+| `src/ads_booster/tools/` | Workspace, shell, browser, and Trace capability tools |
+| `src/ads_booster/tunnel/` | Optional cloudflared public-URL boundary |
+| `src/ads_booster/web/` | Authenticated workspace API and static browser shell |
+| `src/ads_booster/workspace/` | Local SQLite workspace, context, member, and private-session stores |
+| `src/ads_booster/capture/` | XCUITest/Appium capture and native artifact validation |
+| `src/ads_booster/composition/` | Legacy layer normalization and deterministic PNG composition |
+| `src/ads_booster/contracts/` | Versioned capture, composition, and run contracts |
+| `src/ads_booster/runtime/` | Primary wallpaper generation plus legacy TraceRun state machine, journal, locks, and replay |
+| `src/ads_booster/marketing/` | Cloudflare task contract, durable worker inbox/outboxes, and local loop proof |
+| `src/ads_booster/cli/` | `trace-ads`, `trace-marketing`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
 | `cloudflare/` | Hosted account registry, Workflow, Durable Object, Queue, D1, and R2 deployment |
-| `appium/jobs/composite/` | Runnable sample job, layers, result, and final PNG |
 
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-26

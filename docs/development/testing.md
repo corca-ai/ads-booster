@@ -102,12 +102,13 @@ The test tree mirrors the production owner or the user boundary it protects:
 
 ```text
 tests/
-├── agent/         # AgentSession, REPL, TUI, context, and tool-loop behavior
+├── agent/         # Sessions, goal/run lifecycle, connector registry, context, memory and tool loop
 ├── auth/          # OAuth and authorization URL contracts
 ├── automation/    # Campaign, queue, scheduler, and lease behavior
 ├── capture/       # Appium, capture workers, safety, and App Group artifacts
 ├── cli/           # Typer commands, compatibility, installer, and TraceRun CLI paths
 ├── composition/   # Composite worker and image composition
+├── connectors/    # Domain manifests, semantic tools, plans, artifact acceptance, and review policy
 ├── contracts/     # Capture, composite, and result contracts
 ├── generation/    # Scene planning, searched backgrounds, and one-shot generation
 ├── marketing/     # Cloudflare task contracts, bridge durability, account isolation, and loop proof
@@ -159,7 +160,9 @@ when the tooling configuration being changed applies to the whole repository.
 
 | Changed area | Default automated scope | User-surface check |
 | --- | --- | --- |
-| `agent/`, TUI, REPL | Changed agent, session, or TUI test files | Changed input, cancellation, session, or rendering state in a real PTY |
+| `agent/`, TUI, REPL | Changed session, goal/run, connector, context, memory, or TUI tests | One non-Trace durable goal plus the changed interactive input, cancellation, session, or rendering state |
+| `connectors/` | Connector contract/tool tests plus the directly composed domain runtime tests | One semantic tool call whose exact model-authored inputs reach the real domain adapter |
+| `candidate_generation/` image stage | Candidate-to-bundle adaptation, native environment failure, Agent result, path/digest, and review-state tests | One approved candidate whose own Trace items appear in a request-bound native export |
 | `auth/`, `providers/` | Changed provider and auth test files | Changed login, model request, or typed failure path |
 | `tools/` | Direct tests for the tool and registry | Changed approval, path, provider, or subprocess boundary |
 | `planning/`, `contracts/` | Changed contract/planner tests and direct consumers | One-shot path using the changed bundle |
@@ -168,9 +171,9 @@ when the tooling configuration being changed applies to the whole repository.
 | `automation/` | Relevant campaign, producer, queue, scheduler, or worker tests | Changed start/stop/restart, enqueue, claim, lease, result, or review path |
 | `web/` | Changed router, schema, command, and approval tests | Changed API and browser interaction against a running app, including slash commands and approval state |
 | `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
-| `capture/` | Changed adapter, worker, or provenance tests | Changed capture step with the current Appium, Simulator, and Trace build |
-| `marketing/`, `cloudflare/` | Focused Python bridge/native-capture, Queue decoder, D1 migration and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate` and `bridge --executor candidate-pipeline --once`; for hosted UI/context changes exercise root, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, Queue→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
-| `composition/` | Changed composer and artifact tests | Open the generated image and inspect the changed layer or output |
+| `capture/` | Changed adapter, wallpaper contract, worker, or provenance tests | Run the current Appium, Simulator, and Trace build. Inspect `LockScreenWallpaperSheet` controls for selected Photos background, row layout, style values, and Save; confirm the request-owned IANA time zone, structured UTC/all-day event times, event colors, and timed source `HH:MM` plus clean title reached automation input; inspect the resulting full `trace_wallpaper.png` and native manifest rather than a component fixture. |
+| `marketing/`, `cloudflare/` | Focused Python bridge/native-capture, Queue decoder, D1 migration and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate` and `bridge --executor candidate-pipeline --once`; for hosted UI/context changes exercise root, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, Queue→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; native capture evidence includes the full wallpaper manifest, digest, request nonce, and device binding; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
+| `composition/` | Changed composer and artifact tests | This is a legacy component-composition surface. Open the generated image and inspect the changed layer or output. |
 | Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
 
 Select only the rows that match the actual change.
@@ -182,9 +185,17 @@ When automated tests cannot prove user-visible behavior, use only the changed su
 - For TUI changes, reproduce the changed state in a fresh PTY.
 - For Web changes, run the changed API and browser interaction.
 - For service changes, use an isolated state root and port for the changed lifecycle.
-- For Appium changes, confirm the current Simulator and Trace installation, then run the changed
-  capture path.
-- For composition changes, inspect the image and provenance produced by the change.
+- For Appium wallpaper changes, confirm the current Simulator and Trace installation, import a
+  searched background, and run the changed editor path. Inspect the real editor controls and the
+  full Trace wallpaper PNG plus request-bound manifest; do not substitute a fixture or a system
+  lock-screen screenshot.
+- The debug Trace automation session exposes ISO date inputs and exact-title calendar search fields
+  only while `-traceMarketingAutomation` is present. These are native Trace controls; production
+  launch arguments contain binding metadata, never card, row, title, time, all-day, or color data.
+- For any time-zone or timed-event change, add a fresh visual QA check: use a known UTC instant and
+  IANA plan time zone, then confirm the rendered local time is correct, appears once, and does not
+  change when the host or Simulator time zone differs.
+- For legacy composition changes, inspect the image and provenance produced by that command.
 
 Do not add unrelated end-to-end scenarios.
 

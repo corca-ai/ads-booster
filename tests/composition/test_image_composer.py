@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from trace_capture.composition.image_composer import (
+from ads_booster.composition.image_composer import (
     CanvasSize,
     CompositionLayers,
     LayerCompositionError,

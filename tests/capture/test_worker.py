@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trace_capture.capture.capture_safety import CaptureAdapterError
-from trace_capture.capture.worker import CaptureRequest, CaptureWorker
-from trace_capture.contracts import CaptureJob, CaptureProvenance, ErrorCode, JobStatus
+from ads_booster.capture.capture_safety import CaptureAdapterError
+from ads_booster.capture.worker import CaptureRequest, CaptureWorker
+from ads_booster.contracts import CaptureJob, CaptureProvenance, ErrorCode, JobStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,7 +35,9 @@ JOB_JSON = """
       "locale": "ja-JP",
       "capture_target": "trace_components",
       "background_image": "backgrounds/exam.jpg",
-      "trace_data": {"items": ["試験", "レポート", "夕食"]}
+      "trace_data": {"rows": [{"layout": "one_by_one", "components": [{
+        "title": "今日の予定", "items": ["試験", "レポート", "夕食"]
+      }]}]}
     }
   ]
 }

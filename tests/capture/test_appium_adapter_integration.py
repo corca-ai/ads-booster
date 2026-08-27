@@ -6,20 +6,25 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from trace_capture.capture.app_group_collector import parse_app_group_container
-from trace_capture.capture.appium_adapter import AppiumCaptureAdapter, AppiumComponentExportAdapter
-from trace_capture.capture.appium_endpoint import validate_appium_server_url
-from trace_capture.capture.artifact_validation import validate_component_png
-from trace_capture.capture.capture_safety import (
+from ads_booster.capture.app_group_collector import parse_app_group_container
+from ads_booster.capture.appium_capture import (
+    AppiumCaptureAdapter,
+    AppiumComponentExportAdapter,
+    AppiumWallpaperExportAdapter,
+)
+from ads_booster.capture.appium_endpoint import validate_appium_server_url
+from ads_booster.capture.artifact_validation import validate_component_png
+from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
     ExportBinding,
     UdidCaptureLeaseFactory,
 )
-from trace_capture.capture.readiness import CommandResult, DefaultCaptureReadiness
-from trace_capture.cli.capture import build_capture_adapter
-from trace_capture.contracts import DeviceKind, ErrorCode
-from trace_capture.contracts.models import DeviceTarget
+from ads_booster.capture.factory import build_wallpaper_capture_adapter
+from ads_booster.capture.readiness import CommandResult, DefaultCaptureReadiness
+from ads_booster.cli.capture import build_capture_adapter
+from ads_booster.contracts import DeviceKind, ErrorCode
+from ads_booster.contracts.models import DeviceTarget
 
 from .test_appium_adapter import (
     CleanupFailureSession,
@@ -184,6 +189,19 @@ def test_adapter_routing_when_simulator_component_export_is_requested() -> None:
     assert adapter.readiness is not None
 
 
+def test_wallpaper_adapter_routing_when_trace_v1_composition_targets_simulator() -> None:
+    # Given the Trace v1 production composition targets a Simulator
+    # When it selects its full-wallpaper capture adapter
+    adapter = build_wallpaper_capture_adapter(
+        device_kind=DeviceKind.SIMULATOR,
+        appium_server="http://127.0.0.1:4723",
+    )
+
+    # Then standalone component capture remains separate from the production route
+    assert type(adapter) is AppiumWallpaperExportAdapter
+    assert adapter.readiness is not None
+
+
 @dataclass(slots=True)
 class ReadinessCommandRunner:
     commands: list[tuple[str, ...]] = field(default_factory=list)
@@ -220,8 +238,8 @@ def test_readiness_when_simulator_and_appium_are_inactive_then_it_starts_both(
         "_appium_ready",
         fake_appium_ready,
     )
-    monkeypatch.setattr("trace_capture.capture.readiness.shutil.which", fake_which)
-    monkeypatch.setattr("trace_capture.capture.readiness.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("ads_booster.capture.readiness.shutil.which", fake_which)
+    monkeypatch.setattr("ads_booster.capture.readiness.subprocess.Popen", fake_popen)
     readiness = DefaultCaptureReadiness(
         appium_server="http://127.0.0.1:4723",
         command_runner=runner,

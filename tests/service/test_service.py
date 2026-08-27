@@ -11,24 +11,24 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from trace_capture.automation import AutomationQueue, QueueState, QueueSubmission
-from trace_capture.cli.agent import app
-from trace_capture.contracts import TraceRunResult
-from trace_capture.contracts.generation import MarketingContextBundle
-from trace_capture.contracts.run import TraceRunState
-from trace_capture.service.launchd import LaunchdConfig, install_plist
-from trace_capture.service.readiness import wait_for_service_ready
-from trace_capture.service.runtime import TunnelName, create_service_app, prepare_service
-from trace_capture.service.state import (
+from ads_booster.automation import AutomationQueue, QueueState, QueueSubmission
+from ads_booster.cli.agent import app
+from ads_booster.contracts import TraceRunResult
+from ads_booster.contracts.generation import MarketingContextBundle
+from ads_booster.contracts.run import TraceRunState
+from ads_booster.service.launchd import LaunchdConfig, install_plist
+from ads_booster.service.readiness import wait_for_service_ready
+from ads_booster.service.runtime import TunnelName, create_service_app, prepare_service
+from ads_booster.service.state import (
     ServiceState,
     ServiceStateError,
     ServiceStateStore,
     ensure_workspace,
 )
-from trace_capture.service.worker import ServiceWorkerConfig
-from trace_capture.tunnel.cloudflared import CloudflaredTunnel
-from trace_capture.web.app import create_app
-from trace_capture.workspace import MemberId, SqliteWorkspaceStore, WorkspaceId
+from ads_booster.service.worker import ServiceWorkerConfig
+from ads_booster.tunnel.cloudflared import CloudflaredTunnel
+from ads_booster.web.app import create_app
+from ads_booster.workspace import MemberId, SqliteWorkspaceStore, WorkspaceId
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -302,10 +302,10 @@ def test_service_readiness_keeps_emitted_url_when_local_dns_cannot_probe_tunnel(
             return SimpleNamespace(status_code=200)
 
     monkeypatch.setattr(
-        "trace_capture.service.readiness.create_http_client",
+        "ads_booster.service.readiness.create_http_client",
         _LocalHealthClient,
     )
-    monkeypatch.setattr("trace_capture.service.readiness._READY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("ads_booster.service.readiness._READY_TIMEOUT_SECONDS", 0.01)
 
     # When local DNS cannot resolve the quick-tunnel hostname
     local_url, public_url = wait_for_service_ready(tmp_path, TunnelName.CLOUDFLARED)
@@ -332,7 +332,7 @@ def test_service_status_reports_emitted_url_when_public_dns_probe_is_unavailable
     )
     plist_path = tmp_path / "com.corca.trace-agent.plist"
     plist_path.touch()
-    monkeypatch.setattr("trace_capture.service.cli.default_plist_path", lambda: plist_path)
+    monkeypatch.setattr("ads_booster.service.cli.default_plist_path", lambda: plist_path)
 
     class _LocalHealthClient:
         def __enter__(self) -> Self:
@@ -346,7 +346,7 @@ def test_service_status_reports_emitted_url_when_public_dns_probe_is_unavailable
             return SimpleNamespace(status_code=200)
 
     monkeypatch.setattr(
-        "trace_capture.service.cli.create_http_client",
+        "ads_booster.service.cli.create_http_client",
         _LocalHealthClient,
     )
 

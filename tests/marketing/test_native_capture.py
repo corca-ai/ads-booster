@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trace_capture.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
-from trace_capture.contracts.results import TraceRunResult
-from trace_capture.contracts.run import TraceRunState
-from trace_capture.marketing.inbox import MarketingExecutionError
-from trace_capture.marketing.models import MarketingTask, TaskKind
-from trace_capture.marketing.native_capture import (
+from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
+from ads_booster.contracts.results import TraceRunResult
+from ads_booster.contracts.run import TraceRunState
+from ads_booster.marketing.inbox import MarketingExecutionError
+from ads_booster.marketing.models import MarketingTask, TaskKind
+from ads_booster.marketing.native_capture import (
     HostedWorkspaceCaptureExecutor,
     SimctlDeviceResolver,
 )
@@ -22,7 +22,7 @@ from trace_capture.marketing.native_capture import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trace_capture.contracts.generation import MarketingContextBundle
+    from ads_booster.contracts.generation import MarketingContextBundle
 
 
 class FakeDeviceResolver:
@@ -37,8 +37,8 @@ class FakeDeviceResolver:
 
 class FakeNativeRunner:
     def __init__(self, output_root: Path, image: bytes) -> None:
-        self.output_root = output_root
-        self.image = image
+        self.output_root: Path = output_root
+        self.image: bytes = image
         self.bundle: MarketingContextBundle | None = None
 
     def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
@@ -47,8 +47,8 @@ class FakeNativeRunner:
         component = self.output_root / bundle.request_id / "work" / "trace-components.png"
         output.parent.mkdir(parents=True)
         component.parent.mkdir(parents=True)
-        output.write_bytes(self.image)
-        component.write_bytes(b"component")
+        _ = output.write_bytes(self.image)
+        _ = component.write_bytes(b"component")
         return TraceRunResult(
             run_id=bundle.request_id,
             idempotency_key=f"{bundle.request_id}-v1",
@@ -136,7 +136,7 @@ def test_hosted_capture_rejects_an_invalid_candidate_contract(tmp_path: Path) ->
     )
 
     with pytest.raises(MarketingExecutionError, match="native_capture_trace_items_invalid"):
-        executor.execute(task)
+        _ = executor.execute(task)
 
 
 def test_simulator_is_discovered_at_runtime_without_a_fixed_udid(
@@ -154,15 +154,15 @@ def test_simulator_is_discovered_at_runtime_without_a_fixed_udid(
             ],
         },
     }
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+
+    def fake_run(*_args: str, **_kwargs: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
             args=(),
             returncode=0,
             stdout=json.dumps(inventory),
-        ),
-    )
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     device = SimctlDeviceResolver().resolve()
 

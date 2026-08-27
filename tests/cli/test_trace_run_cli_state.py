@@ -6,13 +6,16 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from typer.testing import CliRunner
 
+from ads_booster.cli.trace_run import TraceRunCliErrorPayload, app
+from ads_booster.runtime.trace_run import TraceRunRequest, TraceRunResult, TraceRunState
+from ads_booster.runtime.trace_run_store import JsonlTraceRunStore
+from tests.cli.test_trace_run_cli import cli_capture_adapter
 from tests.runtime.test_trace_run import CAPTURE_JSON, COMPOSE_JSON
-from trace_capture.cli.trace_run import TraceRunCliErrorPayload, app
-from trace_capture.runtime.trace_run import TraceRunRequest, TraceRunResult, TraceRunState
-from trace_capture.runtime.trace_run_store import JsonlTraceRunStore
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def test_run_command_when_state_journal_is_corrupt_then_it_returns_json_error(
@@ -33,17 +36,12 @@ def test_run_command_when_state_journal_is_corrupt_then_it_returns_json_error(
     _ = JsonlTraceRunStore(root=state_root).begin(request)
     journal = state_root / "run-corrupt" / "transitions.jsonl"
     _ = journal.write_text("not-json\n", encoding="utf-8")
-    component = tmp_path / "fixture-components.png"
-    _ = component.write_bytes(b"component")
-
     # When the user retries through the real CLI surface
     result = CliRunner().invoke(
         app,
         [
             "--job",
             str(job_path),
-            "--component-artifact",
-            str(component),
             "--state-root",
             str(state_root),
         ],
@@ -58,6 +56,7 @@ def test_run_command_when_state_journal_is_corrupt_then_it_returns_json_error(
 
 def test_run_command_when_capture_output_root_is_a_file_then_it_returns_json_failure(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given a valid job and a capture output path occupied by a regular file
     job_path = tmp_path / "run.json"
@@ -71,15 +70,12 @@ def test_run_command_when_capture_output_root_is_a_file_then_it_returns_json_fai
     _ = job_path.write_text(json.dumps(payload), encoding="utf-8")
     background = tmp_path / "inputs" / "background.png"
     iphone_ui = tmp_path / "inputs" / "iphone-ui.png"
-    component = tmp_path / "fixture-components.png"
+    monkeypatch.setattr("ads_booster.cli.trace_run.build_capture_adapter", cli_capture_adapter)
     background.parent.mkdir(parents=True)
     Image.new("RGB", (320, 640), (10, 20, 30)).save(background)
     ui_image = Image.new("RGBA", (320, 640), (0, 0, 0, 255))
     ui_image.putpixel((160, 20), (255, 255, 255, 255))
     ui_image.save(iphone_ui)
-    component_image = Image.new("RGBA", (320, 640), (0, 0, 0, 0))
-    component_image.putpixel((160, 320), (0, 255, 0, 255))
-    component_image.save(component)
     output_root = tmp_path / "outputs"
     _ = output_root.write_bytes(b"not a directory")
 
@@ -89,8 +85,8 @@ def test_run_command_when_capture_output_root_is_a_file_then_it_returns_json_fai
         [
             "--job",
             str(job_path),
-            "--component-artifact",
-            str(component),
+            "--capture-output-root",
+            str(tmp_path / "capture"),
             "--state-root",
             str(tmp_path / "state"),
         ],
@@ -120,17 +116,12 @@ def test_run_command_when_state_root_is_a_symlink_then_it_returns_json_state_err
     target.mkdir()
     state_root = tmp_path / "state"
     state_root.symlink_to(target, target_is_directory=True)
-    component = tmp_path / "fixture-components.png"
-    _ = component.write_bytes(b"component")
-
     # When the user invokes the real CLI
     result = CliRunner().invoke(
         app,
         [
             "--job",
             str(job_path),
-            "--component-artifact",
-            str(component),
             "--state-root",
             str(state_root),
         ],
@@ -146,8 +137,9 @@ def test_run_command_when_state_root_is_a_symlink_then_it_returns_json_state_err
 
 def test_run_command_when_completed_output_is_mutated_then_it_returns_json_artifact_error(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given one successful CLI run with a local component artifact
+    # Given one successful CLI run with request-bound native capture
     job_path = tmp_path / "run.json"
     payload = {
         "schema_version": "trace.run-job.v1",
@@ -159,23 +151,20 @@ def test_run_command_when_completed_output_is_mutated_then_it_returns_json_artif
     _ = job_path.write_text(json.dumps(payload), encoding="utf-8")
     background = tmp_path / "inputs" / "background.png"
     iphone_ui = tmp_path / "inputs" / "iphone-ui.png"
-    component = tmp_path / "fixture-components.png"
+    monkeypatch.setattr("ads_booster.cli.trace_run.build_capture_adapter", cli_capture_adapter)
     background.parent.mkdir(parents=True)
     Image.new("RGB", (320, 640), (10, 20, 30)).save(background)
     ui_image = Image.new("RGBA", (320, 640), (0, 0, 0, 255))
     ui_image.putpixel((160, 20), (255, 255, 255, 255))
     ui_image.save(iphone_ui)
-    component_image = Image.new("RGBA", (320, 640), (0, 0, 0, 0))
-    component_image.putpixel((160, 320), (0, 255, 0, 255))
-    component_image.save(component)
     state_root = tmp_path / "state"
     first = CliRunner().invoke(
         app,
         [
             "--job",
             str(job_path),
-            "--component-artifact",
-            str(component),
+            "--capture-output-root",
+            str(tmp_path / "capture"),
             "--state-root",
             str(state_root),
         ],
@@ -190,8 +179,8 @@ def test_run_command_when_completed_output_is_mutated_then_it_returns_json_artif
         [
             "--job",
             str(job_path),
-            "--component-artifact",
-            str(component),
+            "--capture-output-root",
+            str(tmp_path / "capture"),
             "--state-root",
             str(state_root),
         ],

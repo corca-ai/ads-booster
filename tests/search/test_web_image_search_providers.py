@@ -7,18 +7,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trace_capture.search.image.contracts import ImageSearchError
-from trace_capture.search.image.providers import (
+from ads_booster.search.image.contracts import ImageSearchError
+from ads_booster.search.image.providers import (
     BraveImageSearchProvider,
     DdgsImageSearchProvider,
     create_image_search_provider,
 )
-from trace_capture.transport.http import HttpResponse
+from ads_booster.transport.http import HttpResponse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(slots=True)
@@ -79,8 +79,8 @@ def test_ddgs_image_provider_reads_cli_json_output_file(
         )
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setattr("trace_capture.search.image.providers.shutil.which", locate)
-    monkeypatch.setattr("trace_capture.search.image.providers.subprocess.run", run)
+    monkeypatch.setattr("ads_booster.search.image.providers.shutil.which", locate)
+    monkeypatch.setattr("ads_booster.search.image.providers.subprocess.run", run)
 
     # When the DDGS image provider runs
     response = DdgsImageSearchProvider(timeout_seconds=5).search("Trace", 1)

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from trace_capture.contracts import CaptureJob, ComponentExportManifest
+from ads_booster.contracts import CaptureJob, ComponentExportManifest
 
 VALID_JOB = """
 {
@@ -10,8 +10,7 @@ VALID_JOB = """
   "context": {
     "country": "JP",
     "persona_id": "jp-university-student",
-    "promotion_material_id": "exam-week-lockscreen",
-    "reference_url": "https://example.com/reference"
+    "promotion_material_id": "exam-week-lockscreen"
   },
   "device": {
     "kind": "simulator",
@@ -26,7 +25,13 @@ VALID_JOB = """
       "capture_target": "trace_components",
       "background_image": "inputs/backgrounds/exam-week.jpg",
       "trace_data": {
-        "items": ["統計学の試験", "レポート提出", "友達と夕食"]
+        "rows": [{
+          "layout": "one_by_one",
+          "components": [{
+            "title": "試験日の予定",
+            "items": ["統計学の試験", "レポート提出", "友達と夕食"]
+          }]
+        }]
       }
     }
   ]
@@ -101,7 +106,9 @@ def test_parse_job_when_scene_ids_repeat() -> None:
       "locale": "ko-KR",
       "capture_target": "trace_components",
       "background_image": "inputs/backgrounds/work.jpg",
-      "trace_data": {"items": ["회의", "운동", "보고서 제출"]}
+      "trace_data": {"rows": [{"layout": "one_by_one", "components": [{
+        "title": "오늘 일정", "items": ["회의", "운동", "보고서 제출"]
+      }]}]}
     }
     """
     raw_job = VALID_JOB.replace("\n  ]", f"{second_scene}\n  ]")
@@ -110,39 +117,6 @@ def test_parse_job_when_scene_ids_repeat() -> None:
     # Then it rejects the ambiguous scene mapping
     with pytest.raises(ValidationError):
         _ = CaptureJob.model_validate_json(raw_job)
-
-
-def test_parse_job_accepts_one_to_eight_trace_items() -> None:
-    # Given jobs at both ends of the supported schedule length
-    one_item = VALID_JOB.replace(
-        '["統計学の試験", "レポート提出", "友達と夕食"]',
-        '["統計学の試験"]',
-    )
-    eight_items = VALID_JOB.replace(
-        '["統計学の試験", "レポート提出", "友達と夕食"]',
-        '["1限", "2限", "3限", "4限", "5限", "6限", "7限", "8限"]',
-    )
-
-    # When the trust boundary parses them
-    # Then both scheduling lengths are accepted
-    assert len(CaptureJob.model_validate_json(one_item).scenes[0].trace_data.items) == 1
-    assert len(CaptureJob.model_validate_json(eight_items).scenes[0].trace_data.items) == 8
-
-
-def test_parse_job_when_trace_items_exceed_the_supported_range() -> None:
-    # Given a job whose schedule is empty or longer than the fixture contract allows
-    empty = VALID_JOB.replace('["統計学の試験", "レポート提出", "友達と夕食"]', "[]")
-    nine_items = VALID_JOB.replace(
-        '["統計学の試験", "レポート提出", "友達と夕食"]',
-        '["1", "2", "3", "4", "5", "6", "7", "8", "9"]',
-    )
-
-    # When the trust boundary parses them
-    # Then it rejects the unsupported item counts
-    with pytest.raises(ValidationError):
-        _ = CaptureJob.model_validate_json(empty)
-    with pytest.raises(ValidationError):
-        _ = CaptureJob.model_validate_json(nine_items)
 
 
 def test_parse_manifest_when_session_id_is_claimed_rejects_non_native_binding() -> None:

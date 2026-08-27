@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING
 
 from fastapi.testclient import TestClient
 
-from trace_capture.config.settings import AgentSettings
-from trace_capture.providers.codex import CodexResponsesClient
-from trace_capture.web.app import create_app
-from trace_capture.web.chat_factory import ProductionAgentComponents
-from trace_capture.web.schemas import ChatErrorEnvelope
-from trace_capture.workspace import SqliteWorkspaceStore
+from ads_booster.config.settings import AgentSettings
+from ads_booster.providers.codex import CodexResponsesClient
+from ads_booster.web.app import create_app
+from ads_booster.web.chat_factory import ProductionAgentComponents
+from ads_booster.web.schemas import ChatErrorEnvelope
+from ads_booster.workspace import SqliteWorkspaceStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,6 +59,7 @@ def test_production_components_preserve_existing_codex_model_and_tool_compositio
         workspace=tmp_path,
         model="gpt-5.5",
         browser_command=(),
+        reasoning_effort="high",
         memory_file=None,
         sessions_dir=tmp_path / "sessions",
     )
@@ -70,6 +71,7 @@ def test_production_components_preserve_existing_codex_model_and_tool_compositio
         # Then
         assert isinstance(components.client, CodexResponsesClient)
         assert components.client.model == settings.model
+        assert components.client.reasoning_effort == settings.reasoning_effort
         assert "trace_run" in tool_names
         assert "web_search" in tool_names
         assert components.context.approval.request("write", "shared context") is False

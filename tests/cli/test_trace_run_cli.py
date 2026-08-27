@@ -8,18 +8,18 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from typer.testing import CliRunner
 
+from ads_booster.capture.capture_safety import CaptureAdapterError
+from ads_booster.cli.trace_run import app
+from ads_booster.contracts import CaptureProvenance, DeviceKind, ErrorCode
+from ads_booster.runtime.trace_run import TraceRunResult, TraceRunState
 from tests.runtime.test_trace_run import CAPTURE_JSON, COMPOSE_JSON
-from trace_capture.capture.capture_safety import CaptureAdapterError
-from trace_capture.cli.trace_run import app
-from trace_capture.contracts import CaptureProvenance, DeviceKind, ErrorCode
-from trace_capture.runtime.trace_run import TraceRunResult, TraceRunState
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
 
-    from trace_capture.capture.worker import CaptureRequest, SceneCaptureAdapter
+    from ads_booster.capture.worker import CaptureRequest, SceneCaptureAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +39,9 @@ class CliCaptureAdapter:
             width=320,
             height=640,
             source_modified_at_ns=1,
+            source="native_appium",
+            native_export_nonce="b" * 64,
+            native_export_binding_verified=True,
         )
 
 
@@ -59,58 +62,6 @@ def cli_failing_adapter(device_kind: DeviceKind, appium_server: str) -> SceneCap
     return CliFailingAdapter()
 
 
-def test_run_command_when_local_component_is_supplied_then_it_composes_final_image(
-    tmp_path: Path,
-) -> None:
-    # Given a valid one-scene run job and real local image layers
-    job_path = tmp_path / "run.json"
-    payload = {
-        "schema_version": "trace.run-job.v1",
-        "run_id": "run-cli",
-        "idempotency_key": "run-cli-key",
-        "capture_job": json.loads(CAPTURE_JSON),
-        "composite_job": json.loads(COMPOSE_JSON),
-    }
-    _ = job_path.write_text(json.dumps(payload), encoding="utf-8")
-    background = tmp_path / "inputs" / "background.png"
-    iphone_ui = tmp_path / "inputs" / "iphone-ui.png"
-    component = tmp_path / "fixture-components.png"
-    background.parent.mkdir(parents=True)
-    Image.new("RGB", (320, 640), (10, 20, 30)).save(background)
-    ui_image = Image.new("RGBA", (320, 640), (0, 0, 0, 255))
-    ui_image.putpixel((160, 20), (255, 255, 255, 255))
-    ui_image.save(iphone_ui)
-    component_image = Image.new("RGBA", (320, 640), (0, 0, 0, 0))
-    component_image.putpixel((160, 320), (0, 255, 0, 255))
-    component_image.save(component)
-
-    # When the user invokes the installed CLI surface with a local artifact port
-    result = CliRunner().invoke(
-        app,
-        [
-            "--job",
-            str(job_path),
-            "--component-artifact",
-            str(component),
-            "--state-root",
-            str(tmp_path / "state"),
-        ],
-    )
-
-    # Then it reports a completed machine-readable result and writes the final image
-    assert result.exit_code == 0
-    payload = TraceRunResult.model_validate_json(result.stdout)
-    assert payload.state is TraceRunState.COMPLETED
-    serialized = payload.model_dump(mode="json")
-    assert serialized["capture_provenance"]["source"] == "offline_fixture"
-    assert serialized["capture_provenance"]["native_export_binding_verified"] is False
-    assert (tmp_path / "outputs" / "final.png").is_file()
-    journal = (tmp_path / "state" / "run-cli" / "transitions.jsonl").read_text(
-        encoding="utf-8",
-    )
-    assert '"source":"offline_fixture"' in journal
-
-
 def test_run_command_when_job_is_invalid_then_it_returns_machine_readable_usage_error(
     tmp_path: Path,
 ) -> None:
@@ -128,38 +79,12 @@ def test_run_command_when_job_is_invalid_then_it_returns_machine_readable_usage_
     assert '"status":"invalid_job"' in result.stdout
 
 
-def test_run_command_when_component_artifact_is_missing_then_it_returns_runtime_failure(
-    tmp_path: Path,
-) -> None:
-    # Given a valid run request without a supplied local capture artifact
-    job_path = tmp_path / "run.json"
-    payload = {
-        "schema_version": "trace.run-job.v1",
-        "run_id": "run-failed",
-        "idempotency_key": "run-failed-key",
-        "capture_job": json.loads(CAPTURE_JSON),
-        "composite_job": json.loads(COMPOSE_JSON),
-    }
-    _ = job_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    # When the user invokes the real CLI without the capture capability input
-    result = CliRunner().invoke(
-        app,
-        ["--job", str(job_path), "--state-root", str(tmp_path / "state")],
-    )
-
-    # Then it exits with runtime code 1 and a failed machine-readable result
-    assert result.exit_code == 1
-    response = TraceRunResult.model_validate_json(result.stdout)
-    assert response.state is TraceRunState.FAILED
-
-
-def test_run_command_when_fixture_is_omitted_then_it_uses_capture_worker_output(
+def test_run_command_uses_native_capture_worker_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given an injected hardened adapter and a run with real compositing layers
-    monkeypatch.setattr("trace_capture.cli.trace_run.build_capture_adapter", cli_capture_adapter)
+    monkeypatch.setattr("ads_booster.cli.trace_run.build_capture_adapter", cli_capture_adapter)
     job_path = tmp_path / "run.json"
     payload = {
         "schema_version": "trace.run-job.v1",
@@ -177,7 +102,7 @@ def test_run_command_when_fixture_is_omitted_then_it_uses_capture_worker_output(
     ui_image.putpixel((160, 20), (255, 255, 255, 255))
     ui_image.save(iphone_ui)
 
-    # When the CLI runs without a local component fixture
+    # When the CLI runs through its only native capture path
     result = CliRunner().invoke(
         app,
         [
@@ -233,7 +158,7 @@ def test_run_command_when_capture_fails_then_it_returns_runtime_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given the hardened adapter reports a typed component export failure
-    monkeypatch.setattr("trace_capture.cli.trace_run.build_capture_adapter", cli_failing_adapter)
+    monkeypatch.setattr("ads_booster.cli.trace_run.build_capture_adapter", cli_failing_adapter)
     job_path = tmp_path / "run.json"
     payload = {
         "schema_version": "trace.run-job.v1",

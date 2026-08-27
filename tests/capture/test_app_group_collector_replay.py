@@ -8,17 +8,17 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from trace_capture.capture.app_group_collector import (
+from ads_booster.capture.app_group_collector import (
     CommandResult,
     SimctlAppGroupComponentCollector,
 )
-from trace_capture.capture.capture_safety import (
+from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
     ComponentCollectionRequest,
     ExportBinding,
 )
-from trace_capture.contracts import ErrorCode
+from ads_booster.contracts import ErrorCode
 
 if TYPE_CHECKING:
     from pathlib import Path

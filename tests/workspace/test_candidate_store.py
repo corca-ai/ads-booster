@@ -9,10 +9,9 @@ from pydantic import ValidationError
 if TYPE_CHECKING:
     from pathlib import Path
 
-from trace_capture.workspace import (
+from ads_booster.workspace import (
     LEGACY_CANDIDATE_TOPIC,
     CandidateAlreadyReviewedError,
-    CandidateBackgroundSubject,
     CandidateCreate,
     CandidateId,
     CandidateImageInputs,
@@ -42,8 +41,7 @@ def _manual(workspace_id: WorkspaceId, caption: str = "오늘의 캡션") -> Can
         image_inputs=CandidateImageInputs(
             trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
             device_time="07:20",
-            background_subject=CandidateBackgroundSubject.SCENERY,
-            background_mood="늦은 밤 책상 위 스탠드 불빛",
+            background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
             language="ko",
         ),
         refs_used=("ref-a", "ref-b"),
@@ -71,8 +69,7 @@ def test_created_candidate_is_listed_newest_first_with_its_input(
             image_inputs=CandidateImageInputs(
                 trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
                 device_time="07:20",
-                background_subject=CandidateBackgroundSubject.SCENERY,
-                background_mood="늦은 밤 책상 위 스탠드 불빛",
+                background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
                 language="ko",
             ),
             ai_verdict="수정 후 통과 — 1인칭 감탄 문장 빠짐",
@@ -213,8 +210,7 @@ def test_topic_is_required_on_every_candidate() -> None:
             image_inputs=CandidateImageInputs(
                 trace_items=("09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"),
                 device_time="07:20",
-                background_subject=CandidateBackgroundSubject.SCENERY,
-                background_mood="늦은 밤 책상 위 스탠드 불빛",
+                background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
                 language="ko",
             ),
         )

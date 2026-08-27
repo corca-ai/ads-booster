@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import ValidationError
 
-from trace_capture.contracts import CaptureJob, MarketingCompositeJob
-from trace_capture.contracts.run import TraceRunErrorCode, TraceRunEvent, TraceRunFailure
-from trace_capture.runtime.trace_run import (
+from ads_booster.contracts import CaptureJob, MarketingCompositeJob
+from ads_booster.contracts.run import TraceRunErrorCode, TraceRunEvent, TraceRunFailure
+from ads_booster.runtime.trace_run import (
     CaptureCompleted,
     ComposeCompleted,
     ToolFailed,
@@ -19,7 +19,7 @@ from trace_capture.runtime.trace_run import (
     TraceRunRunner,
     TraceRunState,
 )
-from trace_capture.runtime.trace_run_store import JsonlTraceRunStore
+from ads_booster.runtime.trace_run_store import JsonlTraceRunStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,7 +45,9 @@ CAPTURE_JSON = """
     "locale": "ja-JP",
     "capture_target": "trace_components",
     "background_image": "inputs/background.png",
-    "trace_data": {"items": ["A", "B", "C"]}
+    "trace_data": {"rows": [{"layout": "one_by_one", "components": [{
+      "title": "Dynamic card", "items": ["A", "B", "C"]
+    }]}]}
   }]
 }
 """

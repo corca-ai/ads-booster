@@ -5,24 +5,24 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trace_capture.agent.control import AgentControl, AgentControlError
-from trace_capture.agent.session import AgentSession
-from trace_capture.auth.codex import CodexOAuth
-from trace_capture.auth.store import AuthStore
-from trace_capture.config.settings import AgentSettings
-from trace_capture.providers.codex import CodexResponsesClient, ModelTurn
-from trace_capture.providers.models import ProviderModel
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import ToolRegistry
+from ads_booster.agent.control import AgentControl, AgentControlError
+from ads_booster.agent.session import AgentSession
+from ads_booster.auth.codex import CodexOAuth
+from ads_booster.auth.store import AuthStore
+from ads_booster.config.settings import AgentSettings
+from ads_booster.providers.codex import CodexResponsesClient, ModelTurn
+from ads_booster.providers.models import ProviderModel
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.http import HttpResponse
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.http import HttpResponse
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)

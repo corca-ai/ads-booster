@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, assert_never
 
 import pytest
 
-from trace_capture.capture.capture_safety import CaptureAdapterError
-from trace_capture.capture.worker import CaptureExecutionOptions, CaptureRequest
-from trace_capture.contracts import CaptureJob, CaptureProvenance, ErrorCode
-from trace_capture.runtime.trace_run import CaptureCompleted, ToolFailed
-from trace_capture.runtime.trace_run_capture import CaptureWorkerPort
+from ads_booster.capture.capture_safety import CaptureAdapterError
+from ads_booster.capture.worker import CaptureExecutionOptions, CaptureRequest
+from ads_booster.contracts import CaptureJob, CaptureProvenance, ErrorCode
+from ads_booster.runtime.trace_run import CaptureCompleted, ToolFailed
+from ads_booster.runtime.trace_run_capture import CaptureWorkerPort
 
 from .test_trace_run import CAPTURE_JSON
 

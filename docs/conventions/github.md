@@ -135,6 +135,8 @@ evidence, and operational impact.
 4. Apply feedback and push to the same branch.
 5. Squash Merge after approval.
 6. Synchronize local `main` immediately after the merge.
+7. After the merged work and any required release steps are verified, close each completed owning
+   issue with a short PR/release reference. Do not close an issue when it still has deferred scope.
 
 ```bash
 git switch main
@@ -168,6 +170,12 @@ gh release create v<version> --target <main-sha> --title "v<version>" --notes-fi
 gh release edit v<version> --title "v<version>" --notes-file <release-notes-file>
 git ls-remote --tags origin refs/tags/v<version> refs/tags/v<version>^{}
 gh release view v<version> --json tagName,targetCommitish,url
+```
+
+After the required tag/release verification succeeds, close the completed issue(s):
+
+```bash
+gh issue close <issue-number> --comment "Completed in PR #<pr-number> and release v<version>."
 ```
 
 Pushing tags and creating or editing GitHub Releases mutate external state. Perform them only when

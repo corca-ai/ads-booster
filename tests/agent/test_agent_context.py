@@ -3,20 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from trace_capture.agent.context import CompactionSummary, ContextPolicy, ContextRuntime
-from trace_capture.agent.memory import JsonlMemoryStore
-from trace_capture.agent.session import AgentSession
-from trace_capture.providers.codex import FunctionCall, ModelTurn
-from trace_capture.providers.errors import ProviderError
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import ToolRegistry
+from ads_booster.agent.context import CompactionSummary, ContextPolicy, ContextRuntime
+from ads_booster.agent.memory import JsonlMemoryStore
+from ads_booster.agent.session import AgentSession
+from ads_booster.providers.codex import FunctionCall, ModelTurn
+from ads_booster.providers.errors import ProviderError
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(slots=True)  # noqa: MUTABLE_OK

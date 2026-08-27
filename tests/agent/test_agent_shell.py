@@ -6,30 +6,30 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from trace_capture.agent.session import AgentSession
-from trace_capture.auth.codex import CodexOAuth, DeviceChallenge, OAuthLoginOptions
-from trace_capture.auth.models import OAuthCredential
-from trace_capture.auth.store import AuthStore
-from trace_capture.providers.codex import (
+from ads_booster.agent.session import AgentSession
+from ads_booster.auth.codex import CodexOAuth, DeviceChallenge, OAuthLoginOptions
+from ads_booster.auth.models import OAuthCredential
+from ads_booster.auth.store import AuthStore
+from ads_booster.providers.codex import (
     CodexResponsesClient,
     FunctionCall,
     ModelTurn,
 )
-from trace_capture.providers.errors import ProviderError
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.browser import BrowserTool
-from trace_capture.tools.filesystem import FileListTool, FileReadTool, FileWriteTool
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import ToolRegistry
-from trace_capture.tools.shell import ShellTool
-from trace_capture.transport.http import HttpResponse
+from ads_booster.providers.errors import ProviderError
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.browser import BrowserTool
+from ads_booster.tools.filesystem import FileListTool, FileReadTool, FileWriteTool
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import ToolRegistry
+from ads_booster.tools.shell import ShellTool
+from ads_booster.transport.http import HttpResponse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)

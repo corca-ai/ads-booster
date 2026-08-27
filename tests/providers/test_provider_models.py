@@ -4,17 +4,20 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from trace_capture.auth.codex import CodexOAuth
-from trace_capture.auth.models import OAuthCredential
-from trace_capture.auth.store import AuthStore
-from trace_capture.providers.codex import CodexResponsesClient
-from trace_capture.transport.http import HttpResponse
+from pydantic import TypeAdapter
+
+from ads_booster.auth.codex import CodexOAuth
+from ads_booster.auth.models import OAuthCredential
+from ads_booster.auth.store import AuthStore
+from ads_booster.contracts.tools import ToolDescriptor
+from ads_booster.providers.codex import CodexResponsesClient
+from ads_booster.transport.http import HttpResponse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,20 @@ def credential() -> OAuthCredential:
         expires_at=10_000,
         account_id="account",
     )
+
+
+def test_codex_provider_defaults_to_luna_with_xhigh_reasoning(tmp_path: Path) -> None:
+    # Given a provider client without explicit model overrides
+    store = AuthStore(tmp_path / "auth.json")
+    store.save(credential())
+    http = RecordingHttp(responses=[])
+
+    # When the client is constructed
+    client = CodexResponsesClient(http, CodexOAuth(http, store, clock=lambda: 100))
+
+    # Then its requested defaults match the Trace Agent configuration
+    assert client.model == "gpt-5.6-luna"
+    assert client.reasoning_effort == "xhigh"
 
 
 def test_codex_provider_lists_selectable_models(tmp_path: Path) -> None:
@@ -105,6 +122,37 @@ def test_codex_provider_sends_selected_reasoning_effort(tmp_path: Path) -> None:
     _ = client.respond(({"role": "user", "content": "ping"},), ())
 
     assert http.json_calls[0][1]["reasoning"] == {"effort": "high"}
+
+
+def test_codex_provider_normalizes_every_strict_schema_property_as_required(tmp_path: Path) -> None:
+    # Given a strict tool whose Pydantic schema contains a defaulted property
+    store = AuthStore(tmp_path / "auth.json")
+    store.save(credential())
+    response = b'{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}'
+    http = RecordingHttp(responses=[HttpResponse(200, response, {})])
+    client = CodexResponsesClient(http, CodexOAuth(http, store, clock=lambda: 100))
+    tool = ToolDescriptor(
+        name="trace_generate_marketing_image",
+        description="Generate a marketing image",
+        parameters={
+            "type": "object",
+            "properties": {
+                "plan": {"type": "string"},
+                "reference_ids_used": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["plan"],
+        },
+        strict=True,
+    )
+
+    # When the provider request is serialized
+    _ = client.respond(({"role": "user", "content": "generate"},), (tool,))
+
+    # Then every declared property is required by the provider-facing strict schema
+    sent_tools = TypeAdapter(tuple[ToolDescriptor, ...]).validate_python(
+        http.json_calls[0][1]["tools"]
+    )
+    assert sent_tools[0].parameters["required"] == ["plan", "reference_ids_used"]
 
 
 def test_codex_provider_exposes_requested_model_to_agent(

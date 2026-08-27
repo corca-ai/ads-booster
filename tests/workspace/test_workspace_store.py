@@ -9,7 +9,7 @@ from pydantic import ValidationError
 if TYPE_CHECKING:
     from pathlib import Path
 
-from trace_capture.workspace import (
+from ads_booster.workspace import (
     AssetCreate,
     ContextCreate,
     ContextKind,

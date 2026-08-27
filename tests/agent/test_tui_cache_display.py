@@ -7,33 +7,33 @@ from typing import TYPE_CHECKING, final
 import pytest
 from textual.widgets import Input, RichLog
 
-from tests.agent.test_agent_tui import ImmediateModel, ImmediateRuntime
-from tests.agent.test_agent_tui_redesign import RecordingModel
-from trace_capture.agent.context import (
+from ads_booster.agent.context import (
     ContextEvent,
     ContextPhase,
     ContextTrigger,
     ContextUsage,
 )
-from trace_capture.agent.session import AgentSession
-from trace_capture.agent.tui import TraceAgentTui
-from trace_capture.agent.tui_approval import PermissionMode, TuiApproval
-from trace_capture.providers.codex import FunctionCall, ModelTurn
-from trace_capture.providers.models import (
+from ads_booster.agent.session import AgentSession
+from ads_booster.agent.tui import TraceAgentTui
+from ads_booster.agent.tui_approval import PermissionMode, TuiApproval
+from ads_booster.providers.codex import FunctionCall, ModelTurn
+from ads_booster.providers.models import (
     ProviderCacheMetrics,
     ProviderModel,
     ProviderResponseMetadata,
 )
-from trace_capture.tools.filesystem import FileWriteTool
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import ToolRegistry
+from ads_booster.tools.filesystem import FileWriteTool
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import ToolRegistry
+from tests.agent.test_agent_tui import ImmediateModel, ImmediateRuntime
+from tests.agent.test_agent_tui_redesign import RecordingModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)
