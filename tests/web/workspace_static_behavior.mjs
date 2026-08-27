@@ -428,7 +428,20 @@ const makeLiveDocument = () => {
     ["[data-worker-enrollment-code-copy]", workerEnrollmentCodeCopy],
     ["[data-worker-enrollment-command-copy]", workerEnrollmentCommandCopy],
   ]);
-  const selectorGroups = new Map([["[data-autogen]", [autogenButton]]]);
+  const captionStageTab = new FakeElement("stage-tab-caption");
+  captionStageTab.dataset.stageTab = "caption";
+  const imageStageTab = new FakeElement("stage-tab-image");
+  imageStageTab.dataset.stageTab = "image";
+  const captionStagePanel = new FakeElement("stage-caption");
+  captionStagePanel.dataset.stagePanel = "caption";
+  const imageStagePanel = new FakeElement("stage-image");
+  imageStagePanel.dataset.stagePanel = "image";
+  imageStagePanel.hidden = true;
+  const selectorGroups = new Map([
+    ["[data-autogen]", [autogenButton]],
+    ["[data-stage-tab]", [captionStageTab, imageStageTab]],
+    ["[data-stage-panel]", [captionStagePanel, imageStagePanel]],
+  ]);
   const document = new FakeDocument([
     workspaceLive,
     entryScreen,
@@ -499,6 +512,10 @@ const makeLiveDocument = () => {
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
   return {
     document,
+    captionStageTab,
+    imageStageTab,
+    captionStagePanel,
+    imageStagePanel,
     accountHome,
     accountWorkspace,
     accountGrid,
@@ -1525,6 +1542,8 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.equal(fixture.workerEnrollmentCode.textContent, "");
 };
 
+let passed = 0;
+
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
   const styles = await readFile(join(staticRoot, "workspace.css"), "utf8");
@@ -1552,8 +1571,12 @@ const testMarkupUsesTheAgreedTerminology = async () => {
     "topic comes before country in the manual form",
   );
   assert.ok(markup.includes("주제/컨셉"), "the topic field is labelled 주제/컨셉");
-  assert.ok(markup.includes("① 캡션·주제"), "the caption stage is titled");
-  assert.ok(markup.includes("② 이미지"), "the image stage is titled");
+  assert.ok(markup.includes(">캡션 승인<"), "the caption stage has its own tab");
+  assert.ok(markup.includes(">이미지 승인<"), "the image stage has its own tab");
+  assert.ok(
+    markup.includes('data-stage-panel="image" hidden'),
+    "only one approval stage is on screen at a time",
+  );
   assert.ok(markup.includes("data-image-list"), "the image stage renders its own list");
   assert.ok(
     markup.includes('id="candidate-schedule" name="trace-items" required'),
@@ -1594,6 +1617,31 @@ const testMarkupUsesTheAgreedTerminology = async () => {
 
 const allText = (element) =>
   [element.textContent ?? "", ...element.children.map(allText)].join(" ");
+
+const testTheApprovalStagesAreViewedOneAtATime = async () => {
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/accounts") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.captionStagePanel.hidden, false, "captions open first");
+  assert.equal(fixture.imageStagePanel.hidden, true);
+
+  fixture.imageStageTab.click();
+
+  assert.equal(fixture.captionStagePanel.hidden, true);
+  assert.equal(fixture.imageStagePanel.hidden, false);
+  assert.equal(fixture.imageStageTab.attributes.get("aria-selected"), "true");
+  assert.equal(fixture.captionStageTab.attributes.get("aria-selected"), "false");
+
+  fixture.captionStageTab.click();
+
+  assert.equal(fixture.captionStagePanel.hidden, false);
+  assert.equal(fixture.imageStagePanel.hidden, true);
+};
 
 const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
   const fixture = makeLiveDocument();
@@ -1646,41 +1694,81 @@ const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
 
 
 await testCandidatesIsTheDefaultTab();
+passed += 1;
 await testArrowKeysMoveBetweenTheTwoTabs();
+passed += 1;
 await testCommandMenuOnlyLeadsToApproval();
+passed += 1;
 await testOpenReviewButtonRevealsTheApprovalTab();
+passed += 1;
 await testWorkspaceLoadOnlyReadsCandidates();
+passed += 1;
 await testRefreshShowsAndClearsBusyState();
+passed += 1;
 await testLoginShowsAndClearsActionBusyState();
+passed += 1;
 await testRefreshFailureDoesNotSignOut();
+passed += 1;
 await testAuthFailureSignsOut();
+passed += 1;
 await testLoginValidationExplainsTheMissingAccessId();
+passed += 1;
 await testLoginParsesCompositeAccessId();
+passed += 1;
 await testLoginRejectsMalformedCompositeAccessId();
+passed += 1;
 await testMemberAccessIdUsesMemberLoginRoute();
+passed += 1;
 await testOwnerCanInviteMemberAndSeeOneTimeAccessId();
+passed += 1;
 await testInviteValidationAndFailureStayNearby();
+passed += 1;
 await testAutogenGeneratesAndRefreshesTheList();
+passed += 1;
 await testAutogenShowsTheServerMessageVerbatim();
+passed += 1;
 await testManualCandidateSubmitsParsedListFields();
+passed += 1;
 await testManualCandidateValidationExplainsTheCountryCode();
+passed += 1;
 await testManualCandidateValidationRequiresATopic();
+passed += 1;
 await testManualCandidateValidationRequiresASchedule();
+passed += 1;
 await testManualCandidateValidationCapsTheSchedule();
+passed += 1;
 await testManualCandidateValidationExplainsTheDeviceTime();
+passed += 1;
 await testTopicLeadsTheRowAndTheApprovalCard();
+passed += 1;
 await testOnlyAwaitingCaptionsFillTheApprovalGate();
+passed += 1;
 await testJourneyIsVisibleOnRowsAndCards();
+passed += 1;
 await testJourneyPositionFollowsTheStatus();
+passed += 1;
 await testImageStageSplitsCaptionAndImageWork();
+passed += 1;
 await testImageGenerationButtonRunsTheStage();
+passed += 1;
 await testImageGenerationFailureShowsTheServerMessage();
+passed += 1;
 await testImageApprovalPostsTheDecision();
+passed += 1;
 await testMacConnectionsAreManagedWithAnEphemeralControlToken();
+passed += 1;
 await testMarkupUsesTheAgreedTerminology();
+passed += 1;
 await testGenerationProvenanceIsVisibleOnEveryCandidate();
+passed += 1;
 await testAManualCandidateSaysItHasNoGenerationProvenance();
+passed += 1;
 await testDeleteAsksBeforeItDeletes();
+passed += 1;
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
+passed += 1;
 await testTheAccountHomeOpensBeforeAnyCandidateWork();
-console.log("workspace static behavior: 38 passed");
+passed += 1;
+await testTheApprovalStagesAreViewedOneAtATime();
+passed += 1;
+console.log(`workspace static behavior: ${passed} passed`);

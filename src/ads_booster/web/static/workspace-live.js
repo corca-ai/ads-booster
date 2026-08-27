@@ -61,7 +61,6 @@
   let contextCountries = [];
   let selectedContextProfileId = "";
   let candidateRecords = [];
-  let candidateFilter = "all";
   let hostedAccounts = [];
   let selectedAccountId = "";
   let feedbackSignal = null;
@@ -1195,33 +1194,16 @@
     }
   };
 
-  const candidateMatchesFilter = (record) => {
-    if (candidateFilter === "review") return record.status === "awaiting_review";
-    if (candidateFilter === "image") {
-      return record.status === "caption_approved" || record.status === "image_awaiting_review";
-    }
-    if (candidateFilter === "ready") return record.status === "submitted";
-    if (candidateFilter === "rejected") return record.status === "rejected";
-    return true;
-  };
 
   const renderCandidateList = () => {
-    const visible = candidateRecords.filter(candidateMatchesFilter);
-    one("[data-candidate-list]")?.replaceChildren(...visible.map(candidateNode));
-    all("[data-candidate-filter]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.candidateFilter === candidateFilter));
-    });
+    one("[data-candidate-list]")?.replaceChildren(...candidateRecords.map(candidateNode));
     const count = one("[data-candidate-count]");
-    if (count) count.textContent = visible.length === candidateRecords.length
-      ? `후보 ${candidateRecords.length}개`
-      : `전체 ${candidateRecords.length}개 · 표시 ${visible.length}개`;
-    if (candidateEmpty) candidateEmpty.hidden = visible.length > 0;
+    if (count) count.textContent = `후보 ${candidateRecords.length}개`;
+    if (candidateEmpty) candidateEmpty.hidden = candidateRecords.length > 0;
     const emptyTitle = one("[data-candidate-empty-title]");
     const emptyCopy = one("[data-candidate-empty-copy]");
-    if (emptyTitle) emptyTitle.textContent = candidateRecords.length ? "이 상태의 후보가 없습니다" : "등록된 후보가 없습니다";
-    if (emptyCopy) emptyCopy.textContent = candidateRecords.length
-      ? "다른 상태 필터를 선택해 전체 흐름을 확인하세요."
-      : "컨텍스트를 선택하고 오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.";
+    if (emptyTitle) emptyTitle.textContent = "등록된 후보가 없습니다";
+    if (emptyCopy) emptyCopy.textContent = "오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.";
   };
 
 
@@ -2096,24 +2078,28 @@
     }
   };
 
+  const showStage = (stage) => {
+    // The two approval stages are separate jobs: reading captions and judging images ask
+    // for different attention, so only one is on screen at a time.
+    all("[data-stage-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.stagePanel !== stage;
+    });
+    all("[data-stage-tab]").forEach((tab) => {
+      const selected = tab.dataset.stageTab === stage;
+      tab.setAttribute("aria-selected", String(selected));
+      if (selected) tab.removeAttribute("tabindex");
+      else tab.setAttribute("tabindex", "-1");
+    });
+  };
+
+  all("[data-stage-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => showStage(tab.dataset.stageTab));
+  });
+
   all("[data-autogen]").forEach((button) =>
     button.addEventListener("click", () => generateCandidates(button)));
 
-  all("[data-candidate-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      candidateFilter = button.dataset.candidateFilter;
-      renderCandidateList();
-    });
-  });
 
-  all("[data-candidate-filter-jump]").forEach((button) => {
-    button.addEventListener("click", () => {
-      one("[data-tab='candidates']")?.click();
-      candidateFilter = button.dataset.candidateFilterJump;
-      renderCandidateList();
-      one("[data-candidate-list]")?.scrollIntoView({ block: "start" });
-    });
-  });
 
   accountSelect?.addEventListener("change", async () => {
     const next = accountSelect.value;
