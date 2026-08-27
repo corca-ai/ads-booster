@@ -645,6 +645,120 @@ textarea:focus-visible {
 
 .candidate-row__action--danger { color: var(--color-danger); }
 
+.candidate-delete {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.candidate-delete--compact { margin-left: auto; }
+
+.candidate-delete__prompt {
+  color: var(--color-danger);
+  font-size: var(--font-small);
+  line-height: var(--leading-small);
+}
+
+.candidate-delete__confirm {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-accent-ink);
+}
+
+.candidate-delete__confirm:hover { filter: brightness(1.05); }
+
+.provenance .advanced-input__body { gap: var(--space-2); }
+
+.provenance__field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.provenance__documents {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.provenance__document,
+.provenance__model {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono-stack);
+  font-size: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.provenance__missing,
+.provenance__note {
+  color: var(--color-text-quiet);
+  font-size: var(--font-small);
+  line-height: var(--leading-small);
+  margin: 0;
+}
+
+.background-source {
+  align-items: baseline;
+  color: var(--color-text-quiet);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--font-small);
+  gap: var(--space-1) var(--space-2);
+  line-height: var(--leading-small);
+  margin: 0;
+}
+
+.background-source__link {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.background-source__query {
+  color: var(--color-text-quiet);
+  font-family: var(--font-mono-stack);
+  font-size: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.background-source__missing {
+  color: var(--color-text-quiet);
+  font-size: var(--font-small);
+}
+
+.background-judgment__reason {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  line-height: var(--leading-small);
+  margin: var(--space-1) 0 0;
+}
+
+.background-judgment__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.background-judgment__item {
+  align-items: baseline;
+  color: var(--color-text-quiet);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--font-small);
+  gap: var(--space-1) var(--space-2);
+}
+
+.background-judgment__item.is-chosen {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.background-judgment__outcome { overflow-wrap: anywhere; }
+
 .section-note {
   color: var(--color-text-muted);
   font-size: var(--font-small);

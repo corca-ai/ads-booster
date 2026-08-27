@@ -30,6 +30,24 @@ class FakeElement {
     this.listeners.set(type, listener);
   }
 
+  get classList() {
+    const owner = this;
+    return {
+      add(...names) {
+        const present = new Set(String(owner.className ?? "").split(" ").filter(Boolean));
+        for (const name of names) present.add(name);
+        owner.className = [...present].join(" ");
+      },
+      remove(...names) {
+        const present = String(owner.className ?? "").split(" ").filter(Boolean);
+        owner.className = present.filter((name) => !names.includes(name)).join(" ");
+      },
+      contains(name) {
+        return String(owner.className ?? "").split(" ").includes(name);
+      },
+    };
+  }
+
   async click() {
     const listener = this.listeners.get("click");
     if (listener) await listener({ currentTarget: this, preventDefault() {} });
@@ -439,6 +457,7 @@ const loadLive = async (fixture, fetchImplementation) => {
     document: fixture.document,
     fetch: fetchImplementation,
     Headers,
+    URL,
     window: {
       clearTimeout: timers.clearTimeout,
       setTimeout: timers.setTimeout,
@@ -805,8 +824,10 @@ const testManualCandidateSubmitsParsedListFields = async () => {
     device_time: "07:20",
     background_subject: "scenery",
     background_mood: "늦은 밤 책상 위 스탠드 불빛",
+    background_search_query: null,
     language: "ja",
   });
+  assert.equal(payload.persona_domain, null, "an unselected domain is sent as absent, not as an empty token");
   assert.equal(fixture.candidateForm.resetCount, 1);
   assert.equal(fixture.notice.textContent, "후보를 등록했습니다.");
 };
@@ -911,6 +932,170 @@ const testOnlyAwaitingCaptionsFillTheApprovalGate = async () => {
   assert.equal(fixture.approvalList.children.length, 1);
   assert.equal(fixture.approvalEmpty.hidden, true);
   assert.equal(fixture.approvalCount.textContent, "캡션·주제 검수 대기 1건");
+};
+
+const findByClass = (node, className) => {
+  if (node?.className?.split(" ").includes(className)) return node;
+  for (const child of node?.children ?? []) {
+    const found = findByClass(child, className);
+    if (found) return found;
+  }
+  return null;
+};
+
+const flatten = (node, into = []) => {
+  if (!node) return into;
+  into.push(node);
+  for (const child of node.children ?? []) flatten(child, into);
+  return into;
+};
+
+const provenance = () => ({
+  documents: [
+    { relative_path: "core/FACTS.md", size_bytes: 2048 },
+    { relative_path: "core/VOICE-KR.md", size_bytes: 1024 },
+  ],
+  model: "gpt-5.5",
+  instruction_chars: 12_345,
+  generated_at: 1_770_000_000,
+  assigned_domains: ["sports_fan", "exam_prepper"],
+});
+
+const judgedBackground = () => ({
+  query: "김도영 직캠",
+  provider: "ddgs",
+  image_url: "https://cdn.example/a.jpg",
+  source_url: "https://www.blog.example/a",
+  sha256: "a".repeat(64),
+  pipeline: "local_fallback",
+  judgment: {
+    reviews: [
+      {
+        image_id: "img-a",
+        image_url: "https://cdn.example/a.jpg",
+        source_url: "https://www.blog.example/a",
+        gated: false,
+        grades: { authenticity: "상", persona_fit: "상", background_fit: "중" },
+        score: 8,
+        note: "실제 관중석에서 찍힌 사진",
+      },
+      {
+        image_id: "img-b",
+        image_url: "https://cdn.example/b.jpg",
+        source_url: "https://stock.example/b",
+        gated: true,
+        gate_reason: "워터마크",
+        note: "",
+      },
+    ],
+    chosen_id: "img-a",
+    reason: "실제 관중석에서 찍힌 사진",
+    model: "gpt-5.5",
+    query: "김도영 직캠",
+    attempts: [
+      { query: "김도영 타격 직캠 고화질", source: "original", results: 0, passed_filters: 0 },
+      { query: "김도영 직캠", source: "broadened", results: 6, passed_filters: 2 },
+    ],
+    tie_broken: false,
+    tie_break_inconsistent: false,
+  },
+});
+
+const testGenerationProvenanceIsVisibleOnEveryCandidate = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({ source: "auto", generation_provenance: provenance() }),
+  ]);
+  const panel = findByText(fixture.candidateList.children[0], "🧠 생성 근거");
+  assert.ok(panel, "the generation provenance panel is on the candidate row");
+  const texts = flatten(fixture.candidateList.children[0]).map((node) => node.textContent);
+  assert.ok(texts.includes("읽은 문서 2개"), "the document count is named");
+  assert.ok(texts.some((text) => text?.includes("context/core/FACTS.md · 2.0KB")));
+  assert.ok(texts.some((text) => text?.includes("gpt-5.5")), "the model that answered is named");
+  assert.ok(texts.includes("이번 배치 배정"), "the coverage assignment is shown");
+  assert.ok(
+    texts.some((text) => text?.includes("스포츠 팬 · 수험생")),
+    "assigned domains are shown with their Korean labels",
+  );
+};
+
+const testAManualCandidateSaysItHasNoGenerationProvenance = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [candidate({ source: "manual" })]);
+  const texts = flatten(fixture.candidateList.children[0]).map((node) => node.textContent);
+  assert.ok(texts.includes("수동 등록 — 생성 근거 없음"));
+};
+
+const testDeleteAsksBeforeItDeletes = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates" && (options.method ?? "GET") === "GET") {
+      return response(200, calls.some(([, method]) => method === "DELETE") ? [] : [candidate({})]);
+    }
+    if (options.method === "DELETE") return response(204, null);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  const control = findByClass(fixture.candidateList.children[0], "candidate-delete");
+  assert.ok(control, "every candidate row carries a delete control");
+
+  // The first click only arms the control; nothing is deleted yet.
+  await control.children[0].click();
+  assert.deepEqual(calls.filter(([, method]) => method === "DELETE"), []);
+  assert.equal(control.children[0].textContent, "정말 삭제할까요?");
+  assert.equal(control.children[2].textContent, "취소");
+
+  // Cancelling puts it back without touching the server.
+  await control.children[2].click();
+  assert.equal(control.children[0].textContent, "삭제");
+  assert.deepEqual(calls.filter(([, method]) => method === "DELETE"), []);
+
+  // Arming again and confirming is what deletes.
+  await control.children[0].click();
+  await control.children[1].click();
+  assert.deepEqual(
+    calls.filter(([, method]) => method === "DELETE"),
+    [["/api/candidates/candidate-1", "DELETE"]],
+  );
+  assert.equal(fixture.notice.textContent, "후보를 삭제했습니다.");
+};
+
+const testTheImageCardShowsTheBackgroundQueryAndJudgement = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({
+      status: "image_awaiting_review",
+      image_path: "candidates/candidate-1/r2/outputs/final.png",
+      background_provenance: judgedBackground(),
+      image_inputs: {
+        ...candidate({}).image_inputs,
+        background_search_query: "김도영 타격 직캠 고화질",
+      },
+    }),
+  ]);
+  const card = fixture.imageList.children[0];
+  const texts = flatten(card).map((node) => node.textContent);
+  assert.ok(texts.includes("배경 검색어"), "the authored query stays on the card");
+  assert.ok(texts.some((text) => text?.includes("김도영 타격 직캠 고화질")));
+  assert.ok(texts.includes("배경 출처"), "the source page is named");
+  assert.ok(texts.includes("blog.example"), "the source host is shown without www.");
+  assert.ok(
+    texts.includes("배경 심사 · 2장 검토 → 1장 게이트 탈락"),
+    "the judgement summary counts what was reviewed and gated",
+  );
+  assert.ok(texts.some((text) => text?.includes("진정성 상 · 페르소나 상 · 배경 중 (8점)")));
+  assert.ok(texts.some((text) => text?.includes("게이트 탈락 — 워터마크")));
+  assert.ok(
+    texts.some((text) => text?.includes("시도한 검색어 2개") && text.includes("범위 확장")),
+    "every rung of the query ladder is listed",
+  );
+  assert.ok(
+    texts.some((text) => text?.includes("로컬 합성")),
+    "a locally composed image says so rather than passing as a native capture",
+  );
+  assert.ok(findByText(card, "Appium 프롬프트"), "the Appium prompt stays on the image card");
 };
 
 const testJourneyIsVisibleOnRowsAndCards = async () => {
@@ -1150,4 +1335,8 @@ await testImageGenerationButtonRunsTheStage();
 await testImageGenerationFailureShowsTheServerMessage();
 await testImageApprovalPostsTheDecision();
 await testMarkupUsesTheAgreedTerminology();
-console.log("workspace static behavior: 32 passed");
+await testGenerationProvenanceIsVisibleOnEveryCandidate();
+await testAManualCandidateSaysItHasNoGenerationProvenance();
+await testDeleteAsksBeforeItDeletes();
+await testTheImageCardShowsTheBackgroundQueryAndJudgement();
+console.log("workspace static behavior: 36 passed");

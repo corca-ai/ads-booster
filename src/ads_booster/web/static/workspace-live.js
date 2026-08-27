@@ -139,6 +139,23 @@
     "브랜드·정책 위험",
     "기타",
   ]);
+  const PERSONA_DOMAIN_LABELS = Object.freeze({
+    sports_fan: "스포츠 팬",
+    idol_fandom: "아이돌·밴드 팬덤",
+    exam_prepper: "수험생",
+    parenting: "육아",
+    office_worker: "직군 직장인",
+    fitness_crew: "러닝·등산 크루",
+    pet_owner: "반려동물 보호자",
+    cert_student: "자격증 준비생",
+    small_business: "자영업",
+  });
+  const QUERY_SOURCE_LABELS = Object.freeze({
+    original: "원본",
+    broadened: "범위 확장",
+    rewritten: "AI 재작성",
+  });
+  const CONFIRM_REVERT_MS = 8000;
   const DEFAULT_LANGUAGE = "en";
   const MAX_TRACE_ITEMS = 8;
 
@@ -153,6 +170,18 @@
   };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
   const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
+  const candidateDateTime = (seconds) => new Date(seconds * 1000).toLocaleString("ko-KR");
+  const kilobytes = (bytes) => `${(bytes / 1024).toFixed(1)}KB`;
+  const provenanceBytes = (provenance) =>
+    provenance.documents.reduce((total, document) => total + document.size_bytes, 0);
+  const domainLabel = (domain) => PERSONA_DOMAIN_LABELS[domain] ?? domain;
+  const sourceHost = (url) => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return url;
+    }
+  };
 
   const setNotice = (message) => {
     if (notice) notice.textContent = message;
@@ -290,6 +319,104 @@
     return list;
   };
 
+  const provenanceField = (label, node) => {
+    const field = document.createElement("div"); field.className = "provenance__field";
+    const name = document.createElement("span"); name.className = "eyebrow";
+    name.textContent = label;
+    field.append(name, node);
+    return field;
+  };
+
+  const provenanceDocuments = (provenance) => {
+    const list = document.createElement("ul"); list.className = "provenance__documents";
+    provenance.documents.forEach((document_) => {
+      const item = document.createElement("li"); item.className = "provenance__document mono";
+      item.textContent = `context/${document_.relative_path} · ${kilobytes(document_.size_bytes)}`;
+      list.append(item);
+    });
+    return list;
+  };
+
+  const provenanceNode = (record) => {
+    const panel = document.createElement("details"); panel.className = "advanced-input provenance";
+    const summary = document.createElement("summary"); summary.textContent = "🧠 생성 근거";
+    const body = document.createElement("div"); body.className = "advanced-input__body";
+    const provenance = record.generation_provenance;
+    if (!provenance) {
+      const missing = document.createElement("p"); missing.className = "provenance__missing";
+      missing.textContent = record.source === "manual"
+        ? "수동 등록 — 생성 근거 없음"
+        : "생성 근거가 기록되지 않은 후보입니다.";
+      body.append(missing);
+      panel.append(summary, body);
+      return panel;
+    }
+    const model = document.createElement("span"); model.className = "provenance__model mono";
+    model.textContent = [
+      provenance.model,
+      `지시문 ${provenance.instruction_chars.toLocaleString("ko-KR")}자`,
+      candidateDateTime(provenance.generated_at),
+    ].join(" · ");
+    const note = document.createElement("p"); note.className = "provenance__note";
+    note.textContent = "적용 원리·참조 레퍼런스는 위 배지에 표시됩니다";
+    body.append(
+      provenanceField(`읽은 문서 ${provenance.documents.length}개`, provenanceDocuments(provenance)),
+      provenanceField("모델", model),
+    );
+    const assigned = provenance.assigned_domains ?? [];
+    if (assigned.length) {
+      const batch = document.createElement("span");
+      batch.className = "provenance__batch";
+      batch.textContent = `${assigned.map(domainLabel).join(" · ")} (누적 커버리지 기준)`;
+      body.append(provenanceField("이번 배치 배정", batch));
+    }
+    body.append(note);
+    panel.append(summary, body);
+    return panel;
+  };
+
+  const deleteControl = (record, compact) => {
+    const wrap = document.createElement("span");
+    wrap.className = compact ? "candidate-delete candidate-delete--compact" : "candidate-delete";
+    let timer = null;
+    const clear = () => {
+      if (timer === null) return;
+      window.clearTimeout(timer);
+      timer = null;
+    };
+    const showIdle = () => {
+      clear();
+      const button = document.createElement("button");
+      button.className = "button button-quiet candidate-delete__start";
+      button.type = "button";
+      button.textContent = "삭제";
+      button.setAttribute("aria-label", `후보 삭제: ${record.topic || "주제 없음"}`);
+      button.addEventListener("click", () => showConfirm());
+      wrap.replaceChildren(button);
+    };
+    const showConfirm = () => {
+      clear();
+      const prompt = document.createElement("span");
+      prompt.className = "candidate-delete__prompt";
+      prompt.textContent = "정말 삭제할까요?";
+      const confirm = document.createElement("button");
+      confirm.className = "button candidate-delete__confirm";
+      confirm.type = "button";
+      confirm.textContent = "삭제 확정";
+      const cancel = document.createElement("button");
+      cancel.className = "button button-secondary candidate-delete__cancel";
+      cancel.type = "button";
+      cancel.textContent = "취소";
+      confirm.addEventListener("click", () => deleteCandidate(record, confirm, [confirm, cancel]));
+      cancel.addEventListener("click", () => showIdle());
+      wrap.replaceChildren(prompt, confirm, cancel);
+      // An armed control left alone is a trap for the next click, so it disarms itself.
+      timer = window.setTimeout(showIdle, CONFIRM_REVERT_MS);
+    };
+    showIdle();
+    return wrap;
+  };
+
   const candidateNode = (record) => {
     const row = document.createElement("article"); row.className = "candidate-row";
     const source = badge("candidate-source", candidateSourceLabel(record.source));
@@ -307,7 +434,7 @@
     if (record.review_rating) {
       content.append(badge("candidate-context", `최근 평가 · ${record.review_rating}점`));
     }
-    content.append(journeyNode(record));
+    content.append(journeyNode(record), provenanceNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
     trailing.append(badge(
       `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
@@ -319,13 +446,9 @@
       edit.type = "button";
       edit.textContent = "수정";
       edit.addEventListener("click", () => beginCandidateEdit(record));
-      const remove = document.createElement("button");
-      remove.className = "button button-quiet candidate-row__action candidate-row__action--danger";
-      remove.type = "button";
-      remove.textContent = "삭제";
-      remove.addEventListener("click", () => deleteCandidate(record, remove));
-      trailing.append(edit, remove);
+      trailing.append(edit);
     }
+    trailing.append(deleteControl(record, false));
     row.append(source, content, trailing);
     return row;
   };
@@ -486,14 +609,113 @@
       approvalField("참조", record.refs_used.length ? record.refs_used.join(", ") : "—"),
       approvalField("AI 검수", record.ai_verdict || "—"),
     );
+    const order = shootingOrderNode(record);
+    const actions = document.createElement("div"); actions.className = "approval-card__actions";
+    actions.append(reviewControls(record, "caption", "캡션·주제 승인 · 5점"), deleteControl(record, true));
+    card.append(header, journey, body, facts, order, provenanceNode(record), actions);
+    return card;
+  };
+
+  const backgroundQueryNode = (record) => {
+    const query = record.image_inputs?.background_search_query;
+    const line = document.createElement("p"); line.className = "background-source";
+    const label = document.createElement("span"); label.className = "eyebrow";
+    label.textContent = "배경 검색어";
+    const value = document.createElement("span");
+    value.className = query ? "background-source__query mono" : "background-source__missing";
+    value.textContent = query ? `“${query}”` : "기록 없음 — 배경 소재와 분위기로 자동 생성합니다";
+    line.append(label, value);
+    return line;
+  };
+
+  const backgroundSourceNode = (record) => {
+    const provenance = record.background_provenance;
+    if (!provenance) return null;
+    const line = document.createElement("p"); line.className = "background-source";
+    const label = document.createElement("span"); label.className = "eyebrow";
+    label.textContent = "배경 출처";
+    const link = document.createElement("a"); link.className = "background-source__link";
+    link.href = provenance.source_url;
+    link.textContent = sourceHost(provenance.source_url);
+    link.title = provenance.source_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const query = document.createElement("span"); query.className = "background-source__query mono";
+    query.textContent = `“${provenance.query}”`;
+    line.append(label, link, query);
+    if (provenance.pipeline === "local_fallback") {
+      line.append(badge("candidate-context", "로컬 합성 — 일정·시각은 그려지지 않습니다"));
+    }
+    return line;
+  };
+
+  const gradeText = (grades) =>
+    grades ? `진정성 ${grades.authenticity} · 페르소나 ${grades.persona_fit} · 배경 ${grades.background_fit}` : "";
+
+  const backgroundJudgmentNode = (record) => {
+    const judgment = record.background_provenance?.judgment;
+    if (!judgment) return null;
+    const reviews = judgment.reviews ?? [];
+    const gatedCount = reviews.filter((review) => review.gated).length;
+    const details = document.createElement("details");
+    details.className = "advanced-input background-judgment";
+    const summary = document.createElement("summary");
+    summary.textContent = `배경 심사 · ${reviews.length}장 검토 → ${gatedCount}장 게이트 탈락`;
+    const reason = document.createElement("p");
+    reason.className = "background-judgment__reason";
+    reason.textContent = `채택 이유: ${judgment.reason}`;
+    const list = document.createElement("ul");
+    list.className = "background-judgment__list";
+    for (const review of reviews) {
+      const item = document.createElement("li");
+      item.className = "background-judgment__item";
+      if (review.image_id === judgment.chosen_id) item.classList.add("is-chosen");
+      const host = document.createElement("a");
+      host.className = "background-source__link";
+      host.href = review.source_url;
+      host.textContent = sourceHost(review.source_url);
+      host.title = review.source_url;
+      host.target = "_blank";
+      host.rel = "noopener noreferrer";
+      const outcome = document.createElement("span");
+      outcome.className = "background-judgment__outcome";
+      outcome.textContent = review.gated
+        ? `게이트 탈락 — ${review.gate_reason ?? "사유 없음"}`
+        : `${gradeText(review.grades)} (${review.score ?? 0}점)`;
+      item.append(host, outcome);
+      list.append(item);
+    }
+    details.append(summary, reason, list);
+    if (judgment.tie_break_inconsistent) {
+      const flipped = document.createElement("p");
+      flipped.className = "background-judgment__reason";
+      flipped.textContent = "동점 비교가 순서에 따라 뒤집혀, 심사 총점이 높은 쪽을 썼습니다.";
+      details.append(flipped);
+    }
+    const attempts = judgment.attempts ?? [];
+    if (attempts.length > 1) {
+      const tried = document.createElement("p");
+      tried.className = "background-judgment__reason";
+      tried.textContent = `시도한 검색어 ${attempts.length}개: ${attempts
+        .map((attempt) => `“${attempt.query}” (${QUERY_SOURCE_LABELS[attempt.source] ?? attempt.source}) → 결과 ${attempt.results}건 · 통과 ${attempt.passed_filters}장`)
+        .join(" / ")}`;
+      details.append(tried);
+    } else if (judgment.rewritten_query) {
+      const rewritten = document.createElement("p");
+      rewritten.className = "background-judgment__reason";
+      rewritten.textContent = `검색어를 다시 써서 재검색했습니다: “${judgment.rewritten_query}”`;
+      details.append(rewritten);
+    }
+    return details;
+  };
+
+  const shootingOrderNode = (record) => {
     const order = document.createElement("details"); order.className = "advanced-input";
     const summary = document.createElement("summary"); summary.textContent = "Appium 프롬프트";
-    const orderBody = document.createElement("pre"); orderBody.className = "approval-card__order";
-    orderBody.textContent = record.shooting_order || "Appium 프롬프트가 비어 있습니다.";
-    order.append(summary, orderBody);
-    const actions = reviewControls(record, "caption", "캡션·주제 승인 · 5점");
-    card.append(header, journey, body, facts, order, actions);
-    return card;
+    const body = document.createElement("pre"); body.className = "approval-card__order";
+    body.textContent = record.shooting_order || "Appium 프롬프트가 비어 있습니다.";
+    order.append(summary, body);
+    return order;
   };
 
   const imageSummary = (record) => {
@@ -504,7 +726,11 @@
     topic.textContent = record.topic || "(주제 없음)";
     const caption = document.createElement("p"); caption.className = "approval-card__caption";
     caption.textContent = record.caption;
-    text.append(label, topic, caption);
+    text.append(label, topic, caption, backgroundQueryNode(record));
+    const source = backgroundSourceNode(record);
+    if (source) text.append(source);
+    const judgment = backgroundJudgmentNode(record);
+    if (judgment) text.append(judgment);
     return text;
   };
 
@@ -525,6 +751,7 @@
     feedback.className = "candidate-feedback";
     feedback.setAttribute("role", "alert");
     feedback.hidden = true;
+    const order = shootingOrderNode(record);
     if (record.status === "caption_approved") {
       if (record.capture_state === "queued") {
         const waiting = document.createElement("p");
@@ -541,18 +768,18 @@
       }
       if (record.capture_state === "failed") {
         const failure = approvalField("캡처 실패 코드", record.capture_error || "native_capture_failed");
-        card.append(header, body, failure, actions, feedback);
+        card.append(header, body, failure, order, actions, feedback);
         return card;
       }
       if (record.review_note) {
         const note = approvalField("직전 반려 사유", record.review_note);
-        card.append(header, body, note, actions, feedback);
+        card.append(header, body, note, order, actions, feedback);
         return card;
       }
     } else {
       actions.append(reviewControls(record, "image", "이미지 승인 · 5점"));
     }
-    card.append(header, body, actions, feedback);
+    card.append(header, body, order, actions, feedback);
     return card;
   };
 
@@ -982,15 +1209,20 @@
     candidateField("candidate-device-time").value = record.image_inputs.device_time;
     candidateField("candidate-background-subject").value = record.image_inputs.background_subject;
     candidateField("candidate-background-mood").value = record.image_inputs.background_mood;
+    candidateField("candidate-background-query").value =
+      record.image_inputs.background_search_query ?? "";
+    candidateField("candidate-persona-domain").value = record.persona_domain ?? "";
     setCandidateFeedback("");
     manualEntry?.scrollIntoView({ behavior: "smooth", block: "start" });
     candidateField("candidate-topic")?.focus({ preventScroll: true });
   };
 
-  const deleteCandidate = async (record, button) => {
-    if (!window.confirm(`“${record.topic}” 후보를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
-    button.disabled = true;
-    setBusy(button, true, "후보를 삭제하는 중…");
+  // Confirmation is the two-step control in `deleteControl`, not a modal: a browser confirm
+  // cannot be styled, cannot be reached by the static harness, and disappears entirely in a
+  // hosted iframe. The revision still travels because the hosted worker requires it.
+  const deleteCandidate = async (record, target, siblings) => {
+    siblings.forEach((button) => { button.disabled = true; });
+    setBusy(target, true, "후보를 삭제하는 중…");
     try {
       await request(`/api/candidates/${encodeURIComponent(record.candidate_id)}`, {
         method: "DELETE",
@@ -1002,9 +1234,9 @@
       setNotice("후보를 삭제했습니다.");
     } catch (error) {
       setNotice(error.message);
-      button.disabled = false;
+      siblings.forEach((button) => { button.disabled = false; });
     } finally {
-      setBusy(button, false);
+      setBusy(target, false);
     }
   };
 
@@ -1130,6 +1362,14 @@
 
   inviteDialog?.querySelector("[value='cancel']")?.addEventListener("click", () => inviteDialog?.close());
 
+  const autogenNotice = (created) => {
+    const registered = `후보 ${created.length}개가 등록되었습니다`;
+    const provenance = created[0]?.generation_provenance;
+    if (!provenance) return `${registered}.`;
+    const documents = provenance.documents.length;
+    return `${registered} — 문서 ${documents}개(${kilobytes(provenanceBytes(provenance))})를 읽고 생성`;
+  };
+
   const generateCandidates = async (button) => {
     const label = button.textContent;
     button.disabled = true;
@@ -1147,7 +1387,7 @@
         : { method: "POST" };
       const created = await request("/api/candidates/generate", options);
       await loadCandidates();
-      setNotice(`후보 ${created.length}개가 등록되었습니다.`);
+      setNotice(autogenNotice(created));
     } catch (error) {
       setAutogenFeedback(error.message);
       setNotice(error.message);
@@ -1383,6 +1623,7 @@
       topic: String(form.get("topic") ?? "").trim(),
       country: String(form.get("country") ?? "").trim().toUpperCase(),
       posting_slot: String(form.get("posting-slot") ?? "manual").trim(),
+      persona_domain: String(form.get("persona-domain") ?? "").trim() || null,
       caption: String(form.get("caption") ?? "").trim(),
       hypothesis: String(form.get("hypothesis") ?? "").trim(),
       refs_used: commaList(form.get("refs-used")),
@@ -1393,6 +1634,7 @@
         device_time: String(form.get("device-time") ?? "").trim(),
         background_subject: String(form.get("background-subject") ?? "").trim(),
         background_mood: String(form.get("background-mood") ?? "").trim(),
+        background_search_query: String(form.get("background-search-query") ?? "").trim() || null,
         language: countryLanguage(String(form.get("country") ?? "").trim().toUpperCase()),
       },
     };

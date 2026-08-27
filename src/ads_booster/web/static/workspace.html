@@ -201,6 +201,18 @@
                     <label for="candidate-posting-slot">게시 슬롯<select id="candidate-posting-slot" name="posting-slot" required><option value="manual" selected>수동</option><option value="morning">오전</option><option value="evening">저녁</option></select></label>
                     <label for="candidate-hypothesis">가설<input id="candidate-hypothesis" name="hypothesis" required maxlength="2000" autocomplete="off" placeholder="예: 1인칭 감탄이 저장률을 올린다"></label>
                     <label class="candidate-fields__wide" for="candidate-caption">캡션<textarea id="candidate-caption" name="caption" required rows="5" placeholder="게시할 캡션을 그대로 붙여넣으세요."></textarea></label>
+                    <label for="candidate-persona-domain">페르소나 도메인<select id="candidate-persona-domain" name="persona-domain">
+                      <option value="" selected>선택 안 함</option>
+                      <option value="sports_fan">스포츠 팬</option>
+                      <option value="idol_fandom">아이돌·밴드 팬덤</option>
+                      <option value="exam_prepper">수험생</option>
+                      <option value="parenting">육아</option>
+                      <option value="office_worker">직군 직장인</option>
+                      <option value="fitness_crew">러닝·등산 크루</option>
+                      <option value="pet_owner">반려동물 보호자</option>
+                      <option value="cert_student">자격증 준비생</option>
+                      <option value="small_business">자영업</option>
+                    </select></label>
                     <label for="candidate-refs">참조 레퍼런스<input id="candidate-refs" name="refs-used" autocomplete="off" placeholder="쉼표로 구분: ref-a, ref-b"></label>
                     <label for="candidate-principles">적용 원리<input id="candidate-principles" name="principles-applied" autocomplete="off" placeholder="쉼표로 구분: 1, 4"></label>
                     <label class="candidate-fields__wide" for="candidate-shooting-order">Appium 프롬프트<textarea id="candidate-shooting-order" name="shooting-order" rows="4" placeholder="이미지 생성 시 Appium에 전달할 지시 (일정 문자열, 기기 시각, 배경 등)"></textarea></label>
@@ -219,6 +231,8 @@
                       <option value="none">없음</option>
                     </select></label>
                     <label for="candidate-background-mood">배경 분위기<input id="candidate-background-mood" name="background-mood" required maxlength="40" autocomplete="off" placeholder="예: 늦은 밤 책상 위 스탠드 불빛"></label>
+                    <label class="candidate-fields__wide" for="candidate-background-query">배경 검색어<input id="candidate-background-query" name="background-search-query" maxlength="200" autocomplete="off" aria-describedby="candidate-background-query-help" placeholder="예: 김도영 타격 직캠"></label>
+                    <p class="form-help candidate-fields__wide" id="candidate-background-query-help">웹에서 이 배경을 찾을 검색어입니다. 인물·캐릭터·팀 이름을 그대로 써도 됩니다. 비워두면 배경 소재와 분위기로 자동 생성합니다.</p>
                   </div>
                   <p class="form-help" data-candidate-edit-note hidden>수정하면 기존 승인과 이미지가 무효화되고 캡션·주제 검수부터 다시 시작합니다.</p>
                   <p class="candidate-feedback" id="candidate-feedback" data-candidate-feedback role="alert" hidden></p>
