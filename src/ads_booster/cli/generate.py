@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # pyright: reportUnnecessaryComparison=false
-import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, ClassVar, Final, Literal, assert_never
@@ -9,6 +8,7 @@ from typing import Annotated, ClassVar, Final, Literal, assert_never
 import typer
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ads_booster.candidate_generation.background_factory import JudgedBackgroundFetcherFactory
 from ads_booster.capture.readiness import DefaultCaptureReadiness
 from ads_booster.config.settings import AgentSettings
 from ads_booster.connectors.trace.v1.composition import TraceV1Composition
@@ -18,8 +18,6 @@ from ads_booster.runtime.generate_one import (
     GenerateOneOptions,
 )
 from ads_booster.runtime.trace_run import TraceRunState
-from ads_booster.search.image.background import ImageSearchBackgroundFetcher
-from ads_booster.search.image.providers import create_image_search_provider
 from ads_booster.tools.paths import resolve_workspace_path
 from ads_booster.transport.http import create_http_client
 
@@ -62,23 +60,17 @@ def generate_one(
         readiness = DefaultCaptureReadiness(appium_server=options.appium_server)
         options = replace(options, capture_readiness=readiness)
         with create_http_client() as http:
-            background_fetcher = ImageSearchBackgroundFetcher(
-                image_search=create_image_search_provider(
-                    http=http,
-                    provider_name=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
-                    timeout_seconds=float(
-                        os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
-                    ),
-                ),
-                http=http,
-            )
+            settings = AgentSettings.from_environment(workspace)
             result = (
                 TraceV1Composition(
                     home=workspace / ".trace-agent",
-                    settings=AgentSettings.from_environment(workspace),
+                    settings=settings,
                     http=http,
                     options=options,
-                    background_fetcher=background_fetcher,
+                    background_fetchers=JudgedBackgroundFetcherFactory(
+                        http=http,
+                        settings=settings,
+                    ),
                     reference_root=workspace,
                 )
                 .build()

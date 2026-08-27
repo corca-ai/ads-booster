@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING, Final, override
 from urllib.parse import urlsplit
@@ -13,9 +13,11 @@ from PIL import Image, UnidentifiedImageError
 from ads_booster.search.image.contracts import ImageSearchError, ImageSearchProvider
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ads_booster.transport.http import HttpClient
+    from ads_booster.transport.json_types import JsonValue
 
 _HTTP_OK: Final = 200
 _MINIMUM_EDGE: Final = 640
@@ -64,16 +66,21 @@ class SearchedBackground:
     provider: str
     image_url: str
     source_url: str
+    # Extra facts the fetcher that produced this background wants on the artifact record,
+    # merged into the provenance file under their own keys. The stock-allowlist fetcher has
+    # none; the judged open-web fetcher records why this image beat the ones it was shown.
+    details: Mapping[str, JsonValue] = field(default_factory=dict)
 
     def write_provenance(self, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, JsonValue] = {
             "schema_version": "trace.background-search.v1",
             "query": self.query,
             "provider": self.provider,
             "image_url": self.image_url,
             "source_url": self.source_url,
             "artifact_sha256": self.sha256,
+            **self.details,
         }
         _ = destination.write_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
