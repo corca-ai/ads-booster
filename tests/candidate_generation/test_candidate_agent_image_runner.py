@@ -33,11 +33,19 @@ if TYPE_CHECKING:
 
 
 def _inputs() -> CandidateImageInputs:
-    return CandidateImageInputs(
-        trace_items=("09:00 통계학", "13:00 스터디", "19:00 러닝"),
-        device_time="07:20",
-        background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방 사진",
-        language="ko",
+    """The intent-only shape the Trace connector writes, parsed as the store parses it.
+
+    Validated rather than constructed because that is the whole point of this shape: a
+    payload carrying only `background_intent` has to remain readable, and the subject and
+    mood are filled in from it rather than supplied.
+    """
+    return CandidateImageInputs.model_validate(
+        {
+            "trace_items": ("09:00 통계학", "13:00 스터디", "19:00 러닝"),
+            "device_time": "07:20",
+            "background_intent": "늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방 사진",
+            "language": "ko",
+        }
     )
 
 

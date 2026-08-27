@@ -408,7 +408,9 @@ class CandidateImageInputs(FrozenModel):
     device_time: CandidateDeviceTime
     background_subject: CandidateBackgroundSubject
     background_mood: CandidateBackgroundMood
-    background_intent: CandidateBackgroundIntent
+    # Composed from the pair above when a writer does not supply it, so a caller that only
+    # knows the vocabulary never has to spell it out and one that only has free text still fits.
+    background_intent: CandidateBackgroundIntent | None = None
     language: CandidateLanguage
     # Authored by the generating model as a concrete scene phrase, and the query the open-web
     # background search actually runs. Rows written before the field existed carry `None`, and

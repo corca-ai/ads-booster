@@ -30,7 +30,7 @@ from ads_booster.workspace.models import (
 )
 
 if TYPE_CHECKING:
-    from ads_booster.workspace.database import SqliteCursor
+    from ads_booster.workspace.database import SqliteCursor, SqliteRow
 
 _STATUS_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 
@@ -54,7 +54,8 @@ class CandidateStore(CandidateBaseStore):
                 (workspace_id, CandidateSource.AUTO),
             )
             counts: dict[str, int] = {}
-            for row in cursor.fetchall():
+            rows: list[SqliteRow] = cursor.fetchall()
+            for row in rows:
                 match row:
                     case (str() as domain, int() as total):
                         counts[domain] = total
@@ -77,7 +78,8 @@ class CandidateStore(CandidateBaseStore):
                 (workspace_id, CandidateSource.AUTO, limit),
             )
             entries: list[CandidateHistoryEntry] = []
-            for row in cursor.fetchall():
+            rows: list[SqliteRow] = cursor.fetchall()
+            for row in rows:
                 match row:
                     case ((str() | None) as domain, str() as topic):
                         entries.append(

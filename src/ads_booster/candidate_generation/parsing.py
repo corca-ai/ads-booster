@@ -68,7 +68,7 @@ def _require_assigned_domains(
     written = tuple(draft.persona_domain for draft in drafts)
     if written != domains:
         expected = ", ".join(domain.value for domain in domains)
-        received = ", ".join(domain.value for domain in written)
+        received = ", ".join("(없음)" if domain is None else domain.value for domain in written)
         mismatch = (
             f"persona_domain은 배정된 순서대로 [{expected}] 여야 하지만 [{received}] 를 받았습니다."
         )

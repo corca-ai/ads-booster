@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from pydantic import TypeAdapter
+
 from ads_booster.candidate_generation.background_factory import persona_from_bundle
 from ads_booster.candidate_generation.background_judge import BackgroundJudge, JudgePersona
 from ads_booster.candidate_generation.background_selection import (
@@ -20,14 +22,16 @@ from ads_booster.contracts.models import DeviceKind, DeviceTarget
 from ads_booster.providers.codex import ModelTurn
 from ads_booster.runtime.generate_one import BackgroundFetcher  # noqa: TC001 — asserted at runtime
 from ads_booster.search.image.open_background import CollectedBackground, CollectedBackgrounds
+from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import CandidateBackgroundJudgment
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
     from ads_booster.contracts.tools import ToolDescriptor
-    from ads_booster.transport.json_types import JsonObject
 
 _PERSONA = JudgePersona(
     topic="시험기간 일정 관리",
@@ -157,18 +161,17 @@ def test_the_seam_receives_the_judged_winner_and_its_provenance(tmp_path: Path) 
     assert background.source_url == "https://blog.example/img-b"
 
     # And the provenance file keeps the stock fetcher's keys and adds the judgment
-    payload = json.loads((tmp_path / "inputs" / "background-source.json").read_text("utf-8"))
+    raw = (tmp_path / "inputs" / "background-source.json").read_text("utf-8")
+    payload: JsonObject = _JSON_OBJECT.validate_json(raw)
     assert payload["schema_version"] == "trace.background-search.v1"
     assert payload["artifact_sha256"] == background.sha256
     assert payload["selection"] == "ai_judged"
-    judgment = payload["judgment"]
-    assert judgment["chosen_id"] == "img-b"
-    assert [review["image_id"] for review in judgment["reviews"]] == ["img-a", "img-b"]
-    assert [attempt["query"] for attempt in judgment["attempts"]] == ["제주 바다 노을 배경화면"]
-
     # And the whole judgment round-trips, because this file is how the native image stage
     # reads it back onto the candidate
-    assert CandidateBackgroundJudgment.model_validate(judgment).chosen_id == "img-b"
+    judgment = CandidateBackgroundJudgment.model_validate(payload["judgment"])
+    assert judgment.chosen_id == "img-b"
+    assert [review.image_id for review in judgment.reviews] == ["img-a", "img-b"]
+    assert [attempt.query for attempt in judgment.attempts] == ["제주 바다 노을 배경화면"]
 
 
 def test_the_query_the_runner_asks_for_is_the_query_that_is_searched(tmp_path: Path) -> None:

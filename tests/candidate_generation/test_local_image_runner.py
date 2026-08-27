@@ -16,6 +16,7 @@ from ads_booster.candidate_generation import (
     build_background_query,
     build_local_candidate_image_runner,
 )
+from ads_booster.candidate_generation.background_factory import ProductionCandidateBackgrounds
 from ads_booster.candidate_generation.background_selection import (
     EXHAUSTED_CODE,
     JUDGE_REJECTED_CODE,
@@ -25,7 +26,6 @@ from ads_booster.candidate_generation.background_selection import (
 from ads_booster.candidate_generation.factory import (
     COMPONENT_FIXTURE_ENVIRONMENT,
     IPHONE_UI_ENVIRONMENT,
-    ProductionCandidateBackgrounds,
 )
 from ads_booster.config.settings import AgentSettings
 from ads_booster.default_assets import default_iphone_ui_path, default_trace_components_path

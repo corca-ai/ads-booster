@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from hashlib import sha256
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, override
 from urllib.parse import urlsplit
 
@@ -31,6 +32,9 @@ _IMAGE_TOO_SMALL_CODE: Final = "background_search_image_too_small"
 _IMAGE_TOO_SMALL_MESSAGE: Final = (
     "image search returned a background image below the minimum resolution"
 )
+# A read-only mapping rather than a dict, so one shared empty default cannot be mutated
+# by a holder and cannot be rejected as a mutable dataclass default.
+_NO_DETAILS: Final[Mapping[str, JsonValue]] = MappingProxyType({})
 _APPROVED_SOURCE_HOSTS: Final = frozenset(
     {
         "unsplash.com",
@@ -69,7 +73,7 @@ class SearchedBackground:
     # Extra facts the fetcher that produced this background wants on the artifact record,
     # merged into the provenance file under their own keys. The stock-allowlist fetcher has
     # none; the judged open-web fetcher records why this image beat the ones it was shown.
-    details: Mapping[str, JsonValue] = field(default_factory=dict)
+    details: Mapping[str, JsonValue] = _NO_DETAILS
 
     def write_provenance(self, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
