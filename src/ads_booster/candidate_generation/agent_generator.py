@@ -27,7 +27,12 @@ from ads_booster.candidate_generation.errors import (
 )
 from ads_booster.providers.errors import ProviderError
 from ads_booster.transport.json_types import JsonObject
-from ads_booster.workspace import CandidateCreate, CandidateSource
+from ads_booster.workspace import (
+    CandidateContextDocument,
+    CandidateCreate,
+    CandidateGenerationProvenance,
+    CandidateSource,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -160,10 +165,42 @@ class CandidateGenerator:
         drafts = connector.completed_drafts(finished)
         if not drafts:
             raise CandidateFormatError(_BATCH_NOT_STORED)
-        return tuple(self.store.create_candidate(_create(workspace_id, draft)) for draft in drafts)
+        provenance = _provenance(context, finished)
+        return tuple(
+            self.store.create_candidate(_create(workspace_id, draft, provenance))
+            for draft in drafts
+        )
 
 
-def _create(workspace_id: WorkspaceId, draft: CandidateDraft) -> CandidateCreate:
+def _provenance(
+    context: CandidateContextBundle,
+    run: AgentRun,
+) -> CandidateGenerationProvenance:
+    """Record what this run read and which Agent run produced it.
+
+    The run id is the join: the durable Agent run holds the whole conversation, and a
+    reviewer who wants more than the summary the candidate carries can follow it there.
+    """
+    return CandidateGenerationProvenance(
+        documents=tuple(
+            CandidateContextDocument(
+                relative_path=document.relative_path,
+                size_bytes=len(document.text.encode("utf-8")),
+            )
+            for document in context.documents
+        ),
+        model=run.connector_id,
+        instruction_chars=sum(len(document.text) for document in context.documents),
+        generated_at=time.time(),
+        agent_run_id=str(run.run_id),
+    )
+
+
+def _create(
+    workspace_id: WorkspaceId,
+    draft: CandidateDraft,
+    provenance: CandidateGenerationProvenance,
+) -> CandidateCreate:
     return CandidateCreate(
         workspace_id=workspace_id,
         source=CandidateSource.AUTO,
@@ -176,4 +213,6 @@ def _create(workspace_id: WorkspaceId, draft: CandidateDraft) -> CandidateCreate
         refs_used=draft.refs_used,
         principles_applied=draft.principles_applied,
         shooting_order=draft.appium_prompt,
+        persona_domain=draft.persona_domain,
+        generation_provenance=provenance,
     )
