@@ -28,12 +28,18 @@ from ads_booster.candidate_generation.factory import (
     ProductionCandidateModels,
     build_candidate_generator,
     build_candidate_image_runner,
+    build_local_candidate_image_runner,
     build_script_candidate_generator,
 )
 from ads_booster.candidate_generation.instruction import (
     SYSTEM_INSTRUCTION,
     build_instruction,
     build_retry_instruction,
+)
+from ads_booster.candidate_generation.local_image_runner import (
+    CandidateImageOptions,
+    LocalCandidateImageRunner,
+    build_background_query,
 )
 from ads_booster.candidate_generation.models import (
     CandidateContextBundle,
@@ -68,6 +74,7 @@ __all__ = [
     "CandidateGenerationError",
     "CandidateGenerator",
     "CandidateGeneratorPort",
+    "CandidateImageOptions",
     "CandidateImageRunner",
     "CandidateImageRunnerPort",
     "CandidateImageStageError",
@@ -77,12 +84,15 @@ __all__ = [
     "CandidateReviewDecision",
     "CandidateWorkflow",
     "CandidateWriter",
+    "LocalCandidateImageRunner",
     "ProductionCandidateModels",
     "ScriptCandidateGenerator",
     "assign_domains",
+    "build_background_query",
     "build_candidate_generator",
     "build_candidate_image_runner",
     "build_instruction",
+    "build_local_candidate_image_runner",
     "build_retry_instruction",
     "build_script_candidate_generator",
     "default_context_directory",

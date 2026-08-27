@@ -20,6 +20,7 @@ from ads_booster.contracts.models import DeviceKind, DeviceTarget
 from ads_booster.providers.codex import ModelTurn
 from ads_booster.runtime.generate_one import BackgroundFetcher  # noqa: TC001 — asserted at runtime
 from ads_booster.search.image.open_background import CollectedBackground, CollectedBackgrounds
+from ads_booster.workspace import CandidateBackgroundJudgment
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -160,12 +161,14 @@ def test_the_seam_receives_the_judged_winner_and_its_provenance(tmp_path: Path) 
     assert payload["schema_version"] == "trace.background-search.v1"
     assert payload["artifact_sha256"] == background.sha256
     assert payload["selection"] == "ai_judged"
-    assert payload["chosen_image_id"] == "img-b"
-    assert payload["reviewed_images"] == 2
-    assert payload["gated_images"] == 0
-    assert payload["queries_tried"] == [
-        {"query": "제주 바다 노을 배경화면", "source": "original", "results": 2}
-    ]
+    judgment = payload["judgment"]
+    assert judgment["chosen_id"] == "img-b"
+    assert [review["image_id"] for review in judgment["reviews"]] == ["img-a", "img-b"]
+    assert [attempt["query"] for attempt in judgment["attempts"]] == ["제주 바다 노을 배경화면"]
+
+    # And the whole judgment round-trips, because this file is how the native image stage
+    # reads it back onto the candidate
+    assert CandidateBackgroundJudgment.model_validate(judgment).chosen_id == "img-b"
 
 
 def test_the_query_the_runner_asks_for_is_the_query_that_is_searched(tmp_path: Path) -> None:

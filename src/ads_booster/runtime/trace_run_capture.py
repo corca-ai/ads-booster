@@ -31,6 +31,7 @@ from ads_booster.contracts.run import (
 )
 from ads_booster.runtime.trace_run_artifacts import (
     artifact_matches,
+    safe_artifact,
     safe_capture_root,
     safe_job_path,
     same_path,
@@ -52,6 +53,33 @@ class ComposePort(Protocol):
         job: MarketingCompositeJob,
         job_root: Path,
     ) -> ComposeOutcome: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LocalArtifactCapturePort:
+    """Stands in for the native capture on a host that has no capture environment.
+
+    It performs no capture at all: it hands back a packaged component fixture and says so
+    in the provenance it writes. `native_export_binding_verified` is False and the source
+    is `offline_fixture`, so nothing downstream can mistake this for a device export.
+    """
+
+    component_artifact: Path | None
+
+    def capture(self, run_id: str, job: CaptureJob, job_root: Path) -> CaptureOutcome:
+        _ = (run_id, job_root)
+        artifact = safe_artifact(self.component_artifact)
+        if artifact is None:
+            return ToolFailed(
+                failure=TraceRunFailure(
+                    code=TraceRunErrorCode.CAPTURE_FAILED,
+                    message="local component artifact is unavailable",
+                )
+            )
+        return CaptureCompleted(
+            component_artifact=artifact,
+            capture_provenance=_offline_provenance(artifact, job),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +226,25 @@ def build_trace_run_result(
     )
 
 
+def _offline_provenance(path: Path, job: CaptureJob) -> CaptureProvenance:
+    stat = path.stat()
+    content = path.read_bytes()
+    return CaptureProvenance(
+        request_sha256=hashlib.sha256(job.model_dump_json().encode()).hexdigest(),
+        artifact_sha256=hashlib.sha256(content).hexdigest(),
+        bundle_id="offline.fixture",
+        device_udid=job.device.udid,
+        session_id="offline-fixture",
+        byte_size=len(content),
+        width=1,
+        height=1,
+        source_modified_at_ns=max(1, stat.st_mtime_ns),
+        source="offline_fixture",
+        native_export_nonce=None,
+        native_export_binding_verified=False,
+    )
+
+
 def _capture_failure(message: str) -> ToolFailed:
     return ToolFailed(
         failure=TraceRunFailure(code=TraceRunErrorCode.CAPTURE_FAILED, message=message)
@@ -208,8 +255,10 @@ __all__ = [
     "CapturePort",
     "CaptureWorkerPort",
     "ComposePort",
+    "LocalArtifactCapturePort",
     "LocalComposePort",
     "artifact_matches",
     "build_trace_run_result",
+    "safe_artifact",
     "safe_job_path",
 ]

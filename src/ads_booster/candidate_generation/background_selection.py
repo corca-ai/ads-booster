@@ -14,6 +14,8 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import TYPE_CHECKING, Final
 
+from pydantic import TypeAdapter
+
 from ads_booster.candidate_generation.background_judge import (
     BackgroundJudge,
     JudgeError,
@@ -52,6 +54,7 @@ _MIN_TOKENS_TO_BROADEN: Final = 3
 _WIDE_QUERY_TOKENS: Final = 4
 _MAX_REASON_CHARS: Final = 500
 _MAX_COLLECTED: Final = 6
+_JUDGMENT: TypeAdapter[CandidateBackgroundJudgment] = TypeAdapter(CandidateBackgroundJudgment)
 JUDGE_REJECTED_CODE: Final = "background_judge_rejected"
 JUDGE_REJECTED_MESSAGE: Final = "background judge accepted none of the collected images"
 JUDGE_FAILED_CODE: Final = "background_judge_failed"
@@ -254,21 +257,13 @@ class JudgedBackgroundFetcher:
 
 
 def _judgment_details(judgment: CandidateBackgroundJudgment) -> dict[str, JsonValue]:
-    """Reduce the judgment to the facts a reader of `background-source.json` needs."""
-    return {
-        "selection": "ai_judged",
-        "judge_model": judgment.model,
-        "chosen_image_id": judgment.chosen_id,
-        "reason": judgment.reason,
-        "reviewed_images": len(judgment.reviews),
-        "gated_images": sum(1 for review in judgment.reviews if review.gated),
-        "queries_tried": [
-            {"query": attempt.query, "source": attempt.source.value, "results": attempt.results}
-            for attempt in judgment.attempts
-        ],
-        "tie_broken": judgment.tie_broken,
-        "tie_break_inconsistent": judgment.tie_break_inconsistent,
-    }
+    """Carry the whole judgment onto the artifact record.
+
+    The full record travels rather than a summary because the artifact file is where the
+    native path reads the judgment back from: the fetcher runs inside the Trace runner and
+    has no route to the candidate store, so the file it already writes is the only handoff.
+    """
+    return {"selection": "ai_judged", "judgment": _JUDGMENT.dump_python(judgment, mode="json")}
 
 
 def _write(
