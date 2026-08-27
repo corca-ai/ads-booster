@@ -353,7 +353,23 @@ const makeLiveDocument = () => {
   autogenButton.textContent = "🤖 후보 자동 생성";
   const autogenFeedback = new FakeElement("autogen-feedback");
   autogenFeedback.hidden = true;
+  const accountHome = new FakeElement("account-home");
+  const accountWorkspace = new FakeElement("account-workspace");
+  const accountGrid = new FakeElement("account-grid");
+  const accountEmpty = new FakeElement("account-empty");
+  const accountCount = new FakeElement("account-count");
+  const accountBack = new FakeElement("account-back");
+  const accountCurrentName = new FakeElement("account-current-name");
+  const accountVerdict = new FakeElement("account-verdict");
   const selectors = new Map([
+    ["[data-account-home]", accountHome],
+    ["[data-account-workspace]", accountWorkspace],
+    ["[data-account-grid]", accountGrid],
+    ["[data-account-empty]", accountEmpty],
+    ["[data-account-count]", accountCount],
+    ["[data-account-back]", accountBack],
+    ["[data-account-current-name]", accountCurrentName],
+    ["[data-account-verdict]", accountVerdict],
     ["[data-workspace-live]", workspaceLive],
     ["[data-entry-screen]", entryScreen],
     [".skip-link", skipLink],
@@ -483,6 +499,13 @@ const makeLiveDocument = () => {
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
   return {
     document,
+    accountHome,
+    accountWorkspace,
+    accountGrid,
+    accountCount,
+    accountBack,
+    accountCurrentName,
+    accountVerdict,
     workspaceLive,
     entryScreen,
     skipLink,
@@ -574,9 +597,19 @@ const loadLive = async (fixture, fetchImplementation) => {
   const timers = fakeTimers();
   fixture.timers = timers;
   fixture.clipboard ??= [];
+  // Every fixture now carries the account home, so a fresh load always reads the account
+  // list. Answering it here keeps each test's own stub about the thing it is testing;
+  // a test that cares about the list sets `fixture.accounts` before loading.
+  fixture.accounts ??= [];
+  const fetchWithAccounts = async (path, options) => {
+    if (path === "/api/accounts" && (options?.method ?? "GET") === "GET") {
+      return response(200, fixture.accounts);
+    }
+    return fetchImplementation(path, options);
+  };
   runInNewContext(liveSource, {
     document: fixture.document,
-    fetch: fetchImplementation,
+    fetch: fetchWithAccounts,
     Headers,
     URL,
     navigator: { clipboard: { writeText: async (value) => { fixture.clipboard.push(value); } } },
@@ -1559,6 +1592,55 @@ const testMarkupUsesTheAgreedTerminology = async () => {
   assert.ok(live.includes("/api/context-countries"), "country options come from the hosted manifest");
 };
 
+const allText = (element) =>
+  [element.textContent ?? "", ...element.children.map(allText)].join(" ");
+
+const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
+  const fixture = makeLiveDocument();
+  fixture.accounts = [
+    {
+      account_id: "acc-1",
+      display_name: "박세나",
+      country: "KR",
+      language: "ko",
+      status: "observing",
+      revision: 1,
+      identity: {
+        age: 27,
+        region: "서울",
+        occupation: "병동 간호사",
+        concept: "3교대를 잠금화면 일정으로 버티는 간호사",
+        domain: "office_worker",
+      },
+    },
+  ];
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.accountWorkspace.hidden, true);
+  assert.equal(fixture.accountCount.textContent, "계정 1개");
+  const card = fixture.accountGrid.children[0];
+  assert.match(allText(card), /박세나/);
+  assert.match(allText(card), /병동 간호사/);
+
+  const open = card.children.at(-1);
+  await open.click();
+
+  assert.equal(fixture.accountHome.hidden, true);
+  assert.equal(fixture.accountWorkspace.hidden, false);
+  assert.equal(fixture.accountCurrentName.textContent, "박세나");
+  assert.match(fixture.notice.textContent, /박세나 계정으로 작업합니다/);
+
+  await fixture.accountBack.click();
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.accountWorkspace.hidden, true);
+};
+
+
 await testCandidatesIsTheDefaultTab();
 await testArrowKeysMoveBetweenTheTwoTabs();
 await testCommandMenuOnlyLeadsToApproval();
@@ -1596,4 +1678,5 @@ await testGenerationProvenanceIsVisibleOnEveryCandidate();
 await testAManualCandidateSaysItHasNoGenerationProvenance();
 await testDeleteAsksBeforeItDeletes();
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
-console.log("workspace static behavior: 37 passed");
+await testTheAccountHomeOpensBeforeAnyCandidateWork();
+console.log("workspace static behavior: 38 passed");

@@ -2277,3 +2277,87 @@ textarea:focus-visible {
 
   .review-controls > .button { inline-size: 100%; }
 }
+
+/* 계정 홈: 작업 화면 앞에 놓이는 국가별 계정 목록 */
+.account-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.account-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.account-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.account-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.account-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.account-card__name {
+  font-size: var(--text-lg);
+}
+
+.account-card__concept {
+  color: var(--color-text);
+}
+
+.account-card__meta {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.account-workspace__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.account-workspace__identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-inline-end: auto;
+}
+
+.account-workspace__verdict {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (max-width: 40rem) {
+  .account-workspace__bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

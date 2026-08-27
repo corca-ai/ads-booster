@@ -1580,9 +1580,239 @@
     }
   };
 
+
+  // ---- 계정 홈 -------------------------------------------------------------
+  // 계정 하나가 하나의 컨셉이라, 작업 화면은 어떤 계정으로 쓰는지가 정해진 다음에야
+  // 열린다. 목록과 작업 화면을 같은 페이지에서 번갈아 보여 주는 것은 그래서다.
+  const accountHome = one("[data-account-home]");
+  const accountWorkspace = one("[data-account-workspace]");
+  const accountGrid = one("[data-account-grid]");
+  const accountEmpty = one("[data-account-empty]");
+  const accountCount = one("[data-account-count]");
+  const accountBack = one("[data-account-back]");
+  const accountCurrentName = one("[data-account-current-name]");
+  const accountCurrentConcept = one("[data-account-current-concept]");
+  const accountVerdict = one("[data-account-verdict]");
+  const accountForm = one("[data-account-form]");
+  const accountFormDetails = one("[data-account-form-details]");
+  const accountFormFeedback = one("[data-account-feedback]");
+
+  const BACKGROUND_LABELS = Object.freeze({
+    character_kitty: "캐릭터(고양이)", character_other: "캐릭터(기타)", family_photo: "가족 사진",
+    person: "인물", pet: "반려동물", scenery: "풍경", minimal: "미니멀",
+    sports_team: "스포츠 팀", none: "없음",
+  });
+  const FONT_LABELS = Object.freeze({
+    sf_pro: "SF Pro", sf_pro_rounded: "SF Pro Rounded", sf_compact: "SF Compact",
+    new_york: "New York", sf_mono: "SF Mono",
+  });
+  const ACCOUNT_STATUS_LABELS = Object.freeze({
+    proposed: "제안됨", observing: "관찰", active: "활성", retired: "폐기",
+  });
+  const ACCOUNT_ZONES = Object.freeze({
+    KR: "Asia/Seoul", JP: "Asia/Tokyo", TW: "Asia/Taipei", US: "America/Los_Angeles",
+  });
+
+  let accounts = [];
+  let currentAccount = null;
+
+  const fillOptions = (select, labels) => {
+    if (!select || select.options.length) return;
+    Object.entries(labels).forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value; option.textContent = label;
+      select.append(option);
+    });
+  };
+
+  const setAccountFormFeedback = (message) => {
+    if (!accountFormFeedback) return;
+    accountFormFeedback.textContent = message;
+    accountFormFeedback.hidden = !message;
+  };
+
+  const accountCard = (account) => {
+    const card = document.createElement("article");
+    card.className = "account-card";
+    const head = document.createElement("div");
+    head.className = "account-card__head";
+    const badges = document.createElement("div");
+    badges.className = "account-card__badges";
+    const country = document.createElement("span");
+    country.className = "candidate-source"; country.textContent = account.country;
+    const state = document.createElement("span");
+    state.className = `candidate-status ${account.status}`;
+    state.textContent = ACCOUNT_STATUS_LABELS[account.status] ?? account.status;
+    badges.append(country, state);
+    const name = document.createElement("strong");
+    name.className = "account-card__name";
+    name.textContent = account.display_name;
+    head.append(name, badges);
+
+    const concept = document.createElement("p");
+    concept.className = "account-card__concept";
+    concept.textContent = account.identity?.concept ?? "";
+
+    const meta = document.createElement("p");
+    meta.className = "mono account-card__meta";
+    const identity = account.identity;
+    meta.textContent = identity
+      ? `${identity.age}세 · ${identity.region} · ${identity.occupation} · ${domainLabel(identity.domain)}`
+      : account.language;
+
+    const open = document.createElement("button");
+    open.className = "button button-primary";
+    open.type = "button";
+    open.textContent = "이 계정으로 작업";
+    open.addEventListener("click", () => enterAccount(account));
+
+    card.append(head, concept, meta, open);
+    return card;
+  };
+
+  const renderAccounts = () => {
+    if (!accountGrid) return;
+    accountGrid.replaceChildren(...accounts.map(accountCard));
+    if (accountEmpty) accountEmpty.hidden = accounts.length > 0;
+    if (accountCount) {
+      accountCount.textContent = accounts.length
+        ? `계정 ${accounts.length}개`
+        : "등록된 계정이 없습니다";
+    }
+  };
+
+  const renderAccountVerdict = () => {
+    if (!accountVerdict) return;
+    accountVerdict.replaceChildren();
+    if (!currentAccount) return;
+    const next = currentAccount.status === "active" ? "retired" : "active";
+    const button = document.createElement("button");
+    button.className = "button button-quiet";
+    button.type = "button";
+    button.textContent = next === "active" ? "활성으로 승격" : "폐기";
+    button.addEventListener("click", async () => {
+      setBusy(button, true, "계정 상태를 바꾸는 중…");
+      try {
+        const updated = await request(
+          `/api/accounts/${encodeURIComponent(currentAccount.account_id)}/status`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: next, expected_revision: currentAccount.revision }),
+          },
+        );
+        currentAccount = updated;
+        accounts = accounts.map((item) => item.account_id === updated.account_id ? updated : item);
+        renderAccounts(); renderAccountVerdict();
+        setNotice(`계정을 ${ACCOUNT_STATUS_LABELS[updated.status]} 상태로 바꿨습니다.`);
+      } catch (error) { setNotice(error.message); }
+      finally { setBusy(button, false); }
+    });
+    accountVerdict.append(button);
+  };
+
+  const showAccountHome = () => {
+    currentAccount = null;
+    if (accountHome) accountHome.hidden = false;
+    if (accountWorkspace) accountWorkspace.hidden = true;
+  };
+
+  const enterAccount = async (account) => {
+    currentAccount = account;
+    selectedAccountId = account.account_id;
+    if (accountHome) accountHome.hidden = true;
+    if (accountWorkspace) accountWorkspace.hidden = false;
+    if (accountCurrentName) accountCurrentName.textContent = account.display_name;
+    if (accountCurrentConcept) {
+      accountCurrentConcept.textContent = account.identity?.concept ?? account.country;
+    }
+    renderAccountVerdict();
+    setBusy(workspaceLive, true, `${account.display_name} 계정을 여는 중…`);
+    try {
+      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      setNotice(`${account.display_name} 계정으로 작업합니다.`);
+    } catch (error) { setNotice(error.message); }
+    finally { setBusy(workspaceLive, false); }
+  };
+
+  const loadAccounts = async () => {
+    // The account home is part of the full shell; a surface rendered without it (the
+    // hosted build strips sections it does not serve) should not pay for the request.
+    if (!accountGrid) return;
+    fillOptions(one("[data-account-domain]"), PERSONA_DOMAIN_LABELS);
+    fillOptions(one("[data-account-background-subject]"), BACKGROUND_LABELS);
+    fillOptions(one("[data-account-font]"), FONT_LABELS);
+    accounts = await request("/api/accounts");
+    renderAccounts();
+    if (currentAccount) {
+      const refreshed = accounts.find((item) => item.account_id === currentAccount.account_id);
+      if (refreshed) { currentAccount = refreshed; renderAccountVerdict(); }
+      else showAccountHome();
+    }
+  };
+
+  accountBack?.addEventListener("click", () => {
+    showAccountHome();
+    setNotice("계정 목록으로 돌아왔습니다.");
+  });
+
+  accountForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    if (!target.checkValidity()) { target.reportValidity(); return; }
+    const form = new FormData(target);
+    const country = String(form.get("country") ?? "KR");
+    const interests = String(form.get("interests") ?? "")
+      .split(",").map((value) => value.trim()).filter(Boolean);
+    if (!interests.length) {
+      setAccountFormFeedback("관심사를 한 개 이상 입력해 주세요.");
+      return;
+    }
+    setAccountFormFeedback("");
+    setBusy(target, true, "계정을 추가하는 중…");
+    try {
+      const created = await request("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          country,
+          identity: {
+            display_name: String(form.get("display-name") ?? "").trim(),
+            age: Number(form.get("age")),
+            region: String(form.get("region") ?? "").trim(),
+            occupation: String(form.get("occupation") ?? "").trim(),
+            concept: String(form.get("concept") ?? "").trim(),
+            domain: String(form.get("domain") ?? ""),
+            interests,
+            voice: String(form.get("voice") ?? "").trim(),
+            life_rhythm: String(form.get("life-rhythm") ?? "").trim(),
+            taste: {
+              background_subject: String(form.get("background-subject") ?? ""),
+              background_mood: String(form.get("background-mood") ?? "").trim(),
+              font: String(form.get("font") ?? ""),
+            },
+          },
+          schedule: {
+            language: countryLanguage(country),
+            timezone: ACCOUNT_ZONES[country] ?? "UTC",
+          },
+        }),
+      });
+      target.reset();
+      if (accountFormDetails) accountFormDetails.open = false;
+      await loadAccounts();
+      setNotice(`${created.display_name} 계정을 추가했습니다.`);
+    } catch (error) {
+      setAccountFormFeedback(error.message);
+      setNotice(error.message);
+    } finally { setBusy(target, false); }
+  });
+
   const refreshWorkspace = async () => {
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
     try {
+      await loadAccounts();
+      if (!currentAccount) showAccountHome();
       await loadHostedAccounts();
       await loadContextProfiles();
       await Promise.all([
