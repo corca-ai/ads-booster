@@ -1,12 +1,12 @@
 # Code Architecture and Package Structure
 
 Status: Draft
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-26
 
 ## Purpose
 
 This document defines package ownership, dependency direction, composition roots, and code-placement
-rules under `src/trace_capture/`. See [System Architecture](./system.md) for process composition and
+rules under `src/ads_booster/`. See [System Architecture](./system.md) for process composition and
 runtime flows, and [README](../../README.md) for user commands and environment variables.
 
 Do not document layers or packages that do not exist as if they were current architecture. Update
@@ -20,15 +20,21 @@ behavior, external adapters, and delivery/composition responsibilities.
 ```mermaid
 flowchart TD
     DELIVERY[cli web service]
-    APP[agent planning runtime automation workspace candidate_generation]
+    CORE[agent session goal run context memory connector registry]
+    APP[automation workspace candidate_generation]
+    DOMAIN[connectors trace v1 planning runtime capture legacy composition]
     CONTRACTS[contracts and owner models]
-    ADAPTERS[auth providers tools capture composition tunnel transport]
+    ADAPTERS[auth providers tools search tunnel transport]
     EXTERNAL[model provider Appium filesystem browser launchd cloudflared]
 
-    DELIVERY --> APP
+    DELIVERY --> CORE
     DELIVERY --> ADAPTERS
+    CORE --> APP
+    CORE --> DOMAIN
     APP --> CONTRACTS
     APP --> ADAPTERS
+    DOMAIN --> CONTRACTS
+    DOMAIN --> ADAPTERS
     ADAPTERS --> CONTRACTS
     ADAPTERS --> EXTERNAL
 ```
@@ -36,11 +42,15 @@ flowchart TD
 The direction is:
 
 1. `cli/`, `web/`, and `service/` translate user input and compose concrete dependencies.
-2. `agent/`, `planning/`, `runtime/`, `automation/`, `candidate_generation/`, and `workspace/` own
-   application behavior and state transitions.
-3. `auth/`, `providers/`, `search/`, `tools/`, `capture/`, `composition/`, `tunnel/`, and
+2. `agent/` owns domain-neutral goals, durable runs, lifecycle, connector registration, scoped
+   tool snapshots, structured bootstrap context, and completion validation.
+3. `connectors/trace/v1/` owns the first domain pack and may compose `planning/`, `runtime/`,
+   `capture/`, `composition/`, and marketing/workspace owners without leaking those types into Agent.
+4. `automation/`, `candidate_generation/`, and `workspace/` own supporting application
+   behavior and domain state transitions while their production paths migrate behind connectors.
+5. `auth/`, `providers/`, `search/`, `tools/`, `tunnel/`, and
    `transport/` implement external or technical boundaries.
-4. `contracts/` and owner-package models define typed data across boundaries.
+6. `contracts/` and owner-package models define typed data across boundaries.
 
 Application packages must not depend on concrete UI or infrastructure objects such as Typer,
 FastAPI, Textual widgets, or Appium drivers. Accept required behavior through protocols and connect
@@ -49,15 +59,16 @@ implementations at composition roots.
 ## Directory structure
 
 ```text
-src/trace_capture/
-├── agent/          # agent loop, context, TUI, REPL, standalone sessions
+src/ads_booster/
+├── agent/          # model/tool loop, goal/run lifecycle, connector registry, context, memory and sessions
 ├── auth/           # OAuth flow and credential persistence
 ├── automation/     # durable campaigns, queue, producer, worker and review lifecycle
-├── candidate_generation/  # context assembly, one-call candidate production and the offline image stage
+├── candidate_generation/  # context snapshots and Agent candidate/image workflows
 ├── capture/        # Appium/XCUITest capture and artifact validation
 ├── cli/            # installed Typer entry points and composition roots
-├── composition/    # deterministic offline image-layer validation and composition
+├── composition/    # legacy deterministic offline image-layer validation and composition
 ├── config/         # environment-backed runtime settings
+├── connectors/     # versioned domain capability packs; Trace v1 is the first connector
 ├── contracts/      # versioned cross-boundary Pydantic contracts
 ├── marketing/      # Cloudflare task bridge, durable inbox/outbox, and local loop proof
 ├── planning/       # marketing context to scene recipe
@@ -75,20 +86,21 @@ src/trace_capture/
 
 | Package | Owns | Must not own |
 | --- | --- | --- |
-| `agent/` | Conversation history, context projection/compaction, tool loop, and TUI/REPL session control | Provider HTTP details or native capture |
+| `agent/` | Conversation history, context projection/compaction, model/tool loop, durable goal/run lifecycle, connector registry, scoped tool policy, observations, approval resume, and SQLite run state | Trace, Appium, marketing-specific types, or provider HTTP details |
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
-| `candidate_generation/` | Context-document loading, the assembled generation instruction, strict-JSON parsing with one retry, all-or-nothing candidate writing through a store protocol, and the offline candidate image run | HTTP routes, provider transport details, native capture, composition algorithms, or candidate review transitions |
-| `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Trace setup entry, component collection, and provenance validation | Scene planning or final composition policy |
+| `candidate_generation/` | Context-document loading, candidate drafting, and adaptation of approved candidate snapshots into Agent Trace runs | HTTP routes, native capture mechanics, wallpaper rendering, or candidate review transitions |
+| `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Photos import, Trace wallpaper-editor interaction, full-wallpaper collection, and opaque provenance validation | Model planning or legacy offline composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
-| `composition/` | Offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or Image Model composition |
+| `composition/` | Legacy offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or primary wallpaper generation |
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
-| `contracts/` | Versioned capture, composition, generation, run, and model-tool descriptor contracts | File, network, or database access |
+| `connectors/` | Versioned domain manifests, semantic tool surfaces, domain context validation, artifact acceptance, review policy, and domain composition | Agent run lifecycle, generic session persistence, or UI routing |
+| `contracts/` | Versioned capture, composition, generation, run, `WallpaperPlan` time-zone/event contracts, and model-tool descriptors | File, network, or database access |
 | `marketing/` | Cloudflare task/callback contracts, worker inbox/outboxes, bridge orchestration, task-handler ports, and local account-loop proof | Credential values, HTTP routes, or channel-specific policy |
-| `planning/` | Side-effect-free conversion from `MarketingContextBundle` to `SceneRecipe` and image-search query | Image generation, capture, or persistence |
+| `planning/` | Typed execution recipe carrying the validated `WallpaperPlan`; validates timed source items against plan-zone local `HH:MM` and clean titles | Creative card, event, layout, style, background, or ambient time-zone decisions |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
-| `runtime/` | GenerateOne/TraceRun orchestration, capability order, searched background plus clean system UI and deterministic composition boundary, journals, replay, locks, and artifact validation | CLI output or HTTP routing |
+| `runtime/` | Primary GenerateOne wallpaper orchestration plus legacy TraceRun journals, replay, locks, and artifact validation | CLI output or HTTP routing |
 | `service/` | Loopback listener, workspace bootstrap, automation-worker hosting, launchd, and service status | Web schemas or queue transitions |
 | `tools/` | Executable tools, registry, approval, workspace paths, and bounded output | Provider loop or TraceRun state transitions |
 | `transport/` | Shared HTTP client and JSON transport types | Provider-specific meaning |
@@ -106,9 +118,10 @@ Compose concrete dependencies at these entry points.
 | `agent/factory.py` | Shared `ToolContext` and `AgentSession` composition for CLI and Web |
 | `cli/generate.py` | context bundle, image generator, capture adapter, `GenerateOneRunner` options |
 | `capture/factory.py` | Native capture-adapter selection by device kind |
-| `cli/trace_run.py` | run store, capture port, compose port, CLI error mapping |
+| `cli/trace_run.py` | legacy run store, component capture port, compose port, and CLI error mapping |
 | `web/app.py` | workspace/queue stores, session codec, chat factory, candidate generator, focused routers, static shell |
-| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, provider and image clients, context directory, and shipped fixture paths for candidate production and the image stage |
+| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, context directory, native device resolver, and Agent runner composition for candidate production and image review |
+| `connectors/trace/v1/composition.py` | Trace v1 connector admission, Agent run composition, image search, wallpaper capture adapter, and native generation runner |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
 | `cli/marketing.py` | local simulation, external pull-bridge, and opt-in candidate/native-capture dependency composition |
@@ -157,21 +170,26 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
 - Register each tool once in `tools/registry.py`.
 - Define approval for mutating behavior.
 - Restrict file and command paths to the selected workspace.
+- Keep local-image decoding and Responses image-content construction in `tools/image_view.py`;
+  require approval before pixels from either workspace-relative or explicit absolute paths leave the
+  host.
 - Do not hard-code tool names separately in providers or the TUI.
 
 ### Candidate generation
 
-- Keep the context-document contract, instruction assembly, and strict-JSON parsing in
+- Keep context-document loading and Agent candidate/image workflow composition in
   `candidate_generation/`.
-- Accept the provider client through the `ModelClient` protocol and the store through the
-  `CandidateWriter` protocol; compose both in `candidate_generation/factory.py`.
+- Trace candidate schema, semantic tool, context projection, completion validation, and production
+  composition belong to `connectors/trace/v1/`; there is no candidate-specific prose parser or retry loop.
+- Accept the provider through `CandidateModelSource` and the store through the connector's
+  `CandidateCreator` protocol; compose them with `AgentRunStore` in
+  `candidate_generation/factory.py`.
 - Keep the Web layer limited to authentication, typed-error-to-status mapping, and response shaping.
-- v1 is script assembly: one provider call, no tool loop and no search.
-- The image stage owns only orchestration: it calls the `providers/` image port for the background
-  and drives `runtime/`'s `TraceRunRunner` with the offline `LocalArtifactCapturePort` and
-  `LocalComposePort`. Do not reimplement capture, staging, or composition inside this package.
-- Candidate journey transitions stay in `workspace/`; the image runner writes through the
-  `CandidateImageStore` protocol and never edits status columns itself.
+- Candidate generation and wallpaper creation both execute through Agent with restricted Trace
+  connector tool snapshots. Native editor capture and opaque-export validation remain in `capture/`
+  and `runtime/`; legacy composition remains isolated in `composition/`.
+- Candidate journey transitions stay in `workspace/`; `CandidateWorkflow` coordinates the linked
+  Agent run without editing database columns itself.
 
 ### Web APIs
 
@@ -227,19 +245,16 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
   callback authorization to expose the UI.
 - Treat hosted `account_id` as a logical data scope, never as proof of caller authorization. Public
   account settings, profiles, candidates, and feedback must all use the same selected scope.
-- Keep the marketing context canonical under `trace_capture/assets/context/` and generate the Worker
-  module from it during the Cloudflare build instead of maintaining a second copy. `ORIGIN.md` owns
-  the provenance and verification status of every document there.
-- Keep documents copied from the marketing context archive byte-identical, frontmatter included, so
-  a re-sync stays a straight copy. Repository-owned operating rules live in their own files
-  (`core/PIPELINE-SCOPE.md`, `references/KR/INDEX.md`, `markets/*.md`), never as edits to an archive
-  document.
-- Keep `references/KR/INDEX.md` (the scene index backing `profile.reference_ids`) distinct from
-  `references/KR/RESEARCH-INDEX.md` (the collected-record screening table); neither may overwrite
-  the other.
-- Keep country document/asset/reference/profile membership in the context manifest. D1 may add
-  account-scoped profiles, but a profile cannot generate for a country without reviewed packaged
-  documents.
+- Keep the starter context canonical under `ads_booster/assets/context/` and generate the Worker
+  module from it during the Cloudflare build instead of maintaining a second copy.
+- Keep `ORIGIN.md` as the source and verification record for every packaged context document.
+- Keep archive documents byte-identical, including frontmatter, and keep repository-owned operating
+  rules in `core/PIPELINE-SCOPE.md`, `references/KR/INDEX.md`, and `markets/*.md` rather than editing
+  archive documents.
+- Keep `references/KR/INDEX.md` (the scene index used by `profile.reference_ids`) distinct from
+  `references/KR/RESEARCH-INDEX.md` (the collected-record screening table).
+- Keep country document/profile membership in the context manifest. D1 may add account-scoped
+  profiles, but a profile cannot generate for a country without reviewed packaged documents.
 - Keep whole-corpus injection out of the generation prompt. Reference bodies are selected by id and
   bounded; a document set that must always be injected belongs in `documents` and under the build's
   byte budget.

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from threading import Event, Thread
 
-from trace_capture.agent.tui_approval import PermissionMode
-from trace_capture.web.agent_state import WebAgentStateStore, WebApproval
-from trace_capture.workspace import MemberId, WorkspaceId
+from ads_booster.agent.tui_approval import PermissionMode
+from ads_booster.web.agent_state import WebAgentStateStore, WebApproval
+from ads_booster.workspace import MemberId, WorkspaceId
 
 
 def test_web_approval_resolves_a_pending_browser_decision() -> None:

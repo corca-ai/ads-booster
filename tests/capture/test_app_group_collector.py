@@ -4,21 +4,21 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.capture.test_app_group_collector_replay import (
-    AppGroupRunner,
-    write_component_png,
-    write_export_manifest,
-)
-from trace_capture.capture.app_group_collector import (
+from ads_booster.capture.app_group_collector import (
     SimctlAppGroupComponentCollector,
 )
-from trace_capture.capture.capture_safety import (
+from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
     ComponentCollectionRequest,
     ExportBinding,
 )
-from trace_capture.contracts import ErrorCode
+from ads_booster.contracts import ErrorCode
+from tests.capture.test_app_group_collector_replay import (
+    AppGroupRunner,
+    write_component_png,
+    write_export_manifest,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path

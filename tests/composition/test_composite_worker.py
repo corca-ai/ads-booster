@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 
 from PIL import Image
 
+from ads_booster.composition.composite_worker import CompositeWorker
+from ads_booster.contracts import ErrorCode, JobStatus, MarketingCompositeJob
 from tests.contracts.test_composite_contracts import VALID_COMPOSITE_JOB
-from trace_capture.composition.composite_worker import CompositeWorker
-from trace_capture.contracts import ErrorCode, JobStatus, MarketingCompositeJob
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,9 +16,11 @@ if TYPE_CHECKING:
 def test_composite_worker_when_all_layers_exist(tmp_path: Path) -> None:
     # Given a valid job and three independent layer files
     job = MarketingCompositeJob.model_validate_json(VALID_COMPOSITE_JOB)
+    iphone_ui_path = job.layers.iphone_ui
+    assert iphone_ui_path is not None
     background = tmp_path / job.layers.background
     components = tmp_path / job.layers.trace_components
-    iphone_ui = tmp_path / job.layers.iphone_ui
+    iphone_ui = tmp_path / iphone_ui_path
     background.parent.mkdir(parents=True)
     components.parent.mkdir(parents=True)
     iphone_ui.parent.mkdir(parents=True, exist_ok=True)
@@ -41,8 +43,10 @@ def test_composite_worker_when_all_layers_exist(tmp_path: Path) -> None:
 def test_composite_worker_when_component_layer_is_missing(tmp_path: Path) -> None:
     # Given a valid job without its Appium-produced Trace component layer
     job = MarketingCompositeJob.model_validate_json(VALID_COMPOSITE_JOB)
+    iphone_ui_path = job.layers.iphone_ui
+    assert iphone_ui_path is not None
     background = tmp_path / job.layers.background
-    iphone_ui = tmp_path / job.layers.iphone_ui
+    iphone_ui = tmp_path / iphone_ui_path
     background.parent.mkdir(parents=True)
     iphone_ui.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (2, 2), (20, 30, 40)).save(background)
@@ -59,9 +63,11 @@ def test_composite_worker_when_component_layer_is_missing(tmp_path: Path) -> Non
 def test_composite_worker_when_output_is_symlinked_fails_closed(tmp_path: Path) -> None:
     # Given valid layers and an output path that redirects outside the job root
     job = MarketingCompositeJob.model_validate_json(VALID_COMPOSITE_JOB)
+    iphone_ui_path = job.layers.iphone_ui
+    assert iphone_ui_path is not None
     background = tmp_path / job.layers.background
     components = tmp_path / job.layers.trace_components
-    iphone_ui = tmp_path / job.layers.iphone_ui
+    iphone_ui = tmp_path / iphone_ui_path
     background.parent.mkdir(parents=True)
     components.parent.mkdir(parents=True)
     iphone_ui.parent.mkdir(parents=True, exist_ok=True)

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
+from typing import TypedDict
+
+from pydantic import TypeAdapter
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPOSITORY_ROOT / "install.sh"
+ProjectTable = TypedDict("ProjectTable", {"requires-python": str})
+
+
+class PyprojectTable(TypedDict):
+    project: ProjectTable
 
 
 def run_installer(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -15,6 +24,19 @@ def run_installer(*arguments: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def test_package_requires_the_python_version_used_by_its_source_syntax() -> None:
+    # Given the package metadata consumed by uv tool installation
+    metadata = TypeAdapter(PyprojectTable).validate_python(
+        tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    )
+
+    # When the supported Python range is inspected
+    requires_python = metadata["project"]["requires-python"]
+
+    # Then uv cannot select Python 3.13 for source that requires Python 3.14 syntax
+    assert requires_python == ">=3.14,<3.15"
 
 
 def test_installer_help_describes_native_install_controls() -> None:

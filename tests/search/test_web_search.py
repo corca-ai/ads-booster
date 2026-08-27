@@ -6,30 +6,30 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from trace_capture.agent.session import AgentSession
-from trace_capture.providers.codex import FunctionCall, ModelTurn
-from trace_capture.search.text.contracts import (
+from ads_booster.agent.session import AgentSession
+from ads_booster.providers.codex import FunctionCall, ModelTurn
+from ads_booster.search.text.contracts import (
     SearchResponse,
     SearchResult,
     WebSearchError,
 )
-from trace_capture.search.text.providers import (
+from ads_booster.search.text.providers import (
     BraveSearchProvider,
     UnavailableSearchProvider,
     create_web_search_provider,
 )
-from trace_capture.tools.approval import DenyApproval
-from trace_capture.tools.models import ToolContext
-from trace_capture.tools.registry import default_registry
-from trace_capture.tools.text_search import WebSearchTool
-from trace_capture.transport.http import HttpResponse
+from ads_booster.tools.approval import DenyApproval
+from ads_booster.tools.models import ToolContext
+from ads_booster.tools.registry import default_registry
+from ads_booster.tools.text_search import WebSearchTool
+from ads_booster.transport.http import HttpResponse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from trace_capture.contracts.tools import ToolDescriptor
-    from trace_capture.transport.json_types import JsonObject
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)

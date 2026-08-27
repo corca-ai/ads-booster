@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, final
 import pytest
 from pydantic import ValidationError
 
-from trace_capture.automation import (
+from ads_booster.automation import (
     AutomationQueue,
     DuplicateIdempotencyError,
     GenerateOneWorker,
@@ -18,11 +18,11 @@ from trace_capture.automation import (
     QueueState,
     QueueSubmission,
 )
-from trace_capture.automation.models import QueueCompletion
-from trace_capture.contracts import TraceRunResult
-from trace_capture.contracts.generation import MarketingContextBundle
-from trace_capture.contracts.run import TraceRunState
-from trace_capture.workspace import WorkspaceId
+from ads_booster.automation.models import QueueCompletion
+from ads_booster.contracts import TraceRunResult
+from ads_booster.contracts.generation import MarketingContextBundle
+from ads_booster.contracts.run import TraceRunState
+from ads_booster.workspace import WorkspaceId
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -193,6 +193,36 @@ def test_worker_links_completed_fixture_artifact_then_accepts_review(tmp_path: P
     assert review.artifact_path == "outputs/final.png"
     assert review.artifact_sha256 == sha256(b"fixture-output").hexdigest()
     assert accepted.state is QueueState.ACCEPTED
+
+
+def test_rejected_review_requeues_the_same_goal_without_stale_artifact_claims(
+    tmp_path: Path,
+) -> None:
+    # Given a queue record whose first generated artifact awaits review
+    queue = AutomationQueue(tmp_path / "home")
+    _ = queue.enqueue(_submission(request_id="replan-request"))
+    claimed = queue.claim_due(worker_id="worker-1", now=NOW, lease_seconds=30)
+    assert claimed is not None
+    runner = FixtureRunner(tmp_path / "generated")
+    review = GenerateOneWorker(queue, runner, runner.output_root).run_claim(
+        claimed, now=NOW + timedelta(seconds=1)
+    )
+
+    # When the reviewer rejects that artifact
+    replanning = queue.review(
+        review.queue_id,
+        workspace_id=review.workspace_id,
+        accepted=False,
+        expected_revision=review.revision,
+        now=NOW + timedelta(seconds=2),
+    )
+
+    # Then the same queue item is runnable again without claiming the rejected output
+    assert replanning.state is QueueState.SUBMITTED
+    assert replanning.attempts == 0
+    assert replanning.run_id is None
+    assert replanning.artifact_path is None
+    assert replanning.artifact_sha256 is None
 
 
 def test_duplicate_idempotency_replays_same_payload_and_rejects_conflict(tmp_path: Path) -> None:

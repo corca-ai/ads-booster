@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK -- bridge delivery and review scenarios share durable fakes
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -8,14 +9,14 @@ from typing import override
 
 import pytest
 
-from trace_capture.marketing.bridge import MarketingBridge
-from trace_capture.marketing.cloudflare_queue import CloudflareQueueError
-from trace_capture.marketing.executors import (
+from ads_booster.marketing.bridge import MarketingBridge
+from ads_booster.marketing.cloudflare_queue import CloudflareQueueError
+from ads_booster.marketing.executors import (
     ArtifactSimulationExecutor,
     CandidatePipelineExecutor,
 )
-from trace_capture.marketing.inbox import MarketingExecutionError, MarketingInbox
-from trace_capture.marketing.models import (
+from ads_booster.marketing.inbox import MarketingExecutionError, MarketingInbox
+from ads_booster.marketing.models import (
     ApprovalDecision,
     ApprovalPhase,
     MarketingTask,
@@ -26,10 +27,10 @@ from trace_capture.marketing.models import (
     TaskResult,
     TaskStatus,
 )
-from trace_capture.workspace import (
-    CandidateBackgroundSubject,
+from ads_booster.workspace import (
     CandidateCreate,
     CandidateId,
+    CandidateImageAttachment,
     CandidateImageInputs,
     CandidateRecord,
     CandidateSource,
@@ -51,7 +52,7 @@ def _task() -> MarketingTask:
     )
 
 
-@dataclass
+@dataclass(slots=True)  # noqa: MUTABLE_OK
 class FakeQueue:
     leases: tuple[QueueLease, ...]
     acks: list[tuple[tuple[str, ...], tuple[str, ...]]] = field(default_factory=list)
@@ -69,7 +70,7 @@ class FakeQueue:
         self.acks.append((ack_lease_ids, retry_lease_ids))
 
 
-@dataclass
+@dataclass(slots=True)  # noqa: MUTABLE_OK
 class FakeCallbacks:
     delivered: list[TaskCallback] = field(default_factory=list)
     approvals: list[ReviewApproval] = field(default_factory=list)
@@ -81,7 +82,7 @@ class FakeCallbacks:
         self.approvals.append(approval)
 
 
-@dataclass
+@dataclass(slots=True)  # noqa: MUTABLE_OK
 class FlakyApprovalCallbacks(FakeCallbacks):
     failures_remaining: int = 1
 
@@ -99,7 +100,7 @@ class FakeExecutor:
         return TaskResult(status=TaskStatus.SUCCEEDED, output={"task_id": task.task_id})
 
 
-@dataclass
+@dataclass(slots=True)  # noqa: MUTABLE_OK
 class FailingQueue:
     failure: str
 
@@ -121,7 +122,7 @@ class FailingQueue:
             raise CloudflareQueueError(message)
 
 
-@dataclass
+@dataclass(slots=True)  # noqa: MUTABLE_OK
 class FakeCandidateGenerator:
     store: SqliteWorkspaceStore
     run_contexts: list[str | None] = field(default_factory=list)
@@ -145,8 +146,7 @@ class FakeCandidateGenerator:
                     image_inputs=CandidateImageInputs(
                         trace_items=("09:00 통계학", "13:00 스터디"),
                         device_time="07:20",
-                        background_subject=CandidateBackgroundSubject.SCENERY,
-                        background_mood="늦은 밤 책상 위 스탠드 불빛",
+                        background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
                         language="ko",
                     ),
                 )
@@ -154,7 +154,7 @@ class FakeCandidateGenerator:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FakeCandidateImageRunner:
     store: SqliteWorkspaceStore
     home: Path
@@ -169,9 +169,12 @@ class FakeCandidateImageRunner:
         return self.store.attach_candidate_image(
             workspace_id,
             candidate_id,
-            image_path=relative.as_posix(),
-            image_sha256=sha256(content).hexdigest(),
-            expected_revision=record.revision,
+            CandidateImageAttachment(
+                path=relative.as_posix(),
+                sha256=sha256(content).hexdigest(),
+                agent_run_id=f"candidate-{candidate_id}-r{record.revision}",
+                expected_revision=record.revision,
+            ),
         )
 
 

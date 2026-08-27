@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
 
-from trace_capture.auth.models import OAuthCredential
-from trace_capture.auth.store import AuthStore
-from trace_capture.cli.agent import app
+from ads_booster.auth.models import OAuthCredential
+from ads_booster.auth.store import AuthStore
+from ads_booster.cli.agent import app
 
 if TYPE_CHECKING:
     from pathlib import Path

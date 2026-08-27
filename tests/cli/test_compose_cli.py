@@ -5,15 +5,15 @@ from typing import TYPE_CHECKING, Protocol
 from PIL import Image
 from typer.testing import CliRunner
 
-from tests.contracts.test_composite_contracts import VALID_COMPOSITE_JOB
-from trace_capture.cli.capture import CliErrorPayload
-from trace_capture.cli.compose import app
-from trace_capture.contracts import (
+from ads_booster.cli.capture import CliErrorPayload
+from ads_booster.cli.compose import app
+from ads_booster.contracts import (
     ErrorCode,
     JobStatus,
     MarketingCompositeJob,
     MarketingCompositeResult,
 )
+from tests.contracts.test_composite_contracts import VALID_COMPOSITE_JOB
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,7 +69,7 @@ def test_compose_command_when_result_write_fails_returns_json_error(
         message = "read-only output"
         raise OSError(message)
 
-    monkeypatch.setattr("trace_capture.cli.compose.CompositeWorker.run", raise_filesystem_error)
+    monkeypatch.setattr("ads_booster.cli.compose.CompositeWorker.run", raise_filesystem_error)
 
     # When the user invokes the composition CLI
     result = CliRunner().invoke(app, ["--job", str(job_path)])

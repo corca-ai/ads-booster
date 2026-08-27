@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
 
-from trace_capture.cli.marketing import app
-from trace_capture.marketing.service import (
+from ads_booster.cli.marketing import app
+from ads_booster.marketing.service import (
     CredentialProvider,
     MarketingBridgeConfigStore,
     MarketingBridgeServiceConfig,
@@ -74,7 +74,7 @@ def test_external_secret_command_is_executed_without_a_shell(
             stderr="",
         )
 
-    monkeypatch.setattr("trace_capture.marketing.service.subprocess.run", fake_run)
+    monkeypatch.setattr("ads_booster.marketing.service.subprocess.run", fake_run)
     config = _config(
         credential_provider=CredentialProvider.COMMAND,
         credential_command=("/usr/local/bin/secret-provider", "trace-marketing"),

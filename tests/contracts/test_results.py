@@ -1,4 +1,4 @@
-from trace_capture.contracts import (
+from ads_booster.contracts import (
     CaptureError,
     CaptureProvenance,
     CaptureResult,
@@ -6,6 +6,8 @@ from trace_capture.contracts import (
     ErrorCode,
     FailedSceneCapture,
     JobStatus,
+    TraceRunResult,
+    TraceRunState,
 )
 
 PROVENANCE = CaptureProvenance(
@@ -84,3 +86,30 @@ def test_build_result_when_every_scene_fails() -> None:
 
     # Then the job is failed
     assert result.status is JobStatus.FAILED
+
+
+def test_trace_run_result_v2_when_wallpaper_is_complete_requires_no_component_artifact() -> None:
+    # Given a request-bound full wallpaper export
+    provenance = PROVENANCE.model_copy(
+        update={
+            "artifact_role": "trace_wallpaper",
+            "native_export_binding_verified": True,
+        }
+    )
+
+    # When the v2 result crosses the contract boundary
+    result = TraceRunResult(
+        schema_version="trace.run-result.v2",
+        run_id="wallpaper-run",
+        idempotency_key="wallpaper-run-v2",
+        input_digest="c" * 64,
+        state=TraceRunState.COMPLETED,
+        output_image="outputs/final.png",
+        output_image_sha256="b" * 64,
+        capture_provenance=provenance,
+    )
+
+    # Then only the complete wallpaper artifact is claimed
+    assert result.component_artifact is None
+    assert result.capture_provenance is not None
+    assert result.capture_provenance.artifact_role == "trace_wallpaper"

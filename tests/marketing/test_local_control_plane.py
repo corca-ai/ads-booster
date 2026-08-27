@@ -7,7 +7,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from trace_capture.marketing.simulator import (
+from ads_booster.marketing.simulator import (
     LiveAdapterUnavailableError,
     LocalMarketingControlPlane,
     MarketingAccount,

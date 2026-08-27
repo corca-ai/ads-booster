@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from trace_capture.contracts.run import TraceRunEvent
-from trace_capture.runtime.trace_run import (
+from ads_booster.contracts.run import TraceRunEvent
+from ads_booster.runtime.trace_run import (
     ComposeCompleted,
     TraceRunCapability,
     TraceRunRunner,
     TraceRunState,
 )
-from trace_capture.runtime.trace_run_store import (
+from ads_booster.runtime.trace_run_store import (
     InvalidRunJournalError,
     JsonlTraceRunStore,
     TraceRunRecord,
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from trace_capture.contracts import MarketingCompositeJob
+    from ads_booster.contracts import MarketingCompositeJob
 
 
 def invalid_journal_error_from(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from trace_capture.automation import (
+from ads_booster.automation import (
     AutomationQueue,
     CampaignCreate,
     CampaignProducer,
@@ -11,10 +11,10 @@ from trace_capture.automation import (
     CampaignStore,
     QueueState,
 )
-from trace_capture.automation.models import QueueCompletion
-from trace_capture.contracts.generation import PersonaProfile, PromotionMaterial
-from trace_capture.contracts.models import DeviceKind, DeviceTarget
-from trace_capture.workspace import WorkspaceId
+from ads_booster.automation.models import QueueCompletion
+from ads_booster.contracts.generation import PersonaProfile, PromotionMaterial
+from ads_booster.contracts.models import DeviceKind, DeviceTarget
+from ads_booster.workspace import WorkspaceId
 
 if TYPE_CHECKING:
     from pathlib import Path

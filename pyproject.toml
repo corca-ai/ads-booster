@@ -3,7 +3,7 @@ name = "trace-appium-capture"
 version = "0.2.3"
 description = "Appium worker for deterministic Trace marketing captures"
 readme = "README.md"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "Appium-Python-Client>=5.1.1,<6",
     "ddgs>=9,<10",
@@ -18,12 +18,12 @@ dependencies = [
 ]
 
 [project.scripts]
-trace-capture = "trace_capture.cli.capture:app"
-trace-compose = "trace_capture.cli.compose:app"
-trace-run = "trace_capture.cli.trace_run:app"
-trace-agent = "trace_capture.cli.agent:app"
-trace-ads = "trace_capture.cli.agent:app"
-trace-marketing = "trace_capture.cli.marketing:app"
+trace-capture = "ads_booster.cli.capture:app"
+trace-compose = "ads_booster.cli.compose:app"
+trace-run = "ads_booster.cli.trace_run:app"
+trace-agent = "ads_booster.cli.agent:app"
+trace-ads = "ads_booster.cli.agent:app"
+trace-marketing = "ads_booster.cli.marketing:app"
 
 [dependency-groups]
 dev = [
@@ -38,11 +38,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/trace_capture"]
+packages = ["src/ads_booster"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/trace_capture/assets/iphone-ui.png" = "trace_capture/assets/iphone-ui.png"
-"src/trace_capture/assets/trace-components.png" = "trace_capture/assets/trace-components.png"
+"src/ads_booster/assets/iphone-ui.png" = "ads_booster/assets/iphone-ui.png"
 
 [tool.basedpyright]
 typeCheckingMode = "all"
@@ -89,43 +88,41 @@ unfixable = []
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG", "PLR2004", "SLF001", "D"]
-"src/trace_capture/capture/appium_adapter.py" = ["S603"]
-"src/trace_capture/capture/app_group_collector.py" = ["S603"]
-"src/trace_capture/cli/compose.py" = ["TC003"]
-"src/trace_capture/cli/trace_run.py" = ["PLR0913", "PLR0917"]
-"src/trace_capture/cli/generate.py" = ["PLR0913", "PLR0917"]
-"src/trace_capture/tools/shell.py" = ["S603", "S607", "PLR0911"]
-"src/trace_capture/tools/browser.py" = ["S603"]
-"src/trace_capture/tools/trace.py" = ["S603", "PLR0911"]
-"src/trace_capture/search/text/providers.py" = ["S603"]
-"src/trace_capture/search/image/providers.py" = ["S603"]
-"src/trace_capture/transport/http.py" = ["D105", "D107"]
-"src/trace_capture/providers/models.py" = ["TC001"]
-"src/trace_capture/contracts/tools.py" = ["TC001"]
-"src/trace_capture/auth/browser.py" = ["D107"]
-"src/trace_capture/auth/codex.py" = ["D107"]
-"src/trace_capture/auth/store.py" = ["D107"]
-"src/trace_capture/providers/codex.py" = ["D107"]
-"src/trace_capture/agent/tui.py" = ["D107"]
-"src/trace_capture/agent/tui_oauth.py" = ["D107"]
-"src/trace_capture/agent/tui_approval.py" = ["D107"]
-"src/trace_capture/agent/tui_styles.py" = ["FLY002"]
-"src/trace_capture/agent/control.py" = ["D107"]
-"src/trace_capture/agent/tui_model.py" = ["D107"]
-"src/trace_capture/agent/tui_view.py" = ["D107"]
-"src/trace_capture/agent/tui_prompt.py" = ["D107"]
-"src/trace_capture/agent/memory.py" = ["D107"]
-"src/trace_capture/marketing/*.py" = ["D107", "EM101", "EM102", "TC001", "TRY003", "TRY004"]
-"src/trace_capture/cli/marketing.py" = ["EM102", "TRY003"]
-"src/trace_capture/agent/tui_context.py" = ["D107"]
-"src/trace_capture/providers/errors.py" = ["D107"]
-"src/trace_capture/web/app.py" = ["TC003", "PLR0913"]
-"src/trace_capture/web/contexts.py" = ["C901", "TC001"]
-"src/trace_capture/web/candidates.py" = ["C901"]
-"src/trace_capture/web/schemas.py" = ["TC001"]
-"src/trace_capture/candidate_generation/models.py" = ["TC001"]
-"src/trace_capture/web/session.py" = ["TC001"]
-"src/trace_capture/web/sessions.py" = ["TC001"]
+"src/ads_booster/capture/app_group_collector.py" = ["S603"]
+"src/ads_booster/cli/compose.py" = ["TC003"]
+"src/ads_booster/cli/trace_run.py" = ["PLR0913", "PLR0917"]
+"src/ads_booster/cli/generate.py" = ["PLR0913", "PLR0917"]
+"src/ads_booster/tools/shell.py" = ["S603", "S607", "PLR0911"]
+"src/ads_booster/tools/browser.py" = ["S603"]
+"src/ads_booster/tools/trace.py" = ["S603", "PLR0911"]
+"src/ads_booster/search/text/providers.py" = ["S603"]
+"src/ads_booster/search/image/providers.py" = ["S603"]
+"src/ads_booster/transport/http.py" = ["D105", "D107"]
+"src/ads_booster/providers/models.py" = ["TC001"]
+"src/ads_booster/contracts/tools.py" = ["TC001"]
+"src/ads_booster/auth/browser.py" = ["D107"]
+"src/ads_booster/auth/codex.py" = ["D107"]
+"src/ads_booster/auth/store.py" = ["D107"]
+"src/ads_booster/providers/codex.py" = ["D107"]
+"src/ads_booster/agent/tui.py" = ["D107"]
+"src/ads_booster/agent/tui_oauth.py" = ["D107"]
+"src/ads_booster/agent/tui_approval.py" = ["D107"]
+"src/ads_booster/agent/tui_styles.py" = ["FLY002"]
+"src/ads_booster/agent/control.py" = ["D107"]
+"src/ads_booster/agent/tui_model.py" = ["D107"]
+"src/ads_booster/agent/tui_view.py" = ["D107"]
+"src/ads_booster/agent/tui_prompt.py" = ["D107"]
+"src/ads_booster/agent/memory.py" = ["D107"]
+"src/ads_booster/marketing/*.py" = ["D107", "EM101", "EM102", "TC001", "TRY003", "TRY004"]
+"src/ads_booster/cli/marketing.py" = ["EM102", "TRY003"]
+"src/ads_booster/agent/tui_context.py" = ["D107"]
+"src/ads_booster/providers/errors.py" = ["D107"]
+"src/ads_booster/web/app.py" = ["TC003", "PLR0913"]
+"src/ads_booster/web/contexts.py" = ["C901", "TC001"]
+"src/ads_booster/web/schemas.py" = ["TC001"]
+"src/ads_booster/candidate_generation/models.py" = ["TC001"]
+"src/ads_booster/web/session.py" = ["TC001"]
+"src/ads_booster/web/sessions.py" = ["TC001"]
 "tests/agent/test_agent_shell.py" = ["S105", "S106"]
 "tests/cli/test_cli_auth.py" = ["S105", "S106"]
 "tests/providers/test_provider_models.py" = ["S105", "S106"]

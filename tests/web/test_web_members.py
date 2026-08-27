@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING
 
 from fastapi.testclient import TestClient
 
-from trace_capture.service.state import ServiceStateStore, ensure_workspace
-from trace_capture.web.app import create_app
-from trace_capture.web.schemas import (
+from ads_booster.service.state import ServiceStateStore, ensure_workspace
+from ads_booster.web.app import create_app
+from ads_booster.web.schemas import (
     AuthenticatedMemberResponse,
     MemberInviteResponse,
 )
-from trace_capture.workspace import (
+from ads_booster.workspace import (
     ProvisionedMember,
     ProvisionedWorkspace,
     SqliteWorkspaceStore,
