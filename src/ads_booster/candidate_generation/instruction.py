@@ -154,21 +154,27 @@ _RETRY: Final = """직전 응답은 형식 검증을 통과하지 못했습니�
 
 _ACCOUNT_HEADER: Final = """[이 계정으로 씁니다]
 아래는 새로 만들 인물이 아니라 이미 운영 중인 계정입니다. 후보 {count}개 모두 이
-사람이 쓴 글이어야 합니다. 정체성을 새로 지어내지 말고, 소재만 서로 다르게 하세요.
+사람의 하루에서 나와야 합니다. 정체성을 새로 지어내지 말고, 소재만 서로 다르게 하세요.
 
 - 이름: {display_name} ({age}세, {region})
 - 직업: {occupation}
 - 컨셉: {concept}
 - 관심사: {interests}
-- 말투: {voice}
 - 생활 리듬: {life_rhythm}
 - 배경 취향: {background_subject} / {background_mood}
+
+위 항목은 무엇을 쓸지 고를 때 쓰는 재료입니다. 캡션에 옮겨 적을 문장이 아닙니다.
 
 규칙:
 1. persona_domain 은 {domain} 으로 고정합니다.
 2. 일정(trace_items)과 기기 시각은 이 사람의 생활 리듬에서 나와야 합니다.
 3. 배경 검색어는 이 사람의 배경 취향과 맞아야 합니다.
-4. 캡션의 화자는 이 사람이며, 말투 항목을 그대로 따릅니다."""
+4. 문체·어미·길이는 이 블록이 정하지 않습니다. 아래 문체 문서와 레퍼런스가 정합니다.
+   계정이 바뀌었다는 이유로 말투를 바꾸지 마세요.
+5. 자기소개나 직업 소개로 캡션을 시작하지 마세요. 이 계정을 이미 팔로우한 사람에게
+   쓰는 글이라, 매번 자기가 누구인지 밝히면 광고로 읽힙니다.
+6. 컨셉 문장을 캡션에 그대로 옮겨 쓰지 마세요. 컨셉은 소재를 고르는 기준이지
+   본문의 첫 줄이 아닙니다."""
 
 
 def account_section(account: CandidateAccountBrief, *, count: int) -> str:
@@ -181,7 +187,6 @@ def account_section(account: CandidateAccountBrief, *, count: int) -> str:
         occupation=account.occupation,
         concept=account.concept,
         interests=", ".join(account.interests),
-        voice=account.voice,
         life_rhythm=account.life_rhythm,
         background_subject=account.background_subject,
         background_mood=account.background_mood,

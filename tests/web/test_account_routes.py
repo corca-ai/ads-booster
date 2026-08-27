@@ -49,7 +49,6 @@ _IDENTITY: dict[str, Any] = {
     "concept": "3교대 근무를 잠금화면 일정으로 버티는 간호사",
     "domain": "office_worker",
     "interests": ["쿠로미", "필라테스"],
-    "voice": "반말, 짧은 문장",
     "life_rhythm": "데이 출근일 5시 40분 기상",
     "taste": {
         "background_subject": "character_other",

@@ -34,7 +34,6 @@ def _identity(name: str = "박세나") -> MarketingAccountIdentity:
         concept="3교대 근무를 잠금화면 일정으로 버티는 간호사",
         domain=CandidatePersonaDomain.OFFICE_WORKER,
         interests=("쿠로미", "필라테스"),
-        voice="반말, 짧은 문장, 감탄사가 자주 붙는다",
         life_rhythm="데이 출근일 5시 40분 기상, 나이트 주간은 낮에 잔다",
         taste=MarketingAccountTaste(
             background_subject=CandidateBackgroundSubject.CHARACTER_OTHER,

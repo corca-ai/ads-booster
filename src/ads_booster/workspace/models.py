@@ -410,7 +410,6 @@ class CandidateAccountBrief(FrozenModel):
     concept: str
     domain: CandidatePersonaDomain
     interests: tuple[str, ...]
-    voice: str
     life_rhythm: str
     background_subject: CandidateBackgroundSubject
     background_mood: str
@@ -426,7 +425,6 @@ class CandidateAccountBrief(FrozenModel):
             concept=identity.concept,
             domain=identity.domain,
             interests=identity.interests,
-            voice=identity.voice,
             life_rhythm=identity.life_rhythm,
             background_subject=identity.taste.background_subject,
             background_mood=identity.taste.background_mood,
@@ -597,10 +595,10 @@ class MarketingAccountTaste(FrozenModel):
 class MarketingAccountIdentity(FrozenModel):
     """Who the account is, in the terms every generated post has to stay inside.
 
-    These fields are injected whole into generation, so each one is a constraint the
-    caption, the schedule, and the background query all have to agree with. The concept is
-    the single sentence a reader would recognise the account by; the voice is how that
-    person writes, which is why it is stored here and not re-decided per post.
+    These fields say who the account is and what it can plausibly post about — they are
+    material for choosing a subject, not copy to reproduce. How the account writes is
+    deliberately absent: style belongs to the reference corpus, which carries evidence for
+    and against each voice hypothesis, and a one-line field here would silently outrank it.
     """
 
     display_name: Annotated[str, Field(min_length=1, max_length=40)]
@@ -610,7 +608,6 @@ class MarketingAccountIdentity(FrozenModel):
     concept: Annotated[str, Field(min_length=1, max_length=200)]
     domain: CandidatePersonaDomain
     interests: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
-    voice: Annotated[str, Field(min_length=1, max_length=400)]
     life_rhythm: Annotated[str, Field(min_length=1, max_length=200)]
     taste: MarketingAccountTaste
 

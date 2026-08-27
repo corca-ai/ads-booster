@@ -1776,7 +1776,6 @@
             concept: String(form.get("concept") ?? "").trim(),
             domain: String(form.get("domain") ?? ""),
             interests,
-            voice: String(form.get("voice") ?? "").trim(),
             life_rhythm: String(form.get("life-rhythm") ?? "").trim(),
             taste: {
               background_subject: String(form.get("background-subject") ?? ""),
