@@ -411,14 +411,37 @@ const makeLiveDocument = () => {
   };
 };
 
+// The live script re-arms a capture poll through window.setTimeout, so handing it the real
+// timer would keep the Node event loop alive after every assertion has passed and the run
+// would never exit. The pending callbacks are recorded instead: the harness decides when,
+// or whether, a scheduled poll runs.
+const fakeTimers = () => {
+  const pending = new Map();
+  let nextId = 1;
+  return {
+    pending,
+    setTimeout(callback) {
+      const id = nextId;
+      nextId += 1;
+      pending.set(id, callback);
+      return id;
+    },
+    clearTimeout(id) {
+      pending.delete(id);
+    },
+  };
+};
+
 const loadLive = async (fixture, fetchImplementation) => {
+  const timers = fakeTimers();
+  fixture.timers = timers;
   runInNewContext(liveSource, {
     document: fixture.document,
     fetch: fetchImplementation,
     Headers,
     window: {
-      clearTimeout,
-      setTimeout,
+      clearTimeout: timers.clearTimeout,
+      setTimeout: timers.setTimeout,
       confirm: () => true,
       localStorage: { getItem: () => null, setItem: () => {} },
     },
