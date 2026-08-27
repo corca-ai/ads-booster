@@ -1,0 +1,133 @@
+name: Release immutable Mac worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact pyproject version to publish
+        required: true
+        type: string
+
+concurrency:
+  group: trace-marketing-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build, attest, publish, and verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_SHA: ${{ github.sha }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
+
+    steps:
+      - name: Check out the exact release revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Install pinned uv release tooling
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.12.6
+
+      - name: Validate immutable release preconditions
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$RELEASE_VERSION" = "$expected_version"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(uname -m)" = "arm64"
+          gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$RELEASE_REPOSITORY/immutable-releases" --jq '.enabled' | grep -Fx true
+          if gh release view "v$RELEASE_VERSION" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            echo "release already exists" >&2
+            exit 1
+          fi
+          if gh api "repos/$RELEASE_REPOSITORY/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "tag already exists" >&2
+            exit 1
+          fi
+
+      - name: Build the offline arm64 release envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/wheelhouse build/release dist
+          uv export --locked --no-dev --no-emit-project --no-header \
+            --output-file build/requirements.lock
+          python -m pip download --disable-pip-version-check --only-binary=:all: \
+            --dest build/wheelhouse --requirement build/requirements.lock
+          uv build --wheel --out-dir dist
+          cp "dist/trace_appium_capture-$RELEASE_VERSION-"*.whl build/wheelhouse/
+          python scripts/build-mac-worker-release.py \
+            --version "$RELEASE_VERSION" \
+            --commit-sha "$RELEASE_SHA" \
+            --wheelhouse build/wheelhouse \
+            --requirements build/requirements.lock \
+            --bootstrap scripts/bootstrap-mac-worker.py \
+            --output build/release
+
+      - name: Prove a fresh offline product install
+        shell: bash
+        run: |
+          set -euo pipefail
+          fresh="$RUNNER_TEMP/trace-marketing-fresh-$RELEASE_VERSION"
+          uv venv --python 3.14 --no-python-downloads "$fresh"
+          uv pip install --python "$fresh/bin/python" --no-index \
+            --find-links build/wheelhouse "trace-appium-capture==$RELEASE_VERSION"
+          test "$("$fresh/bin/trace-marketing" version --json | \
+            python -c 'import json,sys; print(json.load(sys.stdin)["version"])')" = "$RELEASE_VERSION"
+          "$fresh/bin/trace-marketing" worker --help >/dev/null
+
+      - name: Create the exact draft release and upload its envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          gh release create "$tag" --repo "$RELEASE_REPOSITORY" \
+            --target "$RELEASE_SHA" --draft --title "$tag" \
+            --notes "Immutable trace-marketing Mac worker release $tag."
+          gh release upload "$tag" build/release/* --repo "$RELEASE_REPOSITORY"
+
+      - name: Attest all release assets
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: build/release/*
+
+      - name: Publish stable and verify immutability, commit, digests, and attestations
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          gh release edit "$tag" --repo "$RELEASE_REPOSITORY" --draft=false --latest
+          release_json="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$RELEASE_REPOSITORY/releases/tags/$tag")"
+          test "$(jq -r '.draft' <<<"$release_json")" = false
+          test "$(jq -r '.prerelease' <<<"$release_json")" = false
+          test "$(jq -r '.immutable' <<<"$release_json")" = true
+          test "$(jq -r '.target_commitish' <<<"$release_json")" = "$RELEASE_SHA"
+          test "$(jq -r '[.assets[].name] | sort | join(" ")' <<<"$release_json")" = \
+            "trace-marketing-bootstrap.py trace-marketing-macos-arm64-$tag.tar.gz trace-marketing-release.json"
+          test "$(gh api "repos/$RELEASE_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')" = \
+            "$RELEASE_SHA"
+          gh release verify "$tag" --repo "$RELEASE_REPOSITORY"
+          for asset in build/release/*; do
+            gh release verify-asset "$tag" "$asset" --repo "$RELEASE_REPOSITORY"
+          done

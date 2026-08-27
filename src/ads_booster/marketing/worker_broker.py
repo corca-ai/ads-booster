@@ -169,14 +169,16 @@ class WorkerBrokerClient:
         message = "D1 Mac workers do not deliver control-plane review approvals"
         raise CloudflareQueueError(message)
 
-    def heartbeat_once(self) -> None:
+    def heartbeat_once(self) -> JsonObject:
+        payload = self.heartbeat()
         response = _post_json(
             self.http,
             self._url("/v1/workers/heartbeat"),
-            self.heartbeat(),
+            payload,
             self._headers(),
         )
         _ = _response_payload(response, operation="worker heartbeat")
+        return payload
 
     def _url(self, path: str) -> str:
         return f"{self.config.control_plane_url.rstrip('/')}{path}"

@@ -39,6 +39,15 @@ in-package AgentSession, OAuth store, Responses client, memory, or tool loop. Ev
 `codex exec --ephemeral --sandbox read-only` turn with a strict output schema. Codex authentication
 is resolved normally for the same macOS user that owns the per-user LaunchAgent.
 
+The installed product is a versioned release tree, not a mutable checkout or in-place uv tool.
+`com.corca.trace-marketing-worker` always enters through the atomic `current` symlink. A separate
+`com.corca.trace-marketing-updater` LaunchAgent pulls only a stable immutable GitHub Release,
+verifies its tag, commit and asset digests, installs it offline into staging, and requests a local
+drain. The worker then stops remote claims while finishing durable local work and callbacks. Only an
+empty inbox/outbox plus no ambiguous Codex execution marker permits the updater to unload the
+worker, switch `current`, and require launchd, doctor, and exact-version accepted-heartbeat proof.
+Failure restores and re-verifies the previous last-known-good release.
+
 ## Installed commands
 
 Commands are declared in `pyproject.toml`.
@@ -98,9 +107,10 @@ There are three separate identities:
 - a revocable per-machine worker credential stored in a mode-`0600` file;
 - the current macOS user's Codex login, managed by the official CLI in its normal cache or Keychain.
 
-The LaunchAgent plist contains no token. It stores the resolved `trace-marketing` and `codex` paths,
-`TRACE_AGENT_HOME`, `PATH`, and only the documented allowlisted non-secret worker overrides, and runs in `gui/<uid>`. The worker never copies Codex auth into its
-state, D1, task payloads, logs, or plist.
+The worker and updater LaunchAgent plists contain no token. They store managed executable/state
+paths, the resolved `codex` path, `TRACE_AGENT_HOME`, `PATH`, and only documented allowlisted
+non-secret worker overrides, and run in `gui/<uid>`. The worker never copies Codex auth into its
+state, D1, task payloads, logs, updater state, or plist.
 
 ## Local state
 
@@ -120,6 +130,18 @@ state, D1, task payloads, logs, or plist.
 
 Prompts, raw Codex responses, Codex threads, auth tokens, and auth-cache files are not stored below
 `TRACE_AGENT_HOME` by this runtime.
+
+The separate managed product root defaults to `~/.local/share/trace-marketing`:
+
+| Path | Owner | Contents |
+| --- | --- | --- |
+| `releases/<version>/` | updater | Complete immutable virtual environment and verified release receipt |
+| `staging/<attempt>/` | updater | Candidate bundle extraction and offline install only |
+| `current` | updater | Atomically replaced symlink to one release |
+| `update-state.json` | updater | Non-secret current, candidate and last-known-good status |
+
+Enrollment, inbox/outbox, `codex-runs`, generated artifacts and official Codex login never move into
+the managed product root.
 
 ## External boundaries
 
@@ -143,4 +165,6 @@ Prompts, raw Codex responses, Codex threads, auth tokens, and auth-cache files a
   D1 callback reservation binds result content and linearizes callback application against explicit
   revocation/replacement.
 - Unknown external side effects are not retried automatically.
+- Mutable, draft, prerelease, digest-incomplete, or commit-mismatched releases cannot enter staging.
+- Last-known-good changes only after the exact candidate version is accepted in a new heartbeat.
 - No runtime path publishes to Threads or another marketing channel.

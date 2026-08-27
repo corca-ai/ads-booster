@@ -1,235 +1,119 @@
 #!/usr/bin/env bash
 
-# shellcheck disable=SC2218
-# Helper functions are defined before the runtime dispatch; this warning is a
-# false positive for the command-substitution and callback boundaries here.
-
 set -Eeuo pipefail
 
-readonly PACKAGE_NAME="trace-appium-capture"
-readonly CLI_NAME="trace-marketing"
-readonly REPOSITORY_URL="${TRACE_ADS_REPOSITORY:-https://github.com/corca-ai/ads-booster.git}"
-readonly DEFAULT_REF="${TRACE_ADS_REF:-main}"
-readonly PYTHON_VERSION="${TRACE_ADS_PYTHON:-3.14}"
-readonly HOME_DIRECTORY="${HOME:?HOME is required}"
+readonly DEFAULT_REPOSITORY="corca-ai/ads-booster"
+readonly DEFAULT_HOME="${HOME:?HOME is required}/.trace-agent"
+readonly DEFAULT_INSTALL_ROOT="$HOME/.local/share/trace-marketing"
 
-bin_directory="${TRACE_ADS_BIN_DIR:-$HOME_DIRECTORY/.local/bin}"
-source_override="${TRACE_ADS_SOURCE:-}"
-ref="$DEFAULT_REF"
-ref_was_set=0
+repository="${TRACE_ADS_REPOSITORY:-$DEFAULT_REPOSITORY}"
+tag="${TRACE_ADS_TAG:-}"
+agent_home="${TRACE_AGENT_HOME:-$DEFAULT_HOME}"
+install_root="${TRACE_MARKETING_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
+uv_path="${TRACE_ADS_UV:-}"
+interval_seconds="${TRACE_MARKETING_UPDATE_INTERVAL_SECONDS:-3600}"
 dry_run=0
-shell_update=1
-resolved_source=""
-uv_path=""
-shell_rc=""
+download_directory=""
 
 die() {
     printf 'trace-marketing installer: %s\n' "$*" >&2
     exit 1
 }
 
-info() {
-    printf 'trace-marketing installer: %s\n' "$*" >&2
-}
-
 print_help() {
     cat <<'EOF'
-Install the Trace Mac worker CLI into a user-owned uv tool environment. The hosted workspace
-continues to run on Cloudflare. Native capture prerequisites remain manual: an authenticated
-official Codex CLI, Appium with XCUITest, Xcode Simulator, and a Trace_iOS Debug build installed
-as com.corca.Trace.
+Bootstrap the Trace Mac worker from a stable, immutable, attested GitHub Release. The command
+installs trace-marketing into versioned directories, preserves worker/Codex state, and creates
+separate worker and updater LaunchAgents. It never upgrades Codex CLI, Xcode, Appium, XCUITest,
+or the Trace app.
 
 Usage:
   install.sh [options]
 
 Options:
-  --source <path-or-url>  Install from a local checkout or package source.
-  --ref <git-ref>         Git ref for the default GitHub source (default: main).
-  --bin-dir <path>        User bin directory (default: ~/.local/bin).
-  --dry-run               Print the install plan without changing the system.
-  --no-shell-update       Do not append the bin directory to zsh/bash startup files.
+  --tag <vX.Y.Z>          Exact stable release; defaults to GitHub's latest stable release.
+  --repository <owner/repo>
+                          Release repository (default: corca-ai/ads-booster).
+  --home <path>           Existing worker state root (default: ~/.trace-agent).
+  --install-root <path>   Versioned product root (default: ~/.local/share/trace-marketing).
+  --uv <path>             Existing uv executable; uv is never installed or upgraded here.
+  --interval-seconds <n>  Updater poll interval, at least 300 (default: 3600).
+  --dry-run               Print the immutable-release bootstrap plan only.
   -h, --help              Show this help.
 
-Environment:
-  TRACE_ADS_REPOSITORY     Git repository URL override.
-  TRACE_ADS_REF            Default Git ref override.
-  TRACE_ADS_SOURCE         Source override, equivalent to --source.
-  TRACE_ADS_BIN_DIR        Bin directory override, equivalent to --bin-dir.
-  TRACE_ADS_PYTHON         Python version passed to uv (default: 3.14).
-
-Examples:
-  curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/corca-ai/ads-booster/main/install.sh | bash
-  bash install.sh --source .
-  bash install.sh --ref v0.1.0 --no-shell-update
+Prerequisites:
+  Apple Silicon macOS, GitHub CLI, uv with local Python 3.14, enrolled worker credentials,
+  authenticated official Codex CLI, Appium/XCUITest, Xcode Simulator, and com.corca.Trace.
+  An operator must drain and stop any existing worker LaunchAgent before this one-time bootstrap.
 EOF
 }
 
-require_absolute_path() {
-    case "$1" in
-        /*) ;;
-        *) die "--bin-dir must be an absolute path: $1" ;;
-    esac
-}
-
-local_checkout_source() {
-    local script_name="${BASH_SOURCE[0]:-}"
-    local script_directory=""
-
-    if [[ -z "$script_name" || ! -f "$script_name" ]]; then
-        return 1
-    fi
-
-    script_directory="$(cd -- "$(dirname -- "$script_name")" && pwd -P)"
-    if [[ -f "$script_directory/pyproject.toml" ]]; then
-        printf '%s\n' "$script_directory"
-        return 0
-    fi
-    return 1
-}
-
-resolve_source() {
-    local checkout_source=""
-
-    if [[ -n "$source_override" ]]; then
-        case "$source_override" in
-            .|./*|../*|/*)
-                [[ -f "$source_override/pyproject.toml" ]] || die "source has no pyproject.toml: $source_override"
-                (cd -- "$source_override" && pwd -P)
-                ;;
-            *)
-                printf '%s\n' "$source_override"
-                ;;
-        esac
-        return
-    fi
-
-    checkout_source="$(local_checkout_source || true)"
-    if [[ -n "$checkout_source" && "$ref_was_set" == "0" ]]; then
-        printf '%s\n' "$checkout_source"
-        return
-    fi
-
-    case "$REPOSITORY_URL" in
-        git+*) printf '%s@%s\n' "$REPOSITORY_URL" "$ref" ;;
-        *) printf 'git+%s@%s\n' "$REPOSITORY_URL" "$ref" ;;
-    esac
-}
-
-find_uv() {
-    local discovered=""
-    discovered="$(command -v uv || true)"
-    if [[ -n "$discovered" ]]; then
-        printf '%s\n' "$discovered"
-        return 0
-    fi
-
-    if [[ "$dry_run" == "1" ]]; then
-        printf '%s\n' "uv (installed by Astral's official installer)"
-        return 0
-    fi
-
-    command -v curl >/dev/null 2>&1 || die "uv is missing and curl is not available; install uv first"
-    mkdir -p "$bin_directory"
-    info "uv not found; installing uv into $bin_directory"
-    if ! (export UV_INSTALL_DIR="$bin_directory"; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 https://astral.sh/uv/install.sh | sh) >&2; then
-        die "uv installation failed"
-    fi
-
-    if [[ -x "$bin_directory/uv" ]]; then
-        printf '%s\n' "$bin_directory/uv"
-        return 0
-    fi
-
-    discovered="$(command -v uv || true)"
-    [[ -n "$discovered" ]] || die "uv was installed but could not be found"
-    printf '%s\n' "$discovered"
-}
-
-print_plan() {
-    printf 'trace-marketing installer (dry run)\n'
-    printf '  source: %s\n' "$resolved_source"
-    printf '  python: %s\n' "$PYTHON_VERSION"
-    printf '  bin directory: %s\n' "$bin_directory"
-    printf '  command: UV_TOOL_BIN_DIR=%q %q tool install --force --python %q --from %q %q\n' \
-        "$bin_directory" "$uv_path" "$PYTHON_VERSION" "$resolved_source" "$PACKAGE_NAME"
-    if [[ "$shell_update" == "1" ]]; then
-        printf '  shell PATH: update zsh/bash startup file when supported\n'
-    else
-        printf '  shell PATH: unchanged\n'
-    fi
-    printf '  Mac worker service: configure after enrollment with trace-marketing worker install-service\n'
-}
-
-
-configure_shell_path() {
-    local shell_name="${SHELL##*/}"
-    local marker="# trace-marketing installer"
-    local escaped_bin_directory=""
-    local path_line=""
-
-    if [[ "$shell_update" != "1" ]]; then
-        return
-    fi
-
-    case "$shell_name" in
-        bash) shell_rc="$HOME_DIRECTORY/.bashrc" ;;
-        zsh) shell_rc="$HOME_DIRECTORY/.zshrc" ;;
-        *) return ;;
-    esac
-
-    escaped_bin_directory="$(printf '%q' "$bin_directory")"
-    path_line="export PATH=${escaped_bin_directory}:\$PATH"
-    if [[ -f "$shell_rc" ]] && grep -Fqx "$path_line" "$shell_rc"; then
-        return
-    fi
-
-    if [[ ! -f "$shell_rc" ]] || ! grep -Fqx "$marker" "$shell_rc"; then
-        printf '\n%s\n' "$marker" >> "$shell_rc"
-    fi
-    printf '%s\n' "$path_line" >> "$shell_rc"
+require_value() {
+    (($# >= 2)) || die "$1 requires a value"
 }
 
 while (($# > 0)); do
     case "$1" in
-        --source|--from)
-            (($# >= 2)) || die "$1 requires a value"
-            source_override="$2"
+        --tag)
+            require_value "$@"
+            tag="$2"
             shift 2
             ;;
-        --source=*|--from=*)
-            source_override="${1#*=}"
+        --tag=*)
+            tag="${1#*=}"
             shift
             ;;
-        --ref)
-            (($# >= 2)) || die "--ref requires a value"
-            ref="$2"
-            ref_was_set=1
+        --repository)
+            require_value "$@"
+            repository="$2"
             shift 2
             ;;
-        --ref=*)
-            ref="${1#*=}"
-            ref_was_set=1
+        --repository=*)
+            repository="${1#*=}"
             shift
             ;;
-        --bin-dir)
-            (($# >= 2)) || die "--bin-dir requires a value"
-            bin_directory="$2"
+        --home)
+            require_value "$@"
+            agent_home="$2"
             shift 2
             ;;
-        --bin-dir=*)
-            bin_directory="${1#*=}"
+        --home=*)
+            agent_home="${1#*=}"
+            shift
+            ;;
+        --install-root)
+            require_value "$@"
+            install_root="$2"
+            shift 2
+            ;;
+        --install-root=*)
+            install_root="${1#*=}"
+            shift
+            ;;
+        --uv)
+            require_value "$@"
+            uv_path="$2"
+            shift 2
+            ;;
+        --uv=*)
+            uv_path="${1#*=}"
+            shift
+            ;;
+        --interval-seconds)
+            require_value "$@"
+            interval_seconds="$2"
+            shift 2
+            ;;
+        --interval-seconds=*)
+            interval_seconds="${1#*=}"
             shift
             ;;
         --dry-run)
             dry_run=1
             shift
             ;;
-        --no-shell-update)
-            shell_update=0
-            shift
-            ;;
-        --workspace-service|--no-workspace-service|--workspace-name|--workspace-name=*|--no-cloudflared-install)
-            die "$1 was removed; use trace-marketing worker enrollment and service commands"
+        --source|--source=*|--from|--from=*|--ref|--ref=*|--bin-dir|--bin-dir=*|--no-shell-update)
+            die "$1 is unsafe for production; select an immutable release with --tag"
             ;;
         -h|--help)
             print_help
@@ -241,36 +125,75 @@ while (($# > 0)); do
     esac
 done
 
-require_absolute_path "$bin_directory"
-resolved_source="$(resolve_source)"
-uv_path="$(find_uv)"
+[[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid owner/repository"
+[[ -z "$tag" || "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
+    die "--tag must use vX.Y.Z strict semantic versioning"
+[[ "$agent_home" == /* ]] || die "--home must be an absolute path"
+[[ "$install_root" == /* ]] || die "--install-root must be an absolute path"
+[[ "$interval_seconds" =~ ^[0-9]+$ ]] || die "--interval-seconds must be an integer"
+((interval_seconds >= 300)) || die "--interval-seconds must be at least 300"
 
 if [[ "$dry_run" == "1" ]]; then
-    print_plan
+    printf 'trace-marketing immutable release bootstrap (dry run)\n'
+    printf '  repository: %s\n' "$repository"
+    printf '  release: %s\n' "${tag:-latest stable}"
+    printf '  agent state preserved: %s\n' "$agent_home"
+    printf '  managed releases: %s/releases/<version>\n' "$install_root"
+    printf '  verification: stable + immutable + tag/commit + SHA-256 + GitHub attestations\n'
+    printf '  services: separate worker and pull updater LaunchAgents\n'
+    printf '  out of scope: Codex CLI, Xcode, Appium, XCUITest, Trace app upgrades\n'
     exit 0
 fi
 
-mkdir -p "$bin_directory"
-info "installing $PACKAGE_NAME from $resolved_source"
-UV_TOOL_BIN_DIR="$bin_directory" "$uv_path" tool install \
-    --force \
-    --python "$PYTHON_VERSION" \
-    --from "$resolved_source" \
-    "$PACKAGE_NAME"
-
-export PATH="$bin_directory:$PATH"
-[[ -x "$bin_directory/$CLI_NAME" ]] || die "installation completed but $CLI_NAME was not created in $bin_directory"
-"$bin_directory/$CLI_NAME" --help >/dev/null || die "$CLI_NAME verification failed"
-configure_shell_path
-
-info "Mac worker service not started; enroll first, then run trace-marketing worker install-service"
-
-printf '\nInstalled %s\n' "$CLI_NAME"
-printf '  executable: %s/%s\n' "$bin_directory" "$CLI_NAME"
-if [[ -n "$shell_rc" ]]; then
-    printf '  PATH file: %s\n' "$shell_rc"
-    printf '  reload: source %s\n' "$shell_rc"
-else
-    printf "  current shell: export PATH=%q:\$PATH\n" "$bin_directory"
+[[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || \
+    die "bootstrap requires an Apple Silicon Mac"
+command -v gh >/dev/null 2>&1 || die "GitHub CLI is required"
+command -v python3 >/dev/null 2>&1 || die "python3 is required"
+if [[ -z "$uv_path" ]]; then
+    uv_path="$(command -v uv || true)"
 fi
-printf '  verify: %s --help\n' "$CLI_NAME"
+[[ -n "$uv_path" && -x "$uv_path" ]] || die "uv must already be installed; pass --uv if needed"
+
+if [[ -z "$tag" ]]; then
+    tag="$(gh release view --repo "$repository" --json tagName,isDraft,isPrerelease \
+        --jq 'select(.isDraft == false and .isPrerelease == false) | .tagName')"
+    [[ -n "$tag" ]] || die "latest stable GitHub Release could not be resolved"
+fi
+
+download_directory="$(mktemp -d "${TMPDIR:-/tmp}/trace-marketing-bootstrap.XXXXXX")"
+cleanup() {
+    if [[ -n "$download_directory" && -d "$download_directory" ]]; then
+        rm -rf -- "$download_directory"
+    fi
+}
+trap cleanup EXIT
+
+gh release download "$tag" --repo "$repository" --dir "$download_directory" \
+    --pattern trace-marketing-release.json \
+    --pattern trace-marketing-bootstrap.py
+manifest="$download_directory/trace-marketing-release.json"
+bootstrap="$download_directory/trace-marketing-bootstrap.py"
+[[ -f "$manifest" && -f "$bootstrap" ]] || die "release bootstrap envelope is incomplete"
+
+bundle_name="$(python3 -c '
+import json, pathlib, sys
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if payload.get("tag") != sys.argv[2]:
+    raise SystemExit("manifest tag mismatch")
+print(payload["bundle"]["name"])
+' "$manifest" "$tag")"
+[[ "$bundle_name" =~ ^trace-marketing-macos-arm64-v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$ ]] || \
+    die "manifest bundle name is invalid"
+gh release download "$tag" --repo "$repository" --dir "$download_directory" \
+    --pattern "$bundle_name"
+bundle="$download_directory/$bundle_name"
+[[ -f "$bundle" ]] || die "release bundle is missing"
+
+python3 "$bootstrap" \
+    --manifest "$manifest" \
+    --bundle "$bundle" \
+    --home "$agent_home" \
+    --install-root "$install_root" \
+    --uv "$uv_path" \
+    --repository "$repository" \
+    --interval-seconds "$interval_seconds"

@@ -30,7 +30,7 @@ from ads_booster.marketing.worker_broker import (
     normalize_control_plane_origin,
 )
 from ads_booster.marketing.worker_doctor import MacWorkerDoctorReport, inspect_mac_worker
-from ads_booster.marketing.worker_launchd import MacWorkerLaunchd
+from ads_booster.marketing.worker_launchd import MacWorkerLaunchd, MacWorkerUpdaterLaunchd
 from ads_booster.transport.http import HttpResponse
 from ads_booster.transport.json_types import JsonObject
 
@@ -272,6 +272,65 @@ def test_worker_launchagent_contains_no_credential_or_person_specific_path(
     assert stat.S_IMODE(plist_path.stat().st_mode) == 0o600
 
 
+def test_managed_launchagents_keep_the_current_symlink_and_separate_updater(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRACE_MARKETING_CONTROL_TOKEN", "must-not-be-persisted")
+    root = tmp_path / "managed"
+    release = root / "releases" / "1.2.3"
+    executable = release / "bin" / "trace-marketing"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    executable.chmod(0o700)
+    current = root / "current"
+    current.symlink_to(release, target_is_directory=True)
+    codex = tmp_path / "bin" / "codex"
+    uv = tmp_path / "bin" / "uv"
+    codex.parent.mkdir(parents=True)
+    codex.touch()
+    uv.touch()
+    worker_plist = tmp_path / "worker.plist"
+    updater_plist = tmp_path / "updater.plist"
+    worker = MacWorkerLaunchd(
+        executable=current / "bin" / "trace-marketing",
+        codex_executable=codex,
+        agent_home=tmp_path / "agent",
+        plist_path=worker_plist,
+        install_root=root,
+    )
+    updater = MacWorkerUpdaterLaunchd(
+        executable=current / "bin" / "trace-marketing",
+        codex_executable=codex,
+        uv_executable=uv,
+        agent_home=tmp_path / "agent",
+        install_root=root,
+        plist_path=updater_plist,
+        interval_seconds=600,
+    )
+
+    worker.install()
+    updater.install()
+
+    worker_payload = cast("dict[str, object]", plistlib.loads(worker_plist.read_bytes()))
+    updater_payload = cast("dict[str, object]", plistlib.loads(updater_plist.read_bytes()))
+    worker_arguments = cast("list[str]", worker_payload["ProgramArguments"])
+    updater_arguments = cast("list[str]", updater_payload["ProgramArguments"])
+    assert worker_arguments[0] == str(current / "bin" / "trace-marketing")
+    assert updater_arguments[:3] == [
+        str(current / "bin" / "trace-marketing"),
+        "worker",
+        "update",
+    ]
+    assert updater_payload["Label"] == "com.corca.trace-marketing-updater"
+    assert updater_payload["RunAtLoad"] is True
+    assert updater_payload["StartInterval"] == 600
+    assert "KeepAlive" not in updater_payload
+    assert worker.owns_installed_plist()
+    assert updater.owns_installed_plist()
+    assert "must-not-be-persisted" not in updater_plist.read_text(encoding="utf-8")
+
+
 def test_doctor_heartbeat_serves_cached_state_during_a_slow_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -361,7 +420,9 @@ def test_worker_status_checks_the_launchagent_pinned_codex(
             return pinned
 
     def inspect_pinned(
-        *, codex_executable: Path | None = None, resolve_codex: bool = True,
+        *,
+        codex_executable: Path | None = None,
+        resolve_codex: bool = True,
     ) -> MacWorkerDoctorReport:
         assert resolve_codex is False
         captured.append(codex_executable)
@@ -382,7 +443,8 @@ def test_worker_status_checks_the_launchagent_pinned_codex(
     )
 
     result = CliRunner().invoke(
-        marketing_cli.app, ["worker", "status", "--home", str(tmp_path / "agent")],
+        marketing_cli.app,
+        ["worker", "status", "--home", str(tmp_path / "agent")],
     )
 
     assert result.exit_code == 0

@@ -74,7 +74,7 @@ def inspect_mac_worker(
         ready=ready,
         summary=summary,
         checks=checks,
-        version=_installed_version(),
+        version=installed_version(),
     )
 
 
@@ -162,7 +162,7 @@ def _run(command: tuple[str, ...]) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
-def _installed_version() -> str:
+def installed_version() -> str:
     try:
         return version(_PACKAGE_NAME)
     except PackageNotFoundError:

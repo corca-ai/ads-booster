@@ -44,60 +44,73 @@ def test_installer_help_describes_native_install_controls() -> None:
 
     assert result.returncode == 0
     assert "--dry-run" in result.stdout
-    assert "--source" in result.stdout
-    assert "--ref" in result.stdout
-    assert "--no-shell-update" in result.stdout
+    assert "--tag" in result.stdout
+    assert "--install-root" in result.stdout
+    assert "--uv" in result.stdout
+    assert "immutable" in result.stdout
     assert "Appium" in result.stdout
     assert "Xcode" in result.stdout
     assert "Codex CLI" in result.stdout
 
 
-def test_installer_dry_run_prints_user_local_tool_plan(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
+def test_installer_dry_run_prints_managed_release_plan(tmp_path: Path) -> None:
+    install_root = tmp_path / "managed"
+    agent_home = tmp_path / "agent"
     result = run_installer(
         "--dry-run",
-        "--source",
-        ".",
-        "--bin-dir",
-        str(bin_dir),
-        "--no-shell-update",
+        "--tag",
+        "v1.2.3",
+        "--home",
+        str(agent_home),
+        "--install-root",
+        str(install_root),
     )
 
     assert result.returncode == 0
-    assert "uv tool install" in result.stdout
-    assert "trace-appium-capture" in result.stdout
-    assert "trace-marketing" in result.stdout
-    assert str(bin_dir) in result.stdout
-    assert "Mac worker service" in result.stdout
-    assert "cloudflared" not in result.stdout
-    assert not bin_dir.exists()
+    assert "v1.2.3" in result.stdout
+    assert "stable + immutable + tag/commit + SHA-256 + GitHub attestations" in result.stdout
+    assert str(agent_home) in result.stdout
+    assert str(install_root / "releases" / "<version>") in result.stdout
+    assert "separate worker and pull updater LaunchAgents" in result.stdout
+    assert "Codex CLI, Xcode, Appium, XCUITest, Trace app upgrades" in result.stdout
+    assert not install_root.exists()
 
 
-def test_installer_rejects_removed_local_workspace_service(tmp_path: Path) -> None:
+def test_installer_rejects_mutable_or_in_place_sources(tmp_path: Path) -> None:
     result = run_installer(
         "--dry-run",
         "--source",
         ".",
-        "--workspace-service",
-        "--bin-dir",
-        str(tmp_path / "bin"),
-        "--no-shell-update",
     )
 
     assert result.returncode == 1
-    assert "was removed" in result.stderr
-    assert "trace-marketing worker" in result.stderr
+    assert "unsafe for production" in result.stderr
+    assert "immutable release" in result.stderr
+    assert not (tmp_path / "bin").exists()
 
 
-def test_installer_explicit_ref_uses_remote_source_from_a_checkout(tmp_path: Path) -> None:
+def test_installer_rejects_non_semantic_release_tag(tmp_path: Path) -> None:
     result = run_installer(
         "--dry-run",
-        "--ref",
-        "v0.1.0",
-        "--bin-dir",
-        str(tmp_path / "bin"),
-        "--no-shell-update",
+        "--tag",
+        "main",
+        "--install-root",
+        str(tmp_path / "managed"),
     )
 
-    assert result.returncode == 0
-    assert "git+https://github.com/corca-ai/ads-booster.git@v0.1.0" in result.stdout
+    assert result.returncode == 1
+    assert "strict semantic versioning" in result.stderr
+
+
+def test_production_installer_has_no_mutable_or_in_place_uv_update_path() -> None:
+    installer = INSTALLER.read_text(encoding="utf-8")
+    bootstrap = (REPOSITORY_ROOT / "scripts" / "bootstrap-mac-worker.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "uv tool install" not in installer
+    assert "--force" not in installer
+    assert "TRACE_ADS_REF" not in installer
+    assert "gh release download" in installer
+    assert '"gh", "release", "verify"' in bootstrap
+    assert '"gh", "release", "verify-asset"' in bootstrap
