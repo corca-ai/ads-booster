@@ -21,8 +21,6 @@ dependencies = [
 trace-capture = "ads_booster.cli.capture:app"
 trace-compose = "ads_booster.cli.compose:app"
 trace-run = "ads_booster.cli.trace_run:app"
-trace-agent = "ads_booster.cli.agent:app"
-trace-ads = "ads_booster.cli.agent:app"
 trace-marketing = "ads_booster.cli.marketing:app"
 
 [dependency-groups]

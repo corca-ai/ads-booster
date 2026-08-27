@@ -41,9 +41,11 @@ _LOCALES: Final = {
 }
 _RUNTIME_VERSION = re.compile(r"\.iOS-(\d+)-(\d+)$")
 _MAX_TRACE_ITEMS: Final = 8
+_MAX_REFERENCE_IDS: Final = 16
 _MAX_TRACE_ITEM_LENGTH: Final = 80
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _TRACE_ITEMS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
+_REFERENCE_IDS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 
 
 class DeviceResolver(Protocol):
@@ -105,9 +107,14 @@ class HostedWorkspaceCaptureExecutor:
     def execute(self, task: MarketingTask) -> TaskResult:
         if task.payload.get("pipeline") != _PIPELINE:
             raise MarketingExecutionError("unsupported_hosted_capture_pipeline")
-        request_id = f"hosted-{task.task_id}"[:80]
+        request_id = _task_identifier(task.task_id)
         bundle = _context_bundle(task, request_id, self.device_resolver.resolve())
         result = self.runner.run(bundle)
+        if result.state is TraceRunState.UNKNOWN_SIDE_EFFECT:
+            raise MarketingExecutionError(
+                "native_appium_side_effect_unknown",
+                unknown_side_effect=True,
+            )
         if result.state is not TraceRunState.COMPLETED or result.output_image is None:
             raise MarketingExecutionError("native_appium_capture_failed")
         provenance = result.capture_provenance
@@ -208,17 +215,31 @@ def _context_bundle(
     if isinstance(device_time, str) and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", device_time):
         hour, minute = map(int, device_time.split(":"))
         reference_date = reference_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    tone = str(selected_profile.get("tone") or "natural")[:80]
-    audience = str(selected_profile.get("audience") or "Trace user")[:80]
-    situation = str(
-        selected_profile.get("situation") or image_inputs.get("background_mood") or "daily life"
-    )[:80]
+    profile_name = _profile_text(selected_profile, "name", persona_id, 80)
+    tone = _profile_text(selected_profile, "tone", "natural", 300)
+    audience = _profile_text(selected_profile, "audience", "Trace user", 500)
+    situation = _profile_text(
+        selected_profile,
+        "situation",
+        str(image_inputs.get("background_mood") or "daily life"),
+        500,
+    )
     topic = _required_text(task.payload, "topic", 200)
+    caption = _required_text(task.payload, "caption", 10_000)
+    hypothesis = _required_text(task.payload, "hypothesis", 2_000)
+    creative_direction = _required_text(task.payload, "creative_direction", 20_000)
+    background_intent = _required_text(task.payload, "background_intent", 500)
+    reference_ids = _reference_ids(task.payload.get("reference_ids"))
+    language = _required_text(image_inputs, "language", 8)
+    if language != _LOCALES[country].split("-", maxsplit=1)[0]:
+        raise MarketingExecutionError("native_capture_language_mismatch")
     return MarketingContextBundle(
         schema_version="trace.marketing-context.v1",
         request_id=request_id,
+        campaign_id=task.task_id,
         persona=PersonaProfile(
             persona_id=persona_id,
+            display_name=profile_name,
             country=country,
             locale=_LOCALES[country],
             age_group="adult",
@@ -229,13 +250,48 @@ def _context_bundle(
         promotion_material=PromotionMaterial(
             promotion_material_id=f"hosted-{country.lower()}-trace",
             feature="lock_screen_schedule",
-            concept=topic[:120],
+            concept=topic,
             tone=(tone,),
+            caption=caption,
+            hypothesis=hypothesis,
+            reference_ids=reference_ids,
+            creative_direction=creative_direction,
+            background_intent=background_intent,
             trace_items=tuple(item.strip() for item in trace_items),
         ),
         reference_date=reference_date,
         device=device,
     )
+
+
+def _profile_text(profile: JsonObject, key: str, default: str, max_length: int) -> str:
+    value = profile.get(key, default)
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > max_length:
+        raise MarketingExecutionError("native_capture_context_profile_invalid")
+    return value.strip()
+
+
+def _task_identifier(value: str) -> str:
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}", value):
+        raise MarketingExecutionError("native_capture_task_id_invalid")
+    return value
+
+
+def _reference_ids(value: object) -> tuple[str, ...]:
+    try:
+        supplied = _REFERENCE_IDS.validate_python(value)
+    except ValidationError as error:
+        raise MarketingExecutionError("native_capture_reference_ids_invalid") from error
+    if len(supplied) > _MAX_REFERENCE_IDS:
+        raise MarketingExecutionError("native_capture_reference_ids_invalid")
+    identifiers: list[str] = []
+    for item in supplied:
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}", item):
+            raise MarketingExecutionError("native_capture_reference_ids_invalid")
+        if item in identifiers:
+            raise MarketingExecutionError("native_capture_reference_ids_invalid")
+        identifiers.append(item)
+    return tuple(identifiers)
 
 
 def _required_text(payload: JsonObject, key: str, max_length: int) -> str:

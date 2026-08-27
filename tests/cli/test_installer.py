@@ -47,12 +47,9 @@ def test_installer_help_describes_native_install_controls() -> None:
     assert "--source" in result.stdout
     assert "--ref" in result.stdout
     assert "--no-shell-update" in result.stdout
-    assert "--workspace-service" in result.stdout
-    assert "--no-workspace-service" in result.stdout
-    assert "--no-cloudflared-install" in result.stdout
-    assert "--workspace-name" in result.stdout
     assert "Appium" in result.stdout
     assert "Xcode" in result.stdout
+    assert "Codex CLI" in result.stdout
 
 
 def test_installer_dry_run_prints_user_local_tool_plan(tmp_path: Path) -> None:
@@ -69,29 +66,27 @@ def test_installer_dry_run_prints_user_local_tool_plan(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "uv tool install" in result.stdout
     assert "trace-appium-capture" in result.stdout
-    assert "trace-ads" in result.stdout
+    assert "trace-marketing" in result.stdout
     assert str(bin_dir) in result.stdout
-    assert "workspace service: not started" in result.stdout
+    assert "Mac worker service" in result.stdout
     assert "cloudflared" not in result.stdout
     assert not bin_dir.exists()
 
 
-def test_installer_dry_run_can_explicitly_start_workspace_service(tmp_path: Path) -> None:
+def test_installer_rejects_removed_local_workspace_service(tmp_path: Path) -> None:
     result = run_installer(
         "--dry-run",
         "--source",
         ".",
         "--workspace-service",
-        "--workspace-name",
-        "Launch archive",
         "--bin-dir",
         str(tmp_path / "bin"),
         "--no-shell-update",
     )
 
-    assert result.returncode == 0
-    assert "workspace service: macOS launchd + cloudflared tunnel" in result.stdout
-    assert "workspace name: Launch archive" in result.stdout
+    assert result.returncode == 1
+    assert "was removed" in result.stderr
+    assert "trace-marketing worker" in result.stderr
 
 
 def test_installer_explicit_ref_uses_remote_source_from_a_checkout(tmp_path: Path) -> None:

@@ -6,11 +6,11 @@
 ## 프로젝트 개요
 
 `ads-booster`는 Trace 마케팅 에이전트, 팀 워크스페이스와 Appium 이미지 파이프라인을
-제공합니다. 진입점은 `trace-ads`, `trace-agent`, `trace-capture`, `trace-compose`, `trace-run`입니다.
+제공합니다. 진입점은 `trace-marketing`, `trace-capture`, `trace-compose`, `trace-run`입니다.
 
 ## 제품 기준 환경
 
-- 제품 동작의 최우선 기준은 현재 worktree가 아니라 처음 설치한 격리된 `trace-agent`
+- 제품 동작의 최우선 기준은 현재 worktree가 아니라 처음 설치한 격리된 `trace-marketing`
   환경입니다.
 - 설치, PATH, CLI 노출, 기본 설정, 상태 디렉터리와 service lifecycle은 fresh install에서
   확인합니다.
@@ -23,7 +23,7 @@
 
 모든 문서를 매 작업마다 읽지 않습니다. 작업 범위에 필요한 기준만 선택해 읽습니다.
 
-1. 제품 동작과 설치 가능성은 fresh installed `trace-agent` 환경에서 먼저 확인합니다.
+1. 제품 동작과 설치 가능성은 fresh installed `trace-marketing` 환경에서 먼저 확인합니다.
 2. worktree의 코드와 테스트는 구현 분석과 후보 변경 검증에 사용합니다.
 3. 프로세스와 실행 흐름은 [시스템 아키텍처](./docs/architecture/system.md)를 확인합니다.
 4. 코드 책임과 배치는 [코드 아키텍처](./docs/architecture/code.md)를 확인합니다.
@@ -61,7 +61,8 @@
 
 ## 핵심 불변식
 
-- `trace-agent`는 `trace-ads`의 호환 진입점입니다.
+- Mac production model 경로는 같은 macOS 사용자의 공식 Codex CLI 로그인 세션을 사용하며
+  `trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
 - canonical conversation history를 보존하고 compaction은 provider projection만 줄입니다.
 - shared workspace context는 private chat에서 read-only입니다.
 - private session은 workspace, member, session scope를 모두 적용합니다.

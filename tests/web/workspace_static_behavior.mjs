@@ -50,7 +50,7 @@ class FakeElement {
 
   async click() {
     const listener = this.listeners.get("click");
-    if (listener) await listener({ currentTarget: this, preventDefault() {} });
+    if (listener) await listener({ currentTarget: this, target: this, preventDefault() {} });
   }
 
   async keydown(key) {
@@ -89,6 +89,8 @@ class FakeElement {
   close() {
     this.events.push("close");
     this.open = false;
+    const listener = this.listeners.get("close");
+    if (listener) listener({ currentTarget: this, target: this });
   }
 
   setAttribute(name, value) {
@@ -137,7 +139,9 @@ class FakeDocument {
   }
 
   createElement(id) {
-    return new FakeElement(id);
+    const element = new FakeElement(id);
+    element.ownerDocument = this;
+    return element;
   }
 
   querySelector(selector) {
@@ -274,6 +278,47 @@ const makeLiveDocument = () => {
   inviteCancel.matches = (selector) => selector === "[value='cancel']";
   inviteDialog.children = [inviteCancel];
   inviteForm.formValues = new Map([["display-name", "Grace"]]);
+  const workerManagerOpen = new FakeElement("worker-manager-open");
+  const workerManager = new FakeElement("worker-manager");
+  const workerManagerClose = new FakeElement("worker-manager-close");
+  const workerAdminLocked = new FakeElement("worker-admin-locked");
+  const workerAdminPanel = new FakeElement("worker-admin-panel");
+  workerAdminPanel.hidden = true;
+  const workerAdminForm = new FakeElement("worker-admin-form");
+  workerAdminForm.formValues = new Map([["control-token", "admin-secret"]]);
+  const workerAdminTokenField = new FakeElement("worker-control-token");
+  const workerAdminFeedback = new FakeElement("worker-admin-feedback");
+  workerAdminFeedback.hidden = false;
+  const workerAdminSubmit = new FakeElement("worker-admin-submit");
+  workerAdminSubmit.textContent = "관리 열기";
+  const workerAdminRefresh = new FakeElement("worker-admin-refresh");
+  workerAdminRefresh.textContent = "새로고침";
+  const workerAdminLock = new FakeElement("worker-admin-lock");
+  const workerList = new FakeElement("worker-list");
+  const workerListEmpty = new FakeElement("worker-list-empty");
+  const workerAdminSummary = new FakeElement("worker-admin-summary");
+  const workerEnrollmentForm = new FakeElement("worker-enrollment-form");
+  workerEnrollmentForm.formValues = new Map([
+    ["display-name", "새 스튜디오 Mac"],
+    ["pool", "appium"],
+    ["ttl-seconds", "600"],
+  ]);
+  const workerDisplayName = new FakeElement("worker-display-name");
+  const workerPool = new FakeElement("worker-pool");
+  workerPool.value = "appium";
+  const workerEnrollmentFeedback = new FakeElement("worker-enrollment-feedback");
+  workerEnrollmentFeedback.hidden = false;
+  const workerEnrollmentSubmit = new FakeElement("worker-enrollment-submit");
+  workerEnrollmentSubmit.textContent = "일회용 코드 만들기";
+  const workerEnrollmentResult = new FakeElement("worker-enrollment-result");
+  workerEnrollmentResult.hidden = true;
+  const workerEnrollmentCode = new FakeElement("worker-enrollment-code");
+  const workerEnrollmentCommand = new FakeElement("worker-enrollment-command");
+  const workerEnrollmentExpiry = new FakeElement("worker-enrollment-expiry");
+  const workerEnrollmentCodeCopy = new FakeElement("worker-enrollment-code-copy");
+  workerEnrollmentCodeCopy.textContent = "코드 복사";
+  const workerEnrollmentCommandCopy = new FakeElement("worker-enrollment-command-copy");
+  workerEnrollmentCommandCopy.textContent = "명령 복사";
   const candidateForm = new FakeElement("candidate-form");
   candidateForm.formValues = new Map([
     ["topic", "  시험기간 일정 관리 — 잠금화면 데모  "],
@@ -341,6 +386,31 @@ const makeLiveDocument = () => {
     ["[data-invite-result]", inviteResult],
     ["[data-invite-token]", inviteToken],
     ["[data-invite-copy]", inviteCopy],
+    ["[data-worker-manager-open]", workerManagerOpen],
+    ["[data-worker-manager]", workerManager],
+    ["[data-worker-manager-close]", workerManagerClose],
+    ["[data-worker-admin-locked]", workerAdminLocked],
+    ["[data-worker-admin-panel]", workerAdminPanel],
+    ["[data-worker-admin-form]", workerAdminForm],
+    ["#worker-control-token", workerAdminTokenField],
+    ["[data-worker-admin-feedback]", workerAdminFeedback],
+    ["[data-worker-admin-submit]", workerAdminSubmit],
+    ["[data-worker-admin-refresh]", workerAdminRefresh],
+    ["[data-worker-admin-lock]", workerAdminLock],
+    ["[data-worker-list]", workerList],
+    ["[data-worker-list-empty]", workerListEmpty],
+    ["[data-worker-admin-summary]", workerAdminSummary],
+    ["[data-worker-enrollment-form]", workerEnrollmentForm],
+    ["#worker-display-name", workerDisplayName],
+    ["#worker-pool", workerPool],
+    ["[data-worker-enrollment-feedback]", workerEnrollmentFeedback],
+    ["[data-worker-enrollment-submit]", workerEnrollmentSubmit],
+    ["[data-worker-enrollment-result]", workerEnrollmentResult],
+    ["[data-worker-enrollment-code]", workerEnrollmentCode],
+    ["[data-worker-enrollment-command]", workerEnrollmentCommand],
+    ["[data-worker-enrollment-expiry]", workerEnrollmentExpiry],
+    ["[data-worker-enrollment-code-copy]", workerEnrollmentCodeCopy],
+    ["[data-worker-enrollment-command-copy]", workerEnrollmentCommandCopy],
   ]);
   const selectorGroups = new Map([["[data-autogen]", [autogenButton]]]);
   const document = new FakeDocument([
@@ -380,6 +450,31 @@ const makeLiveDocument = () => {
     inviteToken,
     inviteCopy,
     inviteCancel,
+    workerManagerOpen,
+    workerManager,
+    workerManagerClose,
+    workerAdminLocked,
+    workerAdminPanel,
+    workerAdminForm,
+    workerAdminTokenField,
+    workerAdminFeedback,
+    workerAdminSubmit,
+    workerAdminRefresh,
+    workerAdminLock,
+    workerList,
+    workerListEmpty,
+    workerAdminSummary,
+    workerEnrollmentForm,
+    workerDisplayName,
+    workerPool,
+    workerEnrollmentFeedback,
+    workerEnrollmentSubmit,
+    workerEnrollmentResult,
+    workerEnrollmentCode,
+    workerEnrollmentCommand,
+    workerEnrollmentExpiry,
+    workerEnrollmentCodeCopy,
+    workerEnrollmentCommandCopy,
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
@@ -423,6 +518,31 @@ const makeLiveDocument = () => {
     inviteToken,
     inviteCopy,
     inviteCancel,
+    workerManagerOpen,
+    workerManager,
+    workerManagerClose,
+    workerAdminLocked,
+    workerAdminPanel,
+    workerAdminForm,
+    workerAdminTokenField,
+    workerAdminFeedback,
+    workerAdminSubmit,
+    workerAdminRefresh,
+    workerAdminLock,
+    workerList,
+    workerListEmpty,
+    workerAdminSummary,
+    workerEnrollmentForm,
+    workerDisplayName,
+    workerPool,
+    workerEnrollmentFeedback,
+    workerEnrollmentSubmit,
+    workerEnrollmentResult,
+    workerEnrollmentCode,
+    workerEnrollmentCommand,
+    workerEnrollmentExpiry,
+    workerEnrollmentCodeCopy,
+    workerEnrollmentCommandCopy,
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
@@ -453,15 +573,18 @@ const fakeTimers = () => {
 const loadLive = async (fixture, fetchImplementation) => {
   const timers = fakeTimers();
   fixture.timers = timers;
+  fixture.clipboard ??= [];
   runInNewContext(liveSource, {
     document: fixture.document,
     fetch: fetchImplementation,
     Headers,
     URL,
+    navigator: { clipboard: { writeText: async (value) => { fixture.clipboard.push(value); } } },
     window: {
       clearTimeout: timers.clearTimeout,
       setTimeout: timers.setTimeout,
       confirm: () => true,
+      location: { origin: "https://workspace.borca.ai" },
       localStorage: { getItem: () => null, setItem: () => {} },
     },
     FormData: class FakeFormData {
@@ -1191,10 +1314,10 @@ const testImageGenerationButtonRunsTheStage = async () => {
   await button.click();
   assert.ok(calls.some(([path, method]) =>
     path === "/api/candidates/candidate-1/generate-image" && method === "POST"));
-  assert.equal(fixture.notice.textContent, "Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
+  assert.equal(fixture.notice.textContent, "Mac 캡처 작업을 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, "Mac에서 이미지 생성");
-  assert.ok(findByText(fixture.imageList.children[0], "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다."));
+  assert.ok(findByText(fixture.imageList.children[0], "온라인 Mac worker가 작업 lease를 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다."));
 };
 
 const testImageGenerationFailureShowsTheServerMessage = async () => {
@@ -1249,6 +1372,126 @@ const testImageApprovalPostsTheDecision = async () => {
   assert.equal(fixture.imageEmpty.hidden, false);
 };
 
+const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  let workerState = "active";
+  let rejectEnrollment = false;
+  const workerRecord = () => ({
+    worker_id: "worker-1",
+    display_name: "스튜디오 Mac",
+    pool: "appium",
+    state: workerState,
+    status: workerState === "active" ? "busy" : workerState,
+    capabilities: { native_appium: true },
+    doctor: { ready: true, summary: "ready" },
+    version: "0.2.3",
+    last_seen_at: new Date().toISOString(),
+    current_task_id: "task-1",
+  });
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates") return response(200, []);
+    if (path === "/v1/workers" && new Headers(options.headers).get("authorization") !== "Bearer admin-secret") {
+      return response(401, { error: "unauthorized" });
+    }
+    if (path === "/v1/workers" && options.method === undefined) {
+      return response(200, { workers: [workerRecord()] });
+    }
+    if (path === "/v1/workers/worker-1/state") {
+      workerState = JSON.parse(options.body).state;
+      return response(200, { worker_id: "worker-1", state: workerState });
+    }
+    if (path === "/v1/workers/worker-1/revoke") {
+      workerState = "revoked";
+      return response(200, { worker_id: "worker-1", state: workerState });
+    }
+    if (path === "/v1/worker-enrollments") {
+      if (rejectEnrollment) return response(401, { error: "unauthorized" });
+      return response(201, {
+        enrollment_code: "trace-enroll_once",
+        expires_at: "2026-08-26T04:00:00.000Z",
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await fixture.workerManagerOpen.click();
+  assert.equal(fixture.workerManager.open, true);
+  assert.ok(fixture.workerAdminTokenField.events.includes("focus"));
+  fixture.workerAdminForm.formValues.set("control-token", "wrong-token");
+  await fixture.workerAdminForm.submit();
+  assert.equal(fixture.workerAdminLocked.hidden, false);
+  assert.equal(fixture.workerAdminPanel.hidden, true);
+  assert.equal(
+    fixture.workerAdminFeedback.textContent,
+    "제어 토큰이 맞지 않습니다. Cloudflare의 CONTROL_PLANE_TOKEN 값을 확인해 주세요.",
+  );
+  assert.equal(fixture.workerAdminTokenField.getAttribute("aria-invalid"), "true");
+
+  fixture.workerAdminForm.formValues.set("control-token", "admin-secret");
+  await fixture.workerAdminForm.submit();
+  assert.equal(fixture.workerAdminLocked.hidden, true);
+  assert.equal(fixture.workerAdminPanel.hidden, false);
+  assert.equal(fixture.workerList.children.length, 1);
+  assert.ok(findByText(fixture.workerList.children[0], "작업 중"));
+  assert.equal(fixture.workerAdminSummary.textContent, "전체 1대 · 작업 가능 0대 · 작업 중 1대 · 확인 필요 0대");
+
+  const protectedCalls = calls.filter(([path]) => path.startsWith("/v1/"));
+  assert.ok(protectedCalls.length > 0);
+  assert.ok(protectedCalls.some(([_path, options]) =>
+    new Headers(options.headers).get("authorization") === "Bearer wrong-token"));
+  assert.ok(protectedCalls.some(([_path, options]) =>
+    new Headers(options.headers).get("authorization") === "Bearer admin-secret"));
+
+  await findByText(fixture.workerList.children[0], "새 작업 중지").click();
+  assert.equal(workerState, "draining");
+  assert.ok(findByText(fixture.workerList.children[0], "다시 활성화"));
+
+  await fixture.workerEnrollmentForm.submit();
+  assert.equal(fixture.workerEnrollmentResult.hidden, false);
+  assert.equal(fixture.workerEnrollmentCode.textContent, "trace-enroll_once");
+  const firstEnrollmentCall = calls.findLast(([path]) => path === "/v1/worker-enrollments");
+  assert.equal(JSON.parse(firstEnrollmentCall[1].body).ttl_seconds, 600);
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "trace-marketing worker enroll --url https://workspace.borca.ai --code 'trace-enroll_once'",
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes("trace-marketing worker install-service"));
+  await fixture.workerEnrollmentCommandCopy.click();
+  assert.equal(fixture.clipboard.at(-1), fixture.workerEnrollmentCommand.textContent);
+  assert.equal(fixture.workerEnrollmentCommandCopy.textContent, "명령 복사됨");
+
+  const row = fixture.workerList.children[0];
+  await findByText(row, "연결 폐기").click();
+  const revoke = findByText(row, "폐기 확정");
+  assert.ok(revoke, "revocation requires an explicit second action");
+  assert.ok(findByText(
+    row,
+    "스튜디오 Mac의 자격 증명을 폐기하고 현재 작업을 해제합니다. 콜백 반영 중이면 자격 증명 폐기가 거절되므로 Appium 결과를 먼저 확인하세요.",
+  ));
+  await revoke.click();
+  assert.equal(workerState, "revoked");
+  assert.ok(findByText(fixture.workerList.children[0], "연결 폐기됨"));
+
+  fixture.workerEnrollmentForm.formValues.set("ttl-seconds", "");
+  rejectEnrollment = true;
+  await fixture.workerEnrollmentForm.submit();
+  const rejectedEnrollmentCall = calls.findLast(
+    ([path]) => path === "/v1/worker-enrollments",
+  );
+  assert.equal(Object.hasOwn(JSON.parse(rejectedEnrollmentCall[1].body), "ttl_seconds"), false);
+  assert.equal(fixture.workerAdminLocked.hidden, false);
+  assert.equal(fixture.workerAdminPanel.hidden, true);
+
+  await fixture.workerManagerClose.click();
+  assert.equal(fixture.workerManager.open, false);
+  assert.equal(fixture.workerAdminPanel.hidden, true);
+  assert.equal(fixture.workerAdminLocked.hidden, false);
+  assert.equal(fixture.workerEnrollmentResult.hidden, true);
+  assert.equal(fixture.workerEnrollmentCode.textContent, "");
+};
+
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
   const styles = await readFile(join(staticRoot, "workspace.css"), "utf8");
@@ -1292,10 +1535,23 @@ const testMarkupUsesTheAgreedTerminology = async () => {
     "the manual form collects the background subject",
   );
   assert.ok(markup.includes(">풍경</option>"), "background subjects are labelled in Korean");
-  assert.ok(markup.includes("Cloudflare Queue → Mac Appium → R2"), "the native capture boundary is visible");
-  assert.ok(markup.includes("부팅 가능한 Simulator를 찾아 Appium"), "dynamic Simulator discovery is explained");
+  assert.ok(markup.includes("Cloudflare D1 lease → Mac Appium → R2"), "the native capture boundary is visible");
+  assert.ok(markup.includes("data-worker-title"), "the hosted UI exposes sanitized Mac availability");
+  assert.ok(markup.includes("data-worker-manager-open"), "the status strip opens Mac connection management");
+  assert.ok(markup.includes("data-worker-admin-form"), "the Mac manager unlocks protected controls explicitly");
+  assert.ok(markup.includes("data-worker-enrollment-form"), "the Mac manager creates one-time enrollment codes");
+  assert.ok(markup.includes("data-worker-list"), "the Mac manager renders the protected worker inventory");
+  assert.ok(
+    markup.includes('id="worker-control-token" name="control-token" type="password" required autocomplete="off"'),
+    "the control token is an unseeded password field",
+  );
+  assert.ok(markup.includes("부팅 가능한 Simulator를 동적으로 찾습니다"), "dynamic Simulator discovery is explained");
   assert.ok(markup.includes('value="KR" selected>한국 (KR)'), "the form has a safe KR fallback");
   const live = await readFile(join(staticRoot, "workspace-live.js"), "utf8");
+  assert.ok(live.includes('let workerAdminToken = ""'), "the control token starts only in JavaScript memory");
+  const workerCodeRule = styles.match(/\.worker-enrollment-result__code code \{[^}]+\}/)?.[0] ?? "";
+  assert.ok(!workerCodeRule.includes("word-break"), "worker enrollment codes avoid deprecated word-break");
+  assert.ok(!/localStorage[^\n]*workerAdminToken|workerAdminToken[^\n]*localStorage/.test(live), "the control token is never persisted in browser storage");
   assert.ok(live.includes('? "팀" : "기본"'), "context provenance uses short Korean labels");
   assert.ok(!live.includes("촬영 주문서"), "no insider shooting-order copy in the live script");
   assert.ok(!live.includes("촬영 전"), "the image placeholder is renamed");
@@ -1334,9 +1590,10 @@ await testImageStageSplitsCaptionAndImageWork();
 await testImageGenerationButtonRunsTheStage();
 await testImageGenerationFailureShowsTheServerMessage();
 await testImageApprovalPostsTheDecision();
+await testMacConnectionsAreManagedWithAnEphemeralControlToken();
 await testMarkupUsesTheAgreedTerminology();
 await testGenerationProvenanceIsVisibleOnEveryCandidate();
 await testAManualCandidateSaysItHasNoGenerationProvenance();
 await testDeleteAsksBeforeItDeletes();
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
-console.log("workspace static behavior: 36 passed");
+console.log("workspace static behavior: 37 passed");

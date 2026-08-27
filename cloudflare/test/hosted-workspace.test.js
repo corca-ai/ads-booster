@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   candidateResponseSchema,
   contextForCountry,
+  DEFAULT_WORKSPACE_AI_MODEL,
   generationPrompt,
   handleHostedWorkspace,
   nextDailyGenerationAt,
@@ -69,7 +70,7 @@ function candidateRow(overrides = {}) {
   };
 }
 
-function candidateEnvironment(initial = candidateRow()) {
+function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false) {
   let row = { ...initial };
   const deletedArtifacts = [];
   const queuedTasks = [];
@@ -80,6 +81,9 @@ function candidateEnvironment(initial = candidateRow()) {
         bind(...values) {
           return {
             async first() {
+              if (sql.includes("SELECT worker_id FROM mac_workers")) {
+                return activeBrokerWorker ? { worker_id: "worker-1" } : null;
+              }
               if (sql.includes("SELECT * FROM hosted_workspace_accounts")) {
                 return {
                   account_id: "trace_demo_kr",
@@ -262,6 +266,15 @@ test("Workers AI schema requires two morning and two evening-ready candidates", 
   assert.ok(candidates.items.required.includes("image_inputs"));
 });
 
+test("hosted candidate generation defaults to GPT-OSS 20B in code and deployment config", async () => {
+  const config = JSON.parse(
+    await readFile(new URL("../wrangler.template.jsonc", import.meta.url), "utf8"),
+  );
+
+  assert.equal(DEFAULT_WORKSPACE_AI_MODEL, "@cf/openai/gpt-oss-20b");
+  assert.equal(config.vars.WORKSPACE_AI_MODEL, DEFAULT_WORKSPACE_AI_MODEL);
+});
+
 test("workspace context assets expose data-driven country profiles", () => {
   assert.ok(WORKSPACE_CONTEXT.global.includes("PRINCIPLES-GLOBAL"));
   assert.ok(WORKSPACE_CONTEXT.countries.KR.includes("PRINCIPLES-KR"));
@@ -327,6 +340,21 @@ test("an oversized reference selection is trimmed instead of blowing the prompt"
   const inlined = documents.match(/\[레퍼런스 본문: /g) ?? [];
   assert.ok(inlined.length > 0);
   assert.ok(inlined.length <= 5);
+});
+
+test("context profiles reject reference IDs the Mac contract cannot consume", () => {
+  const profile = { ...WORKSPACE_CONTEXT_PROFILES[0], reference_ids: ["invalid/reference"] };
+  assert.throws(
+    () => normalizeContextProfile(profile),
+    /레퍼런스 ID는/u,
+  );
+});
+
+test("candidate drafts reject reference IDs the Mac contract cannot consume", () => {
+  assert.throws(
+    () => normalizeCandidateDraft({ ...candidate(), refs_used: ["invalid/reference"] }),
+    /레퍼런스 ID는/u,
+  );
 });
 
 test("hosted context countries come from the packaged manifest", async () => {
@@ -465,6 +493,11 @@ test("image generation queues a revision-scoped native Mac capture", async () =>
     capture_task_id: null,
     capture_error: null,
     capture_requested_at: null,
+    context_snapshot_json: JSON.stringify({
+      persona_id: "kr_student",
+      guidance: "과장 없이 실제 사용 장면을 보여준다.",
+      reference_ids: ["kr-020"],
+    }),
   }));
   const response = await handleHostedWorkspace(
     new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
@@ -482,7 +515,39 @@ test("image generation queues a revision-scoped native Mac capture", async () =>
   assert.equal(state.queuedTasks[0].payload.pipeline, "hosted_workspace_capture_v1");
   assert.equal(state.queuedTasks[0].payload.candidate_revision, 4);
   assert.equal(state.queuedTasks[0].payload.image_inputs.device_time, "07:20");
+  assert.equal(state.queuedTasks[0].payload.caption, "기존 캡션");
+  assert.equal(state.queuedTasks[0].payload.hypothesis, "기존 가설");
+  assert.deepEqual(state.queuedTasks[0].payload.reference_ids, ["kr-study-day", "kr-020"]);
+  assert.match(state.queuedTasks[0].payload.creative_direction, /기존 Appium 프롬프트/);
+  assert.match(state.queuedTasks[0].payload.creative_direction, /과장 없이 실제 사용 장면/);
+  assert.equal(state.queuedTasks[0].payload.background_intent, "scenery: 이른 아침 캠퍼스 창가");
   assert.equal(state.captureTasks.length, 1);
+});
+
+test("an enrolled Mac sends new hosted captures through the D1 worker broker", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+  }), true);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(state.row().capture_state, "queued");
+  assert.equal(state.queuedTasks.length, 0);
+  assert.equal(state.captureTasks[0][7], "worker_broker");
 });
 
 test("built public workspace has no login form and keeps candidate controls", async () => {
@@ -498,8 +563,16 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /data-context-select/);
   assert.match(markup, /data-stat-review/);
   assert.match(markup, /href="#workspace-content">워크스페이스로 건너뛰기/);
-  assert.match(markup, /Cloudflare Queue → Mac Appium → R2/);
-  assert.match(markup, /부팅 가능한 Simulator를 찾아 Appium으로 Trace 부품을 캡처/);
+  assert.match(markup, /Cloudflare D1 lease → Mac Appium → R2/);
+  assert.match(markup, /data-worker-title/);
+  assert.match(markup, /data-worker-manager-open/);
+  assert.match(markup, /data-worker-manager/);
+  assert.match(markup, /data-worker-admin-form/);
+  assert.match(markup, /data-worker-enrollment-form/);
+  assert.match(markup, /data-worker-list/);
+  assert.match(markup, /id="worker-control-token" name="control-token" type="password" required autocomplete="off"/);
+  assert.doesNotMatch(markup, /id="worker-control-token"[^>]*value=/);
+  assert.match(markup, /부팅 가능한 Simulator를 동적으로 찾습니다/);
   assert.doesNotMatch(markup, /Cloudflare 검수용 SVG 미리보기/);
   assert.match(markup, /data-candidate-submit/);
 });

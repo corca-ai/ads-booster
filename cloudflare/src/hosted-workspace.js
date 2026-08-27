@@ -1,5 +1,7 @@
+import { hasRegisteredBrokerWorker } from "./mac-workers.js";
+
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
-const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
+export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const MAX_CANDIDATES = 200;
@@ -232,7 +234,8 @@ async function redispatchHostedCaptureTasks(env) {
   const retryBefore = new Date(Date.now() - 5 * 60_000).toISOString();
   const pending = await env.DB.prepare(
     `SELECT task_id, task_json FROM hosted_workspace_capture_tasks
-     WHERE state = 'queued' AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)
+     WHERE state = 'queued' AND dispatch_mode = 'legacy_queue'
+       AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)
      ORDER BY created_at LIMIT 50`,
   )
     .bind(retryBefore)
@@ -241,7 +244,7 @@ async function redispatchHostedCaptureTasks(env) {
     const now = new Date().toISOString();
     const claimed = await env.DB.prepare(
       `UPDATE hosted_workspace_capture_tasks SET last_dispatched_at = ?, updated_at = ?
-       WHERE task_id = ? AND state = 'queued'
+       WHERE task_id = ? AND state = 'queued' AND dispatch_mode = 'legacy_queue'
          AND (last_dispatched_at IS NULL OR last_dispatched_at <= ?)`,
     )
       .bind(now, now, task.task_id, retryBefore)
@@ -269,7 +272,7 @@ export function normalizeCandidateDraft(input) {
   }
   const caption = requiredString(input.caption, "caption", 10000);
   const hypothesis = requiredString(input.hypothesis, "hypothesis", 2000);
-  const refsUsed = stringList(input.refs_used, 16, 120);
+  const refsUsed = referenceIdList(input.refs_used);
   const principlesApplied = principleList(input.principles_applied);
   const imageInputs = normalizeImageInputs(input.image_inputs);
   const requestedPrompt = optionalString(input.appium_prompt ?? input.shooting_order, 10000);
@@ -347,6 +350,7 @@ export function normalizeContextProfile(input) {
   if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(personaId)) {
     throw new WorkspaceHttpError(400, "persona_id는 영문 소문자, 숫자, -, _만 사용할 수 있습니다.");
   }
+  const referenceIds = referenceIdList(input.reference_ids ?? []);
   return {
     country,
     name: requiredString(input.name, "name", 80),
@@ -355,7 +359,7 @@ export function normalizeContextProfile(input) {
     situation: requiredString(input.situation, "situation", 500),
     tone: requiredString(input.tone, "tone", 300),
     guidance: requiredString(input.guidance, "guidance", 2000),
-    reference_ids: stringList(input.reference_ids ?? [], 16, 120),
+    reference_ids: referenceIds,
   };
 }
 
@@ -836,7 +840,7 @@ async function generateCandidates(env, contextRegistry, profile) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let result;
     try {
-      result = await env.AI.run(env.WORKSPACE_AI_MODEL || DEFAULT_MODEL, {
+      result = await env.AI.run(env.WORKSPACE_AI_MODEL || DEFAULT_WORKSPACE_AI_MODEL, {
         messages: [
           {
             role: "system",
@@ -1185,7 +1189,11 @@ async function generateCandidateImage(env, candidateId) {
   if (candidate.capture_state === "queued") {
     throw new WorkspaceHttpError(409, "이미지 캡처가 이미 Mac worker를 기다리고 있습니다.");
   }
-  if (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function") {
+  const dispatchMode = await hasRegisteredBrokerWorker(env.DB)
+    ? "worker_broker"
+    : "legacy_queue";
+  if (dispatchMode === "legacy_queue" &&
+      (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function")) {
     throw new WorkspaceHttpError(503, "Mac 캡처 Queue가 준비되지 않았습니다.");
   }
   const taskId = crypto.randomUUID();
@@ -1193,6 +1201,20 @@ async function generateCandidateImage(env, candidateId) {
   const now = new Date().toISOString();
   const nextRevision = candidate.revision + 1;
   const idempotencyKey = `hosted:${accountId(env)}:${candidateId}:${candidate.revision}`;
+  const referenceIds = [...new Set([
+    ...candidate.refs_used,
+    ...(candidate.context_profile?.reference_ids ?? []),
+  ])];
+  if (referenceIds.length > 16) {
+    throw new WorkspaceHttpError(400, "이미지 생성에 사용할 레퍼런스는 16개 이하여야 합니다.");
+  }
+  const creativeDirection = [candidate.shooting_order, candidate.context_profile?.guidance]
+    .filter(Boolean)
+    .join("\n\n");
+  const backgroundIntent = [
+    candidate.image_inputs.background_subject,
+    candidate.image_inputs.background_mood,
+  ].join(": ");
   const body = {
     schema_version: "1",
     task_id: taskId,
@@ -1207,6 +1229,10 @@ async function generateCandidateImage(env, candidateId) {
       country: candidate.country,
       topic: candidate.topic,
       caption: candidate.caption,
+      hypothesis: candidate.hypothesis,
+      reference_ids: referenceIds,
+      creative_direction: creativeDirection,
+      background_intent: backgroundIntent,
       appium_prompt: candidate.shooting_order,
       image_inputs: candidate.image_inputs,
       context_profile: candidate.context_profile,
@@ -1217,8 +1243,8 @@ async function generateCandidateImage(env, candidateId) {
   await env.DB.prepare(
     `INSERT INTO hosted_workspace_capture_tasks
       (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
-       task_json, state, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+       task_json, state, dispatch_mode, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
   )
     .bind(
       taskId,
@@ -1228,6 +1254,7 @@ async function generateCandidateImage(env, candidateId) {
       nextRevision,
       idempotencyKey,
       JSON.stringify(body),
+      dispatchMode,
       now,
       now,
     )
@@ -1249,6 +1276,7 @@ async function generateCandidateImage(env, candidateId) {
       .run();
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
   }
+  if (dispatchMode === "worker_broker") return requireCandidate(env, candidateId);
   try {
     await env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
     await env.DB.prepare(
@@ -1544,6 +1572,17 @@ function stringList(value, maxItems, maxLength) {
     throw new WorkspaceHttpError(400, `목록은 최대 ${maxItems}개까지 입력할 수 있습니다.`);
   }
   return value.map((item) => requiredString(item, "목록 항목", maxLength));
+}
+
+function referenceIdList(value) {
+  const identifiers = stringList(value, 16, 80);
+  if (identifiers.some((item) => !/[a-zA-Z0-9]/i.test(item[0]) || /[^a-zA-Z0-9._-]/i.test(item))) {
+    throw new WorkspaceHttpError(400, "레퍼런스 ID는 영문자·숫자로 시작하고 ., -, _만 사용할 수 있습니다.");
+  }
+  if (new Set(identifiers).size !== identifiers.length) {
+    throw new WorkspaceHttpError(400, "레퍼런스 ID는 중복될 수 없습니다.");
+  }
+  return identifiers;
 }
 
 function principleList(value) {

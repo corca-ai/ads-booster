@@ -12,6 +12,7 @@ from ads_booster.agent.runs import (
     AgentRunNotFoundError,
     AgentRunState,
     AgentRunStore,
+    AgentRunUpdate,
     ToolPolicy,
 )
 from ads_booster.candidate_generation import CandidateRunConflictError
@@ -45,8 +46,6 @@ def _awaiting_approval(runs: AgentRunStore, run_id: str) -> None:
 
 
 def _advance(runs: AgentRunStore, run: AgentRun) -> AgentRun | None:
-    from ads_booster.agent.runs import AgentRunUpdate
-
     if run.state is AgentRunState.QUEUED:
         return runs.update(
             run.run_id,

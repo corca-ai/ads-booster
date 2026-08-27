@@ -11,6 +11,7 @@ execution kernel is expected to be replaced, and these three modules are the bla
 """
 
 from ads_booster.candidate_generation.kernel.background_seam import (
+    build_judged_codex_trace_runner,
     build_judged_trace_runner,
     judged_background_fetchers,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "CandidateGenerator",
     "CandidateImageRunner",
     "build_image_review",
+    "build_judged_codex_trace_runner",
     "build_judged_trace_runner",
     "build_kernel_candidate_generator",
     "judged_background_fetchers",

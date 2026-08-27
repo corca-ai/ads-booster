@@ -19,7 +19,7 @@ from ads_booster.automation import (
     QueueRecord,
     QueueScheduler,
 )
-from ads_booster.connectors.trace.v1.composition import build_trace_v1_runner
+from ads_booster.connectors.trace.v1.codex_runtime import build_codex_trace_runner
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -74,7 +74,7 @@ def create_service_worker(
 ) -> AutomationServiceWorker:
     selected_config = ServiceWorkerConfig() if config is None else config
     queue = AutomationQueue(home)
-    selected_worker_id = selected_config.worker_id or f"trace-agent-{os.getpid()}-{uuid4().hex}"
+    selected_worker_id = selected_config.worker_id or f"trace-marketing-{os.getpid()}-{uuid4().hex}"
     return AutomationServiceWorker(
         producer=CampaignProducer(CampaignStore(home), queue),
         scheduler=QueueScheduler(
@@ -92,5 +92,10 @@ def create_service_worker(
     )
 
 
-def build_production_runner(home: Path, http: HttpClient) -> GenerateOnePort:
-    return build_trace_v1_runner(home, http)
+def build_production_runner(
+    home: Path,
+    http: HttpClient,
+    *,
+    before_side_effect: Callable[[str], None] | None = None,
+) -> GenerateOnePort:
+    return build_codex_trace_runner(home, http, before_side_effect=before_side_effect)

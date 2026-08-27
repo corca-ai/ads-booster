@@ -1,260 +1,149 @@
-# Trace Marketing Agent Runtime
+# Trace Marketing Pipeline
 
-This repository creates Trace marketing wallpapers without setting a real iOS wallpaper. The primary
-generation path searches for a background, imports it into an iOS Simulator, drives Trace's real
-lock-screen wallpaper editor through Appium, and collects Trace's own request-bound full-wallpaper
-export through a durable, idempotent `TraceRun` state machine.
+`ads-booster` provides the public Trace marketing workspace on Cloudflare and a replaceable Mac
+worker that creates verified Trace wallpaper images with Codex CLI and Appium. Candidate generation,
+review state, account isolation, schedules, task leases, and artifacts remain hosted. Threads posting
+is intentionally not implemented.
 
-The standalone agent can perform read-only web and image searches when asked, but it does not
-automatically research trends, invent personas, write campaign copy, publish to Notion or Threads,
-or learn from campaign feedback. The local workspace can turn saved persona and promotion JSON
-plus uploaded reference images into finite or continuous generation campaigns. Results still stop
-at human review; there is no external publication step.
+## Current product surfaces
 
-## Install as a native CLI
+- Workspace: <https://workspace.borca.ai/>
+- Mac worker CLI: `trace-marketing worker ...`
+- Native capture: Appium + XCUITest + the `com.corca.Trace` debug build
+- Planning model on a Mac: the official `codex` CLI using that macOS user's existing login
+- Hosted candidate model: Cloudflare Workers AI, configured by `WORKSPACE_AI_MODEL`
 
-On macOS or Linux, install the user-local CLI with one command:
+The former `trace-agent` / `trace-ads` custom model shell is no longer installed. The Mac pipeline
+does not use its OAuth store, Responses client, conversation memory, or tool loop.
+
+## Pipeline
+
+1. A teammate opens `workspace.borca.ai`, selects an account/country/profile, and generates or edits
+   candidates.
+2. Candidate selection creates a hosted capture task whose approved caption, hypothesis, references,
+   creative direction, background intent, profile, and Trace items are immutable inputs. D1 assigns
+   one lease to a healthy enrolled Mac.
+3. The Mac starts a new ephemeral `codex exec` turn. The marketing context is sent over stdin and the
+   final output must match the strict `WallpaperPlan` JSON schema.
+4. Code validates request ID, time zone, local event times, references, layout, and style. The
+   Mac then records an execution barrier in D1; Appium cannot start unless that barrier succeeds.
+   Invalid plans never reach Appium.
+5. The deterministic runner finds an approved background and drives the real Trace Simulator app
+   through Appium. A request-bound export, digest, nonce, device binding, and PNG provenance are
+   verified.
+6. The callback stores the verified image in R2 and exposes it for human review. Approval reaches
+   `submitted`; no external social post is created.
+
+Codex threads are ephemeral per task, so two accounts and two Macs do not share conversation
+history. Validated plans and terminal outcomes are request-scoped under
+`$TRACE_AGENT_HOME/codex-runs`; prompts, Codex responses, and auth data are not persisted there.
+
+## Install the Mac worker CLI
 
 ```bash
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/corca-ai/ads-booster/main/install.sh | bash
-source ~/.zshrc  # use ~/.bashrc for bash
-trace-ads --help
+curl -fsSL --proto '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/corca-ai/ads-booster/main/install.sh | bash
+source ~/.zshrc
+trace-marketing --help
 ```
 
-The installer uses `uv tool install` without `sudo`. If `uv` is missing, it installs
-uv into `~/.local/bin`, lets uv manage the supported Python 3.14 runtime, installs the
-package into uv's isolated tool environment, and links `trace-ads`, `trace-agent`,
-`trace-capture`, `trace-compose`, and `trace-run` into `~/.local/bin`. Re-running the
-same command upgrades the installed checkout with `--force`.
-
-For a local checkout, run:
+For a local checkout:
 
 ```bash
 bash install.sh --source .
 ```
 
-Use `--dry-run` to inspect the plan. `--ref <git-ref>` selects a GitHub ref, while
-`--bin-dir <absolute-path>` changes the user bin directory. The installer updates only
-the current user's zsh or bash startup file; `--no-shell-update` disables that change.
-It does not install Xcode, Appium, the XCUITest driver, or the separate `Trace_iOS`
-debug build required by native wallpaper automation. Prepare those prerequisites manually
-only when you need Trace automation; the legacy offline composition commands do not require them.
+The installer uses a user-owned `uv tool` environment and verifies `trace-marketing`. It does not
+install or authenticate Codex, Xcode, Appium, XCUITest, or the Trace debug build.
 
-## Standalone agent shell
+## Prepare a Mac
 
-`trace-ads` is a foreground process with its own REPL, session history, model loop,
-approval policy, and tool registry. It does not start or call a Codex process. The existing
-`trace-run` engine is exposed as one governed Trace capability inside the shell.
-`trace-agent` remains available as a compatibility alias.
+Run these as the same macOS user that will own the LaunchAgent:
 
 ```bash
-uv sync
-source .venv/bin/activate
-# OpenAI ChatGPT / Codex OAuth 로그인
-trace-ads auth login
-trace-ads --model gpt-5.6-luna
+codex login
+codex login status
+appium driver install xcuitest   # only if the driver is missing
+trace-marketing worker doctor
 ```
 
-실제 터미널에서 `trace-ads`를 실행하면 대화 영역, 도구 상태, 승인 패널이 있는
-Codex풍 TUI가 열립니다. `Ctrl-C` 두 번으로 종료, `Ctrl+L`은
-대화 초기화, `Ctrl+K`는 입력창 포커스입니다. 마우스 드래그를 통한 터미널 텍스트
-선택 및 복사를 지원합니다. 파이프나 CI처럼 TTY가 없는 환경에서는 자동으로 기존 plain
-REPL을 사용하며, 어느 환경에서나 `trace-ads --plain`으로 명시할 수 있습니다.
-가상환경을 활성화하지 않는 경우에는 `uv run trace-ads`를 사용합니다.
+Also install:
 
-로그인은 TUI 안에서 OpenAI ChatGPT / Codex OAuth 2.0 (PKCE)로 처리할 수 있습니다.
+- Xcode and one available iPhone Simulator;
+- Appium 3 with the XCUITest driver;
+- the internal Trace debug app with bundle ID `com.corca.Trace` on that Simulator.
+
+`worker doctor` must report `codex_cli`, `codex_authenticated`, Appium, XCUITest, Simulator, and
+Trace as ready. An unauthenticated or incomplete Mac advertises itself as degraded and receives no
+new task.
+
+## Enroll a Mac
+
+The usual operator path is the protected Mac manager inside the workspace. It creates a short-lived,
+single-use enrollment command without putting the administrator token on the target Mac.
+
+The equivalent administrator CLI flow is:
+
+```bash
+export TRACE_MARKETING_CONTROL_TOKEN='...'
+trace-marketing worker create-enrollment \
+  --url https://workspace.borca.ai \
+  --name 'Studio Mac'
+```
+
+On the target Mac, use the returned code:
+
+```bash
+trace-marketing worker enroll \
+  --url https://workspace.borca.ai \
+  --code '...'
+trace-marketing worker install-service
+trace-marketing worker status
+```
+
+Enrollment writes a revocable machine credential with mode `0600`. It is separate from Codex auth
+and is not stored in macOS Keychain. The LaunchAgent stores neither credential; it contains the resolved `trace-marketing` and `codex`
+executable paths, an allowlisted set of non-secret worker overrides, and runs in the current user's
+`gui/<uid>` domain, so Codex resolves the same user's normal login cache or Keychain entry.
+`worker status` reads and checks that pinned plist path rather than another `codex` found in the
+invoking shell.
+
+## Replace or operate a Mac
+
+```bash
+trace-marketing worker stop
+trace-marketing worker start
+trace-marketing worker restart
+trace-marketing worker status
+trace-marketing worker set-state --state draining
+trace-marketing worker revoke
+trace-marketing worker uninstall-service
+```
+
+To replace a machine, drain or revoke the old worker in the workspace, prepare another Mac, create a
+new enrollment code, enroll it, and install its service. No source edit, committed UDID, shared Codex
+thread, or Cloudflare Queue-token rotation is required.
+
+## Codex settings
+
+By default the worker uses the selected user's normal Codex CLI configuration and model. Export any
+optional non-secret overrides before `worker install-service`; the installer captures only the
+allowlisted values in the plist. After changing one, rerun `worker install-service`.
 
 ```text
-/auth login                    OpenAI ChatGPT / Codex 브라우저 OAuth 로그인
-/auth status                   OpenAI OAuth 로그인 상태
-/auth logout                   저장된 OAuth credential 삭제
-/model [model-id]              현재 모델 확인 또는 변경 (예: gpt-5.6-luna)
-/permission [ask|yolo]         승인 모드 확인 또는 변경 (기본값: yolo)
-/new                          현재 세션을 보존하고 새 세션 시작
-/clear                         현재 세션을 삭제하고 새 세션 시작
-/session [session-id]          이전 세션 목록 표시 또는 지정 세션 복귀
-/help                          명령 목록 표시
+TRACE_CODEX_BIN                 # absolute Codex executable selected during service install
+TRACE_CODEX_MODEL               # optional per-worker model override
+TRACE_CODEX_TIMEOUT_SECONDS     # default: 180
 ```
 
-입력창에 `/`를 입력하면 사용할 수 있는 핵심 명령이 미리보기로 표시되고, 문자를
-더 입력하면 해당 prefix에 맞춰 목록이 좁혀집니다. `↑/↓`로 항목을 선택하고
-`Tab` 또는 `Enter`로 입력창에 채울 수 있습니다.
+The worker always adds `codex exec --ephemeral --sandbox read-only --output-schema ...`. It does not
+pass auth environment variables or ignore the user's Codex configuration.
 
-TUI의 permission 기본 모드는 `yolo`이며 파일 쓰기, shell, browser mutation, TraceRun 같은
-변경 작업을 자동으로 허용합니다. `/permission ask`로 전환하면 각 변경 작업마다 승인 패널이
-열리고, `Approve` 또는 `Deny`를 선택해야 합니다. 현재 모드는 `/permission`으로 확인하고
-`/permission yolo`로 다시 자동 허용 모드로 바꿀 수 있습니다.
-
-`/new`는 현재 세션을 `~/.trace-agent/sessions`에 보존한 뒤 빈 세션으로 전환합니다.
-`/clear`는 현재 세션의 저장 기록까지 삭제한 뒤 빈 세션으로 전환합니다. `/session`은
-이전에 보존한 세션을 TUI 선택 목록으로 보여주며, 방향키와 Enter로 복귀할 수 있습니다.
-plain REPL에서는 목록에 표시된 ID를 `/session [session-id]`로 입력합니다. 각 답변이
-완료될 때 현재 세션 history가 자동 저장되므로 프로세스를 다시 실행한 뒤에도 복귀할 수
-있습니다.
-
-`/model`을 입력하면 현재 provider의 사용 가능한 모델 목록을 불러옵니다. 목록에서
-위/아래 방향키와 Enter로 모델을 선택할 수 있으며, `/model [model-id]`로 직접 지정할
-수도 있습니다. (예: `gpt-5.6-luna`, `gpt-5.6-terra`).
-선택한 모델이 추론 강도를 제공하면 이어서 `low`, `medium`, `high`,
-`xhigh` 같은 effort 목록이 표시되고, 선택값은 현재 TUI 세션의 provider 요청에
-즉시 반영됩니다.
-자연어로 현재 모델을 물어보면 다음 provider 요청에 실제로 전달할 `requested_model`을
-기준으로 답합니다. provider 내부에서 별도로 라우팅하는 숨은 모델명까지 확인한다는 뜻은
-아닙니다.
-기존 `trace-ads auth login`은 TTY에 들어갈 수 없는 환경이나 명시적인 device-code
-fallback이 필요할 때 사용할 수 있습니다.
-
-### Context-driven one-shot image generation
-
-The first context-driven capture path is available directly from the standalone agent:
-
-```bash
-trace-agent generate-one \
-  --context-file path/to/marketing-context.json
-```
-
-The command admits a durable Agent goal from the persona, promotion material, references, and
-variation context. Using the existing ChatGPT/Codex OAuth credential, the model must call the
-restricted Trace connector with one complete strict `trace.wallpaper-plan.v1`. The plan supplies an
-explicit IANA `time_zone`, background query, reference IDs, rows and supported layouts, per-event
-colors, UTC timed or all-day calendar events, and only visual styles the Trace editor supports. The
-renderer converts timed events only with this plan-owned time zone; it never reads the Mac or
-Simulator's ambient time zone. Code validates those inputs; it does not replace them with locale or
-occupation templates.
-
-For a timed event, the promotion-owned source `trace_item` must match the plan time zone's local
-`HH:MM` followed by the event's clean title. The event title itself contains no duplicated time text,
-so Trace renders one authoritative local time from the UTC instant and plan time zone.
-
-The connector searches approved public image sources, normalizes the selected background to PNG,
-and imports it into the selected Simulator with `simctl addmedia`. Only opaque export-binding
-metadata is passed at Trace launch. Appium creates the request-owned calendars and events through
-Trace's real UI. In the debug automation build, ISO date inputs and exact-title calendar lookup
-are native Trace controls; normal users retain the standard DatePicker/menu surfaces. Appium then
-uses `LockScreenWallpaperSheet` controls to choose that imported photo and
-set layout, text/header/cell colors, font, opacity, height, title wrapping, scale, brightness, blur,
-dimming, and Save. Trace renders the full wallpaper and writes a request-bound
-`trace_wallpaper.png` plus native manifest. Python treats that
-PNG as opaque: it validates its bytes, digest, request binding, nonce, device, and manifest before
-writing `outputs/final.png` and a `trace.run-result.v2`. The connector then leaves the Agent run
-awaiting human approval. The model performs text/tool planning, not image synthesis. This produces a
-Trace wallpaper PNG, not a physical iPhone lock-screen screenshot with iOS system UI.
-
-## Team workspace service
-
-The workspace is a local-first team surface layered on top of the existing agent. Keep
-`trace-ads` or `trace-agent` for the standalone TUI and plain REPL; install the agent on an
-always-on Mac when the team needs a persistent post factory. The installer only installs the CLI;
-start the workspace separately when you are ready. The service does not start a Codex process,
-publish to Notion or Threads, or create a remote database.
-
-The browser surface is two tabs: 후보 and 캡션·주제 승인. 후보 is the default tab; it creates post
-candidates and lists every candidate in the workspace, and 캡션·주제 승인 is the human approval gate
-for the first stage of the candidate journey.
-Persona, promotion, and reference knowledge lives in the operator's own markdown folder rather than
-in a browser form. The context, asset, campaign, queue, and private-chat routes still run and keep
-their tests, but they are API-only: no browser tab renders them.
-
-### Start the local service
-
-Run the service in the foreground during a local check:
-
-```bash
-export TRACE_AGENT_HOME="$HOME/.trace-agent"
-uv run trace-agent serve --host 127.0.0.1 --port 8765 --workspace-name "Launch archive"
-```
-
-The default service keeps the ASGI origin on loopback and requests a bounded cloudflared quick
-tunnel. Use `--tunnel none` for local-only operation. Start the workspace explicitly with:
-
-```bash
-trace-agent workspace start --workspace-name "Launch archive"
-```
-
-The installer does not start launchd or create a URL. `--workspace-service` is an explicit installer
-opt-in for users who want setup and startup in one command; otherwise the installer skips all
-workspace side effects. The workspace start command requires cloudflared on `PATH`.
-
-On the first `workspace start`, the service creates one workspace and one owner member using the
-supplied `--workspace-name` without printing
-authentication codes. `service.json` and the SQLite database persist only code hashes. To inspect
-the initialized workspace without exposing a code, use:
-
-```bash
-uv run trace-agent workspace access
-```
-
-`workspace show` remains an optional diagnostic command; it is not required for normal team access.
-
-`workspace access` explicitly rotates the owner workspace/member codes and prints one browser login
-ID once. Its four `%`-separated parts are Workspace ID, Member ID, Workspace code, and Member code;
-paste the complete value into the browser entry form. An authenticated owner can use `팀원 초대` in
-the browser to create a regular member and receive a three-part member access ID that does not
-contain the shared workspace code. The compatibility alias `rotate-code` performs the same action.
-The service still scopes shared context to the workspace and private chat history to the authenticated
-member.
-Rotating either code version invalidates sessions issued with the old version. The first-run CLI
-provisions the owner pair; the local operator can provision another member with a member access
-code:
-
-```bash
-uv run trace-agent workspace add-member --name "Grace"
-```
-
-The first owner access ID is the workspace administrator. After signing in, the owner can use the
-browser's `팀원 초대` action to create a regular member and receive a three-part member access ID
-once. The member pastes that ID into the same browser entry field; the server verifies only the
-member's scrypt-backed code and never exposes the shared workspace code. The CLI command remains
-available as a local fallback. The `/api/assets/upload` route validates JPEG, PNG, and WebP bytes,
-stores a protected copy below `$TRACE_AGENT_HOME/assets/`, and records its normalized path, media
-type, SHA-256, and size. That route and the lower-level `/api/assets` CRUD routes are API-only; the
-browser has no upload form since the two-tab restructure.
-
-The service binds to loopback only. `--port 0` chooses an available port for an ephemeral
-check and prints the selected URL; use a fixed port for launchd. A foreground `serve` process
-owns the listener, so stop it with `Ctrl-C` when it is not managed by launchd.
-
-The private-chat API keeps conversation history scoped to the authenticated member and session, and
-the central agent OAuth credential belongs to the always-on host, so team members use their
-Workspace/Member access codes rather than separate provider accounts. `/session` lists only that
-member's saved private sessions; `/model` and `/permission` controls are also member-scoped. The
-two-tab browser surface no longer exposes chat, so these controls are reachable through the
-`/api/chat` routes and the standalone TUI.
-
-### Workspace data and configuration
-
-`TRACE_AGENT_HOME` is the service's single local data root. It defaults to `~/.trace-agent`.
-Use an absolute path when configuring a dedicated Mac:
-
-| Path | Contents |
-| --- | --- |
-| `$TRACE_AGENT_HOME/workspace.sqlite3` | Workspace/member records, hashed access-code versions, shared context and asset metadata, post candidates with their review state, and member-scoped private session histories |
-| `$TRACE_AGENT_HOME/automation.sqlite3` | Finite/continuous campaigns, queue records, leases, run references, artifact hashes, and review state |
-| `$TRACE_AGENT_HOME/service.json` | Owner workspace/member IDs, loopback host/port, tunnel selection, and the last emitted public URL; never plaintext codes |
-| `$TRACE_AGENT_HOME/auth.json` | Agent OAuth credentials, written with mode `0600` |
-| `$TRACE_AGENT_HOME/memory.jsonl` | Context-compaction summaries for the standalone agent |
-| `$TRACE_AGENT_HOME/sessions/` | Standalone TUI/REPL session histories |
-| `$TRACE_AGENT_HOME/logs/` | Protected service and optional cloudflared logs |
-
-The one-shot generation command keeps its default run artifacts relative to the checkout that
-invokes it: `.trace-agent/generated/`.
-The workspace queue stores queue metadata under `TRACE_AGENT_HOME`; the configured worker owns
-the generated artifact root and records only verified run/artifact references in the queue.
-
-The relevant environment overrides are:
+Other worker settings:
 
 ```text
-TRACE_AGENT_HOME              # default: ~/.trace-agent
-TRACE_AGENT_MODEL             # default: gpt-5.6-luna
-TRACE_AGENT_REASONING_EFFORT  # default: xhigh
-TRACE_AGENT_CONTEXT_DIR       # default: <serve working directory>/context
-TRACE_AGENT_CANDIDATE_TIMEOUT_SECONDS  # default: 240
-TRACE_AGENT_MEMORY_FILE       # default: $TRACE_AGENT_HOME/memory.jsonl
-TRACE_AGENT_SESSIONS_DIR      # default: $TRACE_AGENT_HOME/sessions
-TRACE_AGENT_WEB_SEARCH_PROVIDER
-TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS
-TRACE_AGENT_BROWSER_COMMAND
-TRACE_AGENT_APPIUM_SERVER       # default: http://127.0.0.1:4723
+TRACE_AGENT_HOME                       # default: ~/.trace-agent
+TRACE_AGENT_APPIUM_SERVER              # default: http://127.0.0.1:4723
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
 TRACE_AGENT_TRACE_COMPONENTS  # default: packaged assets/trace-components.png
 TRACE_AGENT_IPHONE_UI         # default: packaged assets/iphone-ui.png
@@ -514,502 +403,51 @@ TRACE_AGENT_CONTEXT_MAX_TOOL_OUTPUT_CHARS
 TRACE_AGENT_MEMORY_FILE       # default: ~/.trace-agent/memory.jsonl
 TRACE_AGENT_WEB_SEARCH_PROVIDER       # auto, ddgs, or brave; default: auto
 TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS # default: 30
-BRAVE_SEARCH_API_KEY                   # optional; used by provider=brave or auto
-TRACE_AGENT_SESSIONS_DIR      # default: ~/.trace-agent/sessions
+TRACE_AGENT_DEVICE_UDID                # optional preferred Simulator; otherwise resolved dynamically
+TRACE_MARKETING_CONTROL_TOKEN          # administrator commands only; never target-Mac enrollment
 ```
 
-prompt cache는 correctness 전제가 아닙니다. stable instructions와 고정된 tool descriptor
-순서로 prefix digest를 만들고, provider 응답이 `usage.input_tokens_details.cached_tokens`
-를 제공할 때만 실제 cached token 수를 표시합니다. provider가 cache usage를 주지 않으면
-`cache=unknown`으로 남기며 cache hit를 추정하지 않습니다.
-
-The default login command opens the ChatGPT/Codex subscription OAuth compatibility flow
-with PKCE and a loopback callback at `http://localhost:1455/auth/callback`. If the local
-browser callback cannot be used, paste the redirect URL when prompted. Device-code login
-is an explicit fallback with `trace-ads auth login --device-code`; it may be
-disabled by account security settings. Tokens are stored in the agent-owned
-`$TRACE_AGENT_HOME/auth.json` path, or `~/.trace-agent/auth.json` by default, with mode
-`0600`. The credential is never printed by status commands. This is distinct from the
-usage-billed OpenAI Platform API-key route and may change if the compatibility backend
-changes.
-
-The built-in tools are:
-
-- `file_read`, `file_list`, and approval-gated `file_write` inside the workspace
-- approval-gated `shell_exec` using the workspace as the command boundary
-- `browser` through the external `agent-browser` CLI; navigation and snapshots are
-  read-only, while click, typing, and screenshots require approval
-- `web_search` through a read-only provider; `auto` uses keyless DDGS and selects
-  Brave when `BRAVE_SEARCH_API_KEY` is configured, returning normalized source URLs
-- `image_search` through the same provider setting, returning image URLs, thumbnails,
-  source pages, and available dimensions
-- approval-gated `image_view` for inspecting local PNG, JPEG, and WebP pixels; relative paths stay
-  inside the selected workspace, while an explicitly supplied absolute path can be approved and sent
-  to the selected model
-- approval-gated `trace_run` for the existing Appium/staging/composition workflow
-
-For Trace capture, searched-background generation, and visual QA, the agent first inspects the local runtime. It
-starts an installed but inactive Simulator or Appium dependency, verifies readiness, and continues
-without asking the user. It does not install missing software or start these services for unrelated
-work. A missing Trace Debug build remains a typed prerequisite failure.
-
-Use `--workspace <directory>` to change the file and command boundary and
-`TRACE_AGENT_MODEL` selects the Codex-compatible model identifier and
-`TRACE_AGENT_REASONING_EFFORT` selects its reasoning effort. The installed default is
-`gpt-5.6-luna` with `xhigh`.
-
-## Legacy component capture and composition boundary
-
-`trace-run`, `trace-capture`, and `trace-compose` retain the component-export and three-layer
-composition workflow below for existing standalone jobs. `trace-agent generate-one` does not use
-this workflow; it follows the full-wallpaper route documented above.
-
-```text
-upstream marketing context / trace.run-job.v1
-        |
-        v
-     trace-run --> TraceRun journal (append-only JSONL)
-        |
-        +--> trace_capture --> Appium + Trace native component export
-        |
-        +--> stage verified component artifact
-        |
-        +--> trace-compose --> final marketing PNG
-```
-
-Layer order is fixed:
-
-1. Background photo
-2. Trace component PNG
-3. Request-derived iPhone system UI PNG
-
-The worker never asks Simulator to display a custom wallpaper. A physical iPhone is
-not required.
-
-## Prerequisites
-
-- macOS with Xcode and an available iOS Simulator
-- A debug Trace build installed as `com.corca.Trace`
-- The Trace component-export launch trigger and request-bound manifest export included
-  in the sibling `Trace_iOS` checkout
-- Appium 3 with the XCUITest driver
-- `uv`
-
-The currently checked environment uses Appium 3.3.0, XCUITest 11.0.0, and iOS
-26.5. Confirm live values instead of copying the sample UDID blindly.
-
-```bash
-appium --version
-appium driver list --installed
-xcrun simctl list devices available
-xcrun simctl listapps <SIMULATOR_UDID> | rg 'com\.corca\.Trace'
-```
-
-## Setup
-
-```bash
-uv sync
-```
-
-`trace-agent generate-one` and the workspace worker start the installed Simulator and Appium
-server when they are inactive. Run `appium --port 4723` manually only for lower-level capture
-commands such as `trace-capture` or `trace-run`.
-
-## Run the complete legacy local workflow
-
-With a native Trace debug build installed, this command uses the legacy hardened Appium component
-capture path and then composes the final image:
-
-```bash
-uv run trace-run \
-  --job path/to/trace-run-job.json \
-  --state-root .trace-runs \
-  --capture-output-root path/to/captures \
-  --appium-server http://127.0.0.1:4723 \
-  --timeout-seconds 120
-```
-
-Re-running the same `run_id`, `idempotency_key`, and input returns the durable terminal
-result without invoking capture or composition again. An `idempotency_key` is reserved
-across the entire state root, so the same key cannot be claimed by a different
-`run_id` or input. Reusing the identity with changed input fails closed.
-
-The journal records contiguous sequence numbers, UTC timestamps, the idempotency key,
-input digest, requested capability, artifact reference, and terminal state. Transitions
-are flushed and `fsync`ed before each capability side effect.
-
-## Run each capability manually
-
-### 1. Export Trace components
-
-The capture job starts Trace's actual lock-screen editor with the request payload. The app creates
-one or two component rows from one to eight items, and Appium commits the same editor through its
-native save control before collecting the request-bound export. Trace writes a native transparent
-`trace_components.png` plus `trace_components.manifest.json` into its App Group, and the worker
-collects both.
-
-```bash
-uv run trace-capture \
-  --job path/to/component-capture-job.json \
-  --output-root path/to/work \
-  --appium-server http://127.0.0.1:4723 \
-  --timeout-seconds 120
-```
-
-`trace-capture` accepts only explicit numeric HTTP loopback endpoints. It rejects remote
-hosts, credentials, query strings, fragments, and TLS endpoints before WebDriver starts.
-`--cancel-file <path>` provides a process-external cancellation marker.
-The Appium session command timeout is extended beyond the shared capture deadline so
-delayed native publication does not expire the WebDriver session before cleanup.
-
-Expected artifact:
-
-```text
-path/to/work/component-export/trace-components.png
-path/to/work/component-export/trace-components.manifest.json
-```
-
-If the native manifest is missing or does not match the request digest, nonce, Trace
-bundle, Simulator UDID, role, canvas, and artifact hash, capture fails with
-`export_unverified` or `export_invalid`.
-
-If the Trace debug export itself fails, it publishes
-`trace_components.error.json`; the collector returns `export_failed` immediately instead
-of waiting for the entire capture deadline.
-
-The native manifest intentionally does not claim a WebDriver session binding. It records
-the per-capture export nonce together with the request digest, Trace bundle, and
-Simulator UDID; the `session_id` in capture provenance is the Appium-side identifier.
-
-### 2. Compose the marketing image
-
-```bash
-uv run trace-compose \
-  --job path/to/composite-job.json
-```
-
-Expected artifacts:
-
-```text
-path/to/outputs/final-marketing.png
-path/to/outputs/normalized-iphone-ui.png
-path/to/outputs/composite-result.json
-```
-
-The runtime renders the requested locale, date, and time into the system UI icon template. The
-compositor crops the searched background photo to the requested canvas, normalizes that rendered
-system UI to alpha, resizes every layer consistently, and applies the fixed order.
-
-## Contracts
-
-### Component export
-
-`trace_capture-job.v1` configures the Simulator, Appium-entered Trace component titles, and
-component export.
-The only supported capture target is `trace_components`.
-For component-only capture, `background_image` may be omitted; the background remains
-required by the separate composition job.
-When supplied, `component_canvas` declares the expected native PNG dimensions (the
-current iPhone 17 Pro/iOS 26.5 export is `1206×2622`) and the
-manifest/artifact validator rejects a self-consistent export with the wrong canvas.
-`reference_date` remains scene input for the planned Trace configuration and provenance contract.
-
-Successful scene results contain provenance:
-
-- deterministic request SHA-256
-- capture source (`native_appium`)
-- per-capture native export nonce and request/device binding
-- collected artifact SHA-256 and byte size
-- expected Trace bundle ID and target Simulator UDID
-- Appium session ID (separate from native export binding)
-- PNG dimensions and source modification time
-
-The collector removes the stale App Group export before launching Trace, requires the
-new file to be fresh, and accepts only a readable RGBA PNG with at least 20% fully
-transparent pixels and at least 1% visible pixels. Cleanup errors are recorded without
-replacing the primary capture failure.
-
-`trace-run` carries this request-bound native provenance into its result and journal; production
-capture has no local artifact bypass.
-
-### Trace run
-
-`trace.run-job.v1` embeds one capture job and one composition job with matching marketing
-context. It adds a stable `run_id` and `idempotency_key`. Runtime states are closed:
-
-```text
-queued -> running -> awaiting_tool -> completed | failed | aborted | unknown_side_effect
-```
-
-Terminal and aborted runs cannot invoke later capabilities. Corrupt, reordered, or
-identity-inconsistent journals are rejected during replay. If the process restarts
-after an `awaiting_tool` event was durably written, the runner records
-`unknown_side_effect` and does not invoke that capability again: the external effect
-must be reconciled by an operator before the run can be resolved. This state and all
-replay/error output remain scoped to the requested run directory.
-
-### Marketing composition
-
-`trace.marketing-composite-job.v2` requires background and Trace component paths. `iphone_ui` is
-optional for lower-level legacy composition commands. `generate-one` does not use this contract.
-
-```json
-{
-  "schema_version": "trace.marketing-composite-job.v2",
-  "job_id": "jp-night-city-calendar",
-  "context": {
-    "country": "JP",
-    "persona_id": "jp-office-worker",
-    "promotion_material_id": "night-city-monthly-calendar"
-  },
-  "canvas": {"width": 1290, "height": 2796},
-  "layers": {
-    "background": "inputs/background-night-city.png",
-    "trace_components": "work/component-export/trace-components.png",
-    "iphone_ui": "inputs/iphone-ui.png"
-  },
-  "output_image": "outputs/final-marketing.png"
-}
-```
-
-Input and output paths are resolved relative to the job file and may not collide or
-escape that directory.
-
-## Dynamic Cloudflare marketing loop
-
-This repository includes an optional Cloudflare control plane for data-driven marketing accounts and
-a portable pull bridge for workspace-backed execution. The first milestone is a durable pipeline, not content quality. Live publication
-is disabled until the selected channel adapter passes a capability and readback probe.
-
-Run the full contract locally without Cloudflare or external side effects:
-
-```bash
-trace-marketing simulate --account-id trace-kr --country KR --auto-approve
-```
-
-The command creates a shared registry plus a separate private-memory SQLite file per account, walks
-the approval-gated state machine, simulates six observation samples, evaluates them, commits private
-memory, and prints a `completed` run. Omit `--auto-approve` to stop first at
-`awaiting_candidate_approval`; after candidate approval the run stops again at
-`awaiting_human_approval` before publication.
-
-Simulation accounts without a `workspace_id` execute research, candidate, capture, publication, and
-metrics tasks inside the Cloudflare Workflow. Each task is explicitly labeled as simulated, stored
-as a digest-backed R2 artifact, and indexed as succeeded in D1. The Workflow still pauses at both
-human approval gates. This hosted path needs no always-on worker process.
-
-The production Worker serves the public review workspace at the stable custom domain:
-
-```text
-https://workspace.borca.ai/
-```
-
-It has no workspace access ID or login step. Anyone with the URL can create or change an account,
-its context, candidates, settings, and feedback, so do not put private material in this surface.
-The account selector is a logical D1 silo, not an authorization boundary: every candidate, profile,
-review event, and learned rule is scoped by `account_id`, but every visitor can select those accounts.
-The workbench shows live counts for caption review, image work, and publication-ready results.
-
-Each account owns a country, locale, timezone, morning/evening posting times, and an automatic daily
-generation switch. The default KR account is ready after migration; additional accounts can be
-created and edited in the workbench. Choose one account persona before `오늘 후보 4개 생성`;
-Cloudflare Workers AI combines it with the packaged Trace principles, facts, voice, country reference
-index, current account instruction, and that account/persona's repeated rejection rules. One batch
-stores exactly four D1 candidates: two morning-slot and two evening-slot candidates. The Cron Trigger
-also claims each enabled account at its next local morning time and runs the same generation path.
-Profiles can be added, edited, or hidden from the same screen. Every candidate stores the selected
-profile as an immutable snapshot, so later profile edits do not rewrite its generation provenance.
-
-Caption approval, native Mac/Appium capture, and image approval use the same review tab. `이미지 생성`
-creates a revision-scoped Queue task. An enrolled Mac dynamically selects a booted or available iPhone
-Simulator, starts Appium when installed but inactive, imports the searched background, drives Trace's
-wallpaper editor, collects a fresh full Trace wallpaper PNG and manifest, and sends a digest-backed
-result to the protected callback API. The Worker verifies the digest before storing the PNG in R2.
-Offline workers leave the card visibly queued; verified failures
-show a stable code and a retry button. Image approval
-ends at `submitted` (게시 준비 완료); it does not call Threads or another publishing API. Candidate
-filters make review, image, ready, and rejected queues visible. Every hosted candidate, including
-`submitted` candidates, has 수정 and 삭제 controls. Editing clears its previous approval and R2
-image and returns it to `awaiting_review`; deletion removes both its D1 row and R2 object with an
-optimistic revision guard. Approval is a one-click 5-point review. Rejection requires a 1–3 rating
-and one or more structured tags; `기타` also requires a note. Three matching rejections for the same
-account/persona become an account-scoped rule candidate and are injected into its next generation prompt.
-
-The packaged context is also the local generator's fallback. `TRACE_AGENT_CONTEXT_DIR` remains the
-explicit override, and an existing `<serve workspace>/context` still takes precedence; starting from
-a directory without `context/` no longer leaves the default candidate generator empty.
-The packaged documents and 16 profiles for KR, JP, TW, US, DE, FR, and BR are safe starter guidance,
-not a migration of team-owned persona knowledge. They keep a fresh install and hosted build runnable
-while the team replaces them with successful-account evidence. The context manifest owns country
-document, asset, reference, and profile paths; adding a packaged country is a data change to the
-manifest/documents/profile JSON, not a Worker source edit. `ORIGIN.md` records provenance and
-verification status. Archive documents in `core/` and `references/KR/` stay byte-identical, including
-frontmatter, while repository-owned operating rules live in `core/PIPELINE-SCOPE.md`,
-`references/KR/INDEX.md`, and `markets/*.md`. `references/KR/INDEX.md` is the scene index used by
-`profile.reference_ids`; `references/KR/RESEARCH-INDEX.md` is the collected-record screening table.
-KR, JP, and TW contain collected and verified marketing documents; US, DE, FR, and BR remain
-unverified starter guidance and should be read as hypotheses. Country documents are injected in full
-under the 48,000-byte build budget, while reference bodies are selected by persona id and capped at
-five records and 24,000 bytes. Custom account-scoped profiles live in D1. Generation fails with
-`409` when a selected country has no packaged documents rather than silently falling back to KR.
-
-Hosted context endpoints are intentionally public with the rest of this workspace:
-
-| Endpoint | Behavior |
-| --- | --- |
-| `GET /api/accounts` | List enabled logical account silos and seed the default KR account |
-| `POST /api/accounts` | Create an account with country, locale, timezone, two posting times, and optional automatic generation |
-| `PATCH /api/accounts/{account_id}` | Edit account schedule and generation settings with `expected_revision` |
-| `DELETE /api/accounts/{account_id}` | Disable an account without rewriting its historical records |
-| `GET /api/context-countries` | List countries currently enabled by the packaged manifest; the UI builds its country selector from this response |
-| `GET /api/context-profiles` | Seed packaged profiles if needed, then list enabled profiles for the selected account |
-| `POST /api/context-profiles` | Add an account-scoped team profile |
-| `PATCH /api/context-profiles/{profile_id}` | Edit a profile with `expected_revision` |
-| `DELETE /api/context-profiles/{profile_id}` | Soft-hide a profile while preserving candidate snapshots |
-| `GET /api/feedback-summary` | Return account/persona rejection counts, top tags, and 3+ occurrence rule candidates |
-
-The external worker is required for hosted native image capture and for control-plane accounts with
-a local `workspace_id`. For an interactive foreground check it reads these environment variables:
-
-```bash
-export CLOUDFLARE_ACCOUNT_ID=...
-export TRACE_MARKETING_QUEUE_ID=...
-export TRACE_MARKETING_QUEUE_TOKEN=...
-export TRACE_MARKETING_CONTROL_PLANE_URL=https://...
-export TRACE_MARKETING_WORKER_TOKEN=...
-trace-marketing bridge
-```
-
-For a portable worker enrollment, persist only the non-secret routing config, then start the hidden
-service entrypoint under any supervisor (systemd, launchd, a container, or a process manager):
-
-```bash
-trace-marketing bridge-configure --executor candidate-pipeline
-trace-marketing bridge-service
-```
-
-`bridge-configure` stores only account ID, Queue ID, control-plane URL, executor selection, polling
-interval, and credential-provider choice in `$TRACE_AGENT_HOME/marketing-bridge/service.json`.
-Secrets are injected at process start from environment variables by default. A team can instead use
-`--credential-provider command` with repeated `--credential-command` arguments to call its existing
-1Password, Vault, Kubernetes, or other secret adapter without a shell. The command must print one
-JSON object containing `queue_token` and `worker_token`; stderr and secret values are never logged.
-This keeps worker enrollment independent of a particular person, OS credential store, or computer.
-
-The queue token needs Cloudflare Queues read and write permissions because pull consumers must also
-acknowledge messages. Keep credential values in the worker supervisor or external secret manager; D1 account
-rows contain only opaque `credential_ref` values. The Worker sends task envelopes as JSON text so
-the HTTP pull response is directly decodable; the bridge also accepts the older base64-encoded JSON
-shape during rollout. A temporary pull, acknowledgement, or callback outage leaves inbox/outbox work
-durable and retryable.
-
-The bridge defaults to an artifact-only simulation executor for transport testing. To connect PR
-#22's installed candidate journey, register the Cloudflare account with the local Trace
-`workspace_id`, start the service from the workspace that owns its `context/` directory, and opt in
-explicitly:
-
-```bash
-trace-marketing bridge --executor candidate-pipeline
-```
-
-This mode routes `hosted_workspace_capture_v1` tasks through the production Appium/XCUITest capture
-runner. Other control-plane capture tasks keep the installed candidate-store journey. It does
-**not** enable live publication or metrics: those task kinds remain visibly simulated. The operator reviews every generated caption in the existing workspace. When no caption
-is left waiting, the bridge durably sends one candidate approval containing all accepted candidates
-(or one rejection if all were rejected). After capture, approving every selected image similarly
-sends publication approval. No separate API call is part of the normal review flow.
-
-The control-plane approval endpoint remains available for explicit recovery or diagnostics:
-
-```json
-{"decision":"approved","phase":"candidates","candidate_ids":["<candidate-id>"]}
-{"decision":"approved","phase":"publication"}
-```
-
-Both bodies can be posted to `POST /v1/runs/<run-id>/approval`. Omitting `phase` remains supported:
-the control plane infers it from the run's current waiting state. Normal bridge-originated review
-events instead use the Worker-token-only `/v1/review-events` boundary and a D1 receipt keyed by
-`<run-id>:<phase>` so retrying the same event does not advance the Workflow twice. Hosted workspace
-captures do not use the packaged fixture: the callback is accepted only when task, run, account,
-candidate revision, kind, callback ID, PNG digest, and size all match.
-
-Cloudflare deployment is under `cloudflare/`:
-
-```bash
-cd cloudflare
-npm install
-CF_D1_DATABASE_ID=<database-id> npm run config
-npm run db:migrate:remote
-npx wrangler secret put CONTROL_PLANE_TOKEN
-npx wrangler secret put WORKER_CALLBACK_TOKEN
-npm run deploy
-npx wrangler queues consumer http add trace-marketing-tasks
-```
-
-The commands above are for an initial resource bootstrap or an explicit local recovery. Normal
-production delivery is automatic: a merge to `main` that changes `cloudflare/**`, the canonical
-workspace UI, or packaged context runs `.github/workflows/deploy-cloudflare.yml`, checks the Worker,
-applies pending D1 migrations, deploys the merged revision, and verifies `/health`, the login-free
-root workspace, its public session, and `https://workspace.borca.ai/health` in that order. Pull Requests run the same Worker check
-without receiving deployment credentials or changing Cloudflare. GitHub Actions stores the deployment API
-token as the `CLOUDFLARE_API_TOKEN` repository secret; account ID, D1 ID, and health URL are
-repository variables. Existing Worker runtime secrets remain in Cloudflare and are not copied into
-the repository or deployment log.
-
-Create the D1 database, R2 bucket, and Queue named in `wrangler.template.jsonc` only for a new
-environment. The generated config is ignored because it contains environment-specific resource IDs. See
-[the full loop contract](docs/contracts/cloudflare-marketing-loop.md) for states, extension rules,
-security boundaries, and the honest two-hour acceptance path.
-
-The `0002_one_active_run_per_account.sql` migration prevents Cron and manual triggers from creating
-overlapping non-terminal runs for one account. The merge workflow applies it before deploying this
-revision; operators do not run it separately during the normal merge path.
-Account registration currently accepts only `adapter_mode: "simulation"`; `"live"` fails closed
-until a reviewed publication adapter and readback path are present.
-
-## Legacy sample asset status
-
-The checked sample final image demonstrates the legacy deterministic three-layer composition
-pipeline. The current context-driven path instead performs a fresh full-wallpaper export for every
-run.
-
-## Exit codes
-
-The Trace capture CLIs use:
-
-- `0`: completed
-- `1`: runtime or layer failure
-- `2`: unreadable or invalid job contract
-
-## Development checks
-
-```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run basedpyright
-uv run pytest
-```
-
-## Key files
+## Local state
 
 | Path | Purpose |
 | --- | --- |
-| `src/ads_booster/agent/` | REPL and standalone agent loop |
-| `src/ads_booster/auth/` | ChatGPT/Codex OAuth, refresh, and credential store |
-| `src/ads_booster/automation/` | Durable campaigns, variation producer, queue, scheduler, and GenerateOne worker adapter |
-| `src/ads_booster/providers/` | Codex-compatible Responses transport and model contracts |
-| `src/ads_booster/search/` | Text/image search contracts and external provider adapters |
-| `src/ads_booster/service/` | Foreground workspace server, launchd plist, and service status |
-| `src/ads_booster/tools/` | Workspace, shell, browser, and Trace capability tools |
-| `src/ads_booster/tunnel/` | Optional cloudflared public-URL boundary |
-| `src/ads_booster/web/` | Authenticated workspace API and static browser shell |
-| `src/ads_booster/workspace/` | Local SQLite workspace, context, member, and private-session stores |
-| `src/ads_booster/capture/` | XCUITest/Appium capture and native artifact validation |
-| `src/ads_booster/composition/` | Legacy layer normalization and deterministic PNG composition |
-| `src/ads_booster/contracts/` | Versioned capture, composition, and run contracts |
-| `src/ads_booster/runtime/` | Primary wallpaper generation plus legacy TraceRun state machine, journal, locks, and replay |
-| `src/ads_booster/marketing/` | Cloudflare task contract, durable worker inbox/outboxes, and local loop proof |
-| `src/ads_booster/cli/` | `trace-ads`, `trace-marketing`, `trace-capture`, `trace-compose`, and `trace-run` boundaries |
-| `cloudflare/` | Hosted account registry, Workflow, Durable Object, Queue, D1, and R2 deployment |
+| `$TRACE_AGENT_HOME/marketing-worker/config.json` | Non-secret worker identity and control-plane URL |
+| `$TRACE_AGENT_HOME/marketing-worker/credential.json` | Revocable worker credential, mode `0600` |
+| `$TRACE_AGENT_HOME/marketing-worker/runtime/` | Durable task inbox and callback outbox |
+| `$TRACE_AGENT_HOME/codex-runs/<request-id>/` | Input digest, validated plan, execution marker, terminal result |
+| `$TRACE_AGENT_HOME/generated/<request-id>/` | Background provenance and verified native PNG |
+| `$TRACE_AGENT_HOME/logs/` | Protected LaunchAgent stdout/stderr |
 
-Last reviewed: 2026-08-26
+Before Appium starts, the worker records a D1 execution barrier and then a local marker. If the Mac
+stops after that boundary, lease expiry cannot move the task to another Mac. Before R2 or candidate
+mutation, a second D1 reservation atomically binds the callback ID and normalized result digest to that
+worker and lease, so a stale or changed callback cannot race a replacement. Worker revocation is
+deferred while that reservation is incomplete. The original Mac can return `unknown_side_effect`; otherwise an
+operator must inspect the task and explicitly revoke the old worker before allowing a retry.
+
+## Development verification
+
+Use focused checks for the boundary being changed:
+
+```bash
+uv run pytest -q \
+  tests/providers/test_codex_cli.py \
+  tests/connectors/trace/v1/test_codex_runtime.py \
+  tests/marketing/test_worker_broker.py \
+  tests/cli/test_installer.py
+uv run ruff check \
+  src/ads_booster/providers/codex_cli.py \
+  src/ads_booster/connectors/trace/v1/codex_runtime.py
+```
+
+For product proof, install into a fresh isolated `uv tool` directory, resolve `trace-marketing` from
+that installed PATH, and run `worker doctor`. Worktree-only `uv run` success is development evidence,
+not fresh-install proof.
+
+## Current limits
+
+- Threads publication and metrics readback are not implemented.
+- Physical iPhone support, automatic Trace debug-build signing/install, geographic routing, and
+  worker autoscaling are deferred.
+- A real prepared-Mac canary is still required to prove the complete Codex → Appium → R2 round trip
+  after deployment.

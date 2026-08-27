@@ -9,6 +9,11 @@ import {
   WORKSPACE_CONTEXT,
   WORKSPACE_CONTEXT_PROFILES,
 } from "./generated-workspace-context.js";
+import {
+  assertHostedCallbackTransport,
+  handleMacWorkerRequest,
+  reserveWorkerTaskCallback,
+} from "./mac-workers.js";
 
 import {
   accountName,
@@ -358,6 +363,12 @@ export default {
       if (request.method === "GET" && url.pathname === "/health") {
         return Response.json({ ok: true });
       }
+      const macWorkerResponse = await handleMacWorkerRequest(
+        request,
+        env,
+        (callback, worker) => receiveCallback(env, callback, worker),
+      );
+      if (macWorkerResponse) return macWorkerResponse;
       const workspaceResponse = await handleHostedWorkspace(
         request,
         env,
@@ -621,7 +632,7 @@ async function startDueRuns(env) {
   }
 }
 
-async function receiveCallback(env, callback) {
+async function receiveCallback(env, callback, worker = null) {
   if (
     typeof callback.callback_id !== "string" ||
     callback.callback_id.length < 1 ||
@@ -636,12 +647,13 @@ async function receiveCallback(env, callback) {
   }
   const hostedTask = await env.DB.prepare(
     `SELECT task_id, run_id, account_id, candidate_id, candidate_revision,
-            state, callback_id, result_json
+            state, callback_id, result_json, dispatch_mode, worker_id, lease_id,
+            execution_started_at, callback_reservation_id
      FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
   )
     .bind(callback.task_id)
     .first();
-  if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback);
+  if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback, worker);
   if (resultBytes > MAX_CALLBACK_RESULT_BYTES) {
     throw new HttpError(413, `callback result exceeds ${MAX_CALLBACK_RESULT_BYTES} bytes`);
   }
@@ -690,7 +702,8 @@ async function receiveCallback(env, callback) {
   return { accepted: true, duplicate: false };
 }
 
-async function receiveHostedCaptureCallback(env, task, callback) {
+async function receiveHostedCaptureCallback(env, task, callback, worker = null) {
+  assertHostedCallbackTransport(task, worker);
   if (
     task.run_id !== callback.run_id ||
     task.account_id !== callback.account_id ||
@@ -717,6 +730,13 @@ async function receiveHostedCaptureCallback(env, task, callback) {
     if (task.callback_id !== callback.callback_id) throw new HttpError(409, "conflicting callback");
     if (task.result_json !== storedResultJson) throw new HttpError(409, "callback result changed");
     return { accepted: true, duplicate: true };
+  }
+
+  if (worker) {
+    const reservation = await reserveWorkerTaskCallback(
+      env.DB, worker, task, callback.callback_id, storedResultJson,
+    );
+    if (reservation.duplicate) return { accepted: true, duplicate: true };
   }
 
   const now = new Date().toISOString();
@@ -780,13 +800,22 @@ async function receiveHostedCaptureCallback(env, task, callback) {
       )
       .run();
   }
-  const updated = await env.DB.prepare(
-    `UPDATE hosted_workspace_capture_tasks
-     SET state = ?, result_json = ?, callback_id = ?, updated_at = ?
-     WHERE task_id = ? AND callback_id IS NULL`,
-  )
-    .bind(status, storedResultJson, callback.callback_id, now, task.task_id)
-    .run();
+  const completion = worker
+    ? env.DB.prepare(
+      `UPDATE hosted_workspace_capture_tasks
+       SET state = ?, result_json = ?, callback_id = ?, updated_at = ?
+       WHERE task_id = ? AND callback_id IS NULL AND worker_id = ? AND lease_id = ?
+         AND callback_reservation_id = ?`,
+    ).bind(
+      status, storedResultJson, callback.callback_id, now, task.task_id,
+      worker.worker_id, task.lease_id, callback.callback_id,
+    )
+    : env.DB.prepare(
+      `UPDATE hosted_workspace_capture_tasks
+       SET state = ?, result_json = ?, callback_id = ?, updated_at = ?
+       WHERE task_id = ? AND callback_id IS NULL`,
+    ).bind(status, storedResultJson, callback.callback_id, now, task.task_id);
+  const updated = await completion.run();
   if (updated.meta.changes !== 1) {
     const winner = await env.DB.prepare(
       "SELECT callback_id, result_json FROM hosted_workspace_capture_tasks WHERE task_id = ?",

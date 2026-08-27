@@ -19,7 +19,7 @@ from ads_booster.candidate_generation.instruction import SYSTEM_INSTRUCTION
 from ads_booster.candidate_generation.kernel import (
     CandidateGenerator,
     CandidateImageRunner,
-    build_judged_trace_runner,
+    build_judged_codex_trace_runner,
     build_kernel_candidate_generator,
 )
 from ads_booster.candidate_generation.local_image_runner import (
@@ -177,4 +177,4 @@ class ProductionCandidateTraceRunner:
 
     def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
         with create_http_client(read_timeout=self.settings.candidate_timeout_seconds) as http:
-            return build_judged_trace_runner(self.home, http, self.settings).run(bundle)
+            return build_judged_codex_trace_runner(self.home, http, self.settings).run(bundle)

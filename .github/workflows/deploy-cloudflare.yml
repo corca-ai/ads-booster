@@ -117,6 +117,7 @@ jobs:
             "$workspace_url")"
           test "${workspace#*data-workspace-live}" != "$workspace"
           test "${workspace#*data-context-select}" != "$workspace"
+          test "${workspace#*data-worker-title}" != "$workspace"
           test "${workspace#*워크스페이스 접속 ID}" = "$workspace"
 
           session="$(curl --fail --silent --show-error \
@@ -140,6 +141,36 @@ jobs:
               process.exit(1);
             }
           ' "$contexts"
+
+          workers="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            "${workspace_url}api/workers/status")"
+          node -e '
+            const status = JSON.parse(process.argv[1]);
+            const allowed = new Set(["not_configured", "ready", "degraded", "offline"]);
+            if (!allowed.has(status.status) || !status.counts || !Array.isArray(status.workers)) {
+              process.exit(1);
+            }
+            const topKeys = ["counts", "online_window_seconds", "status", "workers"];
+            const countKeys = ["busy", "draining", "online", "ready", "registered"];
+            const workerKeys = ["display_name", "pool", "status"];
+            const workerStatuses = new Set(["ready", "busy", "degraded", "draining", "offline"]);
+            const exactKeys = (value, allowedKeys) =>
+              JSON.stringify(Object.keys(value).sort()) === JSON.stringify(allowedKeys);
+            const nonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
+            const validWorker = (worker) =>
+              exactKeys(worker, workerKeys) &&
+              typeof worker.display_name === "string" && worker.display_name.length > 0 &&
+              typeof worker.pool === "string" && worker.pool.length > 0 &&
+              workerStatuses.has(worker.status);
+            if (!exactKeys(status, topKeys) || !exactKeys(status.counts, countKeys) ||
+                !nonNegativeInteger(status.online_window_seconds) ||
+                Object.values(status.counts).some((value) => !nonNegativeInteger(value)) ||
+                status.workers.some((worker) => !validWorker(worker))) {
+              process.exit(1);
+            }
+          ' "$workers"
 
           custom_health="$(curl --fail --silent --show-error \
             --connect-timeout 10 --max-time 30 \

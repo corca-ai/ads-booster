@@ -78,7 +78,9 @@ class TraceScenePlan(ContractModel):
                 TRACE_ITEMS_MISMATCH,
                 TRACE_ITEMS_MISMATCH_MESSAGE,
             )
-        available_references = {item.reference_id for item in bundle.reference_images}
+        available_references = {item.reference_id for item in bundle.reference_images} | set(
+            bundle.promotion_material.reference_ids
+        )
         used_references = set(self.reference_ids_used)
         if available_references and not used_references:
             raise TraceScenePlanError(
@@ -125,7 +127,9 @@ def recipe_for_wallpaper_plan(
             TRACE_LOCAL_TIME_MISMATCH,
             TRACE_LOCAL_TIME_MISMATCH_MESSAGE,
         )
-    available_references = {item.reference_id for item in bundle.reference_images}
+    available_references = {item.reference_id for item in bundle.reference_images} | set(
+        bundle.promotion_material.reference_ids
+    )
     used_references = set(plan.reference_ids)
     if available_references and not used_references:
         raise TraceScenePlanError(REFERENCE_NOT_USED, REFERENCE_NOT_USED_MESSAGE)

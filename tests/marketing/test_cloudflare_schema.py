@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -79,3 +80,40 @@ def test_schema_deduplicates_workspace_review_events() -> None:
 
         with pytest.raises(sqlite3.IntegrityError):
             _ = connection.execute(insert)
+
+
+def test_dynamic_mac_workers_have_revocable_identities_and_single_task_leases() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
+        for migration in sorted(migration_root.glob("*.sql")):
+            _ = connection.executescript(migration.read_text())
+        _ = connection.execute(
+            """INSERT INTO mac_workers
+            (worker_id, display_name, pool, token_sha256, state, created_at, updated_at)
+            VALUES ('worker-1', 'Studio Mac', 'appium', 'digest-1', 'active', 'now', 'now')"""
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """INSERT INTO mac_workers
+                (worker_id, display_name, pool, token_sha256, state, created_at, updated_at)
+                VALUES ('worker-2', 'Backup Mac', 'appium', 'digest-1', 'active', 'now', 'now')"""
+            )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_capture_tasks
+            (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+             task_json, state, dispatch_mode, worker_id, lease_id, lease_expires_at,
+             lease_started_at, lease_accepted_at, attempt_count, created_at, updated_at)
+            VALUES ('task-1', 'run-1', 'trace_kr', 'candidate-1', 2, 'hosted:1', '{}',
+                    'queued', 'worker_broker', 'worker-1', 'lease-1', 'later', 'start',
+                    'accepted', 1, 'now', 'now')"""
+        )
+        task = cast(
+            "tuple[str, str, str, str, str, int] | None",
+            connection.execute(
+                """SELECT dispatch_mode, worker_id, lease_id, lease_started_at,
+                    lease_accepted_at, attempt_count
+                FROM hosted_workspace_capture_tasks WHERE task_id = 'task-1'"""
+            ).fetchone(),
+        )
+
+        assert task == ("worker_broker", "worker-1", "lease-1", "start", "accepted", 1)

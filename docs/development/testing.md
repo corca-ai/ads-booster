@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-08-26
+Last reviewed: 2026-08-27
 
 ## Purpose
 
@@ -11,14 +11,14 @@ boundaries, not the entire repository.
 
 ## Product baseline: fresh installation
 
-For product behavior, prioritize a fresh installed `trace-agent` environment over the source
+For product behavior, prioritize a fresh installed `trace-marketing` environment over the source
 worktree.
 
 - Use an isolated install location and a new `TRACE_AGENT_HOME`.
-- Resolve `trace-agent` from the installed PATH; do not substitute `uv run` or an activated project
+- Resolve `trace-marketing` and `codex` from the installed PATH; do not substitute `uv run` or an activated project
   virtual environment for installed-product proof.
-- Verify first-run CLI exposure, defaults, state creation, service startup, and documented
-  prerequisites from that environment.
+- Verify `codex login status`, `trace-marketing worker doctor`, CLI exposure, state creation, and
+  service startup from the same macOS user that owns the LaunchAgent.
 - Treat worktree tests and `uv run` commands as development evidence for a candidate change, not as
   proof that a first-time installation works.
 - For public-install claims, execute the actual published installer URL and ref. A local installer
@@ -155,6 +155,8 @@ uv run basedpyright path/to/changed.py tests/<domain>/test_changed.py
 
 Run repository-wide Ruff, formatting, or BasedPyright only when the user explicitly requests it or
 when the tooling configuration being changed applies to the whole repository.
+Ruff and BasedPyright target the package's lowest declared runtime, Python 3.13, so formatting and
+type checking cannot silently introduce syntax that a supported fresh install cannot import.
 
 ## Selection by change type
 
@@ -174,7 +176,7 @@ when the tooling configuration being changed applies to the whole repository.
 | `web/` | Changed router, schema, command, and approval tests; `node tests/web/workspace_static_behavior.mjs` for any change to `web/static/` | Changed API and browser interaction against a running app, including slash commands and approval state |
 | `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
 | `capture/` | Changed adapter, wallpaper contract, worker, or provenance tests | Run the current Appium, Simulator, and Trace build. Inspect `LockScreenWallpaperSheet` controls for selected Photos background, row layout, style values, and Save; confirm the request-owned IANA time zone, structured UTC/all-day event times, event colors, and timed source `HH:MM` plus clean title reached automation input; inspect the resulting full `trace_wallpaper.png` and native manifest rather than a component fixture. |
-| `marketing/`, `cloudflare/` | Focused Python bridge/native-capture, Queue decoder, D1 migration and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate` and `bridge --executor candidate-pipeline --once`; for hosted UI/context changes exercise root, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, Queue→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; native capture evidence includes the full wallpaper manifest, digest, request nonce, and device binding; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
+| `marketing/`, `cloudflare/` | Focused Python bridge/broker/native-capture, worker credential/LaunchAgent, Queue decoder, D1 migration/lease and hosted-workspace tests plus `cd cloudflare && npm run check`; parse the deployment workflow when it changes | Fresh-installed `trace-marketing simulate`, compatibility `bridge --executor simulation --once`, and broker `worker doctor/status/run --once`; for broker changes enroll with a one-time code, prove separate mode-`0600` credential and secret-free plist, race two workers for one task, reclaim one expired pre-execution lease, prove a post-barrier lease cannot move to a replacement worker, race callback ID/result reservation against changed retries and revoke/reassignment, prove heartbeat renewal stops at the one-hour cap, and keep heartbeat visible during capture; for hosted UI/context changes exercise root, sanitized worker status, protected Mac manager unlock/list/active/drain/two-step revoke/enrollment-copy/close-clear behavior, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, D1 lease→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; native capture evidence includes the full wallpaper manifest, digest, request nonce, and device binding; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
 | `composition/` | Changed composer and artifact tests | This is a legacy component-composition surface. Open the generated image and inspect the changed layer or output. |
 | Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
 
@@ -186,6 +188,9 @@ When automated tests cannot prove user-visible behavior, use only the changed su
 
 - For TUI changes, reproduce the changed state in a fresh PTY.
 - For Web changes, run the changed API and browser interaction.
+- For the hosted Mac manager, verify that public status works without a token, protected actions send
+  the bearer only to `/v1`, a wrong token stays inside the manager, and close/lock clears the token and
+  one-time enrollment output before reopening.
 - For service changes, use an isolated state root and port for the changed lifecycle.
 - For Appium wallpaper changes, confirm the current Simulator and Trace installation, import a
   searched background, and run the changed editor path. Inspect the real editor controls and the

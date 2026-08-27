@@ -32,6 +32,27 @@
   const accountCreateForm = one("[data-account-create-form]");
   const accountEditFeedback = one("[data-account-edit-feedback]");
   const accountCreateFeedback = one("[data-account-create-feedback]");
+  const workerManager = one("[data-worker-manager]");
+  const workerManagerOpen = one("[data-worker-manager-open]");
+  const workerManagerClose = one("[data-worker-manager-close]");
+  const workerAdminLocked = one("[data-worker-admin-locked]");
+  const workerAdminPanel = one("[data-worker-admin-panel]");
+  const workerAdminForm = one("[data-worker-admin-form]");
+  const workerAdminTokenField = one("#worker-control-token");
+  const workerAdminFeedback = one("[data-worker-admin-feedback]");
+  const workerAdminActionFeedback = one("[data-worker-admin-action-feedback]");
+  const workerAdminSubmit = one("[data-worker-admin-submit]");
+  const workerAdminRefresh = one("[data-worker-admin-refresh]");
+  const workerAdminLock = one("[data-worker-admin-lock]");
+  const workerEnrollmentForm = one("[data-worker-enrollment-form]");
+  const workerEnrollmentFeedback = one("[data-worker-enrollment-feedback]");
+  const workerEnrollmentSubmit = one("[data-worker-enrollment-submit]");
+  const workerEnrollmentResult = one("[data-worker-enrollment-result]");
+  const workerEnrollmentCode = one("[data-worker-enrollment-code]");
+  const workerEnrollmentCommand = one("[data-worker-enrollment-command]");
+  const workerEnrollmentExpiry = one("[data-worker-enrollment-expiry]");
+  const workerEnrollmentCodeCopy = one("[data-worker-enrollment-code-copy]");
+  const workerEnrollmentCommandCopy = one("[data-worker-enrollment-command-copy]");
   let hostedCandidateControls = false;
   let editingCandidate = null;
   let editingCandidateContextChanged = false;
@@ -45,6 +66,11 @@
   let selectedAccountId = "";
   let feedbackSignal = null;
   let capturePoll = null;
+  let workerPoll = null;
+  let macWorkerStatus = null;
+  let workerAdminToken = "";
+  let workerAdminPoll = null;
+  let managedWorkers = [];
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -168,6 +194,49 @@
     if (record.capture_state === "failed") return "Mac 캡처 실패 · 재시도 가능";
     return CANDIDATE_STATUS_LABELS[record.status] ?? record.status;
   };
+
+  const renderMacWorkerStatus = () => {
+    if (!macWorkerStatus) return;
+    const title = one("[data-worker-title]");
+    const copy = one("[data-worker-copy]");
+    const signal = one("[data-worker-signal]");
+    const badges = one("[data-worker-badges]");
+    const readyAliases = macWorkerStatus.workers
+      .filter((worker) => ["ready", "busy"].includes(worker.status))
+      .map((worker) => worker.display_name);
+    const presentation = macWorkerStatus.counts.draining > 0 && macWorkerStatus.counts.online === 0
+      ? ["Mac worker 전환 중", "기존 worker가 draining 상태라 새 작업을 받지 않습니다. 새 Mac을 활성화해 주세요.", "warning"]
+      : ({
+      ready: ["Mac 캡처 가능", readyAliases.length
+        ? `현재 ${readyAliases.join(", ")}에서 이미지 작업을 받을 수 있습니다.`
+        : "연결된 Mac이 이미지 작업을 받을 수 있습니다.", "success"],
+      degraded: ["Mac 환경 점검 필요", "worker는 온라인이지만 Appium 준비 항목이 부족해 작업을 받지 않습니다.", "warning"],
+      offline: ["Mac worker 오프라인", "작업은 Cloudflare에 대기하며 worker가 다시 켜지면 자동으로 이어집니다.", "danger"],
+      not_configured: ["Mac worker 미등록", "첫 worker를 등록하기 전에는 기존 Queue 호환 경로를 사용합니다.", "warning"],
+    }[macWorkerStatus.status] ?? ["Mac 상태 확인 불가", "잠시 후 다시 확인합니다.", "warning"]);
+    if (title) title.textContent = presentation[0];
+    if (copy) copy.textContent = presentation[1];
+    if (signal) signal.className = `signal-mark ${presentation[2]}`;
+    if (badges) badges.replaceChildren(
+      badge("approval-badge", `온라인 ${macWorkerStatus.counts.online}`),
+      badge("approval-badge", `작업 중 ${macWorkerStatus.counts.busy}`),
+      badge("approval-badge", `전환 중 ${macWorkerStatus.counts.draining}`),
+      badge("approval-badge quiet", `등록 ${macWorkerStatus.counts.registered}`),
+    );
+  };
+
+  const loadMacWorkerStatus = async () => {
+    if (!hostedCandidateControls || !one("[data-worker-title]")) return;
+    try {
+      macWorkerStatus = await request("/api/workers/status");
+      renderMacWorkerStatus();
+    } finally {
+      if (workerPoll) window.clearTimeout(workerPoll);
+      workerPoll = window.setTimeout(() => {
+        loadMacWorkerStatus().catch((error) => setNotice(error.message));
+      }, 15000);
+    }
+  };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
   const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
   const candidateDateTime = (seconds) => new Date(seconds * 1000).toLocaleString("ko-KR");
@@ -241,6 +310,10 @@
     if (memberName) memberName.textContent = "워크스페이스에 입장";
     if (inviteButton) inviteButton.hidden = true;
     all("[data-hosted-only]").forEach((element) => { element.hidden = true; });
+    if (workerPoll) window.clearTimeout(workerPoll);
+    workerPoll = null;
+    if (workerManager?.open) workerManager.close();
+    else lockWorkerManager();
     inviteDialog?.close();
     clearInviteResult();
   };
@@ -274,6 +347,273 @@
     element.className = className;
     element.textContent = text;
     return element;
+  };
+
+  const setWorkerAdminFeedback = (message) => {
+    if (!workerAdminFeedback) return;
+    workerAdminFeedback.textContent = message;
+  };
+
+  const setWorkerAdminActionFeedback = (message) => {
+    if (!workerAdminActionFeedback) return;
+    workerAdminActionFeedback.textContent = message;
+  };
+
+  const setWorkerEnrollmentFeedback = (message) => {
+    if (!workerEnrollmentFeedback) return;
+    workerEnrollmentFeedback.textContent = message;
+  };
+
+  const workerAdminRequest = async (path, options = {}) => {
+    if (!workerAdminToken) {
+      const failure = new Error("Mac 관리 토큰을 다시 입력해 주세요.");
+      failure.status = 401;
+      throw failure;
+    }
+    const headers = new Headers(options.headers ?? {});
+    headers.set("Authorization", `Bearer ${workerAdminToken}`);
+    const response = await fetch(path, { credentials: "same-origin", ...options, headers });
+    const payload = response.status === 204 ? null : await response.json();
+    if (!response.ok) {
+      const message = ({
+        400: "요청 값을 확인해 주세요.",
+        401: "제어 토큰이 맞지 않습니다. Cloudflare의 CONTROL_PLANE_TOKEN 값을 확인해 주세요.",
+        404: "Mac 연결을 찾지 못했습니다. 목록을 새로고침해 주세요.",
+        409: "다른 작업이 먼저 상태를 바꿨습니다. 목록을 새로고침해 주세요.",
+      })[response.status] ?? `Mac 관리 요청에 실패했습니다 (${response.status}).`;
+      const failure = new Error(message);
+      failure.status = response.status;
+      throw failure;
+    }
+    return payload;
+  };
+
+  const managedWorkerState = (worker) => {
+    if (worker.state === "revoked") return "revoked";
+    return worker.status ?? (worker.state === "draining" ? "draining" : "offline");
+  };
+
+  const MANAGED_WORKER_STATE_LABELS = Object.freeze({
+    ready: "작업 가능",
+    busy: "작업 중",
+    degraded: "환경 점검 필요",
+    draining: "새 작업 중지",
+    offline: "오프라인",
+    revoked: "연결 폐기됨",
+  });
+
+  const workerSeenLabel = (value) => {
+    const seenAt = Date.parse(value ?? "");
+    if (!Number.isFinite(seenAt)) return "연결 기록 없음";
+    const seconds = Math.max(0, Math.floor((Date.now() - seenAt) / 1000));
+    if (seconds < 60) return "방금 연결";
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전 연결`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전 연결`;
+    return `${new Date(seenAt).toLocaleDateString("ko-KR")} 연결`;
+  };
+
+  const setWorkerActionBusy = (button, busy, label) => {
+    if (!button) return;
+    if (busy) {
+      button.dataset.idleLabel = button.textContent;
+      button.textContent = label;
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      return;
+    }
+    button.textContent = button.dataset.idleLabel || button.textContent;
+    delete button.dataset.idleLabel;
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  };
+
+  const updateManagedWorkerState = async (worker, state, button) => {
+    setWorkerAdminActionFeedback("");
+    setWorkerActionBusy(button, true, "변경 중…");
+    try {
+      await workerAdminRequest(`/v1/workers/${encodeURIComponent(worker.worker_id)}/state`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+      await Promise.all([loadManagedWorkers(), loadMacWorkerStatus()]);
+    } catch (error) {
+      setWorkerAdminActionFeedback(error.message);
+      throw error;
+    } finally {
+      setWorkerActionBusy(button, false);
+    }
+  };
+
+  const revokeManagedWorker = async (worker, button) => {
+    setWorkerAdminActionFeedback("");
+    setWorkerActionBusy(button, true, "폐기 중…");
+    try {
+      await workerAdminRequest(`/v1/workers/${encodeURIComponent(worker.worker_id)}/revoke`, {
+        method: "POST",
+      });
+      await Promise.all([loadManagedWorkers(), loadMacWorkerStatus()]);
+    } catch (error) {
+      setWorkerAdminActionFeedback(error.message);
+      throw error;
+    } finally {
+      setWorkerActionBusy(button, false);
+    }
+  };
+
+  const workerRowNode = (worker) => {
+    const state = managedWorkerState(worker);
+    const row = document.createElement("article");
+    row.className = "worker-row";
+    row.dataset.state = state;
+    row.setAttribute("role", "listitem");
+
+    const heading = document.createElement("div");
+    heading.className = "worker-row__heading";
+    const identity = document.createElement("div");
+    identity.className = "worker-row__identity";
+    const name = document.createElement("strong");
+    name.textContent = worker.display_name;
+    const meta = document.createElement("span");
+    meta.className = "worker-row__meta";
+    meta.textContent = `${worker.pool} · ${workerSeenLabel(worker.last_seen_at)}`;
+    identity.append(name, meta);
+    const status = badge("worker-state", MANAGED_WORKER_STATE_LABELS[state] ?? state);
+    status.dataset.state = state;
+    heading.append(identity, status);
+
+    const detail = document.createElement("p");
+    detail.className = "worker-row__detail";
+    const version = worker.version ? `버전 ${worker.version}` : "버전 정보 없음";
+    const doctor = worker.doctor?.summary && worker.doctor.summary !== "ready"
+      ? ` · 점검: ${worker.doctor.summary}`
+      : "";
+    const task = worker.current_task_id ? ` · 현재 작업 ${worker.current_task_id}` : "";
+    detail.textContent = `${version}${doctor}${task}`;
+    row.append(heading, detail);
+
+    if (worker.state !== "revoked") {
+      const actions = document.createElement("div");
+      actions.className = "worker-row__actions";
+      const toggle = document.createElement("button");
+      toggle.className = "button button-secondary";
+      toggle.type = "button";
+      const nextState = worker.state === "draining" ? "active" : "draining";
+      toggle.textContent = nextState === "active" ? "다시 활성화" : "새 작업 중지";
+      toggle.addEventListener("click", () =>
+        updateManagedWorkerState(worker, nextState, toggle).catch(() => undefined));
+
+      const revoke = document.createElement("button");
+      revoke.className = "button button-quiet candidate-row__action--danger";
+      revoke.type = "button";
+      revoke.textContent = "연결 폐기";
+      revoke.addEventListener("click", () => {
+        revoke.hidden = true;
+        const confirmation = document.createElement("div");
+        confirmation.className = "worker-revoke-confirm";
+        const explanation = document.createElement("p");
+        explanation.textContent = worker.current_task_id
+          ? worker.display_name + "의 자격 증명을 폐기하고 현재 작업을 해제합니다. 콜백 반영 중이면 자격 증명 폐기가 거절되므로 Appium 결과를 먼저 확인하세요."
+          : worker.display_name + "의 자격 증명을 폐기합니다. 이 Mac을 다시 쓰려면 새 코드로 등록해야 합니다.";
+        const confirm = document.createElement("button");
+        confirm.className = "button button-secondary candidate-row__action--danger";
+        confirm.type = "button";
+        confirm.textContent = "폐기 확정";
+        confirm.addEventListener("click", () =>
+          revokeManagedWorker(worker, confirm).catch(() => undefined));
+        const cancel = document.createElement("button");
+        cancel.className = "button button-quiet";
+        cancel.type = "button";
+        cancel.textContent = "취소";
+        cancel.addEventListener("click", () => {
+          confirmation.hidden = true;
+          revoke.hidden = false;
+          revoke.focus();
+        });
+        confirmation.append(explanation, confirm, cancel);
+        row.append(confirmation);
+        confirm.focus();
+      });
+      actions.append(toggle, revoke);
+      row.append(actions);
+    }
+    return row;
+  };
+
+  const renderManagedWorkers = () => {
+    const list = one("[data-worker-list]");
+    const empty = one("[data-worker-list-empty]");
+    const summary = one("[data-worker-admin-summary]");
+    if (list) list.replaceChildren(...managedWorkers.map(workerRowNode));
+    if (empty) empty.hidden = managedWorkers.length > 0;
+    if (summary) {
+      const states = managedWorkers.map(managedWorkerState);
+      const available = states.filter((state) => state === "ready").length;
+      const busy = states.filter((state) => state === "busy").length;
+      const attention = states.filter((state) => ["degraded", "offline"].includes(state)).length;
+      summary.textContent = `전체 ${managedWorkers.length}대 · 작업 가능 ${available}대 · 작업 중 ${busy}대 · 확인 필요 ${attention}대`;
+    }
+  };
+
+  const scheduleWorkerAdminPoll = () => {
+    if (workerAdminPoll) window.clearTimeout(workerAdminPoll);
+    workerAdminPoll = null;
+    if (!workerAdminToken || !workerManager?.open) return;
+    workerAdminPoll = window.setTimeout(() => {
+      loadManagedWorkers().catch((error) => {
+        if (error.status === 401) lockWorkerManager(error.message);
+        else setWorkerAdminActionFeedback(error.message);
+      });
+    }, 15000);
+  };
+
+  const loadManagedWorkers = async () => {
+    const result = await workerAdminRequest("/v1/workers");
+    managedWorkers = Array.isArray(result?.workers) ? result.workers : [];
+    renderManagedWorkers();
+    scheduleWorkerAdminPoll();
+  };
+
+  const clearWorkerEnrollmentResult = () => {
+    if (workerEnrollmentResult) workerEnrollmentResult.hidden = true;
+    if (workerEnrollmentCode) workerEnrollmentCode.textContent = "";
+    if (workerEnrollmentCommand) workerEnrollmentCommand.textContent = "";
+    if (workerEnrollmentExpiry) workerEnrollmentExpiry.textContent = "";
+    setWorkerEnrollmentFeedback("");
+  };
+
+  const lockWorkerManager = (message = "") => {
+    workerAdminToken = "";
+    managedWorkers = [];
+    if (workerAdminPoll) window.clearTimeout(workerAdminPoll);
+    workerAdminPoll = null;
+    workerAdminForm?.reset();
+    workerAdminTokenField?.removeAttribute("aria-invalid");
+    if (workerAdminLocked) workerAdminLocked.hidden = false;
+    if (workerAdminPanel) workerAdminPanel.hidden = true;
+    clearWorkerEnrollmentResult();
+    setWorkerAdminFeedback(message);
+    setWorkerAdminActionFeedback("");
+  };
+
+  const copyWorkerSetupText = async (value, button, copiedLabel) => {
+    const original = button?.textContent ?? "복사";
+    try {
+      if (!value || typeof navigator === "undefined" || !navigator.clipboard) {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(value);
+      if (button) {
+        button.textContent = copiedLabel;
+        button.dataset.state = "success";
+        window.setTimeout(() => {
+          button.textContent = original;
+          delete button.dataset.state;
+        }, 2500);
+      }
+    } catch {
+      setWorkerEnrollmentFeedback("복사하지 못했습니다. 값을 직접 선택해 복사해 주세요.");
+    }
   };
 
   const selectedContextProfile = () =>
@@ -756,7 +1096,7 @@
       if (record.capture_state === "queued") {
         const waiting = document.createElement("p");
         waiting.className = "candidate-feedback";
-        waiting.textContent = "등록된 Mac worker가 Queue 작업을 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다.";
+        waiting.textContent = "온라인 Mac worker가 작업 lease를 가져가면 Appium 캡처가 시작됩니다. 완료되면 이 카드가 자동으로 갱신됩니다.";
         actions.append(waiting);
       } else {
         const button = document.createElement("button");
@@ -792,7 +1132,7 @@
   const generateCandidateImage = async (record, button, feedback) => {
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = "Queue 등록 중…";
+    button.textContent = "Mac 작업 등록 중…";
     setCardFeedback(feedback, "");
     setBusy(button, true, "잠금화면 이미지를 만드는 중… (1~3분 소요)");
     try {
@@ -800,7 +1140,7 @@
         method: "POST",
       });
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
-      setNotice("Mac 캡처 Queue에 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
+      setNotice("Mac 캡처 작업을 등록했습니다. 완료되면 이미지 검수 카드가 자동으로 갱신됩니다.");
     } catch (error) {
       setCardFeedback(feedback, error.message);
       setNotice(error.message);
@@ -1245,7 +1585,11 @@
     try {
       await loadHostedAccounts();
       await loadContextProfiles();
-      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      await Promise.all([
+        loadCandidates(),
+        loadFeedbackSummary(),
+        loadMacWorkerStatus().catch((error) => setNotice(error.message)),
+      ]);
     } finally {
       setBusy(workspaceLive, false);
     }
@@ -1361,6 +1705,135 @@
   });
 
   inviteDialog?.querySelector("[value='cancel']")?.addEventListener("click", () => inviteDialog?.close());
+
+  workerManagerOpen?.addEventListener("click", () => {
+    lockWorkerManager();
+    workerManager?.showModal();
+    workerAdminTokenField?.focus();
+  });
+
+  workerManagerClose?.addEventListener("click", () => workerManager?.close());
+  workerManager?.addEventListener("close", () => lockWorkerManager());
+  workerManager?.addEventListener("click", (event) => {
+    if (event.target === workerManager) workerManager.close();
+  });
+
+  workerAdminForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    const form = new FormData(target);
+    const token = String(form.get("control-token") ?? "").trim();
+    workerAdminTokenField?.removeAttribute("aria-invalid");
+    setWorkerAdminFeedback("");
+    if (!token) {
+      workerAdminTokenField?.setAttribute("aria-invalid", "true");
+      setWorkerAdminFeedback("Cloudflare CONTROL_PLANE_TOKEN 값을 입력해 주세요.");
+      workerAdminTokenField?.focus();
+      return;
+    }
+    workerAdminToken = token;
+    target.reset();
+    setWorkerActionBusy(workerAdminSubmit, true, "확인 중…");
+    try {
+      await loadManagedWorkers();
+      if (workerAdminLocked) workerAdminLocked.hidden = true;
+      if (workerAdminPanel) workerAdminPanel.hidden = false;
+    } catch (error) {
+      workerAdminToken = "";
+      workerAdminTokenField?.setAttribute("aria-invalid", "true");
+      setWorkerAdminFeedback(error.message);
+      workerAdminTokenField?.focus();
+    } finally {
+      setWorkerActionBusy(workerAdminSubmit, false);
+    }
+  });
+
+  workerAdminRefresh?.addEventListener("click", async () => {
+    setWorkerAdminActionFeedback("");
+    setWorkerActionBusy(workerAdminRefresh, true, "새로고침 중…");
+    try {
+      await loadManagedWorkers();
+    } catch (error) {
+      if (error.status === 401) lockWorkerManager(error.message);
+      else setWorkerAdminActionFeedback(error.message);
+    } finally {
+      setWorkerActionBusy(workerAdminRefresh, false);
+    }
+  });
+
+  workerAdminLock?.addEventListener("click", () => {
+    lockWorkerManager();
+    workerAdminTokenField?.focus();
+  });
+
+  workerEnrollmentForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    const form = new FormData(target);
+    const displayName = String(form.get("display-name") ?? "").trim();
+    const pool = String(form.get("pool") ?? "").trim();
+    const requestedTtl = Number(form.get("ttl-seconds"));
+    const ttlSeconds = Number.isInteger(requestedTtl) && requestedTtl > 0
+      ? requestedTtl
+      : undefined;
+    const nameField = one("#worker-display-name");
+    const poolField = one("#worker-pool");
+    nameField?.removeAttribute("aria-invalid");
+    poolField?.removeAttribute("aria-invalid");
+    setWorkerEnrollmentFeedback("");
+    clearWorkerEnrollmentResult();
+    if (!displayName) {
+      nameField?.setAttribute("aria-invalid", "true");
+      setWorkerEnrollmentFeedback("팀에서 구분할 Mac 이름을 입력해 주세요.");
+      nameField?.focus();
+      return;
+    }
+    if (!pool) {
+      poolField?.setAttribute("aria-invalid", "true");
+      setWorkerEnrollmentFeedback("작업 풀 이름을 입력해 주세요. 기본값은 appium입니다.");
+      poolField?.focus();
+      return;
+    }
+    setWorkerActionBusy(workerEnrollmentSubmit, true, "코드 만드는 중…");
+    try {
+      const enrollment = await workerAdminRequest("/v1/worker-enrollments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: displayName,
+          pool,
+          ...(ttlSeconds === undefined ? {} : { ttl_seconds: ttlSeconds }),
+        }),
+      });
+      const origin = window.location.origin.replace(/\/$/, "");
+      const commands = [
+        "trace-marketing worker doctor",
+        `trace-marketing worker enroll --url ${origin} --code '${enrollment.enrollment_code}'`,
+        "trace-marketing worker install-service",
+        "trace-marketing worker status",
+      ].join("\n");
+      if (workerEnrollmentCode) workerEnrollmentCode.textContent = enrollment.enrollment_code;
+      if (workerEnrollmentCommand) workerEnrollmentCommand.textContent = commands;
+      if (workerEnrollmentExpiry) {
+        workerEnrollmentExpiry.textContent = `${new Date(enrollment.expires_at).toLocaleString("ko-KR")}까지 한 번만 사용할 수 있습니다.`;
+      }
+      if (workerEnrollmentResult) workerEnrollmentResult.hidden = false;
+      target.reset();
+      const poolReset = one("#worker-pool");
+      if (poolReset) poolReset.value = "appium";
+    } catch (error) {
+      if (error.status === 401) lockWorkerManager(error.message);
+      else setWorkerEnrollmentFeedback(error.message);
+    } finally {
+      setWorkerActionBusy(workerEnrollmentSubmit, false);
+    }
+  });
+
+  workerEnrollmentCodeCopy?.addEventListener("click", () =>
+    copyWorkerSetupText(workerEnrollmentCode?.textContent?.trim(), workerEnrollmentCodeCopy, "코드 복사됨"));
+
+  workerEnrollmentCommandCopy?.addEventListener("click", () =>
+    copyWorkerSetupText(workerEnrollmentCommand?.textContent?.trim(), workerEnrollmentCommandCopy, "명령 복사됨"));
 
   const autogenNotice = (created) => {
     const registered = `후보 ${created.length}개가 등록되었습니다`;
