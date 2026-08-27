@@ -1524,12 +1524,6 @@ textarea:focus-visible {
   font-size: var(--font-small);
 }
 
-.pipeline-summary {
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 .worker-console {
   align-items: center;
   background: var(--color-surface-raised);
@@ -1552,52 +1546,9 @@ textarea:focus-visible {
 }
 .worker-console__badges { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: end; }
 
-.pipeline-step {
-  align-items: center;
-  background: var(--color-surface);
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-block-size: 3.25rem;
-  padding: var(--space-2);
-  text-align: start;
-  transition: background-color var(--motion-standard) var(--motion-ease), border-color var(--motion-standard) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
-}
-
-.pipeline-step:active { transform: translateY(1px); }
-
-.pipeline-step:disabled,
 .candidate-filter:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-}
-
-.pipeline-step:focus-visible {
-  outline: var(--focus-width) solid var(--color-focus);
-  outline-offset: var(--space-1);
-}
-
-.pipeline-step__index {
-  color: var(--color-text-quiet);
-  font-family: var(--font-mono-stack);
-  font-size: var(--font-mono);
-  display: none;
-}
-
-.pipeline-step__label {
-  color: var(--color-text-muted);
-  font-size: var(--font-label);
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.pipeline-step strong {
-  color: var(--color-text);
-  font-family: var(--font-mono-stack);
-  font-size: var(--font-heading);
 }
 
 .workspace-main > .filter-tabs { justify-self: start; }
@@ -2179,11 +2130,6 @@ textarea:focus-visible {
   .review-rating select:hover:not(:disabled),
   .review-rejection textarea:hover:not(:disabled) {
     border-color: var(--color-focus);
-  }
-
-  .pipeline-step:hover {
-    background: var(--color-surface-raised);
-    border-color: var(--color-border-strong);
   }
 
   .candidate-filter:hover { color: var(--color-text); }

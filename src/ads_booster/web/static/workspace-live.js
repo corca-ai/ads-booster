@@ -1224,17 +1224,6 @@
       : "컨텍스트를 선택하고 오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.";
   };
 
-  const renderPipelineStats = () => {
-    const value = (selector, count) => {
-      const element = one(selector);
-      if (element) element.textContent = String(count);
-    };
-    value("[data-stat-review]", candidateRecords.filter((record) => record.status === "awaiting_review").length);
-    value("[data-stat-image]", candidateRecords.filter(
-      (record) => record.status === "caption_approved" || record.status === "image_awaiting_review",
-    ).length);
-    value("[data-stat-ready]", candidateRecords.filter((record) => record.status === "submitted").length);
-  };
 
   const loadCandidates = async () => {
     // Scoped to the open account: another account's drafts are another person's.
@@ -1244,7 +1233,6 @@
     const records = await request(listPath);
     candidateRecords = records;
     renderCandidateList();
-    renderPipelineStats();
     const pending = records.filter((record) => record.status === "awaiting_review");
     one("[data-approval-list]")?.replaceChildren(...pending.map(approvalNode));
     const approvalEmpty = one("[data-approval-empty]");
