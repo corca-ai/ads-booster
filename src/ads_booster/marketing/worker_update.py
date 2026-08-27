@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -42,6 +43,8 @@ _MANIFEST_ASSET: Final = "trace-marketing-release.json"
 _BOOTSTRAP_ASSET: Final = "trace-marketing-bootstrap.py"
 _PACKAGE_NAME: Final = "trace-appium-capture"
 _PLATFORM: Final = "macos-arm64"
+_SIGNER_WORKFLOW: Final = "corca-ai/ads-booster/.github/workflows/release-mac-worker.yml"
+_SOURCE_REF: Final = "refs/heads/main"
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
@@ -126,6 +129,10 @@ class VerifiedRelease:
     bundle_asset: GitHubReleaseAsset
     bootstrap_asset: GitHubReleaseAsset
     manifest_bytes: bytes
+
+
+class ArtifactAttestationVerifier(Protocol):
+    def verify(self, release: VerifiedRelease, assets: Mapping[str, bytes]) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,11 +268,13 @@ class GitHubReleaseSource:
     def __init__(
         self,
         http: HttpClient,
+        attestation_verifier: ArtifactAttestationVerifier,
         *,
         repository: str = _REPOSITORY,
         api_root: str = _API_ROOT,
     ) -> None:
         self.http: HttpClient = http
+        self.attestation_verifier: ArtifactAttestationVerifier = attestation_verifier
         self.repository: str = repository
         self.api_root: str = api_root.rstrip("/")
 
@@ -276,8 +285,8 @@ class GitHubReleaseSource:
             )
         except ValidationError as error:
             raise WorkerUpdateError("latest GitHub Release response is invalid") from error
-        if payload.draft or payload.prerelease or not payload.immutable:
-            raise WorkerUpdateError("latest GitHub Release is not stable and immutable")
+        if payload.draft or payload.prerelease:
+            raise WorkerUpdateError("latest GitHub Release is not stable")
         assets_by_name = {asset.name: asset for asset in payload.assets}
         manifest_asset = assets_by_name.get(_MANIFEST_ASSET)
         if manifest_asset is None:
@@ -313,6 +322,18 @@ class GitHubReleaseSource:
         _verify_asset_bytes(release.bundle_asset, bundle, operation="bundle")
         if sha256(bundle).hexdigest() != release.manifest.bundle.sha256:
             raise WorkerUpdateError("downloaded bundle digest does not match manifest")
+        bootstrap = self._get_bytes(release.bootstrap_asset.browser_download_url)
+        _verify_asset_bytes(release.bootstrap_asset, bootstrap, operation="bootstrap")
+        if sha256(bootstrap).hexdigest() != release.manifest.bootstrap.sha256:
+            raise WorkerUpdateError("downloaded bootstrap digest does not match manifest")
+        self.attestation_verifier.verify(
+            release,
+            {
+                _MANIFEST_ASSET: release.manifest_bytes,
+                release.manifest.bundle.name: bundle,
+                release.manifest.bootstrap.name: bootstrap,
+            },
+        )
         return bundle
 
     def _resolve_tag_commit(self, tag: str) -> str:
@@ -531,6 +552,7 @@ class ManagedReleaseInstaller:
                     "--python",
                     release.manifest.python,
                     "--no-python-downloads",
+                    "--relocatable",
                     str(staged_release),
                 ),
                 operation="create staged environment",
@@ -695,6 +717,54 @@ def run_command(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class GitHubArtifactAttestationVerifier:
+    gh_executable: Path
+    command_runner: CommandRunner
+    repository: str = _REPOSITORY
+    signer_workflow: str = _SIGNER_WORKFLOW
+    source_ref: str = _SOURCE_REF
+
+    def verify(self, release: VerifiedRelease, assets: Mapping[str, bytes]) -> None:
+        expected_names = {
+            _MANIFEST_ASSET,
+            release.manifest.bundle.name,
+            release.manifest.bootstrap.name,
+        }
+        if set(assets) != expected_names:
+            raise WorkerUpdateError("attestation assets do not match the release envelope")
+        try:
+            with tempfile.TemporaryDirectory(prefix="trace-marketing-attestation-") as directory:
+                root = Path(directory)
+                for name in sorted(expected_names):
+                    path = root / name
+                    _ = path.write_bytes(assets[name])
+                    path.chmod(0o600)
+                    completed = self.command_runner(
+                        (
+                            str(self.gh_executable),
+                            "attestation",
+                            "verify",
+                            str(path),
+                            "--repo",
+                            self.repository,
+                            "--signer-workflow",
+                            self.signer_workflow,
+                            "--source-ref",
+                            self.source_ref,
+                            "--source-digest",
+                            release.manifest.commit_sha,
+                            "--deny-self-hosted-runners",
+                        ),
+                        environment=None,
+                    )
+                    if completed.returncode != 0:
+                        detail = _sanitized_process_detail(completed)
+                        raise WorkerUpdateError(f"release artifact attestation failed: {detail}")
+        except OSError as error:
+            raise WorkerUpdateError("release artifact attestation could not run") from error
+
+
 def _sanitized_process_detail(completed: subprocess.CompletedProcess[str]) -> str:
     detail = (completed.stderr or completed.stdout).strip().splitlines()
     return detail[-1][:300] if detail else f"exit {completed.returncode}"
@@ -811,6 +881,7 @@ class MacWorkerUpdater:
                 current_version=current.version,
                 candidate_version=release.manifest.version,
             )
+        _ = self.source.download_bundle(release)
         return UpdateAttempt(
             status="eligible",
             current_version=current.version,

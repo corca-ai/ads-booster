@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from ads_booster.cli.agent import app
@@ -21,24 +22,25 @@ def test_agent_help_keeps_existing_entrypoint_and_workspace_commands() -> None:
 
     # When the root help is rendered
     result = runner.invoke(app, ["--help"])
+    output = unstyle(result.stdout)
 
     # Then the existing and additive commands remain discoverable
     assert result.exit_code == 0
     assert all(
-        command in result.stdout
-        for command in ("serve", "auth", "generate-one", "workspace", "service")
+        command in output for command in ("serve", "auth", "generate-one", "workspace", "service")
     )
 
 
 def test_agent_serve_help_keeps_loopback_and_tunnel_options() -> None:
     # Given the additive workspace service command
     result = CliRunner().invoke(app, ["serve", "--help"])
+    output = unstyle(result.stdout)
 
     # When the service help is rendered
     # Then its compatibility boundary exposes the supported transport controls
     assert result.exit_code == 0
-    assert all(option in result.stdout for option in ("--host", "--port", "--tunnel"))
-    assert "cloudflared" in result.stdout
+    assert all(option in output for option in ("--host", "--port", "--tunnel"))
+    assert "cloudflared" in output
 
 
 def test_agent_auth_status_uses_a_clean_home_without_printing_credentials(
@@ -59,16 +61,17 @@ def test_agent_auth_status_uses_a_clean_home_without_printing_credentials(
 def test_generate_one_help_exposes_only_live_wallpaper_inputs() -> None:
     # Given the context-driven one-shot command
     result = CliRunner().invoke(app, ["generate-one", "--help"])
+    output = unstyle(result.stdout)
 
     # When its help is rendered
     # Then only the context, output, Appium, and timeout controls remain visible
     assert result.exit_code == 0
-    assert "--context-file" in result.stdout
-    assert "--output-root" in result.stdout
-    assert "--appium-server" in result.stdout
-    assert "--timeout-seconds" in result.stdout
+    assert "--context-file" in output
+    assert "--output-root" in output
+    assert "--appium-server" in output
+    assert "--timeout-seconds" in output
     assert all(
-        option not in result.stdout
+        option not in output
         for option in ("--image-model", "--iphone-ui", "--state-root", "--capture-output-root")
     )
 
@@ -90,10 +93,11 @@ def test_package_source_parses_on_the_declared_python_314_floor() -> None:
 
 def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
     result = CliRunner().invoke(marketing_app, ["worker", "--help"])
+    output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert all(
-        command in result.stdout
+        command in output
         for command in (
             "create-enrollment",
             "enroll",

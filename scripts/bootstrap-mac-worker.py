@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from pathlib import Path, PurePosixPath
 MANIFEST_NAME = "trace-marketing-release.json"
 BOOTSTRAP_NAME = "trace-marketing-bootstrap.py"
 PACKAGE_NAME = "trace-appium-capture"
+REPOSITORY = "corca-ai/ads-booster"
 WORKER_LABELS = (
     "com.corca.trace-marketing-worker",
     "com.corca.trace-agent",
@@ -34,7 +36,7 @@ class BootstrapError(RuntimeError):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Install a verified immutable trace-marketing release on an Apple Silicon Mac."
+        description="Install a provenance-verified trace-marketing release on an Apple Silicon Mac."
     )
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--bundle", required=True, type=Path)
@@ -45,7 +47,7 @@ def parse_arguments():
         default=Path.home() / ".local" / "share" / "trace-marketing",
     )
     parser.add_argument("--uv", type=Path)
-    parser.add_argument("--repository", default="corca-ai/ads-booster")
+    parser.add_argument("--gh", type=Path)
     parser.add_argument("--interval-seconds", type=int, default=3600)
     return parser.parse_args()
 
@@ -140,8 +142,8 @@ def verify_local_file(path, expected):
         raise BootstrapError("release file does not match the manifest")
 
 
-def gh_json(arguments, operation):
-    completed = run(("gh",) + tuple(arguments), operation)
+def gh_json(gh, arguments, operation):
+    completed = run((gh,) + tuple(arguments), operation)
     try:
         payload = json.loads(completed.stdout)
     except ValueError as error:
@@ -151,16 +153,30 @@ def gh_json(arguments, operation):
     return payload
 
 
-def verify_github_release(manifest, manifest_path, bundle_path, repository):
+def verify_github_release(manifest, manifest_path, bundle_path, repository, gh):
     tag = manifest["tag"]
-    run(("gh", "release", "verify", tag, "--repo", repository), "release attestation")
     bootstrap_path = Path(__file__).resolve()
     for path in (manifest_path, bundle_path, bootstrap_path):
         run(
-            ("gh", "release", "verify-asset", tag, str(path), "--repo", repository),
-            "release asset attestation",
+            (
+                gh,
+                "attestation",
+                "verify",
+                str(path),
+                "--repo",
+                repository,
+                "--signer-workflow",
+                repository + "/.github/workflows/release-mac-worker.yml",
+                "--source-ref",
+                "refs/heads/main",
+                "--source-digest",
+                manifest["commit_sha"],
+                "--deny-self-hosted-runners",
+            ),
+            "release artifact attestation",
         )
     release = gh_json(
+        gh,
         (
             "api",
             "-H",
@@ -172,13 +188,20 @@ def verify_github_release(manifest, manifest_path, bundle_path, repository):
     if (
         release.get("draft") is not False
         or release.get("prerelease") is not False
-        or release.get("immutable") is not True
         or release.get("tag_name") != tag
         or release.get("target_commitish") != manifest["commit_sha"]
     ):
-        raise BootstrapError("GitHub Release is not stable, immutable, and commit-pinned")
+        raise BootstrapError("GitHub Release is not stable and commit-pinned")
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+    except OSError as error:
+        raise BootstrapError("release manifest could not be read") from error
     expected_files = {
-        MANIFEST_NAME: None,
+        MANIFEST_NAME: {
+            "name": MANIFEST_NAME,
+            "size": len(manifest_bytes),
+            "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        },
         manifest["bundle"]["name"]: manifest["bundle"],
         BOOTSTRAP_NAME: manifest["bootstrap"],
     }
@@ -196,6 +219,7 @@ def verify_github_release(manifest, manifest_path, bundle_path, repository):
         ):
             raise BootstrapError("GitHub Release asset metadata differs from the manifest")
     ref = gh_json(
+        gh,
         ("api", "repos/{}/git/ref/tags/{}".format(repository, tag)),
         "release tag verification",
     )
@@ -204,6 +228,7 @@ def verify_github_release(manifest, manifest_path, bundle_path, repository):
         raise BootstrapError("release tag reference is invalid")
     if raw_object.get("type") == "tag":
         annotated = gh_json(
+            gh,
             ("api", "repos/{}/git/tags/{}".format(repository, raw_object.get("sha"))),
             "annotated tag verification",
         )
@@ -216,15 +241,26 @@ def verify_github_release(manifest, manifest_path, bundle_path, repository):
         raise BootstrapError("release tag does not resolve to the manifest commit")
 
 
-def require_platform_and_tools(uv_override):
+def require_platform_and_tools(uv_override, gh_override):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise BootstrapError("bootstrap requires an Apple Silicon Mac")
     uv = str(uv_override) if uv_override is not None else shutil.which("uv")
     if uv is None or not Path(uv).is_file() or not os.access(uv, os.X_OK):
         raise BootstrapError("uv is required and must already be installed")
-    if shutil.which("gh") is None:
+    gh = str(gh_override) if gh_override is not None else shutil.which("gh")
+    if gh is None or not Path(gh).is_file() or not os.access(gh, os.X_OK):
         raise BootstrapError("GitHub CLI is required for release verification")
-    return Path(uv).resolve()
+    completed = run((gh, "attestation", "verify", "--help"), "GitHub CLI capability check")
+    required_flags = (
+        "--deny-self-hosted-runners",
+        "--signer-workflow",
+        "--source-digest",
+        "--source-ref",
+    )
+    help_text = "{}\n{}".format(completed.stdout, completed.stderr)
+    if any(flag not in help_text for flag in required_flags):
+        raise BootstrapError("GitHub CLI lacks required artifact attestation flags")
+    return Path(uv).resolve(), Path(gh).resolve()
 
 
 def require_drained_worker():
@@ -316,7 +352,15 @@ def install_release(manifest, bundle, root, uv):
         if len(project_wheels) != 1:
             raise BootstrapError("release wheelhouse does not contain one project wheel")
         run(
-            (uv, "venv", "--python", "3.14", "--no-python-downloads", candidate),
+            (
+                uv,
+                "venv",
+                "--python",
+                "3.14",
+                "--no-python-downloads",
+                "--relocatable",
+                candidate,
+            ),
             "staged environment creation",
         )
         run(
@@ -358,7 +402,7 @@ def install_release(manifest, bundle, root, uv):
         shutil.rmtree(attempt, ignore_errors=True)
 
 
-def finalize_services(release, home, root, uv, interval_seconds):
+def finalize_services(release, home, root, uv, gh, interval_seconds):
     executable = release / "bin" / "trace-marketing"
     run(
         (
@@ -371,10 +415,31 @@ def finalize_services(release, home, root, uv, interval_seconds):
             root,
             "--uv",
             uv,
+            "--gh",
+            gh,
             "--interval-seconds",
             str(interval_seconds),
         ),
         "managed worker service bootstrap",
+    )
+
+
+def finish_bootstrap_command(executable, home, root, uv, gh):
+    return shlex.join(
+        str(value)
+        for value in (
+            executable,
+            "worker",
+            "finish-bootstrap",
+            "--home",
+            home,
+            "--install-root",
+            root,
+            "--uv",
+            uv,
+            "--gh",
+            gh,
+        )
     )
 
 
@@ -421,11 +486,11 @@ def main():
     bundle_path = arguments.bundle.expanduser().resolve()
     home = arguments.home.expanduser().resolve()
     root = arguments.install_root.expanduser().resolve()
-    uv = require_platform_and_tools(arguments.uv)
+    uv, gh = require_platform_and_tools(arguments.uv, arguments.gh)
     manifest = load_manifest(manifest_path)
     verify_local_file(bundle_path, manifest["bundle"])
     verify_local_file(Path(__file__).resolve(), manifest["bootstrap"])
-    verify_github_release(manifest, manifest_path, bundle_path, arguments.repository)
+    verify_github_release(manifest, manifest_path, bundle_path, REPOSITORY, gh)
     require_drained_worker()
     release = install_release(manifest, bundle_path, root, uv)
     credential = home / "marketing-worker" / "credential.json"
@@ -433,17 +498,9 @@ def main():
     if not credential.is_file() or not configuration.is_file():
         executable = root / "current" / "bin" / "trace-marketing"
         print("trace-marketing {} installed but not started".format(manifest["version"]))
-        print("enroll first: {} worker enroll --url <origin> --code <code>".format(executable))
-        template = "finish bootstrap: {} worker finish-bootstrap --home {} "
-        template += "--install-root {} --uv {}"
-        print(
-            template.format(
-                executable,
-                home,
-                root,
-                uv,
-            )
-        )
+        print("next step: create a one-time enrollment in the protected workspace Mac manager")
+        print("after enrollment, finish bootstrap with:")
+        print(finish_bootstrap_command(executable, home, root, uv, gh))
         return
     try:
         finalize_services(
@@ -451,6 +508,7 @@ def main():
             home,
             root,
             uv,
+            gh,
             arguments.interval_seconds,
         )
     except BootstrapError:

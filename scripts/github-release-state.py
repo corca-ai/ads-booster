@@ -43,7 +43,20 @@ class GitHubApi:
         self._attempts = attempts
 
     def get_optional(self, path: str) -> dict[str, object] | None:
-        return self._request("GET", path, optional_404=True)
+        payload = self._request("GET", path, optional_404=True)
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            message = "GitHub API returned a non-object response"
+            raise ReleaseStateError(message)
+        return cast("dict[str, object]", payload)
+
+    def get_array(self, path: str) -> list[dict[str, object]]:
+        payload = self._request("GET", path, optional_404=False)
+        if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
+            message = "GitHub API returned a non-object array response"
+            raise ReleaseStateError(message)
+        return cast("list[dict[str, object]]", payload)
 
     def delete(self, path: str) -> None:
         _ = self._request("DELETE", path, optional_404=True)
@@ -54,7 +67,7 @@ class GitHubApi:
         path: str,
         *,
         optional_404: bool,
-    ) -> dict[str, object] | None:
+    ) -> object | None:
         url = f"{self._base_url}/{path.lstrip('/')}"
         request = urllib.request.Request(  # noqa: S310 -- HTTPS is validated in __init__.
             url,
@@ -75,11 +88,11 @@ class GitHubApi:
                     payload: bytes = response.read()
                 if not payload:
                     return None
-                decoded = cast("object", json.loads(payload))
-                if not isinstance(decoded, dict):
-                    message = "GitHub API returned a non-object response"
-                    raise ReleaseStateError(message)
-                return cast("dict[str, object]", decoded)
+                try:
+                    return cast("object", json.loads(payload))
+                except ValueError as error:
+                    message = "GitHub API returned invalid JSON"
+                    raise ReleaseStateError(message) from error
             except urllib.error.HTTPError as error:
                 error.close()
                 if error.code == _NOT_FOUND and optional_404:
@@ -145,7 +158,7 @@ def resolve_release_state(
 ) -> str:
     tag = f"v{version}"
     encoded_tag = quote(tag, safe="")
-    release = api.get_optional(f"repos/{repository}/releases/tags/{encoded_tag}")
+    release = _release_by_tag(api, repository=repository, tag=tag)
     ref = api.get_optional(f"repos/{repository}/git/ref/tags/{encoded_tag}")
     tag_object = _tag_object(api, repository=repository, ref=ref)
     state = classify_release_state(
@@ -165,12 +178,34 @@ def resolve_release_state(
         api.delete(f"repos/{repository}/releases/{release_id}")
     if ref is not None:
         api.delete(f"repos/{repository}/git/refs/tags/{encoded_tag}")
-    remaining_release = api.get_optional(f"repos/{repository}/releases/tags/{encoded_tag}")
+    remaining_release = _release_by_tag(api, repository=repository, tag=tag)
     remaining_ref = api.get_optional(f"repos/{repository}/git/ref/tags/{encoded_tag}")
     if remaining_release is not None or remaining_ref is not None:
         message = "managed partial release repair did not converge to empty state"
         raise ReleaseStateError(message)
     return "new"
+
+
+def _release_by_tag(
+    api: GitHubApi,
+    *,
+    repository: str,
+    tag: str,
+) -> dict[str, object] | None:
+    matches: list[dict[str, object]] = []
+    per_page = 100
+    for page in range(1, 101):
+        releases = api.get_array(f"repos/{repository}/releases?per_page={per_page}&page={page}")
+        matches.extend(release for release in releases if release.get("tag_name") == tag)
+        if len(releases) < per_page:
+            break
+    else:
+        message = "GitHub release listing exceeded the pagination safety limit"
+        raise ReleaseStateError(message)
+    if len(matches) > 1:
+        message = f"{tag} has duplicate GitHub release records"
+        raise ReleaseStateError(message)
+    return matches[0] if matches else None
 
 
 def classify_release_state(
@@ -186,7 +221,7 @@ def classify_release_state(
     if (
         release is not None
         and ref is not None
-        and _is_exact_immutable_release(release, tag=tag, commit_sha=commit_sha)
+        and _is_exact_stable_release(release, tag=tag, commit_sha=commit_sha)
         and _is_managed_tag(
             ref,
             tag_object=tag_object,
@@ -240,7 +275,7 @@ def _tag_object(
     return api.get_optional(f"repos/{repository}/git/tags/{object_sha}")
 
 
-def _is_exact_immutable_release(
+def _is_exact_stable_release(
     release: dict[str, object],
     *,
     tag: str,
@@ -251,7 +286,6 @@ def _is_exact_immutable_release(
         and release.get("target_commitish") == commit_sha
         and release.get("draft") is False
         and release.get("prerelease") is False
-        and release.get("immutable") is True
         and managed_release_body(tag, commit_sha) in str(release.get("body", ""))
     )
 
@@ -262,11 +296,10 @@ def _is_managed_partial_release(
     tag: str,
     commit_sha: str,
 ) -> bool:
-    mutable_or_draft = release.get("draft") is True or release.get("immutable") is False
     return (
         release.get("tag_name") == tag
         and release.get("target_commitish") == commit_sha
-        and mutable_or_draft
+        and release.get("draft") is True
         and managed_release_body(tag, commit_sha) in str(release.get("body", ""))
     )
 

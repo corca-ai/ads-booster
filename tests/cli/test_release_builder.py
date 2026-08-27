@@ -78,7 +78,7 @@ def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -
     assert "macos-14" not in workflow
     assert "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" in workflow
     assert "tomllib.load" in workflow
-    assert "TRACE_IMMUTABLE_RELEASES_ENABLED" in workflow
+    assert "TRACE_IMMUTABLE_RELEASES_ENABLED" not in workflow
     assert "bump pyproject.toml before merge" in workflow
     assert "scripts/github-release-state.py" in workflow
     assert "--repair-managed-partials" in workflow
@@ -92,15 +92,32 @@ def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -
     assert "repos/$RELEASE_REPOSITORY/git/tags" in workflow
     assert "repos/$RELEASE_REPOSITORY/git/refs" in workflow
     assert "generate_release_notes=true" in workflow
-    assert "'.immutable'" in workflow
+    assert "'.immutable'" not in workflow
     assert "unauthenticated readback" in workflow
     assert "trace-marketing-managed-release:$tag:$RELEASE_SHA" in workflow
     assert "Managed trace-marketing release $tag at $RELEASE_SHA" in workflow
-    assert "Remove only this run's failed mutable or unpublished release state" in workflow
+    assert "Remove only this run's unpublished draft state" in workflow
     assert "setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" in workflow
     assert "attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a" in workflow
-    assert 'gh release verify "$tag"' in workflow
-    assert 'gh release verify-asset "$tag"' in workflow
+    assert "tests/fixtures/fake-gh-release.py" in workflow
+    assert "Prove a fresh managed product bootstrap" in workflow
+    assert "build/release/trace-marketing-bootstrap.py" in workflow
+    assert 'test -L "$fresh/product/current"' in workflow
+    assert "release-receipt.json" in workflow
+    assert 'gh attestation verify "$asset"' in workflow
+    assert "gh api --paginate --slurp" in workflow
+    assert '"repos/$RELEASE_REPOSITORY/releases?per_page=100"' in workflow
+    assert (
+        '--signer-workflow "$RELEASE_REPOSITORY/.github/workflows/release-mac-worker.yml"'
+        in workflow
+    )
+    assert "--source-ref refs/heads/main" in workflow
+    assert '--source-digest "$RELEASE_SHA"' in workflow
+    assert "--deny-self-hosted-runners" in workflow
+    assert 'gh release verify "$tag"' not in workflow
+    assert workflow.index("Verify the exact attested release before publication") < workflow.index(
+        "Publish the verified new stable release"
+    )
     assert '-f target_commitish="$RELEASE_SHA"' in workflow
     assert "SSH" not in workflow
     assert 'requires = ["hatchling==1.32.0"]' in PROJECT.read_text(encoding="utf-8")

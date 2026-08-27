@@ -8,6 +8,7 @@ import tarfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -16,6 +17,7 @@ from pydantic import TypeAdapter
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.marketing.worker_update import (
+    GitHubArtifactAttestationVerifier,
     GitHubReleaseAsset,
     GitHubReleasePayload,
     GitHubReleaseSource,
@@ -24,6 +26,7 @@ from ads_booster.marketing.worker_update import (
     InstalledRelease,
     MacWorkerReleaseManifest,
     MacWorkerUpdater,
+    ManagedReleaseInstaller,
     ManagedWorkerPaths,
     ReleaseFile,
     UpdateStateStore,
@@ -41,7 +44,6 @@ from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
@@ -133,34 +135,60 @@ def _response(payload: object) -> HttpResponse:
     return HttpResponse(200, content, {})
 
 
-def test_release_source_requires_exact_immutable_commit_and_digest_envelope() -> None:
+@dataclass(slots=True)
+class RecordingAttestationVerifier:
+    verified: dict[str, bytes] | None = None
+
+    def verify(self, release: VerifiedRelease, assets: Mapping[str, bytes]) -> None:
+        assert release.manifest.commit_sha == "a" * 40
+        self.verified = dict(assets)
+
+
+def test_release_source_accepts_mutable_stable_metadata_then_verifies_all_artifacts() -> None:
     verified = _verified("1.2.3")
     manifest = verified.manifest
     release_payload = _JSON_OBJECT.validate_json(verified.release.model_dump_json())
+    release_payload["immutable"] = False
+    attestation_verifier = RecordingAttestationVerifier()
     http = StubHttp(
         {
             "https://api.github.com/repos/corca-ai/ads-booster/releases/latest": _response(
                 release_payload
             ),
             verified.manifest_asset.browser_download_url: _response(verified.manifest_bytes),
+            verified.bundle_asset.browser_download_url: _response(b"bundle"),
+            verified.bootstrap_asset.browser_download_url: _response(b"bootstrap"),
             "https://api.github.com/repos/corca-ai/ads-booster/git/ref/tags/v1.2.3": _response(
                 {"object": {"type": "commit", "sha": manifest.commit_sha}}
             ),
         }
     )
 
-    inspected = GitHubReleaseSource(http).inspect_latest()
+    source = GitHubReleaseSource(http, attestation_verifier)
+    inspected = source.inspect_latest()
+    bundle = source.download_bundle(inspected)
 
     assert inspected.manifest == manifest
-    assert inspected.release.immutable is True
+    assert inspected.release.immutable is False
+    assert bundle == b"bundle"
+    assert attestation_verifier.verified == {
+        "trace-marketing-release.json": inspected.manifest_bytes,
+        inspected.manifest.bundle.name: b"bundle",
+        "trace-marketing-bootstrap.py": b"bootstrap",
+    }
 
 
-@pytest.mark.parametrize("mutation", ["mutable", "extra-asset", "wrong-commit", "no-digest"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["draft", "prerelease", "extra-asset", "wrong-commit", "no-digest"],
+)
 def test_release_source_rejects_untrusted_release_metadata(mutation: str) -> None:
     verified = _verified("1.2.3")
     payload = _JSON_OBJECT.validate_json(verified.release.model_dump_json())
-    if mutation == "mutable":
-        payload["immutable"] = False
+    if mutation == "draft":
+        payload["draft"] = True
+    elif mutation == "prerelease":
+        payload["prerelease"] = True
     elif mutation == "extra-asset":
         assets = payload["assets"]
         assert isinstance(assets, list)
@@ -186,7 +214,91 @@ def test_release_source_rejects_untrusted_release_metadata(mutation: str) -> Non
     )
 
     with pytest.raises(WorkerUpdateError):
-        _ = GitHubReleaseSource(http).inspect_latest()
+        _ = GitHubReleaseSource(http, RecordingAttestationVerifier()).inspect_latest()
+
+
+def test_attestation_verifier_pins_repository_workflow_ref_and_commit(tmp_path: Path) -> None:
+    release = _verified("1.2.3")
+    commands: list[tuple[str, ...]] = []
+
+    def runner(
+        arguments: Sequence[str],
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = environment
+        commands.append(tuple(arguments))
+        return _completed(0)
+
+    verifier = GitHubArtifactAttestationVerifier(tmp_path / "gh", runner)
+    verifier.verify(
+        release,
+        {
+            "trace-marketing-release.json": release.manifest_bytes,
+            release.manifest.bundle.name: b"bundle",
+            release.manifest.bootstrap.name: b"bootstrap",
+        },
+    )
+
+    assert len(commands) == 3
+    for command in commands:
+        assert command[:3] == (str(tmp_path / "gh"), "attestation", "verify")
+        assert command[command.index("--repo") + 1] == "corca-ai/ads-booster"
+        assert command[command.index("--signer-workflow") + 1] == (
+            "corca-ai/ads-booster/.github/workflows/release-mac-worker.yml"
+        )
+        assert command[command.index("--source-ref") + 1] == "refs/heads/main"
+        assert command[command.index("--source-digest") + 1] == release.manifest.commit_sha
+        assert "--deny-self-hosted-runners" in command
+
+
+def test_attestation_verifier_fails_closed_on_missing_provenance(tmp_path: Path) -> None:
+    release = _verified("1.2.3")
+
+    def runner(
+        arguments: Sequence[str],
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = (arguments, environment)
+        return subprocess.CompletedProcess([], 1, stdout="", stderr="no matching attestation")
+
+    verifier = GitHubArtifactAttestationVerifier(tmp_path / "gh", runner)
+
+    with pytest.raises(WorkerUpdateError, match="artifact attestation failed"):
+        verifier.verify(
+            release,
+            {
+                "trace-marketing-release.json": release.manifest_bytes,
+                release.manifest.bundle.name: b"bundle",
+                release.manifest.bootstrap.name: b"bootstrap",
+            },
+        )
+
+
+def test_attestation_verifier_sanitizes_missing_github_cli(tmp_path: Path) -> None:
+    release = _verified("1.2.3")
+
+    def runner(
+        arguments: Sequence[str],
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = (arguments, environment)
+        message = "fixture path and environment must not escape"
+        raise OSError(message)
+
+    verifier = GitHubArtifactAttestationVerifier(tmp_path / "missing-gh", runner)
+
+    with pytest.raises(WorkerUpdateError, match="attestation could not run"):
+        verifier.verify(
+            release,
+            {
+                "trace-marketing-release.json": release.manifest_bytes,
+                release.manifest.bundle.name: b"bundle",
+                release.manifest.bootstrap.name: b"bootstrap",
+            },
+        )
 
 
 def test_release_bundle_rejects_path_traversal(tmp_path: Path) -> None:
@@ -263,12 +375,14 @@ def _install(paths: ManagedWorkerPaths, version: str) -> InstalledRelease:
 @dataclass(slots=True)
 class FakeSource:
     release: VerifiedRelease
+    download_count: int = 0
 
     def inspect_latest(self) -> VerifiedRelease:
         return self.release
 
     def download_bundle(self, release: VerifiedRelease) -> bytes:
         _ = release
+        self.download_count += 1
         return b"bundle"
 
 
@@ -326,6 +440,59 @@ def _completed(returncode: int) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], returncode, stdout="", stderr="")
 
 
+def test_staged_release_uses_a_relocatable_environment_before_promotion(
+    tmp_path: Path,
+) -> None:
+    paths = ManagedWorkerPaths(tmp_path / "managed", tmp_path / "agent")
+    release = _verified("1.2.3")
+    commands: list[tuple[str, ...]] = []
+
+    def runner(
+        arguments: Sequence[str],
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = environment
+        command = tuple(arguments)
+        commands.append(command)
+        if len(command) > 1 and command[1] == "venv":
+            candidate = Path(command[-1])
+            (candidate / "bin").mkdir(parents=True)
+            _ = (candidate / "bin" / "python").write_text("fixture", encoding="utf-8")
+        elif len(command) > 1 and command[1] == "pip":
+            python = Path(command[command.index("--python") + 1])
+            executable = python.parent / "trace-marketing"
+            _ = executable.write_text("fixture", encoding="utf-8")
+        elif command[-2:] == ("version", "--json"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout='{"version":"1.2.3"}',
+                stderr="",
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+        for name, content in (
+            ("wheelhouse/trace_appium_capture-1.2.3-py3-none-any.whl", b"wheel"),
+            ("requirements.lock", b"trace-appium-capture==1.2.3\n"),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            bundle.addfile(member, io.BytesIO(content))
+
+    installed = ManagedReleaseInstaller(paths, tmp_path / "uv", runner).stage(
+        release,
+        archive.getvalue(),
+    )
+
+    venv_command = next(command for command in commands if command[1] == "venv")
+    assert "--relocatable" in venv_command
+    assert installed.path == (paths.releases / "1.2.3").resolve()
+    assert installed.executable.is_file()
+
+
 def _updater(
     paths: ManagedWorkerPaths,
     candidate: InstalledRelease,
@@ -344,6 +511,29 @@ def _updater(
         drain_timeout_seconds=drain_timeout,
         drain_poll_seconds=0,
     )
+
+
+def test_dry_run_verifies_candidate_artifacts_without_staging(tmp_path: Path) -> None:
+    paths = ManagedWorkerPaths(tmp_path / "managed", tmp_path / "agent")
+    paths.prepare()
+    previous = _install(paths, "1.0.0")
+    candidate = _install(paths, "1.1.0")
+    paths.current.symlink_to(previous.path, target_is_directory=True)
+    source = FakeSource(_verified(candidate.version))
+    updater = MacWorkerUpdater(
+        paths=paths,
+        source=source,
+        installer=FakeInstaller(candidate),
+        service=FakeService(),
+        verifier=FakeVerifier(),
+        state_store=UpdateStateStore(paths.state),
+    )
+
+    attempt = updater.inspect()
+
+    assert attempt.status == "eligible"
+    assert source.download_count == 1
+    assert current_installed_release(paths).version == "1.0.0"
 
 
 def test_busy_worker_defers_without_stopping_launchd(tmp_path: Path) -> None:
