@@ -21,6 +21,7 @@ from ads_booster.candidate_generation import (
 from ads_booster.candidate_generation.kernel import build_image_review
 from ads_booster.config.settings import AgentSettings
 from ads_booster.service.state import ServiceStateStore
+from ads_booster.web.account_router import build_account_router
 from ads_booster.web.assets import build_asset_router
 from ads_booster.web.auth import CurrentPrincipal, OwnerIdentity, build_auth_router
 from ads_booster.web.campaigns import build_campaign_router
@@ -95,6 +96,7 @@ def create_app(
             owner_identity=owner_identity,
         )
     )
+    app.include_router(build_account_router(store, current_principal))
     app.include_router(build_context_router(store, current_principal))
     app.include_router(build_asset_router(store, current_principal))
     app.include_router(

@@ -31,6 +31,9 @@ from ads_booster.workspace import (
     CandidateTopic,
     ContextId,
     ContextKind,
+    MarketingAccountId,
+    MarketingAccountIdentity,
+    MarketingAccountStatus,
     MemberId,
     PrivateSessionId,
     WorkspaceId,
@@ -282,6 +285,36 @@ class CandidateResponse(WebModel):
     background_provenance: CandidateBackgroundProvenance | None
     status: CandidateStatus
     review_note: str | None
+    revision: int
+    created_at: float
+    updated_at: float
+
+
+class MarketingAccountCreateRequest(WebModel):
+    country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
+    identity: MarketingAccountIdentity
+    status: MarketingAccountStatus = MarketingAccountStatus.OBSERVING
+    note: Annotated[str, Field(max_length=400)] = ""
+
+
+class MarketingAccountUpdateRequest(WebModel):
+    identity: MarketingAccountIdentity
+    note: Annotated[str, Field(max_length=400)] = ""
+    expected_revision: int = Field(ge=1)
+
+
+class MarketingAccountStatusRequest(WebModel):
+    status: MarketingAccountStatus
+    expected_revision: int = Field(ge=1)
+
+
+class MarketingAccountResponse(WebModel):
+    workspace_id: WorkspaceId
+    account_id: MarketingAccountId
+    country: str
+    identity: MarketingAccountIdentity
+    status: MarketingAccountStatus
+    note: str
     revision: int
     created_at: float
     updated_at: float
