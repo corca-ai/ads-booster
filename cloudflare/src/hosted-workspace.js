@@ -1,7 +1,7 @@
 import { hasRegisteredBrokerWorker } from "./mac-workers.js";
 
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
-const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
+export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const MAX_CANDIDATES = 200;
@@ -839,7 +839,7 @@ async function generateCandidates(env, contextRegistry, profile) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let result;
     try {
-      result = await env.AI.run(env.WORKSPACE_AI_MODEL || DEFAULT_MODEL, {
+      result = await env.AI.run(env.WORKSPACE_AI_MODEL || DEFAULT_WORKSPACE_AI_MODEL, {
         messages: [
           {
             role: "system",

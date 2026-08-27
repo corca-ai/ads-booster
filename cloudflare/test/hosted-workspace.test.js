@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   candidateResponseSchema,
   contextForCountry,
+  DEFAULT_WORKSPACE_AI_MODEL,
   generationPrompt,
   handleHostedWorkspace,
   nextDailyGenerationAt,
@@ -263,6 +264,15 @@ test("Workers AI schema requires two morning and two evening-ready candidates", 
   assert.ok(candidates.items.required.includes("posting_slot"));
   assert.ok(candidates.items.required.includes("appium_prompt"));
   assert.ok(candidates.items.required.includes("image_inputs"));
+});
+
+test("hosted candidate generation defaults to GPT-OSS 20B in code and deployment config", async () => {
+  const config = JSON.parse(
+    await readFile(new URL("../wrangler.template.jsonc", import.meta.url), "utf8"),
+  );
+
+  assert.equal(DEFAULT_WORKSPACE_AI_MODEL, "@cf/openai/gpt-oss-20b");
+  assert.equal(config.vars.WORKSPACE_AI_MODEL, DEFAULT_WORKSPACE_AI_MODEL);
 });
 
 test("workspace context assets expose data-driven country profiles", () => {

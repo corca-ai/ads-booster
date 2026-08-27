@@ -772,6 +772,11 @@ also claims each enabled account at its next local morning time and runs the sam
 Profiles can be added, edited, or hidden from the same screen. Every candidate stores the selected
 profile as an immutable snapshot, so later profile edits do not rewrite its generation provenance.
 
+The hosted generation path defaults to `@cf/openai/gpt-oss-20b`; operators can override it with
+`WORKSPACE_AI_MODEL`. The model runs only for `오늘 후보 4개 생성` and enabled scheduled generation.
+Manual candidate entry, caption/image review, Mac/Appium capture, and the final `submitted` transition
+do not call a language model.
+
 Caption approval, native Mac/Appium capture, and image approval use the same review tab. `이미지 생성`
 creates a revision-scoped D1 task. Once a non-revoked Mac has been enrolled, exactly one healthy worker
 claims an expiring lease with its own revocable machine credential; a Cloudflare Queue token is not
