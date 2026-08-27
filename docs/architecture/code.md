@@ -89,7 +89,7 @@ src/ads_booster/
 | `agent/` | Conversation history, context projection/compaction, model/tool loop, durable goal/run lifecycle, connector registry, scoped tool policy, observations, approval resume, and SQLite run state | Trace, Appium, marketing-specific types, or provider HTTP details |
 | `auth/` | OAuth login/refresh and protected credential storage | Agent conversation policy or Web member authentication |
 | `automation/` | Campaign state, variation production, queue idempotency, due claims, leases, worker-result validation, and review transitions | HTTP routes or artifact-generation implementations |
-| `candidate_generation/` | Context-document loading, candidate drafting, and adaptation of approved candidate snapshots into Agent Trace runs | HTTP routes, native capture mechanics, wallpaper rendering, or candidate review transitions |
+| `candidate_generation/` | Context-document loading, the generation instruction and its strict-JSON contract, coverage-based domain assignment, AI background judging and selection, local fallback composition, and adaptation of approved candidate snapshots into Agent Trace runs | HTTP routes, native capture mechanics, wallpaper rendering, or candidate review transitions |
 | `capture/` | Appium endpoints/sessions, Simulator/Appium readiness, Photos import, Trace wallpaper-editor interaction, full-wallpaper collection, and opaque provenance validation | Model planning or legacy offline composition policy |
 | `cli/` | Typer input validation, exit codes, and dependency composition | State machines or business transitions |
 | `composition/` | Legacy offline layer validation, transparency/path constraints, system-UI normalization, and deterministic PNG composition | Appium navigation, provider calls, or primary wallpaper generation |
@@ -120,8 +120,9 @@ Compose concrete dependencies at these entry points.
 | `capture/factory.py` | Native capture-adapter selection by device kind |
 | `cli/trace_run.py` | legacy run store, component capture port, compose port, and CLI error mapping |
 | `web/app.py` | workspace/queue stores, session codec, chat factory, candidate generator, focused routers, static shell |
-| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, context directory, native device resolver, and Agent runner composition for candidate production and image review |
-| `connectors/trace/v1/composition.py` | Trace v1 connector admission, Agent run composition, image search, wallpaper capture adapter, and native generation runner |
+| `candidate_generation/factory.py` | Per-run HTTP client, OAuth store, context directory, native device resolver, and both generator and both image-composition compositions |
+| `candidate_generation/background_factory.py` | Per-run image-search provider, judge client, and the persona one judged background fetch is told about |
+| `connectors/trace/v1/composition.py` | Trace v1 connector admission, Agent run composition, per-bundle background fetcher, wallpaper capture adapter, and native generation runner |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | queue scheduler, `GenerateOneWorker`, service-owned artifact roots and provider/capture adapters |
 | `cli/marketing.py` | local simulation, external pull-bridge, and opt-in candidate/native-capture dependency composition |
@@ -177,17 +178,32 @@ one generated Worker module from the canonical packaged source. `MarketingWorkfl
 
 ### Candidate generation
 
-- Keep context-document loading and Agent candidate/image workflow composition in
+- Keep context-document loading, the generation instruction, and image workflow composition in
   `candidate_generation/`.
-- Trace candidate schema, semantic tool, context projection, completion validation, and production
-  composition belong to `connectors/trace/v1/`; there is no candidate-specific prose parser or retry loop.
-- Accept the provider through `CandidateModelSource` and the store through the connector's
-  `CandidateCreator` protocol; compose them with `AgentRunStore` in
-  `candidate_generation/factory.py`.
+- Two generators live side by side and neither owns the other. `script_generator.py` is the
+  single-call engine the Web route runs: it holds the instruction, the domain assignment, and the
+  strict-JSON contract with its one retry, and it is where the team's Korean rules live.
+  `agent_generator.py` is the Agent-kernel path; its candidate schema, semantic tool, context
+  projection, and completion validation belong to `connectors/trace/v1/`.
+- Accept the provider through `CandidateModelSource` and the store through a narrow writer protocol;
+  compose both in `candidate_generation/factory.py`.
 - Keep the Web layer limited to authentication, typed-error-to-status mapping, and response shaping.
-- Candidate generation and wallpaper creation both execute through Agent with restricted Trace
-  connector tool snapshots. Native editor capture and opaque-export validation remain in `capture/`
-  and `runtime/`; legacy composition remains isolated in `composition/`.
+- Wallpaper creation executes through Agent with restricted Trace connector tool snapshots. Native
+  editor capture and opaque-export validation remain in `capture/` and `runtime/`; the deterministic
+  layer merge remains isolated in `composition/`.
+
+### Background selection and composition paths
+
+- Keep open-web collection, its physical checks, and its host filters in `search/image/`; keep the
+  editorial decision — gate, grade, tie-break, query ladder — in `candidate_generation/`.
+- Reach the Trace runner through the existing `BackgroundFetcher` protocol. A fetcher that needs to
+  know the persona is built per bundle by a factory, not injected once per process.
+- Let the run's `inputs/background-source.json` be the handoff between a fetcher inside the runner
+  and the candidate store; the fetcher has no route to the store.
+- Keep the local fallback composition in `candidate_generation/local_image_runner.py` and its
+  capture port in `runtime/`. A composition that did not drive a device declares
+  `source: offline_fixture`, and the path that ran is recorded on the candidate rather than inferred
+  from what is present.
 - Candidate journey transitions stay in `workspace/`; `CandidateWorkflow` coordinates the linked
   Agent run without editing database columns itself.
 

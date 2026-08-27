@@ -270,9 +270,16 @@ Post candidates are workspace-scoped rows in the same workspace database. A cand
 topic, caption, hypothesis, references, applied principles, the free-form Appium prompt stored in
 `shooting_order`, and the machine `image_inputs` the image stage needs: one to eight lock-screen
 schedule items, an `HH:MM` device time, a background subject drawn from a fixed vocabulary, a short
-background mood, and the content language. A candidate enters at `awaiting_review`. Topic and
-caption are reviewed together as one decision, so the first gate has a single approve/reject pair.
-`/api/candidates` creates manual candidates and lists a workspace newest-first.
+background mood, an optional authored background search query, and the content language. A
+`background_intent` is composed from the subject and mood when a writer does not supply one, so a
+payload carrying only that free-text field stays readable and one carrying only the vocabulary pair
+still reaches the connector. A generated candidate also carries its `persona_domain` and the
+generation provenance of the batch that wrote it, and a composed candidate carries the provenance of
+the background behind its image. A candidate enters at `awaiting_review`. Topic and caption are
+reviewed together as one decision, so the first gate has a single approve/reject pair.
+`/api/candidates` creates manual candidates and lists a workspace newest-first, and
+`DELETE /api/candidates/{candidate_id}` removes one candidate at any stage together with its
+artifact directory. Deletion is not a review outcome, so it expects no revision.
 
 A candidate travels three approval stages, and both browser surfaces render that journey so its
 position is visible. Stages one and two are implemented:
@@ -299,7 +306,7 @@ Trace v1 connector used by campaign generation. Its primary artifact comes from:
 
 | Input or artifact | Source | Verified by |
 | --- | --- | --- |
-| Background | `search/image/` fetches one image from the Pexels/Unsplash/Pixabay allowlist | Approved source host, decodable bytes, minimum edge, recorded digest |
+| Background | `search/image/open_background.py` collects open-web images and `candidate_generation/background_selection.py` has the model choose one | Decodable bytes, minimum edge, stock-host exclusion, per-host cap, AI gate and rubric grades, recorded digest |
 | Calendar/event content | Request-owned automation input | Explicit IANA time zone; strict UTC/all-day, event-color, and local `HH:MM` plus clean-title source validation |
 | Visual configuration | Real `LockScreenWallpaperSheet` Appium interaction | Required editor accessibility controls and plan values |
 | Final wallpaper | Request-bound `trace_wallpaper.png` rendered by Trace | PNG bytes, native manifest, request digest, nonce, device binding, and artifact digest |
@@ -311,34 +318,76 @@ opaque native-export verification. The Web route confines `outputs/final.png` be
 root and checks its SHA-256 before moving the candidate to image review. Any environment,
 generation, provenance, path, or digest failure leaves the candidate at `caption_approved`.
 
-Opening the workspace database runs two idempotent candidate migrations: rows written under the
-earlier single-stage `accepted` status are rewritten to `caption_approved`, which carries the same
-meaning on the journey, and rows stored before `topic` became a required reviewable field gain the
-column with the placeholder value `(주제 미기록)`.
+### Background selection
+
+Both composition paths take their background from the same seam, the `BackgroundFetcher` protocol
+`GenerateOneRunner` calls with the scene plan's query. The stock allowlist can only ever return the
+three photo libraries, so it cannot find the athlete, character, or idol a real lock screen holds.
+The judged fetcher searches the open web instead, drops stock-library hosts before downloading,
+prefers portrait crops and caps how many images one host may supply, and then shows every surviving
+preview to the model. The judge gates the obviously wrong images, grades the rest on authenticity,
+persona fit, and background fit, and breaks a near-tie by asking the same pair in both orders and
+accepting only a verdict that survives the swap. A round that judges out entirely walks a short
+query ladder — widen for free, then one model rewrite — and fails loudly rather than returning an
+image the judge just rejected.
+
+The chosen image and the whole judgment are written to the run's `inputs/background-source.json`,
+which is the only handoff between the fetcher inside the Trace runner and the candidate store. Both
+paths read it back onto the candidate, so a reviewer sees what the winner beat.
+
+### Composition path selection
+
+The native path needs a capture device. On a host where none resolves, the image stage composes
+locally instead: the judged background, the packaged Trace component fixture, and the packaged
+iPhone system UI merged deterministically. Which path ran is recorded, never inferred. The local
+capture port writes `source: offline_fixture` with `native_export_binding_verified` false, so it can
+never pass the connector's native export gates, and the candidate's background provenance carries
+`pipeline` as `native` or `local_fallback`. The local path cannot render the candidate's own
+schedule items or device time — the component layer is a fixture, not a capture — and the recorded
+pipeline is what tells a reviewer so. With no local composition configured, an unavailable capture
+environment fails the stage and leaves the candidate at `caption_approved`.
+
+Opening the workspace database runs idempotent candidate migrations: rows written under the earlier
+single-stage `accepted` status are rewritten to `caption_approved`, which carries the same meaning
+on the journey, rows stored before `topic` became a required reviewable field gain the column with
+the placeholder value `(주제 미기록)`, and `persona_domain`, `generation_provenance_json` and
+`background_provenance_json` are added as nullable columns. Every addition is additive, so a
+database written by an older build stays readable.
 
 ## Automatic candidate generation
 
-`POST /api/candidates/generate` is the second candidate entrance. `candidate_generation/` admits a
-durable Agent goal and uses the Trace v1 connector:
+`POST /api/candidates/generate` is the second candidate entrance. Two generators exist and both
+live in `candidate_generation/`; the route runs the single-call script engine.
 
-1. Resolve the context directory from `TRACE_AGENT_CONTEXT_DIR`, or `<serve workspace>/context`.
-2. Discover every readable Markdown document below the selected context directory. A new domain can
-   add its own directory without changing Python constants; an absent directory, unreadable file,
-   symlink, or empty document fails before any provider call and names what is unusable.
-3. Snapshot the discovered documents, workspace scope, and optional control-plane context into
-   `AgentGoal.context`.
-4. The connector injects the read-only documents as projection context and exposes only
-   `trace_propose_marketing_candidates` for this run.
-5. The model authors the complete typed candidates, including country, posting slot, background
-   intent, and Appium direction. Invalid fields or duplicate topics return as tool observations, and
-   the normal completion-driven loop can revise them without a fixed retry count.
-6. A successful tool call returns the validated batch, the application stores it as `source=auto`,
-   `status=awaiting_review`, and the Agent run completes durably.
+1. Resolve the context directory from `TRACE_AGENT_CONTEXT_DIR`, or `<serve workspace>/context`, or
+   the packaged `assets/context/`.
+2. Read the six documents the engine reasons from — the global and Korean principles, the Korean
+   elements, voice, and facts, and the Korean reference index. The whole corpus cannot go into one
+   instruction, so the set is named and an absent, unreadable, or empty document fails before any
+   provider call and says which one.
+3. Assign one persona domain per candidate from the running coverage counts, least-covered first,
+   ties broken by a shuffle. Coverage is counted over a closed nine-token vocabulary and only over
+   generated rows, so hand-written candidates do not exhaust a domain.
+4. Assemble one instruction from the documents, the assignment, the recent generated topics, and the
+   rules the team writes candidates against, including the persona-specificity block and the
+   background rules that keep a search query pointed at what someone would keep on their phone
+   rather than at their occupation.
+5. Call the provider once. The reply must be a JSON array of exactly the requested length, and one
+   failed validation is retried once with the validation detail quoted back. A second failure stores
+   nothing.
+6. Store the batch as `source=auto`, `status=awaiting_review`, each row carrying its assigned domain
+   and the provenance of the run: the documents read with their UTF-8 sizes, the model, the
+   instruction length, the moment of the call, and the domains assigned.
 
-The run has no publishing or filesystem-writing capability. It is a synchronous request handled in
-the FastAPI threadpool, so the browser waits for it. Failure modes are typed and mapped to a status
-with an operator-facing Korean message: missing context or a missing provider credential answer
-`409`, and a provider failure answers `502`.
+The Agent-kernel path composed by `build_candidate_generator` remains available and tested. It
+admits a durable Agent run and exposes `trace_propose_marketing_candidates`, letting the model
+revise invalid fields or duplicate topics through tool observations rather than a fixed retry count.
+It is not what the Web route calls.
+
+Neither run has publishing or filesystem-writing capability. The route is a synchronous request
+handled in the FastAPI threadpool, so the browser waits for it. Failure modes are typed and mapped
+to a status with an operator-facing Korean message: missing context or a missing provider credential
+answer `409`, and a provider failure or a response that twice failed the format answer `502`.
 
 ## Automation queue
 

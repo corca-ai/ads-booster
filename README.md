@@ -256,6 +256,8 @@ TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS
 TRACE_AGENT_BROWSER_COMMAND
 TRACE_AGENT_APPIUM_SERVER       # default: http://127.0.0.1:4723
 TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
+TRACE_AGENT_TRACE_COMPONENTS  # default: packaged assets/trace-components.png
+TRACE_AGENT_IPHONE_UI         # default: packaged assets/iphone-ui.png
 ```
 
 ### Candidate pipeline
@@ -291,23 +293,35 @@ shows `이미지 생성 중… (1~3분)` while the request runs, and an `image_a
 generated wallpaper with the topic and caption beside `승인` and `반려` plus a reason field. A
 rejection returns the candidate to `caption_approved` with the note, so a new wallpaper can be generated.
 
-Opening the workspace database runs two idempotent migrations for rows written before these
-fields existed: `accepted` becomes `caption_approved`, and candidates stored before `topic` was
-required are backfilled with the placeholder `(주제 미기록)` so the required field holds. Posting
-stays manual and outside this runtime.
+Every candidate carries a `🧠 생성 근거` panel naming the context documents the run read with their
+sizes, the model, the instruction length, and the persona domains that batch was assigned. An image
+card additionally shows the background search query, the source page the winning image came from,
+and a `배경 심사` panel listing every image the judge looked at with its grades or the reason it was
+gated, plus every search query the run tried. A locally composed image is labelled as such.
+
+`삭제` on a candidate asks once inline — `정말 삭제할까요?` with `삭제 확정` and `취소` — and disarms
+itself after eight seconds if left alone. Confirming removes the candidate at any stage together
+with its artifact directory.
+
+Opening the workspace database runs idempotent migrations for rows written before these fields
+existed: `accepted` becomes `caption_approved`, candidates stored before `topic` was required are
+backfilled with the placeholder `(주제 미기록)`, and `persona_domain`, generation provenance, and
+background provenance are added as nullable columns. Every addition is additive, so a database
+written by an older build stays readable. Posting stays manual and outside this runtime.
 
 후보 자동 생성 is wired to the durable Agent. One click snapshots the operator's context
-documents and gives the Trace v1 connector only the typed
-`trace_propose_marketing_candidates` capability. The model can inspect the context, revise invalid
-tool arguments, and stores a useful set of distinct candidates as `source=auto`, awaiting caption
-approval like any manual candidate. The button disables itself and shows
-`생성 중… (1~3분 소요)` while the request runs, then refreshes the list. It needs two things:
+documents into one instruction and calls the model once. Each candidate in the batch is assigned
+the least-covered persona domain, the recent topics are shown so a batch does not repeat itself, and
+the reply must be a JSON array of exactly the requested length — one failed validation is retried
+once, a second stores nothing. Candidates land as `source=auto`, awaiting caption approval like any
+manual candidate, each carrying the provenance of the run that wrote it. The button disables itself
+and shows `생성 중… (1~3분 소요)` while the request runs, then refreshes the list. It needs two things:
 
-- **Provide context Markdown.** The generator reads
-  every Markdown file below `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points
-  elsewhere; when neither exists it uses the packaged starter context. New domain directories are
-  discovered automatically. A missing directory, blank file, unreadable file, or symlink stops the
-  run before any model call and the browser names what is unusable.
+- **Provide context Markdown.** The generator reads the six documents it reasons from — the global
+  and Korean principles, the Korean elements, voice, and facts, and the Korean reference index —
+  below `<serve workspace>/context` unless `TRACE_AGENT_CONTEXT_DIR` points elsewhere; when neither
+  exists it uses the packaged starter context. A missing directory, blank file, unreadable file, or
+  symlink stops the run before any model call and the browser names what is unusable.
 - **A logged-in agent credential.** Run `trace-agent auth login` in the terminal first; without it
   the button reports `AI 로그인이 필요합니다`.
 
@@ -334,8 +348,10 @@ the `shooting_order` field; only its UI label was renamed.
 
 `image_inputs` is the machine half of a candidate and the manual form collects it: 잠금화면 일정 is a
 textarea with one item per line (1–8 lines), 기기 시각 takes `HH:MM`, 배경 소재 is a dropdown with
-Korean labels, 배경 분위기 is a short free-text mood, and the content language is derived from the
-selected country.
+Korean labels, 배경 분위기 is a short free-text mood, 배경 검색어 is the optional query the open-web
+background search runs verbatim, 페르소나 도메인 is optional on a manual candidate, and the content
+language is derived from the selected country. Leaving 배경 검색어 blank builds the query from the
+subject, the mood, and the topic instead.
 
 #### What the image stage needs
 
@@ -349,13 +365,27 @@ full-wallpaper export provenance를 검증합니다. 주어지지 않은 연령�
 
 - **An image search route.** The stage uses the same provider selection as `trace-generate-one`:
   install `ddgs`, or set `BRAVE_SEARCH_API_KEY`. `TRACE_AGENT_WEB_SEARCH_PROVIDER` and
-  `TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS` override the choice and its timeout. Without a working
-  route the browser reports a typed generation failure and the candidate stays `caption_approved`.
-- **A native Trace wallpaper route.** A usable iPhone Simulator, Appium/WDA, and the Trace build
-  are resolved at execution time. The normalized searched image enters Simulator Photos; the
-  request-owned calendar/event data starts Trace, and Appium configures the real editor's visual
-  controls before Save. The request-bound full wallpaper manifest must verify before review can
-  advance. This is not a physical iPhone or iOS lock-screen screenshot route.
+  `TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS` override the choice and its timeout. The background is
+  searched across the open web rather than a stock-photo allowlist, because a persona's real lock
+  screen holds specific people, characters, and teams. Stock-library hosts are dropped before
+  download, portrait crops are preferred, no single site may supply the whole pool, and the model
+  then looks at every surviving image and picks one. A round it rejects entirely is retried with a
+  widened and then a rewritten query before the stage fails. Without a working route the browser
+  reports a typed generation failure and the candidate stays `caption_approved`.
+- **A native Trace wallpaper route, or the local composition.** A usable iPhone Simulator,
+  Appium/WDA, and the Trace build are resolved at execution time. The normalized searched image
+  enters Simulator Photos; the request-owned calendar/event data starts Trace, and Appium configures
+  the real editor's visual controls before Save. The request-bound full wallpaper manifest must
+  verify before review can advance. This is not a physical iPhone or iOS lock-screen screenshot
+  route.
+
+  On a host where no capture device resolves, the stage composes locally instead: the judged
+  background, the packaged Trace component layer, and the packaged iPhone system UI merged
+  deterministically. `TRACE_AGENT_TRACE_COMPONENTS` and `TRACE_AGENT_IPHONE_UI` override those two
+  packaged assets. The local composition **cannot** draw the candidate's own schedule items or
+  device time — the component layer is a fixture, not a capture — and it records itself as
+  `local_fallback` in the candidate's background provenance and as `offline_fixture` in the capture
+  provenance, so it can never pass the native export gates or be mistaken for a device export.
 
 Artifacts are written under
 `$TRACE_AGENT_HOME/generated/candidate-<candidate-id>-r<revision>/`. The candidate stores the final
