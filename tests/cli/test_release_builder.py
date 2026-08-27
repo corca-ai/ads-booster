@@ -81,6 +81,8 @@ def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -
     assert "TRACE_IMMUTABLE_RELEASES_ENABLED" not in workflow
     assert "bump pyproject.toml before merge" in workflow
     assert "scripts/github-release-state.py" in workflow
+    assert "state_args=()" not in workflow
+    assert 'state_args=(\n            --repository "$RELEASE_REPOSITORY"' in workflow
     assert "--repair-managed-partials" in workflow
     assert workflow.count("Build the offline arm64 release envelope once") == 1
     assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
