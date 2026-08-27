@@ -42,7 +42,7 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 
 | Package | Owns | Must not own |
 | --- | --- | --- |
-| `marketing/` | Cloudflare task/callback contracts, D1 broker and execution barrier, machine credential, durable inbox/outbox, doctor, worker/updater LaunchAgents, immutable release verification, staging, drain, atomic switch and rollback | Codex auth, prompt history, Appium implementation, plaintext admin, worker or Queue secrets in updater state |
+| `marketing/` | Cloudflare task/callback contracts, D1 broker and execution barrier, machine credential, durable inbox/outbox, doctor, worker/updater LaunchAgents, release metadata and workflow-bound artifact verification, staging, drain, atomic switch and rollback | Codex auth, prompt history, Appium implementation, plaintext admin, worker or Queue secrets in updater state |
 | `connectors/trace/v1/codex_runtime.py` | Trace prompt construction, reference validation/attachment, structured-plan validation handoff, request-scoped plan/result state, unknown-side-effect barrier, production runner composition | Codex authentication, hosted account state, direct Appium commands |
 | `providers/codex_cli.py` | Official `codex exec` argv, stdin, schema/output temporary files, timeout/error sanitization, executable resolution | Trace domain rules, auth copying, conversation persistence, model-tool dispatch |
 | `contracts/` | Versioned marketing context, `WallpaperPlan`, run result and capture provenance models | Filesystem, subprocess, HTTP or database access |
@@ -52,7 +52,7 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 | `search/` | Approved image search and normalized background artifacts/provenance | Model execution or review transitions |
 | `service/worker.py` | Production runner selection and legacy automation worker composition | Provider implementation details |
 | `cli/marketing.py` | Typer parsing, operator output and worker/updater dependency composition | Durable transition policy or secret persistence |
-| `scripts/`, `.github/workflows/release-mac-worker.yml` | Offline arm64 envelope build, release bootstrap, attestation and immutable publication gates | Runtime credentials, CI-to-SSH deployment or external tool upgrades |
+| `scripts/`, `.github/workflows/release-mac-worker.yml` | Offline arm64 envelope build, release bootstrap, attestation, stable publication and public readback gates | Runtime credentials, CI-to-SSH deployment or external tool upgrades |
 | `cloudflare/` | Public assets/API, account/context/candidate state, Workers AI candidates, Workflow waits, D1 worker registry/leases/execution barriers, callbacks and R2 | Mac Codex credentials or Appium execution |
 
 Legacy packages such as `agent/`, `auth/`, `web/`, `automation/`, `tools/`, and the custom Responses

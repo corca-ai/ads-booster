@@ -1,4 +1,4 @@
-name: Release immutable Mac worker
+name: Release verified Mac worker
 
 on:
   pull_request:
@@ -16,6 +16,7 @@ on:
       - tests/cli/test_installer.py
       - tests/cli/test_github_release_state.py
       - tests/cli/test_release_builder.py
+      - tests/fixtures/fake-gh-release.py
       - tests/marketing/test_bridge.py
       - tests/marketing/test_worker_broker.py
       - tests/marketing/test_worker_update.py
@@ -34,6 +35,7 @@ on:
       - tests/cli/test_installer.py
       - tests/cli/test_github_release_state.py
       - tests/cli/test_release_builder.py
+      - tests/fixtures/fake-gh-release.py
       - tests/marketing/test_bridge.py
       - tests/marketing/test_worker_broker.py
       - tests/marketing/test_worker_update.py
@@ -45,7 +47,7 @@ concurrency:
 
 jobs:
   check:
-    name: Check immutable Mac release
+    name: Check verified Mac release
     runs-on: macos-15
     timeout-minutes: 45
     permissions:
@@ -55,7 +57,6 @@ jobs:
       release_version: ${{ steps.identity.outputs.version }}
     env:
       RELEASE_EVENT: ${{ github.event_name }}
-      RELEASE_IMMUTABILITY_PREPARED: ${{ vars.TRACE_IMMUTABLE_RELEASES_ENABLED }}
       RELEASE_REPOSITORY: ${{ github.repository }}
       RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -76,6 +77,15 @@ jobs:
         with:
           version: 0.12.6
 
+      - name: Require artifact-attestation-capable GitHub CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          help="$(gh attestation verify --help)"
+          for flag in --deny-self-hosted-runners --signer-workflow --source-digest --source-ref; do
+            grep -F -- "$flag" <<<"$help" >/dev/null
+          done
+
       - name: Resolve and validate release identity
         id: identity
         shell: bash
@@ -83,10 +93,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$RELEASE_IMMUTABILITY_PREPARED" != "true" ]]; then
-            echo "enable repository immutable releases and set TRACE_IMMUTABLE_RELEASES_ENABLED=true before merge" >&2
-            exit 1
-          fi
           version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
@@ -141,18 +147,28 @@ jobs:
             --bootstrap scripts/bootstrap-mac-worker.py \
             --output build/release
 
-      - name: Prove a fresh offline product install
+      - name: Prove a fresh managed product bootstrap
         env:
           RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+          TRACE_TEST_RELEASE_DIR: ${{ github.workspace }}/build/release
         run: |
           set -euo pipefail
-          fresh="$RUNNER_TEMP/trace-marketing-fresh-$RELEASE_VERSION"
-          uv venv --python 3.14 --no-python-downloads "$fresh"
-          uv pip install --python "$fresh/bin/python" --no-index \
-            --find-links build/wheelhouse "trace-appium-capture==$RELEASE_VERSION"
-          test "$("$fresh/bin/trace-marketing" version --json | \
+          fresh="$RUNNER_TEMP/trace-marketing-managed-$RELEASE_VERSION"
+          fake_gh="$RUNNER_TEMP/trace-marketing-fixture-gh"
+          cp tests/fixtures/fake-gh-release.py "$fake_gh"
+          chmod 0700 "$fake_gh"
+          python build/release/trace-marketing-bootstrap.py \
+            --manifest build/release/trace-marketing-release.json \
+            --bundle "build/release/trace-marketing-macos-arm64-v$RELEASE_VERSION.tar.gz" \
+            --home "$fresh/agent" \
+            --install-root "$fresh/product" \
+            --uv "$(command -v uv)" \
+            --gh "$fake_gh"
+          test -L "$fresh/product/current"
+          test -f "$fresh/product/current/release-receipt.json"
+          test "$("$fresh/product/current/bin/trace-marketing" version --json | \
             python -c 'import json,sys; print(json.load(sys.stdin)["version"])')" = "$RELEASE_VERSION"
-          "$fresh/bin/trace-marketing" worker --help >/dev/null
+          "$fresh/product/current/bin/trace-marketing" worker --help >/dev/null
 
       - name: Transfer the exact checked release bytes
         id: release_artifact
@@ -282,29 +298,28 @@ jobs:
         with:
           subject-path: build/release/*
 
-      - name: Publish the new stable release
-        if: steps.release_identity.outputs.state == 'new'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release edit "v$RELEASE_VERSION" --repo "$RELEASE_REPOSITORY" --draft=false --latest
-
-      - name: Verify or resume the exact immutable release
+      - name: Verify the exact attested release before publication or resume
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="v$RELEASE_VERSION"
+          expected_draft=false
+          if [[ "${{ steps.release_identity.outputs.state }}" == "new" ]]; then
+            expected_draft=true
+          fi
+          release_by_tag() {
+            gh api --paginate --slurp -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$RELEASE_REPOSITORY/releases?per_page=100" | \
+              jq -ce --arg tag "$tag" \
+                '[.[][] | select(.tag_name == $tag)] | if length == 1 then .[0] else empty end'
+          }
           release_json=""
           for attempt in {1..8}; do
-            if candidate="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$RELEASE_REPOSITORY/releases/tags/$tag")" && \
-                [[ "$(jq -r '.draft' <<<"$candidate")" == "false" && \
+            if candidate="$(release_by_tag)" && \
+                [[ "$(jq -r '.draft' <<<"$candidate")" == "$expected_draft" && \
                    "$(jq -r '.prerelease' <<<"$candidate")" == "false" && \
-                   "$(jq -r '.immutable' <<<"$candidate")" == "true" && \
                    "$(jq -r '.target_commitish' <<<"$candidate")" == "$RELEASE_SHA" ]]; then
               release_json="$candidate"
               break
@@ -312,9 +327,8 @@ jobs:
             sleep 3
           done
           test -n "$release_json"
-          test "$(jq -r '.draft' <<<"$release_json")" = false
+          test "$(jq -r '.draft' <<<"$release_json")" = "$expected_draft"
           test "$(jq -r '.prerelease' <<<"$release_json")" = false
-          test "$(jq -r '.immutable' <<<"$release_json")" = true
           test "$(jq -r '.target_commitish' <<<"$release_json")" = "$RELEASE_SHA"
           test "$(jq -r '[.assets[].name] | sort | join(" ")' <<<"$release_json")" = \
             "trace-marketing-bootstrap.py trace-marketing-macos-arm64-$tag.tar.gz trace-marketing-release.json"
@@ -330,18 +344,15 @@ jobs:
           tag_json="$(gh api "repos/$RELEASE_REPOSITORY/git/tags/$tag_object_sha")"
           test "$(jq -r '.object.type' <<<"$tag_json")" = commit
           test "$(jq -r '.object.sha' <<<"$tag_json")" = "$RELEASE_SHA"
-          for attempt in {1..8}; do
-            if gh release verify "$tag" --repo "$RELEASE_REPOSITORY"; then
-              verified_release=1
-              break
-            fi
-            sleep 3
-          done
-          test "${verified_release:-0}" = 1
           for asset in build/release/*; do
             verified_asset=0
             for attempt in {1..8}; do
-              if gh release verify-asset "$tag" "$asset" --repo "$RELEASE_REPOSITORY"; then
+              if gh attestation verify "$asset" \
+                --repo "$RELEASE_REPOSITORY" \
+                --signer-workflow "$RELEASE_REPOSITORY/.github/workflows/release-mac-worker.yml" \
+                --source-ref refs/heads/main \
+                --source-digest "$RELEASE_SHA" \
+                --deny-self-hosted-runners; then
                 verified_asset=1
                 break
               fi
@@ -349,6 +360,36 @@ jobs:
             done
             test "$verified_asset" = 1
           done
+
+      - name: Publish the verified new stable release
+        if: steps.release_identity.outputs.state == 'new'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "v$RELEASE_VERSION" --repo "$RELEASE_REPOSITORY" --draft=false --latest
+
+      - name: Confirm the exact release is stable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          release_json=""
+          for attempt in {1..8}; do
+            if candidate="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$RELEASE_REPOSITORY/releases/tags/$tag")" && \
+                [[ "$(jq -r '.draft' <<<"$candidate")" == "false" && \
+                   "$(jq -r '.prerelease' <<<"$candidate")" == "false" && \
+                   "$(jq -r '.target_commitish' <<<"$candidate")" == "$RELEASE_SHA" ]]; then
+              release_json="$candidate"
+              break
+            fi
+            sleep 3
+          done
+          test -n "$release_json"
 
       - name: Verify the public release through an unauthenticated readback
         shell: bash
@@ -362,7 +403,6 @@ jobs:
               --retry 3 --retry-all-errors --retry-delay 3 "$api")" && \
                 [[ "$(jq -r '.draft' <<<"$candidate")" == "false" && \
                    "$(jq -r '.prerelease' <<<"$candidate")" == "false" && \
-                   "$(jq -r '.immutable' <<<"$candidate")" == "true" && \
                    "$(jq -r '.target_commitish' <<<"$candidate")" == "$RELEASE_SHA" ]]; then
               release_json="$candidate"
               break
@@ -372,7 +412,6 @@ jobs:
           test -n "$release_json"
           test "$(jq -r '.draft' <<<"$release_json")" = false
           test "$(jq -r '.prerelease' <<<"$release_json")" = false
-          test "$(jq -r '.immutable' <<<"$release_json")" = true
           test "$(jq -r '.target_commitish' <<<"$release_json")" = "$RELEASE_SHA"
           manifest_url="$(jq -r '.assets[] | select(.name == "trace-marketing-release.json") | .browser_download_url' <<<"$release_json")"
           expected_digest="$(jq -r '.assets[] | select(.name == "trace-marketing-release.json") | .digest' <<<"$release_json")"
@@ -391,7 +430,7 @@ jobs:
               raise SystemExit("public release manifest identity mismatch")
           PY
 
-      - name: Remove only this run's failed mutable or unpublished release state
+      - name: Remove only this run's unpublished draft state
         if: failure() && steps.release_identity.outputs.state == 'new'
         shell: bash
         env:

@@ -126,6 +126,7 @@ class MacWorkerUpdaterLaunchd:
     plist_path: Path
     codex_executable: Path
     uv_executable: Path
+    gh_executable: Path
     interval_seconds: int = 3600
 
     @property
@@ -157,6 +158,8 @@ class MacWorkerUpdaterLaunchd:
                 str(install_root),
                 "--uv",
                 str(self.uv_executable.expanduser().resolve()),
+                "--gh",
+                str(self.gh_executable.expanduser().resolve()),
             ],
             "RunAtLoad": True,
             "StartInterval": self.interval_seconds,

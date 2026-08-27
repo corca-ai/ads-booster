@@ -287,9 +287,11 @@ def test_managed_launchagents_keep_the_current_symlink_and_separate_updater(
     current.symlink_to(release, target_is_directory=True)
     codex = tmp_path / "bin" / "codex"
     uv = tmp_path / "bin" / "uv"
+    gh = tmp_path / "bin" / "gh"
     codex.parent.mkdir(parents=True)
     codex.touch()
     uv.touch()
+    gh.touch()
     worker_plist = tmp_path / "worker.plist"
     updater_plist = tmp_path / "updater.plist"
     worker = MacWorkerLaunchd(
@@ -303,6 +305,7 @@ def test_managed_launchagents_keep_the_current_symlink_and_separate_updater(
         executable=current / "bin" / "trace-marketing",
         codex_executable=codex,
         uv_executable=uv,
+        gh_executable=gh,
         agent_home=tmp_path / "agent",
         install_root=root,
         plist_path=updater_plist,
@@ -322,6 +325,7 @@ def test_managed_launchagents_keep_the_current_symlink_and_separate_updater(
         "worker",
         "update",
     ]
+    assert updater_arguments[updater_arguments.index("--gh") + 1] == str(gh.resolve())
     assert updater_payload["Label"] == "com.corca.trace-marketing-updater"
     assert updater_payload["RunAtLoad"] is True
     assert updater_payload["StartInterval"] == 600

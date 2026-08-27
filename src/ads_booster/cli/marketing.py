@@ -52,6 +52,7 @@ from ads_booster.marketing.worker_launchd import (
     default_worker_plist_path,
 )
 from ads_booster.marketing.worker_update import (
+    GitHubArtifactAttestationVerifier,
     GitHubReleaseSource,
     HeartbeatReceiptStore,
     MacWorkerUpdater,
@@ -443,7 +444,7 @@ def worker_uninstall_service(
 
 
 @worker_app.command("update")
-def worker_update(
+def worker_update(  # noqa: PLR0913, PLR0917 - explicit operator CLI surface.
     apply: Annotated[
         bool,
         typer.Option("--apply/--dry-run", help="Apply or only inspect the latest release."),
@@ -451,24 +452,30 @@ def worker_update(
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     install_root: Annotated[
         Path | None,
-        typer.Option(help="Managed immutable release root."),
+        typer.Option(help="Managed versioned release root."),
     ] = None,
     uv: Annotated[Path | None, typer.Option(help="Pinned uv executable used for staging.")] = None,
+    gh: Annotated[
+        Path | None,
+        typer.Option(help="Pinned GitHub CLI executable used for artifact attestation."),
+    ] = None,
     drain_timeout_seconds: Annotated[
         float,
         typer.Option(min=0.0, max=3600.0, help="Maximum local drain wait."),
     ] = 900.0,
 ) -> None:
-    """Inspect or safely apply the latest immutable stable GitHub Release."""
+    """Inspect or safely apply the latest verified stable GitHub Release."""
     _require_macos()
     paths = _managed_paths(_home(home), install_root)
     try:
         uv_executable = _resolve_uv(uv) if apply else Path("/nonexistent/uv")
+        gh_executable = _resolve_gh(gh)
         with create_http_client() as http:
             updater = _mac_worker_updater(
                 paths,
                 http=http,
                 uv=uv_executable,
+                gh=gh_executable,
                 drain_timeout_seconds=drain_timeout_seconds,
             )
             attempt = updater.apply() if apply else updater.inspect()
@@ -481,13 +488,17 @@ def worker_update(
 
 
 @worker_app.command("install-updater")
-def worker_install_updater(
+def worker_install_updater(  # noqa: PLR0913, PLR0917 - explicit operator CLI surface.
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     install_root: Annotated[
         Path | None,
-        typer.Option(help="Managed immutable release root."),
+        typer.Option(help="Managed versioned release root."),
     ] = None,
     uv: Annotated[Path | None, typer.Option(help="Pinned uv executable used for staging.")] = None,
+    gh: Annotated[
+        Path | None,
+        typer.Option(help="Pinned GitHub CLI executable used for artifact attestation."),
+    ] = None,
     interval_seconds: Annotated[int, typer.Option(min=300, max=86400)] = 3600,
     start: Annotated[bool, typer.Option("--start/--no-start")] = True,
 ) -> None:
@@ -504,6 +515,7 @@ def worker_install_updater(
             paths,
             codex=codex,
             uv=_resolve_uv(uv),
+            gh=_resolve_gh(gh),
             interval_seconds=interval_seconds,
         )
         _ = updater.stop()
@@ -524,7 +536,7 @@ def worker_updater_status(
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     install_root: Annotated[
         Path | None,
-        typer.Option(help="Managed immutable release root."),
+        typer.Option(help="Managed versioned release root."),
     ] = None,
 ) -> None:
     """Report sanitized managed-release and updater state."""
@@ -547,6 +559,7 @@ def worker_updater_status(
         paths,
         codex=codex,
         uv=Path("/nonexistent/uv"),
+        gh=Path("/nonexistent/gh"),
         interval_seconds=3600,
     )
     state = UpdateStateStore(paths.state).load()
@@ -571,7 +584,7 @@ def worker_uninstall_updater(
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     install_root: Annotated[
         Path | None,
-        typer.Option(help="Managed immutable release root."),
+        typer.Option(help="Managed versioned release root."),
     ] = None,
 ) -> None:
     """Unload and remove only the ads-booster-owned updater LaunchAgent."""
@@ -581,6 +594,7 @@ def worker_uninstall_updater(
         paths,
         codex=Path("/nonexistent/codex"),
         uv=Path("/nonexistent/uv"),
+        gh=Path("/nonexistent/gh"),
         interval_seconds=3600,
     )
     if updater.plist_path.exists() and not updater.owns_installed_plist():
@@ -598,8 +612,12 @@ def worker_uninstall_updater(
 @worker_app.command("finish-bootstrap")
 def worker_finish_bootstrap(  # noqa: C901, PLR0912 - one-time plist transaction.
     home: Annotated[Path, typer.Option(help="Agent state root.")],
-    install_root: Annotated[Path, typer.Option(help="Managed immutable release root.")],
+    install_root: Annotated[Path, typer.Option(help="Managed versioned release root.")],
     uv: Annotated[Path, typer.Option(help="Pinned uv executable used for staging.")],
+    gh: Annotated[
+        Path | None,
+        typer.Option(help="Pinned GitHub CLI executable used for artifact attestation."),
+    ] = None,
     interval_seconds: Annotated[int, typer.Option(min=300, max=86400)] = 3600,
 ) -> None:
     """Finalize worker and updater services after verified install and enrollment."""
@@ -631,6 +649,7 @@ def worker_finish_bootstrap(  # noqa: C901, PLR0912 - one-time plist transaction
             paths,
             codex=codex,
             uv=_resolve_uv(uv),
+            gh=_resolve_gh(gh),
             interval_seconds=interval_seconds,
         )
         if worker.plist_path.exists():
@@ -855,6 +874,7 @@ def _updater_launchd(
     *,
     codex: Path,
     uv: Path,
+    gh: Path,
     interval_seconds: int,
 ) -> MacWorkerUpdaterLaunchd:
     return MacWorkerUpdaterLaunchd(
@@ -864,6 +884,7 @@ def _updater_launchd(
         plist_path=default_updater_plist_path(),
         codex_executable=codex,
         uv_executable=uv,
+        gh_executable=gh,
         interval_seconds=interval_seconds,
     )
 
@@ -878,18 +899,32 @@ def _resolve_uv(configured: Path | None) -> Path:
     return executable
 
 
+def _resolve_gh(configured: Path | None) -> Path:
+    resolved = str(configured.expanduser()) if configured is not None else shutil.which("gh")
+    if resolved is None:
+        _update_failure("GitHub CLI is required for release artifact attestation")
+    executable = Path(resolved).expanduser().resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        _update_failure("configured GitHub CLI executable is unavailable")
+    return executable
+
+
 def _mac_worker_updater(
     paths: ManagedWorkerPaths,
     *,
     http: HttpClient,
     uv: Path,
+    gh: Path,
     drain_timeout_seconds: float,
 ) -> MacWorkerUpdater:
     service = _managed_worker_launchd(paths)
     verifier = WorkerRuntimeVerifier(paths=paths, command_runner=run_command)
     return MacWorkerUpdater(
         paths=paths,
-        source=GitHubReleaseSource(http),
+        source=GitHubReleaseSource(
+            http,
+            GitHubArtifactAttestationVerifier(gh, run_command),
+        ),
         installer=ManagedReleaseInstaller(paths, uv, run_command),
         service=service,
         verifier=verifier,

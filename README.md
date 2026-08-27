@@ -48,20 +48,41 @@ Codex threads are ephemeral per task, so two accounts and two Macs do not share 
 history. Validated plans and terminal outcomes are request-scoped under
 `$TRACE_AGENT_HOME/codex-runs`; prompts, Codex responses, and auth data are not persisted there.
 
-## Bootstrap an immutable Mac worker release
+## Bootstrap a verified Mac worker release
 
 ```bash
-release="$(gh release view --repo corca-ai/ads-booster --json tagName --jq '.tagName')"
-curl -fsSL --proto '=https' --tlsv1.2 \
-  "https://raw.githubusercontent.com/corca-ai/ads-booster/$release/install.sh" |
-  bash -s -- --tag "$release"
+bash -euo pipefail <<'TRACE_MAC_BOOTSTRAP'
+repository="corca-ai/ads-booster"
+release="$(gh release view --repo "$repository" --json tagName,isDraft,isPrerelease \
+  --jq 'select(.isDraft == false and .isPrerelease == false) | .tagName')"
+release_dir="$(mktemp -d "${TMPDIR:-/tmp}/trace-marketing-bootstrap.XXXXXX")"
+trap 'rm -rf -- "$release_dir"' EXIT
+gh release download "$release" --repo "$repository" --dir "$release_dir" \
+  --pattern trace-marketing-release.json --pattern trace-marketing-bootstrap.py
+manifest="$release_dir/trace-marketing-release.json"
+bootstrap="$release_dir/trace-marketing-bootstrap.py"
+bundle_name="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bundle"]["name"])' "$manifest")"
+commit_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit_sha"])' "$manifest")"
+[[ "$bundle_name" =~ ^trace-marketing-macos-arm64-v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$ ]]
+[[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
+gh release download "$release" --repo "$repository" --dir "$release_dir" --pattern "$bundle_name"
+for asset in "$manifest" "$bootstrap" "$release_dir/$bundle_name"; do
+  gh attestation verify "$asset" --repo "$repository" \
+    --signer-workflow "$repository/.github/workflows/release-mac-worker.yml" \
+    --source-ref refs/heads/main --source-digest "$commit_sha" --deny-self-hosted-runners
+done
+python3 "$bootstrap" --manifest "$manifest" --bundle "$release_dir/$bundle_name" \
+  --uv "$(command -v uv)" --gh "$(command -v gh)"
 export PATH="$HOME/.local/share/trace-marketing/current/bin:$PATH"
 trace-marketing version --json
+TRACE_MAC_BOOTSTRAP
 ```
 
 The one-time bootstrap requires `gh`, `uv`, and a locally available Python 3.14, but never installs
-or upgrades them. It verifies a stable immutable GitHub Release, its tag and exact commit, all
-GitHub SHA-256 asset digests, local digests, and build attestations. It then performs an offline
+or upgrades them. Run `gh auth status` first as the same macOS user that will own the services. The
+copied block verifies the downloaded bootstrap before executing it, then verifies a stable
+versioned GitHub Release, its tag and exact commit, all
+GitHub SHA-256 asset digests, local digests, and workflow-bound build attestations. It then performs an offline
 wheelhouse install under `~/.local/share/trace-marketing/releases/<version>` and atomically creates
 `current`. Mutable `main`, a Git checkout, PyPI resolution at update time, and in-place
 `uv tool --force` replacement are not production install paths.
@@ -81,6 +102,7 @@ Run these as the same macOS user that will own the LaunchAgent:
 ```bash
 codex login
 codex login status
+gh auth status
 appium driver install xcuitest   # only if the driver is missing
 trace-marketing worker doctor
 ```
@@ -128,7 +150,8 @@ trace-marketing worker enroll \
 trace-marketing worker finish-bootstrap \
   --home "$HOME/.trace-agent" \
   --install-root "$HOME/.local/share/trace-marketing" \
-  --uv "$(command -v uv)"
+  --uv "$(command -v uv)" \
+  --gh "$(command -v gh)"
 trace-marketing worker status
 trace-marketing worker updater-status
 ```
@@ -158,28 +181,20 @@ thread, or Cloudflare Queue-token rotation is required.
 
 ## Automatic release updates
 
-A repository administrator performs this one-time preparation before the first merge-authorized
-release. The token is used only by the operator's `gh` process and is not stored in Actions or on a
-Mac:
-
-```bash
-gh api --method PUT -H 'X-GitHub-Api-Version: 2026-03-10' \
-  repos/corca-ai/ads-booster/immutable-releases
-gh variable set TRACE_IMMUTABLE_RELEASES_ENABLED --repo corca-ai/ads-booster --body true
-```
-
 A qualifying PR checks the release envelope and fresh offline installation on an arm64 GitHub
 runner. The checked bytes are transferred unchanged to the publication job. Merging to `main`
 derives the version from `pyproject.toml`, creates an annotated tag for the exact merge SHA, uploads
-and attests the three-asset envelope as a draft, publishes it as an immutable stable GitHub Release,
-and verifies it again through an unauthenticated public readback. A rerun resumes verification of an
-already-published exact immutable release. The same merge independently applies Cloudflare
+and attests the three-asset envelope as a draft, verifies each artifact against the repository,
+signer workflow, `main` ref and exact merge SHA, publishes the verified draft, and performs
+an unauthenticated public readback. Repository-level immutable releases are not required. A rerun
+resumes verification of an already-published exact managed release. The same merge independently applies Cloudflare
 migrations, deploys the hosted workspace, and requires both health endpoints to report that exact
 merge SHA. No CI job connects to a team Mac.
 
 `com.corca.trace-marketing-updater` is separate from the KeepAlive worker and periodically runs a
-pull update. It accepts only a newer stable immutable release with the exact three-asset envelope,
-stages it beside the running version, and asks the worker to stop claiming new leases. Already
+pull update. It accepts only a newer stable release whose exact three-asset envelope has valid
+workflow-bound provenance for the recorded commit, stages it beside the running version, and asks
+the worker to stop claiming new leases. Already
 durable work and callbacks continue. If received/running inbox rows, pending callbacks/approvals, or
 an execution marker without `result.json` remain, the attempt is deferred without stopping the
 worker.

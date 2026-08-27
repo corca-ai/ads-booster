@@ -19,7 +19,7 @@ SHA = "0123456789abcdef0123456789abcdef01234567"
 TAG_OBJECT_SHA = "89abcdef0123456789abcdef0123456789abcdef"
 
 
-def test_release_state_distinguishes_new_resume_and_owned_repair() -> None:
+def test_release_state_distinguishes_new_stable_resume_and_owned_draft_repair() -> None:
     module = _module()
 
     assert (
@@ -31,6 +31,16 @@ def test_release_state_distinguishes_new_resume_and_owned_repair() -> None:
             commit_sha=SHA,
         )
         == "new"
+    )
+    assert (
+        module.classify_release_state(
+            release=_release(module, immutable=False),
+            ref=_ref(),
+            tag_object=_tag_object(module),
+            tag=TAG,
+            commit_sha=SHA,
+        )
+        == "resume"
     )
     assert (
         module.classify_release_state(
@@ -96,6 +106,7 @@ def test_repair_removes_only_durably_marked_partial_release_and_tag() -> None:
         "repos/corca-ai/ads-booster/releases/123",
         "repos/corca-ai/ads-booster/git/refs/tags/v1.2.3",
     ]
+    assert api.release_list_reads >= 2
 
 
 def test_github_api_treats_only_404_as_absence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,10 +135,14 @@ class _FakeApi:
         self.ref = _ref()
         self.tag_object = _tag_object(module)
         self.deleted: list[str] = []
+        self.release_list_reads = 0
+
+    def get_array(self, path: str) -> list[dict[str, object]]:
+        assert path.startswith("repos/corca-ai/ads-booster/releases?per_page=100&page=")
+        self.release_list_reads += 1
+        return [] if self.release is None else [self.release]
 
     def get_optional(self, path: str) -> dict[str, object] | None:
-        if "/releases/tags/" in path:
-            return self.release
         if "/git/ref/tags/" in path:
             return self.ref
         if "/git/tags/" in path:
