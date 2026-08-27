@@ -97,15 +97,15 @@ jobs:
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           test "$(uname -m)" = "arm64"
-          state_args=()
+          state_args=(
+            --repository "$RELEASE_REPOSITORY"
+            --version "$version"
+            --commit-sha "$RELEASE_SHA"
+          )
           if [[ "$RELEASE_EVENT" == "pull_request" ]]; then
             state_args+=(--forbid-existing)
           fi
-          if ! python scripts/github-release-state.py \
-            --repository "$RELEASE_REPOSITORY" \
-            --version "$version" \
-            --commit-sha "$RELEASE_SHA" \
-            "${state_args[@]}"; then
+          if ! python scripts/github-release-state.py "${state_args[@]}"; then
             if [[ "$RELEASE_EVENT" == "pull_request" ]]; then
               echo "v$version already exists; bump pyproject.toml before merge" >&2
             fi
