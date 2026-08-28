@@ -37,9 +37,11 @@ Appium PNG callback accepted by the current R2 boundary.
   non-revoked machine identity exists, the request fails before task creation; when registered
   workers are merely degraded or offline, the task stays queued until a healthy claimant appears.
 - The Mac process uses the official Codex CLI as its only model harness. Each claimed task starts an
-  ephemeral, read-only `codex exec` turn, validates the structured `WallpaperPlan`, and then hands
-  the plan to the deterministic Appium boundary. The former in-package `trace-agent` model loop is
-  not part of the Mac worker path.
+  ephemeral, read-only planning turn and validates the structured `WallpaperPlan`. After the remote
+  execution barrier, a separate ephemeral Codex job receives only the non-secret job contract and
+  directly operates the installed Appium/XCUITest/Simulator/Trace surface. The worker, rather than a
+  deterministic UI runner, owns the outer UDID lease, one-hour ceiling, export verification, and
+  callback. The former in-package `trace-agent` model loop is not part of the Mac worker path.
 
 ## Fixed Decisions
 
@@ -123,8 +125,9 @@ Appium PNG callback accepted by the current R2 boundary.
 
 - `unit`: enrollment codes are one-time and expiring; credentials are stored only as hashes server
   side; lease state transitions reject stale owners.
-- `unit`: the Codex adapter uses stdin, the `WallpaperPlan` JSON schema, an ephemeral read-only turn,
-  rejects invalid output, and never supplies auth material.
+- `unit`: planning uses stdin, the `WallpaperPlan` schema, and an ephemeral read-only turn; native
+  execution uses a second schema-constrained ephemeral turn in a mode-0700 workspace with a
+  mode-0600 non-secret contract, rejects invalid output, and never supplies auth material.
 - `integration`: two worker clients race for one hosted task, one wins, a pre-execution retry after
   expiry moves to the second worker, a post-barrier expiry does not, and duplicate completion remains
   idempotent.

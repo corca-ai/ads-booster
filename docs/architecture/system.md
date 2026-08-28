@@ -24,10 +24,11 @@ flowchart LR
     API --> WF[Cloudflare Workflow approvals]
     WF --> LEASE[D1 hosted capture lease]
     LEASE --> BROKER[trace-marketing Mac worker]
-    BROKER --> CODEX[official codex exec ephemeral read-only]
+    BROKER --> CODEX[official codex exec planning read-only]
     CODEX --> PLAN[WallpaperPlan validation]
     PLAN --> SEARCH[approved background search]
-    SEARCH --> APPIUM[Appium XCUITest Trace debug app]
+    SEARCH --> CODEXUI[official codex exec direct Appium job]
+    CODEXUI --> APPIUM[Appium XCUITest Trace debug app]
     APPIUM --> PNG[request-bound verified PNG]
     PNG --> CALLBACK[authenticated callback]
     CALLBACK --> R2[R2 artifact]
@@ -40,9 +41,13 @@ schedules, task assignment, worker health, approval waits, and R2 callbacks. Eac
 machine identity and claims one compatible task through a D1 lease.
 
 The Mac worker uses the official Codex CLI as the model harness. It does not instantiate the former
-in-package AgentSession, OAuth store, Responses client, memory, or tool loop. Every task invokes a new
-`codex exec --ephemeral --sandbox read-only` turn with a strict output schema. Codex authentication
-is resolved normally for the same macOS user that owns the per-user LaunchAgent.
+in-package AgentSession, OAuth store, Responses client, memory, or tool loop. Planning runs in a new
+ephemeral read-only turn with the strict `WallpaperPlan` schema. After the execution barrier and
+background preparation, a second ephemeral turn receives one secret-free `codex-appium-job.json`
+and directly operates the installed Appium/XCUITest/Simulator/Trace surface. That native turn has
+the access required for local UI automation, while the worker retains the one-hour ceiling, UDID
+lease, request binding, artifact validation, and callback. Codex authentication is resolved normally
+for the same macOS user that owns the per-user LaunchAgent.
 
 The installed product is a versioned release tree, not a mutable checkout or in-place uv tool.
 Pull requests that change the installed product prove the focused updater suite, release envelope,

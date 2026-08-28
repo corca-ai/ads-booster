@@ -38,9 +38,11 @@ does not use its OAuth store, Responses client, conversation memory, or tool loo
 4. Code validates request ID, time zone, local event times, references, layout, and style. The
    Mac then records an execution barrier in D1; Appium cannot start unless that barrier succeeds.
    Invalid plans never reach Appium.
-5. The deterministic runner finds an approved background and drives the real Trace Simulator app
-   through Appium. A request-bound export, digest, nonce, device binding, and PNG provenance are
-   verified.
+5. After the approved background is prepared, the Mac starts a second ephemeral Codex job in a
+   request-scoped, secret-free directory. Codex uses the already-installed Appium, XCUITest,
+   Simulator, and Trace app directly, choosing and revising its own UI approach until the requested
+   wallpaper is saved, the native export is visible, and request-owned calendars are cleaned up.
+   The worker independently verifies the export digest, nonce, device binding, and PNG provenance.
 6. The callback stores the verified image in R2 and exposes it for human review. Approval reaches
    `submitted`; no external social post is created.
 
@@ -230,15 +232,18 @@ TRACE_CODEX_MODEL               # optional per-worker model override
 TRACE_CODEX_TIMEOUT_SECONDS     # default: 180
 ```
 
-The worker always adds `codex exec --ephemeral --sandbox read-only --output-schema ...`. It does not
-pass auth environment variables or ignore the user's Codex configuration.
+Planning uses `codex exec --ephemeral --sandbox read-only --output-schema ...`. Native execution uses
+a separate schema-constrained ephemeral turn with `danger-full-access`, which is required to reach
+the local Appium server and Simulator. Its working directory contains only the non-secret job
+contract and generated diagnostics. Neither turn receives auth or worker-credential environment
+variables or overrides the user's Codex configuration.
 
 Other worker settings:
 
 ```text
 TRACE_AGENT_HOME                       # default: ~/.trace-agent
 TRACE_AGENT_APPIUM_SERVER              # default: http://127.0.0.1:4723
-TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 120
+TRACE_AGENT_GENERATION_TIMEOUT_SECONDS # default: 3600; worker hard ceiling, not an expected duration
 TRACE_AGENT_TRACE_COMPONENTS  # default: packaged assets/trace-components.png
 TRACE_AGENT_IPHONE_UI         # default: packaged assets/iphone-ui.png
 ```

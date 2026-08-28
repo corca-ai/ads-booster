@@ -9,6 +9,10 @@ from ads_booster.capture.appium_capture import (
     AppiumComponentExportAdapter,
     AppiumWallpaperExportAdapter,
 )
+from ads_booster.capture.appium_codex import (
+    CodexAppiumWallpaperExportAdapter,
+    StructuredCodexJob,
+)
 from ads_booster.capture.appium_session import DefaultAppiumSessionFactory
 from ads_booster.capture.physical_adapter import UnavailablePhysicalDeviceAdapter
 from ads_booster.capture.readiness import CaptureReadiness, DefaultCaptureReadiness
@@ -43,10 +47,23 @@ def build_wallpaper_capture_adapter(
     device_kind: DeviceKind,
     appium_server: str,
     readiness: CaptureReadiness | None = None,
-) -> AppiumWallpaperExportAdapter | UnavailablePhysicalDeviceAdapter:
+    codex: StructuredCodexJob | None = None,
+) -> (
+    AppiumWallpaperExportAdapter
+    | CodexAppiumWallpaperExportAdapter
+    | UnavailablePhysicalDeviceAdapter
+):
     match device_kind:
         case DeviceKind.SIMULATOR:
             selected_readiness = readiness or DefaultCaptureReadiness(appium_server=appium_server)
+            if codex is not None:
+                return CodexAppiumWallpaperExportAdapter(
+                    codex=codex,
+                    simulator=SimctlPhotoImporter(),
+                    collector=SimctlAppGroupWallpaperCollector(),
+                    appium_server=appium_server,
+                    readiness=selected_readiness,
+                )
             return AppiumWallpaperExportAdapter(
                 session_factory=DefaultAppiumSessionFactory(server_url=appium_server),
                 simulator=SimctlPhotoImporter(),

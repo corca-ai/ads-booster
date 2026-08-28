@@ -63,8 +63,9 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 | `tunnel/` | cloudflared process and emitted public-URL boundary | The full local-service lifecycle |
 | `web/` | FastAPI auth/member-invite/context/asset/campaign/candidate/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
 | `workspace/` | Workspace/member identity, code hashes/versions, shared context, asset metadata, and private sessions | Automation queue or model calls |
-| `connectors/trace/v1/codex_runtime.py` | Trace prompt construction, reference validation/attachment, structured-plan validation handoff, request-scoped plan/result state, unknown-side-effect barrier, production runner composition | Codex authentication, hosted account state, direct Appium commands |
-| `providers/codex_cli.py` | Official `codex exec` argv, stdin, schema/output temporary files, timeout/error sanitization, executable resolution | Trace domain rules, auth copying, conversation persistence, model-tool dispatch |
+| `connectors/trace/v1/codex_runtime.py` | Trace planning prompt, reference validation, request-scoped state, unknown-side-effect barrier, and direct-Codex native runner composition | Codex authentication or hosted account state |
+| `capture/appium_codex.py` | Secret-free Appium job contract, request-scoped Codex workspace, UDID lease, export binding, and native artifact collection | Worker credentials, Codex auth, callback delivery, or model UI strategy |
+| `providers/codex_cli.py` | Official planning and direct-Appium `codex exec` argv, stdin, schema/output temporary files, timeout/error sanitization, executable resolution | Trace domain rules, auth copying, conversation persistence, or an in-package tool loop |
 | `service/worker.py` | Production runner selection and legacy automation worker composition | Provider implementation details |
 | `cli/marketing.py` | Typer parsing, operator output and worker/updater dependency composition | Durable transition policy or secret persistence |
 | `scripts/`, `.github/workflows/release-mac-worker.yml` | Offline arm64 envelope build, release bootstrap, attestation, stable publication and public readback gates | Runtime credentials, CI-to-SSH deployment or external tool upgrades |
@@ -103,7 +104,9 @@ singletons or import side effects.
 - Resolve `TRACE_CODEX_BIN` first, then the current process PATH.
 - Do not read, write, copy, print, or inject Codex credentials.
 - Do not pass an `env` override to the subprocess; same-user normal Codex resolution is authoritative.
-- Always use `exec`, `--ephemeral`, `--sandbox read-only`, `--output-schema`, and stdin.
+- Always use `exec`, `--ephemeral`, `--output-schema`, and stdin. Planning is read-only. The separate
+  native turn uses `danger-full-access` because Codex must directly operate localhost Appium and the
+  Simulator; it receives only a secret-free request workspace and no environment override.
 - Temporary schema and raw output files must be deleted with the task-local temporary directory.
 - Return typed JSON or a sanitized stable error; stderr must not become worker logs or callbacks.
 - Attach only digest-verified reference files rooted below the configured artifact root.

@@ -131,6 +131,7 @@ class CodexTraceRunStore:
 class TraceV1RunnerFactory:
     options: GenerateOneOptions
     background_fetcher: BackgroundFetcher
+    appium_codex: CodexCli
 
     def __call__(self, bundle: MarketingContextBundle) -> TracePlannedImageRunner:
         return GenerateOneRunner(
@@ -140,6 +141,7 @@ class TraceV1RunnerFactory:
                 device_kind=bundle.device.kind,
                 appium_server=self.options.appium_server,
                 readiness=self.options.capture_readiness,
+                codex=self.appium_codex,
             ),
         )
 
@@ -208,20 +210,22 @@ def build_codex_trace_runner(
     options = GenerateOneOptions(
         output_root=home / "generated",
         appium_server=appium_server,
-        timeout_seconds=float(os.environ.get("TRACE_AGENT_GENERATION_TIMEOUT_SECONDS", "120")),
+        timeout_seconds=float(os.environ.get("TRACE_AGENT_GENERATION_TIMEOUT_SECONDS", "3600")),
         capture_readiness=readiness,
+    )
+    codex = CodexCli(
+        executable=executable,
+        timeout_seconds=float(os.environ.get("TRACE_CODEX_TIMEOUT_SECONDS", "180")),
+        model=os.environ.get("TRACE_CODEX_MODEL"),
     )
     return CodexTraceRunner(
         plans=CodexWallpaperPlanner(
-            client=CodexCli(
-                executable=executable,
-                timeout_seconds=float(os.environ.get("TRACE_CODEX_TIMEOUT_SECONDS", "180")),
-                model=os.environ.get("TRACE_CODEX_MODEL"),
-            ),
+            client=codex,
             reference_root=home,
         ),
         trace_runners=TraceV1RunnerFactory(
             options=options,
+            appium_codex=codex,
             background_fetcher=ImageSearchBackgroundFetcher(
                 image_search=create_image_search_provider(
                     http=http,
