@@ -14,12 +14,16 @@ from ads_booster.connectors.trace.v1.references import (
     TraceReferenceError,
     reference_context_messages,
 )
+from ads_booster.connectors.trace.v1.scene_plan import (
+    TraceScenePlanError,
+    recipe_for_wallpaper_plan,
+)
 from ads_booster.connectors.trace.v1.tools import (
     TraceGenerateMarketingImageTool,
     TracePlannedImageRunner,
 )
 from ads_booster.contracts.results import TraceRunResult
-from ads_booster.contracts.run import TraceRunState
+from ads_booster.contracts.run import TraceRunErrorCode, TraceRunFailure, TraceRunState
 from ads_booster.contracts.wallpaper import WallpaperPlan
 from ads_booster.providers.codex_cli import CodexCli, CodexCliError, resolve_codex_executable
 from ads_booster.runtime.generate_one import GenerateOneOptions, GenerateOneRunner
@@ -28,14 +32,16 @@ from ads_booster.search.image.providers import create_image_search_provider
 from ads_booster.tools.models import ToolContext
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from ads_booster.contracts.generation import MarketingContextBundle
     from ads_booster.runtime.generate_one import BackgroundFetcher
     from ads_booster.transport.http import HttpClient
+    from ads_booster.transport.json_types import JsonObject
 
 _DEFAULT_APPIUM_SERVER: Final = "http://127.0.0.1:4723"
+_PLAN_ATTEMPTS: Final = 3
 _COUNTRY_TIME_ZONES: Final = {
     "BR": "America/Sao_Paulo",
     "DE": "Europe/Berlin",
@@ -51,13 +57,23 @@ class WallpaperPlanSource(Protocol):
     def plan(self, bundle: MarketingContextBundle) -> WallpaperPlan: ...
 
 
+class WallpaperPlanClient(Protocol):
+    def generate_json(
+        self,
+        prompt: str,
+        schema: Mapping[str, object],
+        *,
+        images: tuple[Path, ...] = (),
+    ) -> JsonObject: ...
+
+
 class TraceRunnerFactory(Protocol):
     def __call__(self, bundle: MarketingContextBundle) -> TracePlannedImageRunner: ...
 
 
 @dataclass(frozen=True, slots=True)
 class CodexWallpaperPlanner:
-    client: CodexCli
+    client: WallpaperPlanClient
     reference_root: Path
 
     def plan(self, bundle: MarketingContextBundle) -> WallpaperPlan:
@@ -165,7 +181,19 @@ class CodexTraceRunner:
                 return _terminal_result(bundle, TraceRunState.UNKNOWN_SIDE_EFFECT)
             plan = self.store.load_plan(run_root)
             if plan is None:
-                plan = self.plans.plan(bundle)
+                try:
+                    plan = _plan_with_retries(self.plans, bundle)
+                except CodexCliError, TraceScenePlanError:
+                    result = _terminal_result(
+                        bundle,
+                        TraceRunState.FAILED,
+                        failure=TraceRunFailure(
+                            code=TraceRunErrorCode.CODEX_PLAN_FAILED,
+                            message="Codex wallpaper planning failed",
+                        ),
+                    )
+                    self.store.save_result(run_root, result)
+                    return result
                 self.store.save_plan(run_root, plan)
             tool = TraceGenerateMarketingImageTool(bundle, self.trace_runners(bundle))
             if self.before_side_effect is not None:
@@ -260,13 +288,36 @@ def _planning_prompt(bundle: MarketingContextBundle) -> str:
     )
 
 
-def _terminal_result(bundle: MarketingContextBundle, state: TraceRunState) -> TraceRunResult:
+def _plan_with_retries(
+    plans: WallpaperPlanSource,
+    bundle: MarketingContextBundle,
+) -> WallpaperPlan:
+    attempt = 0
+    while True:
+        try:
+            plan = plans.plan(bundle)
+            _ = recipe_for_wallpaper_plan(plan, bundle)
+        except CodexCliError, TraceScenePlanError:
+            attempt += 1
+            if attempt >= _PLAN_ATTEMPTS:
+                raise
+        else:
+            return plan
+
+
+def _terminal_result(
+    bundle: MarketingContextBundle,
+    state: TraceRunState,
+    *,
+    failure: TraceRunFailure | None = None,
+) -> TraceRunResult:
     return TraceRunResult(
         schema_version="trace.run-result.v2",
         run_id=bundle.request_id,
         idempotency_key=f"{bundle.request_id}-v2",
         input_digest=sha256(bundle.model_dump_json().encode()).hexdigest(),
         state=state,
+        failure=failure,
     )
 
 

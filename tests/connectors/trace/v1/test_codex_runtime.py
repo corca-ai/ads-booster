@@ -8,7 +8,7 @@ from ads_booster.connectors.trace.v1.codex_runtime import (
     CodexTraceRunStore,
 )
 from ads_booster.connectors.trace.v1.scene_plan import recipe_for_wallpaper_plan
-from ads_booster.contracts.run import TraceRunState
+from ads_booster.contracts.run import TraceRunErrorCode, TraceRunState
 from ads_booster.providers.codex_cli import CodexCliError
 from tests.connectors.trace.v1.test_connector import (
     RecordingRunner,
@@ -29,8 +29,8 @@ class RecordingPlans:
     value: WallpaperPlan
     calls: list[MarketingContextBundle] = field(default_factory=list)
 
-    def plan(self, context: MarketingContextBundle) -> WallpaperPlan:
-        self.calls.append(context)
+    def plan(self, bundle: MarketingContextBundle) -> WallpaperPlan:
+        self.calls.append(bundle)
         return self.value
 
 
@@ -38,17 +38,36 @@ class RecordingPlans:
 class RunnerFactory:
     runner: RecordingRunner
 
-    def __call__(self, context: MarketingContextBundle) -> RecordingRunner:
-        del context
+    def __call__(self, bundle: MarketingContextBundle) -> RecordingRunner:
+        del bundle
         return self.runner
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class FailingPlans:
-    def plan(self, context: MarketingContextBundle) -> WallpaperPlan:
-        del context
+    calls: int = 0
+
+    def plan(self, bundle: MarketingContextBundle) -> WallpaperPlan:
+        del bundle
+        self.calls += 1
         message = "codex_exec_failed:1"
         raise CodexCliError(message)
+
+
+@dataclass(slots=True)
+class FlakyPlans:
+    value: WallpaperPlan
+    failures_remaining: int
+    calls: int = 0
+
+    def plan(self, bundle: MarketingContextBundle) -> WallpaperPlan:
+        del bundle
+        self.calls += 1
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            message = "codex_exec_failed:1"
+            raise CodexCliError(message)
+        return self.value
 
 
 def test_codex_runner_persists_validated_plan_and_reuses_completed_result(tmp_path: Path) -> None:
@@ -132,14 +151,69 @@ def test_hosted_textual_reference_ids_are_valid_plan_authority() -> None:
 
 def test_codex_failure_becomes_a_terminal_result_without_stopping_worker(tmp_path: Path) -> None:
     native = RecordingRunner(completed_result())
+    plans = FailingPlans()
+    barriers: list[str] = []
     runner = CodexTraceRunner(
-        plans=FailingPlans(),
+        plans=plans,
         trace_runners=RunnerFactory(native),
         store=CodexTraceRunStore(tmp_path / "codex-runs"),
         tool_home=tmp_path,
+        before_side_effect=barriers.append,
+    )
+
+    result = runner.run(bundle())
+    replay = runner.run(bundle())
+
+    assert result.state is TraceRunState.FAILED
+    assert replay == result
+    assert result.failure is not None
+    assert result.failure.code is TraceRunErrorCode.CODEX_PLAN_FAILED
+    assert plans.calls == 3
+    assert barriers == []
+    assert native.calls == []
+    assert (tmp_path / "codex-runs" / "dynamic-scene" / "result.json").is_file()
+
+
+def test_codex_runner_retries_a_transient_plan_before_appium(tmp_path: Path) -> None:
+    native = RecordingRunner(completed_result())
+    plans = FlakyPlans(plan(), failures_remaining=2)
+    barriers: list[str] = []
+    runner = CodexTraceRunner(
+        plans=plans,
+        trace_runners=RunnerFactory(native),
+        store=CodexTraceRunStore(tmp_path / "codex-runs"),
+        tool_home=tmp_path,
+        before_side_effect=barriers.append,
+    )
+
+    result = runner.run(bundle())
+
+    assert result.state is TraceRunState.COMPLETED
+    assert result.failure is None
+    assert plans.calls == 3
+    assert barriers == ["dynamic-scene"]
+    assert len(native.calls) == 1
+
+
+def test_codex_runner_retries_a_bundle_invalid_plan_before_appium(tmp_path: Path) -> None:
+    native = RecordingRunner(completed_result())
+    invalid_plan = plan().model_copy(update={"request_id": "different-request"})
+    plans = RecordingPlans(invalid_plan)
+    barriers: list[str] = []
+    runner = CodexTraceRunner(
+        plans=plans,
+        trace_runners=RunnerFactory(native),
+        store=CodexTraceRunStore(tmp_path / "codex-runs"),
+        tool_home=tmp_path,
+        before_side_effect=barriers.append,
     )
 
     result = runner.run(bundle())
 
     assert result.state is TraceRunState.FAILED
+    assert result.failure is not None
+    assert result.failure.code is TraceRunErrorCode.CODEX_PLAN_FAILED
+    assert len(plans.calls) == 3
+    assert barriers == []
     assert native.calls == []
+    assert not (tmp_path / "codex-runs" / "dynamic-scene" / "plan.json").exists()

@@ -145,7 +145,8 @@ separate policy slice.
 - A callback is accepted only when task, run, account, and task kind all match the stored task.
 - A brokered hosted callback validates its payload and then atomically reserves its callback ID and normalized result digest against the current worker
   and lease before any R2 or candidate mutation. Revocation/reassignment wins if it commits first;
-  once reserved, changed content is rejected and revocation waits for an identical retry to complete.
+  once reserved, changed content is rejected and lease expiry, acknowledgement retry, late execution
+  start, and revocation wait for an identical retry to complete.
   Candidate revision, callback ID, PNG type, native provenance, byte limit, and SHA-256 must also
   match, so changed or stale callbacks cannot advance the candidate.
 
@@ -205,7 +206,11 @@ Hosted broker delivery reuses the same local durability contract with a differen
    and only then writes its local execution marker;
 7. an expired pre-execution lease may move to a healthy worker, but post-barrier work stays with its
    original owner until a callback or explicit operator revocation releases it; and
-8. callback acceptance checks the current D1 owner before the existing candidate/digest boundary.
+8. callback acceptance checks the current D1 owner before the existing candidate/digest boundary;
+   `succeeded` and `unknown_side_effect` require the Appium execution barrier, while `failed` may
+   terminate against the still-current worker/lease before the barrier; and
+9. side-effect-free Codex planning retries twice, then returns `codex_plan_failed` without invoking
+   Appium when all three attempts fail.
 
 The public `/api/workers/status` projection contains only team-visible aliases, pools, aggregate
 counts, and ready/busy/degraded/offline states. One-time code creation, full inventory, state changes,
