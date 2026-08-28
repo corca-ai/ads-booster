@@ -181,6 +181,7 @@
     rewritten: "AI 재작성",
   });
   const CONFIRM_REVERT_MS = 8000;
+  const AUTOGEN_TICK_MS = 1000;
   const DEFAULT_LANGUAGE = "en";
   const MAX_TRACE_ITEMS = 8;
 
@@ -2046,10 +2047,34 @@
     return `${registered} — 문서 ${documents}개(${kilobytes(provenanceBytes(provenance))})를 읽고 생성`;
   };
 
+  // Generation takes minutes, and a button that only says "생성 중…" looks the same at ten
+  // seconds and at two minutes. Without a moving number people read the wait as a hang and
+  // press again, and the second press wrote a second batch. The count is ticks rather than
+  // wall-clock so the label never stalls behind a busy main thread.
+  const countUpOn = (button) => {
+    let seconds = 0;
+    let timer = null;
+    const render = () => {
+      button.textContent = `생성 중… ${seconds}초 (보통 1~3분)`;
+    };
+    const tick = () => {
+      seconds += 1;
+      render();
+      timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
+    };
+    render();
+    timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      timer = null;
+    };
+  };
+
   const generateCandidates = async (button) => {
+    if (button.disabled) return;
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = "생성 중… (1~3분 소요)";
+    const stopClock = countUpOn(button);
     setAutogenFeedback("");
     setBusy(workspaceLive, true, "AI가 후보를 만드는 중… (1~3분 소요)");
     try {
@@ -2072,6 +2097,7 @@
       setAutogenFeedback(error.message);
       setNotice(error.message);
     } finally {
+      stopClock();
       button.disabled = false;
       button.textContent = label;
       setBusy(workspaceLive, false);

@@ -953,6 +953,43 @@ const testAutogenGeneratesAndRefreshesTheList = async () => {
   assert.equal(fixture.autogenFeedback.hidden, true);
 };
 
+const testAutogenCountsTheWaitAndRefusesASecondPress = async () => {
+  // Generation runs for minutes. A still button read as a hang and got pressed again,
+  // which wrote a second batch, so the wait has to be visible while it is happening.
+  const fixture = makeLiveDocument();
+  const generation = deferred();
+  let generateCalls = 0;
+  await loadLive(fixture, async (path, options = {}) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates/generate") { generateCalls += 1; return generation.promise; }
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  const running = fixture.autogenButton.click();
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 0초 (보통 1~3분)");
+
+  // One tick of the clock, and the label moves rather than sitting still.
+  const [tickId, tick] = [...fixture.timers.pending.entries()].at(-1);
+  fixture.timers.pending.delete(tickId);
+  tick();
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 1초 (보통 1~3분)");
+
+  // A second press while the first is in flight must not start a second batch.
+  await fixture.autogenButton.click();
+  assert.equal(generateCalls, 1);
+
+  generation.resolve(response(201, []));
+  await running;
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, "🤖 후보 자동 생성");
+  // And the clock is stopped rather than left ticking against a finished request.
+  assert.equal(fixture.timers.pending.size, 0);
+};
+
 const testAutogenShowsTheServerMessageVerbatim = async () => {
   const fixture = makeLiveDocument();
   const detail = "context 폴더를 찾을 수 없습니다 (경로: /tmp/context) — trace 폴더에서 서버를 실행했는지 확인하세요.";
@@ -1726,6 +1763,8 @@ passed += 1;
 await testAutogenGeneratesAndRefreshesTheList();
 passed += 1;
 await testAutogenShowsTheServerMessageVerbatim();
+passed += 1;
+await testAutogenCountsTheWaitAndRefusesASecondPress();
 passed += 1;
 await testManualCandidateSubmitsParsedListFields();
 passed += 1;
