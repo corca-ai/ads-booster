@@ -23,7 +23,7 @@ def test_agent_settings_load_web_search_provider_configuration(
     assert settings.web_search_timeout_seconds == 7.0
 
 
-def test_agent_settings_default_to_luna_with_xhigh_reasoning(
+def test_agent_settings_default_to_luna_with_medium_reasoning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -34,6 +34,6 @@ def test_agent_settings_default_to_luna_with_xhigh_reasoning(
     # When Agent settings are created
     settings = AgentSettings.from_environment(workspace=tmp_path)
 
-    # Then every production composition receives the requested Luna xhigh defaults
+    # Then every production composition receives the requested Luna medium defaults
     assert settings.model == "gpt-5.6-luna"
-    assert settings.reasoning_effort == "xhigh"
+    assert settings.reasoning_effort == "medium"
