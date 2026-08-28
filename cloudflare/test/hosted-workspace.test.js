@@ -1285,8 +1285,9 @@ test("built public workspace has no login form and keeps candidate controls", as
 // several statements, so its tests need a store rather than a canned answer. This is a
 // deliberately small D1 stand-in: it recognizes the four statements the persona functions
 // issue and keeps the rows in an array.
-function personaEnvironment(rows = []) {
+function personaEnvironment(rows = [], candidateRows = []) {
   const store = rows.map((row) => ({ ...row }));
+  const candidates = candidateRows.map((row) => ({ ...row }));
   const workspace = "cloudflare:trace_demo_kr";
   const match = (sql, ...fragments) => fragments.every((fragment) => sql.includes(fragment));
   const env = {
@@ -1297,6 +1298,14 @@ function personaEnvironment(rows = []) {
           bind(...args) {
             return {
               async all() {
+                if (match(sql, "SELECT * FROM hosted_workspace_candidates")) {
+                  const scoped = sql.includes("AND persona_id = ?")
+                    ? candidates.filter(
+                        (row) => row.account_id === args[0] && row.persona_id === args[1],
+                      )
+                    : candidates.filter((row) => row.account_id === args[0]);
+                  return { results: [...scoped].sort((a, b) => b.created_at - a.created_at) };
+                }
                 if (match(sql, "SELECT * FROM hosted_marketing_personas")) {
                   const scoped = sql.includes("AND country = ?")
                     ? store.filter((row) => row.workspace_id === args[0] && row.country === args[1])
@@ -1306,6 +1315,11 @@ function personaEnvironment(rows = []) {
                 return { results: [] };
               },
               async first() {
+                if (match(sql, "SELECT * FROM hosted_workspace_candidates")) {
+                  return candidates.find(
+                    (row) => row.account_id === args[0] && row.candidate_id === args[1],
+                  ) ?? null;
+                }
                 if (match(sql, "SELECT * FROM hosted_marketing_personas", "account_id = ?")) {
                   return store.find(
                     (row) => row.workspace_id === args[0] && row.account_id === args[1],
@@ -1328,6 +1342,17 @@ function personaEnvironment(rows = []) {
                 return null;
               },
               async run() {
+                if (match(sql, "DELETE FROM hosted_workspace_candidates")) {
+                  const [accountIdValue, candidateIdValue, revision] = args;
+                  const index = candidates.findIndex(
+                    (row) => row.account_id === accountIdValue
+                      && row.candidate_id === candidateIdValue
+                      && row.revision === revision,
+                  );
+                  if (index === -1) return { meta: { changes: 0 } };
+                  candidates.splice(index, 1);
+                  return { meta: { changes: 1 } };
+                }
                 if (match(sql, "INSERT INTO hosted_marketing_personas")) {
                   const [
                     workspaceIdValue, accountIdValue, country, identityJson, scheduleJson,
@@ -1383,7 +1408,8 @@ function personaEnvironment(rows = []) {
       },
     },
   };
-  return { env, store, workspace };
+  env.ARTIFACTS = { async delete() {} };
+  return { env, store, candidates, workspace };
 }
 
 function personaBody(overrides = {}) {
@@ -1558,4 +1584,174 @@ test("an unknown persona is a 404 rather than an empty card", async () => {
   const response = await personaRequest(state.env, "/api/personas/persona-missing");
 
   assert.equal(response.status, 404);
+});
+
+function personaCandidate(candidateId, personaId, topic) {
+  return {
+    candidate_id: candidateId,
+    account_id: "trace_demo_kr",
+    persona_id: personaId,
+    source: "auto",
+    country: "KR",
+    topic,
+    caption: "캡션",
+    hypothesis: "가설",
+    refs_json: "[]",
+    principles_json: "[]",
+    appium_prompt: "입력_일정",
+    image_inputs_json: JSON.stringify({
+      trace_items: ["09:00 통계학"],
+      device_time: "07:20",
+      background_subject: "scenery",
+      background_mood: "늦은 밤 스탠드 불빛",
+      language: "ko",
+    }),
+    ai_verdict: null,
+    image_key: null,
+    image_sha256: null,
+    context_profile_id: null,
+    context_snapshot_json: null,
+    posting_slot: "manual",
+    generation_batch_id: null,
+    generation_prompt_version: null,
+    generation_prompt_sha256: null,
+    generation_model: null,
+    feedback_rules_json: "[]",
+    status: "awaiting_review",
+    review_note: null,
+    revision: 1,
+    created_at: 100,
+    updated_at: 100,
+  };
+}
+
+async function personaCandidateRequest(env, path, method = "GET", body = null, personaId = null) {
+  const headers = body ? { "Content-Type": "application/json" } : {};
+  if (personaId) headers["X-Trace-Persona-ID"] = personaId;
+  return handleHostedWorkspace(
+    new Request(`https://workspace.example${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+    env,
+    "context",
+  );
+}
+
+test("a hosted persona sees only the candidates it wrote", async () => {
+  // Two personas under one country shared a single pool: 김도현's screen listed 이서진's
+  // drafts, and either could delete the other's.
+  const state = personaEnvironment();
+  const mine = await (await personaRequest(state.env, "/api/personas", "POST", personaBody())).json();
+  const theirs = await (await personaRequest(state.env, "/api/personas", "POST", personaBody({
+    identity: { ...personaBody().identity, display_name: "김도현" },
+  }))).json();
+  state.candidates.push(
+    personaCandidate("candidate-1", mine.account_id, "이서진의 후보"),
+    personaCandidate("candidate-2", theirs.account_id, "김도현의 후보"),
+    personaCandidate("candidate-legacy", null, "페르소나 이전 후보"),
+  );
+
+  const listed = await (await personaCandidateRequest(
+    state.env, "/api/candidates", "GET", null, mine.account_id,
+  )).json();
+
+  assert.deepEqual(listed.map((record) => record.topic), ["이서진의 후보"]);
+  assert.equal(listed[0].persona_id, mine.account_id);
+});
+
+test("without a persona the hosted list stays the whole country pool", async () => {
+  // The pre-persona rows and any surface that has not opened a persona still need this.
+  const state = personaEnvironment();
+  state.candidates.push(
+    personaCandidate("candidate-1", "persona-a", "이서진의 후보"),
+    personaCandidate("candidate-legacy", null, "페르소나 이전 후보"),
+  );
+
+  const listed = await (await personaCandidateRequest(state.env, "/api/candidates")).json();
+
+  assert.equal(listed.length, 2);
+  assert.deepEqual(listed.map((record) => record.persona_id), ["persona-a", null]);
+});
+
+test("a candidate written inside a persona is stamped with it", async () => {
+  const state = personaEnvironment();
+  const persona = await (await personaRequest(
+    state.env, "/api/personas", "POST", personaBody(),
+  )).json();
+  const inserted = [];
+  const env = {
+    ...state.env,
+    DB: {
+      prepare(sql) {
+        const inner = state.env.DB.prepare(sql);
+        return {
+          bind(...args) {
+            if (sql.includes("INSERT INTO hosted_workspace_candidates")) {
+              inserted.push({ sql, args });
+              return {
+                async run() {
+                  // Store enough for the read-back the insert does, with the persona the
+                  // statement carried.
+                  const columns = sql.slice(sql.indexOf("(") + 1, sql.indexOf(")")).split(",");
+                  const personaIndex = columns.findIndex(
+                    (name) => name.trim() === "persona_id",
+                  );
+                  state.candidates.push({
+                    ...personaCandidate(args[0], args[personaIndex] ?? null, args[4]),
+                    account_id: args[1],
+                  });
+                  return { meta: { changes: 1 } };
+                },
+              };
+            }
+            return inner.bind(...args);
+          },
+        };
+      },
+      async batch(statements) {
+        for (const statement of statements) await statement.run();
+      },
+    },
+  };
+
+  const response = await personaCandidateRequest(
+    env, "/api/candidates", "POST", candidate(), persona.account_id,
+  );
+
+  assert.equal(response.status, 201, await response.text());
+  // The persona rides in the INSERT, so the row knows who wrote it.
+  assert.equal(inserted.length, 1);
+  assert.ok(inserted[0].sql.includes("persona_id"));
+  assert.ok(inserted[0].args.includes(persona.account_id));
+});
+
+test("deleting a candidate from inside a persona no longer looks it up as an account", async () => {
+  // The reported bug: the persona id travelled as the account id, so the account lookup
+  // searched the country table for it and answered 404.
+  const state = personaEnvironment();
+  const persona = await (await personaRequest(
+    state.env, "/api/personas", "POST", personaBody(),
+  )).json();
+  state.candidates.push(personaCandidate("candidate-1", persona.account_id, "지울 후보"));
+
+  const response = await personaCandidateRequest(
+    state.env, "/api/candidates/candidate-1", "DELETE", { expected_revision: 1 },
+    persona.account_id,
+  );
+
+  assert.equal(response.status, 204, await response.text());
+  assert.equal(state.candidates.length, 0);
+});
+
+test("an unknown persona is refused in the persona's own words", async () => {
+  const state = personaEnvironment();
+
+  const response = await personaCandidateRequest(
+    state.env, "/api/candidates", "GET", null, "persona-missing",
+  );
+
+  assert.equal(response.status, 404);
+  assert.match((await response.json()).detail, /페르소나를 찾을 수 없습니다/u);
 });

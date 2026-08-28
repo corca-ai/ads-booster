@@ -293,6 +293,11 @@
     if (hostedCandidateControls && selectedAccountId) {
       headers.set("X-Trace-Account-ID", selectedAccountId);
     }
+    // 페르소나는 계정과 다른 층이라 다른 파라미터로 간다. 이 헤더가 없으면 그 국가의
+    // 후보 전체가 보이고, 있으면 이 페르소나가 쓴 것만 보인다.
+    if (hostedCandidateControls && currentAccount) {
+      headers.set("X-Trace-Persona-ID", currentAccount.account_id);
+    }
     const response = await fetch(path, { credentials: "same-origin", ...options, headers });
     const payload = response.status === 204 ? null : await response.json();
     if (!response.ok) {
@@ -1292,11 +1297,16 @@
   };
 
 
+  const candidateScope = () => (
+    !currentAccount || hostedCandidateControls
+      ? ""
+      : `account_id=${encodeURIComponent(currentAccount.account_id)}`
+  );
+
   const loadCandidates = async () => {
     // Scoped to the open account: another account's drafts are another person's.
-    const listPath = currentAccount
-      ? `/api/candidates?account_id=${encodeURIComponent(currentAccount.account_id)}`
-      : "/api/candidates";
+    const scope = candidateScope();
+    const listPath = scope ? `/api/candidates?${scope}` : "/api/candidates";
     const records = await request(listPath);
     candidateRecords = records;
     renderCandidateList();
@@ -1883,7 +1893,7 @@
   const enterAccount = async (account) => {
     currentAccount = account;
     activeCountry = account.country;
-    selectedAccountId = account.account_id;
+    if (!hostedCandidateControls) selectedAccountId = account.account_id;
     if (countryHome) countryHome.hidden = true;
     if (accountHome) accountHome.hidden = true;
     if (accountWorkspace) accountWorkspace.hidden = false;
@@ -2354,8 +2364,9 @@
           }
         : { method: "POST" };
       // The account is the concept the batch is written as, so it travels with the request.
-      const generatePath = currentAccount
-        ? `/api/candidates/generate?account_id=${encodeURIComponent(currentAccount.account_id)}`
+      const generateScope = candidateScope();
+      const generatePath = generateScope
+        ? `/api/candidates/generate?${generateScope}`
         : "/api/candidates/generate";
       const created = await request(generatePath, options);
       // Only the screen that asked for the batch is repainted. Somebody who moved on to

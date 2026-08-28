@@ -2122,6 +2122,59 @@ const testHostedCountryOpensItsPersonasAndThenTheWork = async () => {
   assert.equal(fixture.accountCurrentName.textContent, "이서진");
 };
 
+const testHostedCandidateRequestsCarryTheCountryAndThePersonaSeparately = async () => {
+  // The bug: opening a persona overwrote the selected account with the persona id, so every
+  // hosted request sent it as X-Trace-Account-ID and the account lookup answered
+  // "워크스페이스 계정을 찾을 수 없습니다" — deleting a candidate from inside a persona was
+  // impossible. The two layers are two parameters now.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [{
+    account_id: "trace_demo_kr",
+    display_name: "Trace Korea",
+    country: "KR",
+    language: "ko",
+    timezone: "Asia/Seoul",
+    morning_time: "07:30",
+    evening_time: "19:30",
+    generation_enabled: true,
+    revision: 1,
+  }];
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    const headers = new Headers(options.headers ?? {});
+    calls.push({
+      path,
+      method: options.method ?? "GET",
+      account: headers.get("X-Trace-Account-ID"),
+      persona: headers.get("X-Trace-Persona-ID"),
+    });
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path.startsWith("/api/personas")) return response(200, [_hostedPersona("persona-1", "이서진")]);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, { status: "online", counts: { online: 1, busy: 0, draining: 0, registered: 1 }, workers: [] });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await openCountry(fixture, 0);
+  await fixture.accountGrid.children[0].children.at(-1).click();
+
+  const inside = calls.filter((call) => call.path.startsWith("/api/candidates")).at(-1);
+  // The account parameter still names the country's operating account, which is what every
+  // account lookup on that route resolves.
+  assert.equal(inside.account, "trace_demo_kr");
+  // And the persona rides in its own parameter.
+  assert.equal(inside.persona, "persona-1");
+  // The hosted list no longer puts the persona in the account query either.
+  assert.equal(inside.path, "/api/candidates");
+};
+
 const testTheLocalSurfaceStillReadsPersonasFromAccounts = async () => {
   // The two surfaces read different tables; the local one must not follow the hosted one.
   const fixture = makeLiveDocument();
@@ -2334,6 +2387,8 @@ passed += 1;
 await testTheCountryHomeOpensBeforeAnyAccountWork();
 passed += 1;
 await testHostedCountryOpensItsPersonasAndThenTheWork();
+passed += 1;
+await testHostedCandidateRequestsCarryTheCountryAndThePersonaSeparately();
 passed += 1;
 await testTheLocalSurfaceStillReadsPersonasFromAccounts();
 passed += 1;
