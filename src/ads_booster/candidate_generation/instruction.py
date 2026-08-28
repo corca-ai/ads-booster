@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum, unique
 from typing import TYPE_CHECKING, Final
 
 from ads_booster.workspace import (
@@ -70,25 +71,41 @@ _RULES: Final = """[반드시 지킬 규칙]
      같은 잠금화면 소재라도 메이커 화법을 얹은 쪽이 도달 76배 열세였고(kr-032 대 kr-026),
      만든 사람 서사는 계정당 한 번 쓰면 후속이 35배 급락합니다(kr-020 → kr-029).
    - 직업은 이 사람의 배경이지 글의 소재가 아닙니다. 무슨 일을 하는지는 일정에서 스칠
-     뿐이고, 글이 그 직업에 대한 이야기가 되면 안 됩니다."""
+     뿐이고, 글이 그 직업에 대한 이야기가 되면 안 됩니다.
+13. 캡션은 이 사람이 자기 계정에 쓰는 생활글입니다. 연출임을 글에서 선언하지 마세요.
+   - "만들어봤어", "올려봤어", "담아봤어", "세팅해봤어" 같은 시연 동사를 쓰지 마세요.
+     그 동사는 하루를 사는 사람이 아니라 화면을 만든 사람의 자리에서 나옵니다. 한 번
+     나오는 순간 글 전체가 제품 소개가 됩니다.
+   - 계정은 컨셉으로 운영합니다. 겪지 않은 삶이라는 사실을 글 안에서 밝히거나 암시하지
+     마세요. 캡션은 그 인물의 하루로 읽혀야 합니다.
+14. 일정은 이미지가 보여줍니다. 캡션이 image_inputs.trace_items를 낭독하지 마세요.
+   - 시각이 붙은 일정 나열을 캡션에 넣지 마세요. "07:20 …" 처럼 줄바꿈으로 늘어놓은
+     일정표는 캡션이 아니라 잠금화면이 할 일입니다.
+   - 일정 항목은 많아야 하나가 이야기 속에서 스칠 뿐입니다.
+   - 이미지의 일은 증명이고 캡션의 일은 스크롤을 멈추는 것입니다. 둘이 같은 말을 하면
+     캡션이 캡처 설명문이 되고, 사람은 방금 본 것을 다시 읽지 않습니다.
+   - 코퍼스에서 도달이 가장 높았던 kr-001(relative 175.30)에는 일정 나열이 없습니다."""
 
-_PERSONA: Final = """[페르소나 구체성 규칙]
-1. 후보마다 서로 다른 "구체 정체성"을 먼저 창작하고,
-   그 한 사람에게서 모든 표면 디테일을 파생시키세요.
-   도메인을 스포츠에 몰지 말고 넓게 흩으세요. 예: 특정 프로팀 팬, 아이돌·밴드 팬덤,
-   특정 시험 수험생, 어린 아이를 키우는 부모, 특정 직군 직장인(간호사·개발자·미용사 등),
-   러닝·등산 크루, 반려동물 보호자, 자격증 준비생, 자영업자.
-   "야구를 좋아함", "운동을 좋아함" 수준은 금지입니다.
-   어느 팀의 팬인지까지 정해진 고유명사급 구체성이어야 합니다.
-   위 예시는 형식 참고용입니다. 예시의 팀·인물·캐릭터를 그대로 쓰지 말고 새로 정하세요.
-2. 입력_일정(image_inputs.trace_items) 5~7개는 그 정체성의 실제 일주일에서 나올 법한 문자열로
-   파생하세요. 고유명사·시각·장소가 드러나야 합니다.
+_INVENT_IDENTITY: Final = """[정체성 창작 규칙]
+이 배치에는 정해진 계정이 없습니다. 후보마다 서로 다른 "구체 정체성"을 먼저 창작하고,
+그 한 사람에게서 모든 표면 디테일을 파생시키세요.
+도메인을 스포츠에 몰지 말고 넓게 흩으세요. 예: 특정 프로팀 팬, 아이돌·밴드 팬덤,
+특정 시험 수험생, 어린 아이를 키우는 부모, 특정 직군 직장인(간호사·개발자·미용사 등),
+러닝·등산 크루, 반려동물 보호자, 자격증 준비생, 자영업자.
+"야구를 좋아함", "운동을 좋아함" 수준은 금지입니다.
+어느 팀의 팬인지까지 정해진 고유명사급 구체성이어야 합니다.
+위 예시는 형식 참고용입니다. 예시의 팀·인물·캐릭터를 그대로 쓰지 말고 새로 정하세요."""
+
+_CRAFT: Final = """[구체성 규칙]
+아래는 그 사람이 누구든 표면 디테일을 뽑아내는 방법입니다.
+1. 입력_일정(image_inputs.trace_items) 5~7개는 그 사람의 실제 일주일에서 나올 법한
+   문자열로 파생하세요. 고유명사·시각·장소가 드러나야 합니다.
    예: "기아 vs LG 18:30 직관", "본공 티켓팅 20:00", "토익 LC 모의 3회", "새벽 러닝 5:50 한강".
    "회의", "운동", "공부", "약속" 같은 범용 일정은 금지입니다.
    위 예시는 형식 참고용입니다. 예시의 팀·인물·캐릭터를 그대로 쓰지 말고 새로 정하세요.
-3. 기기_시각(image_inputs.device_time)은 그 정체성의 생활 리듬과 맞아야 합니다.
+2. 기기_시각(image_inputs.device_time)은 그 사람의 생활 리듬과 맞아야 합니다.
    새벽 러너와 야근하는 직장인의 잠금화면 시각은 같을 수 없습니다.
-4. image_inputs.background_subject는 위 토큰 목록 안에서 그 정체성에 맞는 것을 고르고,
+3. image_inputs.background_subject는 위 토큰 목록 안에서 그 사람에게 맞는 것을 고르고,
    background_mood는 그 사람이 실제로 깔아뒀을 법한 화면을 구체 문구로 쓰세요.
    배경은 그 사람의 직업을 설명하는 자리가 아니라 취향이 드러나는 자리입니다.
    간호사라고 해서 병원 사진, 카페 사장이라고 해서 카페 사진을 깔지 않습니다.
@@ -96,9 +113,7 @@ _PERSONA: Final = """[페르소나 구체성 규칙]
    그 필드에서는 고유명사를 그대로 쓰고, background_mood와 topic에는 넣지 마세요.
    (background_mood와 topic은 사람이 읽는 설명 필드이므로 일반 명사로 씁니다.)
    일정 문자열과 캡션 본문 안에서는 팬 활동 맥락의 자연스러운 언급이 허용됩니다.
-5. 캡션의 화자도 같은 정체성이어야 합니다. 기존 화자·허구 규칙은 그대로 적용됩니다.
-   겪지 않은 삶은 데모 프레임 동사로 드러내고,
-   검증 가능한 제품 사실은 FACTS 문서에서만 가져오세요."""
+4. 캡션의 화자는 그 사람 본인입니다. 검증 가능한 제품 사실은 FACTS 문서에서만 가져오세요."""
 
 _OUTPUT: Final = """[출력 형식]
 설명, 머리말, 코드펜스 없이 JSON 배열 하나만 출력하세요.
@@ -144,6 +159,77 @@ image_inputs는 같은 내용을 기계가 읽는 형식으로 담습니다.
   (200자 이내, background_subject와 정합, 직업 정물 금지,
   이 필드에만 실존 인물명·캐릭터명·팀명 허용)
 - language: 화면 언어의 두 글자 코드 (예: ko)"""
+
+
+@unique
+class CaptionForm(StrEnum):
+    """How one caption opens, assigned per candidate the way its domain is.
+
+    A batch left to choose for itself writes the same shape three times, and a feed of one
+    shape reads as a template. The vocabulary is closed for the same reason the domain one
+    is: a model free to invent forms reports variety it did not write.
+    """
+
+    DAILY = "daily"
+    HOOK = "hook"
+    TESTIMONY = "testimony"
+
+
+_FORM_LABELS: Final = {
+    CaptionForm.DAILY: "일상글",
+    CaptionForm.HOOK: "훅글",
+    CaptionForm.TESTIMONY: "간증글",
+}
+
+_FORM_GUIDANCE: Final = {
+    CaptionForm.DAILY: (
+        "이 사람의 생활 장면 하나를 그대로 쓰세요. 제품을 설명하지 말고 하루가 보이게 합니다."
+    ),
+    CaptionForm.HOOK: (
+        "질문이나 한 문장 헤드라인으로 열고 본문은 짧게 끊으세요. "
+        "근거 레퍼런스: kr-001, kr-003, kr-014."
+    ),
+    CaptionForm.TESTIMONY: (
+        "쓰기 전과 후에 무엇이 달라졌는지 씁니다. 다만 주장은 FACTS 문서 범위 안에서만 "
+        "하세요. 근거 레퍼런스: kr-010."
+    ),
+}
+
+_FORM_EXAMPLES: Final = {
+    CaptionForm.DAILY: "오늘도 알람 세 번 끄고 나왔는데 폰 켜니까 첫 줄이 벌써 지나 있었다",
+    CaptionForm.HOOK: "다들 시험기간엔 폰 어떻게 해요?",
+    CaptionForm.TESTIMONY: "두 달째 쓰는데 이제 내일 뭐부터 하는지 확인하려고 앱을 안 연다",
+}
+
+_FORM_HEADER: Final = """[캡션 형태 배정]
+같은 사람이 써도 글마다 여는 방식이 달라야 합니다. 한 배치가 전부 같은 형태로 열리면
+피드가 한 장짜리 템플릿으로 읽힙니다. 후보별 형태는 코드가 배정했습니다.
+{lines}
+간증글은 한 배치에 많아야 하나입니다. 제품 이야기가 매 글에 오면 계정이 광고가 됩니다.
+형태는 무엇을 쓰느냐가 아니라 어떻게 여느냐입니다. 배정받은 도메인과 계정은 그대로 두고
+형태만 이 배정을 따르세요."""
+
+_FORM_LINE: Final = "- 후보 {index}: {token} ({label}) — {guidance}\n  예: {example}"
+
+
+def assign_caption_forms(count: int) -> tuple[CaptionForm, ...]:
+    """Give each candidate in the batch a form, with at most one testimonial in it.
+
+    Testimony is the only form that makes a claim about the product, so it is capped rather
+    than cycled: a batch of three testimonials is an ad break, not an account. The rest
+    alternate between the hook and the day, which is enough to keep three captions from
+    opening the same way. The assignment is a function of the count alone, so the same
+    batch size always gets the same shape and a reviewer can predict what they are reading.
+    """
+    if count <= 0:
+        return ()
+    if count == 1:
+        return (CaptionForm.HOOK,)
+    alternating = tuple(
+        CaptionForm.HOOK if index % 2 == 0 else CaptionForm.DAILY for index in range(count - 1)
+    )
+    return (*alternating, CaptionForm.TESTIMONY)
+
 
 _ASSIGNMENT_HEADER: Final = """[도메인 배정]
 이번 배치의 도메인은 누적 커버리지가 가장 적은 순서로 코드가 배정했습니다.
@@ -232,15 +318,21 @@ def build_instruction(
     `account` replaces the invent-a-person half of the job: when the batch is written for
     an existing account, spreading it across domains would be the bug rather than the
     feature, so the per-candidate domain assignment is dropped and the account's own domain
-    stands for the whole batch.
+    stands for the whole batch. The identity-invention block goes with it — telling a batch
+    to author a fresh person and to stay inside an existing one at the same time is the
+    contradiction that put a stranger in every account's captions. What survives both paths
+    is the craft: how a schedule, a clock and a wallpaper are derived from whoever is
+    writing.
     """
     subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
     sections = [
         _ROLE.format(count=count),
         _RULES.format(count=count, subjects=subjects),
-        _PERSONA,
+        *([_INVENT_IDENTITY] if account is None else []),
+        _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
         *([_assignment_section(domains)] if domains and account is None else []),
+        _form_section(assign_caption_forms(count)),
         *([_history_section(history)] if history else []),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"
@@ -249,6 +341,20 @@ def build_instruction(
         _OUTPUT.format(count=count),
     ]
     return "\n\n".join(sections)
+
+
+def _form_section(forms: tuple[CaptionForm, ...]) -> str:
+    lines = "\n".join(
+        _FORM_LINE.format(
+            index=index,
+            token=form.value,
+            label=_FORM_LABELS[form],
+            guidance=_FORM_GUIDANCE[form],
+            example=_FORM_EXAMPLES[form],
+        )
+        for index, form in enumerate(forms, start=1)
+    )
+    return _FORM_HEADER.format(lines=lines)
 
 
 def _assignment_section(domains: tuple[CandidatePersonaDomain, ...]) -> str:

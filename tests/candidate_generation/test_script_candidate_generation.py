@@ -16,7 +16,9 @@ from ads_booster.candidate_generation import (
     CandidateDocument,
     CandidateFormatError,
     CandidateProviderError,
+    CaptionForm,
     ScriptCandidateGenerator,
+    assign_caption_forms,
     assign_domains,
     build_instruction,
     parse_candidate_drafts,
@@ -279,11 +281,8 @@ def test_the_account_block_supplies_a_person_without_dictating_the_prose(
     assert "말투:" not in instruction
 
 
-def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> None:
-    """Spreading one account's batch across domains would contradict the account."""
-    # Given
-    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
-    account = CandidateAccountBrief(
+def _account() -> CandidateAccountBrief:
+    return CandidateAccountBrief(
         display_name="김도현",
         age=29,
         region="서울 성동구",
@@ -296,12 +295,18 @@ def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> 
         background_mood="야간 경기 조명이 켜진 외야 관중석",
     )
 
+
+def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> None:
+    """Spreading one account's batch across domains would contradict the account."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
     # When
     instruction = build_instruction(
         bundle,
         count=3,
         domains=(CandidatePersonaDomain.PARENTING,) * 3,
-        account=account,
+        account=_account(),
     )
 
     # Then
@@ -310,23 +315,28 @@ def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> 
     assert "계정 블록이 있으면 그 계정의 도메인" in instruction
 
 
-def _assert_persona_specificity_block(instruction: str) -> None:
-    assert "[페르소나 구체성 규칙]" in instruction
+def _assert_identity_invention_block(instruction: str) -> None:
+    """The half of the old persona block that only the account-less path may read."""
+    assert "[정체성 창작 규칙]" in instruction
     assert '서로 다른 "구체 정체성"을 먼저 창작하고' in instruction
     assert "도메인을 스포츠에 몰지 말고 넓게 흩으세요" in instruction
     assert '"야구를 좋아함", "운동을 좋아함" 수준은 금지입니다.' in instruction
     assert "어느 팀의 팬인지까지 정해진" in instruction
-    assert "그 정체성의 실제 일주일에서 나올 법한 문자열로" in instruction
+
+
+def _assert_craft_block(instruction: str) -> None:
+    """The half both paths read: how surface detail is derived from whoever is writing."""
+    assert "[구체성 규칙]" in instruction
+    assert "그 사람의 실제 일주일에서 나올 법한" in instruction
     assert "기아 vs LG 18:30 직관" in instruction
     assert '"회의", "운동", "공부", "약속" 같은 범용 일정은 금지입니다.' in instruction
-    assert "그 정체성의 생활 리듬과 맞아야 합니다" in instruction
+    assert "그 사람의 생활 리듬과 맞아야 합니다" in instruction
     assert (
         "실존 인물명·캐릭터명·팀명을 쓰는 자리는 image_inputs.background_search_query 하나뿐입니다."
         in instruction
     )
     assert "background_mood와 topic에는 넣지 마세요" in instruction
-    assert "캡션의 화자도 같은 정체성이어야 합니다" in instruction
-    assert "데모 프레임 동사로 드러내고" in instruction
+    assert "캡션의 화자는 그 사람 본인입니다" in instruction
 
 
 def test_instruction_sanctions_real_names_only_in_the_background_search_query(
@@ -359,8 +369,8 @@ def test_instruction_sanctions_real_names_only_in_the_background_search_query(
     )
 
 
-def test_instruction_carries_the_persona_specificity_block(tmp_path: Path) -> None:
-    """The block reaches the model on the plain path, with the INDEX but no reference bodies."""
+def test_instruction_carries_the_persona_specificity_blocks(tmp_path: Path) -> None:
+    """Both blocks reach the model on the plain path, with the INDEX but no reference bodies."""
     # Given
     bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
 
@@ -368,7 +378,8 @@ def test_instruction_carries_the_persona_specificity_block(tmp_path: Path) -> No
     instruction = build_instruction(bundle, count=3)
 
     # Then
-    _assert_persona_specificity_block(instruction)
+    _assert_identity_invention_block(instruction)
+    _assert_craft_block(instruction)
 
 
 def test_persona_specificity_block_survives_added_reference_bodies(tmp_path: Path) -> None:
@@ -389,7 +400,125 @@ def test_persona_specificity_block_survives_added_reference_bodies(tmp_path: Pat
 
     # Then
     assert "[context 문서: references/KR/kr-001.md]" in instruction
-    _assert_persona_specificity_block(instruction)
+    _assert_identity_invention_block(instruction)
+    _assert_craft_block(instruction)
+
+
+def test_an_account_batch_is_never_told_to_invent_a_person(tmp_path: Path) -> None:
+    """The two blocks used to contradict each other, and the invented person won.
+
+    "Author a different concrete identity per candidate" and "do not invent an identity,
+    the account is fixed" were both in the prompt whenever an account was chosen. So the
+    invention rules only belong to the path that has nobody to write as; the craft rules
+    belong to both.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When the batch is written as an existing account
+    instruction = build_instruction(bundle, count=3, account=_account())
+
+    # Then nothing asks it to author a person, while the craft rules still apply
+    assert "[정체성 창작 규칙]" not in instruction
+    assert '서로 다른 "구체 정체성"을 먼저 창작하고' not in instruction
+    assert "도메인을 스포츠에 몰지 말고 넓게 흩으세요" not in instruction
+    _assert_craft_block(instruction)
+
+
+def test_the_caption_never_announces_that_it_is_staged(tmp_path: Path) -> None:
+    """Accounts are run as concepts, so the writing does not declare itself a demo.
+
+    The old rule told the model to expose a life it had not lived through demo-frame verbs,
+    which is how "만들어봤어" ended up opening caption after caption — the maker's chair,
+    one sentence in.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then the demo frame is gone and its verbs are named as what not to write
+    assert "데모 프레임" not in instruction
+    assert "연출임을 글에서 선언하지 마세요" in instruction
+    assert '"만들어봤어", "올려봤어", "담아봤어", "세팅해봤어" 같은 시연 동사를 쓰지 마세요' in (
+        instruction
+    )
+    assert "겪지 않은 삶이라는 사실을 글 안에서 밝히거나 암시하지" in instruction
+    # And the maker-voice rule the corpus settled stays where it was
+    assert "메이커 화법을 쓰지 마세요" in instruction
+    assert "kr-032 대 kr-026" in instruction
+    assert "kr-020 → kr-029" in instruction
+
+
+def test_the_schedule_belongs_to_the_image_and_not_to_the_caption(tmp_path: Path) -> None:
+    """Captions were reading the lock screen back out loud, which is the image's job.
+
+    The two surfaces have different work: the image proves the schedule exists, the caption
+    has to stop the scroll. A caption that lists the same times is a caption of a capture,
+    and kr-001 — the highest reach in the corpus at relative 175.30 — lists nothing.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    assert "일정은 이미지가 보여줍니다" in instruction
+    assert "캡션이 image_inputs.trace_items를 낭독하지 마세요" in instruction
+    assert "시각이 붙은 일정 나열을 캡션에 넣지 마세요" in instruction
+    assert "일정 항목은 많아야 하나가 이야기 속에서 스칠 뿐입니다" in instruction
+    assert "이미지의 일은 증명이고 캡션의 일은 스크롤을 멈추는 것입니다" in instruction
+    assert "kr-001(relative 175.30)에는 일정 나열이 없습니다" in instruction
+
+
+def test_the_batch_is_assigned_one_caption_form_per_candidate(tmp_path: Path) -> None:
+    """Left to itself a batch opens three ways that are the same way."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then each candidate is bound to its own form, with the evidence for it
+    assert "[캡션 형태 배정]" in instruction
+    assert "- 후보 1: hook (훅글)" in instruction
+    assert "- 후보 2: daily (일상글)" in instruction
+    assert "- 후보 3: testimony (간증글)" in instruction
+    assert "근거 레퍼런스: kr-001, kr-003, kr-014." in instruction
+    assert "근거 레퍼런스: kr-010." in instruction
+    assert "주장은 FACTS 문서 범위 안에서만" in instruction
+    assert "간증글은 한 배치에 많아야 하나입니다" in instruction
+    # And every form is shown rather than only named
+    assert "예: 다들 시험기간엔 폰 어떻게 해요?" in instruction
+
+
+def test_the_form_assignment_reaches_an_account_batch_too(tmp_path: Path) -> None:
+    """One account writing three posts is exactly the case that needs three shapes."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3, account=_account())
+
+    # Then
+    assert "[캡션 형태 배정]" in instruction
+    assert "- 후보 3: testimony (간증글)" in instruction
+
+
+def test_a_batch_carries_at_most_one_testimonial() -> None:
+    """Testimony is the one form that claims something, so it is capped rather than cycled."""
+    # Given / When / Then no batch size turns the feed into an ad break
+    for count in range(1, 9):
+        forms = assign_caption_forms(count)
+        assert len(forms) == count
+        assert forms.count(CaptionForm.TESTIMONY) <= 1
+    # And a single candidate is not spent on the one form that talks about the product
+    assert assign_caption_forms(1) == (CaptionForm.HOOK,)
+    assert assign_caption_forms(0) == ()
+    # And the assignment is a function of the count, so a reviewer can predict it
+    assert assign_caption_forms(3) == (CaptionForm.HOOK, CaptionForm.DAILY, CaptionForm.TESTIMONY)
 
 
 def test_fenced_json_is_parsed() -> None:

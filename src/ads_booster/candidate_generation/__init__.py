@@ -22,6 +22,8 @@ from ads_booster.candidate_generation.factory import (
 )
 from ads_booster.candidate_generation.instruction import (
     SYSTEM_INSTRUCTION,
+    CaptionForm,
+    assign_caption_forms,
     build_instruction,
     build_retry_instruction,
 )
@@ -89,10 +91,12 @@ __all__ = [
     "CandidateRunConflictError",
     "CandidateWorkflow",
     "CandidateWriter",
+    "CaptionForm",
     "ImageReviewPort",
     "LocalCandidateImageRunner",
     "ProductionCandidateModels",
     "ScriptCandidateGenerator",
+    "assign_caption_forms",
     "assign_domains",
     "build_background_query",
     "build_candidate_generator",
