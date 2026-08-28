@@ -1,9 +1,13 @@
+"""# noqa: SIZE_OK - Hosted capture request contract joins preparation and verification."""
+
 from __future__ import annotations
 
 import base64
 import os
 import re
+import secrets
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -11,22 +15,35 @@ from typing import TYPE_CHECKING, Final, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from ads_booster.capture.appium_codex import CodexAppiumJobAdapter
+from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureControl
+from ads_booster.capture.codex_appium_job import (
+    CodexAppiumJobContract,
+    CodexAppiumJobIdentity,
+)
+from ads_booster.capture.readiness import DefaultCaptureReadiness
+from ads_booster.capture.simulator_photo import SimctlPhotoImporter
+from ads_booster.capture.wallpaper_collection import SimctlAppGroupWallpaperCollector
+from ads_booster.capture.wallpaper_validation import read_wallpaper_export_manifest
+from ads_booster.contracts import CaptureProvenance, PreparedBackground
 from ads_booster.contracts.generation import (
     MarketingContextBundle,
     PersonaProfile,
     PromotionMaterial,
 )
 from ads_booster.contracts.models import DeviceKind, DeviceTarget
-from ads_booster.contracts.run import TraceRunState
-from ads_booster.marketing.inbox import MarketingExecutionError
+from ads_booster.marketing.background import HostedBackgroundPreparer
+from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskResult, TaskStatus
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
+from ads_booster.search.image.background import ImageSearchBackgroundFetcher
+from ads_booster.search.image.providers import create_image_search_provider
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.automation import GenerateOnePort
-    from ads_booster.marketing.bridge import TaskExecutor
+    from ads_booster.transport.http import HttpClient
 
 _PIPELINE: Final = "hosted_workspace_capture_v1"
 _MAX_IMAGE_BYTES: Final = 16 * 1024 * 1024
@@ -39,6 +56,17 @@ _LOCALES: Final = {
     "TW": "zh-TW",
     "US": "en-US",
 }
+_TIME_ZONES: Final = {
+    "BR": "America/Sao_Paulo",
+    "DE": "Europe/Berlin",
+    "FR": "Europe/Paris",
+    "JP": "Asia/Tokyo",
+    "KR": "Asia/Seoul",
+    "TW": "Asia/Taipei",
+    "US": "America/New_York",
+}
+_DEFAULT_APPIUM_SERVER: Final = "http://127.0.0.1:4723"
+_DEFAULT_TIMEOUT_SECONDS: Final = 3600.0
 _RUNTIME_VERSION = re.compile(r"\.iOS-(\d+)-(\d+)$")
 _MAX_TRACE_ITEMS: Final = 8
 _MAX_REFERENCE_IDS: Final = 16
@@ -48,8 +76,66 @@ _TRACE_ITEMS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 _REFERENCE_IDS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 
 
+def build_hosted_capture_executor(
+    home: Path,
+    http: HttpClient,
+) -> HostedWorkspaceCaptureExecutor:
+    executable = resolve_codex_executable()
+    if executable is None:
+        raise MarketingExecutionError("codex_exec_unavailable")
+    appium_server = os.environ.get("TRACE_AGENT_APPIUM_SERVER", _DEFAULT_APPIUM_SERVER)
+    timeout_seconds = _positive_timeout(
+        os.environ.get("TRACE_AGENT_GENERATION_TIMEOUT_SECONDS", str(_DEFAULT_TIMEOUT_SECONDS))
+    )
+    return HostedWorkspaceCaptureExecutor(
+        background_preparer=HostedBackgroundPreparer(
+            ImageSearchBackgroundFetcher(
+                image_search=create_image_search_provider(
+                    http=http,
+                    provider_name=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
+                    timeout_seconds=_positive_timeout(
+                        os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
+                    ),
+                ),
+                http=http,
+            )
+        ),
+        appium=CodexAppiumJobAdapter(
+            codex=CodexCli(executable=executable, timeout_seconds=timeout_seconds),
+            simulator=SimctlPhotoImporter(),
+            collector=SimctlAppGroupWallpaperCollector(),
+            readiness=DefaultCaptureReadiness(appium_server=appium_server),
+        ),
+        output_root=home / "generated",
+        appium_server=appium_server,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 class DeviceResolver(Protocol):
     def resolve(self) -> DeviceTarget: ...
+
+
+class BackgroundPreparer(Protocol):
+    def prepare(
+        self,
+        bundle: MarketingContextBundle,
+        job_root: Path,
+    ) -> PreparedBackground: ...
+
+
+class AppiumJobPort(Protocol):
+    def ensure_ready(self, contract: CodexAppiumJobContract, control: CaptureControl) -> None: ...
+
+    def execute(
+        self,
+        contract: CodexAppiumJobContract,
+        *,
+        job_root: Path,
+        background: Path,
+        output: Path,
+        control: CaptureControl,
+    ) -> CaptureProvenance: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,47 +185,170 @@ class SimctlDeviceResolver:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedCodexAppiumJob:
+    task: MarketingTask
+    contract: CodexAppiumJobContract
+    execution_admission: ExecutionAdmission
+    job_root: Path
+    background: Path
+    output: Path
+    control: CaptureControl
+
+
+@dataclass(frozen=True, slots=True)
 class HostedWorkspaceCaptureExecutor:
-    runner: GenerateOnePort
+    background_preparer: BackgroundPreparer
+    appium: AppiumJobPort
     output_root: Path
     device_resolver: DeviceResolver = SimctlDeviceResolver()
+    appium_server: str = _DEFAULT_APPIUM_SERVER
+    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
 
-    def execute(self, task: MarketingTask) -> TaskResult:
+    def prepare(self, task: MarketingTask) -> PreparedCodexAppiumJob:
         if task.payload.get("pipeline") != _PIPELINE:
             raise MarketingExecutionError("unsupported_hosted_capture_pipeline")
         request_id = _task_identifier(task.task_id)
-        bundle = _context_bundle(task, request_id, self.device_resolver.resolve())
-        result = self.runner.run(bundle)
-        if result.state is TraceRunState.UNKNOWN_SIDE_EFFECT:
+        workspace_id = _required_text(task.payload, "workspace_id", 128)
+        device = self.device_resolver.resolve()
+        bundle = _context_bundle(task, request_id, device)
+        job_root = (self.output_root / request_id).resolve()
+        root = self.output_root.resolve()
+        if not job_root.is_relative_to(root):
+            raise MarketingExecutionError("native_capture_artifact_missing")
+        try:
+            job_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            job_root.chmod(0o700)
+        except OSError as error:
+            raise MarketingExecutionError("native_capture_workspace_unavailable") from error
+        prepared_background = self.background_preparer.prepare(bundle, job_root)
+        background = (job_root / prepared_background.path).resolve()
+        output = (job_root / "outputs" / "trace_wallpaper.png").resolve()
+        contract = CodexAppiumJobContract(
+            schema_version="trace.codex-appium-job.v2",
+            identity=CodexAppiumJobIdentity(
+                task_id=request_id,
+                run_id=_task_identifier(task.run_id),
+                request_id=request_id,
+                idempotency_key=task.idempotency_key,
+                candidate_id=_required_text(task.payload, "candidate_id", 80),
+                candidate_revision=_required_integer(task.payload, "candidate_revision"),
+            ),
+            context=bundle,
+            prepared_background=prepared_background,
+            python_executable=sys.executable,
+            appium_server=self.appium_server,
+            bundle_id="com.corca.Trace",
+            app_group_id="group.ai.corca.trace",
+            device=device,
+            locale=bundle.persona.locale,
+            time_zone=_TIME_ZONES[bundle.persona.country],
+            calendar_namespace=f"trace-{request_id}",
+            export_nonce=secrets.token_hex(32),
+        )
+        control = CaptureControl.start(self.timeout_seconds)
+        try:
+            self.appium.ensure_ready(contract, control)
+        except CaptureAdapterError as error:
+            raise MarketingExecutionError(f"native_capture_{error.code.value}") from error
+        return PreparedCodexAppiumJob(
+            task=task,
+            contract=contract,
+            execution_admission=ExecutionAdmission(
+                job_digest=contract.request_sha256,
+                export_nonce=contract.export_nonce,
+                workspace_id=workspace_id,
+            ),
+            job_root=job_root,
+            background=background,
+            output=output,
+            control=control,
+        )
+
+    def execute(self, prepared: PreparedCodexAppiumJob) -> TaskResult:
+        try:
+            background_digest = sha256(prepared.background.read_bytes()).hexdigest()
+        except OSError as error:
             raise MarketingExecutionError(
-                "native_appium_side_effect_unknown",
+                "native_capture_background_missing",
+                unknown_side_effect=True,
+            ) from error
+        if background_digest != prepared.contract.prepared_background.sha256:
+            raise MarketingExecutionError(
+                "native_capture_background_digest_mismatch",
                 unknown_side_effect=True,
             )
-        if result.state is not TraceRunState.COMPLETED or result.output_image is None:
-            raise MarketingExecutionError("native_appium_capture_failed")
-        provenance = result.capture_provenance
-        if (
-            provenance is None
-            or provenance.source != "native_appium"
-            or not provenance.native_export_binding_verified
-        ):
-            raise MarketingExecutionError("native_capture_provenance_unverified")
-        image_path = (self.output_root / request_id / result.output_image).resolve()
+        try:
+            provenance = self.appium.execute(
+                prepared.contract,
+                job_root=prepared.job_root,
+                background=prepared.background,
+                output=prepared.output,
+                control=prepared.control,
+            )
+        except CaptureAdapterError as error:
+            raise MarketingExecutionError(
+                f"native_capture_{error.code.value}",
+                unknown_side_effect=True,
+            ) from error
+        image_path = prepared.output.resolve()
         root = self.output_root.resolve()
-        if not image_path.is_relative_to(root) or not image_path.is_file():
-            raise MarketingExecutionError("native_capture_artifact_missing")
-        image = image_path.read_bytes()
+        if (
+            image_path != prepared.output
+            or not image_path.is_relative_to(root)
+            or not image_path.is_file()
+        ):
+            raise MarketingExecutionError(
+                "native_capture_artifact_missing",
+                unknown_side_effect=True,
+            )
+        try:
+            image = image_path.read_bytes()
+            manifest = read_wallpaper_export_manifest(image_path.with_suffix(".manifest.json"))
+        except (OSError, CaptureAdapterError) as error:
+            raise MarketingExecutionError(
+                "native_capture_artifact_missing",
+                unknown_side_effect=True,
+            ) from error
         if not image or len(image) > _MAX_IMAGE_BYTES:
-            raise MarketingExecutionError("native_capture_artifact_size_invalid")
+            raise MarketingExecutionError(
+                "native_capture_artifact_size_invalid",
+                unknown_side_effect=True,
+            )
         digest = sha256(image).hexdigest()
-        if result.output_image_sha256 != digest:
-            raise MarketingExecutionError("native_capture_artifact_digest_mismatch")
+        contract = prepared.contract
+        if (
+            provenance.source != "native_appium"
+            or provenance.artifact_role != "trace_wallpaper"
+            or not provenance.native_export_binding_verified
+            or provenance.request_sha256 != contract.request_sha256
+            or provenance.native_export_nonce != contract.export_nonce
+            or provenance.bundle_id != contract.bundle_id
+            or provenance.device_udid != contract.device.udid
+        ):
+            raise MarketingExecutionError(
+                "native_capture_provenance_unverified",
+                unknown_side_effect=True,
+            )
+        if (
+            provenance.artifact_sha256 != digest
+            or provenance.byte_size != len(image)
+            or manifest.artifact_sha256 != digest
+            or manifest.request_sha256 != contract.request_sha256
+            or manifest.export_nonce != contract.export_nonce
+            or manifest.bundle_id != contract.bundle_id
+            or manifest.device_udid != contract.device.udid
+            or (manifest.width, manifest.height) != (provenance.width, provenance.height)
+        ):
+            raise MarketingExecutionError(
+                "native_capture_artifact_digest_mismatch",
+                unknown_side_effect=True,
+            )
         return TaskResult(
             status=TaskStatus.SUCCEEDED,
             output={
                 "pipeline": _PIPELINE,
-                "candidate_id": _required_text(task.payload, "candidate_id", 128),
-                "candidate_revision": _required_integer(task.payload, "candidate_revision"),
+                "candidate_id": contract.identity.candidate_id,
+                "candidate_revision": contract.identity.candidate_revision,
                 "content_type": "image/png",
                 "image_sha256": digest,
                 "image_base64": base64.b64encode(image).decode("ascii"),
@@ -147,17 +356,6 @@ class HostedWorkspaceCaptureExecutor:
                 "native_export_binding_verified": True,
             },
         )
-
-
-@dataclass(frozen=True, slots=True)
-class HostedCaptureRoutingExecutor:
-    hosted: HostedWorkspaceCaptureExecutor
-    fallback: TaskExecutor
-
-    def execute(self, task: MarketingTask) -> TaskResult:
-        if task.payload.get("pipeline") == _PIPELINE:
-            return self.hosted.execute(task)
-        return self.fallback.execute(task)
 
 
 def _simulator_candidates(
@@ -277,7 +475,7 @@ def _task_identifier(value: str) -> str:
     return value
 
 
-def _reference_ids(value: object) -> tuple[str, ...]:
+def _reference_ids(value: JsonValue) -> tuple[str, ...]:
     try:
         supplied = _REFERENCE_IDS.validate_python(value)
     except ValidationError as error:
@@ -306,3 +504,13 @@ def _required_integer(payload: JsonObject, key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise MarketingExecutionError(f"native_capture_{key}_invalid")
     return value
+
+
+def _positive_timeout(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as error:
+        raise MarketingExecutionError("native_capture_timeout_invalid") from error
+    if timeout <= 0:
+        raise MarketingExecutionError("native_capture_timeout_invalid")
+    return timeout

@@ -4,16 +4,16 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ads_booster.capture.app_group_collector import (
-    CommandRunner,
-    SubprocessCommandRunner,
-    parse_app_group_container,
-)
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureClock,
     CaptureControl,
     SystemCaptureClock,
+)
+from ads_booster.capture.simctl_command import (
+    CommandRunner,
+    SubprocessCommandRunner,
+    parse_app_group_container,
 )
 from ads_booster.capture.wallpaper_validation import (
     WallpaperExportBinding,
@@ -23,10 +23,12 @@ from ads_booster.capture.wallpaper_validation import (
     reject_symlink_path,
     validate_wallpaper_png,
 )
-from ads_booster.contracts import CaptureProvenance, ErrorCode, WallpaperExportManifest
+from ads_booster.contracts import CaptureProvenance, ErrorCode
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ads_booster.contracts.native_export import WallpaperExportManifest
 
 __all__ = [
     "SimctlAppGroupWallpaperCollector",

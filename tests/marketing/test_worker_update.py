@@ -1,3 +1,5 @@
+"""# noqa: SIZE_OK - Managed-release cases share stateful fakes for updater transitions."""
+
 from __future__ import annotations
 
 import io
@@ -14,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import TypeAdapter
 
-from ads_booster.marketing.inbox import MarketingInbox
+from ads_booster.marketing.inbox import ExecutionAdmission, MarketingInbox
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.marketing.worker_update import (
     GitHubArtifactAttestationVerifier,
@@ -40,7 +42,7 @@ from ads_booster.marketing.worker_update import (
     update_drain_requested,
 )
 from ads_booster.transport.http import HttpResponse
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -113,30 +115,46 @@ def _asset(name: str, payload: bytes) -> GitHubReleaseAsset:
     )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class StubHttp:
+    """Mutable fixture holds deterministic HTTP responses for release-source requests."""
+
     responses: dict[str, HttpResponse]
 
     def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
         assert headers["user-agent"] == "trace-marketing-updater"
         return self.responses[url]
 
-    def post_json(self, *_args: object, **_kwargs: object) -> HttpResponse:
+    def post_json(
+        self,
+        url: str,
+        payload: JsonObject,
+        headers: Mapping[str, str],
+    ) -> HttpResponse:
+        del url, payload, headers
         message = "unexpected POST"
         raise AssertionError(message)
 
-    def post_form(self, *_args: object, **_kwargs: object) -> HttpResponse:
+    def post_form(
+        self,
+        url: str,
+        form: Mapping[str, str],
+        headers: Mapping[str, str],
+    ) -> HttpResponse:
+        del url, form, headers
         message = "unexpected form POST"
         raise AssertionError(message)
 
 
-def _response(payload: object) -> HttpResponse:
+def _response(payload: JsonValue | bytes) -> HttpResponse:
     content = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
     return HttpResponse(200, content, {})
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class RecordingAttestationVerifier:
+    """Mutable fixture retains the verified artifact map for assertions."""
+
     verified: dict[str, bytes] | None = None
 
     def verify(self, release: VerifiedRelease, assets: Mapping[str, bytes]) -> None:
@@ -350,6 +368,17 @@ def test_quiescence_counts_inbox_outbox_and_ambiguous_codex_side_effects(
     _ = inbox.ingest(task)
     assert inbox.claim_next() == task
     _ = inbox.complete(task, TaskResult(status=TaskStatus.SUCCEEDED))
+    guarded = task.model_copy(update={"task_id": "task-guarded", "idempotency_key": "capture:2"})
+    assert inbox.ingest(guarded)
+    assert inbox.claim_next() == guarded
+    inbox.begin_execution(
+        guarded.task_id,
+        ExecutionAdmission(
+            job_digest="c" * 64,
+            export_nonce="nonce-guarded",
+            workspace_id="workspace-1",
+        ),
+    )
     run = paths.codex_runs / "run-1"
     run.mkdir(parents=True)
     _ = (run / "executing").write_text("native side effect started")
@@ -358,6 +387,7 @@ def test_quiescence_counts_inbox_outbox_and_ambiguous_codex_side_effects(
 
     assert snapshot.ready is False
     assert snapshot.inbox.pending_callbacks == 1
+    assert snapshot.inbox.guarded_tasks == 1
     assert snapshot.ambiguous_codex_runs == 1
 
 
@@ -372,8 +402,10 @@ def _install(paths: ManagedWorkerPaths, version: str) -> InstalledRelease:
     return InstalledRelease(version=version, path=root.resolve(), receipt=manifest)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeSource:
+    """Mutable fixture counts release downloads while returning one configured release."""
+
     release: VerifiedRelease
     download_count: int = 0
 
@@ -386,8 +418,10 @@ class FakeSource:
         return b"bundle"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeInstaller:
+    """Mutable fixture supplies the staged candidate selected by updater tests."""
+
     candidate: InstalledRelease
 
     def stage(self, release: VerifiedRelease, bundle: bytes) -> InstalledRelease:
@@ -395,8 +429,10 @@ class FakeInstaller:
         return self.candidate
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeService:
+    """Mutable fixture exposes launchd-like running state and lifecycle call counts."""
+
     running: bool = True
     stop_count: int = 0
     start_count: int = 0
@@ -419,8 +455,10 @@ class FakeService:
         return True
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeVerifier:
+    """Mutable fixture records activation checks and can fail one configured release."""
+
     fail_started_version: str | None = None
     doctors: list[str] = field(default_factory=list)
     starts: list[str] = field(default_factory=list)

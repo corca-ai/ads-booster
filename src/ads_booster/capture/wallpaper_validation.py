@@ -12,8 +12,9 @@ from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     path_has_symlink_component,
 )
-from ads_booster.contracts import CaptureProvenance, ErrorCode, WallpaperExportManifest
+from ads_booster.contracts import CaptureProvenance, ErrorCode
 from ads_booster.contracts.models import ContractModel
+from ads_booster.contracts.native_export import WallpaperExportManifest
 
 if TYPE_CHECKING:
     from pathlib import Path

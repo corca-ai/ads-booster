@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import fcntl
 import os
-import secrets
 import tempfile
 import time
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Protocol, cast, override, runtime_checkable
+from typing import TYPE_CHECKING, Final, Protocol, override
 
 from ads_booster.contracts import ErrorCode
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Generator
 
 
 class CaptureClock(Protocol):
@@ -37,17 +36,6 @@ SYSTEM_CAPTURE_CLOCK: Final = SystemCaptureClock()
 
 class CaptureSleeper(Protocol):
     def sleep(self, seconds: float) -> None: ...
-
-
-class AppiumCall(Protocol):
-    def __call__[T](
-        self,
-        operation: Callable[[], T],
-        code: ErrorCode,
-        message: str,
-        control: CaptureControl,
-        check_control: bool = True,
-    ) -> T: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,99 +130,6 @@ class CaptureControl:
         self.checkpoint()
 
 
-@dataclass(frozen=True, slots=True)
-class ExportBinding:
-    request_sha256: str
-    bundle_id: str
-    device_udid: str
-    session_id: str
-    cleared_at_ns: int
-    export_nonce: str = field(default_factory=lambda: secrets.token_hex(32))
-    expected_width: int | None = None
-    expected_height: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ComponentCollectionRequest:
-    udid: str
-    destination: Path
-    binding: ExportBinding
-    control: CaptureControl
-
-
-class WebDriverClient(Protocol):
-    @property
-    def session_id(self) -> str | None: ...
-    def lock(self, seconds: int) -> WebDriverClient | None: ...
-    def is_locked(self) -> bool: ...
-    def unlock(self) -> WebDriverClient | None: ...
-    def save_screenshot(self, filename: str) -> bool: ...
-    def back(self) -> WebDriverClient | None: ...
-    def quit(self) -> WebDriverClient | None: ...
-
-
-@runtime_checkable
-class AlertCommandWebDriver(Protocol):
-    def execute_script(self, script: str, *args: object) -> object: ...
-
-
-class AlertClient(Protocol):
-    @property
-    def text(self) -> str: ...
-
-
-@runtime_checkable
-class AlertPresenceWebDriver(Protocol):
-    @property
-    def switch_to(self) -> AlertSwitchTarget: ...
-
-
-class AlertSwitchTarget(Protocol):
-    @property
-    def alert(self) -> AlertClient: ...
-
-
-def alert_button_labels(raw_buttons: object) -> tuple[str, ...]:
-    if not isinstance(raw_buttons, list):
-        return ()
-    buttons = cast("list[object]", raw_buttons)
-    if not all(isinstance(button, str) for button in buttons):
-        return ()
-    return tuple(cast("str", button) for button in buttons)
-
-
-def startup_alert_button(labels: tuple[str, ...]) -> str | None:
-    for label in (
-        "전체 접근 허용",
-        "허용",
-        "앱을 사용하는 동안 허용",
-        "한 번 허용",
-    ):
-        if label in labels:
-            return label
-    return None
-
-
-@runtime_checkable
-class ElementFindingWebDriver(Protocol):
-    def find_element(self, by: str, value: str) -> WebDriverElement: ...
-    def find_elements(self, by: str, value: str) -> list[WebDriverElement]: ...
-
-
-@runtime_checkable
-class PhotoAssetW3CTapWebDriver(Protocol):
-    def execute_photo_asset_w3c_tap(self, element_id: str) -> None: ...
-
-
-class WebDriverElement(Protocol):
-    @property
-    def element_id(self) -> str: ...
-    def clear(self) -> None: ...
-    def click(self) -> None: ...
-    def set_value(self, value: str) -> None: ...
-    def get_attribute(self, name: str) -> str | None: ...
-
-
 def path_has_symlink_component(path: Path) -> bool:
     current = path
     while True:
@@ -263,7 +158,7 @@ class CaptureLeaseFactory(Protocol):
     def acquire(self, udid: str) -> AbstractContextManager[None]: ...
 
 
-DEFAULT_CAPTURE_LEASE_ROOT: Final = Path(tempfile.gettempdir()) / "trace-capture-udid-leases"
+DEFAULT_CAPTURE_LEASE_ROOT: Final = Path(tempfile.gettempdir()) / "trace-marketing-udid-leases"
 
 
 @dataclass(frozen=True, slots=True)

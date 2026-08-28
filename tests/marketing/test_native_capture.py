@@ -3,50 +3,33 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
 import pytest
+from PIL import Image
 
-from ads_booster.connectors.trace.v1.codex_runtime import CodexWallpaperPlanner
 from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
-from ads_booster.contracts.results import TraceRunResult
-from ads_booster.contracts.run import TraceRunState
+from ads_booster.contracts.native_export import (
+    PreparedBackground,
+    TraceBackgroundSearchProvenance,
+    WallpaperExportManifest,
+)
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind
 from ads_booster.marketing.native_capture import (
     HostedWorkspaceCaptureExecutor,
     SimctlDeviceResolver,
 )
-from tests.connectors.trace.v1.test_connector import plan
-
-_LONG_TOPIC = "T" * 200
-_LONG_AUDIENCE = ("global audience " * 30).strip()
-_LONG_SITUATION = ("weekday context " * 25).strip()
-_LONG_TONE = ("observational tone " * 12).strip()
-
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ads_booster.capture.capture_safety import CaptureControl
+    from ads_booster.capture.codex_appium_job import CodexAppiumJobContract
     from ads_booster.contracts.generation import MarketingContextBundle
-
-
-class RecordingCodexClient:
-    def __init__(self) -> None:
-        self.prompt = ""
-
-    def generate_json(
-        self,
-        prompt: str,
-        schema: dict[str, object],
-        *,
-        images: tuple[Path, ...] = (),
-    ) -> dict[str, object]:
-        _ = (schema, images)
-        self.prompt = prompt
-        return plan().model_dump(mode="json")
 
 
 class FakeDeviceResolver:
@@ -59,58 +42,96 @@ class FakeDeviceResolver:
         )
 
 
-class FakeNativeRunner:
-    def __init__(self, output_root: Path, image: bytes) -> None:
-        self.output_root: Path = output_root
-        self.image: bytes = image
-        self.bundle: MarketingContextBundle | None = None
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
+class RecordingBackgroundPreparer:
+    """Mutable fixture records preparation calls for the hosted-capture assertion."""
 
-    def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
-        self.bundle = bundle
-        output = self.output_root / bundle.request_id / "outputs" / "final.png"
-        component = self.output_root / bundle.request_id / "work" / "trace-components.png"
-        output.parent.mkdir(parents=True)
-        component.parent.mkdir(parents=True)
-        _ = output.write_bytes(self.image)
-        _ = component.write_bytes(b"component")
-        return TraceRunResult(
-            run_id=bundle.request_id,
-            idempotency_key=f"{bundle.request_id}-v1",
-            input_digest="a" * 64,
-            state=TraceRunState.COMPLETED,
-            component_artifact="work/trace-components.png",
-            component_artifact_sha256=sha256(b"component").hexdigest(),
-            output_image="outputs/final.png",
-            output_image_sha256=sha256(self.image).hexdigest(),
-            capture_provenance=CaptureProvenance(
-                request_sha256="b" * 64,
-                artifact_sha256=sha256(b"component").hexdigest(),
-                bundle_id="com.corca.Trace",
-                device_udid=bundle.device.udid,
-                session_id="native-session",
-                byte_size=len(b"component"),
-                width=1206,
-                height=2622,
-                source_modified_at_ns=1,
-                source="native_appium",
-                native_export_nonce="c" * 64,
-                native_export_binding_verified=True,
+    calls: list[str]
+
+    def prepare(self, bundle: MarketingContextBundle, job_root: Path) -> PreparedBackground:
+        del bundle
+        self.calls.append("background")
+        path = job_root / "inputs" / "background.png"
+        path.parent.mkdir(parents=True)
+        _ = path.write_bytes(b"prepared-background")
+        digest = sha256(path.read_bytes()).hexdigest()
+        return PreparedBackground(
+            path="inputs/background.png",
+            sha256=digest,
+            provenance=TraceBackgroundSearchProvenance(
+                schema_version="trace.background-search.v1",
+                artifact_path="inputs/background.png",
+                artifact_sha256=digest,
+                query="campus morning",
+                provider="test-search",
+                image_url="https://images.pexels.com/photo/1",
+                source_url="https://www.pexels.com/photo/1",
             ),
         )
 
 
-class UnknownSideEffectRunner:
-    def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
-        return TraceRunResult(
-            schema_version="trace.run-result.v2",
-            run_id=bundle.request_id,
-            idempotency_key=f"{bundle.request_id}-v2",
-            input_digest="a" * 64,
-            state=TraceRunState.UNKNOWN_SIDE_EFFECT,
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
+class RecordingAppiumAdapter:
+    """Mutable fixture records Appium execution and test-controlled output mutation."""
+
+    calls: list[str]
+    execute_calls: int = 0
+    mutate_background: bool = False
+
+    def ensure_ready(self, contract: CodexAppiumJobContract, control: CaptureControl) -> None:
+        assert contract.prepared_background.sha256
+        control.checkpoint()
+        self.calls.append("ready")
+
+    def execute(
+        self,
+        contract: CodexAppiumJobContract,
+        *,
+        job_root: Path,
+        background: Path,
+        output: Path,
+        control: CaptureControl,
+    ) -> CaptureProvenance:
+        del job_root
+        self.calls.append("execute")
+        self.execute_calls += 1
+        control.checkpoint()
+        if self.mutate_background:
+            _ = background.write_bytes(b"changed-after-admission")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (12, 20), "blue").save(output, format="PNG")
+        image = output.read_bytes()
+        digest = sha256(image).hexdigest()
+        manifest = WallpaperExportManifest(
+            schema_version="trace.wallpaper-export-manifest.v1",
+            request_sha256=contract.request_sha256,
+            export_nonce=contract.export_nonce,
+            bundle_id=contract.bundle_id,
+            device_udid=contract.device.udid,
+            role="trace_wallpaper",
+            artifact_sha256=digest,
+            width=12,
+            height=20,
+        )
+        _ = output.with_suffix(".manifest.json").write_text(manifest.model_dump_json())
+        return CaptureProvenance(
+            request_sha256=contract.request_sha256,
+            artifact_sha256=digest,
+            bundle_id=contract.bundle_id,
+            device_udid=contract.device.udid,
+            session_id="native-session",
+            byte_size=len(image),
+            width=12,
+            height=20,
+            source_modified_at_ns=1,
+            source="native_appium",
+            artifact_role="trace_wallpaper",
+            native_export_nonce=contract.export_nonce,
+            native_export_binding_verified=True,
         )
 
 
-def _task() -> MarketingTask:
+def task_fixture() -> MarketingTask:
     return MarketingTask(
         task_id="c7dcc5a4-d841-49d0-bd34-f94afef98485",
         run_id="66dcd684-2e69-4cf1-bbf3-da3684102299",
@@ -119,10 +140,11 @@ def _task() -> MarketingTask:
         idempotency_key="hosted:trace_demo_kr:candidate-1:3",
         payload={
             "pipeline": "hosted_workspace_capture_v1",
+            "workspace_id": "workspace-1",
             "candidate_id": "candidate-1",
             "candidate_revision": 4,
             "country": "KR",
-            "topic": _LONG_TOPIC,
+            "topic": "대학생의 하루",
             "caption": "오늘 일정",
             "hypothesis": "시험 일정을 구체적으로 보여주면 공감이 생긴다.",
             "reference_ids": ["kr-study-day", "kr-020"],
@@ -131,91 +153,95 @@ def _task() -> MarketingTask:
             "image_inputs": {
                 "trace_items": ["09:00 통계학", "13:00 스터디"],
                 "device_time": "07:20",
-                "background_subject": "scenery",
                 "background_mood": "이른 아침 캠퍼스",
                 "language": "ko",
             },
             "context_profile": {
                 "name": "한국 대학생 프로필",
                 "persona_id": "kr_student",
-                "audience": _LONG_AUDIENCE,
-                "situation": _LONG_SITUATION,
-                "tone": _LONG_TONE,
-                "guidance": "과장 없이 실제 사용 장면을 보여준다.",
-                "reference_ids": ["kr-020"],
+                "audience": "한국 대학생",
+                "situation": "평일 캠퍼스",
+                "tone": "자연스러움",
             },
         },
         created_at=datetime.now(UTC),
     )
 
 
-def test_hosted_capture_returns_digest_backed_png_for_cloudflare(tmp_path: Path) -> None:
-    image = b"\x89PNG\r\n\x1a\ntrace-native-image"
-    runner = FakeNativeRunner(tmp_path / "generated", image)
-    executor = HostedWorkspaceCaptureExecutor(
-        runner=runner,
+def build_executor(
+    tmp_path: Path,
+    calls: list[str],
+    *,
+    mutate: bool = False,
+) -> HostedWorkspaceCaptureExecutor:
+    return HostedWorkspaceCaptureExecutor(
+        background_preparer=RecordingBackgroundPreparer(calls),
+        appium=RecordingAppiumAdapter(calls, mutate_background=mutate),
         output_root=tmp_path / "generated",
         device_resolver=FakeDeviceResolver(),
     )
 
-    result = executor.execute(_task())
 
+def test_hosted_capture_prepares_planless_job_before_execution(tmp_path: Path) -> None:
+    calls: list[str] = []
+    executor = build_executor(tmp_path, calls)
+
+    prepared = executor.prepare(task_fixture())
+
+    assert calls == ["background", "ready"]
+    assert prepared.execution_admission.job_digest == prepared.contract.request_sha256
+    assert prepared.execution_admission.export_nonce == prepared.contract.export_nonce
+    assert prepared.execution_admission.workspace_id == "workspace-1"
+
+
+def test_hosted_capture_executes_once_and_independently_verifies_callback_png(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    executor = build_executor(tmp_path, calls)
+    prepared = executor.prepare(task_fixture())
+
+    result = executor.execute(prepared)
+
+    image = prepared.output.read_bytes()
+    digest = sha256(image).hexdigest()
+    assert calls == ["background", "ready", "execute"]
     assert result.output["capture_source"] == "native_appium"
-    assert result.output["image_sha256"] == sha256(image).hexdigest()
+    assert result.output["image_sha256"] == digest
     assert base64.b64decode(str(result.output["image_base64"])) == image
-    assert runner.bundle is not None
-    assert runner.bundle.persona.persona_id == "kr_student"
-    assert runner.bundle.promotion_material.trace_items == ("09:00 통계학", "13:00 스터디")
-    assert runner.bundle.promotion_material.caption == "오늘 일정"
-    assert (
-        runner.bundle.promotion_material.hypothesis
-        == "시험 일정을 구체적으로 보여주면 공감이 생긴다."
+    manifest = WallpaperExportManifest.model_validate_json(
+        prepared.output.with_suffix(".manifest.json").read_text()
     )
-    assert runner.bundle.promotion_material.reference_ids == ("kr-study-day", "kr-020")
-    assert (
-        runner.bundle.promotion_material.creative_direction
-        == "실제 캠퍼스 아침처럼 자연스럽게 구성"
-    )
-    assert runner.bundle.promotion_material.background_intent == "scenery: 이른 아침 캠퍼스"
-    assert runner.bundle.persona.display_name == "한국 대학생 프로필"
-    assert runner.bundle.promotion_material.concept == _LONG_TOPIC
-    assert runner.bundle.persona.occupation == _LONG_AUDIENCE
-    assert runner.bundle.persona.traits == (_LONG_TONE,)
-    assert runner.bundle.persona.interests == (_LONG_SITUATION,)
-    client = RecordingCodexClient()
-    _ = CodexWallpaperPlanner(client=client, reference_root=tmp_path).plan(runner.bundle)
-    assert _LONG_TOPIC in client.prompt
-    assert "한국 대학생 프로필" in client.prompt
-    assert _LONG_AUDIENCE in client.prompt
-    assert _LONG_SITUATION in client.prompt
-    assert _LONG_TONE in client.prompt
-    assert runner.bundle.device.udid == "E1FB798D-79E6-4B25-A987-D298A4FD122A"
+    assert manifest.artifact_sha256 == digest
+    assert manifest.request_sha256 == prepared.contract.request_sha256
 
 
-def test_hosted_capture_preserves_an_unknown_native_side_effect(tmp_path: Path) -> None:
-    executor = HostedWorkspaceCaptureExecutor(
-        runner=UnknownSideEffectRunner(),
-        output_root=tmp_path / "generated",
-        device_resolver=FakeDeviceResolver(),
-    )
+def test_changed_background_fails_after_admission_without_second_codex_call(tmp_path: Path) -> None:
+    calls: list[str] = []
+    executor = build_executor(tmp_path, calls)
+    prepared = executor.prepare(task_fixture())
+    _ = prepared.background.write_bytes(b"changed-after-admission")
 
-    with pytest.raises(MarketingExecutionError) as failure:
-        _ = executor.execute(_task())
+    with pytest.raises(
+        MarketingExecutionError,
+        match="native_capture_background_digest_mismatch",
+    ) as raised:
+        _ = executor.execute(prepared)
 
-    assert failure.value.failure_code == "native_appium_side_effect_unknown"
-    assert failure.value.unknown_side_effect is True
+    assert raised.value.unknown_side_effect is True
+    assert calls.count("execute") == 0
 
 
-def test_hosted_capture_rejects_an_invalid_candidate_contract(tmp_path: Path) -> None:
-    task = _task().model_copy(update={"payload": {**_task().payload, "image_inputs": {}}})
-    executor = HostedWorkspaceCaptureExecutor(
-        runner=FakeNativeRunner(tmp_path / "generated", b"image"),
-        output_root=tmp_path / "generated",
-        device_resolver=FakeDeviceResolver(),
+def test_invalid_hosted_bundle_fails_before_readiness(tmp_path: Path) -> None:
+    calls: list[str] = []
+    task = task_fixture().model_copy(
+        update={"payload": {**task_fixture().payload, "image_inputs": {}}}
     )
 
     with pytest.raises(MarketingExecutionError, match="native_capture_trace_items_invalid"):
-        _ = executor.execute(task)
+        _ = build_executor(tmp_path, calls).prepare(task)
+
+    assert calls == []
 
 
 def test_simulator_is_discovered_at_runtime_without_a_fixed_udid(
@@ -235,11 +261,7 @@ def test_simulator_is_discovered_at_runtime_without_a_fixed_udid(
     }
 
     def fake_run(*_args: str, **_kwargs: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=(),
-            returncode=0,
-            stdout=json.dumps(inventory),
-        )
+        return subprocess.CompletedProcess(args=(), returncode=0, stdout=json.dumps(inventory))
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 

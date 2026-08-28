@@ -1,43 +1,47 @@
 from __future__ import annotations
 
 import json
-import sys
+import re
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
+from hashlib import sha256
+from html import unescape
+from typing import TYPE_CHECKING, Final, Literal, Protocol
+from urllib.parse import quote
 
-from pydantic import AwareDatetime, Field, ValidationError
+import httpx2
+from pydantic import Field, ValidationError
 
 from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
 from ads_booster.capture.appium_endpoint import validate_appium_server_url
-from ads_booster.capture.appium_process import (
-    build_configuration_process_arguments,
-    capture_request_digest,
-)
-from ads_booster.capture.appium_session import TRACE_BUNDLE_ID
-from ads_booster.capture.appium_ui_data import owned_calendars
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureLeaseFactory,
     UdidCaptureLeaseFactory,
     path_has_symlink_component,
 )
+from ads_booster.capture.codex_appium_job import (
+    CodexAppiumJobContract,
+    write_codex_appium_job_contract,
+)
 from ads_booster.capture.wallpaper_collection import (
     WallpaperCollectionRequest,
     WallpaperExportBinding,
 )
-from ads_booster.contracts import CaptureProvenance, ErrorCode, WallpaperPlan
-from ads_booster.contracts.models import ContractModel, DeviceTarget
+from ads_booster.contracts import CaptureProvenance, ErrorCode
+from ads_booster.contracts.models import ContractModel
+from ads_booster.providers.codex_cli import CodexAppiumJobCallbacks
+from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable
+    from pathlib import Path
 
-    from ads_booster.capture.appium_capture import (
-        AppGroupWallpaperCollector,
-        SimulatorPhotoImporter,
-    )
+    from ads_booster.capture.capture_safety import CaptureControl
     from ads_booster.capture.readiness import CaptureReadiness
-    from ads_booster.capture.worker import CaptureRequest
+    from ads_booster.providers.codex_cli import (
+        CodexAppiumReadyState,
+        CodexAppiumSavedState,
+    )
     from ads_booster.transport.json_types import JsonObject
 
 
@@ -45,162 +49,367 @@ class StructuredCodexJob(Protocol):
     def run_appium_job(
         self,
         prompt: str,
-        schema: Mapping[str, object],
+        schema: JsonObject,
         *,
         workspace: Path,
         timeout_seconds: float,
+        callbacks: CodexAppiumJobCallbacks,
     ) -> JsonObject: ...
+
+
+class AppiumEditorVerifier(Protocol):
+    def verify(
+        self,
+        appium_server: str,
+        ready: CodexAppiumReadyState,
+        expected_titles: tuple[str, ...],
+        control: CaptureControl,
+    ) -> bool: ...
+
+
+class SimulatorPhotoImporter(Protocol):
+    def import_background(
+        self,
+        udid: str,
+        background: Path,
+        control: CaptureControl,
+    ) -> None: ...
+
+
+class AppGroupWallpaperCollector(Protocol):
+    def clear(self, udid: str, control: CaptureControl) -> int: ...
+
+    def collect(self, request: WallpaperCollectionRequest) -> CaptureProvenance: ...
 
 
 class CodexAppiumJobResult(ContractModel):
     status: Literal["completed", "failed"]
     session_id: str | None = Field(min_length=1, max_length=200)
-    app_group_export_seen: bool
+    created_calendar_titles: tuple[str, ...] = Field(max_length=8)
+    remaining_calendar_titles: tuple[str, ...] = Field(max_length=8)
     cleanup_completed: bool
+    session_closed: bool
     error_code: str | None = Field(pattern=r"^[a-z0-9_]+$")
 
 
-class CodexAppiumProcessArguments(ContractModel):
-    args: tuple[str, ...]
-    env: dict[str, str]
+class _AppiumSourceResponse(ContractModel):
+    value: str
 
 
-class CodexAppiumJobContract(ContractModel):
-    schema_version: Literal["trace.codex-appium-job.v1"]
-    python_executable: str
-    appium_server: str
-    bundle_id: Literal["com.corca.Trace"]
-    app_group_id: Literal["group.ai.corca.trace"]
-    device: DeviceTarget
-    background: str
-    reference_date: AwareDatetime
-    plan: WallpaperPlan
-    process_arguments: CodexAppiumProcessArguments
-    owned_calendar_titles: tuple[str, ...]
-    request_sha256: str
-    export_nonce: str
-    export_files: tuple[str, str, str]
+_TIME_PREFIX: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d\s+(.+)$")
+_HTTP_OK: Final = 200
+_HTTP_MULTIPLE_CHOICES: Final = 300
+_SOURCE_READ_TIMEOUT_SECONDS: Final = 10.0
+_WALLPAPER_EDITOR_IDENTIFIER: Final = "lockScreenWallpaperSave"
 
 
 @dataclass(frozen=True, slots=True)
-class CodexAppiumWallpaperExportAdapter:
+class DefaultAppiumEditorVerifier:
+    def verify(
+        self,
+        appium_server: str,
+        ready: CodexAppiumReadyState,
+        expected_titles: tuple[str, ...],
+        control: CaptureControl,
+    ) -> bool:
+        server = validate_appium_server_url(appium_server).rstrip("/")
+        timeout = min(control.remaining_seconds(), _SOURCE_READ_TIMEOUT_SECONDS)
+        source_url = f"{server}/session/{quote(ready.session_id, safe='')}/source"
+        try:
+            with create_http_client(read_timeout=timeout) as http:
+                response = http.get(source_url, {})
+        except httpx2.HTTPError:
+            return False
+        if not _HTTP_OK <= response.status_code < _HTTP_MULTIPLE_CHOICES:
+            return False
+        try:
+            source = _AppiumSourceResponse.model_validate_json(response.content).value
+        except ValidationError:
+            return False
+        visible_source = unescape(source)
+        return _WALLPAPER_EDITOR_IDENTIFIER in visible_source and all(
+            title in visible_source for title in expected_titles
+        )
+
+
+DEFAULT_APPIUM_EDITOR_VERIFIER: Final = DefaultAppiumEditorVerifier()
+
+
+@dataclass(frozen=True, slots=True)
+class CodexAppiumJobAdapter:
     codex: StructuredCodexJob
     simulator: SimulatorPhotoImporter
     collector: AppGroupWallpaperCollector
-    appium_server: str
     lease_factory: CaptureLeaseFactory = field(default_factory=UdidCaptureLeaseFactory)
     readiness: CaptureReadiness | None = None
-    python_executable: Path = field(default_factory=lambda: Path(sys.executable).resolve())
+    editor_verifier: AppiumEditorVerifier = DEFAULT_APPIUM_EDITOR_VERIFIER
 
-    _GROUP_ID: ClassVar[Literal["group.ai.corca.trace"]] = "group.ai.corca.trace"
-    _EXPORT_FILES: ClassVar[tuple[str, str, str]] = (
-        "trace_wallpaper.png",
-        "trace_wallpaper.manifest.json",
-        "trace_wallpaper.error.json",
-    )
-
-    def capture(self, request: CaptureRequest, plan: WallpaperPlan) -> CaptureProvenance:
-        _ = validate_appium_server_url(self.appium_server)
-        background = request.background
-        if background is None:
-            raise CaptureAdapterError(
-                code=ErrorCode.INPUT_ASSET_MISSING,
-                message="full wallpaper export requires a searched background image",
-            )
+    def ensure_ready(self, contract: CodexAppiumJobContract, control: CaptureControl) -> None:
+        _ = validate_appium_server_url(contract.appium_server)
         if self.readiness is not None:
-            self.readiness.ensure(request.device, request.control)
-        with self.lease_factory.acquire(request.device.udid):
-            request.control.checkpoint()
-            cleared_at_ns = self.collector.clear(request.device.udid, request.control)
-            self.simulator.import_background(
-                request.device.udid,
-                background,
-                request.control,
-            )
-            request_sha256 = capture_request_digest(request, plan)
-            workspace = self._write_contract(request, plan, request_sha256)
-            try:
-                payload = self.codex.run_appium_job(
-                    codex_appium_prompt(),
-                    CodexAppiumJobResult.model_json_schema(),
-                    workspace=workspace,
-                    timeout_seconds=request.control.remaining_seconds(),
-                )
-                result_path = workspace / "codex-appium-result.json"
-                _ = result_path.write_text(
-                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                    encoding="utf-8",
-                )
-                result_path.chmod(0o600)
-                result = CodexAppiumJobResult.model_validate_json(json.dumps(payload))
-            except (OSError, RuntimeError, ValidationError) as error:
-                raise CaptureAdapterError(
-                    code=ErrorCode.SCENE_CAPTURE_FAILED,
-                    message="Codex Appium job failed",
-                ) from error
-            if (
-                result.status != "completed"
-                or result.session_id is None
-                or not result.app_group_export_seen
-                or not result.cleanup_completed
-            ):
-                raise CaptureAdapterError(
-                    code=ErrorCode.SCENE_CAPTURE_FAILED,
-                    message=(
-                        "Codex Appium job did not complete: "
-                        f"{result.error_code or result.status}"
-                    ),
-                )
-            return self.collector.collect(
-                WallpaperCollectionRequest(
-                    udid=request.device.udid,
-                    destination=request.destination,
-                    binding=WallpaperExportBinding(
-                        request_sha256=request_sha256,
-                        bundle_id=TRACE_BUNDLE_ID,
-                        device_udid=request.device.udid,
-                        session_id=result.session_id,
-                        cleared_at_ns=cleared_at_ns,
-                        export_nonce=request.capture_nonce,
-                    ),
-                    control=request.control,
-                )
-            )
+            self.readiness.ensure(contract.device, control)
 
-    def _write_contract(
+    def execute(
         self,
-        request: CaptureRequest,
-        plan: WallpaperPlan,
-        request_sha256: str,
-    ) -> Path:
-        workspace = request.destination.parent / f".codex-appium-{request.job_id}"
-        if path_has_symlink_component(workspace):
+        contract: CodexAppiumJobContract,
+        *,
+        job_root: Path,
+        background: Path,
+        output: Path,
+        control: CaptureControl,
+    ) -> CaptureProvenance:
+        _ = validate_appium_server_url(contract.appium_server)
+        self._validate_execution_paths(contract, job_root, background, output)
+        with self.lease_factory.acquire(contract.device.udid):
+            control.checkpoint()
+            cleared_at_ns = [self.collector.clear(contract.device.udid, control)]
+            self.simulator.import_background(contract.device.udid, background, control)
+            contract_path = job_root / "codex-appium-job.json"
+            write_codex_appium_job_contract(contract_path, contract)
+            provenances: list[CaptureProvenance] = []
+            ready_states: list[CodexAppiumReadyState] = []
+            saved_states: list[CodexAppiumSavedState] = []
+            collection_errors: list[CaptureAdapterError] = []
+            expected_titles = _expected_trace_item_titles(contract)
+
+            def verify_ready_editor(ready: CodexAppiumReadyState) -> bool:
+                ready_states.append(ready)
+                verified = self._ready_state_is_verified(
+                    contract,
+                    ready,
+                    expected_titles,
+                    control,
+                )
+                if verified:
+                    cleared_at_ns[0] = self.collector.clear(contract.device.udid, control)
+                return verified
+
+            def collect_saved_export(saved: CodexAppiumSavedState) -> bool:
+                try:
+                    session_id = self._require_saved_state(
+                        contract,
+                        saved,
+                        ready_states[0],
+                    )
+                    provenances.append(
+                        self.collector.collect(
+                            WallpaperCollectionRequest(
+                                udid=contract.device.udid,
+                                destination=output,
+                                binding=WallpaperExportBinding(
+                                    request_sha256=contract.request_sha256,
+                                    bundle_id=contract.bundle_id,
+                                    device_udid=contract.device.udid,
+                                    session_id=session_id,
+                                    cleared_at_ns=cleared_at_ns[0],
+                                    export_nonce=contract.export_nonce,
+                                ),
+                                control=control,
+                            )
+                        )
+                    )
+                    saved_states.append(saved)
+                except CaptureAdapterError as error:
+                    collection_errors.append(error)
+                    return False
+                return True
+
+            result = self._run_codex(
+                job_root,
+                control,
+                verify_ready_editor,
+                collect_saved_export,
+            )
+            if not ready_states or not self._result_matches_ready(result, ready_states[0]):
+                raise CaptureAdapterError(
+                    code=ErrorCode.SCENE_CAPTURE_FAILED,
+                    message="Codex Appium result does not match its ready marker",
+                )
+            if collection_errors:
+                raise collection_errors[0]
+            if not saved_states or not provenances:
+                raise CaptureAdapterError(
+                    code=ErrorCode.SCENE_CAPTURE_FAILED,
+                    message="Codex Appium editor content was not verified before save",
+                )
+            self._require_completed_result(
+                contract,
+                result,
+                ready_states[0],
+                saved_states[0],
+            )
+            return provenances[0]
+
+    def _validate_execution_paths(
+        self,
+        contract: CodexAppiumJobContract,
+        job_root: Path,
+        background: Path,
+        output: Path,
+    ) -> None:
+        for path in (job_root, background, output):
+            if not path.is_absolute() or path_has_symlink_component(path):
+                raise CaptureAdapterError(
+                    code=ErrorCode.SCENE_CAPTURE_FAILED,
+                    message="Codex Appium job paths must be absolute and symlink-free",
+                )
+        if not job_root.is_dir() or not output.is_relative_to(job_root):
             raise CaptureAdapterError(
                 code=ErrorCode.SCENE_CAPTURE_FAILED,
-                message="Codex Appium workspace contains a symlink",
+                message="Codex Appium workspace is unavailable or output is outside it",
             )
-        workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
-        process_arguments = build_configuration_process_arguments(request, request_sha256)
-        contract = CodexAppiumJobContract(
-            schema_version="trace.codex-appium-job.v1",
-            python_executable=str(self.python_executable),
-            appium_server=self.appium_server,
-            bundle_id=TRACE_BUNDLE_ID,
-            app_group_id=self._GROUP_ID,
-            device=request.device,
-            background=str(request.background),
-            reference_date=request.scene.reference_date,
-            plan=plan,
-            process_arguments=CodexAppiumProcessArguments(
-                args=tuple(process_arguments["args"]),
-                env=dict(process_arguments["env"]),
-            ),
-            owned_calendar_titles=tuple(calendar.title for calendar in owned_calendars(plan)),
-            request_sha256=request_sha256,
-            export_nonce=request.capture_nonce,
-            export_files=self._EXPORT_FILES,
+        expected_background = job_root / contract.prepared_background.path
+        if background != expected_background or not background.is_file():
+            raise CaptureAdapterError(
+                code=ErrorCode.INPUT_ASSET_MISSING,
+                message="prepared background path does not match the v2 job",
+            )
+        try:
+            background_digest = sha256(background.read_bytes()).hexdigest()
+            job_root.chmod(0o700)
+        except OSError as error:
+            raise CaptureAdapterError(
+                code=ErrorCode.INPUT_ASSET_MISSING,
+                message="prepared background could not be verified",
+            ) from error
+        if background_digest != contract.prepared_background.sha256:
+            raise CaptureAdapterError(
+                code=ErrorCode.INPUT_ASSET_MISSING,
+                message="prepared background digest does not match the v2 job",
+            )
+
+    def _run_codex(
+        self,
+        job_root: Path,
+        control: CaptureControl,
+        on_ready: Callable[[CodexAppiumReadyState], bool],
+        on_saved: Callable[[CodexAppiumSavedState], bool],
+    ) -> CodexAppiumJobResult:
+        try:
+            payload = self.codex.run_appium_job(
+                codex_appium_prompt(),
+                CodexAppiumJobResult.model_json_schema(),
+                workspace=job_root,
+                timeout_seconds=control.remaining_seconds(),
+                callbacks=CodexAppiumJobCallbacks(
+                    on_ready=on_ready,
+                    on_saved=on_saved,
+                ),
+            )
+            result_path = job_root / "codex-appium-result.json"
+            _ = result_path.write_text(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            result_path.chmod(0o600)
+            return CodexAppiumJobResult.model_validate(payload)
+        except (OSError, RuntimeError, ValidationError) as error:
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Codex Appium job failed",
+            ) from error
+
+    def _require_completed_result(
+        self,
+        contract: CodexAppiumJobContract,
+        result: CodexAppiumJobResult,
+        ready: CodexAppiumReadyState,
+        saved: CodexAppiumSavedState,
+    ) -> None:
+        calendar_titles = (
+            *result.created_calendar_titles,
+            *result.remaining_calendar_titles,
         )
-        path = workspace / "codex-appium-job.json"
-        _ = path.write_text(contract.model_dump_json(), encoding="utf-8")
-        path.chmod(0o600)
-        return workspace
+        if any(not title.startswith(contract.calendar_namespace) for title in calendar_titles):
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Codex Appium job returned a title outside its calendar namespace",
+            )
+        if result.remaining_calendar_titles or not result.cleanup_completed:
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Codex Appium job did not complete cleanup",
+            )
+        if result.status != "completed" or result.session_id is None or not result.session_closed:
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message=(
+                    f"Codex Appium job did not complete: {result.error_code or result.status}"
+                ),
+            )
+        if (
+            result.session_id != saved.session_id
+            or result.created_calendar_titles != saved.created_calendar_titles
+            or saved.session_id != ready.session_id
+            or saved.created_calendar_titles != ready.created_calendar_titles
+        ):
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Codex Appium completion does not match its saved marker",
+            )
+
+    @staticmethod
+    def _require_saved_state(
+        contract: CodexAppiumJobContract,
+        saved: CodexAppiumSavedState,
+        ready: CodexAppiumReadyState,
+    ) -> str:
+        if any(
+            not title.startswith(contract.calendar_namespace)
+            for title in saved.created_calendar_titles
+        ):
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Codex Appium saved marker returned a title outside its calendar namespace",
+            )
+        if (
+            saved.session_id != ready.session_id
+            or saved.created_calendar_titles != ready.created_calendar_titles
+        ):
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Codex Appium saved marker does not match its ready marker",
+            )
+        return saved.session_id
+
+    def _ready_state_is_verified(
+        self,
+        contract: CodexAppiumJobContract,
+        ready: CodexAppiumReadyState,
+        expected_titles: tuple[str, ...],
+        control: CaptureControl,
+    ) -> bool:
+        if any(
+            not title.startswith(contract.calendar_namespace)
+            for title in ready.created_calendar_titles
+        ):
+            return False
+        if ready.rendered_trace_item_titles != expected_titles:
+            return False
+        return self.editor_verifier.verify(
+            contract.appium_server,
+            ready,
+            expected_titles,
+            control,
+        )
+
+    @staticmethod
+    def _result_matches_ready(
+        result: CodexAppiumJobResult,
+        ready: CodexAppiumReadyState,
+    ) -> bool:
+        return (
+            result.session_id == ready.session_id
+            and result.created_calendar_titles == ready.created_calendar_titles
+        )
+
+
+def _expected_trace_item_titles(contract: CodexAppiumJobContract) -> tuple[str, ...]:
+    trace_items = contract.context.promotion_material.trace_items
+    if trace_items is None:
+        return ()
+    titles: list[str] = []
+    for item in trace_items:
+        matched = _TIME_PREFIX.fullmatch(item)
+        titles.append(matched.group(1) if matched is not None else item)
+    return tuple(titles)

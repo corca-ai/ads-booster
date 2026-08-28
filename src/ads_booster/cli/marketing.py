@@ -1,3 +1,5 @@
+"""# noqa: SIZE_OK - Worker lifecycle CLI composition root; commands share presentation helpers."""
+
 from __future__ import annotations
 
 import json
@@ -7,31 +9,15 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import TYPE_CHECKING, Annotated, Never
+from typing import TYPE_CHECKING, Annotated, Never, Protocol
 
 import typer
 
-from ads_booster.marketing.bridge import MarketingBridge
-from ads_booster.marketing.cloudflare_queue import (
-    CloudflareQueueClient,
-    CloudflareQueueConfig,
-    CloudflareQueueError,
-    ControlPlaneCallbackClient,
-)
-from ads_booster.marketing.executors import ArtifactSimulationExecutor
+from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.inbox import MarketingInbox
-from ads_booster.marketing.native_capture import HostedWorkspaceCaptureExecutor
-from ads_booster.marketing.service import (
-    CredentialProvider,
-    MarketingBridgeConfigStore,
-    MarketingBridgeServiceConfig,
-    MarketingBridgeServiceError,
-    resolve_bridge_credentials,
-)
-from ads_booster.marketing.simulator import LocalMarketingControlPlane, MarketingAccount
+from ads_booster.marketing.native_capture import build_hosted_capture_executor
 from ads_booster.marketing.worker_broker import (
     MacWorkerConfig,
     MacWorkerCredential,
@@ -51,6 +37,7 @@ from ads_booster.marketing.worker_launchd import (
     default_updater_plist_path,
     default_worker_plist_path,
 )
+from ads_booster.marketing.worker_loop import MarketingWorkerLoop
 from ads_booster.marketing.worker_update import (
     GitHubArtifactAttestationVerifier,
     GitHubReleaseSource,
@@ -68,8 +55,6 @@ from ads_booster.marketing.worker_update import (
     update_drain_requested,
 )
 from ads_booster.providers.codex_cli import resolve_codex_executable
-from ads_booster.service.cli import serve, service_app, workspace_app
-from ads_booster.service.worker import build_production_runner
 from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
@@ -82,17 +67,6 @@ _HTTP_SUCCESS_MAX = 300
 app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
 app.add_typer(worker_app, name="worker")
-app.add_typer(workspace_app, name="workspace")
-app.add_typer(service_app, name="service")
-# The local workspace surface outlived the model shell that used to expose it: #42 removed the
-# `trace-agent` entry point along with the custom harness, but `web/` and `service/` are still
-# built and tested. Registering `serve` here keeps the loopback workspace runnable under the CLI
-# that survived, without reviving an alias back to the old shell.
-_ = app.command("serve")(serve)
-
-
-class BridgeExecutor(StrEnum):
-    SIMULATION = "simulation"
 
 
 @app.command("version")
@@ -110,21 +84,10 @@ def version_command(
         typer.echo(package_version)
 
 
-@dataclass(frozen=True, slots=True)
-class BridgeRuntime:
-    agent_home: Path
-    account_id: str
-    queue_id: str
-    queue_token: str
-    control_plane_url: str
-    worker_token: str
-    once: bool
-    poll_seconds: float
-    executor: BridgeExecutor
-
-
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class DoctorHeartbeat:
+    """Mutable cache because concurrent heartbeat calls refresh one shared doctor report."""
+
     report: MacWorkerDoctorReport
     checked_at: float
     refresh_seconds: float = 30.0
@@ -150,120 +113,6 @@ class DoctorHeartbeat:
                 self.refreshing = False
                 current = self.report.heartbeat()
         return current
-
-
-@app.command("simulate")
-def simulate(
-    account_id: Annotated[str, typer.Option(help="Stable lower-case marketing account ID.")],
-    country: Annotated[str, typer.Option(help="Country or locale code.")] = "KR",
-    home: Annotated[
-        Path | None,
-        typer.Option(help="Simulation state root; defaults under TRACE_AGENT_HOME."),
-    ] = None,
-    auto_approve: Annotated[
-        bool,
-        typer.Option(help="Exercise the approval event and complete the simulated loop."),
-    ] = False,
-) -> None:
-    root = _home(home) / "marketing-simulation"
-    control = LocalMarketingControlPlane(root)
-    _ = control.register_account(MarketingAccount(account_id=account_id, country=country))
-    run = control.start_run(account_id, auto_approve=auto_approve)
-    typer.echo(run.model_dump_json(indent=2))
-
-
-@app.command("bridge")
-def bridge(
-    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
-    once: Annotated[bool, typer.Option(help="Pull and process at most one local task.")] = False,
-    poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
-    executor: Annotated[
-        BridgeExecutor,
-        typer.Option(help="Simulation-only compatibility bridge."),
-    ] = BridgeExecutor.SIMULATION,
-) -> None:
-    """Run the external Cloudflare Queue pull consumer.
-
-    Required secrets are read from the environment and never persisted by the bridge.
-    The default executor is explicitly simulation-only; production task handlers are
-    registered in the composition root as they are enabled.
-    """
-    agent_home = _home(home)
-    _run_bridge(
-        BridgeRuntime(
-            agent_home=agent_home,
-            account_id=_required("CLOUDFLARE_ACCOUNT_ID"),
-            queue_id=_required("TRACE_MARKETING_QUEUE_ID"),
-            queue_token=_required("TRACE_MARKETING_QUEUE_TOKEN"),
-            control_plane_url=_required("TRACE_MARKETING_CONTROL_PLANE_URL"),
-            worker_token=_required("TRACE_MARKETING_WORKER_TOKEN"),
-            once=once,
-            poll_seconds=poll_seconds,
-            executor=executor,
-        )
-    )
-
-
-@app.command("bridge-configure")
-def bridge_configure(
-    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
-    executor: Annotated[BridgeExecutor, typer.Option()] = BridgeExecutor.SIMULATION,
-    poll_seconds: Annotated[float, typer.Option(min=0.1, max=60.0)] = 2.0,
-    credential_provider: Annotated[
-        CredentialProvider,
-        typer.Option(help="environment, or command for an external secret manager."),
-    ] = CredentialProvider.ENVIRONMENT,
-    credential_command: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--credential-command",
-            help="One argv item; repeat to build the external secret command without a shell.",
-        ),
-    ] = None,
-) -> None:
-    """Write portable non-secret enrollment for a worker on any computer."""
-    agent_home = _home(home)
-    try:
-        config = MarketingBridgeServiceConfig(
-            account_id=_required("CLOUDFLARE_ACCOUNT_ID"),
-            queue_id=_required("TRACE_MARKETING_QUEUE_ID"),
-            control_plane_url=_required("TRACE_MARKETING_CONTROL_PLANE_URL"),
-            executor=executor.value,
-            poll_seconds=poll_seconds,
-            credential_provider=credential_provider,
-            credential_command=tuple(credential_command or ()),
-        )
-        MarketingBridgeConfigStore(agent_home).save(config)
-    except (MarketingBridgeServiceError, ValueError) as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=2) from error
-    typer.echo(f"worker config: {MarketingBridgeConfigStore(agent_home).path}")
-    typer.echo(f"credential provider: {config.credential_provider}")
-
-
-@app.command("bridge-service", hidden=True)
-def bridge_service() -> None:
-    """Portable supervisor entrypoint with externally injected credentials."""
-    agent_home = _home(None)
-    try:
-        config = MarketingBridgeConfigStore(agent_home).load()
-        credentials = resolve_bridge_credentials(config)
-    except MarketingBridgeServiceError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=1) from error
-    _run_bridge(
-        BridgeRuntime(
-            agent_home=agent_home,
-            account_id=config.account_id,
-            queue_id=config.queue_id,
-            queue_token=credentials.queue_token,
-            control_plane_url=config.control_plane_url,
-            worker_token=credentials.worker_token,
-            once=False,
-            poll_seconds=config.poll_seconds,
-            executor=BridgeExecutor(config.executor),
-        )
-    )
 
 
 @worker_app.command("create-enrollment")
@@ -560,7 +409,7 @@ def worker_updater_status(
             "bundle_sha256": release.receipt.bundle.sha256,
         }
     except WorkerUpdateError:
-        pass
+        current = None
     worker = _managed_worker_launchd(paths)
     codex = worker.installed_codex_executable() or Path("/nonexistent/codex")
     updater = _updater_launchd(
@@ -761,39 +610,6 @@ def worker_list(
     typer.echo(json.dumps(response.json_object(), ensure_ascii=False, indent=2))
 
 
-def _run_bridge(runtime: BridgeRuntime) -> None:
-    root = runtime.agent_home / "marketing-bridge"
-    simulation = ArtifactSimulationExecutor(root / "artifacts")
-    with create_http_client() as http:
-        worker = MarketingBridge(
-            queue=CloudflareQueueClient(
-                http,
-                CloudflareQueueConfig(
-                    account_id=runtime.account_id,
-                    queue_id=runtime.queue_id,
-                    api_token=runtime.queue_token,
-                ),
-            ),
-            callbacks=ControlPlaneCallbackClient(
-                http,
-                runtime.control_plane_url,
-                runtime.worker_token,
-            ),
-            inbox=MarketingInbox(root),
-            executor=simulation,
-            review_store=None,
-        )
-        recovered = worker.recover()
-        if recovered:
-            typer.echo(f"recovered {recovered} interrupted task(s)")
-        while True:
-            active = worker.tick()
-            if runtime.once:
-                return
-            if not active:
-                time.sleep(runtime.poll_seconds)
-
-
 def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
     try:
         config, credential = MacWorkerStore(agent_home).load()
@@ -814,25 +630,18 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
     try:
         with create_http_client(read_timeout=60.0) as http:
             broker = WorkerBrokerClient(http, config, credential, heartbeat)
-            executor = HostedWorkspaceCaptureExecutor(
-                runner=build_production_runner(
-                    agent_home,
-                    http,
-                    before_side_effect=broker.mark_execution_started,
-                ),
-                output_root=agent_home / "generated",
-            )
-            bridge = MarketingBridge(
-                queue=broker,
-                callbacks=broker,
+            executor = build_hosted_capture_executor(agent_home, http)
+            worker = MarketingWorkerLoop(
+                broker=broker,
                 inbox=MarketingInbox(root),
+                preparer=executor,
                 executor=executor,
             )
-            recovered = bridge.recover()
+            recovered = worker.recover()
             if recovered:
                 typer.echo(f"recovered {recovered} interrupted task(s)")
             while True:
-                active = bridge.tick(accept_remote=not update_drain_requested(managed_paths.guard))
+                active = worker.tick(accept_remote=not update_drain_requested(managed_paths.guard))
                 if once:
                     return
                 if not active:
@@ -1041,9 +850,19 @@ def _stop_worker_launchd(launchd: MacWorkerLaunchd) -> None:
         raise typer.Exit(code=1)
 
 
-def _process_error(prefix: str, result: object) -> str:
-    return_code = getattr(result, "returncode", "unknown")
-    stderr = str(getattr(result, "stderr", "")).strip()
+class _ProcessResult(Protocol):
+    """Minimal launchctl result surface consumed by CLI error presentation."""
+
+    @property
+    def returncode(self) -> int: ...
+
+    @property
+    def stderr(self) -> str: ...
+
+
+def _process_error(prefix: str, result: _ProcessResult) -> str:
+    return_code = result.returncode
+    stderr = str(result.stderr or "").strip()
     return f"{prefix} ({return_code}){f': {stderr}' if stderr else ''}"
 
 

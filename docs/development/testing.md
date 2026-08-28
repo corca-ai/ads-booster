@@ -1,282 +1,36 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-28
 
-## Purpose
+## Focused checks
 
-This document defines validation scope, commands, user-surface checks, and completion reporting for
-code and documentation changes. The goal is to prove the changed behavior and its directly affected
-boundaries, not the entire repository.
+Choose the boundary that changed. Source tests are not installed-worker or hosted-runtime proof.
 
-## Product baseline: fresh installation
+| Change | Command |
+| --- | --- |
+| v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
+| background and native validation | `uv run pytest tests/marketing/test_background.py tests/marketing/test_native_capture.py` |
+| inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
+| update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
+| CLI surface | `uv run pytest tests/cli/test_cli_compatibility.py`; `uv run trace-marketing --help`; `uv run trace-marketing worker --help` |
 
-For product behavior, prioritize a fresh installed `trace-marketing` environment over the source
-worktree.
+For changed Python paths, run the matching scoped Ruff, formatter, BasedPyright, and
+`git diff --check`. Do not run the full suite or repository-wide static checks unless requested.
 
-- Use an isolated versioned install root and a new `TRACE_AGENT_HOME`.
-- Resolve `trace-marketing` and `codex` from the installed PATH; do not substitute `uv run` or an activated project
-  virtual environment for installed-product proof.
-- Verify `codex login status`, `trace-marketing worker doctor`, CLI exposure, state creation, and
-  service startup from the same macOS user that owns the LaunchAgent.
-- Treat worktree tests and `uv run` commands as development evidence for a candidate change, not as
-  proof that a first-time installation works.
-- For public-install claims, execute the actual published installer URL and ref. A local installer
-  file or unpushed worktree does not prove the public command.
+## Installed-worker proof
 
-The fresh-install check must still remain focused on the changed product behavior. It does not
-authorize unrelated end-to-end scenarios or the full test suite.
-
-## Primary rule
-
-Do not run the full test suite by default.
-
-- Run the direct tests for the behavior being changed.
-- Include only direct consumers of a changed contract, store, service, or runtime.
-- Do not run tests for unrelated packages or user surfaces.
-- When several areas are affected, select the relevant focused tests explicitly.
-- Do not run a repository-wide command such as `uv run pytest` out of habit.
-- Run the full test suite only when the user explicitly requests it.
-- Do not repeat a passing check when neither its code nor inputs have changed.
-
-Scope validation by behavior affected, not merely by files edited. A shared-contract change includes
-its direct producers and consumers, but it does not justify unrelated tests.
-
-## Selecting the validation scope
-
-Before running a validation command:
-
-1. State the changed user behavior or failure in one sentence.
-2. Identify the package, service, store, or runtime that owns that behavior.
-3. Inspect only direct callers, direct consumers, and siblings that share the same invariant.
-4. Select the smallest test files and user surface that execute that boundary.
-5. Exclude test files unrelated to the selected scope.
-
-Do not choose the full suite because many files changed. Do not skip direct-consumer validation
-merely because only one file changed.
-
-## Test authoring gate
-
-Do not create a test merely because production code changed. Add or modify a test only when it
-protects the changed behavior or a directly affected owner contract.
-
-Before adding a test:
-
-1. Name the user behavior, failure, invariant, or public contract it protects.
-2. Find the existing test file that owns that behavior.
-3. Extend the existing scenario when it already exercises the same boundary.
-4. Create a new test file only when no existing owner file is appropriate.
-5. Confirm that the test fails for a credible regression in production behavior.
-
-Do not create:
-
-- orphan tests with no current production owner or consumer;
-- tests unrelated to the requested change;
-- duplicate happy-path tests that protect an invariant already covered;
-- tests added only to increase coverage counts;
-- hypothetical edge-case tests without a reachable boundary or observed risk;
-- tests that read production source text and assert on strings, imports, or code shape;
-- mock-only tests that never execute the owning production boundary;
-- test-only production APIs, flags, branches, or dependency seams;
-- snapshots or fixtures that freeze incidental output without protecting behavior; or
-- broad integration tests when a focused owner-boundary test proves the change.
-
-A test is orphaned when the production behavior it claims to protect has been removed, moved to a
-different owner, or is no longer reachable. When changing ownership, move or rewrite the test with
-the production boundary. Do not leave the old test behind as historical evidence.
-
-Test names and placement must make the protected behavior and owner discoverable. If that mapping
-cannot be stated clearly, do not add the test until the ownership question is resolved.
-
-## Automated tests
-
-Start with the nearest test file.
+Use the managed executable, not `uv run`:
 
 ```bash
-uv run pytest -q tests/<domain>/test_target.py
+"$HOME/.local/share/trace-marketing/current/bin/trace-marketing" version --json
+"$HOME/.local/share/trace-marketing/current/bin/trace-marketing" worker doctor
+"$HOME/.local/share/trace-marketing/current/bin/trace-marketing" worker status
 ```
 
-### Domain layout
+For a real job record task ID, callback receipt, PNG path/SHA-256, native manifest, and resulting
+`image_awaiting_review` state. `doctor` proves prerequisites only. A manifest proves bindings
+only. Human review alone passes visual correctness.
 
-The test tree mirrors the production owner or the user boundary it protects:
-
-```text
-tests/
-├── agent/         # Sessions, goal/run lifecycle, connector registry, context, memory and tool loop
-├── auth/          # OAuth and authorization URL contracts
-├── automation/    # Campaign, queue, scheduler, and lease behavior
-├── capture/       # Appium, capture workers, safety, and App Group artifacts
-├── cli/           # Typer commands, compatibility, installer, and TraceRun CLI paths
-├── composition/   # Composite worker and image composition
-├── connectors/    # Domain manifests, semantic tools, plans, artifact acceptance, and review policy
-├── contracts/     # Capture, composite, and result contracts
-├── generation/    # Scene planning, searched backgrounds, and one-shot generation
-├── marketing/     # Cloudflare task contracts, bridge durability, account isolation, and loop proof
-├── providers/     # Model catalog and provider request contracts
-├── runtime/       # TraceRun execution, replay, store, and capture ports
-├── search/        # Text/image search tools, providers, and settings
-├── service/       # Service lifecycle, launchd, tunnel, and production worker wiring
-├── web/           # FastAPI routes, sessions, queue, chat, and static browser behavior
-└── workspace/     # Workspace identity, context, asset, and private-session stores
-```
-
-When two boundaries connect directly, name only the required files.
-
-```bash
-uv run pytest -q tests/agent/test_agent_sessions.py tests/web/test_web_sessions.py
-```
-
-```bash
-uv run pytest -q tests/service/test_service.py tests/automation/test_workspace_queue.py
-```
-
-Use `-k` when one test name is sufficient.
-
-```bash
-uv run pytest -q tests/service/test_service.py -k worker
-```
-
-For the Mac updater and verified release envelope, use this focused scope rather than the full
-suite:
-
-```bash
-uv run pytest -q \
-  tests/marketing/test_worker_update.py \
-  tests/marketing/test_worker_broker.py \
-  tests/marketing/test_bridge.py \
-  tests/cli/test_installer.py \
-  tests/cli/test_github_release_state.py \
-  tests/cli/test_release_builder.py \
-  tests/cli/test_cli_compatibility.py
-```
-
-Then build the project wheel and dependency wheelhouse in a temporary directory and run the release
-bootstrap against them with no index access. Verify the fresh Python 3.14 managed root's `current`
-link, release receipt, installed `version --json`, and CLI help. The pull-request workflow repeats these checks with
-read-only permissions. On `main`, the release job must additionally prove the annotated tag, exact
-merge SHA, transfer of the already bootstrapped bytes, exact three-asset envelope, pre-publication
-workflow/repository/ref/commit-bound attestations, local asset digests, safe full-run and failed-job retry/resume behavior, strict
-404-versus-transport classification, and an unauthenticated public release readback. The hosted
-deploy check must read the exact merge SHA from both configured and custom health endpoints. A Mac
-remains a separately enrolled dynamic consumer; reboot, heartbeat, and Appium canary checks
-establish that Mac's operational readiness rather than gating CI release.
-
-For hosted feedback learning and candidate-quality changes, use the source-owned Worker test plus
-the migration test. Build the workspace in a temporary copy so ignored or stale `cloudflare/dist`
-files in the worktree cannot masquerade as source behavior.
-
-```bash
-cd cloudflare
-npm run build
-node --check src/hosted-workspace.js
-node --test test/hosted-workspace.test.js
-cd ..
-uv run pytest -q tests/marketing/test_cloudflare_schema.py tests/marketing/test_native_capture.py
-```
-
-The focused cases must prove prompt/model/rule provenance, reviewed revision snapshots, three
-distinct rating-1–2 rejections in the same stage before activation, no free-form note injection,
-NULL-revision legacy feedback exclusion from rule evidence, feedback-dimension routing,
-selected-profile reference confinement, unique topics/captions/
-schedules/principles, five-to-seven timed Trace items, no-worker fail-fast without task creation,
-an explicit no-worker UI state without legacy Queue fallback copy, same-candidate image-retry
-guidance, and design/policy rule delivery through broker capture context.
-Inject feedback-insert, review-transition, candidate-insert, and candidate-queue failures to prove
-review evidence is atomic, storage errors do not re-call Workers AI, and broker tasks cannot survive
-a failed candidate transition. A production claim still requires a
-real Workers AI batch plus one registered-Mac capture and readback after deployment.
-
-Do not run the following commands without an explicit user request.
-
-```bash
-uv run pytest
-uv run pytest -q
-```
-
-## Static checks
-
-Limit Ruff and BasedPyright to changed files and their directly affected files.
-
-```bash
-uv run ruff check path/to/changed.py tests/<domain>/test_changed.py
-uv run ruff format --check path/to/changed.py tests/<domain>/test_changed.py
-uv run basedpyright path/to/changed.py tests/<domain>/test_changed.py
-```
-
-Run repository-wide Ruff, formatting, or BasedPyright only when the user explicitly requests it or
-when the tooling configuration being changed applies to the whole repository.
-Ruff and BasedPyright target the package's lowest declared runtime, Python 3.14, so formatting and
-type checking cannot silently introduce syntax that a supported fresh install cannot import.
-
-## Selection by change type
-
-| Changed area | Default automated scope | User-surface check |
-| --- | --- | --- |
-| `agent/`, TUI, REPL | Changed session, goal/run, connector, context, memory, or TUI tests | One non-Trace durable goal plus the changed interactive input, cancellation, session, or rendering state |
-| `connectors/` | Connector contract/tool tests plus the directly composed domain runtime tests | One semantic tool call whose exact model-authored inputs reach the real domain adapter |
-| `candidate_generation/` generation | Instruction, strict-JSON parsing and its single retry, domain assignment and coverage, and generation-provenance tests | One generated batch whose 🧠 생성 근거 panel names the documents read and the domains assigned |
-| `candidate_generation/` background | Open-web collection filters, judge gate/grade/tie-break, query ladder, and the judged fetcher at the `BackgroundFetcher` seam | One composed candidate whose 배경 심사 panel shows what the winning image beat and which queries ran |
-| `candidate_generation/` image stage | Candidate-to-bundle adaptation, native environment failure, local composition, recorded pipeline, Agent result, path/digest, and review-state tests | One approved candidate whose own Trace items appear in a request-bound native export, and one composed on a host with no capture device whose card is labelled as locally composed |
-| `auth/`, `providers/` | Changed provider and auth test files | Changed login, model request, or typed failure path |
-| `tools/` | Direct tests for the tool and registry | Changed approval, path, provider, or subprocess boundary |
-| `planning/`, `contracts/` | Changed contract/planner tests and direct consumers | One-shot path using the changed bundle |
-| `runtime/`, TraceRun | Changed state, replay, or artifact tests | Changed capability or resume path |
-| `workspace/` | Changed store tests and direct Web consumers | Changed scope, revision, rotation, or persistence path |
-| `automation/` | Relevant campaign, producer, queue, scheduler, or worker tests | Changed start/stop/restart, enqueue, claim, lease, result, or review path |
-| `web/` | Changed router, schema, command, and approval tests; `node tests/web/workspace_static_behavior.mjs` for any change to `web/static/` | Changed API and browser interaction against a running app, including slash commands and approval state |
-| `service/`, `tunnel/` | Relevant service, worker, or tunnel tests | Changed lifecycle and health check with an isolated `TRACE_AGENT_HOME` |
-| `capture/` | Changed adapter, Codex job contract, wallpaper contract, worker, or provenance tests | Run the same-user Codex CLI against the current installed Appium, Simulator, and Trace build from a secret-free request workspace. Observe Codex making and revising real UI actions without a deterministic Python runner; confirm the mode-0600 job contract contains no credential, the one-hour worker ceiling remains outside Codex's strategy, request-owned cleanup completes, and the resulting full `trace_wallpaper.png` plus native manifest pass digest, nonce, and device-binding validation. |
-| `marketing/`, `cloudflare/` | Focused Python bridge/broker/native-capture, worker credential/LaunchAgent, updater/release, Queue decoder, D1 migration/lease and hosted-workspace tests plus `cd cloudflare && npm run check`; parse changed deployment/release workflows | Fresh-installed `trace-marketing simulate`, compatibility `bridge --executor simulation --once`, and broker `worker doctor/status/run --once`; updater changes additionally require a fresh offline wheelhouse install, invalid-attestation/tag/SHA/digest refusal, traversal refusal, busy inbox/outbox and ambiguous execution deferral without stop, atomic switch, injected launchd/doctor/heartbeat rollback, secret-free separate plists/state, and final published-release self-update plus reboot/exact-heartbeat readback; the first rollout also requires one real Codex→Appium→callback canary; for broker changes race two workers for one task, reclaim one expired pre-execution lease, prove a post-barrier lease cannot move to a replacement worker, race callback ID/result reservation against changed retries and revoke/reassignment, prove heartbeat renewal stops at the one-hour cap, and keep heartbeat visible during capture; for hosted UI/context changes exercise root, sanitized worker status, protected Mac manager unlock/list/active/drain/two-step revoke/enrollment-copy/close-clear behavior, public account create/switch/isolation, profile CRUD, immutable candidate profile snapshot, four-candidate morning/evening batch, structured feedback rule, D1 lease→Mac→callback→R2 flow, failed capture retry, submitted-candidate edit/delete, responsive UI, and one real Workers AI generation; native capture evidence includes the full wallpaper manifest, digest, request nonce, and device binding; after a qualifying `main` merge require the Actions migration/deploy plus workers.dev and `workspace.borca.ai` readbacks |
-| `composition/` | Changed composer and artifact tests | This is a legacy component-composition surface. Open the generated image and inspect the changed layer or output. |
-| Documentation | Links, paths, examples, stale references, and whitespace | Render only when layout matters |
-
-Select only the rows that match the actual change.
-
-## User-surface verification
-
-When automated tests cannot prove user-visible behavior, use only the changed surface.
-
-- For TUI changes, reproduce the changed state in a fresh PTY.
-- For Web changes, run the changed API and browser interaction.
-- For the hosted Mac manager, verify that public status works without a token, protected actions send
-  the bearer only to `/v1`, a wrong token stays inside the manager, and close/lock clears the token and
-  one-time enrollment output before reopening.
-- For service changes, use an isolated state root and port for the changed lifecycle.
-- For Appium wallpaper changes, confirm the current Simulator and Trace installation, import a
-  searched background, and run the changed editor path. Inspect the real editor controls and the
-  full Trace wallpaper PNG plus request-bound manifest; do not substitute a fixture or a system
-  lock-screen screenshot.
-- The debug Trace automation session exposes ISO date inputs and exact-title calendar search fields
-  only while `-traceMarketingAutomation` is present. These are native Trace controls; production
-  launch arguments contain binding metadata, never card, row, title, time, all-day, or color data.
-- For any time-zone or timed-event change, add a fresh visual QA check: use a known UTC instant and
-  IANA plan time zone, then confirm the rendered local time is correct, appears once, and does not
-  change when the host or Simulator time zone differs.
-- For legacy composition changes, inspect the image and provenance produced by that command.
-
-Do not add unrelated end-to-end scenarios.
-
-## Failure and revalidation
-
-- When validation fails, relate the first actionable error to the current change.
-- Report unrelated pre-existing failures separately; do not absorb them into the change scope.
-- After a fix, rerun only the focused command that failed and the directly affected scope.
-- Do not repeat a passing command at completion when its inputs have not changed.
-- If a different cause is suspected, inspect source and call boundaries before widening the command.
-
-## Completion report
-
-Report:
-
-- the changed behavior validated;
-- each focused command executed;
-- the user surface exercised directly;
-- relevant validation not run and why; and
-- pre-existing failures left outside the scope.
-
-Do not report only that tests passed. State what changed and the scope that proves it.
-
-## Document maintenance
-
-Update this document in the same change when test locations, official commands, selection rules,
-user-surface QA, or completion-evidence requirements change.
+A regression test for a post-barrier defect must assert `unknown_side_effect` and no automatic
+native re-execution. Never place credentials, raw Codex output, or private user data in evidence.

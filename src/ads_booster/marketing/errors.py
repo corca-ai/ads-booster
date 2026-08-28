@@ -1,0 +1,2 @@
+class CloudflareQueueError(RuntimeError):
+    pass

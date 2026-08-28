@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const cloudflareRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(cloudflareRoot, "..");
-const webStaticRoot = resolve(repoRoot, "src/ads_booster/web/static");
+const staticRoot = resolve(cloudflareRoot, "static");
 const contextRoot = resolve(repoRoot, "src/ads_booster/assets/context");
 const outputRoot = resolve(cloudflareRoot, "dist");
 const contextManifestPath = resolve(contextRoot, "profiles/manifest.json");
@@ -13,7 +13,7 @@ const MAX_CONTEXT_BYTES = 48_000;
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(resolve(outputRoot, "static"), { recursive: true });
 
-let markup = await readFile(resolve(webStaticRoot, "workspace.html"), "utf8");
+let markup = await readFile(resolve(staticRoot, "workspace.html"), "utf8");
 markup = withoutBlock(markup, '<section class="workspace-entry"', "</section>");
 markup = withoutBlock(markup, '<dialog class="command-dialog" data-invite-dialog', "</dialog>");
 markup = markup
@@ -36,7 +36,7 @@ for (const filename of [
   "workspace-navigation.js",
   "workspace-live.js",
 ]) {
-  const contents = await readFile(resolve(webStaticRoot, filename));
+  const contents = await readFile(resolve(staticRoot, filename));
   await writeFile(resolve(outputRoot, "static", filename), contents);
 }
 

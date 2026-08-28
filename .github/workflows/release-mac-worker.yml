@@ -17,7 +17,8 @@ on:
       - tests/cli/test_github_release_state.py
       - tests/cli/test_release_builder.py
       - tests/fixtures/fake-gh-release.py
-      - tests/marketing/test_bridge.py
+      - tests/marketing/test_native_capture.py
+      - tests/marketing/test_worker_loop.py
       - tests/marketing/test_worker_broker.py
       - tests/marketing/test_worker_update.py
   push:
@@ -36,7 +37,8 @@ on:
       - tests/cli/test_github_release_state.py
       - tests/cli/test_release_builder.py
       - tests/fixtures/fake-gh-release.py
-      - tests/marketing/test_bridge.py
+      - tests/marketing/test_native_capture.py
+      - tests/marketing/test_worker_loop.py
       - tests/marketing/test_worker_broker.py
       - tests/marketing/test_worker_update.py
   workflow_dispatch:
@@ -121,7 +123,8 @@ jobs:
           uv run pytest -q \
             tests/marketing/test_worker_update.py \
             tests/marketing/test_worker_broker.py \
-            tests/marketing/test_bridge.py \
+            tests/marketing/test_native_capture.py \
+            tests/marketing/test_worker_loop.py \
             tests/cli/test_installer.py \
             tests/cli/test_github_release_state.py \
             tests/cli/test_release_builder.py \
@@ -138,7 +141,33 @@ jobs:
           python -m pip download --disable-pip-version-check --only-binary=:all: \
             --dest build/wheelhouse --requirement build/requirements.lock
           uv build --wheel --out-dir dist
-          cp "dist/trace_appium_capture-$RELEASE_VERSION-"*.whl build/wheelhouse/
+          project_wheels=("dist/trace_appium_capture-$RELEASE_VERSION-"*.whl)
+          test "${#project_wheels[@]}" -eq 1
+          project_wheel="${project_wheels[0]}"
+          entry_points="$(unzip -p "$project_wheel" '*/entry_points.txt')"
+          test "$entry_points" = $'[console_scripts]\ntrace-marketing = ads_booster.cli.marketing:app'
+          wheel_files="$(unzip -Z1 "$project_wheel")"
+          for retired in \
+            ads_booster/agent/ \
+            ads_booster/auth/ \
+            ads_booster/automation/ \
+            ads_booster/candidate_generation/ \
+            ads_booster/cli/capture.py \
+            ads_booster/cli/compose.py \
+            ads_booster/cli/generate.py \
+            ads_booster/cli/trace_run.py \
+            ads_booster/composition/ \
+            ads_booster/default_assets.py \
+            ads_booster/runtime/ \
+            ads_booster/service/ \
+            ads_booster/tools/ \
+            ads_booster/web/ \
+            ads_booster/workspace/ \
+            ads_booster/assets/iphone-ui.png \
+            ads_booster/assets/trace-components.png; do
+            ! grep -F "$retired" <<<"$wheel_files"
+          done
+          cp "$project_wheel" build/wheelhouse/
           python scripts/build-mac-worker-release.py \
             --version "$RELEASE_VERSION" \
             --commit-sha "$RELEASE_SHA" \

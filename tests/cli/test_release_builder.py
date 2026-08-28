@@ -125,11 +125,23 @@ def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -
     assert 'requires = ["hatchling==1.32.0"]' in PROJECT.read_text(encoding="utf-8")
 
 
+def test_release_workflow_checks_the_reduced_worker_wheel() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "tests/marketing/test_bridge.py" not in workflow
+    assert "tests/marketing/test_native_capture.py" in workflow
+    assert "tests/marketing/test_worker_loop.py" in workflow
+    assert "entry_points.txt" in workflow
+    assert "trace-marketing = ads_booster.cli.marketing:app" in workflow
+    assert "ads_booster/cli/trace_run.py" in workflow
+    assert "ads_booster/assets/iphone-ui.png" in workflow
+
+
 def test_cloudflare_deploy_tracks_the_actual_packaged_static_sources() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     assert "src/ads_booster/assets/context/**" in workflow
-    assert "src/ads_booster/web/static/**" in workflow
+    assert "cloudflare/static/**" in workflow
     assert "src/trace_capture/" not in workflow
     assert "TRACE_DEPLOY_SHA: ${{ github.sha }}" in workflow
     assert ".commit_sha == $sha" in workflow
