@@ -249,8 +249,13 @@
     const readyAliases = macWorkerStatus.workers
       .filter((worker) => ["ready", "busy"].includes(worker.status))
       .map((worker) => worker.display_name);
+    // An online Mac that predates caption generation takes image work and nothing else. The
+    // card has to say so before the button is pressed, not after the request comes back 503.
+    const captionsUnavailable = macWorkerStatus.counts.generation_ready === 0;
     const presentation = macWorkerStatus.counts.draining > 0 && macWorkerStatus.counts.online === 0
       ? ["Mac worker 전환 중", "기존 worker가 draining 상태라 새 작업을 받지 않습니다. 새 Mac을 활성화해 주세요.", "warning"]
+      : macWorkerStatus.status === "ready" && captionsUnavailable
+        ? ["Mac worker 업데이트 필요", "연결된 Mac은 이미지 캡처만 받습니다. 캡션 생성을 하려면 Mac 워커를 업데이트해 주세요.", "warning"]
       : ({
       ready: ["Mac 작업 가능", readyAliases.length
         ? `현재 ${readyAliases.join(", ")}에서 캡션·이미지 작업을 받을 수 있습니다.`

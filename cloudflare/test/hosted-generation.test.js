@@ -17,6 +17,9 @@ import {
 import { receiveHostedGenerationCallback } from "../src/hosted-generation-callback.js";
 
 const ACCOUNT_ID = "trace_demo_kr";
+// What an updated worker advertises, and what one that predates the field says instead.
+const CAPABLE = { task_kinds: "capture,generate_candidates" };
+const LEGACY = { native_appium: true };
 const REGISTRY = { global: "전역", countries: { KR: "한국", JP: "일본" } };
 
 const account = () => ({
@@ -131,6 +134,8 @@ function environment(options = {}) {
   const candidates = [];
   const personas = options.personas ? options.personas.map((row) => ({ ...row })) : [];
   const locks = new Map();
+  // Each entry is one non-revoked worker's advertised capabilities. `[{}]` is a Mac from
+  // before caption generation existed: registered, online, and capture-only.
   const workers = options.workers ?? [];
   const matches = (sql, ...fragments) => fragments.every((fragment) => sql.includes(fragment));
   const DB = {
@@ -142,7 +147,7 @@ function environment(options = {}) {
             values,
             async first() {
               if (matches(sql, "SELECT worker_id FROM mac_workers")) {
-                return workers.length ? { worker_id: workers[0] } : null;
+                return workers.length ? { worker_id: "worker-1" } : null;
               }
               if (matches(sql, "FROM hosted_workspace_capture_tasks", "kind = 'generate_candidates'")) {
                 const [accountId, personaId] = values;
@@ -175,6 +180,13 @@ function environment(options = {}) {
               throw new Error(`unexpected first SQL: ${sql}`);
             },
             async all() {
+              if (matches(sql, "SELECT capabilities_json FROM mac_workers")) {
+                return {
+                  results: workers.map((capabilities) => ({
+                    capabilities_json: JSON.stringify(capabilities),
+                  })),
+                };
+              }
               if (matches(sql, "FROM hosted_workspace_capture_tasks", "kind = 'generate_candidates'")) {
                 const scoped = sql.includes("AND persona_id = ?")
                   ? tasks.filter((row) => row.account_id === values[0]
@@ -311,7 +323,7 @@ const callbackFor = (task, result) => ({
 });
 
 test("the generate route publishes a worker job and answers before it is written", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
 
   const response = await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
 
@@ -341,7 +353,7 @@ test("the generate route publishes a worker job and answers before it is written
 
 test("a persona's country decides the corpus the worker is asked to read", async () => {
   const state = environment({
-    workers: ["worker-1"],
+    workers: [CAPABLE],
     personas: [personaRow("persona-jp", "JP")],
   });
 
@@ -364,8 +376,33 @@ test("with no Mac worker the generate route refuses instead of writing captions 
   assert.equal(state.tasks.length, 0);
 });
 
+test("a Mac that predates caption generation is told to update rather than left silent", async () => {
+  // The window between deploying the Worker and a Mac updating itself is minutes, and a
+  // button pressed inside it used to publish a batch that Mac would take and not understand.
+  const state = environment({ workers: [LEGACY], personas: [personaRow()] });
+
+  const response = await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
+
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).detail, /Mac 워커를 업데이트해 주세요/u);
+  // Different sentence from "no Mac at all", because it is a different thing to fix.
+  assert.doesNotMatch((await (await handleHostedWorkspace(
+    generateRequest("persona-1"), environment({ workers: [], personas: [personaRow()] }).env, REGISTRY,
+  )).json()).detail, /업데이트/u);
+  assert.equal(state.tasks.length, 0);
+});
+
+test("one updated Mac among older ones is enough to publish", async () => {
+  const state = environment({ workers: [LEGACY, CAPABLE], personas: [personaRow()] });
+
+  const response = await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
+
+  assert.equal(response.status, 202);
+  assert.equal(state.tasks.length, 1);
+});
+
 test("a persona with a batch already on a Mac is refused a second one", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
 
   const first = await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
   const second = await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
@@ -380,7 +417,7 @@ test("one persona's cooldown does not hold another persona under the same countr
   // The window used to be the country's. Generation ran inline for minutes so nobody met it;
   // a published job answers at once, and the second persona would have met it every time.
   const state = environment({
-    workers: ["worker-1"],
+    workers: [CAPABLE],
     personas: [personaRow("persona-1"), personaRow("persona-2")],
   });
 
@@ -393,7 +430,7 @@ test("one persona's cooldown does not hold another persona under the same countr
 });
 
 test("published batches are listed so a reloaded tab finds the one already running", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
   await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
 
   const response = await handleHostedWorkspace(
@@ -413,7 +450,7 @@ test("published batches are listed so a reloaded tab finds the one already runni
 });
 
 test("the worker callback stores the batch under its persona and keeps the generator's record", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
   await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
   const task = state.tasks[0];
 
@@ -459,7 +496,7 @@ test("the worker callback stores the batch under its persona and keeps the gener
 });
 
 test("a callback retried after the rows were written does not write them twice", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
   await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
   const task = state.tasks[0];
   const result = {
@@ -480,7 +517,7 @@ test("a callback retried after the rows were written does not write them twice",
 });
 
 test("a failed batch closes its task and names the failure without writing candidates", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
   await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
   const task = state.tasks[0];
 
@@ -508,7 +545,7 @@ test("a failed batch closes its task and names the failure without writing candi
 });
 
 test("a callback for another account's generation task is refused", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
   await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
   const task = state.tasks[0];
   const callback = callbackFor(task, {
@@ -525,7 +562,7 @@ test("a callback for another account's generation task is refused", async () => 
 });
 
 test("a batch with no usable candidates stores nothing and still closes the task", async () => {
-  const state = environment({ workers: ["worker-1"], personas: [personaRow()] });
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
   await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
   const task = state.tasks[0];
 
@@ -544,7 +581,7 @@ test("a batch with no usable candidates stores nothing and still closes the task
 test("a draft the control plane cannot store costs only itself", async () => {
   // A batch is one provider call per candidate, so one bad answer is one bad candidate. The
   // three beside it are worth keeping, and the worker has nothing to retry either way.
-  const state = environment({ workers: ["worker-1"] });
+  const state = environment({ workers: [CAPABLE] });
 
   const applied = await applyHostedGenerationResult(
     state.env,
@@ -562,7 +599,7 @@ test("a draft the control plane cannot store costs only itself", async () => {
 });
 
 test("the storage step is callable on its own and reports what it wrote", async () => {
-  const state = environment({ workers: ["worker-1"] });
+  const state = environment({ workers: [CAPABLE] });
 
   const applied = await applyHostedGenerationResult(
     state.env,

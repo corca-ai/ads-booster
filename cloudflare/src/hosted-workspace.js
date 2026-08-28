@@ -1,4 +1,4 @@
-import { hasRegisteredBrokerWorker } from "./mac-workers.js";
+import { hasRegisteredBrokerWorker, hasWorkerForTaskKind } from "./mac-workers.js";
 
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
 export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
@@ -1425,10 +1425,15 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
   if (pending) {
     throw new WorkspaceHttpError(409, "이미 Mac 워커가 이 후보 묶음을 만들고 있습니다.");
   }
-  if (!(await hasRegisteredBrokerWorker(env.DB))) {
+  // Two different problems, two different sentences. No Mac at all is an enrolment the team
+  // has not done; a Mac that cannot run this job is a worker that has not updated itself yet,
+  // and it would otherwise sit online while the batch waited for a lease nobody could take.
+  if (!(await hasWorkerForTaskKind(env.DB, "generate_candidates"))) {
     throw new WorkspaceHttpError(
       503,
-      "Mac 워커가 없어 후보를 만들 수 없습니다. Mac 연결 관리에서 worker를 먼저 등록해 주세요.",
+      (await hasRegisteredBrokerWorker(env.DB))
+        ? "연결된 Mac 워커가 캡션 생성을 지원하지 않습니다. Mac 워커를 업데이트해 주세요."
+        : "Mac 워커가 없어 후보를 만들 수 없습니다. Mac 연결 관리에서 worker를 먼저 등록해 주세요.",
     );
   }
   // Scoped to the persona rather than the country, because two people posting under one
@@ -1460,6 +1465,9 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
     created_at: now,
     credential_ref: null,
   };
+  // The gate races the check above, and it stays "some worker exists" on purpose: a batch
+  // published in the instant the last capable Mac went away waits for the next one rather
+  // than being lost, and an incapable Mac cannot lease it either way.
   const created = await env.DB.prepare(
     `INSERT INTO hosted_workspace_capture_tasks
       (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,

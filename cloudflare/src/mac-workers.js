@@ -7,6 +7,12 @@ const MAX_EXECUTION_LEASE_SECONDS = 3_600;
 const MAX_WORKER_PAYLOAD_BYTES = 16 * 1024;
 const MAX_WORKER_CALLBACK_BYTES = 24 * 1024 * 1024;
 const WORKER_STATES = new Set(["active", "draining"]);
+// The job kinds a task row can carry. A worker only leases a task whose kind it advertises.
+export const WORKER_TASK_KINDS = Object.freeze(["capture", "generate_candidates"]);
+// What a worker that advertises nothing can do. Every Mac enrolled before caption generation
+// existed is one of those, and capture is the only job its Python knows how to run.
+const LEGACY_WORKER_TASK_KINDS = Object.freeze(["capture"]);
+const MAX_ADVERTISED_TASK_KINDS = 8;
 
 export async function handleMacWorkerRequest(request, env, receiveTaskCallback) {
   const url = new URL(request.url);
@@ -98,22 +104,60 @@ export async function hasRegisteredBrokerWorker(db) {
   return Boolean(row);
 }
 
+/**
+ * Which job kinds one worker says it can run.
+ *
+ * The advertisement is a comma-joined string rather than a list because `normalizeObject`
+ * flattens every non-scalar capability value to null — a worker that sent an array would
+ * read as having advertised nothing. Silence means the worker predates this field, and the
+ * only job that existed then is capture: that is the whole point of the default, because
+ * during the minutes between deploying the Worker and a Mac updating itself, that Mac must
+ * not lease a caption batch its Python cannot parse.
+ */
+export function workerTaskKinds(capabilities) {
+  const declared = capabilities?.task_kinds;
+  if (typeof declared !== "string" || !declared.trim()) return [...LEGACY_WORKER_TASK_KINDS];
+  const advertised = declared
+    .split(",")
+    .map((kind) => kind.trim())
+    .filter((kind) => WORKER_TASK_KINDS.includes(kind))
+    .slice(0, MAX_ADVERTISED_TASK_KINDS);
+  const unique = [...new Set(advertised)];
+  return unique.length > 0 ? unique : [...LEGACY_WORKER_TASK_KINDS];
+}
+
+/** True when some non-revoked worker advertises this job kind. */
+export async function hasWorkerForTaskKind(db, kind) {
+  const result = await db.prepare(
+    "SELECT capabilities_json FROM mac_workers WHERE state != 'revoked'",
+  ).bind().all();
+  return result.results.some((row) =>
+    workerTaskKinds(parseObject(row.capabilities_json)).includes(kind));
+}
+
 export async function publicWorkerStatus(db, now = new Date()) {
   const result = await db.prepare(
-    `SELECT display_name, pool, state, doctor_json, last_seen_at, current_task_id
+    `SELECT display_name, pool, state, capabilities_json, doctor_json, last_seen_at,
+            current_task_id
      FROM mac_workers WHERE state != 'revoked' ORDER BY display_name`,
   ).all();
-  const workers = result.results.map((row) => ({
+  const rows = result.results.map((row) => ({
     display_name: row.display_name,
     pool: row.pool,
     status: workerOperationalStatus(row, now),
+    kinds: workerTaskKinds(parseObject(row.capabilities_json)),
   }));
+  // The screen names the Macs; it does not say what each one can run. What it needs is the
+  // one number a person acts on: whether any Mac online right now can write captions.
+  const workers = rows.map(({ kinds, ...worker }) => worker);
   const counts = {
     registered: workers.length,
     online: workers.filter((worker) => ["ready", "busy", "degraded"].includes(worker.status)).length,
     ready: workers.filter((worker) => worker.status === "ready").length,
     busy: workers.filter((worker) => worker.status === "busy").length,
     draining: workers.filter((worker) => worker.status === "draining").length,
+    generation_ready: rows.filter((row) =>
+      ["ready", "busy"].includes(row.status) && row.kinds.includes("generate_candidates")).length,
   };
   let status = "not_configured";
   if (counts.ready > 0 || counts.busy > 0) status = "ready";
@@ -139,14 +183,20 @@ export function workerOperationalStatus(row, now = new Date()) {
 export async function claimWorkerTasks(db, worker, now = new Date()) {
   if (worker.state !== "active") return [];
   await clearStaleWorkerAssignment(db, worker.worker_id, now);
+  // What this Mac says it can run, read back from the row the heartbeat just wrote rather
+  // than from the token lookup, so a worker that updated itself is trusted on this poll.
+  const kinds = await claimableTaskKinds(db, worker.worker_id);
+  if (kinds.length === 0) return [];
+  const kindPlaceholders = kinds.map(() => "?").join(", ");
   const current = await db.prepare(
     `SELECT task_id, task_json, lease_id, attempt_count
      FROM hosted_workspace_capture_tasks
      WHERE worker_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
        AND callback_id IS NULL AND callback_reservation_id IS NULL
        AND execution_started_at IS NULL AND lease_expires_at > ?
+       AND kind IN (${kindPlaceholders})
      ORDER BY created_at LIMIT 1`,
-  ).bind(worker.worker_id, now.toISOString()).first();
+  ).bind(worker.worker_id, now.toISOString(), ...kinds).first();
   if (current) return [leaseResponse(current)];
 
   const reservation = `claim:${crypto.randomUUID()}`;
@@ -162,8 +212,9 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
        WHERE dispatch_mode = 'worker_broker' AND state = 'queued' AND callback_id IS NULL
          AND callback_reservation_id IS NULL AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+         AND kind IN (${kindPlaceholders})
        ORDER BY created_at LIMIT 1`,
-    ).bind(now.toISOString()).first();
+    ).bind(now.toISOString(), ...kinds).first();
     if (!task) {
       await clearWorkerReservation(db, worker.worker_id, reservation, now);
       return [];
@@ -179,6 +230,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND callback_id IS NULL AND callback_reservation_id IS NULL
          AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+         AND kind IN (${kindPlaceholders})
          AND EXISTS (SELECT 1 FROM mac_workers
                      WHERE worker_id = ? AND state = 'active' AND current_task_id = ?)`,
     ).bind(
@@ -189,6 +241,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
       now.toISOString(),
       task.task_id,
       now.toISOString(),
+      ...kinds,
       worker.worker_id,
       reservation,
     ).run();
@@ -214,6 +267,20 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
   }
   await clearWorkerReservation(db, worker.worker_id, reservation, now);
   return [];
+}
+
+/**
+ * The kinds this worker may lease, read fresh from its stored capabilities.
+ *
+ * The claim route heartbeats before it claims, so this row is the worker's current
+ * advertisement rather than whatever it said when its token was last looked up.
+ */
+async function claimableTaskKinds(db, workerId) {
+  const row = await db.prepare(
+    "SELECT capabilities_json FROM mac_workers WHERE worker_id = ?",
+  ).bind(workerId).first();
+  if (!row) return [];
+  return workerTaskKinds(parseObject(row.capabilities_json));
 }
 
 async function clearWorkerReservation(db, workerId, reservation, now) {

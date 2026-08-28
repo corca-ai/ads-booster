@@ -12,6 +12,7 @@ import {
   reserveWorkerTaskCallback,
   revokeWorker,
   workerOperationalStatus,
+  workerTaskKinds,
 } from "../src/mac-workers.js";
 
 function task(overrides = {}) {
@@ -30,6 +31,7 @@ function task(overrides = {}) {
     }),
     state: "queued",
     dispatch_mode: "worker_broker",
+    kind: "capture",
     callback_id: null,
     worker_id: null,
     lease_id: null,
@@ -52,6 +54,7 @@ function worker(workerId, overrides = {}) {
     display_name: workerId,
     pool: "appium",
     state: "active",
+    capabilities_json: '{"task_kinds":"capture,generate_candidates"}',
     doctor_json: '{"ready":true}',
     last_seen_at: "2026-08-26T00:00:00.000Z",
     current_task_id: null,
@@ -85,6 +88,9 @@ class ClaimStatement {
     if (this.sql.includes("FROM mac_workers WHERE token_sha256")) {
       return [...this.db.workers.values()][0] ?? null;
     }
+    if (this.sql.includes("SELECT capabilities_json FROM mac_workers WHERE worker_id = ?")) {
+      return this.db.workers.get(this.values[0]) ?? null;
+    }
     if (this.sql.includes("SELECT worker_id, execution_started_at")) {
       return this.db.tasks.get(this.values[0]) ?? null;
     }
@@ -93,19 +99,23 @@ class ClaimStatement {
     }
     if (this.sql.includes("WHERE worker_id = ?") && this.sql.includes("lease_expires_at > ?")) {
       const [workerId, now] = this.values;
+      const kinds = this.values.slice(2);
       return [...this.db.tasks.values()].find((row) =>
         row.worker_id === workerId && row.dispatch_mode === "worker_broker" &&
         row.state === "queued" && !row.callback_id && !row.execution_started_at &&
         (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
+        kinds.includes(row.kind) &&
         row.lease_expires_at > now
       ) ?? null;
     }
     if (this.sql.includes("SELECT task_id FROM hosted_workspace_capture_tasks") &&
         this.sql.includes("worker_id IS NULL")) {
       const [now] = this.values;
+      const kinds = this.values.slice(1);
       return [...this.db.tasks.values()].find((row) =>
         row.dispatch_mode === "worker_broker" && row.state === "queued" && !row.callback_id &&
         (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
+        kinds.includes(row.kind) &&
         !row.execution_started_at && (!row.worker_id || !row.lease_expires_at || row.lease_expires_at <= now)
       ) ?? null;
     }
@@ -154,13 +164,17 @@ class ClaimStatement {
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("SET worker_id = ?, lease_id = ?")) {
-      const [workerId, leaseId, expiresAt, startedAt, updatedAt, taskId, now,
-        ownerWorkerId, reservation] = this.values;
+      const [workerId, leaseId, expiresAt, startedAt, updatedAt, taskId, now] = this.values;
+      // The kind list sits between the task predicate and the owner check, so the last two
+      // values are read from the end rather than by a fixed index.
+      const [ownerWorkerId, reservation] = this.values.slice(-2);
+      const kinds = this.values.slice(7, -2);
       const row = this.db.tasks.get(taskId);
       const owner = this.db.workers.get(ownerWorkerId);
       if (!row || row.dispatch_mode !== "worker_broker" || row.state !== "queued" ||
           row.callback_id || row.execution_started_at || (row.worker_id && row.lease_expires_at && row.lease_expires_at > now) ||
           (this.sql.includes("callback_reservation_id IS NULL") && row.callback_reservation_id) ||
+          !kinds.includes(row.kind) ||
           owner?.state !== "active" || owner.current_task_id !== reservation) {
         return { meta: { changes: 0 } };
       }
@@ -660,12 +674,34 @@ test("public worker status exposes aliases and availability without machine deta
   const status = await publicWorkerStatus(db, now);
 
   assert.equal(status.status, "ready");
-  assert.deepEqual(status.counts, { registered: 2, online: 1, ready: 0, busy: 1, draining: 0 });
+  assert.deepEqual(status.counts, {
+    registered: 2, online: 1, ready: 0, busy: 1, draining: 0, generation_ready: 1,
+  });
+  // The Macs are named; what each one can run is not, because nobody acts on that per Mac.
   assert.deepEqual(status.workers, [
     { display_name: "Studio Mac", pool: "appium", status: "busy" },
     { display_name: "Backup Mac", pool: "appium", status: "offline" },
   ]);
   assert.equal(JSON.stringify(status).includes("worker-secret-id"), false);
+});
+
+test("an online Mac that cannot write captions is counted as one that cannot", async () => {
+  // Otherwise the card says the connected Mac takes caption work, and the person only finds
+  // out otherwise by pressing the button.
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const rows = [
+    worker("worker-1", {
+      display_name: "Studio Mac",
+      capabilities_json: '{"native_appium":true}',
+    }),
+  ];
+  const db = { prepare() { return { async all() { return { results: rows }; } }; } };
+
+  const status = await publicWorkerStatus(db, now);
+
+  assert.equal(status.status, "ready");
+  assert.equal(status.counts.ready, 1);
+  assert.equal(status.counts.generation_ready, 0);
 });
 
 test("a degraded doctor result is visible without leaking its detailed checks", () => {
@@ -706,6 +742,82 @@ test("heartbeat renews pre-execution work only within the one-hour claim cap", a
     now,
   );
   assert.equal(db.task.lease_expires_at, previousExpiry);
+});
+
+// A Mac enrolled before caption generation existed advertises nothing about task kinds.
+const legacyWorker = (workerId) => worker(workerId, { capabilities_json: '{"native_appium":true}' });
+
+test("a Mac that predates caption generation cannot lease one", async () => {
+  // The failure this prevents is silent: the old Python does not recognise the job, the batch
+  // dies inside it, and the task sits leased until expiry while the button says "만드는 중".
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const outdated = legacyWorker("worker-1");
+  const db = new ClaimDb([outdated], [task({ kind: "generate_candidates" })]);
+
+  const leases = await claimWorkerTasks(db, outdated, now);
+
+  assert.deepEqual(leases, []);
+  assert.equal(db.tasks.get("task-1").worker_id, null);
+  assert.equal(db.tasks.get("task-1").attempt_count, 0);
+  // And the worker is left free rather than holding a reservation for a task it never took.
+  assert.equal(db.workers.get("worker-1").current_task_id, null);
+});
+
+test("a Mac that predates caption generation still leases image captures", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const outdated = legacyWorker("worker-1");
+  const db = new ClaimDb([outdated], [task()]);
+
+  const leases = await claimWorkerTasks(db, outdated, now);
+
+  assert.equal(leases.length, 1);
+  assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+});
+
+test("an updated Mac leases either kind, oldest first", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const updated = worker("worker-1");
+  const db = new ClaimDb([updated], [task({ kind: "generate_candidates" })]);
+
+  const leases = await claimWorkerTasks(db, updated, now);
+
+  assert.equal(leases.length, 1);
+  assert.equal(leases[0].message_id, "task-1");
+});
+
+test("a caption batch waits for the updated Mac rather than stalling on the old one", async () => {
+  // Both Macs poll. The old one must skip the generation task and take the capture instead,
+  // which is what keeps one un-updated Mac from blocking the queue for everyone.
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const outdated = legacyWorker("worker-1");
+  const updated = worker("worker-2");
+  const db = new ClaimDb([outdated, updated], [
+    task({ task_id: "task-generate", kind: "generate_candidates", created_at: "2026-08-26T00:00:00.000Z" }),
+    task({ task_id: "task-capture", created_at: "2026-08-26T00:00:10.000Z" }),
+  ]);
+
+  const outdatedLeases = await claimWorkerTasks(db, outdated, now);
+  const updatedLeases = await claimWorkerTasks(db, updated, now);
+
+  assert.deepEqual(outdatedLeases.map((lease) => lease.message_id), ["task-capture"]);
+  assert.deepEqual(updatedLeases.map((lease) => lease.message_id), ["task-generate"]);
+});
+
+test("an advertisement is read as the closed set it is, and silence as capture only", () => {
+  // The value is a comma-joined string because the control plane flattens every non-scalar
+  // capability to null; a worker that sent a list would read as having said nothing.
+  assert.deepEqual(workerTaskKinds({ task_kinds: "capture,generate_candidates" }),
+    ["capture", "generate_candidates"]);
+  assert.deepEqual(workerTaskKinds({ task_kinds: " generate_candidates , capture " }),
+    ["generate_candidates", "capture"]);
+  // Tokens this control plane does not define are dropped rather than trusted.
+  assert.deepEqual(workerTaskKinds({ task_kinds: "capture,publish" }), ["capture"]);
+  assert.deepEqual(workerTaskKinds({ task_kinds: "publish" }), ["capture"]);
+  // Every shape a worker from before the field can produce reads as capture-only.
+  assert.deepEqual(workerTaskKinds({ native_appium: true }), ["capture"]);
+  assert.deepEqual(workerTaskKinds({ task_kinds: null }), ["capture"]);
+  assert.deepEqual(workerTaskKinds({}), ["capture"]);
+  assert.deepEqual(workerTaskKinds(null), ["capture"]);
 });
 
 test("two workers racing for one task produce exactly one lease owner", async () => {

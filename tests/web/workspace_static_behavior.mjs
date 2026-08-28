@@ -1812,7 +1812,7 @@ const testUnregisteredMacDisablesHostedImageCapture = async () => {
     if (path === "/api/workers/status") {
       return response(200, {
         status: "not_configured",
-        counts: { online: 0, busy: 0, draining: 0, registered: 0 },
+        counts: { online: 0, busy: 0, draining: 0, registered: 0, generation_ready: 0 },
         workers: [],
       });
     }
@@ -1826,6 +1826,62 @@ const testUnregisteredMacDisablesHostedImageCapture = async () => {
     "Mac worker를 등록하기 전에는 캡션 생성과 이미지 캡처를 시작할 수 없습니다.",
   );
   assert.doesNotMatch(fixture.workerCopy.textContent, /Queue/u);
+};
+
+const testAnOutdatedMacSaysSoBeforeTheButtonIsPressed = async () => {
+  // A Mac from before caption generation is online and ready — for images. Saying "캡션·이미지
+  // 작업을 받을 수 있습니다" there sends the reader to press a button that answers 503.
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path === "/api/accounts") return response(200, []);
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) return response(200, { tasks: [] });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, {
+        status: "ready",
+        counts: { online: 1, ready: 1, busy: 0, draining: 0, registered: 1, generation_ready: 0 },
+        workers: [{ display_name: "Studio Mac", pool: "appium", status: "ready" }],
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.workerTitle.textContent, "Mac worker 업데이트 필요");
+  assert.match(fixture.workerCopy.textContent, /캡션 생성을 하려면 Mac 워커를 업데이트해 주세요/u);
+};
+
+const testAnUpdatedMacSaysItTakesBothKindsOfWork = async () => {
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path === "/api/accounts") return response(200, []);
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) return response(200, { tasks: [] });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, {
+        status: "ready",
+        counts: { online: 1, ready: 1, busy: 0, draining: 0, registered: 1, generation_ready: 1 },
+        workers: [{ display_name: "Studio Mac", pool: "appium", status: "ready" }],
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.workerTitle.textContent, "Mac 작업 가능");
+  assert.match(fixture.workerCopy.textContent, /Studio Mac에서 캡션·이미지 작업을 받을 수 있습니다/u);
 };
 
 const testMarkupUsesTheAgreedTerminology = async () => {
@@ -2667,6 +2723,10 @@ passed += 1;
 await testMacConnectionsAreManagedWithAnEphemeralControlToken();
 passed += 1;
 await testUnregisteredMacDisablesHostedImageCapture();
+passed += 1;
+await testAnOutdatedMacSaysSoBeforeTheButtonIsPressed();
+passed += 1;
+await testAnUpdatedMacSaysItTakesBothKindsOfWork();
 passed += 1;
 await testMarkupUsesTheAgreedTerminology();
 passed += 1;
