@@ -2,6 +2,7 @@ import { hasRegisteredBrokerWorker } from "./mac-workers.js";
 
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
 export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
+export const WORKSPACE_GENERATION_PROMPT_VERSION = "trace.workspace-generation.v2";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const MAX_CANDIDATES = 200;
@@ -21,6 +22,63 @@ export const REVIEW_TAGS = Object.freeze([
   "브랜드·정책 위험",
   "기타",
 ]);
+const FEEDBACK_RULE_DEFINITIONS = Object.freeze({
+  "caption:국가·언어 부적합": Object.freeze({
+    rule_id: "caption-market-language",
+    dimension: "persona",
+    instruction: "선택한 국가의 실제 언어와 자연스러운 현지 표현만 사용한다.",
+  }),
+  "caption:계정 페르소나 불일치": Object.freeze({
+    rule_id: "caption-persona-fit",
+    dimension: "persona",
+    instruction: "선택한 대상·상황·문체가 캡션과 가설에 구체적으로 드러나게 한다.",
+  }),
+  "caption:컨셉이 약함": Object.freeze({
+    rule_id: "caption-concept-specificity",
+    dimension: "concept",
+    instruction: "일반적인 생산성 문구 대신 한 장면과 한 갈등이 보이는 구체적인 컨셉을 만든다.",
+  }),
+  "caption:기존 게시물과 중복": Object.freeze({
+    rule_id: "caption-concept-novelty",
+    dimension: "concept",
+    instruction: "직전 후보의 주제·훅·일정 조합을 반복하지 않고 다른 장면과 관점을 선택한다.",
+  }),
+  "caption:캡션 부적합": Object.freeze({
+    rule_id: "caption-voice-fit",
+    dimension: "caption",
+    instruction: "선택한 문체를 지키고 짧고 자연스러운 한 가지 메시지로 캡션을 쓴다.",
+  }),
+  "caption:브랜드·정책 위험": Object.freeze({
+    rule_id: "caption-policy-safety",
+    dimension: "policy",
+    instruction: "근거 없는 성과 약속, 타사 상표 오용, 민감하거나 오해를 부르는 주장을 피한다.",
+  }),
+  "image:이미지 품질·AI 티": Object.freeze({
+    rule_id: "image-natural-quality",
+    dimension: "design",
+    instruction: "과도한 합성 느낌과 부자연스러운 장식을 피하고 실제 잠금화면처럼 자연스럽게 구성한다.",
+  }),
+  "image:앱 화면·데이터 오류": Object.freeze({
+    rule_id: "image-ui-data-accuracy",
+    dimension: "design",
+    instruction: "Trace UI 구조와 승인된 일정·시각·언어를 정확히 보존하고 임의 데이터를 추가하지 않는다.",
+  }),
+  "image:국가·언어 부적합": Object.freeze({
+    rule_id: "image-market-language",
+    dimension: "design",
+    instruction: "잠금화면의 언어·시간·시각 요소를 선택한 국가 컨텍스트와 일치시킨다.",
+  }),
+  "image:계정 페르소나 불일치": Object.freeze({
+    rule_id: "image-persona-fit",
+    dimension: "design",
+    instruction: "배경과 일정 장면이 선택한 대상과 상황에서 실제로 사용할 법하게 보이도록 구성한다.",
+  }),
+  "image:브랜드·정책 위험": Object.freeze({
+    rule_id: "image-policy-safety",
+    dimension: "policy",
+    instruction: "승인되지 않은 브랜드·로고·개인정보·정책 위험 요소를 이미지에 넣지 않는다.",
+  }),
+});
 const ALLOWED_BACKGROUND_SUBJECTS = new Set([
   "scenery",
   "character_kitty",
@@ -296,8 +354,11 @@ export function normalizeCandidateDraft(input) {
   };
 }
 
-export function candidateResponseSchema(country = "KR") {
+export function candidateResponseSchema(country = "KR", referenceIds = []) {
   const language = languageForCountry(country);
+  const referenceItems = referenceIds.length
+    ? { type: "string", enum: [...referenceIds] }
+    : { type: "string" };
   return {
     type: "object",
     properties: {
@@ -309,19 +370,30 @@ export function candidateResponseSchema(country = "KR") {
           type: "object",
           additionalProperties: false,
           properties: {
-            topic: { type: "string" },
+            topic: { type: "string", minLength: 1 },
             country: { type: "string", enum: [country] },
-            caption: { type: "string" },
-            hypothesis: { type: "string" },
+            caption: { type: "string", minLength: 1 },
+            hypothesis: { type: "string", minLength: 1 },
             posting_slot: { type: "string", enum: ["morning", "evening"] },
-            refs_used: { type: "array", items: { type: "string" } },
-            principles_applied: { type: "array", items: { type: "integer" } },
+            refs_used: {
+              type: "array",
+              minItems: referenceIds.length ? 1 : 0,
+              maxItems: referenceIds.length,
+              uniqueItems: true,
+              items: referenceItems,
+            },
+            principles_applied: {
+              type: "array",
+              minItems: 1,
+              uniqueItems: true,
+              items: { type: "integer", minimum: 1 },
+            },
             appium_prompt: { type: "string" },
             image_inputs: {
               type: "object",
               additionalProperties: false,
               properties: {
-                trace_items: { type: "array", minItems: 1, maxItems: 8, items: { type: "string" } },
+                trace_items: { type: "array", minItems: 5, maxItems: 7, items: { type: "string" } },
                 device_time: { type: "string" },
                 background_subject: { type: "string", enum: [...ALLOWED_BACKGROUND_SUBJECTS] },
                 background_mood: { type: "string" },
@@ -336,6 +408,58 @@ export function candidateResponseSchema(country = "KR") {
     },
     required: ["candidates"],
   };
+}
+
+export function validateGeneratedCandidateBatch(drafts, profile) {
+  if (drafts.length !== 4) throw new Error("후보는 정확히 4개여야 합니다.");
+  requireUniqueGeneratedValues(drafts, "topic", "후보 주제가 서로 달라야 합니다.");
+  requireUniqueGeneratedValues(drafts, "caption", "후보 캡션이 서로 달라야 합니다.");
+
+  const slots = drafts.reduce((counts, draft) => {
+    counts[draft.posting_slot] = (counts[draft.posting_slot] ?? 0) + 1;
+    return counts;
+  }, {});
+  if (slots.morning !== 2 || slots.evening !== 2) {
+    throw new Error("오전 후보 2개와 저녁 후보 2개가 필요합니다.");
+  }
+
+  const allowedReferences = new Set(profile.reference_ids ?? []);
+  const scheduleSignatures = new Set();
+  for (const draft of drafts) {
+    if (draft.principles_applied.length === 0) {
+      throw new Error("자동 생성 후보에는 적용 원리가 한 개 이상 필요합니다.");
+    }
+    if (new Set(draft.principles_applied).size !== draft.principles_applied.length) {
+      throw new Error("자동 생성 후보의 적용 원리는 중복될 수 없습니다.");
+    }
+    if (allowedReferences.size > 0 && draft.refs_used.length === 0) {
+      throw new Error("자동 생성 후보에는 선택한 레퍼런스가 한 개 이상 필요합니다.");
+    }
+    if (draft.refs_used.some((referenceId) => !allowedReferences.has(referenceId))) {
+      throw new Error("자동 생성 후보가 선택한 페르소나 밖의 레퍼런스를 사용했습니다.");
+    }
+    const traceItems = draft.image_inputs.trace_items;
+    if (traceItems.length < 5 || traceItems.length > 7) {
+      throw new Error("자동 생성 일정은 5~7개여야 합니다.");
+    }
+    if (traceItems.some((item) => !/^(?:[01]\d|2[0-3]):[0-5]\d\s+\S/u.test(item))) {
+      throw new Error("자동 생성 일정은 모두 'HH:MM 제목' 형식이어야 합니다.");
+    }
+    const scheduleSignature = traceItems.map(normalizeGeneratedValue).join("\n");
+    if (scheduleSignatures.has(scheduleSignature)) {
+      throw new Error("후보마다 서로 다른 일정 장면이 필요합니다.");
+    }
+    scheduleSignatures.add(scheduleSignature);
+  }
+}
+
+function requireUniqueGeneratedValues(drafts, field, message) {
+  const normalized = drafts.map((draft) => normalizeGeneratedValue(draft[field]));
+  if (new Set(normalized).size !== normalized.length) throw new Error(message);
+}
+
+function normalizeGeneratedValue(value) {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 export function normalizeContextProfile(input) {
@@ -835,12 +959,18 @@ async function generateCandidates(env, contextRegistry, profile) {
     account,
     learnedFeedback,
   );
+  const model = env.WORKSPACE_AI_MODEL || DEFAULT_WORKSPACE_AI_MODEL;
   let detail = "AI 응답 형식이 올바르지 않습니다.";
+  let acceptedDrafts = null;
+  let acceptedPrompt = null;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const attemptPrompt = attempt === 0
+      ? prompt
+      : `${prompt}\n\n직전 응답 검증 오류: ${detail}\n형식을 정확히 지켜 다시 만드세요.`;
     let result;
     try {
-      result = await env.AI.run(env.WORKSPACE_AI_MODEL || DEFAULT_WORKSPACE_AI_MODEL, {
+      result = await env.AI.run(model, {
         messages: [
           {
             role: "system",
@@ -848,12 +978,15 @@ async function generateCandidates(env, contextRegistry, profile) {
           },
           {
             role: "user",
-            content: attempt === 0 ? prompt : `${prompt}\n\n직전 응답 검증 오류: ${detail}\n형식을 정확히 지켜 다시 만드세요.`,
+            content: attemptPrompt,
           },
         ],
         max_tokens: positiveInteger(env.WORKSPACE_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
         temperature: 0.4,
-        response_format: { type: "json_schema", json_schema: candidateResponseSchema(profile.country) },
+        response_format: {
+          type: "json_schema",
+          json_schema: candidateResponseSchema(profile.country, profile.reference_ids),
+        },
       });
     } catch (error) {
       throw new WorkspaceHttpError(502, "Cloudflare AI 후보 생성에 실패했습니다.");
@@ -861,23 +994,23 @@ async function generateCandidates(env, contextRegistry, profile) {
     try {
       const raw = aiCandidates(result);
       const drafts = raw.map(normalizeCandidateDraft);
-      if (drafts.length !== 4) throw new Error("후보는 정확히 4개여야 합니다.");
-      if (new Set(drafts.map((draft) => draft.topic)).size !== drafts.length) {
-        throw new Error("후보 주제가 서로 달라야 합니다.");
-      }
-      const slots = drafts.reduce((counts, draft) => {
-        counts[draft.posting_slot] = (counts[draft.posting_slot] ?? 0) + 1;
-        return counts;
-      }, {});
-      if (slots.morning !== 2 || slots.evening !== 2) {
-        throw new Error("오전 후보 2개와 저녁 후보 2개가 필요합니다.");
-      }
-      return insertCandidates(env, drafts, "auto", profile);
+      validateGeneratedCandidateBatch(drafts, profile);
+      acceptedDrafts = drafts;
+      acceptedPrompt = attemptPrompt;
+      break;
     } catch (error) {
       detail = error instanceof Error ? error.message : detail;
     }
   }
-  throw new WorkspaceHttpError(502, `AI 후보 형식 검증에 실패했습니다: ${detail}`);
+  if (!acceptedDrafts || !acceptedPrompt) {
+    throw new WorkspaceHttpError(502, `AI 후보 형식 검증에 실패했습니다: ${detail}`);
+  }
+  return insertCandidates(env, acceptedDrafts, "auto", profile, {
+    prompt_version: WORKSPACE_GENERATION_PROMPT_VERSION,
+    prompt_sha256: await sha256(acceptedPrompt),
+    model,
+    feedback_rules: learnedFeedback.active_rules,
+  });
 }
 
 async function claimGenerationWindow(env) {
@@ -925,14 +1058,12 @@ export function generationPrompt(
 ) {
   const morningTime = account?.morning_time ?? "07:30";
   const eveningTime = account?.evening_time ?? "19:30";
-  const learnedRules = learnedFeedback?.rule_candidates?.length
-    ? learnedFeedback.rule_candidates.map((rule) => `- ${rule}`).join("\n")
-    : "- 아직 3회 이상 반복된 반려 규칙 없음";
+  const learnedRules = feedbackRulePrompt(learnedFeedback?.active_rules ?? []);
   return `아래 Trace context, 계정 지침, 선택한 국가·페르소나 컨텍스트만 근거로 서로 다른 게시물 후보 4개를 만드세요.
 posting_slot=morning 후보 2개, posting_slot=evening 후보 2개를 정확히 만드세요.
 오전 슬롯 기준 시각은 ${morningTime}, 저녁 슬롯 기준 시각은 ${eveningTime}${account?.timezone ? ` (${account.timezone})` : ""}입니다.
 사실 문서 밖의 수치나 기능은 주장하지 마세요. appium_prompt와 image_inputs를 비우지 마세요.
-trace_items는 실제 하루처럼 읽히는 일정 5~7개를 권장합니다.
+trace_items는 실제 하루처럼 읽히는 'HH:MM 제목' 일정 5~7개를 정확히 만드세요.
 
 [Trace 기본 context]
 ${contextDocuments}
@@ -952,6 +1083,27 @@ ${sharedInstruction || "추가 지침 없음"}
 
 [같은 계정·페르소나의 반복 피드백]
 ${learnedRules}`;
+}
+
+function feedbackRulePrompt(rules) {
+  if (!Array.isArray(rules) || rules.length === 0) {
+    return "- 아직 동일 단계에서 3회 이상 반복된 1~2점 반려 규칙 없음";
+  }
+  const labels = {
+    caption: "캡션",
+    concept: "컨셉",
+    design: "디자인",
+    persona: "페르소나",
+    policy: "브랜드·정책",
+  };
+  return ["caption", "concept", "design", "persona", "policy"]
+    .map((dimension) => {
+      const selected = rules.filter((rule) => rule.dimension === dimension);
+      if (selected.length === 0) return null;
+      return `[${labels[dimension]} 규칙]\n${selected.map((rule) => `- ${rule.instruction}`).join("\n")}`;
+    })
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function contextForCountry(registry, country, profile = null) {
@@ -1037,8 +1189,8 @@ function assertProfileCountry(profile, country) {
   }
 }
 
-function aiCandidates(result) {
-  let response = result?.response ?? result;
+export function aiCandidates(result) {
+  let response = result?.response ?? result?.choices?.[0]?.message?.content ?? result;
   if (typeof response === "string") response = JSON.parse(response);
   if (!response || typeof response !== "object" || !Array.isArray(response.candidates)) {
     throw new Error("candidates 배열이 없습니다.");
@@ -1046,7 +1198,7 @@ function aiCandidates(result) {
   return response.candidates;
 }
 
-async function insertCandidates(env, drafts, source, profile = null) {
+async function insertCandidates(env, drafts, source, profile = null, generationProvenance = null) {
   const now = Date.now() / 1000;
   const contextSnapshot = profile ? JSON.stringify(profile) : null;
   const batchId = source === "auto" ? crypto.randomUUID() : null;
@@ -1060,8 +1212,11 @@ async function insertCandidates(env, drafts, source, profile = null) {
         (candidate_id, account_id, source, country, topic, caption, hypothesis,
          refs_json, principles_json, appium_prompt, image_inputs_json, ai_verdict,
          context_profile_id, context_snapshot_json, posting_slot, generation_batch_id,
+         generation_prompt_version, generation_prompt_sha256, generation_model,
+         feedback_rules_json,
          status, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_review', 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               'awaiting_review', 1, ?, ?)`,
       ).bind(
         candidateId,
         accountId(env),
@@ -1079,6 +1234,10 @@ async function insertCandidates(env, drafts, source, profile = null) {
         contextSnapshot,
         draft.posting_slot,
         batchId,
+        generationProvenance?.prompt_version ?? null,
+        generationProvenance?.prompt_sha256 ?? null,
+        generationProvenance?.model ?? null,
+        JSON.stringify(generationProvenance?.feedback_rules ?? []),
         now + index / 1000,
         now + index / 1000,
       ),
@@ -1102,6 +1261,8 @@ async function updateCandidate(env, candidateId, revision, draft, requestedProfi
          principles_json = ?, appium_prompt = ?, image_inputs_json = ?,
          context_profile_id = ?, context_snapshot_json = ?, posting_slot = ?,
          ai_verdict = NULL, status = 'awaiting_review', review_note = NULL, image_key = NULL,
+         generation_prompt_version = NULL, generation_prompt_sha256 = NULL,
+         generation_model = NULL, feedback_rules_json = '[]',
          image_sha256 = NULL, capture_state = NULL, capture_task_id = NULL,
          capture_error = NULL, capture_requested_at = NULL,
          last_review_rating = NULL, last_review_tags_json = '[]',
@@ -1164,6 +1325,7 @@ async function reviewCandidate(env, candidateId, body) {
   const revision = positiveInteger(body?.expected_revision, null);
   if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
   const feedback = normalizeReviewFeedback(body, accepted);
+  assertReviewTagsForStage("caption", feedback);
   const current = await requireCandidate(env, candidateId);
   if (current.status !== "awaiting_review") {
     throw new WorkspaceHttpError(409, "검수 대기 중인 캡션·주제를 찾을 수 없습니다.");
@@ -1171,13 +1333,13 @@ async function reviewCandidate(env, candidateId, body) {
   const status = accepted ? "caption_approved" : "rejected";
   await transitionCandidate(
     env,
+    current,
     candidateId,
     revision,
     "awaiting_review",
     status,
     feedback,
   );
-  await recordFeedbackEvent(env, current, "caption", accepted, feedback);
   return requireCandidate(env, candidateId);
 }
 
@@ -1189,13 +1351,7 @@ async function generateCandidateImage(env, candidateId) {
   if (candidate.capture_state === "queued") {
     throw new WorkspaceHttpError(409, "이미지 캡처가 이미 Mac worker를 기다리고 있습니다.");
   }
-  const dispatchMode = await hasRegisteredBrokerWorker(env.DB)
-    ? "worker_broker"
-    : "legacy_queue";
-  if (dispatchMode === "legacy_queue" &&
-      (!env.TASK_QUEUE || typeof env.TASK_QUEUE.send !== "function")) {
-    throw new WorkspaceHttpError(503, "Mac 캡처 Queue가 준비되지 않았습니다.");
-  }
+  const dispatchMode = "worker_broker";
   const taskId = crypto.randomUUID();
   const runId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -1208,7 +1364,30 @@ async function generateCandidateImage(env, candidateId) {
   if (referenceIds.length > 16) {
     throw new WorkspaceHttpError(400, "이미지 생성에 사용할 레퍼런스는 16개 이하여야 합니다.");
   }
-  const creativeDirection = [candidate.shooting_order, candidate.context_profile?.guidance]
+  const generatedFeedbackRules = candidate.generation_provenance?.feedback_rules ?? [];
+  const immediateRetryRules = candidate.status === "caption_approved"
+    ? candidate.review_tags
+        .map((tag) => ({ tag, rule: FEEDBACK_RULE_DEFINITIONS[`image:${tag}`] }))
+        .filter(({ rule }) => Boolean(rule))
+        .map(({ tag, rule }) => ({
+          ...rule,
+          stage: "image",
+          tag,
+          evidence: "current_candidate_rejection",
+        }))
+    : [];
+  const captureFeedbackRules = [...new Map(
+    [...generatedFeedbackRules, ...immediateRetryRules].map((rule) => [rule.rule_id, rule]),
+  ).values()];
+  const designFeedback = captureFeedbackRules
+    .filter((rule) => ["design", "policy"].includes(rule.dimension))
+    .map((rule) => rule.instruction)
+    .join("\n");
+  const creativeDirection = [
+    candidate.shooting_order,
+    candidate.context_profile?.guidance,
+    designFeedback ? `[검수에서 학습된 디자인 규칙]\n${designFeedback}` : null,
+  ]
     .filter(Boolean)
     .join("\n\n");
   const backgroundIntent = [
@@ -1236,15 +1415,23 @@ async function generateCandidateImage(env, candidateId) {
       appium_prompt: candidate.shooting_order,
       image_inputs: candidate.image_inputs,
       context_profile: candidate.context_profile,
+      feedback_rules: captureFeedbackRules,
     },
     created_at: now,
     credential_ref: null,
   };
-  await env.DB.prepare(
+  const taskStatement = env.DB.prepare(
     `INSERT INTO hosted_workspace_capture_tasks
       (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
        task_json, state, dispatch_mode, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+     SELECT ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?
+     WHERE EXISTS (
+       SELECT 1 FROM mac_workers WHERE state != 'revoked'
+     ) AND EXISTS (
+       SELECT 1 FROM hosted_workspace_candidates
+       WHERE account_id = ? AND candidate_id = ?
+         AND status = 'caption_approved' AND revision = ?
+     )`,
   )
     .bind(
       taskId,
@@ -1257,48 +1444,27 @@ async function generateCandidateImage(env, candidateId) {
       dispatchMode,
       now,
       now,
-    )
-    .run();
-  const result = await env.DB.prepare(
+      accountId(env),
+      candidateId,
+      candidate.revision,
+    );
+  const candidateStatement = env.DB.prepare(
     `UPDATE hosted_workspace_candidates
      SET capture_state = 'queued', capture_task_id = ?, capture_error = NULL,
          capture_requested_at = ?, revision = revision + 1, updated_at = ?
-     WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved' AND revision = ?`,
+     WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved' AND revision = ?
+       AND EXISTS (SELECT 1 FROM mac_workers WHERE state != 'revoked')`,
   )
-    .bind(taskId, now, Date.now() / 1000, accountId(env), candidateId, candidate.revision)
-    .run();
-  if (result.meta.changes !== 1) {
-    await env.DB.prepare(
-      `UPDATE hosted_workspace_capture_tasks SET state = 'failed', result_json = ?, updated_at = ?
-       WHERE task_id = ? AND state = 'queued'`,
-    )
-      .bind(JSON.stringify({ status: "failed", failure_code: "candidate_revision_conflict" }), now, taskId)
-      .run();
+    .bind(taskId, now, Date.now() / 1000, accountId(env), candidateId, candidate.revision);
+  const [taskCreated, candidateQueued] = await env.DB.batch([taskStatement, candidateStatement]);
+  if (taskCreated.meta.changes !== 1 || candidateQueued.meta.changes !== 1) {
+    if (!(await hasRegisteredBrokerWorker(env.DB))) {
+      throw new WorkspaceHttpError(
+        503,
+        "등록된 Mac worker가 없어 이미지를 만들 수 없습니다. Mac 연결 관리에서 worker를 먼저 등록해 주세요.",
+      );
+    }
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
-  }
-  if (dispatchMode === "worker_broker") return requireCandidate(env, candidateId);
-  try {
-    await env.TASK_QUEUE.send(JSON.stringify(body), { contentType: "text" });
-    await env.DB.prepare(
-      `UPDATE hosted_workspace_capture_tasks SET last_dispatched_at = ?, updated_at = ?
-       WHERE task_id = ? AND state = 'queued'`,
-    )
-      .bind(now, now, taskId)
-      .run();
-  } catch (error) {
-    await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE hosted_workspace_capture_tasks SET state = 'failed', result_json = ?, updated_at = ?
-         WHERE task_id = ? AND state = 'queued'`,
-      ).bind(JSON.stringify({ status: "failed", failure_code: "queue_dispatch_failed" }), now, taskId),
-      env.DB.prepare(
-        `UPDATE hosted_workspace_candidates
-         SET capture_state = 'failed', capture_error = 'queue_dispatch_failed',
-             revision = revision + 1, updated_at = ?
-         WHERE account_id = ? AND candidate_id = ? AND capture_task_id = ? AND capture_state = 'queued'`,
-      ).bind(Date.now() / 1000, accountId(env), candidateId, taskId),
-    ]);
-    throw new WorkspaceHttpError(503, "Mac 캡처 작업을 Queue에 등록하지 못했습니다. 다시 시도해 주세요.");
   }
   return requireCandidate(env, candidateId);
 }
@@ -1308,12 +1474,22 @@ async function reviewCandidateImage(env, candidateId, body) {
   const revision = positiveInteger(body?.expected_revision, null);
   if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
   const feedback = normalizeReviewFeedback(body, accepted);
+  assertReviewTagsForStage("image", feedback);
   const current = await requireCandidate(env, candidateId);
   if (current.status !== "image_awaiting_review") {
     throw new WorkspaceHttpError(409, "검수 대기 중인 이미지를 찾을 수 없습니다.");
   }
   const status = accepted ? "submitted" : "caption_approved";
-  const result = await env.DB.prepare(
+  const feedbackStatement = await feedbackEventStatement(
+    env,
+    current,
+    "image",
+    accepted,
+    feedback,
+    "image_awaiting_review",
+    revision,
+  );
+  const transitionStatement = env.DB.prepare(
     `UPDATE hosted_workspace_candidates
      SET status = ?, review_note = ?, image_key = ?, image_sha256 = ?,
          last_review_rating = ?, last_review_tags_json = ?,
@@ -1331,12 +1507,9 @@ async function reviewCandidateImage(env, candidateId, body) {
       accountId(env),
       candidateId,
       revision,
-    )
-    .run();
-  if (result.meta.changes !== 1) {
-    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
-  }
-  await recordFeedbackEvent(env, current, "image", accepted, feedback);
+    );
+  const [recorded, transitioned] = await env.DB.batch([feedbackStatement, transitionStatement]);
+  await assertReviewBatchCommitted(env, candidateId, recorded, transitioned);
   if (!accepted && current.image_path) await env.ARTIFACTS.delete(current.image_path);
   return requireCandidate(env, candidateId);
 }
@@ -1355,8 +1528,17 @@ async function readCandidateImage(env, candidateId) {
   });
 }
 
-async function transitionCandidate(env, candidateId, revision, from, to, feedback) {
-  const result = await env.DB.prepare(
+async function transitionCandidate(env, current, candidateId, revision, from, to, feedback) {
+  const feedbackStatement = await feedbackEventStatement(
+    env,
+    current,
+    "caption",
+    to === "caption_approved",
+    feedback,
+    from,
+    revision,
+  );
+  const transitionStatement = env.DB.prepare(
     `UPDATE hosted_workspace_candidates
      SET status = ?, review_note = ?, last_review_rating = ?, last_review_tags_json = ?,
          revision = revision + 1, updated_at = ?
@@ -1372,13 +1554,16 @@ async function transitionCandidate(env, candidateId, revision, from, to, feedbac
       candidateId,
       from,
       revision,
-    )
-    .run();
-  if (result.meta.changes !== 1) {
-    const existing = await findCandidate(env, candidateId);
-    if (!existing) throw new WorkspaceHttpError(404, "후보를 찾을 수 없습니다.");
-    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
-  }
+    );
+  const [recorded, transitioned] = await env.DB.batch([feedbackStatement, transitionStatement]);
+  await assertReviewBatchCommitted(env, candidateId, recorded, transitioned);
+}
+
+async function assertReviewBatchCommitted(env, candidateId, recorded, transitioned) {
+  if (recorded.meta.changes === 1 && transitioned.meta.changes === 1) return;
+  const existing = await findCandidate(env, candidateId);
+  if (!existing) throw new WorkspaceHttpError(404, "후보를 찾을 수 없습니다.");
+  throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
 }
 
 export function normalizeReviewFeedback(input, accepted) {
@@ -1407,12 +1592,48 @@ export function normalizeReviewFeedback(input, accepted) {
   return { rating, tags: accepted ? [] : tags, note };
 }
 
-async function recordFeedbackEvent(env, candidate, stage, accepted, feedback) {
-  await env.DB.prepare(
+function assertReviewTagsForStage(stage, feedback) {
+  if (feedback.tags.some((tag) => tag !== "기타" && !FEEDBACK_RULE_DEFINITIONS[`${stage}:${tag}`])) {
+    throw new WorkspaceHttpError(400, `${stage} 검수 단계에서 사용할 수 없는 반려 태그입니다.`);
+  }
+}
+
+async function feedbackEventStatement(
+  env,
+  candidate,
+  stage,
+  accepted,
+  feedback,
+  expectedStatus,
+  expectedRevision,
+) {
+  const candidateSnapshot = JSON.stringify({
+    schema_version: "trace.workspace-feedback-candidate.v1",
+    candidate_id: candidate.candidate_id,
+    candidate_revision: candidate.revision,
+    country: candidate.country,
+    topic: candidate.topic,
+    caption: candidate.caption,
+    hypothesis: candidate.hypothesis,
+    refs_used: candidate.refs_used,
+    principles_applied: candidate.principles_applied,
+    shooting_order: candidate.shooting_order,
+    image_inputs: candidate.image_inputs,
+    image_sha256: candidate.image_sha256,
+    context_profile: candidate.context_profile,
+    posting_slot: candidate.posting_slot,
+  });
+  return env.DB.prepare(
     `INSERT INTO hosted_workspace_feedback_events
       (event_id, account_id, candidate_id, context_profile_id, stage, decision,
-       rating, tags_json, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       rating, tags_json, note, candidate_revision, candidate_snapshot_json,
+       candidate_snapshot_sha256, generation_prompt_version, generation_prompt_sha256,
+       generation_model, feedback_rules_json, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     WHERE EXISTS (
+       SELECT 1 FROM hosted_workspace_candidates
+       WHERE account_id = ? AND candidate_id = ? AND status = ? AND revision = ?
+     )`,
   )
     .bind(
       crypto.randomUUID(),
@@ -1424,19 +1645,29 @@ async function recordFeedbackEvent(env, candidate, stage, accepted, feedback) {
       feedback.rating,
       JSON.stringify(feedback.tags),
       feedback.note || null,
+      candidate.revision,
+      candidateSnapshot,
+      await sha256(candidateSnapshot),
+      candidate.generation_provenance?.prompt_version ?? null,
+      candidate.generation_provenance?.prompt_sha256 ?? null,
+      candidate.generation_provenance?.model ?? null,
+      JSON.stringify(candidate.generation_provenance?.feedback_rules ?? []),
       Date.now() / 1000,
-    )
-    .run();
+      accountId(env),
+      candidate.candidate_id,
+      expectedStatus,
+      expectedRevision,
+    );
 }
 
-async function feedbackSummary(env, requestedProfileId) {
+export async function feedbackSummary(env, requestedProfileId) {
   const profileId = optionalString(requestedProfileId, 100) || null;
   const query = profileId
-    ? `SELECT tags_json, note, rating, stage, created_at
+    ? `SELECT candidate_id, candidate_revision, tags_json, rating, stage, created_at
        FROM hosted_workspace_feedback_events
        WHERE account_id = ? AND context_profile_id = ? AND decision = 'rejected'
        ORDER BY created_at DESC LIMIT 200`
-    : `SELECT tags_json, note, rating, stage, created_at
+    : `SELECT candidate_id, candidate_revision, tags_json, rating, stage, created_at
        FROM hosted_workspace_feedback_events
        WHERE account_id = ? AND decision = 'rejected'
        ORDER BY created_at DESC LIMIT 200`;
@@ -1445,22 +1676,45 @@ async function feedbackSummary(env, requestedProfileId) {
     ? await statement.bind(accountId(env), profileId).all()
     : await statement.bind(accountId(env)).all();
   const counts = new Map();
-  const recentNotes = [];
+  const strongReviewKeys = new Map();
   for (const row of result.results) {
     const tags = JSON.parse(row.tags_json);
     for (const tag of tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    if (row.note && recentNotes.length < 5) recentNotes.push(row.note);
+    // Pre-0011 rows have no verifiable reviewed revision. Keep them in aggregate
+    // tag counts, but never promote them into a generation rule.
+    if (row.rating <= 2 && row.candidate_revision !== null) {
+      for (const tag of tags) {
+        const definitionKey = `${row.stage}:${tag}`;
+        if (!FEEDBACK_RULE_DEFINITIONS[definitionKey]) continue;
+        const reviewKey = `${row.candidate_id}:${row.candidate_revision}`;
+        if (!strongReviewKeys.has(definitionKey)) strongReviewKeys.set(definitionKey, new Set());
+        strongReviewKeys.get(definitionKey).add(reviewKey);
+      }
+    }
   }
   const topTags = [...counts.entries()]
     .map(([tag, count]) => ({ tag, count }))
     .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag));
+  const activeRules = [...strongReviewKeys.entries()]
+    .map(([definitionKey, reviews]) => {
+      const definition = FEEDBACK_RULE_DEFINITIONS[definitionKey];
+      const [stage, tag] = definitionKey.split(":", 2);
+      return {
+        ...definition,
+        stage,
+        tag,
+        evidence_count: reviews.size,
+      };
+    })
+    .filter((rule) => rule.evidence_count >= 3)
+    .sort((left, right) => left.rule_id.localeCompare(right.rule_id));
   return {
     rejected_reviews: result.results.length,
     top_tags: topTags,
-    rule_candidates: topTags
-      .filter(({ count }) => count >= 3)
-      .map(({ tag, count }) => `“${tag}” 반려가 ${count}회 누적됨 — 같은 패턴을 피할 것`),
-    recent_notes: recentNotes,
+    rule_candidates: activeRules.map(
+      (rule) => `${rule.instruction} (${rule.stage} “${rule.tag}” 강한 반려 ${rule.evidence_count}회)`,
+    ),
+    active_rules: activeRules,
   };
 }
 
@@ -1496,6 +1750,14 @@ function candidateFromRow(row) {
     context_profile: row.context_snapshot_json ? JSON.parse(row.context_snapshot_json) : null,
     posting_slot: row.posting_slot ?? "manual",
     generation_batch_id: row.generation_batch_id ?? null,
+    generation_provenance: row.generation_prompt_version
+      ? {
+          prompt_version: row.generation_prompt_version,
+          prompt_sha256: row.generation_prompt_sha256,
+          model: row.generation_model,
+          feedback_rules: JSON.parse(row.feedback_rules_json ?? "[]"),
+        }
+      : null,
     image_path: row.image_key,
     image_sha256: row.image_sha256,
     capture_state: row.capture_state ?? null,
@@ -1589,13 +1851,17 @@ function principleList(value) {
   if (!Array.isArray(value) || value.length > 32) {
     throw new WorkspaceHttpError(400, "적용 원리는 최대 32개까지 입력할 수 있습니다.");
   }
-  return value.map((item) => {
+  const principles = value.map((item) => {
     const number = Number(item);
     if (!Number.isInteger(number) || number < 1) {
       throw new WorkspaceHttpError(400, "적용 원리는 1 이상의 정수여야 합니다.");
     }
     return number;
   });
+  if (new Set(principles).size !== principles.length) {
+    throw new WorkspaceHttpError(400, "적용 원리는 중복될 수 없습니다.");
+  }
+  return principles;
 }
 
 function booleanField(value, field) {

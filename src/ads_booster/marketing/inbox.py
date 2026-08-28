@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, Final, Protocol, cast, override
@@ -93,6 +94,25 @@ class InboxStateError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class InboxQuiescence:
+    received_tasks: int
+    running_tasks: int
+    pending_callbacks: int
+    pending_approvals: int
+
+    @property
+    def ready(self) -> bool:
+        return not any(
+            (
+                self.received_tasks,
+                self.running_tasks,
+                self.pending_callbacks,
+                self.pending_approvals,
+            )
+        )
+
+
 class MarketingInbox:
     path: Path
 
@@ -164,6 +184,22 @@ class MarketingInbox:
                 (now,),
             )
         return result.rowcount
+
+    def quiescence(self) -> InboxQuiescence:
+        with self._connect() as connection:
+            row = _fetchone(
+                connection,
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM marketing_inbox WHERE state = 'received'),
+                    (SELECT COUNT(*) FROM marketing_inbox WHERE state = 'running'),
+                    (SELECT COUNT(*) FROM marketing_outbox WHERE delivered_at IS NULL),
+                    (SELECT COUNT(*) FROM marketing_approval_outbox WHERE delivered_at IS NULL)
+                """,
+            )
+        if row is None:
+            raise InboxStateError("worker inbox quiescence query returned no row")
+        return InboxQuiescence(*(int(value or 0) for value in row))
 
     def complete(self, task: MarketingTask, result: TaskResult) -> TaskCallback:
         completed_at = datetime.now(UTC)

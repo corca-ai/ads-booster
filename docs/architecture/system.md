@@ -9,12 +9,17 @@ This document describes the deployed Cloudflare workspace and installed Mac work
 behavior is established with a fresh-installed `trace-marketing` command plus the deployed
 `workspace.borca.ai` surface; worktree execution is implementation evidence only.
 
+Deployment note (2026-08-27): the feedback provenance/learning, generated-batch validator,
+immediate image-retry guidance, and zero-worker fail-fast described in Hosted candidate flow are
+candidate implementation only. They are not deployed behavior until migration, Worker deployment,
+hosted readback, and the first Mac canary complete.
+
 ## Process topology
 
 ```mermaid
 flowchart LR
     UI[Public workspace UI] --> API[Cloudflare Worker API]
-    API --> D1[D1 accounts contexts candidates runs workers leases]
+    API --> D1[D1 accounts contexts candidates feedback rules workers leases]
     API --> WAI[Workers AI candidate generation]
     API --> WF[Cloudflare Workflow approvals]
     WF --> LEASE[D1 hosted capture lease]
@@ -39,6 +44,33 @@ in-package AgentSession, OAuth store, Responses client, memory, or tool loop. Ev
 `codex exec --ephemeral --sandbox read-only` turn with a strict output schema. Codex authentication
 is resolved normally for the same macOS user that owns the per-user LaunchAgent.
 
+The installed product is a versioned release tree, not a mutable checkout or in-place uv tool.
+Pull requests that change the installed product prove the focused updater suite, release envelope,
+and fresh managed offline bootstrap on a read-only arm64 runner. The exact checked bytes cross into a separate
+write-scoped publication job. A merge to `main` automatically creates the annotated exact-SHA tag,
+attests and verifies the draft artifacts before publishing the stable GitHub Release, then proves
+workflow/repository/ref/commit-bound artifact provenance and
+unauthenticated public readback; a retry can resume proof of the already-published exact managed
+release. A shared GitHub state resolver uses the authenticated draft-inclusive release listing and
+durable version/SHA markers to repair only workflow-owned drafts, while treating only a tag-ref
+HTTP 404 as absence, so full-run and failed-job retries converge on the same `new` or `resume` state.
+Cloudflare migration/deploy remains a separate
+merge-triggered workflow and both health endpoints must report the deployed merge SHA. Neither
+workflow connects to a Mac.
+`com.corca.trace-marketing-worker` always enters through the atomic `current` symlink. A separate
+`com.corca.trace-marketing-updater` LaunchAgent pulls only a stable GitHub Release, verifies its tag,
+commit, asset digests, and all three artifact attestations against the trusted release workflow,
+installs it offline into staging, and requests a local
+drain. The worker then stops remote claims while finishing durable local work and callbacks. Only an
+empty inbox/outbox plus no ambiguous Codex execution marker permits the updater to unload the
+worker, switch `current`, and require launchd, doctor, and exact-version accepted-heartbeat proof.
+Failure restores and re-verifies the previous last-known-good release.
+
+The protected workspace manager creates a short-lived one-time enrollment and renders a single
+copyable block that verifies the latest release bootstrap before executing it, then enrolls and
+starts the Mac. Macs become revocable dynamic identities at
+runtime; no worker ID, Simulator UDID, administrator token, or host address is committed to CI.
+
 ## Installed commands
 
 Commands are declared in `pyproject.toml`.
@@ -58,12 +90,24 @@ temporarily for source compatibility tests, but no production Mac or installer p
 1. The browser loads the login-free hosted workspace and selects a logical account. Account scope
    separates contexts, profiles, candidates, runs, feedback, and learned memory; it is not visitor
    authentication.
-2. Cloudflare Workers AI generates context-grounded candidates using `WORKSPACE_AI_MODEL`.
+2. Cloudflare Workers AI generates context-grounded candidates using `WORKSPACE_AI_MODEL`. D1
+   stores prompt version/digest, model, selected profile snapshot, and active controlled feedback
+   rules. A deterministic batch validator rejects duplicate topics/captions/schedules, invalid
+   references or principles, and non-`HH:MM 제목` Trace items before persistence.
 3. A teammate may edit or delete submitted candidates. Candidate approval creates a version-bound
-   capture task.
+   capture task only if at least one non-revoked broker worker is registered; otherwise it returns
+   `503` without queueing. Worker eligibility, task insertion, and candidate revision advance share
+   one conditional D1 batch. Manual edits clear generation provenance and invalidate earlier approval.
 4. D1 assigns one lease to an active worker whose heartbeat doctor is ready. Offline, degraded,
-   draining, and revoked workers receive no new task.
-5. The Workflow waits for the callback and then for human image approval. Approval reaches
+   draining, and revoked workers receive no new task. Learned design/policy rules snapshotted on the
+   candidate are appended to the Mac creative direction. A rejected image's controlled stage-valid
+   tags also guide the same candidate's immediate retry; its free-form note does not.
+5. Caption and image review events retain the reviewed candidate revision, bounded snapshot/digest,
+   generation provenance, stage, rating, tags, and note. A server-owned instruction activates only
+   after rating 1–2 evidence for the same stage/tag from three distinct revisions. Notes are never
+   injected into model context automatically. Review evidence and its candidate transition commit
+   in one D1 batch, preventing a decision without provenance or provenance without a decision.
+6. The Workflow waits for the callback and then for human image approval. Approval reaches
    `submitted`; Threads publication remains outside the runtime.
 
 ## Mac planning and capture flow
@@ -98,9 +142,10 @@ There are three separate identities:
 - a revocable per-machine worker credential stored in a mode-`0600` file;
 - the current macOS user's Codex login, managed by the official CLI in its normal cache or Keychain.
 
-The LaunchAgent plist contains no token. It stores the resolved `trace-marketing` and `codex` paths,
-`TRACE_AGENT_HOME`, `PATH`, and only the documented allowlisted non-secret worker overrides, and runs in `gui/<uid>`. The worker never copies Codex auth into its
-state, D1, task payloads, logs, or plist.
+The worker and updater LaunchAgent plists contain no token. They store managed executable/state
+paths, the resolved `codex` path, `TRACE_AGENT_HOME`, `PATH`, and only documented allowlisted
+non-secret worker overrides, and run in `gui/<uid>`. The worker never copies Codex auth into its
+state, D1, task payloads, logs, updater state, or plist.
 
 ## Local state
 
@@ -388,6 +433,18 @@ task.
 Prompts, raw Codex responses, Codex threads, auth tokens, and auth-cache files are not stored below
 `TRACE_AGENT_HOME` by this runtime.
 
+The separate managed product root defaults to `~/.local/share/trace-marketing`:
+
+| Path | Owner | Contents |
+| --- | --- | --- |
+| `releases/<version>/` | updater | Complete immutable virtual environment and verified release receipt |
+| `staging/<attempt>/` | updater | Candidate bundle extraction and offline install only |
+| `current` | updater | Atomically replaced symlink to one release |
+| `update-state.json` | updater | Non-secret current, candidate and last-known-good status |
+
+Enrollment, inbox/outbox, `codex-runs`, generated artifacts and official Codex login never move into
+the managed product root.
+
 ## External boundaries
 
 | Dependency | Boundary |
@@ -406,8 +463,12 @@ Prompts, raw Codex responses, Codex threads, auth tokens, and auth-cache files a
 - An unhealthy worker cannot claim a new task; a stale or revoked worker cannot complete a lost lease.
 - Model output cannot invoke Appium until it passes the deterministic `WallpaperPlan` checks.
 - Generated images require native provenance and human review.
+- Automatic feedback learning accepts only server-owned instructions backed by stage-specific,
+  distinct-revision evidence; it never injects free-form notes or silently mutates a profile.
 - A D1 execution barrier prevents lease expiry from reassigning work after Appium begins; a second
   D1 callback reservation binds result content and linearizes callback application against explicit
   revocation/replacement.
 - Unknown external side effects are not retried automatically.
+- Mutable, draft, prerelease, digest-incomplete, or commit-mismatched releases cannot enter staging.
+- Last-known-good changes only after the exact candidate version is accepted in a new heartbeat.
 - No runtime path publishes to Threads or another marketing channel.

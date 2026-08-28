@@ -52,7 +52,7 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 | `config/` | Conversion of environment variables into typed runtime settings | Secret persistence or product state |
 | `connectors/` | Versioned domain manifests, semantic tool surfaces, domain context validation, artifact acceptance, review policy, and domain composition | Agent run lifecycle, generic session persistence, or UI routing |
 | `contracts/` | Versioned capture, composition, generation, run, `WallpaperPlan` time-zone/event contracts, and model-tool descriptors | File, network, or database access |
-| `marketing/` | Cloudflare task/callback contracts, D1 broker client and remote execution barrier, machine credential file, durable local inbox/outbox, doctor, LaunchAgent, hosted capture routing | Codex auth, prompt history, Appium implementation, plaintext admin or Queue secrets |
+| `marketing/` | Cloudflare task/callback contracts, D1 broker and execution barrier, machine credential, durable inbox/outbox, doctor, worker/updater LaunchAgents, release metadata and workflow-bound artifact verification, staging, drain, atomic switch and rollback | Codex auth, prompt history, Appium implementation, plaintext admin, worker or Queue secrets in updater state |
 | `planning/` | Typed execution recipe carrying the validated `WallpaperPlan`; validates timed source items against plan-zone local `HH:MM` and clean titles | Creative card, event, layout, style, background, or ambient time-zone decisions |
 | `providers/` | Provider request/response mapping, model catalog, and image-generation adapters | UI state or workspace persistence |
 | `search/` | Text/image search contracts, provider selection, and external adapters | Model-visible dispatch or workspace state |
@@ -63,6 +63,12 @@ not depend on `agent/`, `auth/`, the custom Responses provider, Textual, FastAPI
 | `tunnel/` | cloudflared process and emitted public-URL boundary | The full local-service lifecycle |
 | `web/` | FastAPI auth/member-invite/context/asset/campaign/candidate/chat/generation/queue/session routes, TUI-compatible chat command adapter, HTTP error mapping, and static shell | Durable transitions or provider details |
 | `workspace/` | Workspace/member identity, code hashes/versions, shared context, asset metadata, and private sessions | Automation queue or model calls |
+| `connectors/trace/v1/codex_runtime.py` | Trace prompt construction, reference validation/attachment, structured-plan validation handoff, request-scoped plan/result state, unknown-side-effect barrier, production runner composition | Codex authentication, hosted account state, direct Appium commands |
+| `providers/codex_cli.py` | Official `codex exec` argv, stdin, schema/output temporary files, timeout/error sanitization, executable resolution | Trace domain rules, auth copying, conversation persistence, model-tool dispatch |
+| `service/worker.py` | Production runner selection and legacy automation worker composition | Provider implementation details |
+| `cli/marketing.py` | Typer parsing, operator output and worker/updater dependency composition | Durable transition policy or secret persistence |
+| `scripts/`, `.github/workflows/release-mac-worker.yml` | Offline arm64 envelope build, release bootstrap, attestation, stable publication and public readback gates | Runtime credentials, CI-to-SSH deployment or external tool upgrades |
+| `cloudflare/` | Public assets/API, account/context/candidate state, Workers AI candidates, Workflow waits, D1 worker registry/leases/execution barriers, callbacks and R2 | Mac Codex credentials or Appium execution |
 
 Legacy packages such as `agent/`, `auth/`, `web/`, `automation/`, `tools/`, and the custom Responses
 provider remain in source for non-production compatibility paths. They are not installed as
@@ -83,7 +89,7 @@ provider remain in source for non-production compatibility paths. They are not i
 | `connectors/trace/v1/composition.py` | Trace v1 connector admission, Agent run composition, per-bundle background fetcher, wallpaper capture adapter, and native generation runner |
 | `service/runtime.py` | listener, FastAPI app, production generation runner, automation worker, tunnel shutdown |
 | `service/worker.py` | Select `build_codex_trace_runner` for production image work |
-| `cli/marketing.py` | Enrollment, readiness, worker broker, foreground and LaunchAgent lifecycle |
+| `cli/marketing.py` | Enrollment, readiness, worker broker, worker/updater lifecycle and one-time bootstrap transaction |
 | `cloudflare/src/index.js` | Hosted API/assets, Workflow, D1, Queue compatibility and R2 |
 | `connectors/trace/v1/codex_runtime.py` | Codex CLI planner, durable request state, image search and native runner |
 | `cloudflare/src/hosted-workspace.js` | Account/context/profile/candidate logic and Workers AI candidate generation |
@@ -122,7 +128,8 @@ singletons or import side effects.
 - Trace-specific prompts, validation composition and task state belong in `connectors/trace/v1/`.
 - Appium/XCUITest operations and export verification belong in `capture/`.
 - Cross-boundary Pydantic models belong in `contracts/`.
-- Worker identity, credentials, leases, inbox/outbox and launchd belong in `marketing/`.
+- Worker identity, credentials, leases, inbox/outbox, launchd and installed-release transitions belong
+  in `marketing/`.
 - Typer callbacks only parse input, compose dependencies and render results.
 - Hosted business state belongs in `cloudflare/`, not in the Mac filesystem.
 
@@ -289,7 +296,6 @@ Update this document in the same change when:
 
 Also update `docs/architecture/system.md` when process composition, runtime flow, persisted state, or
 an external-system boundary changes.
-
 `pyproject.toml` no longer exports `trace-agent` or `trace-ads`. Do not add compatibility aliases that
 silently route back to the custom model harness. A future source cleanup may delete legacy packages
 after their remaining non-production consumers are migrated, but production replacement is already

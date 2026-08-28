@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -319,6 +328,10 @@ const makeLiveDocument = () => {
   workerEnrollmentCodeCopy.textContent = "코드 복사";
   const workerEnrollmentCommandCopy = new FakeElement("worker-enrollment-command-copy");
   workerEnrollmentCommandCopy.textContent = "명령 복사";
+  const workerTitle = new FakeElement("worker-title");
+  const workerCopy = new FakeElement("worker-copy");
+  const workerSignal = new FakeElement("worker-signal");
+  const workerBadges = new FakeElement("worker-badges");
   const candidateForm = new FakeElement("candidate-form");
   candidateForm.formValues = new Map([
     ["topic", "  시험기간 일정 관리 — 잠금화면 데모  "],
@@ -427,6 +440,10 @@ const makeLiveDocument = () => {
     ["[data-worker-enrollment-expiry]", workerEnrollmentExpiry],
     ["[data-worker-enrollment-code-copy]", workerEnrollmentCodeCopy],
     ["[data-worker-enrollment-command-copy]", workerEnrollmentCommandCopy],
+    ["[data-worker-title]", workerTitle],
+    ["[data-worker-copy]", workerCopy],
+    ["[data-worker-signal]", workerSignal],
+    ["[data-worker-badges]", workerBadges],
   ]);
   const captionStageTab = new FakeElement("stage-tab-caption");
   captionStageTab.dataset.stageTab = "caption";
@@ -504,6 +521,10 @@ const makeLiveDocument = () => {
     workerEnrollmentExpiry,
     workerEnrollmentCodeCopy,
     workerEnrollmentCommandCopy,
+    workerTitle,
+    workerCopy,
+    workerSignal,
+    workerBadges,
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
@@ -583,6 +604,10 @@ const makeLiveDocument = () => {
     workerEnrollmentExpiry,
     workerEnrollmentCodeCopy,
     workerEnrollmentCommandCopy,
+    workerTitle,
+    workerCopy,
+    workerSignal,
+    workerBadges,
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
@@ -1544,7 +1569,65 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
     "trace-marketing worker enroll --url https://workspace.borca.ai --code 'trace-enroll_once'",
   ));
-  assert.ok(fixture.workerEnrollmentCommand.textContent.includes("trace-marketing worker install-service"));
+  // The enrollment command is a signed bootstrap block now: it resolves the latest release,
+  // verifies every asset's attestation, and only then runs anything.
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    'repository="corca-ai/ads-booster"',
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    'gh release view --repo "$repository"',
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes("gh attestation verify"));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes("--deny-self-hosted-runners"));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "trace-marketing worker finish-bootstrap",
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    "trace-marketing worker updater-status",
+  ));
+  assert.match(
+    fixture.workerEnrollmentCommand.textContent,
+    /^bash -euo pipefail <<'TRACE_MAC_BOOTSTRAP'/u,
+  );
+  assert.match(fixture.workerEnrollmentCommand.textContent, /\nTRACE_MAC_BOOTSTRAP$/u);
+  assert.doesNotMatch(fixture.workerEnrollmentCommand.textContent, /worker install-service/u);
+
+  // And it stops before touching the machine when release resolution fails: a fake `gh` that
+  // answers everything with a version string leaves no manifest behind, so the block must
+  // abort rather than run trace-marketing against nothing.
+  const fakeRoot = mkdtempSync(join(tmpdir(), "trace-enrollment-fail-fast-"));
+  const fakeBin = join(fakeRoot, "bin");
+  const traceLog = join(fakeRoot, "trace.log");
+  try {
+    mkdirSync(fakeBin);
+    const commands = {
+      gh: "#!/bin/sh\nprintf 'v0.3.0\\n'\n",
+      curl: "#!/bin/sh\nexit 42\n",
+      "trace-marketing": "#!/bin/sh\nprintf 'trace-marketing %s\\n' \"$*\" >> \"$TRACE_TEST_LOG\"\n",
+    };
+    for (const [name, source] of Object.entries(commands)) {
+      const target = join(fakeBin, name);
+      writeFileSync(target, source);
+      chmodSync(target, 0o755);
+    }
+    const failedInstall = spawnSync(
+      "/bin/bash",
+      ["-c", fixture.workerEnrollmentCommand.textContent],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: fakeRoot,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          TRACE_TEST_LOG: traceLog,
+        },
+      },
+    );
+    assert.notEqual(failedInstall.status, 0);
+    assert.throws(() => readFileSync(traceLog, "utf8"), /ENOENT/u);
+  } finally {
+    rmSync(fakeRoot, { recursive: true, force: true });
+  }
   await fixture.workerEnrollmentCommandCopy.click();
   assert.equal(fixture.clipboard.at(-1), fixture.workerEnrollmentCommand.textContent);
   assert.equal(fixture.workerEnrollmentCommandCopy.textContent, "명령 복사됨");
@@ -1580,6 +1663,42 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
 };
 
 let passed = 0;
+
+const testUnregisteredMacDisablesHostedImageCapture = async () => {
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") {
+      return response(200, {
+        member_id: "public",
+        workspace_id: "cloudflare:trace_demo_kr",
+        account_id: "trace_demo_kr",
+        display_name: "Public reviewer",
+      });
+    }
+    if (path === "/api/accounts") return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path === "/api/candidates") return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, {
+        status: "not_configured",
+        counts: { online: 0, busy: 0, draining: 0, registered: 0 },
+        workers: [],
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.workerTitle.textContent, "Mac worker 미등록");
+  assert.equal(
+    fixture.workerCopy.textContent,
+    "Mac worker를 등록하기 전에는 이미지 캡처를 시작할 수 없습니다.",
+  );
+  assert.doesNotMatch(fixture.workerCopy.textContent, /Queue/u);
+};
 
 const testMarkupUsesTheAgreedTerminology = async () => {
   const markup = await readFile(join(staticRoot, "workspace.html"), "utf8");
@@ -1795,6 +1914,8 @@ passed += 1;
 await testImageApprovalPostsTheDecision();
 passed += 1;
 await testMacConnectionsAreManagedWithAnEphemeralControlToken();
+passed += 1;
+await testUnregisteredMacDisablesHostedImageCapture();
 passed += 1;
 await testMarkupUsesTheAgreedTerminology();
 passed += 1;
