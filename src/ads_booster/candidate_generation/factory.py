@@ -34,8 +34,10 @@ from ads_booster.default_assets import (
     default_iphone_ui_path,
     default_trace_components_path,
 )
+from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.native_capture import SimctlDeviceResolver
 from ads_booster.providers.codex import CodexResponsesClient
+from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.transport.http import create_http_client
 
 COMPONENT_FIXTURE_ENVIRONMENT: Final = "TRACE_AGENT_TRACE_COMPONENTS"
@@ -118,9 +120,10 @@ def build_candidate_image_runner(
 ) -> CandidateImageRunner:
     """Compose the Web candidate image stage over the native Trace connector.
 
-    The local composition is composed alongside it and used only when no capture device
-    resolves. Both write the same judged background; they differ in what draws the Trace
-    layer on top of it, and the candidate records which one ran.
+    The local composition is composed alongside it and used whenever this host cannot run
+    the native capture — no Simulator resolves, or no Codex CLI is installed to drive one.
+    Both write the same judged background; they differ in what draws the Trace layer on
+    top of it, and the candidate records which one ran.
     """
     return CandidateImageRunner(
         store=store,
@@ -170,6 +173,9 @@ def resolve_asset(workspace: Path, environment: str, packaged: Path) -> Path:
     return path if path.is_absolute() else workspace / path
 
 
+_NATIVE_RUNNER_UNAVAILABLE: Final = "native_runner_unavailable"
+
+
 @dataclass(frozen=True, slots=True)
 class ProductionCandidateTraceRunner:
     home: Path
@@ -177,4 +183,11 @@ class ProductionCandidateTraceRunner:
 
     def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
         with create_http_client(read_timeout=self.settings.candidate_timeout_seconds) as http:
-            return build_judged_codex_trace_runner(self.home, http, self.settings).run(bundle)
+            try:
+                runner = build_judged_codex_trace_runner(self.home, http, self.settings)
+            except CodexCliError as error:
+                # A host without the Codex CLI cannot run the native capture at all. That is
+                # the same kind of fact as having no device, so it is reported in the same
+                # vocabulary and the image stage can fall back instead of returning a 500.
+                raise MarketingExecutionError(_NATIVE_RUNNER_UNAVAILABLE) from error
+            return runner.run(bundle)

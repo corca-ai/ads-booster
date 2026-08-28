@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pytest
 
@@ -304,6 +304,68 @@ def test_no_capture_device_routes_to_the_local_composition_and_says_so(tmp_path:
     assert reviewed.status is CandidateStatus.IMAGE_AWAITING_REVIEW
     assert reviewed.background_provenance is not None
     assert reviewed.background_provenance.pipeline is CandidateImagePipeline.LOCAL_FALLBACK
+
+
+_RUNNER_UNAVAILABLE: Final = "native_runner_unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableRunner:
+    """A native runner this host cannot build, reported in the environment's vocabulary."""
+
+    def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
+        del bundle
+        raise MarketingExecutionError(_RUNNER_UNAVAILABLE)
+
+
+def test_an_unavailable_native_runner_routes_to_the_local_composition_and_says_so(
+    tmp_path: Path,
+) -> None:
+    # Given a host whose Simulator resolves but which has no runner to drive it
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+    fallback = RecordingFallback(store)
+    runner = CandidateImageRunner(
+        store=store,
+        runner=UnavailableRunner(),
+        device_resolver=FixedDeviceResolver(),
+        home=tmp_path,
+        clock=lambda: datetime(2026, 8, 26, 9, 30, tzinfo=UTC),
+        fallback=fallback,
+    )
+
+    # When the image stage runs
+    reviewed = runner.generate(workspace_id, candidate.candidate_id)
+
+    # Then a missing runner reads like a missing device rather than a crash, and the record
+    # still says which path composed the image
+    assert fallback.calls == [candidate.candidate_id]
+    assert reviewed.status is CandidateStatus.IMAGE_AWAITING_REVIEW
+    assert reviewed.background_provenance is not None
+    assert reviewed.background_provenance.pipeline is CandidateImagePipeline.LOCAL_FALLBACK
+
+
+def test_an_unavailable_native_runner_without_a_fallback_still_fails_loudly(
+    tmp_path: Path,
+) -> None:
+    # Given the same host with no local composition behind it
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+    runner = CandidateImageRunner(
+        store=store,
+        runner=UnavailableRunner(),
+        device_resolver=FixedDeviceResolver(),
+        home=tmp_path,
+        clock=lambda: datetime(2026, 8, 26, 9, 30, tzinfo=UTC),
+    )
+
+    # When / Then the environment failure is named and the candidate is left where it was
+    with pytest.raises(CandidateImageStageError) as failure:
+        _ = runner.generate(workspace_id, candidate.candidate_id)
+    assert "실제 Trace 캡처 환경을 준비하지 못했습니다" in failure.value.message
+    assert store.get_candidate(workspace_id, candidate.candidate_id) == candidate
 
 
 def test_the_native_path_records_the_background_the_fetcher_wrote(tmp_path: Path) -> None:

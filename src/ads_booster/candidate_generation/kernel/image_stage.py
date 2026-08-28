@@ -4,8 +4,9 @@ Triggering composition turns a stored candidate into the connector's `MarketingC
 and runs it; reviewing the result carries a human decision back to the durable Agent run
 that produced the image. Both name kernel and connector types, so both live here.
 
-The local composition this dispatches to when no capture device resolves is deliberately
-outside: it shares the `CandidateImageRunnerPort` contract and nothing else.
+The local composition this dispatches to when the host cannot capture — no device, or no
+runner to drive one — is deliberately outside: it shares the `CandidateImageRunnerPort`
+contract and nothing else.
 """
 
 from __future__ import annotations
@@ -142,9 +143,10 @@ def build_image_review(runs: AgentRunStore, at: float) -> AgentRunImageReview:
 
 @dataclass(frozen=True, slots=True)
 class CandidateImageRunner:
-    """Runs the native Trace capture, or the local composition when there is no device.
+    """Runs the native Trace capture, or the local composition when the host cannot.
 
-    Which one ran is decided by whether a capture device resolves, and it is recorded on
+    Which one ran is decided by whether this host can capture at all — a device has to
+    resolve and a runner has to exist for it — and it is recorded on
     the candidate rather than inferred: the native path renders the candidate's own
     schedule and clock through Appium, the fallback merges a packaged component fixture and
     cannot. A reviewer looking at an image has to be able to tell those apart.
@@ -157,6 +159,25 @@ class CandidateImageRunner:
     clock: Callable[[], datetime]
     fallback: CandidateImageRunnerPort | None = None
 
+    def _compose_locally(
+        self,
+        workspace_id: WorkspaceId,
+        candidate_id: CandidateId,
+        error: MarketingExecutionError,
+    ) -> CandidateRecord:
+        """Take the fallback when this host cannot run the native capture.
+
+        The native path needs two things of the host — a device to drive and a runner to
+        drive it with — and neither is a fact about the candidate. Treating only the missing
+        device as a fallback condition meant a Mac without the Codex CLI returned a 500
+        instead of an image. What the reviewer must not lose is which path ran, and that is
+        recorded on the candidate rather than inferred.
+        """
+        if self.fallback is None:
+            message = f"{_NATIVE_ENVIRONMENT_FAILED} — {error}"
+            raise CandidateImageStageError(message) from error
+        return self.fallback.generate(workspace_id, candidate_id)
+
     def generate(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> CandidateRecord:
         record = self.store.get_candidate(workspace_id, candidate_id)
         if record.status is not CandidateStatus.CAPTION_APPROVED:
@@ -164,10 +185,7 @@ class CandidateImageRunner:
         try:
             device = self.device_resolver.resolve()
         except MarketingExecutionError as error:
-            if self.fallback is None:
-                message = f"{_NATIVE_ENVIRONMENT_FAILED} — {error}"
-                raise CandidateImageStageError(message) from error
-            return self.fallback.generate(workspace_id, candidate_id)
+            return self._compose_locally(workspace_id, candidate_id, error)
         bundle = _candidate_bundle(record, device, self.clock())
         try:
             result = self.runner.run(bundle)
@@ -176,6 +194,8 @@ class CandidateImageRunner:
             # any other reason, is a conflict rather than a crash — and it is named in our
             # vocabulary so the Web layer never has to catch a kernel error.
             raise CandidateRunConflictError from error
+        except MarketingExecutionError as error:
+            return self._compose_locally(workspace_id, candidate_id, error)
         if result.state is not TraceRunState.COMPLETED or result.output_image is None:
             detail = result.failure.message if result.failure is not None else result.state.value
             message = f"{_NATIVE_RUN_FAILED} — {detail}"
