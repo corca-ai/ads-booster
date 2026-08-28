@@ -8,6 +8,7 @@ import {
   contextForCountry,
   DEFAULT_WORKSPACE_AI_MODEL,
   feedbackSummary,
+  generateCandidates,
   generationPrompt,
   handleHostedWorkspace,
   nextDailyGenerationAt,
@@ -1012,20 +1013,28 @@ test("generation prompt routes controlled feedback rules by quality dimension", 
   assert.match(prompt, /\[페르소나 규칙\]\n- 페르소나 규칙/u);
 });
 
-test("generated candidates persist the exact prompt digest, model, and active rule evidence", async () => {
-  const state = generationEnvironment();
-  const response = await handleHostedWorkspace(
-    new Request("https://workspace.example/api/candidates/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_profile_id: "profile-1" }),
-    }),
-    state.env,
-    "기본 원리",
-  );
+// The Workers AI generator is off every route now — the Mac worker writes hosted captions —
+// but it is still here and still covered, because the history it wrote is still on screen and
+// the two records have to keep rendering side by side.
+const retainedProfile = {
+  profile_id: "profile-1",
+  country: "KR",
+  name: "학생의 실제 하루",
+  persona_id: "kr_student",
+  audience: "한국 대학생",
+  situation: "시험 주간",
+  tone: "담백한 한국어",
+  guidance: "실제 하루 장면을 보여준다.",
+  reference_ids: ["kr-study-day"],
+  source: "custom",
+  is_default: true,
+  revision: 1,
+};
 
-  assert.equal(response.status, 201);
-  const generated = await response.json();
+test("the retained Workers AI generator still persists its prompt digest, model, and rule evidence", async () => {
+  const state = generationEnvironment();
+  const generated = await generateCandidates(state.env, "기본 원리", retainedProfile);
+
   assert.equal(generated.length, 4);
   assert.equal(state.aiCalls.length, 1);
   const exactPrompt = state.aiCalls[0].request.messages[1].content;
@@ -1054,17 +1063,8 @@ test("generated candidates persist the exact prompt digest, model, and active ru
 
 test("candidate storage failure does not trigger another Workers AI call", async () => {
   const state = generationEnvironment({ failCandidateInsert: true });
-  const response = await handleHostedWorkspace(
-    new Request("https://workspace.example/api/candidates/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_profile_id: "profile-1" }),
-    }),
-    state.env,
-    "기본 원리",
-  );
 
-  assert.equal(response.status, 500);
+  await assert.rejects(() => generateCandidates(state.env, "기본 원리", retainedProfile));
   assert.equal(state.aiCalls.length, 1);
   assert.equal(state.inserted.size, 0);
 });

@@ -3,8 +3,15 @@ import { hasRegisteredBrokerWorker } from "./mac-workers.js";
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
 export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
 export const WORKSPACE_GENERATION_PROMPT_VERSION = "trace.workspace-generation.v3";
+// Written on every candidate a Mac worker produced, so a reviewer can tell at a glance which
+// generator wrote the caption in front of them while both still exist in the history.
+export const WORKER_GENERATION_PROMPT_VERSION = "trace.worker-generation.v1";
+export const HOSTED_GENERATION_PIPELINE = "hosted_workspace_generation_v1";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
+const DEFAULT_GENERATION_COUNT = 4;
+const MAX_GENERATED_CANDIDATES = 8;
+const MAX_GENERATION_TASKS = 20;
 const MAX_CANDIDATES = 200;
 const MAX_CONTEXT_PROFILES = 100;
 const MAX_REFERENCE_BODIES = 5;
@@ -253,14 +260,26 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
       const personaId = await requirePersonaScope(scopedEnv, requestedPersonaId);
       return json(await insertCandidate(scopedEnv, draft, "manual", profile, personaId), 201);
     }
+    if (request.method === "GET" && url.pathname === "/api/candidates/generation-tasks") {
+      return json(
+        await listGenerationTasks(
+          scopedEnv,
+          await requirePersonaScope(scopedEnv, requestedPersonaId),
+        ),
+      );
+    }
     if (request.method === "POST" && url.pathname === "/api/candidates/generate") {
       await ensureStarterProfiles(scopedEnv, starterProfiles);
       const body = await readOptionalJson(request);
       const profile = await resolveContextProfile(scopedEnv, body?.context_profile_id);
-      const personaId = await requirePersonaScope(scopedEnv, requestedPersonaId);
+      // The whole persona is needed here, not just its id: the identity travels to the Mac
+      // worker, which rebuilds the generation brief from it.
+      const persona = requestedPersonaId
+        ? await requireHostedPersona(scopedEnv, requestedPersonaId)
+        : null;
       return json(
-        await generateCandidates(scopedEnv, contextRegistry, profile, personaId),
-        201,
+        await publishCandidateGeneration(scopedEnv, contextRegistry, profile, persona, body),
+        202,
       );
     }
 
@@ -341,7 +360,10 @@ export async function runHostedWorkspaceSchedules(env, contextRegistry, starterP
         requireHostedAccount(scopedEnv),
         resolveContextProfile(scopedEnv, null),
       ]);
-      await generateCandidates(scopedEnv, contextRegistry, profile);
+      // The daily batch goes to a Mac worker for the same reason the button does: one
+      // generator. With no worker online this throws, the account's retry stays fifteen
+      // minutes out, and nothing half-written reaches the review queue.
+      await publishCandidateGeneration(scopedEnv, contextRegistry, profile, null);
       const next = nextDailyGenerationAt(
         account.timezone,
         account.morning_time,
@@ -1378,7 +1400,230 @@ async function listCandidates(env, personaId = null) {
   return result.results.map(candidateFromRow);
 }
 
-async function generateCandidates(env, contextRegistry, profile, personaId = null) {
+/**
+ * Publish one caption batch for a Mac worker to write, and answer before it has.
+ *
+ * The Workers AI generator below is kept and no longer called from any route. It read none
+ * of the reference corpus, assigned no domain and no caption form, and its captions read as
+ * advertising because of it; the generator the team tunes is the Python one, and the only
+ * way for the hosted surface to produce what the local surface produces is to run that one.
+ * So this publishes the same kind of job the image capture publishes, and the candidates
+ * arrive later on the worker callback.
+ */
+async function publishCandidateGeneration(env, contextRegistry, profile, persona, body = null) {
+  const account = await requireHostedAccount(env);
+  const country = persona?.country ?? account.country;
+  assertConfiguredContextCountry(contextRegistry, country);
+  const personaId = persona?.account_id ?? null;
+  const pending = await env.DB.prepare(
+    `SELECT task_id FROM hosted_workspace_capture_tasks
+     WHERE account_id = ? AND kind = 'generate_candidates' AND state = 'queued'
+       AND callback_id IS NULL AND persona_id IS ?`,
+  )
+    .bind(accountId(env), personaId)
+    .first();
+  if (pending) {
+    throw new WorkspaceHttpError(409, "이미 Mac 워커가 이 후보 묶음을 만들고 있습니다.");
+  }
+  if (!(await hasRegisteredBrokerWorker(env.DB))) {
+    throw new WorkspaceHttpError(
+      503,
+      "Mac 워커가 없어 후보를 만들 수 없습니다. Mac 연결 관리에서 worker를 먼저 등록해 주세요.",
+    );
+  }
+  // Scoped to the persona rather than the country, because two people posting under one
+  // country are two batches; the country-wide request keeps the account's own window.
+  await claimGenerationWindow(env, personaId);
+  const count = generationCount(body?.count);
+  const taskId = crypto.randomUUID();
+  const runId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const task = {
+    schema_version: "1",
+    task_id: taskId,
+    run_id: runId,
+    account_id: accountId(env),
+    kind: "generate_candidates",
+    idempotency_key: `hosted-generation:${accountId(env)}:${taskId}`,
+    payload: {
+      pipeline: HOSTED_GENERATION_PIPELINE,
+      persona_id: personaId,
+      // The whole identity, in the shape the local account record uses, so the worker
+      // rebuilds the generation brief from it rather than from a second reader of its own.
+      persona: persona?.identity ?? null,
+      country,
+      language: persona?.language ?? account.language,
+      count,
+      context_profile_id: profile?.profile_id ?? null,
+      requested_by: "hosted_workspace",
+    },
+    created_at: now,
+    credential_ref: null,
+  };
+  const created = await env.DB.prepare(
+    `INSERT INTO hosted_workspace_capture_tasks
+      (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+       task_json, state, dispatch_mode, kind, persona_id, created_at, updated_at)
+     SELECT ?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'generate_candidates', ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM mac_workers WHERE state != 'revoked')`,
+  )
+    .bind(
+      taskId,
+      runId,
+      accountId(env),
+      task.idempotency_key,
+      JSON.stringify(task),
+      personaId,
+      now,
+      now,
+    )
+    .run();
+  if (created.meta.changes !== 1) {
+    throw new WorkspaceHttpError(
+      503,
+      "Mac 워커가 없어 후보를 만들 수 없습니다. Mac 연결 관리에서 worker를 먼저 등록해 주세요.",
+    );
+  }
+  return {
+    task_id: taskId,
+    persona_id: personaId,
+    state: "queued",
+    count,
+    context_profile_id: profile?.profile_id ?? null,
+    created_at: now,
+  };
+}
+
+/**
+ * Store the candidates a Mac worker wrote, keeping what it recorded about writing them.
+ *
+ * A batch that produced three of four candidates is three candidates worth keeping, so a
+ * partial result is stored rather than refused; `failures` travels back to the browser as
+ * part of the task row so the person who pressed the button is told they got fewer.
+ */
+export async function applyHostedGenerationResult(env, task, output) {
+  const drafts = Array.isArray(output?.candidates) ? output.candidates : [];
+  if (drafts.length === 0) return { created: 0 };
+  const scopedEnv = withHostedAccount(env, task.account_id);
+  // The task id is this batch's id, so a callback retried after the rows were already
+  // written finds them and writes nothing a second time. The capture callback does not
+  // need this because re-putting the same R2 key is the same picture; four more candidates
+  // in the review queue are four more candidates.
+  const already = await scopedEnv.DB.prepare(
+    `SELECT candidate_id FROM hosted_workspace_candidates
+     WHERE account_id = ? AND generation_batch_id = ? LIMIT 1`,
+  )
+    .bind(task.account_id, task.task_id)
+    .first();
+  if (already) return { created: 0, duplicate: true };
+  const profile = task.context_profile_id
+    ? await findContextProfile(scopedEnv, task.context_profile_id, false)
+    : null;
+  // One unusable draft must not cost the batch the three beside it. The generator validated
+  // its own output already; this is the control plane's own contract, and a draft that fails
+  // it is dropped and counted rather than sent back to the worker as a failed batch.
+  const normalized = [];
+  const provenances = [];
+  for (const draft of drafts.slice(0, MAX_GENERATED_CANDIDATES)) {
+    try {
+      const candidate = normalizeCandidateDraft(draft);
+      provenances.push(normalizeWorkerProvenance(draft?.provenance));
+      normalized.push(candidate);
+    } catch (error) {
+      console.error("hosted generation draft rejected", {
+        task_id: task.task_id,
+        message: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+  }
+  const rejected = drafts.length - normalized.length;
+  if (normalized.length === 0) return { created: 0, rejected };
+  const created = await insertCandidates(
+    scopedEnv,
+    normalized,
+    "auto",
+    profile,
+    task.persona_id ?? null,
+    {
+      prompt_version: WORKER_GENERATION_PROMPT_VERSION,
+      prompt_sha256: null,
+      model: provenances.find((item) => item?.model)?.model ?? null,
+      feedback_rules: [],
+    },
+    provenances,
+    task.task_id,
+  );
+  return { created: created.length, rejected };
+}
+
+async function listGenerationTasks(env, personaId = null) {
+  const scope = personaId ? " AND persona_id = ?" : "";
+  const parameters = personaId
+    ? [accountId(env), personaId, MAX_GENERATION_TASKS]
+    : [accountId(env), MAX_GENERATION_TASKS];
+  const result = await env.DB.prepare(
+    `SELECT task_id, persona_id, state, result_json, created_at, updated_at
+     FROM hosted_workspace_capture_tasks
+     WHERE account_id = ? AND kind = 'generate_candidates'${scope}
+     ORDER BY created_at DESC LIMIT ?`,
+  )
+    .bind(...parameters)
+    .all();
+  return { tasks: result.results.map(generationTaskFromRow) };
+}
+
+function generationTaskFromRow(row) {
+  let result = null;
+  try {
+    result = row.result_json ? JSON.parse(row.result_json) : null;
+  } catch {
+    result = null;
+  }
+  const output = result?.output ?? null;
+  return {
+    task_id: row.task_id,
+    persona_id: row.persona_id ?? null,
+    state: row.state,
+    created: Array.isArray(output?.candidates) ? output.candidates.length : 0,
+    failures: Number.isInteger(output?.failures) ? output.failures : 0,
+    failure_code: typeof result?.failure_code === "string" ? result.failure_code : null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/**
+ * Keep only the keys the "생성 근거" panel reads, so a worker cannot grow the stored row.
+ *
+ * The shape is the local `CandidateGenerationProvenance`, which is what the browser file
+ * already renders — that file serves both surfaces, and this is what makes one panel enough.
+ */
+function normalizeWorkerProvenance(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const documents = Array.isArray(value.documents) ? value.documents.slice(0, 64) : [];
+  return {
+    model: optionalString(value.model, 200) || null,
+    instruction_chars: Number.isInteger(value.instruction_chars) ? value.instruction_chars : null,
+    generated_at: Number.isFinite(value.generated_at) ? value.generated_at : null,
+    caption_form: optionalString(value.caption_form, 40) || null,
+    reference_ids: referenceIdList(value.reference_ids ?? []),
+    assigned_domains: stringList(value.assigned_domains ?? [], 16, 40),
+    documents: documents.map((document) => ({
+      relative_path: requiredString(document?.relative_path, "relative_path", 1024),
+      size_bytes: positiveInteger(document?.size_bytes, 0),
+    })),
+  };
+}
+
+function generationCount(value) {
+  const count = positiveInteger(value, DEFAULT_GENERATION_COUNT);
+  if (count < 1 || count > MAX_GENERATED_CANDIDATES) {
+    throw new WorkspaceHttpError(400, `후보 수는 1개에서 ${MAX_GENERATED_CANDIDATES}개 사이여야 합니다.`);
+  }
+  return count;
+}
+
+export async function generateCandidates(env, contextRegistry, profile, personaId = null) {
   if (!env.AI || typeof env.AI.run !== "function") {
     throw new WorkspaceHttpError(503, "Cloudflare Workers AI 연결이 준비되지 않았습니다.");
   }
@@ -1450,19 +1695,24 @@ async function generateCandidates(env, contextRegistry, profile, personaId = nul
   });
 }
 
-async function claimGenerationWindow(env) {
+async function claimGenerationWindow(env, personaId = null) {
   const now = Math.floor(Date.now() / 1000);
   const cooldown = positiveInteger(
     env.WORKSPACE_GENERATION_COOLDOWN_SECONDS,
     DEFAULT_GENERATION_COOLDOWN_SECONDS,
   );
+  // A persona gets its own window. While generation ran inline the country-wide lock never
+  // showed — a batch took minutes and nobody pressed twice inside a minute — but a published
+  // job answers immediately, and one country's second persona would meet a cooldown it had
+  // nothing to do with.
+  const lockId = personaId ? `${accountId(env)}#${personaId}` : accountId(env);
   const result = await env.DB.prepare(
     `INSERT INTO hosted_workspace_generation_locks (account_id, last_started_at)
      VALUES (?, ?)
      ON CONFLICT(account_id) DO UPDATE SET last_started_at = excluded.last_started_at
      WHERE hosted_workspace_generation_locks.last_started_at <= ?`,
   )
-    .bind(accountId(env), now, now - cooldown)
+    .bind(lockId, now, now - cooldown)
     .run();
   if (result.meta.changes !== 1) {
     throw new WorkspaceHttpError(429, `${cooldown}초 후에 다시 생성해 주세요.`);
@@ -1643,10 +1893,17 @@ async function insertCandidates(
   profile = null,
   personaId = null,
   generationProvenance = null,
+  // One record per draft, from a generator that samples different references for each
+  // candidate. The batch-wide `generationProvenance` above cannot express that, and the
+  // sample is exactly what "which references produce candidates worth approving" needs.
+  workerProvenances = null,
+  // The publishing task's id when a Mac worker wrote the batch, so a retried callback can
+  // recognise rows it already wrote. Inline batches keep a fresh id.
+  requestedBatchId = null,
 ) {
   const now = Date.now() / 1000;
   const contextSnapshot = profile ? JSON.stringify(profile) : null;
-  const batchId = source === "auto" ? crypto.randomUUID() : null;
+  const batchId = source === "auto" ? requestedBatchId ?? crypto.randomUUID() : null;
   const inserts = drafts.map((draft, index) => {
     assertProfileCountry(profile, draft.country);
     const candidateId = crypto.randomUUID();
@@ -1658,9 +1915,9 @@ async function insertCandidates(
          refs_json, principles_json, appium_prompt, image_inputs_json, ai_verdict,
          context_profile_id, context_snapshot_json, posting_slot, generation_batch_id,
          generation_prompt_version, generation_prompt_sha256, generation_model,
-         feedback_rules_json, persona_id,
+         feedback_rules_json, persona_id, generation_provenance_json,
          status, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                'awaiting_review', 1, ?, ?)`,
       ).bind(
         candidateId,
@@ -1684,6 +1941,7 @@ async function insertCandidates(
         generationProvenance?.model ?? null,
         JSON.stringify(generationProvenance?.feedback_rules ?? []),
         personaId,
+        workerProvenances?.[index] ? JSON.stringify(workerProvenances[index]) : null,
         now + index / 1000,
         now + index / 1000,
       ),
@@ -1709,6 +1967,7 @@ async function updateCandidate(env, candidateId, revision, draft, requestedProfi
          ai_verdict = NULL, status = 'awaiting_review', review_note = NULL, image_key = NULL,
          generation_prompt_version = NULL, generation_prompt_sha256 = NULL,
          generation_model = NULL, feedback_rules_json = '[]',
+         generation_provenance_json = NULL,
          image_sha256 = NULL, capture_state = NULL, capture_task_id = NULL,
          capture_error = NULL, capture_requested_at = NULL,
          last_review_rating = NULL, last_review_tags_json = '[]',
@@ -2197,14 +2456,7 @@ function candidateFromRow(row) {
     context_profile: row.context_snapshot_json ? JSON.parse(row.context_snapshot_json) : null,
     posting_slot: row.posting_slot ?? "manual",
     generation_batch_id: row.generation_batch_id ?? null,
-    generation_provenance: row.generation_prompt_version
-      ? {
-          prompt_version: row.generation_prompt_version,
-          prompt_sha256: row.generation_prompt_sha256,
-          model: row.generation_model,
-          feedback_rules: JSON.parse(row.feedback_rules_json ?? "[]"),
-        }
-      : null,
+    generation_provenance: generationProvenanceFromRow(row),
     image_path: row.image_key,
     image_sha256: row.image_sha256,
     capture_state: row.capture_state ?? null,
@@ -2218,6 +2470,40 @@ function candidateFromRow(row) {
     revision: row.revision,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+/**
+ * What produced this candidate, in whichever of the two records the row actually carries.
+ *
+ * A Mac worker's batch carries the generator's own record — documents read with their byte
+ * sizes, the reference sample, the instruction length, the caption form — and the browser
+ * file already renders exactly that shape for the local surface. A Workers AI batch carries
+ * the prompt version and digest instead, which is all that generator ever knew about itself.
+ */
+function generationProvenanceFromRow(row) {
+  const feedbackRules = JSON.parse(row.feedback_rules_json ?? "[]");
+  if (row.generation_provenance_json) {
+    let worker = null;
+    try {
+      worker = JSON.parse(row.generation_provenance_json);
+    } catch {
+      worker = null;
+    }
+    if (worker && typeof worker === "object" && !Array.isArray(worker)) {
+      return {
+        ...worker,
+        prompt_version: row.generation_prompt_version ?? WORKER_GENERATION_PROMPT_VERSION,
+        feedback_rules: feedbackRules,
+      };
+    }
+  }
+  if (!row.generation_prompt_version) return null;
+  return {
+    prompt_version: row.generation_prompt_version,
+    prompt_sha256: row.generation_prompt_sha256,
+    model: row.generation_model,
+    feedback_rules: feedbackRules,
   };
 }
 
@@ -2235,13 +2521,19 @@ function normalizeImageInputs(input) {
   if (!ALLOWED_BACKGROUND_SUBJECTS.has(backgroundSubject)) {
     throw new WorkspaceHttpError(400, "지원하지 않는 background_subject입니다.");
   }
-  return {
+  const inputs = {
     trace_items: traceItems,
     device_time: deviceTime,
     background_subject: backgroundSubject,
     background_mood: requiredString(input.background_mood, "background_mood", 40),
     language: requiredString(input.language ?? "ko", "language", 2),
   };
+  // The phrase the generating model wrote to find this person's wallpaper. The image stage
+  // runs it as the search query, and dropping it here would silently fall the capture back
+  // to the mechanical query built from subject and mood.
+  const searchQuery = optionalString(input.background_search_query, 200);
+  if (searchQuery) inputs.background_search_query = searchQuery;
+  return inputs;
 }
 
 function appiumPromptFrom(inputs) {

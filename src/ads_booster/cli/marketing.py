@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Annotated, Never
 
 import typer
 
+from ads_booster.candidate_generation import build_worker_draft_engine
+from ads_booster.config.settings import AgentSettings
 from ads_booster.marketing.bridge import MarketingBridge
 from ads_booster.marketing.cloudflare_queue import (
     CloudflareQueueClient,
@@ -22,6 +24,10 @@ from ads_booster.marketing.cloudflare_queue import (
     ControlPlaneCallbackClient,
 )
 from ads_booster.marketing.executors import ArtifactSimulationExecutor
+from ads_booster.marketing.hosted_generation import (
+    HostedGenerationRoutingExecutor,
+    HostedWorkspaceGenerationExecutor,
+)
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.native_capture import HostedWorkspaceCaptureExecutor
 from ads_booster.marketing.service import (
@@ -814,13 +820,22 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
     try:
         with create_http_client(read_timeout=60.0) as http:
             broker = WorkerBrokerClient(http, config, credential, heartbeat)
-            executor = HostedWorkspaceCaptureExecutor(
-                runner=build_production_runner(
-                    agent_home,
-                    http,
-                    before_side_effect=broker.mark_execution_started,
+            # Two jobs arrive on the same lease now: a caption batch, which is a provider
+            # call this Mac's Codex login pays for, and an image capture, which drives a
+            # Simulator. Routing keeps them one worker rather than two enrolments.
+            executor = HostedGenerationRoutingExecutor(
+                generation=HostedWorkspaceGenerationExecutor(
+                    engine=build_worker_draft_engine(AgentSettings.from_environment(agent_home)),
+                    before_execution=broker.mark_execution_started,
                 ),
-                output_root=agent_home / "generated",
+                fallback=HostedWorkspaceCaptureExecutor(
+                    runner=build_production_runner(
+                        agent_home,
+                        http,
+                        before_side_effect=broker.mark_execution_started,
+                    ),
+                    output_root=agent_home / "generated",
+                ),
             )
             bridge = MarketingBridge(
                 queue=broker,

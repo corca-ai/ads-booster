@@ -207,6 +207,25 @@
   });
   const CONFIRM_REVERT_MS = 8000;
   const AUTOGEN_TICK_MS = 1000;
+  // The hosted surface no longer writes captions itself: it publishes the batch and a Mac
+  // worker runs the same generator the local surface runs. So the wait is a poll, not a
+  // pending fetch, and the ceiling is generous because four provider calls take minutes.
+  const HOSTED_GENERATION_POLL_MS = 5000;
+  const HOSTED_GENERATION_TIMEOUT_MS = 15 * 60 * 1000;
+  const GENERATION_FAILURE_MESSAGES = Object.freeze({
+    hosted_generation_ai_login_required:
+      "워커 Mac에 AI 로그인이 없습니다. 그 Mac에서 Codex 로그인을 먼저 끝내 주세요.",
+    hosted_generation_context_missing:
+      "워커 Mac이 생성 context 문서를 읽지 못했습니다. 워커를 업데이트해 주세요.",
+    hosted_generation_country_invalid: "이 페르소나의 국가로는 아직 후보를 만들 수 없습니다.",
+    hosted_generation_persona_invalid: "페르소나 정보를 워커가 읽지 못했습니다.",
+    hosted_generation_failed: "Mac 워커가 후보를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    unsupported_hosted_generation_pipeline:
+      "연결된 Mac 워커가 캡션 생성을 지원하지 않습니다. 워커를 업데이트해 주세요.",
+    // A worker from before this job existed reads the batch as an image capture and says so.
+    unsupported_hosted_capture_pipeline:
+      "연결된 Mac 워커가 캡션 생성을 지원하지 않습니다. 워커를 업데이트해 주세요.",
+  });
   const DEFAULT_LANGUAGE = "en";
   const MAX_TRACE_ITEMS = 8;
 
@@ -233,12 +252,12 @@
     const presentation = macWorkerStatus.counts.draining > 0 && macWorkerStatus.counts.online === 0
       ? ["Mac worker 전환 중", "기존 worker가 draining 상태라 새 작업을 받지 않습니다. 새 Mac을 활성화해 주세요.", "warning"]
       : ({
-      ready: ["Mac 캡처 가능", readyAliases.length
-        ? `현재 ${readyAliases.join(", ")}에서 이미지 작업을 받을 수 있습니다.`
-        : "연결된 Mac이 이미지 작업을 받을 수 있습니다.", "success"],
+      ready: ["Mac 작업 가능", readyAliases.length
+        ? `현재 ${readyAliases.join(", ")}에서 캡션·이미지 작업을 받을 수 있습니다.`
+        : "연결된 Mac이 캡션·이미지 작업을 받을 수 있습니다.", "success"],
       degraded: ["Mac 환경 점검 필요", "worker는 온라인이지만 Appium 준비 항목이 부족해 작업을 받지 않습니다.", "warning"],
       offline: ["Mac worker 오프라인", "작업은 Cloudflare에 대기하며 worker가 다시 켜지면 자동으로 이어집니다.", "danger"],
-      not_configured: ["Mac worker 미등록", "Mac worker를 등록하기 전에는 이미지 캡처를 시작할 수 없습니다.", "warning"],
+      not_configured: ["Mac worker 미등록", "Mac worker를 등록하기 전에는 캡션 생성과 이미지 캡처를 시작할 수 없습니다.", "warning"],
     }[macWorkerStatus.status] ?? ["Mac 상태 확인 불가", "잠시 후 다시 확인합니다.", "warning"]);
     if (title) title.textContent = presentation[0];
     if (copy) copy.textContent = presentation[1];
@@ -1919,6 +1938,7 @@
     setBusy(workspaceLive, true, `${account.display_name} 계정을 여는 중…`);
     try {
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      void adoptHostedGeneration();
       setNotice(`${account.display_name} 계정으로 작업합니다.`);
     } catch (error) { setNotice(error.message); }
     finally { setBusy(workspaceLive, false); }
@@ -2131,6 +2151,9 @@
         loadFeedbackSummary(),
         loadMacWorkerStatus().catch((error) => setNotice(error.message)),
       ]);
+      // Not awaited: a batch already running on a Mac is minutes of waiting, and the screen
+      // is usable throughout. This only reattaches the button to work already in flight.
+      void adoptHostedGeneration();
     } finally {
       setBusy(workspaceLive, false);
     }
@@ -2449,7 +2472,7 @@
   // wall-clock so the label never stalls behind a busy main thread.
   const countUpFor = (run, key) => {
     const paint = () => {
-      run.label = `생성 중… ${run.seconds}초 (보통 1~3분)`;
+      run.label = `${run.prefix} ${run.seconds}초 (보통 1~3분)`;
       // A run for an account nobody is looking at keeps counting but paints nothing.
       if (generationKey() === key) renderAutogenButtons();
     };
@@ -2458,18 +2481,78 @@
       paint();
       run.timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
     };
+    // Held so a phase change repaints at once. Waiting for the next tick left the button
+    // claiming this browser was writing the batch for up to a second after it stopped.
+    run.repaint = paint;
     paint();
     run.timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
+  };
+
+  const delay = (milliseconds) => new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+
+  const generationFailureMessage = (code) =>
+    GENERATION_FAILURE_MESSAGES[code]
+      ?? "Mac 워커가 후보를 만들지 못했습니다. Mac 연결 상태를 확인해 주세요.";
+
+  const hostedGenerationNotice = (task) => {
+    const registered = `후보 ${task.created}개가 등록되었습니다`;
+    // A batch is one provider call per candidate, so three of four is the normal partial
+    // outcome. The person who asked for four has to be told they got three.
+    return task.failures > 0 ? `${registered} — ${task.failures}개는 실패했습니다.` : `${registered}.`;
+  };
+
+  const findGenerationTask = async (taskId) => {
+    const scope = candidateScope();
+    const path = scope
+      ? `/api/candidates/generation-tasks?${scope}`
+      : "/api/candidates/generation-tasks";
+    const payload = await request(path);
+    const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+    return taskId ? tasks.find((task) => task.task_id === taskId) ?? null : tasks[0] ?? null;
+  };
+
+  // Wait out one published batch. The run stays in `generationRuns` the whole time, so the
+  // account's button stays locked and every other account's stays free.
+  const awaitHostedGeneration = async (taskId, run, key) => {
+    run.prefix = "Mac 워커가 만드는 중…";
+    run.repaint?.();
+    const deadline = Date.now() + HOSTED_GENERATION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await delay(HOSTED_GENERATION_POLL_MS);
+      if (generationRuns.get(key) !== run) return;
+      const task = await findGenerationTask(taskId);
+      if (!task || task.state === "queued") continue;
+      if (generationKey() !== key) return;
+      await loadCandidates();
+      if (task.state === "succeeded") {
+        setNotice(hostedGenerationNotice(task));
+        return;
+      }
+      const message = generationFailureMessage(task.failure_code);
+      setAutogenFeedback(message);
+      setNotice(message);
+      return;
+    }
+    if (generationKey() !== key) return;
+    const timeout = "Mac 워커가 아직 응답하지 않았습니다. Mac 연결 상태를 확인해 주세요.";
+    setAutogenFeedback(timeout);
+    setNotice(timeout);
   };
 
   const generateCandidates = async () => {
     const key = generationKey();
     if (generationRuns.has(key)) return;
-    const run = { seconds: 0, timer: null, label: "" };
+    const run = { seconds: 0, timer: null, label: "", prefix: "생성 중…" };
     generationRuns.set(key, run);
     countUpFor(run, key);
     setAutogenFeedback("");
-    setNotice("AI가 후보를 만드는 중… (1~3분 소요)");
+    setNotice(
+      hostedCandidateControls
+        ? "Mac 워커에 후보 생성을 맡기는 중…"
+        : "AI가 후보를 만드는 중… (1~3분 소요)",
+    );
     try {
       const profile = selectedContextProfile();
       const options = hostedCandidateControls
@@ -2485,6 +2568,12 @@
         ? `/api/candidates/generate?${generateScope}`
         : "/api/candidates/generate";
       const created = await request(generatePath, options);
+      // The hosted answer is a receipt, not a batch: the candidates are written on a Mac
+      // and arrive later. The local surface still generates in the request.
+      if (hostedCandidateControls) {
+        await awaitHostedGeneration(created?.task_id ?? null, run, key);
+        return;
+      }
       // Only the screen that asked for the batch is repainted. Somebody who moved on to
       // another account must not have its list replaced by candidates it never requested;
       // opening an account reloads its own list anyway.
@@ -2497,6 +2586,33 @@
         setAutogenFeedback(error.message);
         setNotice(error.message);
       }
+    } finally {
+      if (run.timer) window.clearTimeout(run.timer);
+      generationRuns.delete(key);
+      renderAutogenButtons();
+    }
+  };
+
+  // A batch outlives the tab that asked for it, so a reload has to find it again rather than
+  // show an idle button while a Mac is two minutes into the work.
+  const adoptHostedGeneration = async () => {
+    if (!hostedCandidateControls) return;
+    const key = generationKey();
+    if (generationRuns.has(key)) return;
+    let task = null;
+    try {
+      task = await findGenerationTask(null);
+    } catch {
+      return;
+    }
+    if (!task || task.state !== "queued") return;
+    const run = { seconds: 0, timer: null, label: "", prefix: "Mac 워커가 만드는 중…" };
+    generationRuns.set(key, run);
+    countUpFor(run, key);
+    try {
+      await awaitHostedGeneration(task.task_id, run, key);
+    } catch (error) {
+      if (generationKey() === key) setAutogenFeedback(error.message);
     } finally {
       if (run.timer) window.clearTimeout(run.timer);
       generationRuns.delete(key);
@@ -2544,6 +2660,7 @@
     try {
       await loadContextProfiles();
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      void adoptHostedGeneration();
       setNotice(`${selectedHostedAccount()?.display_name ?? selectedAccountId} 계정으로 전환했습니다.`);
     } catch (error) {
       setNotice(error.message);
