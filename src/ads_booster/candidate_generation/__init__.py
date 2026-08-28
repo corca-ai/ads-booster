@@ -5,6 +5,7 @@ from ads_booster.candidate_generation.context_source import (
     CandidateReferenceSource,
     ReferencePool,
     default_context_directory,
+    reference_directory,
     reference_id,
 )
 from ads_booster.candidate_generation.errors import (
@@ -14,6 +15,7 @@ from ads_booster.candidate_generation.errors import (
     CandidateGenerationError,
     CandidateImageStageError,
     CandidateProviderError,
+    CandidateReferencesMissingError,
     CandidateRunConflictError,
 )
 from ads_booster.candidate_generation.factory import (
@@ -93,6 +95,7 @@ __all__ = [
     "CandidateModelSource",
     "CandidateProviderError",
     "CandidateReferenceSource",
+    "CandidateReferencesMissingError",
     "CandidateReviewDecision",
     "CandidateRunConflictError",
     "CandidateWorkflow",
@@ -115,6 +118,7 @@ __all__ = [
     "default_context_directory",
     "default_domain_shuffle",
     "parse_candidate_drafts",
+    "reference_directory",
     "reference_id",
     "strip_json_fence",
 ]

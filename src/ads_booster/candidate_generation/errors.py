@@ -47,6 +47,25 @@ class CandidateContextMissingError(CandidateGenerationError):
 
 
 @final
+class CandidateReferencesMissingError(CandidateGenerationError):
+    def __init__(self, directory: Path, country: str) -> None:
+        """Create an error for a country the reference corpus does not cover.
+
+        Falling back to another country's corpus would be worse than failing: the batch
+        would be written from Korean posts and labelled as the other country's, and nothing
+        downstream would say so. The corpus is KR-only today, so this is the wall a second
+        country hits first, by design.
+        """
+        self.directory = directory
+        self.country = country
+        message = (
+            f"{country} 레퍼런스가 없습니다 (경로: {directory}) — "
+            f"이 국가의 레퍼런스를 먼저 추가해야 후보를 만들 수 있습니다."
+        )
+        super().__init__(message)
+
+
+@final
 class CandidateAuthRequiredError(CandidateGenerationError):
     def __init__(self) -> None:
         """Create an error for a missing or unusable model-provider credential."""

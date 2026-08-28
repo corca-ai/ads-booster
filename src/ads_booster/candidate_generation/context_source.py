@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
-from ads_booster.candidate_generation.errors import CandidateContextMissingError
+from ads_booster.candidate_generation.errors import (
+    CandidateContextMissingError,
+    CandidateReferencesMissingError,
+)
 from ads_booster.candidate_generation.models import CandidateContextBundle, CandidateDocument
 from ads_booster.default_assets import default_candidate_context_path
 
@@ -86,7 +89,7 @@ def _read(path: Path) -> str | None:
     return text if text.strip() else None
 
 
-REFERENCE_DIRECTORY: Final = "references/KR"
+REFERENCE_ROOT: Final = "references"
 _HIT_SAMPLE: Final = 3
 _FLOP_SAMPLE: Final = 1
 _OUTCOME_HIT: Final = "hit"
@@ -134,19 +137,31 @@ def reference_id(document: CandidateDocument) -> str:
     return PurePosixPath(document.relative_path).stem
 
 
+def reference_directory(country: str) -> str:
+    """Where one country's reference bodies live, relative to the context directory."""
+    return f"{REFERENCE_ROOT}/{country}"
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateReferenceSource:
-    """Loads the reference bodies under one country folder, classified by outcome."""
+    """Loads one country's reference bodies, classified by the outcome each records."""
 
     directory: Path
-    relative_directory: str = REFERENCE_DIRECTORY
+    root: str = REFERENCE_ROOT
 
-    def load(self) -> ReferencePool:
-        root = self.directory / self.relative_directory
+    def load(self, country: str) -> ReferencePool:
+        """Read the corpus for `country`, or say plainly that there is not one.
+
+        The country comes from the account being written as, not from a constant, so a
+        second country reaches this code the moment one is created. There is no fallback:
+        writing a JP account from the Korean corpus would produce captions grounded in the
+        wrong audience with nothing downstream saying so, which is worse than refusing.
+        """
+        root = self.directory / self.root / country
+        if not root.is_dir():
+            raise CandidateReferencesMissingError(root, country)
         hits: list[CandidateDocument] = []
         flops: list[CandidateDocument] = []
-        if not root.is_dir():
-            return ReferencePool(hits=(), flops=())
         for path in sorted(root.glob(_MARKDOWN_PATTERN)):
             text = None if path.is_symlink() or not path.is_file() else _read(path)
             if text is None:

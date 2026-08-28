@@ -18,6 +18,7 @@ from ads_booster.candidate_generation import (
     CandidateDocument,
     CandidateFormatError,
     CandidateProviderError,
+    CandidateReferencesMissingError,
     CandidateReferenceSource,
     CaptionForm,
     ScriptCandidateGenerator,
@@ -25,6 +26,7 @@ from ads_booster.candidate_generation import (
     assign_domains,
     build_instruction,
     parse_candidate_drafts,
+    reference_directory,
     reference_id,
 )
 from ads_booster.candidate_generation.script_generator import (
@@ -1047,7 +1049,7 @@ def test_a_reference_sample_is_three_hits_and_one_flop(tmp_path: Path) -> None:
     """
     # Given the reference corpus classified by the outcome in each file's frontmatter
     directory = _write_context(tmp_path)
-    pool = CandidateReferenceSource(directory).load()
+    pool = CandidateReferenceSource(directory).load("KR")
 
     # When one call draws its sample
     sample = pool.sample(_first)
@@ -1072,7 +1074,7 @@ def test_a_corpus_shorter_than_the_sample_gives_what_it_has(tmp_path: Path) -> N
     _ = (directory / "kr-900.md").write_text(_reference("hit", 0), encoding="utf-8")
 
     # When a sample is drawn
-    pool = CandidateReferenceSource(tmp_path / "context").load()
+    pool = CandidateReferenceSource(tmp_path / "context").load("KR")
     sample = pool.sample(_first)
 
     # Then it is the one document rather than a failure
@@ -1092,11 +1094,69 @@ def test_only_the_frontmatter_decides_a_reference_outcome(tmp_path: Path) -> Non
     _ = (directory / "INDEX.md").write_text("# INDEX\noutcome: hit", encoding="utf-8")
 
     # When the corpus is read
-    pool = CandidateReferenceSource(tmp_path / "context").load()
+    pool = CandidateReferenceSource(tmp_path / "context").load("KR")
 
     # Then the frontmatter verdict wins and the table is not a reference
     assert [reference_id(document) for document in pool.hits] == ["kr-900"]
     assert pool.flops == ()
+
+
+def test_the_reference_corpus_is_chosen_by_country(tmp_path: Path) -> None:
+    """The folder is a parameter, not a constant, so a second country reaches this code."""
+    # Given two countries' corpora side by side
+    directory = _write_context(tmp_path)
+    japanese = directory / reference_directory("JP")
+    japanese.mkdir(parents=True)
+    _ = (japanese / "jp-900.md").write_text(_reference("hit", 0), encoding="utf-8")
+
+    # When each is read
+    korean_pool = CandidateReferenceSource(directory).load("KR")
+    japanese_pool = CandidateReferenceSource(directory).load("JP")
+
+    # Then each country sees only its own posts
+    assert reference_directory("KR") == "references/KR"
+    assert len(korean_pool.hits) == _FAKE_HITS
+    assert [reference_id(document) for document in japanese_pool.hits] == ["jp-900"]
+
+
+def test_a_country_without_references_fails_instead_of_borrowing_another(
+    tmp_path: Path,
+) -> None:
+    """Silence here would ship Korean-grounded captions labelled as another country.
+
+    The corpus is KR-only today. Falling back would produce a batch written from the wrong
+    audience's posts with nothing downstream saying so, so the wall is explicit and names
+    the country that hit it.
+    """
+    # Given a context directory with a Korean corpus and nothing else
+    directory = _write_context(tmp_path)
+
+    # When a country with no references is asked for
+    with pytest.raises(CandidateReferencesMissingError) as failure:
+        _ = CandidateReferenceSource(directory).load("JP")
+
+    # Then the message names the country and the path rather than failing quietly
+    assert failure.value.country == "JP"
+    assert "JP 레퍼런스가 없습니다" in failure.value.message
+    assert "references/JP" in failure.value.message
+
+
+def test_an_account_batch_reads_its_own_country_corpus(tmp_path: Path) -> None:
+    """The country comes from the account being written as, not from a default."""
+    # Given an account in a country the corpus does not cover
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    account_id = _create_account(store, workspace_id, "사토")
+    record = store.get_account(workspace_id, MarketingAccountId(account_id))
+    japanese = record.model_copy(update={"country": "JP"})
+
+    # When a batch is generated as that account
+    generator = _generator(tmp_path, store, DomainAnswerClient())
+
+    # Then it refuses rather than writing that account from Korean posts
+    with pytest.raises(CandidateReferencesMissingError):
+        _ = generator.generate(workspace_id, account=japanese)
+    assert store.list_candidates(workspace_id) == ()
 
 
 def test_every_call_reads_reference_bodies_and_records_which(tmp_path: Path) -> None:

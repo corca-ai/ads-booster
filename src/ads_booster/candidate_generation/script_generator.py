@@ -198,7 +198,11 @@ class ScriptCandidateGenerator:
         """
         del run_context
         bundle = self.context_source.load()
-        pool = self.references.load()
+        # The corpus follows the account, not a constant: a batch is grounded in the posts
+        # its own country's readers responded to. Without an account the workspace-wide
+        # default stands in.
+        country = self.country if account is None else account.country
+        pool = self.references.load(country)
         brief = None if account is None else CandidateAccountBrief.of(account)
         account_id = None if account is None else account.account_id
         domains = (
