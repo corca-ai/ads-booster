@@ -1,3 +1,7 @@
+from ads_booster.candidate_generation.account_proposal import (
+    AccountProposal,
+    AccountProposalGenerator,
+)
 from ads_booster.candidate_generation.context_source import (
     CONTEXT_DIR_ENVIRONMENT,
     REQUIRED_DOCUMENTS,
@@ -20,6 +24,7 @@ from ads_booster.candidate_generation.errors import (
 )
 from ads_booster.candidate_generation.factory import (
     ProductionCandidateModels,
+    build_account_proposal_generator,
     build_candidate_generator,
     build_candidate_image_runner,
     build_local_candidate_image_runner,
@@ -51,6 +56,7 @@ from ads_booster.candidate_generation.models import (
 )
 from ads_booster.candidate_generation.parsing import parse_candidate_drafts, strip_json_fence
 from ads_booster.candidate_generation.ports import (
+    AccountProposalPort,
     CandidateCreator,
     CandidateGeneratorPort,
     CandidateImageRunnerPort,
@@ -73,6 +79,9 @@ __all__ = [
     "CONTEXT_DIR_ENVIRONMENT",
     "REQUIRED_DOCUMENTS",
     "SYSTEM_INSTRUCTION",
+    "AccountProposal",
+    "AccountProposalGenerator",
+    "AccountProposalPort",
     "CandidateAgent",
     "CandidateAgentPort",
     "CandidateAuthRequiredError",
@@ -108,6 +117,7 @@ __all__ = [
     "ScriptCandidateGenerator",
     "assign_caption_forms",
     "assign_domains",
+    "build_account_proposal_generator",
     "build_background_query",
     "build_candidate_generator",
     "build_candidate_image_runner",

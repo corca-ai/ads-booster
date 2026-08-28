@@ -12,9 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from ads_booster.agent.runs import AgentRunStore
 from ads_booster.automation import AutomationQueue, CampaignStore
 from ads_booster.candidate_generation import (
+    AccountProposalPort,
     CandidateGeneratorPort,
     CandidateImageRunnerPort,
     CandidateWorkflow,
+    build_account_proposal_generator,
     build_candidate_image_runner,
     build_script_candidate_generator,
 )
@@ -50,6 +52,7 @@ def create_app(
     chat_factory: WebAgentSessionFactory | None = None,
     candidate_generator: CandidateGeneratorPort | None = None,
     candidate_image_runner: CandidateImageRunnerPort | None = None,
+    account_proposals: AccountProposalPort | None = None,
 ) -> FastAPI:
     store = SqliteWorkspaceStore(root)
     state = ServiceStateStore(store.database_path.parent).load()
@@ -87,6 +90,11 @@ def create_app(
         if candidate_image_runner is None
         else candidate_image_runner
     )
+    active_proposals = (
+        build_account_proposal_generator(settings)
+        if account_proposals is None
+        else account_proposals
+    )
     app = FastAPI(title="Trace Workspace API")
     app.include_router(
         build_auth_router(
@@ -96,7 +104,7 @@ def create_app(
             owner_identity=owner_identity,
         )
     )
-    app.include_router(build_account_router(store, current_principal))
+    app.include_router(build_account_router(store, current_principal, active_proposals))
     app.include_router(build_context_router(store, current_principal))
     app.include_router(build_asset_router(store, current_principal))
     app.include_router(
