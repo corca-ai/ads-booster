@@ -114,6 +114,10 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
   try {
     const requestedAccountId = accountIdFromRequest(request, env);
     const scopedEnv = withHostedAccount(env, requestedAccountId);
+    // A persona is a different layer from the operating account, so it is a different
+    // parameter. Sending it as the account id is what made "delete this candidate" answer
+    // "워크스페이스 계정을 찾을 수 없습니다".
+    const requestedPersonaId = personaIdFromRequest(request);
     if (request.method === "GET" && url.pathname === "/api/auth/session") {
       return json({
         workspace_id: workspaceId(scopedEnv),
@@ -234,7 +238,9 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
       return json(await feedbackSummary(scopedEnv, url.searchParams.get("context_profile_id")));
     }
     if (request.method === "GET" && url.pathname === "/api/candidates") {
-      return json(await listCandidates(scopedEnv));
+      return json(
+        await listCandidates(scopedEnv, await requirePersonaScope(scopedEnv, requestedPersonaId)),
+      );
     }
     if (request.method === "POST" && url.pathname === "/api/candidates") {
       await ensureStarterProfiles(scopedEnv, starterProfiles);
@@ -244,13 +250,18 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
         : undefined;
       const draft = normalizeCandidateDraft(body);
       await assertAccountCountry(scopedEnv, draft.country);
-      return json(await insertCandidate(scopedEnv, draft, "manual", profile), 201);
+      const personaId = await requirePersonaScope(scopedEnv, requestedPersonaId);
+      return json(await insertCandidate(scopedEnv, draft, "manual", profile, personaId), 201);
     }
     if (request.method === "POST" && url.pathname === "/api/candidates/generate") {
       await ensureStarterProfiles(scopedEnv, starterProfiles);
       const body = await readOptionalJson(request);
       const profile = await resolveContextProfile(scopedEnv, body?.context_profile_id);
-      return json(await generateCandidates(scopedEnv, contextRegistry, profile), 201);
+      const personaId = await requirePersonaScope(scopedEnv, requestedPersonaId);
+      return json(
+        await generateCandidates(scopedEnv, contextRegistry, profile, personaId),
+        201,
+      );
     }
 
     const route = url.pathname.match(
@@ -1345,17 +1356,29 @@ function contextProfileFromRow(row) {
   };
 }
 
-async function listCandidates(env) {
+async function requirePersonaScope(env, personaId) {
+  // No persona means the country-wide view, which is what the pre-persona rows and any
+  // surface without a persona open still need. A named persona has to exist.
+  if (!personaId) return null;
+  const persona = await requireHostedPersona(env, personaId);
+  return persona.account_id;
+}
+
+async function listCandidates(env, personaId = null) {
+  const scope = personaId ? " AND persona_id = ?" : "";
+  const parameters = personaId
+    ? [accountId(env), personaId, MAX_CANDIDATES]
+    : [accountId(env), MAX_CANDIDATES];
   const result = await env.DB.prepare(
     `SELECT * FROM hosted_workspace_candidates
-     WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`,
+     WHERE account_id = ?${scope} ORDER BY created_at DESC LIMIT ?`,
   )
-    .bind(accountId(env), MAX_CANDIDATES)
+    .bind(...parameters)
     .all();
   return result.results.map(candidateFromRow);
 }
 
-async function generateCandidates(env, contextRegistry, profile) {
+async function generateCandidates(env, contextRegistry, profile, personaId = null) {
   if (!env.AI || typeof env.AI.run !== "function") {
     throw new WorkspaceHttpError(503, "Cloudflare Workers AI 연결이 준비되지 않았습니다.");
   }
@@ -1419,7 +1442,7 @@ async function generateCandidates(env, contextRegistry, profile) {
   if (!acceptedDrafts || !acceptedPrompt) {
     throw new WorkspaceHttpError(502, `AI 후보 형식 검증에 실패했습니다: ${detail}`);
   }
-  return insertCandidates(env, acceptedDrafts, "auto", profile, {
+  return insertCandidates(env, acceptedDrafts, "auto", profile, personaId, {
     prompt_version: WORKSPACE_GENERATION_PROMPT_VERSION,
     prompt_sha256: await sha256(acceptedPrompt),
     model,
@@ -1612,7 +1635,14 @@ export function aiCandidates(result) {
   return response.candidates;
 }
 
-async function insertCandidates(env, drafts, source, profile = null, generationProvenance = null) {
+async function insertCandidates(
+  env,
+  drafts,
+  source,
+  profile = null,
+  personaId = null,
+  generationProvenance = null,
+) {
   const now = Date.now() / 1000;
   const contextSnapshot = profile ? JSON.stringify(profile) : null;
   const batchId = source === "auto" ? crypto.randomUUID() : null;
@@ -1627,9 +1657,9 @@ async function insertCandidates(env, drafts, source, profile = null, generationP
          refs_json, principles_json, appium_prompt, image_inputs_json, ai_verdict,
          context_profile_id, context_snapshot_json, posting_slot, generation_batch_id,
          generation_prompt_version, generation_prompt_sha256, generation_model,
-         feedback_rules_json,
+         feedback_rules_json, persona_id,
          status, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                'awaiting_review', 1, ?, ?)`,
       ).bind(
         candidateId,
@@ -1652,6 +1682,7 @@ async function insertCandidates(env, drafts, source, profile = null, generationP
         generationProvenance?.prompt_sha256 ?? null,
         generationProvenance?.model ?? null,
         JSON.stringify(generationProvenance?.feedback_rules ?? []),
+        personaId,
         now + index / 1000,
         now + index / 1000,
       ),
@@ -1661,8 +1692,8 @@ async function insertCandidates(env, drafts, source, profile = null, generationP
   return Promise.all(inserts.map(({ candidateId }) => requireCandidate(env, candidateId)));
 }
 
-async function insertCandidate(env, draft, source, profile = null) {
-  return (await insertCandidates(env, [draft], source, profile))[0];
+async function insertCandidate(env, draft, source, profile = null, personaId = null) {
+  return (await insertCandidates(env, [draft], source, profile, personaId))[0];
 }
 
 async function updateCandidate(env, candidateId, revision, draft, requestedProfile) {
@@ -2151,6 +2182,7 @@ function candidateFromRow(row) {
   return {
     workspace_id: `cloudflare:${row.account_id}`,
     candidate_id: row.candidate_id,
+    persona_id: row.persona_id ?? null,
     source: row.source,
     country: row.country,
     topic: row.topic,
@@ -2292,6 +2324,13 @@ function accountId(env) {
   return safeAccountId(
     env.HOSTED_WORKSPACE_ACCOUNT_ID || env.PUBLIC_WORKSPACE_ACCOUNT_ID || DEFAULT_ACCOUNT_ID,
   );
+}
+
+function personaIdFromRequest(request) {
+  const url = new URL(request.url);
+  const requested = request.headers.get("x-trace-persona-id")
+    || url.searchParams.get("persona_id");
+  return requested ? requested.trim() || null : null;
 }
 
 function accountIdFromRequest(request, env) {
