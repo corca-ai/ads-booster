@@ -10,6 +10,7 @@ from typing import Annotated, Final
 import httpx2
 import typer
 
+from ads_booster.service.code_version import code_version_line
 from ads_booster.service.launchd import (
     LaunchdConfig,
     bootstrap_launchd_service,
@@ -77,6 +78,10 @@ def serve(
     ] = TunnelName.CLOUDFLARED,
     workspace_name: Annotated[str | None, typer.Option()] = None,
 ) -> None:
+    # The first line of the log, printed before anything can fail: which code this is.
+    version = code_version_line()
+    if version is not None:
+        typer.echo(version)
     try:
         prepared = prepare_service(
             default_agent_home(),

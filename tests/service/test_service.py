@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import stat
+import subprocess
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Event
@@ -16,6 +18,7 @@ from ads_booster.cli.agent import app
 from ads_booster.contracts import TraceRunResult
 from ads_booster.contracts.generation import MarketingContextBundle
 from ads_booster.contracts.run import TraceRunState
+from ads_booster.service.code_version import code_version_line
 from ads_booster.service.launchd import LaunchdConfig, install_plist
 from ads_booster.service.readiness import wait_for_service_ready
 from ads_booster.service.runtime import TunnelName, create_service_app, prepare_service
@@ -386,3 +389,57 @@ def test_new_cli_surfaces_preserve_existing_commands() -> None:
     assert serve.exit_code == 0
     assert "--host" in serve.stdout
     assert "--port" in serve.stdout
+
+
+def _init_repository(root: Path) -> None:
+    """A one-commit checkout on a named branch, so the printed line is exactly known."""
+    environment = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Trace",
+        "GIT_AUTHOR_EMAIL": "trace@example.com",
+        "GIT_COMMITTER_NAME": "Trace",
+        "GIT_COMMITTER_EMAIL": "trace@example.com",
+    }
+    _ = (root / "file.txt").write_text("내용\n", encoding="utf-8")
+    for command in (
+        ("init", "--initial-branch", "feature/serve-banner"),
+        ("add", "file.txt"),
+        ("commit", "-m", "첫 커밋"),
+    ):
+        _ = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), *command],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+
+def test_startup_names_the_revision_the_service_is_running(tmp_path: Path) -> None:
+    """Which code is answering has to be readable from the log, not guessed from the screen."""
+    # Given a checkout with one commit on a named branch
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _init_repository(checkout)
+    revision = subprocess.run(  # noqa: S603
+        ["git", "-C", str(checkout), "rev-parse", "--short", "HEAD"],  # noqa: S607
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # When the banner is composed
+    line = code_version_line(checkout)
+
+    # Then it names both halves a reader needs to tell two processes apart
+    assert line == f"Code: {revision} (feature/serve-banner)"
+
+
+def test_startup_stays_silent_outside_a_checkout(tmp_path: Path) -> None:
+    """A packaged install has no revision to report, and startup is no place to say so."""
+    # Given a directory that is not a git checkout
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    # When / Then nothing is printed rather than an error
+    assert code_version_line(plain) is None
