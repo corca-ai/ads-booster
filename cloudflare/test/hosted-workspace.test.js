@@ -523,18 +523,19 @@ test("candidate normalization rejects unusable image context", () => {
   );
 });
 
-test("Workers AI schema constrains generated references, principles, and schedules", () => {
+test("Workers AI schema uses provider-compatible constraints and keeps local uniqueness", () => {
   const schema = candidateResponseSchema("KR", ["kr-study-day", "kr-020"]);
   const candidates = schema.properties.candidates;
 
+  assert.doesNotMatch(JSON.stringify(schema), /"uniqueItems":/u);
   assert.equal(candidates.minItems, 4);
   assert.equal(candidates.maxItems, 4);
   assert.deepEqual(candidates.items.properties.posting_slot.enum, ["morning", "evening"]);
   assert.equal(candidates.items.properties.refs_used.minItems, 1);
-  assert.equal(candidates.items.properties.refs_used.uniqueItems, true);
+  assert.equal("uniqueItems" in candidates.items.properties.refs_used, false);
   assert.deepEqual(candidates.items.properties.refs_used.items.enum, ["kr-study-day", "kr-020"]);
   assert.equal(candidates.items.properties.principles_applied.minItems, 1);
-  assert.equal(candidates.items.properties.principles_applied.uniqueItems, true);
+  assert.equal("uniqueItems" in candidates.items.properties.principles_applied, false);
   assert.equal(candidates.items.properties.image_inputs.properties.trace_items.minItems, 5);
   assert.equal(candidates.items.properties.image_inputs.properties.trace_items.maxItems, 7);
   assert.ok(candidates.items.required.includes("posting_slot"));
@@ -686,7 +687,11 @@ test("candidate drafts reject reference IDs the Mac contract cannot consume", ()
   );
 });
 
-test("candidate drafts reject duplicate principles before storage", () => {
+test("candidate drafts reject duplicate references and principles before storage", () => {
+  assert.throws(
+    () => normalizeCandidateDraft({ ...candidate(), refs_used: ["kr-study-day", "kr-study-day"] }),
+    /레퍼런스 ID는 중복/u,
+  );
   assert.throws(
     () => normalizeCandidateDraft({ ...candidate(), principles_applied: [1, 1] }),
     /적용 원리는 중복/u,
@@ -980,9 +985,11 @@ test("generation prompt binds the selected persona and country", () => {
   const prompt = generationPrompt("기본 원리", "계정 지침", profile);
   const schema = candidateResponseSchema(profile.country, profile.reference_ids);
 
-  assert.equal(WORKSPACE_GENERATION_PROMPT_VERSION, "trace.workspace-generation.v2");
+  assert.equal(WORKSPACE_GENERATION_PROMPT_VERSION, "trace.workspace-generation.v3");
   assert.match(prompt, new RegExp(profile.persona_id));
   assert.match(prompt, new RegExp(profile.audience));
+  assert.match(prompt, /topic, caption, trace_items/u);
+  assert.match(prompt, /네 후보에서 각각 서로 달라야/u);
   assert.deepEqual(schema.properties.candidates.items.properties.country.enum, ["KR"]);
   assert.deepEqual(
     schema.properties.candidates.items.properties.image_inputs.properties.language.enum,
