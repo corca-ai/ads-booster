@@ -370,7 +370,15 @@ const makeLiveDocument = () => {
   autogenButton.textContent = "🤖 후보 자동 생성";
   const autogenFeedback = new FakeElement("autogen-feedback");
   autogenFeedback.hidden = true;
+  const countryHome = new FakeElement("country-home");
+  const countryGrid = new FakeElement("country-grid");
+  const countryEmpty = new FakeElement("country-empty");
+  const countryCount = new FakeElement("country-count");
+  const countryBack = new FakeElement("country-back");
+  const countryAddAccount = new FakeElement("country-add-account");
+  const countryCurrentName = new FakeElement("country-current-name");
   const accountHome = new FakeElement("account-home");
+  accountHome.hidden = true;
   const accountWorkspace = new FakeElement("account-workspace");
   const accountGrid = new FakeElement("account-grid");
   const accountEmpty = new FakeElement("account-empty");
@@ -378,7 +386,46 @@ const makeLiveDocument = () => {
   const accountBack = new FakeElement("account-back");
   const accountCurrentName = new FakeElement("account-current-name");
   const accountVerdict = new FakeElement("account-verdict");
+  const accountFormDetails = new FakeElement("account-form-details");
+  const accountCountryField = new FakeElement("account-country");
+  const accountFormEl = new FakeElement("account-form");
+  accountFormEl.checkValidity = () => true;
+  accountFormEl.formValues = new Map([
+    ["country", "JP"],
+    ["display-name", "사토 유이"],
+    ["age", "26"],
+    ["region", "도쿄"],
+    ["occupation", "카페 바리스타"],
+    ["concept", "새벽 오픈조로 사는 바리스타"],
+    ["domain", "office_worker"],
+    ["interests", "커피, 러닝"],
+    ["life-rhythm", "5시 기상, 6시 오픈"],
+    ["background-subject", "scenery"],
+    ["background-mood", "이른 아침 가게 앞"],
+    ["font", "sf_pro"],
+  ]);
+  const accountFormFeedback = new FakeElement("account-feedback");
+  accountFormFeedback.hidden = true;
+  const accountDomainField = new FakeElement("account-domain");
+  const accountBackgroundField = new FakeElement("account-background-subject");
+  const accountFontField = new FakeElement("account-font");
+  for (const field of [accountDomainField, accountBackgroundField, accountFontField]) {
+    field.options = [];
+  }
   const selectors = new Map([
+    ["[data-account-form]", accountFormEl],
+    ["[data-account-feedback]", accountFormFeedback],
+    ["[data-account-domain]", accountDomainField],
+    ["[data-account-background-subject]", accountBackgroundField],
+    ["[data-account-font]", accountFontField],
+    ["[data-country-home]", countryHome],
+    ["[data-country-grid]", countryGrid],
+    ["[data-country-empty]", countryEmpty],
+    ["[data-country-count]", countryCount],
+    ["[data-country-back]", countryBack],
+    ["[data-country-add-account]", countryAddAccount],
+    ["[data-country-current-name]", countryCurrentName],
+    ["[data-account-form-details]", accountFormDetails],
     ["[data-account-home]", accountHome],
     ["[data-account-workspace]", accountWorkspace],
     ["[data-account-grid]", accountGrid],
@@ -538,6 +585,7 @@ const makeLiveDocument = () => {
     scheduleField,
     deviceTimeField,
     backgroundMoodField,
+    accountCountryField,
   ]);
   document.querySelector = (selector) => selectors.get(selector) ?? null;
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
@@ -547,13 +595,24 @@ const makeLiveDocument = () => {
     imageStageTab,
     captionStagePanel,
     imageStagePanel,
+    countryHome,
+    countryGrid,
+    countryEmpty,
+    countryCount,
+    countryBack,
+    countryAddAccount,
+    countryCurrentName,
     accountHome,
     accountWorkspace,
     accountGrid,
+    accountEmpty,
     accountCount,
     accountBack,
     accountCurrentName,
     accountVerdict,
+    accountFormDetails,
+    accountFormEl,
+    accountCountryField,
     workspaceLive,
     entryScreen,
     skipLink,
@@ -1799,10 +1858,10 @@ const testMarkupUsesTheAgreedTerminology = async () => {
 const allText = (element) =>
   [element.textContent ?? "", ...element.children.map(allText)].join(" ");
 
-const _account = (accountId, name) => ({
+const _account = (accountId, name, country = "KR") => ({
   account_id: accountId,
   display_name: name,
-  country: "KR",
+  country,
   language: "ko",
   status: "observing",
   revision: 1,
@@ -1814,6 +1873,11 @@ const _account = (accountId, name) => ({
     domain: "office_worker",
   },
 });
+
+const openCountry = async (fixture, index) => {
+  const card = fixture.countryGrid.children[index];
+  await card.children.at(-1).click();
+};
 
 const openAccount = async (fixture, index) => {
   const card = fixture.accountGrid.children[index];
@@ -1837,6 +1901,7 @@ const testOneAccountGeneratingLeavesEveryOtherAccountFree = async () => {
     throw new Error(`unexpected path: ${path}`);
   });
 
+  await openCountry(fixture, 0);
   await openAccount(fixture, 0);
   const label = fixture.autogenButton.textContent;
   const running = fixture.autogenButton.click();
@@ -1900,6 +1965,59 @@ const testTheApprovalStagesAreViewedOneAtATime = async () => {
   assert.equal(fixture.imageStagePanel.hidden, true);
 };
 
+const testTheCountryHomeOpensBeforeAnyAccountWork = async () => {
+  // The screen is three storeys now: country, then that country's accounts, then that
+  // account's work. Countries are not stored anywhere — the list is derived from the
+  // accounts, because an account is the only evidence a market is being worked at all.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [
+    _account("acc-1", "이서진"),
+    _account("acc-2", "김도현"),
+    _account("acc-3", "사토 유이", "JP"),
+  ];
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.countryHome.hidden, false, "the home is the country grid");
+  assert.equal(fixture.accountHome.hidden, true);
+  assert.equal(fixture.accountWorkspace.hidden, true);
+  assert.equal(fixture.countryCount.textContent, "국가 2개");
+  assert.equal(fixture.countryGrid.children.length, 2);
+
+  const [japan, korea] = fixture.countryGrid.children;
+  assert.match(allText(japan), /일본/);
+  assert.match(allText(japan), /JP/);
+  assert.match(allText(japan), /계정 1개/);
+  assert.match(allText(korea), /한국/);
+  assert.match(allText(korea), /계정 2개/);
+  assert.match(allText(korea), /이서진 · 김도현/);
+
+  // Opening a country drops one storey and keeps only that country's accounts.
+  await openCountry(fixture, 1);
+  assert.equal(fixture.countryHome.hidden, true);
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.accountWorkspace.hidden, true);
+  assert.equal(fixture.countryCurrentName.textContent, "한국");
+  assert.equal(fixture.accountCount.textContent, "계정 2개");
+  assert.deepEqual(
+    fixture.accountGrid.children.map((card) => allText(card).match(/이서진|김도현|사토 유이/)[0]),
+    ["이서진", "김도현"],
+  );
+  // Adding another account here almost always means adding it to this country.
+  assert.equal(fixture.accountCountryField.value, "KR");
+
+  // And the other country shows only its own.
+  await fixture.countryBack.click();
+  assert.equal(fixture.countryHome.hidden, false);
+  await openCountry(fixture, 0);
+  assert.equal(fixture.countryCurrentName.textContent, "일본");
+  assert.equal(fixture.accountCount.textContent, "계정 1개");
+  assert.match(allText(fixture.accountGrid.children[0]), /사토 유이/);
+};
+
 const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
   const fixture = makeLiveDocument();
   fixture.accounts = [
@@ -1926,6 +2044,7 @@ const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
     throw new Error(`unexpected path: ${path}`);
   });
 
+  await openCountry(fixture, 0);
   assert.equal(fixture.accountHome.hidden, false);
   assert.equal(fixture.accountWorkspace.hidden, true);
   assert.equal(fixture.accountCount.textContent, "계정 1개");
@@ -1936,6 +2055,7 @@ const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
   const open = card.children.at(-1);
   await open.click();
 
+  assert.equal(fixture.countryHome.hidden, true);
   assert.equal(fixture.accountHome.hidden, true);
   assert.equal(fixture.accountWorkspace.hidden, false);
   assert.equal(fixture.accountCurrentName.textContent, "박세나");
@@ -1944,9 +2064,67 @@ const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
   // the list to it, so another account's drafts never appear on its screens.
   assert.deepEqual(listed, ["/api/candidates", "/api/candidates?account_id=acc-1"]);
 
+  // Back walks up one storey at a time: work → that country's accounts → the countries.
   await fixture.accountBack.click();
-  assert.equal(fixture.accountHome.hidden, false);
   assert.equal(fixture.accountWorkspace.hidden, true);
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.countryHome.hidden, true);
+  assert.equal(fixture.countryCurrentName.textContent, "한국");
+
+  await fixture.countryBack.click();
+  assert.equal(fixture.accountHome.hidden, true);
+  assert.equal(fixture.countryHome.hidden, false);
+  assert.match(fixture.notice.textContent, /국가 목록으로 돌아왔습니다/);
+};
+
+const testTheFirstAccountCreatesItsCountry = async () => {
+  // With no accounts there is no country to open, so the empty country home has to lead
+  // somewhere: the account form. The country picked there is the country being created.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [];
+  const created = {
+    ..._account("acc-jp-1", "사토 유이", "JP"),
+    identity: { age: 26, region: "도쿄", occupation: "카페 바리스타", concept: "새벽 오픈조로 사는 바리스타", domain: "office_worker" },
+  };
+  let posted = null;
+  await loadLive(fixture, async (path, options = {}) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/accounts" && options.method === "POST") {
+      posted = JSON.parse(options.body);
+      fixture.accounts = [created];
+      return response(201, created);
+    }
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.countryHome.hidden, false);
+  assert.equal(fixture.countryEmpty.hidden, false, "an empty country home says so");
+  assert.equal(fixture.countryCount.textContent, "등록된 국가가 없습니다");
+  assert.equal(fixture.countryGrid.children.length, 0);
+
+  await fixture.countryAddAccount.click();
+  assert.equal(fixture.countryHome.hidden, true);
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.accountFormDetails.open, true, "the form is already unfolded");
+  assert.equal(fixture.countryCurrentName.textContent, "새 국가");
+  assert.equal(fixture.accountEmpty.hidden, false);
+
+  await fixture.accountFormEl.submit();
+
+  assert.equal(posted.country, "JP");
+  assert.equal(posted.schedule.timezone, "Asia/Tokyo");
+  // The new account's country is now a country, and the maker is standing inside it.
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.countryCurrentName.textContent, "일본");
+  assert.equal(fixture.accountCount.textContent, "계정 1개");
+  assert.match(allText(fixture.accountGrid.children[0]), /사토 유이/);
+
+  await fixture.countryBack.click();
+  assert.equal(fixture.countryHome.hidden, false);
+  assert.equal(fixture.countryEmpty.hidden, true);
+  assert.equal(fixture.countryCount.textContent, "국가 1개");
+  assert.match(allText(fixture.countryGrid.children[0]), /일본/);
 };
 
 
@@ -2028,7 +2206,11 @@ await testDeleteAsksBeforeItDeletes();
 passed += 1;
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
 passed += 1;
+await testTheCountryHomeOpensBeforeAnyAccountWork();
+passed += 1;
 await testTheAccountHomeOpensBeforeAnyCandidateWork();
+passed += 1;
+await testTheFirstAccountCreatesItsCountry();
 passed += 1;
 await testOneAccountGeneratingLeavesEveryOtherAccountFree();
 passed += 1;

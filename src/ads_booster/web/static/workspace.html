@@ -97,6 +97,24 @@
           </details>
         </section>
 
+        <section class="country-home" data-country-home aria-labelledby="country-home-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">시장</p>
+              <h2 id="country-home-title">어느 나라로 일할까요</h2>
+            </div>
+            <span class="mono" role="status" data-country-count>국가를 불러오는 중…</span>
+          </div>
+          <p class="form-help">국가가 먼저입니다. 나라를 고르면 그 나라에서 쓰는 계정만 남고, 계정을 고르면 그 계정의 작업 화면이 열립니다.</p>
+          <div class="country-grid" data-country-grid></div>
+          <div class="empty-surface" data-country-empty hidden>
+            <p class="eyebrow">아직 없음</p>
+            <h3>등록된 국가가 없습니다</h3>
+            <p>국가는 따로 만들지 않습니다. 첫 계정을 추가하면서 고른 국가가 곧 이 목록의 첫 칸이 됩니다.</p>
+            <button class="button button-primary" type="button" data-country-add-account>계정 추가</button>
+          </div>
+        </section>
+
         <section class="worker-console" data-hosted-only hidden aria-labelledby="worker-console-title">
           <span class="signal-mark" data-worker-signal aria-hidden="true"></span>
           <div class="worker-console__copy" role="status" aria-live="polite">
@@ -107,10 +125,14 @@
           <button class="button button-secondary" type="button" data-worker-manager-open>Mac 연결 관리</button>
         </section>
 
-        <section class="account-home" data-account-home aria-labelledby="account-home-title">
+        <section class="account-home" data-account-home hidden aria-labelledby="account-home-title">
+          <div class="account-home__bar">
+            <button class="button button-quiet" type="button" data-country-back>← 국가 목록</button>
+            <strong data-country-current-name>국가</strong>
+          </div>
           <div class="section-heading">
             <div>
-              <p class="eyebrow">국가별 계정</p>
+              <p class="eyebrow">계정</p>
               <h2 id="account-home-title">어떤 계정으로 쓸까요</h2>
             </div>
             <span class="mono" role="status" data-account-count>계정을 불러오는 중…</span>
