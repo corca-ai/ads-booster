@@ -1701,6 +1701,7 @@
     currentAccount = null;
     if (accountHome) accountHome.hidden = false;
     if (accountWorkspace) accountWorkspace.hidden = true;
+    renderAutogenButtons();
   };
 
   const enterAccount = async (account) => {
@@ -1713,6 +1714,7 @@
       accountCurrentConcept.textContent = account.identity?.concept ?? account.country;
     }
     renderAccountVerdict();
+    renderAutogenButtons();
     setBusy(workspaceLive, true, `${account.display_name} 계정을 여는 중…`);
     try {
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
@@ -2077,36 +2079,64 @@
     return `${registered} — 문서 ${documents}개(${kilobytes(provenanceBytes(provenance))})를 읽고 생성`;
   };
 
+  // A batch belongs to the account that asked for it. The server takes concurrent requests
+  // and the accounts are already isolated, so the only thing that has to be exclusive is one
+  // account generating twice — locking the whole screen meant 이서진's two-minute batch also
+  // froze 김도현's, and froze review work that has nothing to do with generation.
+  const WORKSPACE_BATCH = "workspace";
+  const generationRuns = new Map();
+  const autogenLabels = new Map();
+
+  const generationKey = () => {
+    // The opened account on the local shell, the selected one on the hosted shell, and one
+    // shared key when neither names an account.
+    const account = currentAccount?.account_id
+      || (hostedCandidateControls ? selectedAccountId : "");
+    return account || WORKSPACE_BATCH;
+  };
+
+  const autogenLabel = (button) => {
+    // Captured the first time the button is painted, which is always while it is idle.
+    if (!autogenLabels.has(button)) autogenLabels.set(button, button.textContent);
+    return autogenLabels.get(button);
+  };
+
+  const renderAutogenButtons = () => {
+    const run = generationRuns.get(generationKey());
+    all("[data-autogen]").forEach((button) => {
+      const label = autogenLabel(button);
+      button.disabled = Boolean(run);
+      button.textContent = run ? run.label : label;
+    });
+  };
+
   // Generation takes minutes, and a button that only says "생성 중…" looks the same at ten
   // seconds and at two minutes. Without a moving number people read the wait as a hang and
   // press again, and the second press wrote a second batch. The count is ticks rather than
   // wall-clock so the label never stalls behind a busy main thread.
-  const countUpOn = (button) => {
-    let seconds = 0;
-    let timer = null;
-    const render = () => {
-      button.textContent = `생성 중… ${seconds}초 (보통 1~3분)`;
+  const countUpFor = (run, key) => {
+    const paint = () => {
+      run.label = `생성 중… ${run.seconds}초 (보통 1~3분)`;
+      // A run for an account nobody is looking at keeps counting but paints nothing.
+      if (generationKey() === key) renderAutogenButtons();
     };
     const tick = () => {
-      seconds += 1;
-      render();
-      timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
+      run.seconds += 1;
+      paint();
+      run.timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
     };
-    render();
-    timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
-    return () => {
-      if (timer) window.clearTimeout(timer);
-      timer = null;
-    };
+    paint();
+    run.timer = window.setTimeout(tick, AUTOGEN_TICK_MS);
   };
 
-  const generateCandidates = async (button) => {
-    if (button.disabled) return;
-    const label = button.textContent;
-    button.disabled = true;
-    const stopClock = countUpOn(button);
+  const generateCandidates = async () => {
+    const key = generationKey();
+    if (generationRuns.has(key)) return;
+    const run = { seconds: 0, timer: null, label: "" };
+    generationRuns.set(key, run);
+    countUpFor(run, key);
     setAutogenFeedback("");
-    setBusy(workspaceLive, true, "AI가 후보를 만드는 중… (1~3분 소요)");
+    setNotice("AI가 후보를 만드는 중… (1~3분 소요)");
     try {
       const profile = selectedContextProfile();
       const options = hostedCandidateControls
@@ -2121,16 +2151,22 @@
         ? `/api/candidates/generate?account_id=${encodeURIComponent(currentAccount.account_id)}`
         : "/api/candidates/generate";
       const created = await request(generatePath, options);
-      await loadCandidates();
-      setNotice(autogenNotice(created));
+      // Only the screen that asked for the batch is repainted. Somebody who moved on to
+      // another account must not have its list replaced by candidates it never requested;
+      // opening an account reloads its own list anyway.
+      if (generationKey() === key) {
+        await loadCandidates();
+        setNotice(autogenNotice(created));
+      }
     } catch (error) {
-      setAutogenFeedback(error.message);
-      setNotice(error.message);
+      if (generationKey() === key) {
+        setAutogenFeedback(error.message);
+        setNotice(error.message);
+      }
     } finally {
-      stopClock();
-      button.disabled = false;
-      button.textContent = label;
-      setBusy(workspaceLive, false);
+      if (run.timer) window.clearTimeout(run.timer);
+      generationRuns.delete(key);
+      renderAutogenButtons();
     }
   };
 
@@ -2152,8 +2188,10 @@
     tab.addEventListener("click", () => showStage(tab.dataset.stageTab));
   });
 
-  all("[data-autogen]").forEach((button) =>
-    button.addEventListener("click", () => generateCandidates(button)));
+  all("[data-autogen]").forEach((button) => {
+    autogenLabel(button);
+    button.addEventListener("click", () => generateCandidates());
+  });
 
 
 
@@ -2167,6 +2205,7 @@
     cancelCandidateEdit();
     cancelContextEdit();
     renderHostedAccounts();
+    renderAutogenButtons();
     setBusy(workspaceLive, true, "운영 계정을 바꾸는 중…");
     try {
       await loadContextProfiles();

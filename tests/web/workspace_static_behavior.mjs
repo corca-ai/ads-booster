@@ -1774,6 +1774,82 @@ const testMarkupUsesTheAgreedTerminology = async () => {
 const allText = (element) =>
   [element.textContent ?? "", ...element.children.map(allText)].join(" ");
 
+const _account = (accountId, name) => ({
+  account_id: accountId,
+  display_name: name,
+  country: "KR",
+  language: "ko",
+  status: "observing",
+  revision: 1,
+  identity: {
+    age: 27,
+    region: "서울",
+    occupation: "병동 간호사",
+    concept: "3교대를 잠금화면 일정으로 버티는 간호사",
+    domain: "office_worker",
+  },
+});
+
+const openAccount = async (fixture, index) => {
+  const card = fixture.accountGrid.children[index];
+  await card.children.at(-1).click();
+};
+
+const testOneAccountGeneratingLeavesEveryOtherAccountFree = async () => {
+  // Generation runs for minutes. Locking the whole screen meant one account's batch also
+  // froze every other account's, on a server that takes the requests concurrently.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [_account("acc-1", "이서진"), _account("acc-2", "김도현")];
+  const generated = [];
+  const first = deferred();
+  await loadLive(fixture, async (path, options = {}) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates/generate")) {
+      generated.push(path);
+      return path.includes("acc-1") ? first.promise : response(201, []);
+    }
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await openAccount(fixture, 0);
+  const label = fixture.autogenButton.textContent;
+  const running = fixture.autogenButton.click();
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 0초 (보통 1~3분)");
+  // The screen itself is no longer held: review work is unrelated to generation.
+  assert.equal(fixture.workspaceLive.getAttribute("aria-busy"), "false");
+
+  // Stepping out to the account home already frees the button.
+  await fixture.accountBack.click();
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, label);
+
+  // And the other account can start its own batch while the first is still in flight.
+  await openAccount(fixture, 1);
+  assert.equal(fixture.autogenButton.disabled, false);
+  await fixture.autogenButton.click();
+  assert.deepEqual(generated, [
+    "/api/candidates/generate?account_id=acc-1",
+    "/api/candidates/generate?account_id=acc-2",
+  ]);
+
+  // Coming back to the account that is still generating shows it still generating.
+  await fixture.accountBack.click();
+  await openAccount(fixture, 0);
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 0초 (보통 1~3분)");
+
+  // And finishing releases only that account's button.
+  first.resolve(response(201, []));
+  await running;
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, label);
+  assert.equal(fixture.timers.pending.size, 0);
+};
+
 const testTheApprovalStagesAreViewedOneAtATime = async () => {
   const fixture = makeLiveDocument();
   await loadLive(fixture, async (path) => {
@@ -1928,6 +2004,8 @@ passed += 1;
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
 passed += 1;
 await testTheAccountHomeOpensBeforeAnyCandidateWork();
+passed += 1;
+await testOneAccountGeneratingLeavesEveryOtherAccountFree();
 passed += 1;
 await testTheApprovalStagesAreViewedOneAtATime();
 passed += 1;
