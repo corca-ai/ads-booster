@@ -26,6 +26,7 @@ const PERSONA_DOMAINS = new Set([
 ]);
 const PERSONA_FONTS = new Set(["sf_pro", "sf_pro_rounded", "sf_compact", "new_york", "sf_mono"]);
 const MAX_PERSONA_INTERESTS = 8;
+const MAX_ACCOUNT_PROPOSALS = 3;
 export const REVIEW_TAGS = Object.freeze([
   "이미지 품질·AI 티",
   "앱 화면·데이터 오류",
@@ -154,6 +155,19 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     await requireHostedAccount(scopedEnv);
     if (request.method === "GET" && url.pathname === "/api/personas") {
       return json(await listHostedPersonas(scopedEnv, url.searchParams.get("country")));
+    }
+    if (request.method === "POST" && url.pathname === "/api/personas/proposals") {
+      const body = await readOptionalJson(request);
+      const country = requiredString(body?.country ?? "KR", "country", 2).toUpperCase();
+      assertConfiguredContextCountry(contextRegistry, country);
+      return json(
+        await proposeAccounts(
+          scopedEnv,
+          contextRegistry,
+          country,
+          await listHostedPersonas(scopedEnv, country),
+        ),
+      );
     }
     if (request.method === "POST" && url.pathname === "/api/personas") {
       const persona = normalizeHostedPersona(await readJson(request), contextRegistry);
@@ -570,6 +584,141 @@ export function normalizeHostedAccount(input, contextRegistry) {
    * font, status — is the same closed vocabulary the local models enforce, because the same
    * generator reads both.
    */
+export function accountProposalSchema() {
+  return {
+    type: "object",
+    properties: {
+      proposals: {
+        type: "array",
+        minItems: 2,
+        maxItems: MAX_ACCOUNT_PROPOSALS,
+        items: {
+          type: "object",
+          properties: {
+            identity: {
+              type: "object",
+              properties: {
+                display_name: { type: "string" },
+                age: { type: "integer", minimum: 13, maximum: 99 },
+                region: { type: "string" },
+                occupation: { type: "string" },
+                concept: { type: "string" },
+                domain: { type: "string", enum: [...PERSONA_DOMAINS] },
+                interests: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: MAX_PERSONA_INTERESTS,
+                  items: { type: "string" },
+                },
+                life_rhythm: { type: "string" },
+                taste: {
+                  type: "object",
+                  properties: {
+                    background_subject: {
+                      type: "string",
+                      enum: [...ALLOWED_BACKGROUND_SUBJECTS],
+                    },
+                    background_mood: { type: "string" },
+                    font: { type: "string", enum: [...PERSONA_FONTS] },
+                  },
+                  required: ["background_subject", "background_mood", "font"],
+                },
+              },
+              required: [
+                "display_name", "age", "region", "occupation", "concept",
+                "domain", "interests", "life_rhythm", "taste",
+              ],
+            },
+            reason: { type: "string" },
+          },
+          required: ["identity", "reason"],
+        },
+      },
+    },
+    required: ["proposals"],
+  };
+}
+
+export function accountProposalPrompt(contextDocuments, country, existing) {
+  const listed = existing.length
+    ? existing
+        .map((persona) => `- ${persona.display_name} (${persona.identity.occupation}, `
+          + `${persona.identity.domain}): ${persona.identity.concept}`)
+        .join("\n")
+    : "아직 이 국가에 운영 중인 계정이 없습니다.";
+  return `당신은 Trace 마케팅 계정을 제안하는 에이전트입니다.
+아래 context 의 레퍼런스 인덱스와 이미 운영 중인 계정 목록만 근거로,
+${country} 계정 후보 ${MAX_ACCOUNT_PROPOSALS}개를 서로 다른 화자 유형으로 제안하세요.
+
+[context]
+${contextDocuments}
+
+[이미 운영 중인 계정]
+${listed}
+위 계정들과 도메인·직업·컨셉이 겹치지 않게 하세요.
+
+[반드시 지킬 규칙]
+1. 개발·메이커 소재를 제안하지 마세요. 인덱스에 1인개발 계열의 성과가 있더라도 우리가 쓸
+   수 있는 유형이 아닙니다. 계정 필드에 배포·코딩·개발·출시·앱 제작 같은 말이 들어가면 그
+   계정이 쓰는 모든 글의 소재 통이 오염됩니다. 직업이 개발자인 계정도 제안하지 마세요.
+2. display_name 은 실제로 있을 법한 한국 이름입니다. 별명·영문 아이디를 쓰지 마세요.
+3. region 은 "서울 성동구" 처럼 구·군까지, occupation 은 실제 직업명 하나입니다.
+4. concept 은 사람이 읽고 바로 그림이 그려지는 한 문장입니다.
+5. interests 는 3개이고 고유명사급으로 구체적이어야 합니다. "운동", "음악" 은 금지입니다.
+6. life_rhythm 은 시각이 드러나는 구체적인 하루입니다.
+7. reason 에는 이 유형이 통한다고 보는 이유와 근거 레퍼런스 id 를 함께 적습니다.`;
+}
+
+async function proposeAccounts(env, contextRegistry, country, existing) {
+  if (!env.AI || typeof env.AI.run !== "function") {
+    throw new WorkspaceHttpError(503, "Cloudflare Workers AI 연결이 준비되지 않았습니다.");
+  }
+  const prompt = accountProposalPrompt(
+    contextForCountry(contextRegistry, country),
+    country,
+    existing,
+  );
+  let result;
+  try {
+    result = await env.AI.run(env.WORKSPACE_AI_MODEL || DEFAULT_WORKSPACE_AI_MODEL, {
+      messages: [
+        {
+          role: "system",
+          content: `당신은 Trace 마케팅 계정 제안기입니다. 제공된 문서만 근거로 ${country} 계정을 제안하세요.`,
+        },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: positiveInteger(env.WORKSPACE_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
+      temperature: 0.7,
+      response_format: { type: "json_schema", json_schema: accountProposalSchema() },
+    });
+  } catch {
+    throw new WorkspaceHttpError(502, "Cloudflare AI 계정 제안에 실패했습니다.");
+  }
+  return aiAccountProposals(result).slice(0, MAX_ACCOUNT_PROPOSALS).map(normalizeAccountProposal);
+}
+
+export function aiAccountProposals(result) {
+  let response = result?.response ?? result?.choices?.[0]?.message?.content ?? result;
+  if (typeof response === "string") response = JSON.parse(response);
+  if (!response || typeof response !== "object" || !Array.isArray(response.proposals)) {
+    throw new WorkspaceHttpError(502, "AI 계정 제안 형식이 올바르지 않습니다.");
+  }
+  return response.proposals;
+}
+
+export function normalizeAccountProposal(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkspaceHttpError(502, "AI 계정 제안 형식이 올바르지 않습니다.");
+  }
+  // The identity goes through the same validator a hand-written persona does, so a
+  // suggestion can never carry a token the create route would refuse.
+  return {
+    identity: personaIdentity(input.identity),
+    reason: requiredString(input.reason, "reason", 400),
+  };
+}
+
 export function normalizeHostedPersona(input, contextRegistry) {
   const country = requiredString(input?.country ?? "KR", "country", 2).toUpperCase();
   assertConfiguredContextCountry(contextRegistry, country);

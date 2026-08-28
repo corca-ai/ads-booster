@@ -1559,3 +1559,105 @@ test("an unknown persona is a 404 rather than an empty card", async () => {
 
   assert.equal(response.status, 404);
 });
+
+test("hosted account proposals stand on the reference index and refuse maker material", async () => {
+  const state = personaEnvironment();
+  await personaRequest(state.env, "/api/personas", "POST", personaBody());
+  let seenPrompt = "";
+  const env = {
+    ...state.env,
+    DB: state.env.DB,
+    AI: {
+      async run(_model, options) {
+        seenPrompt = options.messages[1].content;
+        return {
+          response: JSON.stringify({
+            proposals: [
+              { identity: personaBody().identity, reason: "kr-001 직장인 공감 계열" },
+              {
+                identity: { ...personaBody().identity, display_name: "김도현" },
+                reason: "kr-014 질문형 훅",
+              },
+            ],
+          }),
+        };
+      },
+    },
+  };
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/personas/proposals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country: "KR" }),
+    }),
+    env,
+    WORKSPACE_CONTEXT,
+  );
+
+  assert.equal(response.status, 200);
+  const proposals = await response.json();
+  // Each proposal is a whole identity plus the evidence, in the shape the create form takes.
+  assert.equal(proposals.length, 2);
+  assert.equal(proposals[0].identity.display_name, "이서진");
+  assert.equal(proposals[0].identity.taste.font, "sf_pro_rounded");
+  assert.match(proposals[1].reason, /kr-014/u);
+  // The prompt names the ban against the evidence, and quotes the account already running.
+  assert.match(seenPrompt, /개발·메이커 소재를 제안하지 마세요/u);
+  assert.match(seenPrompt, /소재 통이 오염됩니다/u);
+  assert.match(seenPrompt, /- 이서진 \(병동 간호사, office_worker\)/u);
+  // And asking produced no rows.
+  assert.equal(state.store.length, 1);
+});
+
+test("a hosted proposal carrying an unknown token is refused rather than offered", async () => {
+  const state = personaEnvironment();
+  const env = {
+    ...state.env,
+    AI: {
+      async run() {
+        return {
+          response: JSON.stringify({
+            proposals: [{
+              identity: {
+                ...personaBody().identity,
+                taste: { ...personaBody().identity.taste, background_subject: "예쁜 것" },
+              },
+              reason: "kr-001",
+            }],
+          }),
+        };
+      },
+    },
+  };
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/personas/proposals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country: "KR" }),
+    }),
+    env,
+    WORKSPACE_CONTEXT,
+  );
+
+  // A suggestion the create route would refuse must never reach the card grid.
+  assert.equal(response.status, 400);
+  assert.equal(state.store.length, 0);
+});
+
+test("hosted proposals need Workers AI to be bound", async () => {
+  const state = personaEnvironment();
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/personas/proposals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country: "KR" }),
+    }),
+    state.env,
+    WORKSPACE_CONTEXT,
+  );
+
+  assert.equal(response.status, 503);
+});

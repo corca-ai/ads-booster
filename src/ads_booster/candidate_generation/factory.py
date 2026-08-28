@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Final
 
 from ads_booster.auth.codex import CodexOAuth
 from ads_booster.auth.store import AuthStore
+from ads_booster.candidate_generation.account_proposal import AccountProposalGenerator
 from ads_booster.candidate_generation.background_factory import ProductionCandidateBackgrounds
 from ads_booster.candidate_generation.context_source import (
     REQUIRED_DOCUMENTS,
@@ -78,6 +79,19 @@ class ProductionCandidateModels:
             if self.instructions is not None:
                 client.instructions = self.instructions
             yield client
+
+
+def build_account_proposal_generator(settings: AgentSettings) -> AccountProposalGenerator:
+    """Compose the account proposal generator from settings and the context directory.
+
+    It reads the same context directory the caption engine does, because the evidence it
+    argues from — the reference index — is the same corpus.
+    """
+    return AccountProposalGenerator(
+        models=ProductionCandidateModels(settings, instructions=SYSTEM_INSTRUCTION),
+        context_directory=default_context_directory(settings.workspace),
+        model=settings.model,
+    )
 
 
 def build_script_candidate_generator(

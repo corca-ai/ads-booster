@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from ads_booster.agent.session import ModelClient
+    from ads_booster.candidate_generation.account_proposal import AccountProposal
     from ads_booster.candidate_generation.models import CandidateBatch
     from ads_booster.workspace import (
         CandidateCreate,
@@ -41,6 +42,20 @@ class CandidateGeneratorPort(Protocol):
         run_context: str | None = None,
         account: MarketingAccountRecord | None = None,
     ) -> CandidateBatch: ...
+
+
+class AccountProposalPort(Protocol):
+    """Suggests accounts worth opening, without creating any.
+
+    Stated here so the Web layer can depend on the suggestion without depending on the
+    provider that produces it — the same reason every other generation surface has a port.
+    """
+
+    def propose(
+        self,
+        country: str,
+        existing: tuple[MarketingAccountRecord, ...] = (),
+    ) -> tuple[AccountProposal, ...]: ...
 
 
 class CandidateImageRunnerPort(Protocol):

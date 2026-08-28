@@ -388,6 +388,18 @@ const makeLiveDocument = () => {
   const accountVerdict = new FakeElement("account-verdict");
   const accountFormDetails = new FakeElement("account-form-details");
   const accountCountryField = new FakeElement("account-country");
+  const accountProposeButton = new FakeElement("account-propose", { accountPropose: "" });
+  accountProposeButton.textContent = "🤖 AI 제안 받기";
+  const accountProposalGrid = new FakeElement("account-proposals");
+  accountProposalGrid.hidden = true;
+  const accountProposalFeedback = new FakeElement("account-proposal-feedback");
+  accountProposalFeedback.hidden = true;
+  // The create form fields a chosen proposal fills, looked up by id like the live script does.
+  const accountFields = [
+    "account-name", "account-age", "account-region", "account-occupation", "account-domain",
+    "account-concept", "account-interests", "account-rhythm", "account-background-subject",
+    "account-background-mood", "account-font",
+  ].map((id) => new FakeElement(id));
   const accountFormEl = new FakeElement("account-form");
   accountFormEl.checkValidity = () => true;
   accountFormEl.formValues = new Map([
@@ -433,6 +445,9 @@ const makeLiveDocument = () => {
     ["[data-account-count]", accountCount],
     ["[data-account-back]", accountBack],
     ["[data-account-current-name]", accountCurrentName],
+    ["[data-account-propose]", accountProposeButton],
+    ["[data-account-proposals]", accountProposalGrid],
+    ["[data-account-proposal-feedback]", accountProposalFeedback],
     ["[data-account-verdict]", accountVerdict],
     ["[data-workspace-live]", workspaceLive],
     ["[data-entry-screen]", entryScreen],
@@ -514,6 +529,7 @@ const makeLiveDocument = () => {
     ["[data-stage-panel]", [captionStagePanel, imageStagePanel]],
   ]);
   const document = new FakeDocument([
+    ...accountFields,
     workspaceLive,
     entryScreen,
     skipLink,
@@ -586,6 +602,10 @@ const makeLiveDocument = () => {
     deviceTimeField,
     backgroundMoodField,
     accountCountryField,
+    accountProposeButton,
+    accountProposalGrid,
+    accountProposalFeedback,
+    accountFields,
   ]);
   document.querySelector = (selector) => selectors.get(selector) ?? null;
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
@@ -613,6 +633,10 @@ const makeLiveDocument = () => {
     accountFormDetails,
     accountFormEl,
     accountCountryField,
+    accountProposeButton,
+    accountProposalGrid,
+    accountProposalFeedback,
+    accountFields,
     workspaceLive,
     entryScreen,
     skipLink,
@@ -1966,6 +1990,94 @@ const testTheApprovalStagesAreViewedOneAtATime = async () => {
   assert.equal(fixture.imageStagePanel.hidden, true);
 };
 
+const _proposalPayload = (name, reason) => ({
+  identity: {
+    display_name: name,
+    age: 27,
+    region: "서울 마포구",
+    occupation: "병동 간호사",
+    concept: `${name}의 3교대 잠금화면`,
+    domain: "office_worker",
+    interests: ["쿠로미", "필라테스", "동네 베이커리"],
+    life_rhythm: "데이 근무일은 5시 40분 기상",
+    taste: {
+      background_subject: "character_other",
+      background_mood: "파스텔 톤 캐릭터 화면",
+      font: "sf_pro_rounded",
+    },
+  },
+  reason,
+});
+
+const _field = (fixture, id) => fixture.accountFields.find((element) => element.id === id);
+
+const testAiProposalsFillTheCreateFormWithoutSubmittingIt = async () => {
+  // Opening an account meant writing twelve fields from a blank form. The proposal turns
+  // that into a choice: pick a card, the form fills, and the person edits and submits it
+  // down the ordinary route. Nothing is stored until they do.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [];
+  const posted = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/accounts/proposals") {
+      posted.push(JSON.parse(options.body));
+      return response(200, [
+        _proposalPayload("이서진", "kr-014·kr-003처럼 질문형 훅이 도달을 만든 사례가 있다"),
+        _proposalPayload("김도현", "kr-001의 직장인 공감 계열"),
+      ]);
+    }
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await fixture.accountProposeButton.click();
+
+  // The request names the country the form is pointed at.
+  assert.deepEqual(posted, [{ country: "KR" }]);
+  // Two cards, each showing the concept and the evidence behind it.
+  assert.equal(fixture.accountProposalGrid.hidden, false);
+  assert.equal(fixture.accountProposalGrid.children.length, 2);
+  assert.match(allText(fixture.accountProposalGrid.children[0]), /이서진/);
+  assert.match(allText(fixture.accountProposalGrid.children[0]), /병동 간호사/);
+  assert.match(allText(fixture.accountProposalGrid.children[0]), /kr-014/);
+  // The button came back for another try.
+  assert.equal(fixture.accountProposeButton.disabled, false);
+  assert.equal(fixture.accountProposeButton.textContent, "🤖 AI 제안 받기");
+  // And nothing has been created by looking.
+  assert.equal(fixture.accountGrid.children.length, 0);
+
+  // Choosing one fills the form rather than submitting it.
+  await fixture.accountProposalGrid.children[0].children.at(-1).click();
+  assert.equal(_field(fixture, "account-name").value, "이서진");
+  assert.equal(_field(fixture, "account-age").value, "27");
+  assert.equal(_field(fixture, "account-occupation").value, "병동 간호사");
+  assert.equal(_field(fixture, "account-domain").value, "office_worker");
+  assert.equal(_field(fixture, "account-interests").value, "쿠로미, 필라테스, 동네 베이커리");
+  assert.equal(_field(fixture, "account-font").value, "sf_pro_rounded");
+  // The cards clear once one is taken, and still nothing is stored.
+  assert.equal(fixture.accountProposalGrid.hidden, true);
+  assert.equal(fixture.accountGrid.children.length, 0);
+};
+
+const testAFailedProposalSaysSoNextToTheButton = async () => {
+  const fixture = makeLiveDocument();
+  const detail = "AI 응답이 형식을 통과하지 못했습니다 — 다시 시도해 주세요.";
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/accounts/proposals") return response(502, { detail });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await fixture.accountProposeButton.click();
+
+  assert.equal(fixture.accountProposalFeedback.hidden, false);
+  assert.equal(fixture.accountProposalFeedback.textContent, detail);
+  assert.equal(fixture.accountProposeButton.disabled, false);
+  assert.equal(fixture.accountProposalGrid.children.length, 0);
+};
+
 const testTheCountryHomeOpensBeforeAnyAccountWork = async () => {
   // The screen is three storeys now: country, then that country's accounts, then that
   // account's work. Countries are not stored anywhere — the list is derived from the
@@ -2332,6 +2444,10 @@ passed += 1;
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
 passed += 1;
 await testTheCountryHomeOpensBeforeAnyAccountWork();
+passed += 1;
+await testAiProposalsFillTheCreateFormWithoutSubmittingIt();
+passed += 1;
+await testAFailedProposalSaysSoNextToTheButton();
 passed += 1;
 await testHostedCountryOpensItsPersonasAndThenTheWork();
 passed += 1;
