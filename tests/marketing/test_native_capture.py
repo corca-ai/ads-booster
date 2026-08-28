@@ -12,7 +12,7 @@ import pytest
 from ads_booster.connectors.trace.v1.codex_runtime import CodexWallpaperPlanner
 from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
 from ads_booster.contracts.results import TraceRunResult
-from ads_booster.contracts.run import TraceRunState
+from ads_booster.contracts.run import TraceRunErrorCode, TraceRunFailure, TraceRunState
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind
 from ads_booster.marketing.native_capture import (
@@ -28,22 +28,24 @@ _LONG_TONE = ("observational tone " * 12).strip()
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ads_booster.contracts.generation import MarketingContextBundle
+    from ads_booster.transport.json_types import JsonObject
 
 
 class RecordingCodexClient:
     def __init__(self) -> None:
-        self.prompt = ""
+        self.prompt: str = ""
 
     def generate_json(
         self,
         prompt: str,
-        schema: dict[str, object],
+        schema: Mapping[str, object],
         *,
         images: tuple[Path, ...] = (),
-    ) -> dict[str, object]:
+    ) -> JsonObject:
         _ = (schema, images)
         self.prompt = prompt
         return plan().model_dump(mode="json")
@@ -107,6 +109,21 @@ class UnknownSideEffectRunner:
             idempotency_key=f"{bundle.request_id}-v2",
             input_digest="a" * 64,
             state=TraceRunState.UNKNOWN_SIDE_EFFECT,
+        )
+
+
+class FailedPlanRunner:
+    def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
+        return TraceRunResult(
+            schema_version="trace.run-result.v2",
+            run_id=bundle.request_id,
+            idempotency_key=f"{bundle.request_id}-v2",
+            input_digest="a" * 64,
+            state=TraceRunState.FAILED,
+            failure=TraceRunFailure(
+                code=TraceRunErrorCode.CODEX_PLAN_FAILED,
+                message="Codex wallpaper planning failed",
+            ),
         )
 
 
@@ -204,6 +221,20 @@ def test_hosted_capture_preserves_an_unknown_native_side_effect(tmp_path: Path) 
 
     assert failure.value.failure_code == "native_appium_side_effect_unknown"
     assert failure.value.unknown_side_effect is True
+
+
+def test_hosted_capture_reports_a_distinct_codex_plan_failure(tmp_path: Path) -> None:
+    executor = HostedWorkspaceCaptureExecutor(
+        runner=FailedPlanRunner(),
+        output_root=tmp_path / "generated",
+        device_resolver=FakeDeviceResolver(),
+    )
+
+    with pytest.raises(MarketingExecutionError) as failure:
+        _ = executor.execute(_task())
+
+    assert failure.value.failure_code == "codex_plan_failed"
+    assert failure.value.unknown_side_effect is False
 
 
 def test_hosted_capture_rejects_an_invalid_candidate_contract(tmp_path: Path) -> None:

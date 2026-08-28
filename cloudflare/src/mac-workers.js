@@ -143,7 +143,8 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
     `SELECT task_id, task_json, lease_id, attempt_count
      FROM hosted_workspace_capture_tasks
      WHERE worker_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
-       AND callback_id IS NULL AND execution_started_at IS NULL AND lease_expires_at > ?
+       AND callback_id IS NULL AND callback_reservation_id IS NULL
+       AND execution_started_at IS NULL AND lease_expires_at > ?
      ORDER BY created_at LIMIT 1`,
   ).bind(worker.worker_id, now.toISOString()).first();
   if (current) return [leaseResponse(current)];
@@ -159,7 +160,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
     const task = await db.prepare(
       `SELECT task_id FROM hosted_workspace_capture_tasks
        WHERE dispatch_mode = 'worker_broker' AND state = 'queued' AND callback_id IS NULL
-         AND execution_started_at IS NULL
+         AND callback_reservation_id IS NULL AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
        ORDER BY created_at LIMIT 1`,
     ).bind(now.toISOString()).first();
@@ -175,7 +176,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
            lease_accepted_at = NULL,
            attempt_count = attempt_count + 1, updated_at = ?
        WHERE task_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
-         AND callback_id IS NULL
+         AND callback_id IS NULL AND callback_reservation_id IS NULL
          AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND EXISTS (SELECT 1 FROM mac_workers
@@ -368,7 +369,7 @@ async function acknowledgeWorkerLeases(db, worker, body) {
       `UPDATE hosted_workspace_capture_tasks
        SET lease_accepted_at = ?, lease_expires_at = ?, updated_at = ?
        WHERE lease_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
-         AND state = 'queued' AND callback_id IS NULL
+         AND state = 'queued' AND callback_id IS NULL AND callback_reservation_id IS NULL
          AND execution_started_at IS NULL AND lease_expires_at > ?`,
     ).bind(
       now.toISOString(),
@@ -384,7 +385,8 @@ async function acknowledgeWorkerLeases(db, worker, body) {
     const task = await db.prepare(
       `SELECT task_id FROM hosted_workspace_capture_tasks
        WHERE lease_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
-         AND state = 'queued' AND callback_id IS NULL AND execution_started_at IS NULL`,
+         AND state = 'queued' AND callback_id IS NULL
+         AND callback_reservation_id IS NULL AND execution_started_at IS NULL`,
     ).bind(leaseId, worker.worker_id).first();
     if (!task) continue;
     const result = await db.prepare(
@@ -392,7 +394,8 @@ async function acknowledgeWorkerLeases(db, worker, body) {
        SET worker_id = NULL, lease_id = NULL, lease_expires_at = NULL,
            lease_started_at = NULL, lease_accepted_at = NULL, execution_started_at = NULL,
            updated_at = ?
-       WHERE task_id = ? AND lease_id = ? AND worker_id = ? AND state = 'queued'`,
+       WHERE task_id = ? AND lease_id = ? AND worker_id = ? AND state = 'queued'
+         AND callback_reservation_id IS NULL`,
     ).bind(now.toISOString(), task.task_id, leaseId, worker.worker_id).run();
     if (result.meta.changes === 1) {
       retried += 1;
@@ -417,7 +420,8 @@ export async function markWorkerTaskExecuting(db, worker, taskId, clock = new Da
     `UPDATE hosted_workspace_capture_tasks
      SET execution_started_at = ?, lease_expires_at = NULL, updated_at = ?
      WHERE task_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
-       AND state = 'queued' AND callback_id IS NULL AND execution_started_at IS NULL
+       AND state = 'queued' AND callback_id IS NULL AND callback_reservation_id IS NULL
+       AND execution_started_at IS NULL
        AND lease_accepted_at IS NOT NULL AND lease_expires_at > ?`,
   ).bind(now, now, taskId, worker.worker_id, now).run();
   if (updated.meta.changes === 1) return { accepted: true, duplicate: false };
@@ -445,16 +449,19 @@ export async function reserveWorkerTaskCallback(
   }
   const now = clock.toISOString();
   const resultDigest = await sha256(resultJson);
+  const allowPreExecutionFailure = callbackResultStatus(resultJson) === "failed" ? 1 : 0;
   const reserved = await db.prepare(
     `UPDATE hosted_workspace_capture_tasks
      SET callback_reservation_id = ?, callback_reserved_at = ?,
          callback_result_sha256 = ?, updated_at = ?
      WHERE task_id = ? AND worker_id = ? AND lease_id = ?
        AND dispatch_mode = 'worker_broker' AND state = 'queued'
-       AND callback_id IS NULL AND execution_started_at IS NOT NULL
+       AND callback_id IS NULL
+       AND (execution_started_at IS NOT NULL OR ? = 1)
        AND callback_reservation_id IS NULL`,
   ).bind(
     callbackId, now, resultDigest, now, task.task_id, worker.worker_id, task.lease_id,
+    allowPreExecutionFailure,
   ).run();
   if (reserved.meta.changes === 1) return { duplicate: false, retry: false };
   const current = await db.prepare(
@@ -494,7 +501,8 @@ async function clearStaleWorkerAssignment(db, workerId, now) {
     `SELECT task_id FROM hosted_workspace_capture_tasks
      WHERE task_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'
        AND state = 'queued' AND callback_id IS NULL
-       AND (execution_started_at IS NOT NULL OR lease_expires_at > ?)`,
+       AND (callback_reservation_id IS NOT NULL OR execution_started_at IS NOT NULL
+            OR lease_expires_at > ?)`,
   ).bind(worker.current_task_id, workerId, now.toISOString()).first();
   if (task) return;
   await db.prepare(
@@ -653,6 +661,14 @@ function parseObject(value) {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+function callbackResultStatus(resultJson) {
+  try {
+    return JSON.parse(resultJson)?.status ?? null;
+  } catch {
+    return null;
   }
 }
 

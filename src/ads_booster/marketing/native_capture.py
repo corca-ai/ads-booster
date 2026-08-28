@@ -17,7 +17,7 @@ from ads_booster.contracts.generation import (
     PromotionMaterial,
 )
 from ads_booster.contracts.models import DeviceKind, DeviceTarget
-from ads_booster.contracts.run import TraceRunState
+from ads_booster.contracts.run import TraceRunErrorCode, TraceRunState
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskResult, TaskStatus
 from ads_booster.transport.json_types import JsonObject
@@ -116,6 +116,11 @@ class HostedWorkspaceCaptureExecutor:
                 unknown_side_effect=True,
             )
         if result.state is not TraceRunState.COMPLETED or result.output_image is None:
+            if (
+                result.failure is not None
+                and result.failure.code is TraceRunErrorCode.CODEX_PLAN_FAILED
+            ):
+                raise MarketingExecutionError("codex_plan_failed")
             raise MarketingExecutionError("native_appium_capture_failed")
         provenance = result.capture_provenance
         if (

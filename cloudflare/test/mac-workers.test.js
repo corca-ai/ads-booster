@@ -82,6 +82,9 @@ class ClaimStatement {
   }
 
   async first() {
+    if (this.sql.includes("FROM mac_workers WHERE token_sha256")) {
+      return [...this.db.workers.values()][0] ?? null;
+    }
     if (this.sql.includes("SELECT worker_id, execution_started_at")) {
       return this.db.tasks.get(this.values[0]) ?? null;
     }
@@ -93,6 +96,7 @@ class ClaimStatement {
       return [...this.db.tasks.values()].find((row) =>
         row.worker_id === workerId && row.dispatch_mode === "worker_broker" &&
         row.state === "queued" && !row.callback_id && !row.execution_started_at &&
+        (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
         row.lease_expires_at > now
       ) ?? null;
     }
@@ -101,7 +105,16 @@ class ClaimStatement {
       const [now] = this.values;
       return [...this.db.tasks.values()].find((row) =>
         row.dispatch_mode === "worker_broker" && row.state === "queued" && !row.callback_id &&
+        (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
         !row.execution_started_at && (!row.worker_id || !row.lease_expires_at || row.lease_expires_at <= now)
+      ) ?? null;
+    }
+    if (this.sql.includes("WHERE lease_id = ? AND worker_id = ?")) {
+      const [leaseId, workerId] = this.values;
+      return [...this.db.tasks.values()].find((row) =>
+        row.lease_id === leaseId && row.worker_id === workerId && row.state === "queued" &&
+        !row.callback_id && !row.execution_started_at &&
+        (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id)
       ) ?? null;
     }
     if (this.sql.includes("FROM hosted_workspace_capture_tasks") &&
@@ -115,7 +128,10 @@ class ClaimStatement {
       const [taskId, workerId, now] = this.values;
       const row = this.db.tasks.get(taskId);
       return row?.worker_id === workerId && row.state === "queued" &&
-        !row.callback_id && row.lease_expires_at > now ? row : null;
+        !row.callback_id && (
+          (this.sql.includes("callback_reservation_id IS NOT NULL") && row.callback_reservation_id) ||
+          row.execution_started_at || row.lease_expires_at > now
+        ) ? row : null;
     }
     throw new Error(`unexpected first SQL: ${this.sql}`);
   }
@@ -126,6 +142,7 @@ class ClaimStatement {
       const row = this.db.tasks.get(taskId);
       if (!row || row.worker_id !== workerId || row.dispatch_mode !== "worker_broker" ||
           row.state !== "queued" || row.callback_id || row.execution_started_at ||
+          (this.sql.includes("callback_reservation_id IS NULL") && row.callback_reservation_id) ||
           !row.lease_accepted_at || !row.lease_expires_at || row.lease_expires_at <= now) {
         return { meta: { changes: 0 } };
       }
@@ -143,6 +160,7 @@ class ClaimStatement {
       const owner = this.db.workers.get(ownerWorkerId);
       if (!row || row.dispatch_mode !== "worker_broker" || row.state !== "queued" ||
           row.callback_id || row.execution_started_at || (row.worker_id && row.lease_expires_at && row.lease_expires_at > now) ||
+          (this.sql.includes("callback_reservation_id IS NULL") && row.callback_reservation_id) ||
           owner?.state !== "active" || owner.current_task_id !== reservation) {
         return { meta: { changes: 0 } };
       }
@@ -154,6 +172,22 @@ class ClaimStatement {
         lease_accepted_at: null,
         attempt_count: row.attempt_count + 1,
         updated_at: updatedAt,
+      });
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("SET worker_id = NULL, lease_id = NULL")) {
+      const [_updatedAt, taskId, leaseId, workerId] = this.values;
+      const row = this.db.tasks.get(taskId);
+      if (!row || row.lease_id !== leaseId || row.worker_id !== workerId ||
+          (this.sql.includes("callback_reservation_id IS NULL") && row.callback_reservation_id)) {
+        return { meta: { changes: 0 } };
+      }
+      Object.assign(row, {
+        worker_id: null,
+        lease_id: null,
+        lease_expires_at: null,
+        lease_started_at: null,
+        lease_accepted_at: null,
       });
       return { meta: { changes: 1 } };
     }
@@ -331,10 +365,12 @@ class CallbackReservationDb {
       bind(...values) { this.values = values; return this; },
       async run() {
         if (sql.includes("SET callback_reservation_id = ?")) {
-          const [reservationId, reservedAt, resultDigest, updatedAt, taskId, workerId, leaseId] = this.values;
+          const [reservationId, reservedAt, resultDigest, updatedAt, taskId, workerId, leaseId,
+            allowPreExecutionFailure] = this.values;
           if (db.task.task_id !== taskId || db.task.worker_id !== workerId ||
               db.task.lease_id !== leaseId || db.task.dispatch_mode !== "worker_broker" ||
-              db.task.state !== "queued" || db.task.callback_id || !db.task.execution_started_at ||
+              db.task.state !== "queued" || db.task.callback_id ||
+              (!db.task.execution_started_at && allowPreExecutionFailure !== 1) ||
               db.task.callback_reservation_id) {
             return { meta: { changes: 0 } };
           }
@@ -371,25 +407,147 @@ class CallbackReservationDb {
   }
 }
 
-test("revocation and reassignment wins before a stale callback can reserve side effects", async () => {
+class CallbackCompletionDb {
+  constructor() {
+    this.worker = worker("worker-1", { current_task_id: "task-1" });
+    this.task = task({
+      worker_id: "worker-1",
+      lease_id: "lease-1",
+      lease_expires_at: "2026-08-26T00:15:00.000Z",
+      lease_started_at: "2026-08-26T00:00:00.000Z",
+    });
+  }
+
+  prepare(sql) {
+    const db = this;
+    return {
+      values: [],
+      bind(...values) { this.values = values; return this; },
+      async first() {
+        if (sql.includes("FROM mac_workers WHERE token_sha256")) return db.worker;
+        throw new Error(`unexpected callback completion first SQL: ${sql}`);
+      },
+      async run() {
+        if (sql.includes("UPDATE mac_workers SET current_task_id = NULL")) {
+          const [_updatedAt, workerId, taskId] = this.values;
+          if (db.worker.worker_id !== workerId || db.worker.current_task_id !== taskId) {
+            return { meta: { changes: 0 } };
+          }
+          db.worker.current_task_id = null;
+          return { meta: { changes: 1 } };
+        }
+        if (sql.includes("SET lease_expires_at = NULL")) {
+          const [_updatedAt, taskId, workerId] = this.values;
+          if (db.task.task_id !== taskId || db.task.worker_id !== workerId) {
+            return { meta: { changes: 0 } };
+          }
+          db.task.lease_expires_at = null;
+          db.task.lease_started_at = null;
+          return { meta: { changes: 1 } };
+        }
+        throw new Error(`unexpected callback completion run SQL: ${sql}`);
+      },
+    };
+  }
+
+  async batch(statements) {
+    return Promise.all(statements.map((statement) => statement.run()));
+  }
+}
+
+test("reassignment wins before a stale pre-execution failure can reserve", async () => {
   const original = task({
     worker_id: "worker-1",
     lease_id: "lease-1",
-    execution_started_at: "2026-08-26T00:05:00.000Z",
   });
   const db = new CallbackReservationDb(original);
   db.task.worker_id = "worker-2";
   db.task.lease_id = "lease-2";
-  db.task.execution_started_at = "2026-08-26T00:06:00.000Z";
 
   await assert.rejects(
     reserveWorkerTaskCallback(
-      db, worker("worker-1"), original, "task-1:completed", "{\"status\":\"succeeded\"}",
+      db,
+      worker("worker-1"),
+      original,
+      "task-1:completed",
+      JSON.stringify({ status: "failed", failure_code: "native_appium_capture_failed" }),
     ),
     /worker no longer owns the callback lease/u,
   );
 
   assert.equal(db.task.callback_reservation_id, null);
+});
+
+test("a failed callback can terminate before Appium for the current worker lease", async () => {
+  const current = task({ worker_id: "worker-1", lease_id: "lease-1" });
+  const db = new CallbackReservationDb(current);
+
+  const reserved = await reserveWorkerTaskCallback(
+    db,
+    worker("worker-1"),
+    current,
+    "task-1:completed",
+    JSON.stringify({ status: "failed", failure_code: "native_appium_capture_failed" }),
+  );
+
+  assert.deepEqual(reserved, { duplicate: false, retry: false });
+  assert.equal(db.task.callback_reservation_id, "task-1:completed");
+});
+
+for (const status of ["succeeded", "unknown_side_effect"]) {
+  test(`a pre-execution ${status} callback cannot bypass the Appium barrier`, async () => {
+    const current = task({ worker_id: "worker-1", lease_id: "lease-1" });
+    const db = new CallbackReservationDb(current);
+
+    await assert.rejects(
+      reserveWorkerTaskCallback(
+        db,
+        worker("worker-1"),
+        current,
+        "task-1:completed",
+        JSON.stringify({ status }),
+      ),
+      /worker no longer owns the callback lease or result/u,
+    );
+
+    assert.equal(db.task.callback_reservation_id, null);
+  });
+}
+
+test("an accepted callback releases the worker assignment and renewable lease", async () => {
+  const db = new CallbackCompletionDb();
+  let received = null;
+  const callback = {
+    callback_id: "task-1:completed",
+    task_id: "task-1",
+    run_id: "run-1",
+    account_id: "trace_demo_kr",
+    kind: "capture",
+    result: { status: "failed", failure_code: "codex_plan_failed" },
+    completed_at: "2026-08-26T00:05:00.000Z",
+  };
+
+  const response = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers/task-callbacks", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer worker-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(callback),
+    }),
+    { DB: db },
+    async (value) => {
+      received = value;
+      return { accepted: true, duplicate: false };
+    },
+  );
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(received, callback);
+  assert.equal(db.worker.current_task_id, null);
+  assert.equal(db.task.lease_expires_at, null);
+  assert.equal(db.task.lease_started_at, null);
 });
 
 test("a callback reservation wins before revocation can release the task", async () => {
@@ -617,6 +775,114 @@ test("an execution barrier prevents automatic reassignment after Appium starts",
   assert.deepEqual(leases, []);
   assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
   assert.equal(db.tasks.get("task-1").attempt_count, 1);
+});
+
+test("a callback reservation prevents expired pre-execution reassignment", async () => {
+  const replacement = worker("worker-2");
+  const db = new ClaimDb(
+    [replacement],
+    [task({
+      worker_id: "worker-1",
+      lease_id: "lease-1",
+      lease_expires_at: "2026-08-26T00:09:00.000Z",
+      callback_reservation_id: "task-1:completed",
+      callback_result_sha256: "a".repeat(64),
+    })],
+  );
+
+  const leases = await claimWorkerTasks(db, replacement, new Date("2026-08-26T00:10:00.000Z"));
+
+  assert.deepEqual(leases, []);
+  assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+  assert.equal(db.tasks.get("task-1").lease_id, "lease-1");
+});
+
+test("a callback reservation keeps its worker busy after lease expiry", async () => {
+  const owner = worker("worker-1", { current_task_id: "task-1" });
+  const db = new ClaimDb(
+    [owner],
+    [task({
+      worker_id: "worker-1",
+      lease_id: "lease-1",
+      lease_expires_at: "2026-08-26T00:09:00.000Z",
+      callback_reservation_id: "task-1:completed",
+      callback_result_sha256: "a".repeat(64),
+    })],
+  );
+
+  const leases = await claimWorkerTasks(db, owner, new Date("2026-08-26T00:10:00.000Z"));
+
+  assert.deepEqual(leases, []);
+  assert.equal(db.workers.get("worker-1").current_task_id, "task-1");
+});
+
+test("a callback reservation rejects retry release and late execution start", async () => {
+  const owner = worker("worker-1", { current_task_id: "task-1" });
+  const db = new ClaimDb(
+    [owner],
+    [task({
+      worker_id: "worker-1",
+      lease_id: "lease-1",
+      lease_expires_at: "2099-08-26T00:15:00.000Z",
+      lease_accepted_at: "2026-08-26T00:00:30.000Z",
+      callback_reservation_id: "task-1:completed",
+      callback_result_sha256: "a".repeat(64),
+    })],
+  );
+
+  const retryResponse = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers/tasks/ack", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer worker-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ retries: ["lease-1"] }),
+    }),
+    { DB: db },
+    () => { throw new Error("unexpected callback"); },
+  );
+
+  assert.equal(retryResponse.status, 409);
+  await assert.rejects(
+    markWorkerTaskExecuting(db, owner, "task-1", new Date("2026-08-26T00:05:00.000Z")),
+    /task is not ready for native execution/u,
+  );
+  assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+  assert.equal(db.tasks.get("task-1").lease_id, "lease-1");
+  assert.equal(db.tasks.get("task-1").execution_started_at, null);
+});
+
+test("an unreserved acknowledgement retry still releases pre-execution work", async () => {
+  const owner = worker("worker-1", { current_task_id: "task-1" });
+  const db = new ClaimDb(
+    [owner],
+    [task({
+      worker_id: "worker-1",
+      lease_id: "lease-1",
+      lease_expires_at: "2099-08-26T00:15:00.000Z",
+      lease_accepted_at: "2026-08-26T00:00:30.000Z",
+    })],
+  );
+
+  const response = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers/tasks/ack", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer worker-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ retries: ["lease-1"] }),
+    }),
+    { DB: db },
+    () => { throw new Error("unexpected callback"); },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { accepted: 0, retried: 1 });
+  assert.equal(db.tasks.get("task-1").worker_id, null);
+  assert.equal(db.tasks.get("task-1").lease_id, null);
+  assert.equal(db.workers.get("worker-1").current_task_id, null);
 });
 
 test("one worker identity cannot concurrently claim two tasks", async () => {
