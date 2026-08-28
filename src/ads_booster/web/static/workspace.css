@@ -2225,7 +2225,8 @@ textarea:focus-visible {
   .review-controls > .button { inline-size: 100%; }
 }
 
-/* 계정 홈: 작업 화면 앞에 놓이는 국가별 계정 목록 */
+/* 국가 홈: 계정 목록 앞에 놓이는 첫 층 */
+.country-home,
 .account-home {
   display: flex;
   flex-direction: column;
@@ -2236,12 +2237,26 @@ textarea:focus-visible {
   border-radius: var(--radius-md);
 }
 
+.country-grid,
 .account-grid {
   display: grid;
   gap: var(--space-3);
   grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
 }
 
+/* 계정 홈: 어느 국가로 좁혀져 있는지와 돌아갈 길을 목록 위에 둔다 */
+.account-home__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.account-home__bar strong {
+  color: var(--color-text);
+}
+
+.country-card,
 .account-card {
   display: flex;
   flex-direction: column;
