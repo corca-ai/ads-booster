@@ -35,6 +35,7 @@ class TraceRunCapability(StrEnum):
 
 
 class TraceRunErrorCode(StrEnum):
+    CODEX_PLAN_FAILED = "codex_plan_failed"
     CAPTURE_FAILED = "capture_failed"
     STAGE_FAILED = "stage_failed"
     COMPOSE_FAILED = "compose_failed"

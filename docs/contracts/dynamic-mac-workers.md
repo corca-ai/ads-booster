@@ -65,8 +65,16 @@ Appium PNG callback accepted by the current R2 boundary.
   and live worker heartbeats renew pre-side-effect work for at most one hour. Immediately before
   Appium, D1 records `execution_started_at` and removes automatic expiry. A validated callback then
   reserves its callback ID and result digest against the current worker/lease before R2 mutation.
+  Successful and `unknown_side_effect` callbacks require that execution barrier. A `failed`
+  callback may reserve against the still-current worker/lease before the barrier so deterministic
+  or exhausted planning failures can terminate without claiming that Appium started. A reservation
+  freezes lease reassignment, acknowledgement retry/release, late execution start, stale-assignment
+  clearing, and revocation until the identical callback completes.
   Explicit revocation releases only unreserved work and returns `409` while callback application is
   incomplete, preserving the worker credential for an identical durable retry.
+- Wallpaper planning is side-effect free and may retry two times after an initial Codex failure.
+  Exhausting all three attempts terminates as `codex_plan_failed`; no execution barrier or Appium
+  operation may occur during those attempts.
 - Existing candidate revision, callback ID, digest, native provenance, R2, and human approval gates
   remain authoritative.
 
@@ -110,6 +118,9 @@ Appium PNG callback accepted by the current R2 boundary.
   be completed by a different healthy worker.
 - After `execution_started_at`, expiry never assigns the task to another Mac; explicit two-step
   revocation is the operator disposition that may release it.
+- A failed pre-Appium plan is accepted from the current worker/lease without
+  `execution_started_at`, moves the candidate to `capture_state=failed`, and releases the worker for
+  another task. Successful and `unknown_side_effect` callbacks without the barrier remain rejected.
 - Heartbeat renewal extends only accepted pre-execution work and stops after the one-hour claim cap;
   post-barrier work has no automatic expiry.
 - The public workspace explains no-worker, queued, assigned, degraded, and offline conditions without
@@ -133,6 +144,11 @@ Appium PNG callback accepted by the current R2 boundary.
   idempotent.
 - `integration`: local inbox persists before broker acknowledgement and callback delivery survives a
   transient control-plane failure.
+- `unit`: Codex planning retries twice before returning `codex_plan_failed`, and never invokes the
+  execution barrier or native runner on those failed attempts.
+- `integration`: the callback reservation accepts a pre-execution `failed` result only from the
+  current worker/lease, while pre-execution `succeeded` and `unknown_side_effect` results remain
+  rejected; accepted completion releases the worker assignment.
 - `manual`: 320/375/414/768px workspace layouts show worker availability without horizontal overflow.
 - `browser`: the Mac manager rejects a wrong token without leaving the public workspace, sends the
   bearer token only to protected `/v1` calls, renders inventory and health, performs active/draining
@@ -152,8 +168,9 @@ Appium PNG callback accepted by the current R2 boundary.
 
 ## Canonical Artifact
 
-This file is the implementation contract for issue #37. Update it when implementation changes a
-fixed decision, success criterion, or acceptance boundary.
+This file is the implementation contract for issue #37 and its failure-recovery refinement in issue
+#64. Update it when implementation changes a fixed decision, success criterion, or acceptance
+boundary.
 
 ## Implemented Composition
 

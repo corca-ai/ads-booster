@@ -125,6 +125,8 @@ temporarily for source compatibility tests, but no production Mac or installer p
    IDs are deterministic plan authority even when no binary `reference_images` are attached.
 4. `providers/codex_cli.py` passes the context through stdin and requests the Pydantic-generated
    `WallpaperPlan` JSON schema. Optional reference images are validated and attached with `--image`.
+   This side-effect-free planning call retries twice after transient Codex failures; exhausting all
+   three attempts produces `codex_plan_failed` without crossing the execution barrier.
 5. Domain code revalidates request ID, IANA time zone, every promotion-owned event and its plan-zone
    local `HH:MM`, reference IDs, layouts, colors, and style values.
 6. Immediately before Appium, the worker first records `execution_started_at` in D1, which removes
@@ -138,6 +140,11 @@ temporarily for source compatibility tests, but no production Mac or installer p
    Cloudflare atomically reserves the callback ID plus normalized result digest against the current
    worker and lease before writing R2 or changing candidate state. An identical partial retry may
    continue; changed content is rejected, and revocation waits until the reservation completes.
+   Successful and `unknown_side_effect` results require `execution_started_at`. A `failed` result may
+   reserve before that barrier when the same worker and lease still own the task, allowing planning
+   and other pre-Appium failures to mark the candidate failed and release the worker safely. While a
+   callback is reserved, expiry, acknowledgement retry, late execution start, and revocation cannot
+   change that ownership before completion.
 
 ## Authentication and secrets
 

@@ -529,8 +529,13 @@ Before Appium starts, the worker records a D1 execution barrier and then a local
 stops after that boundary, lease expiry cannot move the task to another Mac. Before R2 or candidate
 mutation, a second D1 reservation atomically binds the callback ID and normalized result digest to that
 worker and lease, so a stale or changed callback cannot race a replacement. Worker revocation is
-deferred while that reservation is incomplete. The original Mac can return `unknown_side_effect`; otherwise an
+deferred while that reservation is incomplete, as are expiry reassignment, acknowledgement retry,
+and a late execution start. The original Mac can return `unknown_side_effect`; otherwise an
 operator must inspect the task and explicitly revoke the old worker before allowing a retry.
+Side-effect-free Codex planning retries twice before returning `codex_plan_failed`. A `failed`
+callback from before Appium may reserve against the still-current worker and lease so the candidate
+becomes retryable and the worker returns to ready; successful and `unknown_side_effect` callbacks
+still require the execution barrier.
 
 ## Development verification
 
