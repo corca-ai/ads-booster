@@ -2,7 +2,7 @@ import { hasRegisteredBrokerWorker } from "./mac-workers.js";
 
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
 export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
-export const WORKSPACE_GENERATION_PROMPT_VERSION = "trace.workspace-generation.v2";
+export const WORKSPACE_GENERATION_PROMPT_VERSION = "trace.workspace-generation.v3";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const MAX_CANDIDATES = 200;
@@ -434,6 +434,8 @@ export function candidateResponseSchema(country = "KR", referenceIds = []) {
   const referenceItems = referenceIds.length
     ? { type: "string", enum: [...referenceIds] }
     : { type: "string" };
+  // Workers AI's grammar rejects `uniqueItems`; normalization and batch validation below
+  // enforce the same uniqueness invariants before any candidate can be persisted.
   return {
     type: "object",
     properties: {
@@ -454,13 +456,11 @@ export function candidateResponseSchema(country = "KR", referenceIds = []) {
               type: "array",
               minItems: referenceIds.length ? 1 : 0,
               maxItems: referenceIds.length,
-              uniqueItems: true,
               items: referenceItems,
             },
             principles_applied: {
               type: "array",
               minItems: 1,
-              uniqueItems: true,
               items: { type: "integer", minimum: 1 },
             },
             appium_prompt: { type: "string" },
@@ -1501,6 +1501,7 @@ posting_slot=morning 후보 2개, posting_slot=evening 후보 2개를 정확히 
 오전 슬롯 기준 시각은 ${morningTime}, 저녁 슬롯 기준 시각은 ${eveningTime}${account?.timezone ? ` (${account.timezone})` : ""}입니다.
 사실 문서 밖의 수치나 기능은 주장하지 마세요. appium_prompt와 image_inputs를 비우지 마세요.
 trace_items는 실제 하루처럼 읽히는 'HH:MM 제목' 일정 5~7개를 정확히 만드세요.
+topic, caption, trace_items 전체 일정은 네 후보에서 각각 서로 달라야 하며 복사하지 마세요.
 
 [Trace 기본 context]
 ${contextDocuments}
