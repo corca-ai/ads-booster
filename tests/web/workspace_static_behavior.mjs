@@ -1292,6 +1292,13 @@ const provenance = () => ({
   assigned_domains: ["sports_fan", "exam_prepper"],
 });
 
+const hostedProvenance = () => ({
+  prompt_version: "hosted-candidates-v3",
+  prompt_sha256: "b".repeat(64),
+  model: "@cf/openai/gpt-oss-120b",
+  feedback_rules: [],
+});
+
 const judgedBackground = () => ({
   query: "김도영 직캠",
   provider: "ddgs",
@@ -1348,6 +1355,18 @@ const testGenerationProvenanceIsVisibleOnEveryCandidate = async () => {
     texts.some((text) => text?.includes("스포츠 팬 · 수험생")),
     "assigned domains are shown with their Korean labels",
   );
+};
+
+const testHostedGenerationProvenanceRendersWithoutLocalDocumentMetrics = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({ source: "auto", generation_provenance: hostedProvenance() }),
+  ]);
+  assert.equal(fixture.notice.textContent, "워크스페이스에 연결되었습니다.");
+  const texts = flatten(fixture.candidateList.children[0]).map((node) => node.textContent);
+  assert.ok(texts.some((text) => text?.includes("@cf/openai/gpt-oss-120b")));
+  assert.ok(texts.some((text) => text?.includes("프롬프트 hosted-candidates-v3")));
+  assert.ok(!texts.some((text) => text?.startsWith("읽은 문서")));
 };
 
 const testAManualCandidateSaysItHasNoGenerationProvenance = async () => {
@@ -2489,6 +2508,8 @@ passed += 1;
 await testMarkupUsesTheAgreedTerminology();
 passed += 1;
 await testGenerationProvenanceIsVisibleOnEveryCandidate();
+passed += 1;
+await testHostedGenerationProvenanceRendersWithoutLocalDocumentMetrics();
 passed += 1;
 await testAManualCandidateSaysItHasNoGenerationProvenance();
 passed += 1;

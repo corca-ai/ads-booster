@@ -267,8 +267,11 @@
   const postingSlotLabel = (slot) => ({ morning: "오전", evening: "저녁", manual: "수동" })[slot] ?? slot;
   const candidateDateTime = (seconds) => new Date(seconds * 1000).toLocaleString("ko-KR");
   const kilobytes = (bytes) => `${(bytes / 1024).toFixed(1)}KB`;
+  const provenanceDocumentRecords = (provenance) =>
+    Array.isArray(provenance.documents) ? provenance.documents : [];
   const provenanceBytes = (provenance) =>
-    provenance.documents.reduce((total, document) => total + document.size_bytes, 0);
+    provenanceDocumentRecords(provenance)
+      .reduce((total, document) => total + document.size_bytes, 0);
   const domainLabel = (domain) => PERSONA_DOMAIN_LABELS[domain] ?? domain;
   const sourceHost = (url) => {
     try {
@@ -758,7 +761,7 @@
 
   const provenanceDocuments = (provenance) => {
     const list = document.createElement("ul"); list.className = "provenance__documents";
-    provenance.documents.forEach((document_) => {
+    provenanceDocumentRecords(provenance).forEach((document_) => {
       const item = document.createElement("li"); item.className = "provenance__document mono";
       item.textContent = `context/${document_.relative_path} · ${kilobytes(document_.size_bytes)}`;
       list.append(item);
@@ -781,17 +784,25 @@
       return panel;
     }
     const model = document.createElement("span"); model.className = "provenance__model mono";
-    model.textContent = [
-      provenance.model,
-      `지시문 ${provenance.instruction_chars.toLocaleString("ko-KR")}자`,
-      candidateDateTime(provenance.generated_at),
-    ].join(" · ");
+    const modelDetails = [provenance.model];
+    if (Number.isFinite(provenance.instruction_chars)) {
+      modelDetails.push(`지시문 ${provenance.instruction_chars.toLocaleString("ko-KR")}자`);
+    }
+    if (Number.isFinite(provenance.generated_at)) {
+      modelDetails.push(candidateDateTime(provenance.generated_at));
+    } else if (provenance.prompt_version) {
+      modelDetails.push(`프롬프트 ${provenance.prompt_version}`);
+    }
+    model.textContent = modelDetails.filter(Boolean).join(" · ");
     const note = document.createElement("p"); note.className = "provenance__note";
     note.textContent = "적용 원리·참조 레퍼런스는 위 배지에 표시됩니다";
-    body.append(
-      provenanceField(`읽은 문서 ${provenance.documents.length}개`, provenanceDocuments(provenance)),
-      provenanceField("모델", model),
-    );
+    const documents = provenanceDocumentRecords(provenance);
+    if (documents.length) {
+      body.append(
+        provenanceField(`읽은 문서 ${documents.length}개`, provenanceDocuments(provenance)),
+      );
+    }
+    body.append(provenanceField("모델", model));
     const assigned = provenance.assigned_domains ?? [];
     if (assigned.length) {
       const batch = document.createElement("span");
@@ -2396,7 +2407,8 @@
     const registered = `후보 ${created.length}개가 등록되었습니다`;
     const provenance = created[0]?.generation_provenance;
     if (!provenance) return `${registered}.`;
-    const documents = provenance.documents.length;
+    const documents = provenanceDocumentRecords(provenance).length;
+    if (!documents) return `${registered}.`;
     return `${registered} — 문서 ${documents}개(${kilobytes(provenanceBytes(provenance))})를 읽고 생성`;
   };
 
