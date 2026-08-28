@@ -310,6 +310,10 @@ const makeLiveDocument = () => {
   workerEnrollmentCodeCopy.textContent = "코드 복사";
   const workerEnrollmentCommandCopy = new FakeElement("worker-enrollment-command-copy");
   workerEnrollmentCommandCopy.textContent = "명령 복사";
+  const workerAgentPrompt = new FakeElement("worker-agent-prompt");
+  const workerAgentPromptCopy = new FakeElement("worker-agent-prompt-copy");
+  workerAgentPromptCopy.textContent = "에이전트 프롬프트 복사";
+  const workerAgentPromptFeedback = new FakeElement("worker-agent-prompt-feedback");
   const workerTitle = new FakeElement("worker-title");
   const workerCopy = new FakeElement("worker-copy");
   const workerSignal = new FakeElement("worker-signal");
@@ -406,6 +410,9 @@ const makeLiveDocument = () => {
     ["[data-worker-enrollment-expiry]", workerEnrollmentExpiry],
     ["[data-worker-enrollment-code-copy]", workerEnrollmentCodeCopy],
     ["[data-worker-enrollment-command-copy]", workerEnrollmentCommandCopy],
+    ["[data-worker-agent-prompt]", workerAgentPrompt],
+    ["[data-worker-agent-prompt-copy]", workerAgentPromptCopy],
+    ["[data-worker-agent-prompt-feedback]", workerAgentPromptFeedback],
     ["[data-worker-title]", workerTitle],
     ["[data-worker-copy]", workerCopy],
     ["[data-worker-signal]", workerSignal],
@@ -474,6 +481,9 @@ const makeLiveDocument = () => {
     workerEnrollmentExpiry,
     workerEnrollmentCodeCopy,
     workerEnrollmentCommandCopy,
+    workerAgentPrompt,
+    workerAgentPromptCopy,
+    workerAgentPromptFeedback,
     workerTitle,
     workerCopy,
     workerSignal,
@@ -546,6 +556,9 @@ const makeLiveDocument = () => {
     workerEnrollmentExpiry,
     workerEnrollmentCodeCopy,
     workerEnrollmentCommandCopy,
+    workerAgentPrompt,
+    workerAgentPromptCopy,
+    workerAgentPromptFeedback,
     workerTitle,
     workerCopy,
     workerSignal,
@@ -1266,6 +1279,16 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.ok(protectedCalls.some(([_path, options]) =>
     new Headers(options.headers).get("authorization") === "Bearer admin-secret"));
 
+  assert.ok(fixture.workerAgentPrompt.textContent.includes("ComputerName"));
+  assert.ok(fixture.workerAgentPrompt.textContent.includes("https://workspace.borca.ai"));
+  assert.ok(fixture.workerAgentPrompt.textContent.includes("CONTROL_PLANE_TOKEN을 채팅으로 요청하지 않는다"));
+  assert.ok(fixture.workerAgentPrompt.textContent.includes("com.corca.trace-marketing-updater"));
+  assert.ok(!fixture.workerAgentPrompt.textContent.includes("admin-secret"));
+  assert.ok(!fixture.workerAgentPrompt.textContent.includes("trace-enroll_once"));
+  await fixture.workerAgentPromptCopy.click();
+  assert.equal(fixture.clipboard.at(-1), fixture.workerAgentPrompt.textContent);
+  assert.equal(fixture.workerAgentPromptCopy.textContent, "프롬프트 복사됨");
+
   await findByText(fixture.workerList.children[0], "새 작업 중지").click();
   assert.equal(workerState, "draining");
   assert.ok(findByText(fixture.workerList.children[0], "다시 활성화"));
@@ -1279,10 +1302,10 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
     "trace-marketing worker enroll --url https://workspace.borca.ai --code 'trace-enroll_once'",
   ));
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
-    "gh release view --repo corca-ai/ads-booster",
+    "gh release view --repo \"$repository\"",
   ));
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
-    "raw.githubusercontent.com/corca-ai/ads-booster/$release/install.sh",
+    "gh attestation verify \"$asset\"",
   ));
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
     "trace-marketing worker finish-bootstrap",
@@ -1303,8 +1326,7 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   try {
     mkdirSync(fakeBin);
     const commands = {
-      gh: "#!/bin/sh\nprintf 'v0.3.0\\n'\n",
-      curl: "#!/bin/sh\nexit 42\n",
+      gh: "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then exit 0; fi\nif [ \"$1 $2\" = \"release view\" ]; then printf 'v0.3.0\\n'; exit 0; fi\nexit 42\n",
       "trace-marketing": "#!/bin/sh\nprintf 'trace-marketing %s\\n' \"$*\" >> \"$TRACE_TEST_LOG\"\n",
     };
     for (const [name, source] of Object.entries(commands)) {
@@ -1448,6 +1470,7 @@ const testMarkupUsesTheAgreedTerminology = async () => {
   assert.ok(markup.includes("data-worker-manager-open"), "the status strip opens Mac connection management");
   assert.ok(markup.includes("data-worker-admin-form"), "the Mac manager unlocks protected controls explicitly");
   assert.ok(markup.includes("data-worker-enrollment-form"), "the Mac manager creates one-time enrollment codes");
+  assert.ok(markup.includes("data-worker-agent-prompt-copy"), "the Mac manager exposes a copyable agent guide");
   assert.ok(markup.includes("data-worker-list"), "the Mac manager renders the protected worker inventory");
   assert.ok(
     markup.includes('id="worker-control-token" name="control-token" type="password" required autocomplete="off"'),
