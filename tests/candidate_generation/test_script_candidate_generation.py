@@ -778,6 +778,30 @@ def test_instruction_forbids_occupation_still_life_queries_by_example(tmp_path: 
     assert '"background_search_query": "제주 바다 노을 배경화면 고화질"' in instruction
 
 
+def test_the_background_query_is_shaped_for_an_image_search_not_for_a_reader(
+    tmp_path: Path,
+) -> None:
+    """Long descriptive queries return news photography, and news photography is unusable.
+
+    Image search matches words, not sentences. Every extra word pulled the results toward
+    articles about the subject — 600x400 landscape press photos — and the 800px composition
+    gate then dropped all ten. A short "proper noun + 배경화면" query returns wallpapers.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then the shape is stated with the length, the skeleton, and both worked examples
+    assert "검색어는 2~4단어입니다" in instruction
+    assert '"고유명사 + 배경화면" 골격으로 쓰고, 장면을 묘사하는' in instruction
+    assert '나쁜 예: "KIA 타이거즈 야간 경기장 외야 관중석 배경화면"' in instruction
+    assert '좋은 예: "KIA 타이거즈 배경화면"' in instruction
+    # And the reason is given rather than asserted, because the model has to generalise it
+    assert "해상도 관문에서 한 장도 남지 않습니다" in instruction
+
+
 def test_assignment_picks_the_least_covered_domains(tmp_path: Path) -> None:
     """Coverage decides the batch, so the genres nobody has written go first."""
     # Given a workspace whose generated candidates lean on three domains
