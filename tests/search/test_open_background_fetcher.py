@@ -122,8 +122,9 @@ def test_open_web_background_when_earlier_hits_are_unusable_then_the_first_usabl
     provenance = tmp_path / "inputs" / "background-source.json"
     background.write_provenance(provenance)
 
-    # Then the model-authored query ran unmodified against the open web
-    assert search.calls == [(_QUERY, 8)]
+    # Then the model-authored query ran unmodified against the open web, asking for as many
+    # rows as the fetcher is configured to take
+    assert search.calls == [(_QUERY, fetcher.max_results)]
     # And the stored background carries the page that published it
     assert background.path.is_file()
     assert background.image_url == usable

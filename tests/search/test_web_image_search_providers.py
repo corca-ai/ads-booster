@@ -92,6 +92,85 @@ def test_ddgs_image_provider_reads_cli_json_output_file(
     assert response.results[0].width == 1200
 
 
+def test_ddgs_image_provider_asks_the_search_engine_for_large_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open-web image search answers with news photography unless told otherwise.
+
+    Every row came back around 600x400 landscape, which the 800px composition gate then
+    threw away, so the judge was handed an empty pool. The size filter is the one narrowing
+    the provider itself can do, before anything is downloaded.
+    """
+    # Given a ddgs-compatible command that records how it was invoked
+    seen: list[tuple[str, ...]] = []
+
+    def locate(_name: str) -> str:
+        return "/usr/bin/ddgs"
+
+    def run(
+        argv: tuple[str, ...],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = (check, capture_output, text, timeout)
+        seen.append(argv)
+        _ = Path(argv[argv.index("--output") + 1]).write_text("[]", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("ads_booster.search.image.providers.shutil.which", locate)
+    monkeypatch.setattr("ads_booster.search.image.providers.subprocess.run", run)
+
+    # When an image search runs
+    _ = DdgsImageSearchProvider(timeout_seconds=5).search("KIA 타이거즈 배경화면", 20)
+
+    # Then the request carries the size filter alongside the query it was given
+    argv = seen[0]
+    assert argv[argv.index("--size") + 1] == "Large"
+    assert argv[argv.index("--query") + 1] == "KIA 타이거즈 배경화면"
+    assert argv[argv.index("--max_results") + 1] == "20"
+
+
+def test_image_providers_accept_twenty_results_and_refuse_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The downstream resolution gate, not the provider, is what thins the pool."""
+
+    # Given a ddgs-compatible command that answers with no rows
+    def locate(_name: str) -> str:
+        return "/usr/bin/ddgs"
+
+    def run(
+        argv: tuple[str, ...],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = (check, capture_output, text, timeout)
+        _ = Path(argv[argv.index("--output") + 1]).write_text("[]", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("ads_booster.search.image.providers.shutil.which", locate)
+    monkeypatch.setattr("ads_booster.search.image.providers.subprocess.run", run)
+    provider = DdgsImageSearchProvider(timeout_seconds=5)
+
+    # When twenty results are requested, and then one more than the bound
+    accepted = provider.search("Trace", 20)
+    with pytest.raises(ImageSearchError, match="between 1 and 20"):
+        _ = provider.search("Trace", 21)
+
+    # Then twenty is inside the contract and the bound is reported in its own terms
+    assert accepted.results == ()
+    with pytest.raises(ImageSearchError, match="between 1 and 20"):
+        _ = BraveImageSearchProvider(
+            http=RecordingHttp(HttpResponse(200, b"{}", {})), api_key="secret"
+        ).search("Trace", 21)
+
+
 def test_brave_image_provider_normalizes_properties_and_limits_results() -> None:
     # Given a Brave image response with properties and more results than requested
     first = b'{"results":['
