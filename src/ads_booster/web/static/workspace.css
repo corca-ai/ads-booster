@@ -650,6 +650,40 @@ textarea:focus-visible {
   padding: var(--space-4);
 }
 
+.worker-agent-guide {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.worker-agent-guide > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.worker-agent-guide__body {
+  display: grid;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+}
+
+.worker-agent-guide__prompt {
+  background: var(--color-canvas);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: var(--font-mono-stack);
+  font-size: var(--font-label);
+  line-height: var(--leading-small);
+  margin: 0;
+  max-block-size: 24rem;
+  max-inline-size: 100%;
+  overflow: auto;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+}
+
 .worker-admin-form { max-inline-size: 36rem; }
 
 .worker-manager__panel,
