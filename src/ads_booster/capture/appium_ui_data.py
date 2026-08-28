@@ -123,11 +123,11 @@ class WallpaperDataDriver:
         self.ui.click("wallpaperInfoEditorButton", control)
 
     def _open_settings(self, control: CaptureControl) -> None:
-        if self.ui.exists("settingsConnectionButton", control):
-            return
-        while not self.ui.exists("calendar_settingsButton", control):
-            self.ui.back(control)
-        self.ui.click("calendar_settingsButton", control)
+        while not self.ui.exists("settingsConnectionButton", control):
+            if self.ui.exists("calendar_settingsButton", control):
+                self.ui.click("calendar_settingsButton", control)
+            else:
+                self.ui.back(control)
 
     def cleanup(
         self,

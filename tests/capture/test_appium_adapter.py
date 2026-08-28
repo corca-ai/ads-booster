@@ -739,11 +739,12 @@ def test_webdriver_session_when_plan_has_timed_events_creates_data_through_ui() 
     )
 
     # Then request-owned calendars and events are created before wallpaper editing
-    assert calls[:6] == [
+    assert calls[:7] == [
         "find_all:accessibility id:settingsConnectionButton",
         "find_all:accessibility id:calendar_settingsButton",
         "find:accessibility id:calendar_settingsButton",
         "click",
+        "find_all:accessibility id:settingsConnectionButton",
         "find:accessibility id:settingsConnectionButton",
         "click",
     ]
@@ -1072,6 +1073,10 @@ class RecordingWebDriver:
 
     def find_elements(self, by: str, value: str) -> list[RecordingWebElement]:
         self.calls.append(f"find_all:{by}:{value}")
+        if value == "settingsConnectionButton" and (
+            "find:accessibility id:calendar_settingsButton" in self.calls
+        ):
+            return [RecordingWebElement(self.calls)]
         if value == "name == 'PXGGridLayout-Info'":
             return [RecordingWebElement(self.calls, element_id="recording-element-0")]
         if value == "calendar_settingsButton" or value in self.existing_identifiers:

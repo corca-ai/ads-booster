@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK — one cohesive Appium UI boundary; splitting would separate coupled driver actions
 # pyright: reportUnknownMemberType=false
 # pyright: reportUnnecessaryComparison=false
 from dataclasses import dataclass
@@ -83,15 +84,16 @@ class AppiumUI:
         identifier: str,
         control: CaptureControl,
     ) -> None:
-        if identifier.startswith("connectionCalendarEdit.") and isinstance(
-            self.driver,
-            AppiumWebDriver,
-        ):
+        if (
+            identifier == "calendar_settingsButton"
+            or identifier.startswith("connectionCalendarEdit.")
+        ) and isinstance(self.driver, AlertCommandWebDriver):
             driver = cast("AlertCommandWebDriver", self.driver)
+            offset = (18, 18) if identifier == "calendar_settingsButton" else (180, 26)
             _ = self.call(
                 lambda: driver.execute_script(
                     "mobile: tap",
-                    {"elementId": element.element_id, "x": 180, "y": 26},
+                    {"elementId": element.element_id, "x": offset[0], "y": offset[1]},
                 ),
                 ErrorCode.SCENE_CAPTURE_FAILED,
                 f"Trace UI control is unavailable: {identifier}",
@@ -276,7 +278,8 @@ class AppiumUI:
                 lambda: WebDriverWait(driver, control.remaining_seconds()).until(
                     lambda _: (
                         self._present_element(driver, by, value)
-                        if value.startswith("connectionCalendarEdit.")
+                        if value == "calendar_settingsButton"
+                        or value.startswith("connectionCalendarEdit.")
                         else self._visible_element(driver, by, value)
                     ),
                 ),
@@ -315,7 +318,8 @@ class AppiumUI:
                 for element in self.call(
                     lambda: (
                         self._present_elements(driver, by, value)
-                        if value.startswith("connectionCalendarEdit.")
+                        if value == "calendar_settingsButton"
+                        or value.startswith("connectionCalendarEdit.")
                         else self._visible_elements(driver, by, value)
                     ),
                     ErrorCode.SCENE_CAPTURE_FAILED,
