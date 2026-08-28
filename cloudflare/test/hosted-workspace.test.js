@@ -1280,3 +1280,282 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.doesNotMatch(markup, /Cloudflare 검수용 SVG 미리보기/);
   assert.match(markup, /data-candidate-submit/);
 });
+
+// The persona layer is the only hosted surface that both reads and writes rows across
+// several statements, so its tests need a store rather than a canned answer. This is a
+// deliberately small D1 stand-in: it recognizes the four statements the persona functions
+// issue and keeps the rows in an array.
+function personaEnvironment(rows = []) {
+  const store = rows.map((row) => ({ ...row }));
+  const workspace = "cloudflare:trace_demo_kr";
+  const match = (sql, ...fragments) => fragments.every((fragment) => sql.includes(fragment));
+  const env = {
+    PUBLIC_WORKSPACE_ACCOUNT_ID: "trace_demo_kr",
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...args) {
+            return {
+              async all() {
+                if (match(sql, "SELECT * FROM hosted_marketing_personas")) {
+                  const scoped = sql.includes("AND country = ?")
+                    ? store.filter((row) => row.workspace_id === args[0] && row.country === args[1])
+                    : store.filter((row) => row.workspace_id === args[0]);
+                  return { results: [...scoped].sort((a, b) => b.created_at - a.created_at) };
+                }
+                return { results: [] };
+              },
+              async first() {
+                if (match(sql, "SELECT * FROM hosted_marketing_personas", "account_id = ?")) {
+                  return store.find(
+                    (row) => row.workspace_id === args[0] && row.account_id === args[1],
+                  ) ?? null;
+                }
+                if (match(sql, "hosted_workspace_accounts")) {
+                  return {
+                    account_id: "trace_demo_kr",
+                    display_name: "Trace Korea",
+                    country: "KR",
+                    language: "ko",
+                    timezone: "Asia/Seoul",
+                    morning_time: "07:30",
+                    evening_time: "19:30",
+                    generation_enabled: 1,
+                    next_generation_at: null,
+                    revision: 1,
+                  };
+                }
+                return null;
+              },
+              async run() {
+                if (match(sql, "INSERT INTO hosted_marketing_personas")) {
+                  const [
+                    workspaceIdValue, accountIdValue, country, identityJson, scheduleJson,
+                    status, note, createdAt, updatedAt,
+                  ] = args;
+                  store.push({
+                    workspace_id: workspaceIdValue,
+                    account_id: accountIdValue,
+                    country,
+                    identity_json: identityJson,
+                    schedule_json: scheduleJson,
+                    status,
+                    note,
+                    revision: 1,
+                    created_at: createdAt,
+                    updated_at: updatedAt,
+                  });
+                  return { meta: { changes: 1 } };
+                }
+                if (match(sql, "UPDATE hosted_marketing_personas", "identity_json = ?")) {
+                  const [identityJson, scheduleJson, note, updatedAt, ws, id, revision] = args;
+                  const row = store.find(
+                    (entry) => entry.workspace_id === ws && entry.account_id === id,
+                  );
+                  if (!row || row.revision !== revision) return { meta: { changes: 0 } };
+                  Object.assign(row, {
+                    identity_json: identityJson,
+                    schedule_json: scheduleJson,
+                    note,
+                    updated_at: updatedAt,
+                    revision: row.revision + 1,
+                  });
+                  return { meta: { changes: 1 } };
+                }
+                if (match(sql, "UPDATE hosted_marketing_personas", "SET status = ?")) {
+                  const [status, updatedAt, ws, id, revision] = args;
+                  const row = store.find(
+                    (entry) => entry.workspace_id === ws && entry.account_id === id,
+                  );
+                  if (!row || row.revision !== revision) return { meta: { changes: 0 } };
+                  Object.assign(row, {
+                    status,
+                    updated_at: updatedAt,
+                    revision: row.revision + 1,
+                  });
+                  return { meta: { changes: 1 } };
+                }
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+  return { env, store, workspace };
+}
+
+function personaBody(overrides = {}) {
+  return {
+    country: "KR",
+    identity: {
+      display_name: "이서진",
+      age: 27,
+      region: "서울 마포구",
+      occupation: "병동 간호사",
+      concept: "3교대를 잠금화면 일정으로 버티는 간호사",
+      domain: "office_worker",
+      interests: ["쿠로미", "필라테스"],
+      life_rhythm: "데이 출근일 5시 40분 기상",
+      taste: {
+        background_subject: "character_other",
+        background_mood: "파스텔 톤의 캐릭터 배경",
+        font: "sf_pro_rounded",
+      },
+    },
+    schedule: { language: "ko", timezone: "Asia/Seoul" },
+    ...overrides,
+  };
+}
+
+async function personaRequest(env, path, method = "GET", body = null, registry = "context") {
+  return handleHostedWorkspace(
+    new Request(`https://workspace.example${path}`, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+    env,
+    registry,
+  );
+}
+
+test("a hosted persona is created and listed in the shape the local shell renders", async () => {
+  const state = personaEnvironment();
+
+  const created = await (await personaRequest(state.env, "/api/personas", "POST", personaBody()))
+    .json();
+
+  // The response is the flattened account shape, so one browser file renders both surfaces.
+  assert.equal(created.display_name, "이서진");
+  assert.equal(created.country, "KR");
+  assert.equal(created.language, "ko");
+  assert.equal(created.status, "observing");
+  assert.equal(created.revision, 1);
+  assert.equal(created.identity.occupation, "병동 간호사");
+  assert.equal(created.identity.taste.font, "sf_pro_rounded");
+  assert.match(created.account_id, /^persona-/u);
+  // And it is scoped to the hosted workspace, not to the operating account row.
+  assert.equal(created.workspace_id, state.workspace);
+  assert.equal(state.store.length, 1);
+
+  const listed = await (await personaRequest(state.env, "/api/personas")).json();
+  assert.deepEqual(listed.map((persona) => persona.display_name), ["이서진"]);
+});
+
+test("hosted personas are listed within one country", async () => {
+  // Two countries whose context documents are both registered; a country without them is
+  // refused below rather than quietly created.
+  const registry = { countries: { KR: {}, JP: {} } };
+  const state = personaEnvironment();
+  await personaRequest(state.env, "/api/personas", "POST", personaBody(), registry);
+  await personaRequest(state.env, "/api/personas", "POST", personaBody({
+    country: "JP",
+    identity: { ...personaBody().identity, display_name: "사토" },
+  }), registry);
+
+  const korean = await (await personaRequest(state.env, "/api/personas?country=KR")).json();
+  const japanese = await (await personaRequest(state.env, "/api/personas?country=JP")).json();
+  const all = await (await personaRequest(state.env, "/api/personas")).json();
+
+  assert.deepEqual(korean.map((persona) => persona.display_name), ["이서진"]);
+  assert.deepEqual(japanese.map((persona) => persona.display_name), ["사토"]);
+  assert.equal(all.length, 2);
+});
+
+
+test("a persona for a country with no context documents is refused", async () => {
+  // The country layer only means something if the corpus behind it exists; creating a
+  // persona for an unregistered country would put a card on screen that cannot generate.
+  const state = personaEnvironment();
+
+  const response = await personaRequest(state.env, "/api/personas", "POST", personaBody({
+    country: "JP",
+  }));
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /context 문서가 아직 등록되지 않았습니다/u);
+  assert.equal(state.store.length, 0);
+});
+
+test("a hosted persona is edited and its status changed under a revision check", async () => {
+  const state = personaEnvironment();
+  const created = await (await personaRequest(state.env, "/api/personas", "POST", personaBody()))
+    .json();
+  const path = `/api/personas/${created.account_id}`;
+
+  const edited = await (await personaRequest(state.env, path, "PUT", {
+    ...personaBody(),
+    identity: { ...personaBody().identity, concept: "야간 근무 뒤의 하루를 쓰는 간호사" },
+    note: "컨셉 조정",
+    expected_revision: 1,
+  })).json();
+  assert.equal(edited.identity.concept, "야간 근무 뒤의 하루를 쓰는 간호사");
+  assert.equal(edited.note, "컨셉 조정");
+  assert.equal(edited.revision, 2);
+
+  const promoted = await (await personaRequest(state.env, `${path}/status`, "POST", {
+    status: "active",
+    expected_revision: 2,
+  })).json();
+  assert.equal(promoted.status, "active");
+  assert.equal(promoted.revision, 3);
+
+  const fetched = await (await personaRequest(state.env, path)).json();
+  assert.equal(fetched.revision, 3);
+  assert.equal(fetched.status, "active");
+});
+
+test("a stale revision loses to the write that landed first", async () => {
+  const state = personaEnvironment();
+  const created = await (await personaRequest(state.env, "/api/personas", "POST", personaBody()))
+    .json();
+  const path = `/api/personas/${created.account_id}/status`;
+
+  const first = await personaRequest(state.env, path, "POST", {
+    status: "active",
+    expected_revision: 1,
+  });
+  const second = await personaRequest(state.env, path, "POST", {
+    status: "retired",
+    expected_revision: 1,
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  const conflict = await second.json();
+  assert.match(conflict.detail, /먼저 변경/u);
+  // The losing write changed nothing.
+  assert.equal(JSON.parse(JSON.stringify(state.store[0])).status, "active");
+});
+
+test("a persona missing its required identity is refused rather than half stored", async () => {
+  const state = personaEnvironment();
+
+  const noInterests = await personaRequest(state.env, "/api/personas", "POST", personaBody({
+    identity: { ...personaBody().identity, interests: [] },
+  }));
+  const unknownDomain = await personaRequest(state.env, "/api/personas", "POST", personaBody({
+    identity: { ...personaBody().identity, domain: "우주비행사" },
+  }));
+  const unknownSubject = await personaRequest(state.env, "/api/personas", "POST", personaBody({
+    identity: {
+      ...personaBody().identity,
+      taste: { ...personaBody().identity.taste, background_subject: "예쁜 것" },
+    },
+  }));
+
+  assert.equal(noInterests.status, 400);
+  assert.equal(unknownDomain.status, 400);
+  assert.equal(unknownSubject.status, 400);
+  assert.equal(state.store.length, 0);
+});
+
+test("an unknown persona is a 404 rather than an empty card", async () => {
+  const state = personaEnvironment();
+
+  const response = await personaRequest(state.env, "/api/personas/persona-missing");
+
+  assert.equal(response.status, 404);
+});

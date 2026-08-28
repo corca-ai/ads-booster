@@ -1759,6 +1759,7 @@ const testUnregisteredMacDisablesHostedImageCapture = async () => {
       });
     }
     if (path === "/api/accounts") return response(200, []);
+    if (path.startsWith("/api/personas")) return response(200, []);
     if (path === "/api/context-countries") return response(200, []);
     if (path === "/api/context-profiles") return response(200, []);
     if (path === "/api/candidates") return response(200, []);
@@ -2018,6 +2019,130 @@ const testTheCountryHomeOpensBeforeAnyAccountWork = async () => {
   assert.match(allText(fixture.accountGrid.children[0]), /사토 유이/);
 };
 
+const _hostedSession = () => response(200, {
+  member_id: "public",
+  workspace_id: "cloudflare:trace_demo_kr",
+  account_id: "trace_demo_kr",
+  display_name: "Public reviewer",
+});
+
+const _hostedPersona = (accountId, name) => ({
+  workspace_id: "cloudflare:trace_demo_kr",
+  account_id: accountId,
+  display_name: name,
+  country: "KR",
+  language: "ko",
+  timezone: "Asia/Seoul",
+  morning_time: "08:00",
+  evening_time: "20:00",
+  generation_enabled: false,
+  status: "observing",
+  note: "",
+  revision: 1,
+  created_at: 1,
+  updated_at: 1,
+  identity: {
+    display_name: name,
+    age: 27,
+    region: "서울 마포구",
+    occupation: "병동 간호사",
+    concept: `${name}의 3교대 잠금화면`,
+    domain: "office_worker",
+    interests: ["쿠로미"],
+    life_rhythm: "데이 출근일 5시 40분 기상",
+    taste: {
+      background_subject: "character_other",
+      background_mood: "파스텔 톤의 캐릭터 배경",
+      font: "sf_pro_rounded",
+    },
+  },
+});
+
+const testHostedCountryOpensItsPersonasAndThenTheWork = async () => {
+  // On the hosted plane the middle storey was empty: /api/accounts is the country's
+  // operating account, and personas had nowhere to live. They are their own resource now,
+  // so the same three storeys work there — country, that country's personas, that
+  // persona's work.
+  const fixture = makeLiveDocument();
+  // `/api/accounts` on the hosted plane is the country's operating account, and the harness
+  // answers it from `fixture.accounts`.
+  fixture.accounts = [{
+    account_id: "trace_demo_kr",
+    display_name: "Trace Korea",
+    country: "KR",
+    language: "ko",
+    timezone: "Asia/Seoul",
+    morning_time: "07:30",
+    evening_time: "19:30",
+    generation_enabled: true,
+    revision: 1,
+  }];
+  const requested = [];
+  await loadLive(fixture, async (path) => {
+    requested.push(path);
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path.startsWith("/api/personas")) {
+      return response(200, [_hostedPersona("persona-1", "이서진"), _hostedPersona("persona-2", "김도현")]);
+    }
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, { status: "online", counts: { online: 1, busy: 0, draining: 0, registered: 1 }, workers: [] });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  // The persona layer is read from its own endpoint, not from the operating account list.
+  assert.ok(requested.some((path) => path.startsWith("/api/personas")));
+
+  // Storey one: the country, derived from the operating account.
+  assert.equal(fixture.countryHome.hidden, false);
+  assert.equal(fixture.countryCount.textContent, "국가 1개");
+  assert.match(allText(fixture.countryGrid.children[0]), /한국/);
+  assert.match(allText(fixture.countryGrid.children[0]), /계정 2개/);
+  assert.match(allText(fixture.countryGrid.children[0]), /이서진 · 김도현/);
+
+  // Storey two: that country's personas, with the identity the hosted table now carries.
+  await openCountry(fixture, 0);
+  assert.equal(fixture.countryHome.hidden, true);
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.countryCurrentName.textContent, "한국");
+  assert.equal(fixture.accountCount.textContent, "계정 2개");
+  assert.match(allText(fixture.accountGrid.children[0]), /이서진/);
+  assert.match(allText(fixture.accountGrid.children[0]), /병동 간호사/);
+
+  // Storey three: that persona's work screen.
+  await fixture.accountGrid.children[0].children.at(-1).click();
+  assert.equal(fixture.accountHome.hidden, true);
+  assert.equal(fixture.accountWorkspace.hidden, false);
+  assert.equal(fixture.accountCurrentName.textContent, "이서진");
+};
+
+const testTheLocalSurfaceStillReadsPersonasFromAccounts = async () => {
+  // The two surfaces read different tables; the local one must not follow the hosted one.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [_account("acc-1", "이서진")];
+  const requested = [];
+  await loadLive(fixture, async (path) => {
+    requested.push(path);
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  // The harness answers `/api/accounts` itself, so the proof that the local surface read it
+  // is that the persona it serves reached the grid — and that nothing asked for /api/personas.
+  assert.ok(!requested.some((path) => path.startsWith("/api/personas")));
+  assert.equal(fixture.countryCount.textContent, "국가 1개");
+  await openCountry(fixture, 0);
+  assert.equal(fixture.accountCount.textContent, "계정 1개");
+  assert.match(allText(fixture.accountGrid.children[0]), /이서진/);
+};
+
 const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
   const fixture = makeLiveDocument();
   fixture.accounts = [
@@ -2207,6 +2332,10 @@ passed += 1;
 await testTheImageCardShowsTheBackgroundQueryAndJudgement();
 passed += 1;
 await testTheCountryHomeOpensBeforeAnyAccountWork();
+passed += 1;
+await testHostedCountryOpensItsPersonasAndThenTheWork();
+passed += 1;
+await testTheLocalSurfaceStillReadsPersonasFromAccounts();
 passed += 1;
 await testTheAccountHomeOpensBeforeAnyCandidateWork();
 passed += 1;

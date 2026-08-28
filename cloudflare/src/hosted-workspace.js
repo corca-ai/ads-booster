@@ -11,6 +11,21 @@ const MAX_REFERENCE_BODIES = 5;
 const MAX_REFERENCE_BODY_BYTES = 24_000;
 const MAX_HOSTED_ACCOUNTS = 100;
 const POSTING_SLOTS = new Set(["morning", "evening", "manual"]);
+const MAX_PERSONAS = 200;
+const PERSONA_STATUSES = new Set(["proposed", "observing", "active", "retired"]);
+const PERSONA_DOMAINS = new Set([
+  "sports_fan",
+  "idol_fandom",
+  "exam_prepper",
+  "parenting",
+  "office_worker",
+  "fitness_crew",
+  "pet_owner",
+  "cert_student",
+  "small_business",
+]);
+const PERSONA_FONTS = new Set(["sf_pro", "sf_pro_rounded", "sf_compact", "new_york", "sf_mono"]);
+const MAX_PERSONA_INTERESTS = 8;
 export const REVIEW_TAGS = Object.freeze([
   "이미지 품질·AI 티",
   "앱 화면·데이터 오류",
@@ -137,6 +152,41 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
 
     await ensureDefaultHostedAccount(env);
     await requireHostedAccount(scopedEnv);
+    if (request.method === "GET" && url.pathname === "/api/personas") {
+      return json(await listHostedPersonas(scopedEnv, url.searchParams.get("country")));
+    }
+    if (request.method === "POST" && url.pathname === "/api/personas") {
+      const persona = normalizeHostedPersona(await readJson(request), contextRegistry);
+      return json(await createHostedPersona(scopedEnv, persona), 201);
+    }
+    const personaStatusRoute = url.pathname.match(/^\/api\/personas\/([^/]+)\/status$/);
+    if (personaStatusRoute && request.method === "POST") {
+      const body = await readJson(request);
+      return json(
+        await setHostedPersonaStatus(
+          scopedEnv,
+          decodeURIComponent(personaStatusRoute[1]),
+          personaStatus(body?.status),
+          expectedRevision(body),
+        ),
+      );
+    }
+    const personaRoute = url.pathname.match(/^\/api\/personas\/([^/]+)$/);
+    if (personaRoute && ["GET", "PUT"].includes(request.method)) {
+      const personaId = decodeURIComponent(personaRoute[1]);
+      if (request.method === "GET") {
+        return json(await requireHostedPersona(scopedEnv, personaId));
+      }
+      const body = await readJson(request);
+      return json(
+        await updateHostedPersona(
+          scopedEnv,
+          personaId,
+          normalizeHostedPersonaSettings(body),
+          expectedRevision(body),
+        ),
+      );
+    }
     if (request.method === "GET" && url.pathname === "/api/context-profiles") {
       await ensureStarterProfiles(scopedEnv, starterProfiles);
       return json(await listContextProfiles(scopedEnv));
@@ -509,6 +559,221 @@ export function normalizeHostedAccount(input, contextRegistry) {
     morning_time: morningTime,
     evening_time: eveningTime,
     generation_enabled: input.generation_enabled === true,
+  };
+}
+
+  /**
+   * Validate one persona the hosted control plane is asked to create.
+   *
+   * Personas are the layer between a country and its posts: many people writing under one
+   * country's operating account. The vocabulary checked here — domain, background subject,
+   * font, status — is the same closed vocabulary the local models enforce, because the same
+   * generator reads both.
+   */
+export function normalizeHostedPersona(input, contextRegistry) {
+  const country = requiredString(input?.country ?? "KR", "country", 2).toUpperCase();
+  assertConfiguredContextCountry(contextRegistry, country);
+  const settings = normalizeHostedPersonaSettings(input);
+  return { country, ...settings, status: personaStatus(input?.status ?? "observing") };
+}
+
+export function normalizeHostedPersonaSettings(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkspaceHttpError(400, "페르소나 입력 형식이 올바르지 않습니다.");
+  }
+  return {
+    identity: personaIdentity(input.identity),
+    schedule: personaSchedule(input.schedule),
+    note: optionalString(input.note, 400),
+  };
+}
+
+function personaIdentity(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkspaceHttpError(400, "페르소나 정체성 입력이 필요합니다.");
+  }
+  const age = positiveInteger(input.age, null);
+  if (age === null || age < 13 || age > 99) {
+    throw new WorkspaceHttpError(400, "나이는 13에서 99 사이여야 합니다.");
+  }
+  const interests = Array.isArray(input.interests)
+    ? input.interests.map((value) => requiredString(value, "interests", 40))
+    : [];
+  if (!interests.length || interests.length > MAX_PERSONA_INTERESTS) {
+    throw new WorkspaceHttpError(400, "관심사는 1개 이상 8개 이하로 입력해 주세요.");
+  }
+  const domain = requiredString(input.domain, "domain", 40);
+  if (!PERSONA_DOMAINS.has(domain)) {
+    throw new WorkspaceHttpError(400, `도메인 토큰이 올바르지 않습니다: ${domain}`);
+  }
+  return {
+    display_name: requiredString(input.display_name, "display_name", 40),
+    age,
+    region: requiredString(input.region, "region", 40),
+    occupation: requiredString(input.occupation, "occupation", 60),
+    concept: requiredString(input.concept, "concept", 200),
+    domain,
+    interests,
+    life_rhythm: requiredString(input.life_rhythm, "life_rhythm", 200),
+    taste: personaTaste(input.taste),
+  };
+}
+
+function personaTaste(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkspaceHttpError(400, "배경 취향 입력이 필요합니다.");
+  }
+  const subject = requiredString(input.background_subject, "background_subject", 40);
+  if (!ALLOWED_BACKGROUND_SUBJECTS.has(subject)) {
+    throw new WorkspaceHttpError(400, `배경 소재 토큰이 올바르지 않습니다: ${subject}`);
+  }
+  const font = optionalString(input.font, 40) || "sf_pro";
+  if (!PERSONA_FONTS.has(font)) {
+    throw new WorkspaceHttpError(400, `폰트 토큰이 올바르지 않습니다: ${font}`);
+  }
+  return {
+    background_subject: subject,
+    background_mood: requiredString(input.background_mood, "background_mood", 40),
+    font,
+  };
+}
+
+function personaSchedule(input) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const timezone = requiredString(source.timezone ?? "Asia/Seoul", "timezone", 64);
+  assertTimezone(timezone);
+  return {
+    language: requiredString(source.language ?? "ko", "language", 8),
+    timezone,
+    morning_time: clockTime(source.morning_time ?? "08:00", "morning_time"),
+    evening_time: clockTime(source.evening_time ?? "20:00", "evening_time"),
+    generation_enabled: source.generation_enabled === true,
+  };
+}
+
+function personaStatus(value) {
+  const status = requiredString(value ?? "", "status", 20);
+  if (!PERSONA_STATUSES.has(status)) {
+    throw new WorkspaceHttpError(400, `페르소나 상태가 올바르지 않습니다: ${status}`);
+  }
+  return status;
+}
+
+function expectedRevision(body) {
+  const revision = positiveInteger(body?.expected_revision, null);
+  if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
+  return revision;
+}
+
+async function listHostedPersonas(env, country) {
+  const scope = country ? requiredString(country, "country", 2).toUpperCase() : null;
+  const statement = scope
+    ? env.DB.prepare(
+        `SELECT * FROM hosted_marketing_personas
+         WHERE workspace_id = ? AND country = ? ORDER BY created_at DESC LIMIT ?`,
+      ).bind(workspaceId(env), scope, MAX_PERSONAS)
+    : env.DB.prepare(
+        `SELECT * FROM hosted_marketing_personas
+         WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?`,
+      ).bind(workspaceId(env), MAX_PERSONAS);
+  const result = await statement.all();
+  return result.results.map(hostedPersonaFromRow);
+}
+
+async function createHostedPersona(env, persona) {
+  const now = Date.now() / 1000;
+  const personaId = `persona-${crypto.randomUUID()}`;
+  await env.DB.prepare(
+    `INSERT INTO hosted_marketing_personas
+      (workspace_id, account_id, country, identity_json, schedule_json,
+       status, note, revision, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+  )
+    .bind(
+      workspaceId(env),
+      personaId,
+      persona.country,
+      JSON.stringify(persona.identity),
+      JSON.stringify(persona.schedule),
+      persona.status,
+      persona.note,
+      now,
+      now,
+    )
+    .run();
+  return requireHostedPersona(env, personaId);
+}
+
+async function updateHostedPersona(env, personaId, settings, revision) {
+  const current = await requireHostedPersona(env, personaId);
+  const result = await env.DB.prepare(
+    `UPDATE hosted_marketing_personas
+     SET identity_json = ?, schedule_json = ?, note = ?,
+         revision = revision + 1, updated_at = ?
+     WHERE workspace_id = ? AND account_id = ? AND revision = ?`,
+  )
+    .bind(
+      JSON.stringify(settings.identity),
+      JSON.stringify(settings.schedule),
+      settings.note,
+      Date.now() / 1000,
+      workspaceId(env),
+      current.account_id,
+      revision,
+    )
+    .run();
+  if (result.meta.changes !== 1) throw personaConflict();
+  return requireHostedPersona(env, personaId);
+}
+
+async function setHostedPersonaStatus(env, personaId, status, revision) {
+  const current = await requireHostedPersona(env, personaId);
+  const result = await env.DB.prepare(
+    `UPDATE hosted_marketing_personas
+     SET status = ?, revision = revision + 1, updated_at = ?
+     WHERE workspace_id = ? AND account_id = ? AND revision = ?`,
+  )
+    .bind(status, Date.now() / 1000, workspaceId(env), current.account_id, revision)
+    .run();
+  if (result.meta.changes !== 1) throw personaConflict();
+  return requireHostedPersona(env, personaId);
+}
+
+async function requireHostedPersona(env, personaId) {
+  const row = await env.DB.prepare(
+    "SELECT * FROM hosted_marketing_personas WHERE workspace_id = ? AND account_id = ?",
+  )
+    .bind(workspaceId(env), personaId)
+    .first();
+  if (!row) throw new WorkspaceHttpError(404, "페르소나를 찾을 수 없습니다.");
+  return hostedPersonaFromRow(row);
+}
+
+function personaConflict() {
+  return new WorkspaceHttpError(409, "페르소나가 다른 요청에서 먼저 변경되었습니다.");
+}
+
+function hostedPersonaFromRow(row) {
+  // Flattened the way the local `/api/accounts` response is, so one browser file renders a
+  // persona card whether the row came from SQLite or from D1.
+  const identity = JSON.parse(row.identity_json);
+  const schedule = JSON.parse(row.schedule_json);
+  return {
+    workspace_id: row.workspace_id,
+    account_id: row.account_id,
+    display_name: identity.display_name,
+    country: row.country,
+    language: schedule.language,
+    timezone: schedule.timezone,
+    morning_time: schedule.morning_time,
+    evening_time: schedule.evening_time,
+    generation_enabled: schedule.generation_enabled === true,
+    identity,
+    status: row.status,
+    note: row.note,
+    revision: row.revision,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
