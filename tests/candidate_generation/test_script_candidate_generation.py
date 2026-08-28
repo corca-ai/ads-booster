@@ -34,6 +34,12 @@ from ads_booster.workspace import (
     CandidatePersonaDomain,
     CandidateSource,
     CandidateStatus,
+    LockScreenFont,
+    MarketingAccountCreate,
+    MarketingAccountId,
+    MarketingAccountIdentity,
+    MarketingAccountSchedule,
+    MarketingAccountTaste,
     SqliteWorkspaceStore,
 )
 
@@ -145,9 +151,11 @@ def _manual_create(
     *,
     source: CandidateSource,
     topic: str = "시험기간 일정 관리",
+    account_id: MarketingAccountId | None = None,
 ) -> CandidateCreate:
     """One stored candidate, used to seed coverage counts and history."""
     return CandidateCreate(
+        account_id=account_id,
         workspace_id=workspace_id,
         source=source,
         country="KR",
@@ -940,6 +948,114 @@ def test_generated_history_is_read_back_newest_first_and_manual_rows_are_ignored
     # Then only generated rows appear, newest first
     assert [entry.topic for entry in history] == ["두번째 생성", "첫 생성"]
     assert history[0].persona_domain is CandidatePersonaDomain.PARENTING
+
+
+def _create_account(store: SqliteWorkspaceStore, workspace_id: WorkspaceId, name: str) -> str:
+    """One running account, so history rows can belong to somebody."""
+    record = store.create_account(
+        workspace_id,
+        MarketingAccountCreate(
+            country="KR",
+            identity=MarketingAccountIdentity(
+                display_name=name,
+                age=27,
+                region="서울",
+                occupation="병동 간호사",
+                concept="3교대를 잠금화면 일정으로 버티는 간호사",
+                domain=CandidatePersonaDomain.OFFICE_WORKER,
+                interests=("쿠로미",),
+                life_rhythm="데이 출근일 5시 40분 기상",
+                taste=MarketingAccountTaste(
+                    background_subject=CandidateBackgroundSubject.CHARACTER_OTHER,
+                    background_mood="파스텔 톤의 캐릭터 배경",
+                    font=LockScreenFont.SF_PRO_ROUNDED,
+                ),
+            ),
+            schedule=MarketingAccountSchedule(language="ko", timezone="Asia/Seoul"),
+        ),
+    )
+    return record.account_id
+
+
+def test_history_is_read_within_one_account_rather_than_across_the_workspace(
+    tmp_path: Path,
+) -> None:
+    """Two accounts share a database and nothing else.
+
+    History is handed to the model as "do not repeat these", so read workspace-wide it made
+    every account steer around subjects its own readers have never seen — one account's
+    baseball post was quietly reserving the subject for everybody.
+    """
+    # Given two accounts that have each written one candidate, plus an unattached row
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    first = _create_account(store, workspace_id, "이서진")
+    second = _create_account(store, workspace_id, "김도현")
+    for account_id, topic in ((first, "이서진의 주제"), (second, "김도현의 주제")):
+        _ = store.create_candidate(
+            _manual_create(
+                workspace_id,
+                CandidatePersonaDomain.OFFICE_WORKER,
+                source=CandidateSource.AUTO,
+                topic=topic,
+                account_id=MarketingAccountId(account_id),
+            )
+        )
+    _ = store.create_candidate(
+        _manual_create(
+            workspace_id,
+            CandidatePersonaDomain.PET_OWNER,
+            source=CandidateSource.AUTO,
+            topic="계정 없는 후보",
+        )
+    )
+
+    # When history is read for one account, and for the workspace at large
+    scoped = store.recent_candidate_history(workspace_id, 15, account_id=MarketingAccountId(first))
+    everything = store.recent_candidate_history(workspace_id, 15)
+
+    # Then an account only ever sees what it wrote itself
+    assert [entry.topic for entry in scoped] == ["이서진의 주제"]
+    # And the unscoped read is unchanged, which is what the workspace-wide batch still needs
+    assert [entry.topic for entry in everything] == [
+        "계정 없는 후보",
+        "김도현의 주제",
+        "이서진의 주제",
+    ]
+
+
+def test_an_account_batch_is_only_shown_its_own_recent_topics(tmp_path: Path) -> None:
+    """The scoping has to reach the prompt, not just the store."""
+    # Given one account with a past candidate and another account's candidate beside it
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    mine = _create_account(store, workspace_id, "이서진")
+    theirs = _create_account(store, workspace_id, "김도현")
+    for account_id, topic in ((mine, "이서진의 지난 주제"), (theirs, "김도현의 지난 주제")):
+        _ = store.create_candidate(
+            _manual_create(
+                workspace_id,
+                CandidatePersonaDomain.OFFICE_WORKER,
+                source=CandidateSource.AUTO,
+                topic=topic,
+                account_id=MarketingAccountId(account_id),
+            )
+        )
+    account = store.get_account(workspace_id, MarketingAccountId(mine))
+    # An account fixes the domain for the whole batch, so the answer has to carry that one.
+    answer = json.dumps(
+        [_draft(f"주제 {index}", "office_worker") for index in range(3)], ensure_ascii=False
+    )
+    client = FakeModelClient([answer])
+
+    # When a batch is generated as that account
+    _ = _generator(tmp_path, store, client).generate(workspace_id, account=account)
+
+    # Then the instruction lists this account's history and not the other's
+    instruction = client.histories[0][0]["content"]
+    assert isinstance(instruction, str)
+    assert "이서진의 지난 주제" in instruction
+    assert "김도현의 지난 주제" not in instruction
 
 
 def test_the_persona_examples_are_marked_as_format_only(tmp_path: Path) -> None:

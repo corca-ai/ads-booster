@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -26,6 +26,7 @@ from ads_booster.workspace.models import (
     CandidateRecord,
     CandidateSource,
     CandidateStatus,
+    MarketingAccountId,
     WorkspaceId,
 )
 
@@ -33,6 +34,12 @@ if TYPE_CHECKING:
     from ads_booster.workspace.database import SqliteCursor, SqliteRow
 
 _STATUS_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
+
+# Split in two so the optional account scope can sit between them.
+_SELECT_HISTORY: Final = (
+    "SELECT persona_domain, topic FROM candidates WHERE workspace_id = ? AND source = ?"
+)
+_HISTORY_ORDER: Final = " ORDER BY created_at DESC, candidate_id DESC LIMIT ?"
 
 
 class CandidateStore(CandidateBaseStore):
@@ -64,19 +71,28 @@ class CandidateStore(CandidateBaseStore):
         return counts
 
     def recent_candidate_history(
-        self, workspace_id: WorkspaceId, limit: int
+        self,
+        workspace_id: WorkspaceId,
+        limit: int,
+        *,
+        account_id: MarketingAccountId | None = None,
     ) -> tuple[CandidateHistoryEntry, ...]:
-        """Return the newest generated candidates as (domain, topic), newest first."""
+        """Return the newest generated candidates as (domain, topic), newest first.
+
+        History is what the next batch is told not to repeat, so it has to be scoped the
+        way the candidate list is. Read workspace-wide, one account's batch was avoiding
+        another account's subjects — two people who share nothing but a database were being
+        kept apart as if they shared a feed.
+        """
         with self._database.connect() as connection:
-            cursor: SqliteCursor = connection.execute(
-                """
-                SELECT persona_domain, topic FROM candidates
-                WHERE workspace_id = ? AND source = ?
-                ORDER BY created_at DESC, candidate_id DESC
-                LIMIT ?
-                """,
-                (workspace_id, CandidateSource.AUTO, limit),
+            scope = "" if account_id is None else " AND account_id = ?"
+            query = f"{_SELECT_HISTORY}{scope}{_HISTORY_ORDER}"
+            parameters = (
+                (workspace_id, CandidateSource.AUTO, limit)
+                if account_id is None
+                else (workspace_id, CandidateSource.AUTO, account_id, limit)
             )
+            cursor: SqliteCursor = connection.execute(query, parameters)
             entries: list[CandidateHistoryEntry] = []
             rows: list[SqliteRow] = cursor.fetchall()
             for row in rows:

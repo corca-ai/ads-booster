@@ -87,7 +87,11 @@ class CandidateWriter(Protocol):
     def count_candidate_domains(self, workspace_id: WorkspaceId) -> dict[str, int]: ...
 
     def recent_candidate_history(
-        self, workspace_id: WorkspaceId, limit: int
+        self,
+        workspace_id: WorkspaceId,
+        limit: int,
+        *,
+        account_id: MarketingAccountId | None = None,
     ) -> tuple[CandidateHistoryEntry, ...]: ...
 
 
@@ -128,10 +132,15 @@ class ScriptCandidateGenerator:
         coverage stops choosing domains and the account's own domain applies to all of
         them. Without one the previous behaviour stands: spread the batch across the
         domains this workspace has covered least.
+
+        The "do not repeat these" history is scoped the same way. What one account has
+        already written is a fact about that account; read workspace-wide it made every
+        account steer around every other account's subjects.
         """
         del run_context
         bundle = self.context_source.load()
         brief = None if account is None else CandidateAccountBrief.of(account)
+        account_id = None if account is None else account.account_id
         domains = (
             (brief.domain,) * self.count
             if brief is not None
@@ -139,12 +148,13 @@ class ScriptCandidateGenerator:
                 self.store.count_candidate_domains(workspace_id), self.count, self.shuffle
             )
         )
-        history = self.store.recent_candidate_history(workspace_id, self.history_limit)
+        history = self.store.recent_candidate_history(
+            workspace_id, self.history_limit, account_id=account_id
+        )
         instruction = build_instruction(
             bundle, count=self.count, domains=domains, history=history, account=brief
         )
         provenance = self._provenance(bundle, instruction, domains)
-        account_id = None if account is None else account.account_id
         with self.models.open() as client:
             drafts = self._drafts(client, instruction, domains)
         return tuple(
