@@ -124,6 +124,10 @@ command block that resolves the latest stable release, performs the verified ins
 short-lived single-use enrollment code, and starts both the worker and updater. The block contains
 no administrator token, worker ID, committed device ID, or Codex credential. It runs in a fail-fast
 subshell, so a release lookup, install, or doctor failure cannot consume the enrollment code.
+Open `Mac 연결 관리` and expand `에이전트에게 Mac 등록 맡기기` to copy a Computer Use prompt that
+performs the prerequisite checks, guides the operator-only token entry, runs the generated block,
+and requires local service plus hosted heartbeat/version readback before reporting success. The
+prompt never contains the control-plane token or a generated enrollment code.
 
 The equivalent administrator CLI flow is:
 

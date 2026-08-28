@@ -53,6 +53,9 @@
   const workerEnrollmentExpiry = one("[data-worker-enrollment-expiry]");
   const workerEnrollmentCodeCopy = one("[data-worker-enrollment-code-copy]");
   const workerEnrollmentCommandCopy = one("[data-worker-enrollment-command-copy]");
+  const workerAgentPrompt = one("[data-worker-agent-prompt]");
+  const workerAgentPromptCopy = one("[data-worker-agent-prompt-copy]");
+  const workerAgentPromptFeedback = one("[data-worker-agent-prompt-feedback]");
   let hostedCandidateControls = false;
   let editingCandidate = null;
   let editingCandidateContextChanged = false;
@@ -375,6 +378,57 @@
     workerEnrollmentFeedback.textContent = message;
   };
 
+  const setWorkerAgentPromptFeedback = (message) => {
+    if (!workerAgentPromptFeedback) return;
+    workerAgentPromptFeedback.textContent = message;
+  };
+
+  const macEnrollmentAgentPrompt = () => [
+    "현재 이 Mac을 Trace 마케팅의 동적 Mac worker로 등록하고 자동 업데이트까지 활성화해줘.",
+    "",
+    `워크스페이스: ${window.location.origin.replace(/\/$/, "")}`,
+    "작업 풀: appium",
+    "Mac 이름: 현재 macOS ComputerName을 사용하고, 없으면 HostName을 사용",
+    "",
+    "목표:",
+    "- Mac 연결 관리 화면에서 일회용 등록 명령을 만든다.",
+    "- 최신 stable trace-marketing release의 tag·commit·digest·attestation을 검증해 설치한다.",
+    "- worker와 별도 updater LaunchAgent를 시작한다.",
+    "- doctor, launchd, heartbeat, 정확한 설치 버전을 확인한다.",
+    "- 실제 이미지 캡처나 게시 작업은 만들지 않는다.",
+    "",
+    "보안과 중단 원칙:",
+    "- CONTROL_PLANE_TOKEN, enrollment code, worker credential, GitHub/Codex 인증정보를 대화·로그·보고서에 출력하지 않는다.",
+    "- CONTROL_PLANE_TOKEN을 채팅으로 요청하지 않는다. 입력 단계에서 내가 브라우저 비밀번호 필드에 직접 입력하게 한다.",
+    "- 토큰을 보내 일회용 credential과 지속 실행 LaunchAgent를 만들기 직전에 영향 범위를 설명하고 한 번 확인받는다.",
+    "- mutable main, Git checkout, uv tool --force를 설치 경로로 사용하지 않는다.",
+    "- Codex CLI, Xcode, Appium, XCUITest, Trace 앱, gh, uv, Python을 자동 설치·업그레이드하지 않는다.",
+    "- 실행 중 task, pending callback, 미완료 execution marker가 있으면 강제 종료·재등록하지 않고 상태를 보고한다.",
+    "- ads-booster 소유가 확인되지 않은 LaunchAgent를 변경하거나 삭제하지 않는다.",
+    "",
+    "진행:",
+    "1. 읽기 전용으로 uname -m, Python 3.14, gh, uv, codex, Appium 3, XCUITest, iPhone Simulator, com.corca.Trace 준비 상태를 점검한다.",
+    "2. gh auth status와 codex login status는 성공 여부만 확인하고 인증값을 출력하지 않는다.",
+    "3. 기존 설치가 있으면 current/bin/trace-marketing worker status와 updater-status를 먼저 읽는다. 이미 정상 등록된 Mac이면 새 코드를 만들지 않는다.",
+    "4. 필수 환경이 부족하면 등록 전에 중단하고 부족한 항목만 보고한다.",
+    "5. 브라우저에서 워크스페이스를 열고 Mac 연결 관리 → 운영 권한 열기로 이동한다.",
+    "6. 내가 CONTROL_PLANE_TOKEN을 직접 입력하고 관리 열기를 누른 뒤에만 계속한다. 토큰을 읽거나 복사하거나 저장하지 않는다.",
+    "7. 새 Mac 연결에서 Mac 이름, appium, 10분을 선택하고 일회용 코드 만들기를 누른다.",
+    "8. 코드 자체를 출력하지 말고 명령 복사로 전체 fail-fast 블록을 복사한다.",
+    "9. 복사한 블록이 bash -euo pipefail, corca-ai/ads-booster, gh attestation verify, worker doctor → enroll → finish-bootstrap → status 순서를 포함하는지 확인한다.",
+    "10. 같은 macOS 사용자의 Terminal에 멀티라인 paste로 명령을 변형 없이 한 번 실행하고 종료 상태를 기다린다.",
+    "11. 설치 후 절대 경로 current/bin/trace-marketing으로 version --json, worker doctor, worker status, worker updater-status를 확인한다.",
+    "12. launchctl에서 com.corca.trace-marketing-worker와 com.corca.trace-marketing-updater가 실행 중인지 확인한다.",
+    "13. 관리 화면을 새로고침하며 최대 90초 동안 Mac이 작업 가능이고 화면 버전이 로컬 버전과 일치하는지 확인한다.",
+    "",
+    "실패 처리:",
+    "- enrolled 출력 전 실패면 환경 문제를 보고하고 무작정 새 코드를 만들지 않는다.",
+    "- enrolled 출력 후 finish-bootstrap 실패면 새 enrollment 대신 기존 credential을 보존하고 finish-bootstrap 재실행 가능성을 확인한다.",
+    "- 만료 또는 이미 사용된 코드가 명확할 때만 내 확인 후 새 코드를 만든다.",
+    "",
+    "완료 보고에는 Mac 이름, 설치 version/commit, doctor, worker/updater 상태, 화면 heartbeat 버전과 남은 문제만 포함한다. secret과 enrollment code는 포함하지 말고 실제 capture canary는 실행하지 않았다고 명시한다.",
+  ].join("\n");
+
   const workerAdminRequest = async (path, options = {}) => {
     if (!workerAdminToken) {
       const failure = new Error("Mac 관리 토큰을 다시 입력해 주세요.");
@@ -607,7 +661,12 @@
     setWorkerAdminActionFeedback("");
   };
 
-  const copyWorkerSetupText = async (value, button, copiedLabel) => {
+  const copyWorkerSetupText = async (
+    value,
+    button,
+    copiedLabel,
+    reportFailure = setWorkerEnrollmentFeedback,
+  ) => {
     const original = button?.textContent ?? "복사";
     try {
       if (!value || typeof navigator === "undefined" || !navigator.clipboard) {
@@ -623,9 +682,11 @@
         }, 2500);
       }
     } catch {
-      setWorkerEnrollmentFeedback("복사하지 못했습니다. 값을 직접 선택해 복사해 주세요.");
+      reportFailure("복사하지 못했습니다. 값을 직접 선택해 복사해 주세요.");
     }
   };
+
+  if (workerAgentPrompt) workerAgentPrompt.textContent = macEnrollmentAgentPrompt();
 
   const selectedContextProfile = () =>
     contextProfiles.find((profile) => profile.profile_id === selectedContextProfileId) ?? null;
@@ -2070,6 +2131,14 @@
 
   workerEnrollmentCommandCopy?.addEventListener("click", () =>
     copyWorkerSetupText(workerEnrollmentCommand?.textContent?.trim(), workerEnrollmentCommandCopy, "명령 복사됨"));
+
+  workerAgentPromptCopy?.addEventListener("click", () =>
+    copyWorkerSetupText(
+      workerAgentPrompt?.textContent?.trim(),
+      workerAgentPromptCopy,
+      "프롬프트 복사됨",
+      setWorkerAgentPromptFeedback,
+    ));
 
   const autogenNotice = (created) => {
     const registered = `후보 ${created.length}개가 등록되었습니다`;

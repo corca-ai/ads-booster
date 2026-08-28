@@ -358,6 +358,18 @@
           <button class="button button-quiet" type="button" data-worker-manager-close>닫기</button>
         </div>
 
+        <details class="worker-agent-guide">
+          <summary>에이전트에게 Mac 등록 맡기기</summary>
+          <div class="worker-agent-guide__body">
+            <p>Computer Use 에이전트가 사전 점검부터 등록·서비스 확인까지 진행하도록 안전 경계를 포함한 프롬프트를 복사합니다. 운영 토큰은 프롬프트에 들어가지 않으며 입력 순간에만 직접 전달합니다.</p>
+            <pre class="worker-agent-guide__prompt"><code data-worker-agent-prompt></code></pre>
+            <div class="form-actions">
+              <button class="button button-secondary" type="button" data-worker-agent-prompt-copy>에이전트 프롬프트 복사</button>
+            </div>
+            <p class="candidate-feedback" data-worker-agent-prompt-feedback role="status" aria-live="polite"></p>
+          </div>
+        </details>
+
         <section class="worker-manager__lock" data-worker-admin-locked aria-labelledby="worker-admin-title">
           <div>
             <h3 id="worker-admin-title">운영 권한 열기</h3>
