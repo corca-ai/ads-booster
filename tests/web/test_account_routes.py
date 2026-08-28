@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi.testclient import TestClient
 
+from ads_booster.candidate_generation import CandidateBatch
 from ads_booster.web.app import create_app
 from ads_booster.workspace import (
     CandidateCreate,
@@ -19,7 +20,7 @@ from ads_booster.workspace import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.workspace import CandidateRecord, MarketingAccountRecord, WorkspaceId
+    from ads_booster.workspace import MarketingAccountRecord, WorkspaceId
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +35,10 @@ class RecordingGenerator:
         *,
         run_context: str | None = None,
         account: MarketingAccountRecord | None = None,
-    ) -> tuple[CandidateRecord, ...]:
+    ) -> CandidateBatch:
         del workspace_id, run_context
         self.seen_accounts.append(account)
-        return ()
+        return CandidateBatch(records=())
 
 
 _SCHEDULE: dict[str, Any] = {"language": "ko", "timezone": "Asia/Seoul"}

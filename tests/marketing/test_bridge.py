@@ -9,6 +9,7 @@ from typing import override
 
 import pytest
 
+from ads_booster.candidate_generation import CandidateBatch
 from ads_booster.marketing.bridge import MarketingBridge
 from ads_booster.marketing.cloudflare_queue import CloudflareQueueError
 from ads_booster.marketing.executors import (
@@ -142,25 +143,27 @@ class FakeCandidateGenerator:
         workspace_id: WorkspaceId,
         *,
         run_context: str | None = None,
-    ) -> tuple[CandidateRecord, ...]:
+    ) -> CandidateBatch:
         self.run_contexts.append(run_context)
-        return (
-            self.store.create_candidate(
-                CandidateCreate(
-                    workspace_id=workspace_id,
-                    source=CandidateSource.AUTO,
-                    country="KR",
-                    topic="시험기간 일정",
-                    caption="잠금화면에서 오늘 일정을 확인합니다.",
-                    hypothesis="구체적인 사용 장면이 반응을 만든다.",
-                    image_inputs=CandidateImageInputs(
-                        trace_items=("09:00 통계학", "13:00 스터디"),
-                        device_time="07:20",
-                        background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
-                        language="ko",
-                    ),
-                )
-            ),
+        return CandidateBatch(
+            records=(
+                self.store.create_candidate(
+                    CandidateCreate(
+                        workspace_id=workspace_id,
+                        source=CandidateSource.AUTO,
+                        country="KR",
+                        topic="시험기간 일정",
+                        caption="잠금화면에서 오늘 일정을 확인합니다.",
+                        hypothesis="구체적인 사용 장면이 반응을 만든다.",
+                        image_inputs=CandidateImageInputs(
+                            trace_items=("09:00 통계학", "13:00 스터디"),
+                            device_time="07:20",
+                            background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
+                            language="ko",
+                        ),
+                    )
+                ),
+            )
         )
 
 

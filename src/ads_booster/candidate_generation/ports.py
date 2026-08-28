@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from ads_booster.agent.session import ModelClient
+    from ads_booster.candidate_generation.models import CandidateBatch
     from ads_booster.workspace import (
         CandidateCreate,
         CandidateId,
@@ -39,7 +40,7 @@ class CandidateGeneratorPort(Protocol):
         *,
         run_context: str | None = None,
         account: MarketingAccountRecord | None = None,
-    ) -> tuple[CandidateRecord, ...]: ...
+    ) -> CandidateBatch: ...
 
 
 class CandidateImageRunnerPort(Protocol):

@@ -148,18 +148,20 @@ class CandidatePipelineExecutor:
             "research": task.payload.get("research", {}),
         }
         try:
-            records = self.generator.generate(
+            batch = self.generator.generate(
                 workspace_id,
                 run_context=json.dumps(context, ensure_ascii=False, sort_keys=True),
             )
         except CandidateGenerationError as error:
             raise MarketingExecutionError("candidate_generation_failed") from error
+        records = batch.records
         candidate_ids: list[JsonValue] = [str(record.candidate_id) for record in records]
         return TaskResult(
             status=TaskStatus.SUCCEEDED,
             output={
                 "candidate_ids": candidate_ids,
                 "candidates": [self._candidate_summary(record) for record in records],
+                "generation_failures": batch.failures,
             },
         )
 

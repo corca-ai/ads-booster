@@ -266,6 +266,11 @@ class CandidateGenerationProvenance(FrozenModel):
     # The domains this batch was told to write, one per candidate, chosen from the running
     # coverage counts. Batches generated before the assignment existed carry an empty tuple.
     assigned_domains: Annotated[tuple[CandidatePersonaDomain, ...], Field(max_length=16)] = ()
+    # The reference bodies this one call was shown, drawn fresh per candidate. Recorded so
+    # "which references produce candidates worth approving" is a question the stored rows
+    # can answer later; batches written before reference sampling existed carry an empty
+    # tuple, which is the truth about them.
+    reference_ids: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
     # Set when the batch came from the Agent-kernel connector rather than the single-call
     # script engine, so a reviewer can tell which generator wrote the caption in front of them.
     agent_run_id: str | None = Field(default=None, max_length=200)

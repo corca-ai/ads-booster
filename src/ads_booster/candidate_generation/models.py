@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Annotated, ClassVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,23 @@ from ads_booster.workspace import (
     CandidateShootingOrder,
     CandidateTopic,
 )
+
+if TYPE_CHECKING:
+    from ads_booster.workspace import CandidateRecord
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateBatch:
+    """What one generation batch produced, including the calls that produced nothing.
+
+    A batch is now one provider call per candidate, so partial success is the normal
+    outcome rather than an edge case: two captions and one timeout is two captions worth
+    keeping. `failures` is carried out rather than logged away because the person who
+    pressed the button asked for a number of candidates and has to be told they got fewer.
+    """
+
+    records: tuple[CandidateRecord, ...]
+    failures: int = 0
 
 
 class GenerationModel(BaseModel):

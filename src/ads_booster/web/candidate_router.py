@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import FileResponse
 
 from ads_booster.candidate_generation import (
@@ -42,6 +42,9 @@ from ads_booster.workspace import (
 )
 
 _CANDIDATE_NOT_FOUND: Final = "candidate not found"
+# How many of the batch's per-candidate calls produced nothing. A header rather than a
+# body field so the list response stays exactly what every existing reader expects.
+GENERATION_FAILURES_HEADER: Final = "X-Trace-Generation-Failures"
 _ACCOUNT_NOT_FOUND: Final = "marketing account not found"
 _WRONG_IMAGE_STAGE: Final = "candidate is not caption approved"
 _NO_IMAGE_TO_REVIEW: Final = "candidate has no image awaiting review"
@@ -138,6 +141,7 @@ class CandidateRouter:
             status_code=status.HTTP_201_CREATED,
         )
         def generate_candidates(
+            response: Response,
             principal: Annotated[Principal, Depends(current_principal)],
             account_id: MarketingAccountId | None = None,
         ) -> list[CandidateResponse]:
@@ -145,12 +149,16 @@ class CandidateRouter:
             # for a surface with no account chosen yet.
             account = self._account(principal.workspace_id, account_id)
             try:
-                records = self.workflow.generate(principal.workspace_id, account)
+                batch = self.workflow.generate(principal.workspace_id, account)
             except (CandidateContextMissingError, CandidateAuthRequiredError) as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, error.message) from error
             except (CandidateProviderError, CandidateFormatError) as error:
                 raise HTTPException(status.HTTP_502_BAD_GATEWAY, error.message) from error
-            return [_response(record) for record in records]
+            # A batch is one provider call per candidate, so it can come back short. The
+            # body stays the list of what was written — the count of calls that produced
+            # nothing rides in a header, where adding it cannot break an existing reader.
+            response.headers[GENERATION_FAILURES_HEADER] = str(batch.failures)
+            return [_response(record) for record in batch.records]
 
         @router.post("/{candidate_id}/review", response_model=CandidateResponse)
         def review_candidate(

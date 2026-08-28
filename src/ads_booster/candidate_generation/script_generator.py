@@ -11,19 +11,30 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from threading import Lock
 from typing import TYPE_CHECKING, Final, Protocol
 
 from ads_booster.auth.codex import OAuthError
+from ads_booster.candidate_generation.context_source import (
+    CandidateReferenceSource,
+    ReferencePool,
+    reference_id,
+)
 from ads_booster.candidate_generation.errors import (
     CandidateAuthRequiredError,
     CandidateFormatError,
+    CandidateGenerationError,
     CandidateProviderError,
 )
 from ads_booster.candidate_generation.instruction import (
+    CaptionForm,
+    assign_caption_forms,
     build_instruction,
     build_retry_instruction,
 )
+from ads_booster.candidate_generation.models import CandidateBatch, CandidateDocument
 from ads_booster.candidate_generation.parsing import parse_candidate_drafts
 from ads_booster.providers.errors import ProviderError
 from ads_booster.workspace import (
@@ -99,6 +110,41 @@ class CandidateModelSource(Protocol):
     def open(self) -> AbstractContextManager[ModelClient]: ...
 
 
+@dataclass(slots=True)
+class WrittenTopics:
+    """The topics a call must not repeat: the stored history plus this batch so far.
+
+    Shared across the batch's threads, so every read and write is under the lock. A call
+    sees whatever had been written when its instruction was built, which is why the domain
+    and form assignments — decided before any call goes out — carry the real separation.
+    """
+
+    stored: tuple[CandidateHistoryEntry, ...]
+    fresh: list[CandidateHistoryEntry] = field(default_factory=list)
+    lock: Lock = field(default_factory=Lock)
+
+    def entries(self) -> tuple[CandidateHistoryEntry, ...]:
+        with self.lock:
+            return (*self.fresh, *self.stored)
+
+    def add(self, persona_domain: CandidatePersonaDomain | None, topic: str) -> None:
+        with self.lock:
+            self.fresh.insert(0, CandidateHistoryEntry(persona_domain=persona_domain, topic=topic))
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateCall:
+    """Everything one candidate's provider call needs, decided before the call goes out."""
+
+    bundle: CandidateContextBundle
+    pool: ReferencePool
+    domain: CandidatePersonaDomain
+    form: CaptionForm
+    brief: CandidateAccountBrief | None
+    account_id: MarketingAccountId | None
+    written: WrittenTopics
+
+
 @dataclass(frozen=True, slots=True)
 class ScriptCandidateGenerator:
     """Assembles the context documents into one provider call and stores its candidates.
@@ -110,10 +156,15 @@ class ScriptCandidateGenerator:
     store: CandidateWriter
     models: CandidateModelSource
     context_source: CandidateContextSource
+    references: CandidateReferenceSource
     model: str
     count: int = DEFAULT_CANDIDATE_COUNT
     country: str = DEFAULT_COUNTRY
     history_limit: int = DEFAULT_HISTORY_LIMIT
+    # Injected in tests so a sample is predictable; production draws at random.
+    sample_references: Callable[[Sequence[CandidateDocument], int], Sequence[CandidateDocument]] = (
+        random.sample
+    )
     # Injected in tests so a coverage tie resolves predictably; production randomises it.
     shuffle: Callable[[Sequence[CandidatePersonaDomain]], Sequence[CandidatePersonaDomain]] = (
         default_domain_shuffle
@@ -125,20 +176,33 @@ class ScriptCandidateGenerator:
         *,
         run_context: str | None = None,
         account: MarketingAccountRecord | None = None,
-    ) -> tuple[CandidateRecord, ...]:
-        """Write one batch, either for an account or for the workspace at large.
+    ) -> CandidateBatch:
+        """Write one batch as one provider call per candidate, run in parallel.
+
+        A single call for the whole batch had to keep every candidate distinct by itself,
+        and it read the same context every time. One call per candidate lets each draw its
+        own reference sample, so the batch collectively sees more of the corpus than any
+        one instruction could carry.
+
+        What keeps the candidates apart is assigned before the calls go out: a domain each
+        and a caption form each. The recent-topic list is the third guard and the only one
+        that cannot be fully resolved up front — a call reads the topics stored when its
+        instruction is built, so calls that start later in the pool see more of the batch.
+        Under full parallelism that is best effort, and the two assignments are what
+        actually carry the separation.
 
         With an account the batch is that one person writing about different things, so
         coverage stops choosing domains and the account's own domain applies to all of
-        them. Without one the previous behaviour stands: spread the batch across the
-        domains this workspace has covered least.
-
-        The "do not repeat these" history is scoped the same way. What one account has
-        already written is a fact about that account; read workspace-wide it made every
-        account steer around every other account's subjects.
+        them. The history is scoped to that account for the same reason: what one account
+        has already written is a fact about that account.
         """
         del run_context
         bundle = self.context_source.load()
+        # The corpus follows the account, not a constant: a batch is grounded in the posts
+        # its own country's readers responded to. Without an account the workspace-wide
+        # default stands in.
+        country = self.country if account is None else account.country
+        pool = self.references.load(country)
         brief = None if account is None else CandidateAccountBrief.of(account)
         account_id = None if account is None else account.account_id
         domains = (
@@ -148,28 +212,73 @@ class ScriptCandidateGenerator:
                 self.store.count_candidate_domains(workspace_id), self.count, self.shuffle
             )
         )
-        history = self.store.recent_candidate_history(
-            workspace_id, self.history_limit, account_id=account_id
+        # The cap of one testimonial belongs to the batch, so the batch assigns the forms
+        # and hands each call its own.
+        forms = assign_caption_forms(self.count)
+        written = WrittenTopics(
+            self.store.recent_candidate_history(
+                workspace_id, self.history_limit, account_id=account_id
+            )
         )
+        with ThreadPoolExecutor(max_workers=self.count) as workers:
+            futures = [
+                workers.submit(
+                    self._one,
+                    workspace_id,
+                    _CandidateCall(
+                        bundle=bundle,
+                        pool=pool,
+                        domain=domains[index],
+                        form=forms[index],
+                        brief=brief,
+                        account_id=account_id,
+                        written=written,
+                    ),
+                )
+                for index in range(self.count)
+            ]
+            records: list[CandidateRecord] = []
+            failures: list[CandidateGenerationError] = []
+            for future in futures:
+                try:
+                    records.append(future.result())
+                except CandidateGenerationError as error:
+                    failures.append(error)
+        if not records:
+            raise failures[0]
+        return CandidateBatch(records=tuple(records), failures=len(failures))
+
+    def _one(self, workspace_id: WorkspaceId, call: _CandidateCall) -> CandidateRecord:
+        """Write one candidate: sample references, ask once, store the row."""
+        sample = call.pool.sample(self.sample_references)
+        bundle = call.bundle.model_copy(update={"documents": (*call.bundle.documents, *sample)})
         instruction = build_instruction(
-            bundle, count=self.count, domains=domains, history=history, account=brief
+            bundle,
+            count=1,
+            domains=(call.domain,),
+            history=call.written.entries(),
+            account=call.brief,
+            forms=(call.form,),
         )
-        provenance = self._provenance(bundle, instruction, domains)
+        provenance = self._provenance(bundle, instruction, (call.domain,), sample)
         with self.models.open() as client:
-            drafts = self._drafts(client, instruction, domains)
-        return tuple(
-            self.store.create_candidate(self._create(workspace_id, draft, provenance, account_id))
-            for draft in drafts
+            drafts = self._drafts(client, instruction, (call.domain,))
+        record = self.store.create_candidate(
+            self._create(workspace_id, drafts[0], provenance, call.account_id)
         )
+        call.written.add(record.persona_domain, record.topic)
+        return record
 
     def _provenance(
         self,
         bundle: CandidateContextBundle,
         instruction: str,
         domains: tuple[CandidatePersonaDomain, ...],
+        sample: tuple[CandidateDocument, ...] = (),
     ) -> CandidateGenerationProvenance:
         """Record what this run read, just before it spends the provider call on it."""
         return CandidateGenerationProvenance(
+            reference_ids=tuple(reference_id(document) for document in sample),
             documents=tuple(
                 CandidateContextDocument(
                     relative_path=document.relative_path,
@@ -216,7 +325,10 @@ class ScriptCandidateGenerator:
         self, answer: str, domains: tuple[CandidatePersonaDomain, ...]
     ) -> tuple[CandidateDraft, ...]:
         return parse_candidate_drafts(
-            answer, expected=self.count, country=self.country, domains=domains or None
+            answer,
+            expected=len(domains) or self.count,
+            country=self.country,
+            domains=domains or None,
         )
 
     def _create(

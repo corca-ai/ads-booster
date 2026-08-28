@@ -21,6 +21,7 @@ from ads_booster.agent.runs import (
 )
 from ads_booster.candidate_generation import (
     CandidateAuthRequiredError,
+    CandidateBatch,
     CandidateContextMissingError,
     CandidateFormatError,
     CandidateGenerationError,
@@ -28,6 +29,7 @@ from ads_booster.candidate_generation import (
     CandidateRunConflictError,
 )
 from ads_booster.web.app import create_app
+from ads_booster.web.candidate_router import GENERATION_FAILURES_HEADER
 from ads_booster.workspace import (
     CandidateCreate,
     CandidateId,
@@ -56,6 +58,8 @@ _CANDIDATES = TypeAdapter(tuple[CandidateResponse, ...])
 class FakeGenerator:
     store: SqliteWorkspaceStore | None = None
     failure: CandidateGenerationError | None = None
+    # How many of the batch's per-candidate calls the route should report as lost.
+    failures: int = 0
 
     seen_accounts: list[MarketingAccountRecord | None] = field(default_factory=list)
 
@@ -65,33 +69,36 @@ class FakeGenerator:
         *,
         run_context: str | None = None,
         account: MarketingAccountRecord | None = None,
-    ) -> tuple[CandidateRecord, ...]:
+    ) -> CandidateBatch:
         del run_context
         self.seen_accounts.append(account)
         if self.failure is not None:
             raise self.failure
         assert self.store is not None
-        return tuple(
-            self.store.create_candidate(
-                CandidateCreate(
-                    workspace_id=workspace_id,
-                    source=CandidateSource.AUTO,
-                    country="KR",
-                    topic=f"자동 주제 {index}",
-                    caption=f"자동 캡션 {index}",
-                    hypothesis="자동 가설",
-                    image_inputs=CandidateImageInputs(
-                        trace_items=("09:00 통계학 2교시", "13:00 스터디"),
-                        device_time="07:20",
-                        background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
-                        language="ko",
-                    ),
-                    refs_used=("kr-001",),
-                    principles_applied=(1,),
-                    shooting_order="입력_일정: 9시 스터디",
+        return CandidateBatch(
+            records=tuple(
+                self.store.create_candidate(
+                    CandidateCreate(
+                        workspace_id=workspace_id,
+                        source=CandidateSource.AUTO,
+                        country="KR",
+                        topic=f"자동 주제 {index}",
+                        caption=f"자동 캡션 {index}",
+                        hypothesis="자동 가설",
+                        image_inputs=CandidateImageInputs(
+                            trace_items=("09:00 통계학 2교시", "13:00 스터디"),
+                            device_time="07:20",
+                            background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방",
+                            language="ko",
+                        ),
+                        refs_used=("kr-001",),
+                        principles_applied=(1,),
+                        shooting_order="입력_일정: 9시 스터디",
+                    )
                 )
-            )
-            for index in range(3)
+                for index in range(3)
+            ),
+            failures=self.failures,
         )
 
 
@@ -407,6 +414,28 @@ def test_generate_stores_three_automatic_candidates(tmp_path: Path) -> None:
     assert all(record.status is CandidateStatus.AWAITING_REVIEW for record in created)
     listed = _CANDIDATES.validate_json(client.get("/api/candidates").content)
     assert len(listed) == 3
+    # A whole batch means nothing was lost, and the route says so rather than staying silent
+    assert response.headers[GENERATION_FAILURES_HEADER] == "0"
+
+
+def test_a_short_batch_reports_the_calls_that_produced_nothing(tmp_path: Path) -> None:
+    """One provider call per candidate, so a batch can come back short.
+
+    The body stays the list of what was written — every existing reader keeps working —
+    and the count of lost calls rides in a header, because the person who pressed the
+    button asked for a number of candidates and has to be told they got fewer.
+    """
+    # Given a generator whose batch lost one of its calls
+    store = SqliteWorkspaceStore(tmp_path)
+    client = _client(tmp_path, store, "Trace team", generator=FakeGenerator(store, failures=1))
+
+    # When the batch is generated
+    response = client.post("/api/candidates/generate")
+
+    # Then what was written is returned, and the shortfall is stated
+    assert response.status_code == 201, response.text
+    assert len(_CANDIDATES.validate_json(response.content)) == 3
+    assert response.headers[GENERATION_FAILURES_HEADER] == "1"
 
 
 def test_generate_requires_an_authenticated_member(tmp_path: Path) -> None:
