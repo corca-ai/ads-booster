@@ -147,6 +147,12 @@
           <details class="advanced-input" data-account-form-details>
             <summary>계정 추가</summary>
             <div class="advanced-input__body">
+              <div class="proposal-bar">
+                <button class="button button-quiet" type="button" data-account-propose>🤖 AI 제안 받기</button>
+                <p class="form-help">레퍼런스 성과 기록과 이미 있는 계정을 읽고 컨셉 2~3개를 제안합니다. 고르면 아래 폼이 채워지고, 그대로 고쳐 쓸 수 있습니다.</p>
+              </div>
+              <p class="candidate-feedback" data-account-proposal-feedback role="alert" hidden></p>
+              <div class="proposal-grid" data-account-proposals hidden></div>
               <form class="stack-form" data-account-form novalidate aria-describedby="account-feedback">
                 <div class="candidate-fields">
                   <label for="account-country">국가<select id="account-country" name="country" required><option value="KR" selected>한국 (KR)</option><option value="JP">일본 (JP)</option><option value="TW">대만 (TW)</option><option value="US">미국 (US)</option></select></label>

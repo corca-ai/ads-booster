@@ -6,6 +6,7 @@ from typing import Annotated, ClassVar, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ads_booster.agent.tui_approval import PermissionMode
+from ads_booster.candidate_generation.account_proposal import AccountProposal
 from ads_booster.contracts.generation import MarketingContextBundle
 from ads_booster.contracts.models import DeviceTarget
 from ads_booster.providers.models import ProviderModel
@@ -310,6 +311,28 @@ class MarketingAccountUpdateRequest(WebModel):
 class MarketingAccountStatusRequest(WebModel):
     status: MarketingAccountStatus
     expected_revision: int = Field(ge=1)
+
+
+class AccountProposalRequest(WebModel):
+    """Ask for accounts worth opening in one country."""
+
+    country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] = "KR"
+
+
+class AccountProposalResponse(WebModel):
+    """One suggested account, in exactly the shape the create form submits.
+
+    Proposals are not stored. What the browser does with this is fill the form, which the
+    person then edits and submits down the ordinary creation route, so nothing here needs
+    an id or a revision.
+    """
+
+    identity: MarketingAccountIdentity
+    reason: str
+
+    @classmethod
+    def of(cls, proposal: AccountProposal) -> AccountProposalResponse:
+        return cls(identity=proposal.identity, reason=proposal.reason)
 
 
 class MarketingAccountResponse(WebModel):

@@ -2325,3 +2325,40 @@ textarea:focus-visible {
 }
 
 .stage-tabs { justify-self: start; }
+
+/* AI 계정 제안: 폼 위에 놓인 카드 몇 장. 고르면 아래 폼이 채워지므로 카드 자체는 가볍게. */
+.proposal-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.proposal-bar .form-help {
+  flex: 1 1 16rem;
+  margin: 0;
+}
+
+.proposal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.proposal-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.proposal-card__reason {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}

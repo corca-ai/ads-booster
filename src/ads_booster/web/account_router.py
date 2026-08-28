@@ -13,8 +13,17 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ads_booster.candidate_generation.errors import (
+    CandidateAuthRequiredError,
+    CandidateContextMissingError,
+    CandidateFormatError,
+    CandidateProviderError,
+)
+from ads_booster.candidate_generation.ports import AccountProposalPort  # noqa: TC001
 from ads_booster.web.auth import CurrentPrincipal, Principal  # noqa: TC001
 from ads_booster.web.schemas import (
+    AccountProposalRequest,
+    AccountProposalResponse,
     MarketingAccountCreateRequest,
     MarketingAccountResponse,
     MarketingAccountStatusRequest,
@@ -32,6 +41,7 @@ from ads_booster.workspace import (
 
 _ACCOUNT_NOT_FOUND: Final = "marketing account not found"
 _ACCOUNT_REVISION_CONFLICT: Final = "marketing account revision conflict"
+_PROPOSALS_UNAVAILABLE: Final = "계정 제안을 만들 수 있는 구성이 아닙니다."
 
 
 def _response(record: MarketingAccountRecord) -> MarketingAccountResponse:
@@ -52,8 +62,28 @@ def _mapped_errors() -> Generator[None]:
 def build_account_router(
     store: MarketingAccountWriter,
     current_principal: CurrentPrincipal,
+    proposals: AccountProposalPort | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+
+    # Registered before the `/{account_id}` routes so the literal path is never read as an
+    # id. Proposals are not stored: this route reads the reference index and answers, and
+    # the account only exists once a person submits the create form below.
+    @router.post("/proposals", response_model=list[AccountProposalResponse])
+    def propose_accounts(
+        payload: AccountProposalRequest,
+        principal: Annotated[Principal, Depends(current_principal)],
+    ) -> list[AccountProposalResponse]:
+        if proposals is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _PROPOSALS_UNAVAILABLE)
+        existing = store.list_accounts(principal.workspace_id)
+        try:
+            suggested = proposals.propose(payload.country, existing)
+        except (CandidateContextMissingError, CandidateAuthRequiredError) as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, error.message) from error
+        except (CandidateProviderError, CandidateFormatError) as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, error.message) from error
+        return [AccountProposalResponse.of(proposal) for proposal in suggested]
 
     @router.get("", response_model=list[MarketingAccountResponse])
     def list_accounts(
@@ -124,4 +154,5 @@ def build_account_router(
             )
 
     _ = (list_accounts, create_account, get_account, update_account, set_account_status)
+    _ = propose_accounts
     return router

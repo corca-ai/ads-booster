@@ -1684,6 +1684,8 @@
 
   let accounts = [];
   let currentAccount = null;
+  // AI 제안에서 고른 근거. 등록될 때 계정 note 로 함께 저장되고, 손으로 만든 계정은 빈 문자열.
+  let proposalNote = "";
 
   // 로컬에서는 계정 한 행이 곧 페르소나다. 호스팅에서는 /api/accounts 가 국가 운영 계정이고
   // (Trace Korea) 페르소나는 그 아래 층의 별도 자원이라, 표면에 따라 읽는 곳이 다르다.
@@ -1936,6 +1938,106 @@
     if (accountFormDetails) accountFormDetails.open = true;
   });
 
+  const accountProposeButton = one("[data-account-propose]");
+  const accountProposalGrid = one("[data-account-proposals]");
+  const accountProposalFeedback = one("[data-account-proposal-feedback]");
+
+  const setAccountProposalFeedback = (message) => {
+    if (!accountProposalFeedback) return;
+    accountProposalFeedback.textContent = message;
+    accountProposalFeedback.hidden = !message;
+  };
+
+  // 제안은 저장하지 않는다. 고른 것만 폼에 실려 평소 등록 경로로 내려간다.
+  const applyProposal = (proposal) => {
+    const identity = proposal.identity;
+    const values = {
+      "account-name": identity.display_name,
+      "account-age": String(identity.age),
+      "account-region": identity.region,
+      "account-occupation": identity.occupation,
+      "account-domain": identity.domain,
+      "account-concept": identity.concept,
+      "account-interests": identity.interests.join(", "),
+      "account-rhythm": identity.life_rhythm,
+      "account-background-subject": identity.taste.background_subject,
+      "account-background-mood": identity.taste.background_mood,
+      "account-font": identity.taste.font,
+    };
+    Object.entries(values).forEach(([id, value]) => {
+      const field = document.getElementById(id);
+      if (field) field.value = value;
+    });
+    // 고른 근거는 계정 note 로 남는다 — 왜 이 계정을 열었는지가 계정과 함께 있어야 한다.
+    proposalNote = proposal.reason;
+    if (accountProposalGrid) {
+      accountProposalGrid.replaceChildren();
+      accountProposalGrid.hidden = true;
+    }
+    setAccountProposalFeedback("");
+    setNotice(`${identity.display_name} 컨셉을 폼에 채웠습니다. 고쳐서 등록하세요.`);
+  };
+
+  const proposalCard = (proposal) => {
+    const identity = proposal.identity;
+    const card = document.createElement("article");
+    card.className = "proposal-card";
+
+    const name = document.createElement("strong");
+    name.className = "account-card__name";
+    name.textContent = `${identity.display_name} · ${identity.age}세 · ${identity.occupation}`;
+
+    const concept = document.createElement("p");
+    concept.className = "account-card__concept";
+    concept.textContent = identity.concept;
+
+    const meta = document.createElement("p");
+    meta.className = "mono account-card__meta";
+    meta.textContent = `${identity.region} · ${domainLabel(identity.domain)} · ${identity.interests.join(", ")}`;
+
+    const reason = document.createElement("p");
+    reason.className = "proposal-card__reason";
+    reason.textContent = proposal.reason;
+
+    const use = document.createElement("button");
+    use.className = "button button-primary";
+    use.type = "button";
+    use.textContent = "이 컨셉 쓰기";
+    use.addEventListener("click", () => applyProposal(proposal));
+
+    card.append(name, concept, meta, reason, use);
+    return card;
+  };
+
+  const requestProposals = async (button) => {
+    if (button.disabled) return;
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "제안을 만드는 중… (30초~1분)";
+    setAccountProposalFeedback("");
+    try {
+      const country = document.getElementById("account-country")?.value || activeCountry || "KR";
+      const proposals = await request(`${personaPath()}/proposals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ country }),
+      });
+      if (accountProposalGrid) {
+        accountProposalGrid.replaceChildren(...proposals.map(proposalCard));
+        accountProposalGrid.hidden = proposals.length === 0;
+      }
+      setNotice(`컨셉 ${proposals.length}개를 제안받았습니다. 하나를 고르면 폼이 채워집니다.`);
+    } catch (error) {
+      setAccountProposalFeedback(error.message);
+      setNotice(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  };
+
+  accountProposeButton?.addEventListener("click", () => requestProposals(accountProposeButton));
+
   accountForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const target = event.currentTarget;
@@ -1975,9 +2077,11 @@
             language: countryLanguage(country),
             timezone: ACCOUNT_ZONES[country] ?? "UTC",
           },
+          note: proposalNote,
         }),
       });
       target.reset();
+      proposalNote = "";
       if (accountFormDetails) accountFormDetails.open = false;
       // 첫 계정이면 그 계정의 국가가 방금 생긴 국가다. 만든 사람을 국가 홈으로 되돌리는
       // 대신 그 국가의 계정 목록에 세워 둔다.
