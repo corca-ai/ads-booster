@@ -147,6 +147,17 @@
     FR: "fr",
     BR: "pt",
   });
+  // 국가 홈의 카드 이름. 계정 추가 폼의 `한국 (KR)` 라벨과 같은 이름을 쓰되, 코드는 카드의
+  // 배지가 따로 보여 주므로 여기서는 나라 이름만 담는다.
+  const COUNTRY_LABELS = Object.freeze({
+    KR: "한국",
+    JP: "일본",
+    TW: "대만",
+    US: "미국",
+    DE: "독일",
+    FR: "프랑스",
+    BR: "브라질",
+  });
   const COUNTRY_TIMEZONES = Object.freeze({
     KR: "Asia/Seoul",
     JP: "Asia/Tokyo",
@@ -200,6 +211,7 @@
   const MAX_TRACE_ITEMS = 8;
 
   const countryLanguage = (country) => COUNTRY_LANGUAGES[country] ?? DEFAULT_LANGUAGE;
+  const countryLabel = (country) => COUNTRY_LABELS[country] ?? country;
 
   const localizeError = (message) => ERROR_MESSAGES[message] ?? "요청에 실패했습니다. 잠시 후 다시 시도해 주세요.";
   const candidateSourceLabel = (source) => CANDIDATE_SOURCE_LABELS[source] ?? source;
@@ -1628,9 +1640,17 @@
   };
 
 
-  // ---- 계정 홈 -------------------------------------------------------------
-  // 계정 하나가 하나의 컨셉이라, 작업 화면은 어떤 계정으로 쓰는지가 정해진 다음에야
-  // 열린다. 목록과 작업 화면을 같은 페이지에서 번갈아 보여 주는 것은 그래서다.
+  // ---- 국가 홈 · 계정 홈 ---------------------------------------------------
+  // 화면은 세 층이다: 국가 → 그 국가의 계정 → 그 계정의 작업 화면. 계정 하나가 하나의
+  // 컨셉이고, 컨셉은 어느 시장에서 쓰는지가 정해진 다음에야 뜻이 생기기 때문에 국가가
+  // 가장 위에 온다. 세 층을 같은 페이지에서 번갈아 보여 주는 것은 그래서다.
+  const countryHome = one("[data-country-home]");
+  const countryGrid = one("[data-country-grid]");
+  const countryEmpty = one("[data-country-empty]");
+  const countryCount = one("[data-country-count]");
+  const countryBack = one("[data-country-back]");
+  const countryAddAccount = one("[data-country-add-account]");
+  const countryCurrentName = one("[data-country-current-name]");
   const accountHome = one("[data-account-home]");
   const accountWorkspace = one("[data-account-workspace]");
   const accountGrid = one("[data-account-grid]");
@@ -1662,6 +1682,9 @@
 
   let accounts = [];
   let currentAccount = null;
+  // 레벨 2가 어느 국가로 좁혀져 있는지. null이면 국가 홈에 있거나, 아직 국가가 하나도
+  // 없어 첫 계정을 만드는 중이다.
+  let activeCountry = null;
 
   const fillOptions = (select, labels) => {
     if (!select || select.options.length) return;
@@ -1717,14 +1740,70 @@
     return card;
   };
 
+  const accountsInCountry = (country) => accounts.filter((account) => account.country === country);
+
   const renderAccounts = () => {
     if (!accountGrid) return;
-    accountGrid.replaceChildren(...accounts.map(accountCard));
-    if (accountEmpty) accountEmpty.hidden = accounts.length > 0;
+    // 국가를 고르고 들어온 목록이면 그 국가의 계정만 남는다. 국가 없이 열린 목록(첫 계정을
+    // 만드는 중)에서는 가진 계정을 전부 보여 준다.
+    const visible = activeCountry ? accountsInCountry(activeCountry) : accounts;
+    accountGrid.replaceChildren(...visible.map(accountCard));
+    if (accountEmpty) accountEmpty.hidden = visible.length > 0;
     if (accountCount) {
-      accountCount.textContent = accounts.length
-        ? `계정 ${accounts.length}개`
+      accountCount.textContent = visible.length
+        ? `계정 ${visible.length}개`
         : "등록된 계정이 없습니다";
+    }
+  };
+
+  // 국가는 따로 저장하지 않는다. 계정의 country 값이 곧 그 국가가 쓰이고 있다는 증거라서,
+  // 목록은 계정에서 파생한다. 새 국가는 그 국가의 첫 계정과 함께 생긴다.
+  const countryCodes = () => [...new Set(accounts.map((account) => account.country))].sort();
+
+  const countryCard = (country) => {
+    const members = accountsInCountry(country);
+    const card = document.createElement("article");
+    card.className = "country-card";
+    const head = document.createElement("div");
+    head.className = "account-card__head";
+    const name = document.createElement("strong");
+    name.className = "account-card__name";
+    name.textContent = countryLabel(country);
+    const badges = document.createElement("div");
+    badges.className = "account-card__badges";
+    const code = document.createElement("span");
+    code.className = "candidate-source";
+    code.textContent = country;
+    badges.append(code);
+    head.append(name, badges);
+
+    const count = document.createElement("p");
+    count.className = "account-card__concept";
+    count.textContent = `계정 ${members.length}개`;
+
+    const meta = document.createElement("p");
+    meta.className = "mono account-card__meta";
+    meta.textContent = members.map((account) => account.display_name).join(" · ");
+
+    const open = document.createElement("button");
+    open.className = "button button-primary";
+    open.type = "button";
+    open.textContent = "이 국가로 작업";
+    open.addEventListener("click", () => enterCountry(country));
+
+    card.append(head, count, meta, open);
+    return card;
+  };
+
+  const renderCountries = () => {
+    if (!countryGrid) return;
+    const codes = countryCodes();
+    countryGrid.replaceChildren(...codes.map(countryCard));
+    if (countryEmpty) countryEmpty.hidden = codes.length > 0;
+    if (countryCount) {
+      countryCount.textContent = codes.length
+        ? `국가 ${codes.length}개`
+        : "등록된 국가가 없습니다";
     }
   };
 
@@ -1758,16 +1837,45 @@
     accountVerdict.append(button);
   };
 
+  // 레벨 1. 국가를 벗어나면 열려 있던 계정도 함께 닫힌다.
+  const showCountryHome = () => {
+    currentAccount = null;
+    activeCountry = null;
+    if (countryHome) countryHome.hidden = false;
+    if (accountHome) accountHome.hidden = true;
+    if (accountWorkspace) accountWorkspace.hidden = true;
+    renderCountries();
+    renderAutogenButtons();
+  };
+
+  // 레벨 2. 어느 국가로 좁혔는지는 activeCountry가 들고 있다.
   const showAccountHome = () => {
     currentAccount = null;
+    if (countryHome) countryHome.hidden = true;
     if (accountHome) accountHome.hidden = false;
     if (accountWorkspace) accountWorkspace.hidden = true;
+    if (countryCurrentName) {
+      countryCurrentName.textContent = activeCountry ? countryLabel(activeCountry) : "새 국가";
+    }
+    renderAccounts();
     renderAutogenButtons();
+  };
+
+  const enterCountry = (country) => {
+    activeCountry = country;
+    // 이 국가에 계정을 하나 더 붙이는 것이 여기서 가장 흔한 다음 일이라, 추가 폼의 국가도
+    // 같이 맞춰 둔다.
+    const countryField = document.getElementById("account-country");
+    if (countryField && country) countryField.value = country;
+    showAccountHome();
+    setNotice(`${countryLabel(country)} 계정 목록입니다.`);
   };
 
   const enterAccount = async (account) => {
     currentAccount = account;
+    activeCountry = account.country;
     selectedAccountId = account.account_id;
+    if (countryHome) countryHome.hidden = true;
     if (accountHome) accountHome.hidden = true;
     if (accountWorkspace) accountWorkspace.hidden = false;
     if (accountCurrentName) accountCurrentName.textContent = account.display_name;
@@ -1793,6 +1901,7 @@
     fillOptions(one("[data-account-font]"), FONT_LABELS);
     accounts = await request("/api/accounts");
     renderAccounts();
+    renderCountries();
     if (currentAccount) {
       const refreshed = accounts.find((item) => item.account_id === currentAccount.account_id);
       if (refreshed) { currentAccount = refreshed; renderAccountVerdict(); }
@@ -1803,6 +1912,19 @@
   accountBack?.addEventListener("click", () => {
     showAccountHome();
     setNotice("계정 목록으로 돌아왔습니다.");
+  });
+
+  countryBack?.addEventListener("click", () => {
+    showCountryHome();
+    setNotice("국가 목록으로 돌아왔습니다.");
+  });
+
+  countryAddAccount?.addEventListener("click", () => {
+    // 계정이 하나도 없으면 고를 국가도 없다. 폼에서 국가를 고르는 것이 곧 그 국가를 여는
+    // 일이라, 국가 없이 계정 목록으로 내려보내고 추가 폼을 펼쳐 준다.
+    activeCountry = null;
+    showAccountHome();
+    if (accountFormDetails) accountFormDetails.open = true;
   });
 
   accountForm?.addEventListener("submit", async (event) => {
@@ -1848,7 +1970,11 @@
       });
       target.reset();
       if (accountFormDetails) accountFormDetails.open = false;
+      // 첫 계정이면 그 계정의 국가가 방금 생긴 국가다. 만든 사람을 국가 홈으로 되돌리는
+      // 대신 그 국가의 계정 목록에 세워 둔다.
+      activeCountry = created.country;
       await loadAccounts();
+      showAccountHome();
       setNotice(`${created.display_name} 계정을 추가했습니다.`);
     } catch (error) {
       setAccountFormFeedback(error.message);
@@ -1860,7 +1986,8 @@
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
     try {
       await loadAccounts();
-      if (!currentAccount) showAccountHome();
+      // 새로 입장하면 언제나 맨 위 층부터다.
+      if (!currentAccount) showCountryHome();
       await loadHostedAccounts();
       await loadContextProfiles();
       await Promise.all([
