@@ -1470,6 +1470,8 @@
       if (!(error instanceof DOMException)) throw error;
     }
     renderHostedAccounts();
+    // 호스팅의 국가 카드는 이 목록에서 나온다. 운영 계정이 늘거나 줄면 국가 층도 따라간다.
+    renderCountries();
   };
 
   const renderFeedbackSummary = () => {
@@ -1682,6 +1684,10 @@
 
   let accounts = [];
   let currentAccount = null;
+
+  // 로컬에서는 계정 한 행이 곧 페르소나다. 호스팅에서는 /api/accounts 가 국가 운영 계정이고
+  // (Trace Korea) 페르소나는 그 아래 층의 별도 자원이라, 표면에 따라 읽는 곳이 다르다.
+  const personaPath = () => (hostedCandidateControls ? "/api/personas" : "/api/accounts");
   // 레벨 2가 어느 국가로 좁혀져 있는지. null이면 국가 홈에 있거나, 아직 국가가 하나도
   // 없어 첫 계정을 만드는 중이다.
   let activeCountry = null;
@@ -1756,11 +1762,14 @@
     }
   };
 
-  // 국가는 따로 저장하지 않는다. 계정의 country 값이 곧 그 국가가 쓰이고 있다는 증거라서,
-  // 목록은 계정에서 파생한다. 새 국가는 그 국가의 첫 계정과 함께 생긴다.
-  const countryCodes = () => [...new Set(accounts.map((account) => account.country))].sort();
+  // 국가는 따로 저장하지 않는다. 어느 국가가 쓰이고 있는지는 이미 있는 행이 증언한다 —
+  // 호스팅에서는 국가 운영 계정(Trace Korea)이, 로컬에서는 페르소나의 country 값이. 새
+  // 국가는 호스팅에서는 운영 계정과, 로컬에서는 그 국가의 첫 페르소나와 함께 생긴다.
+  const countrySource = () => (hostedCandidateControls ? hostedAccounts : accounts);
+  const countryCodes = () => [...new Set(countrySource().map((row) => row.country))].sort();
 
   const countryCard = (country) => {
+    // 카드가 세는 것은 언제나 그 아래 층, 곧 페르소나다.
     const members = accountsInCountry(country);
     const card = document.createElement("article");
     card.className = "country-card";
@@ -1820,7 +1829,7 @@
       setBusy(button, true, "계정 상태를 바꾸는 중…");
       try {
         const updated = await request(
-          `/api/accounts/${encodeURIComponent(currentAccount.account_id)}/status`,
+          `${personaPath()}/${encodeURIComponent(currentAccount.account_id)}/status`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1899,7 +1908,7 @@
     fillOptions(one("[data-account-domain]"), PERSONA_DOMAIN_LABELS);
     fillOptions(one("[data-account-background-subject]"), BACKGROUND_LABELS);
     fillOptions(one("[data-account-font]"), FONT_LABELS);
-    accounts = await request("/api/accounts");
+    accounts = await request(personaPath());
     renderAccounts();
     renderCountries();
     if (currentAccount) {
@@ -1942,7 +1951,7 @@
     setAccountFormFeedback("");
     setBusy(target, true, "계정을 추가하는 중…");
     try {
-      const created = await request("/api/accounts", {
+      const created = await request(personaPath(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1985,10 +1994,12 @@
   const refreshWorkspace = async () => {
     setBusy(workspaceLive, true, "워크스페이스를 새로고침하는 중…");
     try {
+      // 호스팅에서는 국가 층이 운영 계정에서 나오므로 페르소나보다 먼저 읽는다. 로컬에서는
+      // 이 호출이 곧바로 돌아오므로 순서가 바뀌어도 하는 일이 같다.
+      await loadHostedAccounts();
       await loadAccounts();
       // 새로 입장하면 언제나 맨 위 층부터다.
       if (!currentAccount) showCountryHome();
-      await loadHostedAccounts();
       await loadContextProfiles();
       await Promise.all([
         loadCandidates(),
