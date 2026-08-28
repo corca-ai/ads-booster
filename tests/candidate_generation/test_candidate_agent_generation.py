@@ -284,3 +284,37 @@ def test_candidate_generation_preserves_auth_and_provider_failure_boundaries(
     assert not failure.value.context_overflow
     assert failure.value.provider_code == "provider_network"
     assert "provider_network" in failure.value.message
+
+
+def test_the_connector_batch_records_its_agent_run_as_its_provenance(tmp_path: Path) -> None:
+    # Given the Agent-kernel generator running one batch
+    store = SqliteWorkspaceStore(tmp_path)
+    runs = AgentRunStore(tmp_path / "core-agent")
+    model = CandidateModel(
+        [
+            ModelTurn(
+                text="",
+                calls=(
+                    FunctionCall(
+                        call_id="candidate-call",
+                        name="trace_propose_marketing_candidates",
+                        arguments={"candidates": [_draft(index) for index in range(4)]},
+                    ),
+                ),
+            ),
+            ModelTurn(text="candidate batch stored", calls=()),
+        ]
+    )
+
+    # When it stores its candidates
+    created = _generator(tmp_path, store, runs, model, "candidate-batch-run").generate(
+        _workspace(store)
+    )
+
+    # Then each one names the run that produced it, so the durable conversation can be found
+    assert created
+    for record in created:
+        provenance = record.generation_provenance
+        assert provenance is not None
+        assert provenance.agent_run_id == "candidate-batch-run"
+        assert [document.relative_path for document in provenance.documents]

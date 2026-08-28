@@ -1266,7 +1266,6 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /오전 2개·저녁 2개 후보 자동 생성/);
   assert.match(markup, /다음 생성에 반영되는 신호/);
   assert.match(markup, /data-context-select/);
-  assert.match(markup, /data-stat-review/);
   assert.match(markup, /href="#workspace-content">워크스페이스로 건너뛰기/);
   assert.match(markup, /Cloudflare D1 lease → Mac Appium → R2/);
   assert.match(markup, /data-worker-title/);

@@ -63,6 +63,17 @@ class TraceRunnerFactory(Protocol):
     def __call__(self, bundle: MarketingContextBundle) -> TracePlannedImageRunner: ...
 
 
+class BackgroundFetcherFactory(Protocol):
+    """Builds the background fetcher for one bundle.
+
+    The fetcher is chosen per bundle rather than once per process because the judged
+    open-web fetcher has to be told whose lock screen it is choosing a photo for; a factory
+    is the smallest seam that carries the persona to it without changing the runner.
+    """
+
+    def __call__(self, bundle: MarketingContextBundle) -> BackgroundFetcher: ...
+
+
 @dataclass(frozen=True, slots=True)
 class TraceConnectorApproval:
     def request(self, action: str, detail: str) -> bool:
@@ -73,12 +84,12 @@ class TraceConnectorApproval:
 @dataclass(frozen=True, slots=True)
 class TraceV1RunnerFactory:
     options: GenerateOneOptions
-    background_fetcher: BackgroundFetcher
+    background_fetchers: BackgroundFetcherFactory
 
     def __call__(self, bundle: MarketingContextBundle) -> TracePlannedImageRunner:
         return GenerateOneRunner(
             options=self.options,
-            background_fetcher=self.background_fetcher,
+            background_fetcher=self.background_fetchers(bundle),
             capture_adapter=build_wallpaper_capture_adapter(
                 device_kind=bundle.device.kind,
                 appium_server=self.options.appium_server,
@@ -167,7 +178,7 @@ class TraceV1Composition:
     settings: AgentSettings
     http: HttpClient
     options: GenerateOneOptions
-    background_fetcher: BackgroundFetcher
+    background_fetchers: BackgroundFetcherFactory
     reference_root: Path
 
     def build(self) -> TraceV1GenerateOneRunner:
@@ -188,7 +199,7 @@ class TraceV1Composition:
             ),
             trace_runners=TraceV1RunnerFactory(
                 options=self.options,
-                background_fetcher=self.background_fetcher,
+                background_fetchers=self.background_fetchers,
             ),
             reference_root=self.reference_root,
         )
@@ -197,8 +208,13 @@ class TraceV1Composition:
 def build_trace_v1_runner(
     home: Path,
     http: HttpClient,
+    background_fetchers: BackgroundFetcherFactory | None = None,
 ) -> TraceV1GenerateOneRunner:
-    """Compose the installed service's Agent and Trace connector runtime."""
+    """Compose the installed service's Agent and Trace connector runtime.
+
+    `background_fetchers` chooses what stands behind the fetcher seam. Left unset, the
+    allowlisted stock-photo fetcher is used, which is what a caller with no opinion gets.
+    """
     settings = AgentSettings.from_environment(home)
     appium_server = os.environ.get("TRACE_AGENT_APPIUM_SERVER", _DEFAULT_APPIUM_SERVER)
     readiness = DefaultCaptureReadiness(appium_server=appium_server)
@@ -213,18 +229,33 @@ def build_trace_v1_runner(
         settings=settings,
         http=http,
         options=options,
-        background_fetcher=ImageSearchBackgroundFetcher(
+        background_fetchers=background_fetchers or _stock_background_fetchers(http),
+        reference_root=home,
+    ).build()
+
+
+@dataclass(frozen=True, slots=True)
+class _StockBackgroundFetchers:
+    """The allowlisted stock-photo fetcher, as a factory the runner can call per bundle."""
+
+    http: HttpClient
+
+    def __call__(self, bundle: MarketingContextBundle) -> BackgroundFetcher:
+        del bundle
+        return ImageSearchBackgroundFetcher(
             image_search=create_image_search_provider(
-                http=http,
+                http=self.http,
                 provider_name=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
                 timeout_seconds=float(
                     os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
                 ),
             ),
-            http=http,
-        ),
-        reference_root=home,
-    ).build()
+            http=self.http,
+        )
+
+
+def _stock_background_fetchers(http: HttpClient) -> BackgroundFetcherFactory:
+    return _StockBackgroundFetchers(http=http)
 
 
 def _failed_result(bundle: MarketingContextBundle) -> TraceRunResult:

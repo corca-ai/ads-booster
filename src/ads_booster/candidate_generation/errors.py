@@ -81,6 +81,21 @@ class CandidateImageStageError(CandidateGenerationError):
 
 
 @final
+class CandidateRunConflictError(CandidateGenerationError):
+    """The run behind a candidate could not accept the decision it was given.
+
+    Raised by the kernel adapter in place of every way the execution runtime can refuse a
+    resume, so callers depend on one error rather than on that runtime's error taxonomy.
+    """
+
+    def __init__(self) -> None:
+        """Create an error for a run decision that could not be applied."""
+        super().__init__(
+            "이 후보의 실행 기록이 결정을 받을 수 있는 상태가 아닙니다 — 화면을 새로고침해 주세요."
+        )
+
+
+@final
 class CandidateFormatError(CandidateGenerationError):
     def __init__(self, detail: str) -> None:
         """Create an error for a model response that failed the strict output contract."""

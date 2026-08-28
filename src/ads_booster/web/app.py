@@ -15,11 +15,13 @@ from ads_booster.candidate_generation import (
     CandidateGeneratorPort,
     CandidateImageRunnerPort,
     CandidateWorkflow,
-    build_candidate_generator,
     build_candidate_image_runner,
+    build_script_candidate_generator,
 )
+from ads_booster.candidate_generation.kernel import build_image_review
 from ads_booster.config.settings import AgentSettings
 from ads_booster.service.state import ServiceStateStore
+from ads_booster.web.account_router import build_account_router
 from ads_booster.web.assets import build_asset_router
 from ads_booster.web.auth import CurrentPrincipal, OwnerIdentity, build_auth_router
 from ads_booster.web.campaigns import build_campaign_router
@@ -66,10 +68,17 @@ def create_app(
         if chat_factory is None
         else chat_factory
     )
+    # The one kernel expression left in this composition root, because the queue router
+    # owns runs of its own. Everything candidate-side reaches the kernel through
+    # `candidate_generation/kernel/`.
     agent_runs = AgentRunStore(home / "core-agent")
-    _ = agent_runs.recover_interrupted(at=clock())
+    image_review = build_image_review(agent_runs, at=clock())
+    # The single-call script engine owns caption generation: it carries the Korean
+    # instruction rules the team writes candidates against, and the reviewer screens are
+    # built around what it records. `build_candidate_generator` still composes the
+    # Agent-kernel connector path for callers that want the tool loop; it is not the default.
     active_generator = (
-        build_candidate_generator(settings, home, store)
+        build_script_candidate_generator(settings, store)
         if candidate_generator is None
         else candidate_generator
     )
@@ -87,11 +96,13 @@ def create_app(
             owner_identity=owner_identity,
         )
     )
+    app.include_router(build_account_router(store, current_principal))
     app.include_router(build_context_router(store, current_principal))
     app.include_router(build_asset_router(store, current_principal))
     app.include_router(
         CandidateRouter(
-            CandidateWorkflow(store, active_generator, active_image_runner, agent_runs),
+            CandidateWorkflow(store, active_generator, active_image_runner, image_review),
+            store,
             current_principal,
             home,
         ).build()

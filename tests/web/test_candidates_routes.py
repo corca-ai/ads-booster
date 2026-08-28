@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # noqa: SIZE_OK -- the two-stage candidate journey shares authenticated route fixtures
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -13,7 +13,6 @@ from ads_booster.agent.runs import (
     AgentRun,
     AgentRunAlreadyExistsError,
     AgentRunId,
-    AgentRunNotRunnableError,
     AgentRunState,
     AgentRunStore,
     AgentRunUpdate,
@@ -26,6 +25,7 @@ from ads_booster.candidate_generation import (
     CandidateFormatError,
     CandidateGenerationError,
     CandidateImageStageError,
+    CandidateRunConflictError,
 )
 from ads_booster.web.app import create_app
 from ads_booster.workspace import (
@@ -35,6 +35,7 @@ from ads_booster.workspace import (
     CandidateImageInputs,
     CandidateSource,
     CandidateStatus,
+    MarketingAccountRecord,
     ProvisionedMember,
     ProvisionedWorkspace,
     SqliteWorkspaceStore,
@@ -56,13 +57,17 @@ class FakeGenerator:
     store: SqliteWorkspaceStore | None = None
     failure: CandidateGenerationError | None = None
 
+    seen_accounts: list[MarketingAccountRecord | None] = field(default_factory=list)
+
     def generate(
         self,
         workspace_id: WorkspaceId,
         *,
         run_context: str | None = None,
+        account: MarketingAccountRecord | None = None,
     ) -> tuple[CandidateRecord, ...]:
         del run_context
+        self.seen_accounts.append(account)
         if self.failure is not None:
             raise self.failure
         assert self.store is not None
@@ -523,9 +528,10 @@ def test_generate_image_reports_a_stage_failure_verbatim(tmp_path: Path) -> None
 
 
 def test_generate_image_reports_an_already_running_agent_as_a_conflict(tmp_path: Path) -> None:
-    # Given an image Agent run that is already serving another request
+    # Given an image run that is already serving another request. The kernel adapter is
+    # what turns the runtime's refusal into this error; see the image-stage tests.
     store = SqliteWorkspaceStore(tmp_path)
-    failure = AgentRunNotRunnableError(AgentRunId("candidate-running"), AgentRunState.RUNNING)
+    failure = CandidateRunConflictError()
     client = _client(tmp_path, store, "Trace team", image_runner=FakeImageRunner(failure=failure))
     approved = _caption_approved(client)
 

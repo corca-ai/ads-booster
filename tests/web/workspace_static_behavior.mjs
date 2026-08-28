@@ -39,6 +39,24 @@ class FakeElement {
     this.listeners.set(type, listener);
   }
 
+  get classList() {
+    const owner = this;
+    return {
+      add(...names) {
+        const present = new Set(String(owner.className ?? "").split(" ").filter(Boolean));
+        for (const name of names) present.add(name);
+        owner.className = [...present].join(" ");
+      },
+      remove(...names) {
+        const present = String(owner.className ?? "").split(" ").filter(Boolean);
+        owner.className = present.filter((name) => !names.includes(name)).join(" ");
+      },
+      contains(name) {
+        return String(owner.className ?? "").split(" ").includes(name);
+      },
+    };
+  }
+
   async click() {
     const listener = this.listeners.get("click");
     if (listener) await listener({ currentTarget: this, target: this, preventDefault() {} });
@@ -352,7 +370,23 @@ const makeLiveDocument = () => {
   autogenButton.textContent = "🤖 후보 자동 생성";
   const autogenFeedback = new FakeElement("autogen-feedback");
   autogenFeedback.hidden = true;
+  const accountHome = new FakeElement("account-home");
+  const accountWorkspace = new FakeElement("account-workspace");
+  const accountGrid = new FakeElement("account-grid");
+  const accountEmpty = new FakeElement("account-empty");
+  const accountCount = new FakeElement("account-count");
+  const accountBack = new FakeElement("account-back");
+  const accountCurrentName = new FakeElement("account-current-name");
+  const accountVerdict = new FakeElement("account-verdict");
   const selectors = new Map([
+    ["[data-account-home]", accountHome],
+    ["[data-account-workspace]", accountWorkspace],
+    ["[data-account-grid]", accountGrid],
+    ["[data-account-empty]", accountEmpty],
+    ["[data-account-count]", accountCount],
+    ["[data-account-back]", accountBack],
+    ["[data-account-current-name]", accountCurrentName],
+    ["[data-account-verdict]", accountVerdict],
     ["[data-workspace-live]", workspaceLive],
     ["[data-entry-screen]", entryScreen],
     [".skip-link", skipLink],
@@ -418,7 +452,20 @@ const makeLiveDocument = () => {
     ["[data-worker-signal]", workerSignal],
     ["[data-worker-badges]", workerBadges],
   ]);
-  const selectorGroups = new Map([["[data-autogen]", [autogenButton]]]);
+  const captionStageTab = new FakeElement("stage-tab-caption");
+  captionStageTab.dataset.stageTab = "caption";
+  const imageStageTab = new FakeElement("stage-tab-image");
+  imageStageTab.dataset.stageTab = "image";
+  const captionStagePanel = new FakeElement("stage-caption");
+  captionStagePanel.dataset.stagePanel = "caption";
+  const imageStagePanel = new FakeElement("stage-image");
+  imageStagePanel.dataset.stagePanel = "image";
+  imageStagePanel.hidden = true;
+  const selectorGroups = new Map([
+    ["[data-autogen]", [autogenButton]],
+    ["[data-stage-tab]", [captionStageTab, imageStageTab]],
+    ["[data-stage-panel]", [captionStagePanel, imageStagePanel]],
+  ]);
   const document = new FakeDocument([
     workspaceLive,
     entryScreen,
@@ -496,6 +543,17 @@ const makeLiveDocument = () => {
   document.querySelectorAll = (selector) => selectorGroups.get(selector) ?? [];
   return {
     document,
+    captionStageTab,
+    imageStageTab,
+    captionStagePanel,
+    imageStagePanel,
+    accountHome,
+    accountWorkspace,
+    accountGrid,
+    accountCount,
+    accountBack,
+    accountCurrentName,
+    accountVerdict,
     workspaceLive,
     entryScreen,
     skipLink,
@@ -569,20 +627,50 @@ const makeLiveDocument = () => {
   };
 };
 
+// The live script re-arms a capture poll through window.setTimeout, so handing it the real
+// timer would keep the Node event loop alive after every assertion has passed and the run
+// would never exit. The pending callbacks are recorded instead: the harness decides when,
+// or whether, a scheduled poll runs.
+const fakeTimers = () => {
+  const pending = new Map();
+  let nextId = 1;
+  return {
+    pending,
+    setTimeout(callback) {
+      const id = nextId;
+      nextId += 1;
+      pending.set(id, callback);
+      return id;
+    },
+    clearTimeout(id) {
+      pending.delete(id);
+    },
+  };
+};
+
 const loadLive = async (fixture, fetchImplementation) => {
+  const timers = fakeTimers();
+  fixture.timers = timers;
   fixture.clipboard ??= [];
+  // Every fixture now carries the account home, so a fresh load always reads the account
+  // list. Answering it here keeps each test's own stub about the thing it is testing;
+  // a test that cares about the list sets `fixture.accounts` before loading.
+  fixture.accounts ??= [];
+  const fetchWithAccounts = async (path, options) => {
+    if (path === "/api/accounts" && (options?.method ?? "GET") === "GET") {
+      return response(200, fixture.accounts);
+    }
+    return fetchImplementation(path, options);
+  };
   runInNewContext(liveSource, {
     document: fixture.document,
-    fetch: fetchImplementation,
+    fetch: fetchWithAccounts,
     Headers,
+    URL,
     navigator: { clipboard: { writeText: async (value) => { fixture.clipboard.push(value); } } },
     window: {
-      clearTimeout,
-      setTimeout: (callback, delay) => {
-        const timer = setTimeout(callback, delay);
-        timer.unref?.();
-        return timer;
-      },
+      clearTimeout: timers.clearTimeout,
+      setTimeout: timers.setTimeout,
       confirm: () => true,
       location: { origin: "https://workspace.borca.ai" },
       localStorage: { getItem: () => null, setItem: () => {} },
@@ -903,6 +991,43 @@ const testAutogenGeneratesAndRefreshesTheList = async () => {
   assert.equal(fixture.autogenFeedback.hidden, true);
 };
 
+const testAutogenCountsTheWaitAndRefusesASecondPress = async () => {
+  // Generation runs for minutes. A still button read as a hang and got pressed again,
+  // which wrote a second batch, so the wait has to be visible while it is happening.
+  const fixture = makeLiveDocument();
+  const generation = deferred();
+  let generateCalls = 0;
+  await loadLive(fixture, async (path, options = {}) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates/generate") { generateCalls += 1; return generation.promise; }
+    if (path === "/api/candidates") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  const running = fixture.autogenButton.click();
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 0초 (보통 1~3분)");
+
+  // One tick of the clock, and the label moves rather than sitting still.
+  const [tickId, tick] = [...fixture.timers.pending.entries()].at(-1);
+  fixture.timers.pending.delete(tickId);
+  tick();
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 1초 (보통 1~3분)");
+
+  // A second press while the first is in flight must not start a second batch.
+  await fixture.autogenButton.click();
+  assert.equal(generateCalls, 1);
+
+  generation.resolve(response(201, []));
+  await running;
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, "🤖 후보 자동 생성");
+  // And the clock is stopped rather than left ticking against a finished request.
+  assert.equal(fixture.timers.pending.size, 0);
+};
+
 const testAutogenShowsTheServerMessageVerbatim = async () => {
   const fixture = makeLiveDocument();
   const detail = "context 폴더를 찾을 수 없습니다 (경로: /tmp/context) — trace 폴더에서 서버를 실행했는지 확인하세요.";
@@ -947,8 +1072,10 @@ const testManualCandidateSubmitsParsedListFields = async () => {
     device_time: "07:20",
     background_subject: "scenery",
     background_mood: "늦은 밤 책상 위 스탠드 불빛",
+    background_search_query: null,
     language: "ja",
   });
+  assert.equal(payload.persona_domain, null, "an unselected domain is sent as absent, not as an empty token");
   assert.equal(fixture.candidateForm.resetCount, 1);
   assert.equal(fixture.notice.textContent, "후보를 등록했습니다.");
 };
@@ -1053,6 +1180,170 @@ const testOnlyAwaitingCaptionsFillTheApprovalGate = async () => {
   assert.equal(fixture.approvalList.children.length, 1);
   assert.equal(fixture.approvalEmpty.hidden, true);
   assert.equal(fixture.approvalCount.textContent, "캡션·주제 검수 대기 1건");
+};
+
+const findByClass = (node, className) => {
+  if (node?.className?.split(" ").includes(className)) return node;
+  for (const child of node?.children ?? []) {
+    const found = findByClass(child, className);
+    if (found) return found;
+  }
+  return null;
+};
+
+const flatten = (node, into = []) => {
+  if (!node) return into;
+  into.push(node);
+  for (const child of node.children ?? []) flatten(child, into);
+  return into;
+};
+
+const provenance = () => ({
+  documents: [
+    { relative_path: "core/FACTS.md", size_bytes: 2048 },
+    { relative_path: "core/VOICE-KR.md", size_bytes: 1024 },
+  ],
+  model: "gpt-5.5",
+  instruction_chars: 12_345,
+  generated_at: 1_770_000_000,
+  assigned_domains: ["sports_fan", "exam_prepper"],
+});
+
+const judgedBackground = () => ({
+  query: "김도영 직캠",
+  provider: "ddgs",
+  image_url: "https://cdn.example/a.jpg",
+  source_url: "https://www.blog.example/a",
+  sha256: "a".repeat(64),
+  pipeline: "local_fallback",
+  judgment: {
+    reviews: [
+      {
+        image_id: "img-a",
+        image_url: "https://cdn.example/a.jpg",
+        source_url: "https://www.blog.example/a",
+        gated: false,
+        grades: { authenticity: "상", persona_fit: "상", background_fit: "중" },
+        score: 8,
+        note: "실제 관중석에서 찍힌 사진",
+      },
+      {
+        image_id: "img-b",
+        image_url: "https://cdn.example/b.jpg",
+        source_url: "https://stock.example/b",
+        gated: true,
+        gate_reason: "워터마크",
+        note: "",
+      },
+    ],
+    chosen_id: "img-a",
+    reason: "실제 관중석에서 찍힌 사진",
+    model: "gpt-5.5",
+    query: "김도영 직캠",
+    attempts: [
+      { query: "김도영 타격 직캠 고화질", source: "original", results: 0, passed_filters: 0 },
+      { query: "김도영 직캠", source: "broadened", results: 6, passed_filters: 2 },
+    ],
+    tie_broken: false,
+    tie_break_inconsistent: false,
+  },
+});
+
+const testGenerationProvenanceIsVisibleOnEveryCandidate = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({ source: "auto", generation_provenance: provenance() }),
+  ]);
+  const panel = findByText(fixture.candidateList.children[0], "🧠 생성 근거");
+  assert.ok(panel, "the generation provenance panel is on the candidate row");
+  const texts = flatten(fixture.candidateList.children[0]).map((node) => node.textContent);
+  assert.ok(texts.includes("읽은 문서 2개"), "the document count is named");
+  assert.ok(texts.some((text) => text?.includes("context/core/FACTS.md · 2.0KB")));
+  assert.ok(texts.some((text) => text?.includes("gpt-5.5")), "the model that answered is named");
+  assert.ok(texts.includes("이번 배치 배정"), "the coverage assignment is shown");
+  assert.ok(
+    texts.some((text) => text?.includes("스포츠 팬 · 수험생")),
+    "assigned domains are shown with their Korean labels",
+  );
+};
+
+const testAManualCandidateSaysItHasNoGenerationProvenance = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [candidate({ source: "manual" })]);
+  const texts = flatten(fixture.candidateList.children[0]).map((node) => node.textContent);
+  assert.ok(texts.includes("수동 등록 — 생성 근거 없음"));
+};
+
+const testDeleteAsksBeforeItDeletes = async () => {
+  const fixture = makeLiveDocument();
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path === "/api/candidates" && (options.method ?? "GET") === "GET") {
+      return response(200, calls.some(([, method]) => method === "DELETE") ? [] : [candidate({})]);
+    }
+    if (options.method === "DELETE") return response(204, null);
+    throw new Error(`unexpected path: ${path}`);
+  });
+  const control = findByClass(fixture.candidateList.children[0], "candidate-delete");
+  assert.ok(control, "every candidate row carries a delete control");
+
+  // The first click only arms the control; nothing is deleted yet.
+  await control.children[0].click();
+  assert.deepEqual(calls.filter(([, method]) => method === "DELETE"), []);
+  assert.equal(control.children[0].textContent, "정말 삭제할까요?");
+  assert.equal(control.children[2].textContent, "취소");
+
+  // Cancelling puts it back without touching the server.
+  await control.children[2].click();
+  assert.equal(control.children[0].textContent, "삭제");
+  assert.deepEqual(calls.filter(([, method]) => method === "DELETE"), []);
+
+  // Arming again and confirming is what deletes.
+  await control.children[0].click();
+  await control.children[1].click();
+  assert.deepEqual(
+    calls.filter(([, method]) => method === "DELETE"),
+    [["/api/candidates/candidate-1", "DELETE"]],
+  );
+  assert.equal(fixture.notice.textContent, "후보를 삭제했습니다.");
+};
+
+const testTheImageCardShowsTheBackgroundQueryAndJudgement = async () => {
+  const fixture = makeLiveDocument();
+  await loadCandidates(fixture, [
+    candidate({
+      status: "image_awaiting_review",
+      image_path: "candidates/candidate-1/r2/outputs/final.png",
+      background_provenance: judgedBackground(),
+      image_inputs: {
+        ...candidate({}).image_inputs,
+        background_search_query: "김도영 타격 직캠 고화질",
+      },
+    }),
+  ]);
+  const card = fixture.imageList.children[0];
+  const texts = flatten(card).map((node) => node.textContent);
+  assert.ok(texts.includes("배경 검색어"), "the authored query stays on the card");
+  assert.ok(texts.some((text) => text?.includes("김도영 타격 직캠 고화질")));
+  assert.ok(texts.includes("배경 출처"), "the source page is named");
+  assert.ok(texts.includes("blog.example"), "the source host is shown without www.");
+  assert.ok(
+    texts.includes("배경 심사 · 2장 검토 → 1장 게이트 탈락"),
+    "the judgement summary counts what was reviewed and gated",
+  );
+  assert.ok(texts.some((text) => text?.includes("진정성 상 · 페르소나 상 · 배경 중 (8점)")));
+  assert.ok(texts.some((text) => text?.includes("게이트 탈락 — 워터마크")));
+  assert.ok(
+    texts.some((text) => text?.includes("시도한 검색어 2개") && text.includes("범위 확장")),
+    "every rung of the query ladder is listed",
+  );
+  assert.ok(
+    texts.some((text) => text?.includes("로컬 합성")),
+    "a locally composed image says so rather than passing as a native capture",
+  );
+  assert.ok(findByText(card, "Appium 프롬프트"), "the Appium prompt stays on the image card");
 };
 
 const testJourneyIsVisibleOnRowsAndCards = async () => {
@@ -1301,12 +1592,18 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
     "trace-marketing worker enroll --url https://workspace.borca.ai --code 'trace-enroll_once'",
   ));
+  // The enrollment command is a signed bootstrap block now: it resolves the latest release,
+  // verifies every asset's attestation, and only then runs anything.
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
-    "gh release view --repo \"$repository\"",
+    'repository="corca-ai/ads-booster"',
   ));
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
-    "gh attestation verify \"$asset\"",
+    'gh release view --repo "$repository"',
   ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
+    'gh attestation verify "$asset"',
+  ));
+  assert.ok(fixture.workerEnrollmentCommand.textContent.includes("--deny-self-hosted-runners"));
   assert.ok(fixture.workerEnrollmentCommand.textContent.includes(
     "trace-marketing worker finish-bootstrap",
   ));
@@ -1320,6 +1617,9 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.match(fixture.workerEnrollmentCommand.textContent, /\nTRACE_MAC_BOOTSTRAP$/u);
   assert.doesNotMatch(fixture.workerEnrollmentCommand.textContent, /worker install-service/u);
 
+  // And it stops before touching the machine when release resolution fails: a fake `gh` that
+  // answers everything with a version string leaves no manifest behind, so the block must
+  // abort rather than run trace-marketing against nothing.
   const fakeRoot = mkdtempSync(join(tmpdir(), "trace-enrollment-fail-fast-"));
   const fakeBin = join(fakeRoot, "bin");
   const traceLog = join(fakeRoot, "trace.log");
@@ -1386,6 +1686,8 @@ const testMacConnectionsAreManagedWithAnEphemeralControlToken = async () => {
   assert.equal(fixture.workerEnrollmentCode.textContent, "");
 };
 
+let passed = 0;
+
 const testUnregisteredMacDisablesHostedImageCapture = async () => {
   const fixture = makeLiveDocument();
   await loadLive(fixture, async (path) => {
@@ -1449,8 +1751,12 @@ const testMarkupUsesTheAgreedTerminology = async () => {
     "topic comes before country in the manual form",
   );
   assert.ok(markup.includes("주제/컨셉"), "the topic field is labelled 주제/컨셉");
-  assert.ok(markup.includes("① 캡션·주제"), "the caption stage is titled");
-  assert.ok(markup.includes("② 이미지"), "the image stage is titled");
+  assert.ok(markup.includes(">캡션 승인<"), "the caption stage has its own tab");
+  assert.ok(markup.includes(">이미지 승인<"), "the image stage has its own tab");
+  assert.ok(
+    markup.includes('data-stage-panel="image" hidden'),
+    "only one approval stage is on screen at a time",
+  );
   assert.ok(markup.includes("data-image-list"), "the image stage renders its own list");
   assert.ok(
     markup.includes('id="candidate-schedule" name="trace-items" required'),
@@ -1490,38 +1796,242 @@ const testMarkupUsesTheAgreedTerminology = async () => {
   assert.ok(live.includes("/api/context-countries"), "country options come from the hosted manifest");
 };
 
+const allText = (element) =>
+  [element.textContent ?? "", ...element.children.map(allText)].join(" ");
+
+const _account = (accountId, name) => ({
+  account_id: accountId,
+  display_name: name,
+  country: "KR",
+  language: "ko",
+  status: "observing",
+  revision: 1,
+  identity: {
+    age: 27,
+    region: "서울",
+    occupation: "병동 간호사",
+    concept: "3교대를 잠금화면 일정으로 버티는 간호사",
+    domain: "office_worker",
+  },
+});
+
+const openAccount = async (fixture, index) => {
+  const card = fixture.accountGrid.children[index];
+  await card.children.at(-1).click();
+};
+
+const testOneAccountGeneratingLeavesEveryOtherAccountFree = async () => {
+  // Generation runs for minutes. Locking the whole screen meant one account's batch also
+  // froze every other account's, on a server that takes the requests concurrently.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [_account("acc-1", "이서진"), _account("acc-2", "김도현")];
+  const generated = [];
+  const first = deferred();
+  await loadLive(fixture, async (path, options = {}) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates/generate")) {
+      generated.push(path);
+      return path.includes("acc-1") ? first.promise : response(201, []);
+    }
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await openAccount(fixture, 0);
+  const label = fixture.autogenButton.textContent;
+  const running = fixture.autogenButton.click();
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 0초 (보통 1~3분)");
+  // The screen itself is no longer held: review work is unrelated to generation.
+  assert.equal(fixture.workspaceLive.getAttribute("aria-busy"), "false");
+
+  // Stepping out to the account home already frees the button.
+  await fixture.accountBack.click();
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, label);
+
+  // And the other account can start its own batch while the first is still in flight.
+  await openAccount(fixture, 1);
+  assert.equal(fixture.autogenButton.disabled, false);
+  await fixture.autogenButton.click();
+  assert.deepEqual(generated, [
+    "/api/candidates/generate?account_id=acc-1",
+    "/api/candidates/generate?account_id=acc-2",
+  ]);
+
+  // Coming back to the account that is still generating shows it still generating.
+  await fixture.accountBack.click();
+  await openAccount(fixture, 0);
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "생성 중… 0초 (보통 1~3분)");
+
+  // And finishing releases only that account's button.
+  first.resolve(response(201, []));
+  await running;
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, label);
+  assert.equal(fixture.timers.pending.size, 0);
+};
+
+const testTheApprovalStagesAreViewedOneAtATime = async () => {
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/accounts") return response(200, []);
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.captionStagePanel.hidden, false, "captions open first");
+  assert.equal(fixture.imageStagePanel.hidden, true);
+
+  fixture.imageStageTab.click();
+
+  assert.equal(fixture.captionStagePanel.hidden, true);
+  assert.equal(fixture.imageStagePanel.hidden, false);
+  assert.equal(fixture.imageStageTab.attributes.get("aria-selected"), "true");
+  assert.equal(fixture.captionStageTab.attributes.get("aria-selected"), "false");
+
+  fixture.captionStageTab.click();
+
+  assert.equal(fixture.captionStagePanel.hidden, false);
+  assert.equal(fixture.imageStagePanel.hidden, true);
+};
+
+const testTheAccountHomeOpensBeforeAnyCandidateWork = async () => {
+  const fixture = makeLiveDocument();
+  fixture.accounts = [
+    {
+      account_id: "acc-1",
+      display_name: "박세나",
+      country: "KR",
+      language: "ko",
+      status: "observing",
+      revision: 1,
+      identity: {
+        age: 27,
+        region: "서울",
+        occupation: "병동 간호사",
+        concept: "3교대를 잠금화면 일정으로 버티는 간호사",
+        domain: "office_worker",
+      },
+    },
+  ];
+  const listed = [];
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return response(200, { display_name: "Ada" });
+    if (path.startsWith("/api/candidates")) { listed.push(path); return response(200, []); }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.accountWorkspace.hidden, true);
+  assert.equal(fixture.accountCount.textContent, "계정 1개");
+  const card = fixture.accountGrid.children[0];
+  assert.match(allText(card), /박세나/);
+  assert.match(allText(card), /병동 간호사/);
+
+  const open = card.children.at(-1);
+  await open.click();
+
+  assert.equal(fixture.accountHome.hidden, true);
+  assert.equal(fixture.accountWorkspace.hidden, false);
+  assert.equal(fixture.accountCurrentName.textContent, "박세나");
+  assert.match(fixture.notice.textContent, /박세나 계정으로 작업합니다/);
+  // The first load is workspace-wide because no account is open yet; opening one scopes
+  // the list to it, so another account's drafts never appear on its screens.
+  assert.deepEqual(listed, ["/api/candidates", "/api/candidates?account_id=acc-1"]);
+
+  await fixture.accountBack.click();
+  assert.equal(fixture.accountHome.hidden, false);
+  assert.equal(fixture.accountWorkspace.hidden, true);
+};
+
+
 await testCandidatesIsTheDefaultTab();
+passed += 1;
 await testArrowKeysMoveBetweenTheTwoTabs();
+passed += 1;
 await testCommandMenuOnlyLeadsToApproval();
+passed += 1;
 await testOpenReviewButtonRevealsTheApprovalTab();
+passed += 1;
 await testWorkspaceLoadOnlyReadsCandidates();
+passed += 1;
 await testRefreshShowsAndClearsBusyState();
+passed += 1;
 await testLoginShowsAndClearsActionBusyState();
+passed += 1;
 await testRefreshFailureDoesNotSignOut();
+passed += 1;
 await testAuthFailureSignsOut();
+passed += 1;
 await testLoginValidationExplainsTheMissingAccessId();
+passed += 1;
 await testLoginParsesCompositeAccessId();
+passed += 1;
 await testLoginRejectsMalformedCompositeAccessId();
+passed += 1;
 await testMemberAccessIdUsesMemberLoginRoute();
+passed += 1;
 await testOwnerCanInviteMemberAndSeeOneTimeAccessId();
+passed += 1;
 await testInviteValidationAndFailureStayNearby();
+passed += 1;
 await testAutogenGeneratesAndRefreshesTheList();
+passed += 1;
 await testAutogenShowsTheServerMessageVerbatim();
+passed += 1;
+await testAutogenCountsTheWaitAndRefusesASecondPress();
+passed += 1;
 await testManualCandidateSubmitsParsedListFields();
+passed += 1;
 await testManualCandidateValidationExplainsTheCountryCode();
+passed += 1;
 await testManualCandidateValidationRequiresATopic();
+passed += 1;
 await testManualCandidateValidationRequiresASchedule();
+passed += 1;
 await testManualCandidateValidationCapsTheSchedule();
+passed += 1;
 await testManualCandidateValidationExplainsTheDeviceTime();
+passed += 1;
 await testTopicLeadsTheRowAndTheApprovalCard();
+passed += 1;
 await testOnlyAwaitingCaptionsFillTheApprovalGate();
+passed += 1;
 await testJourneyIsVisibleOnRowsAndCards();
+passed += 1;
 await testJourneyPositionFollowsTheStatus();
+passed += 1;
 await testImageStageSplitsCaptionAndImageWork();
+passed += 1;
 await testImageGenerationButtonRunsTheStage();
+passed += 1;
 await testImageGenerationFailureShowsTheServerMessage();
+passed += 1;
 await testImageApprovalPostsTheDecision();
+passed += 1;
 await testMacConnectionsAreManagedWithAnEphemeralControlToken();
+passed += 1;
 await testUnregisteredMacDisablesHostedImageCapture();
+passed += 1;
 await testMarkupUsesTheAgreedTerminology();
-console.log("workspace static behavior: 34 passed");
+passed += 1;
+await testGenerationProvenanceIsVisibleOnEveryCandidate();
+passed += 1;
+await testAManualCandidateSaysItHasNoGenerationProvenance();
+passed += 1;
+await testDeleteAsksBeforeItDeletes();
+passed += 1;
+await testTheImageCardShowsTheBackgroundQueryAndJudgement();
+passed += 1;
+await testTheAccountHomeOpensBeforeAnyCandidateWork();
+passed += 1;
+await testOneAccountGeneratingLeavesEveryOtherAccountFree();
+passed += 1;
+await testTheApprovalStagesAreViewedOneAtATime();
+passed += 1;
+console.log(`workspace static behavior: ${passed} passed`);

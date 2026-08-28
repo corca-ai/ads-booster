@@ -38,7 +38,11 @@ class RecordingCodexClient:
         self.prompt = ""
 
     def generate_json(
-        self, prompt: str, schema: dict[str, object], *, images: tuple[Path, ...] = (),
+        self,
+        prompt: str,
+        schema: dict[str, object],
+        *,
+        images: tuple[Path, ...] = (),
     ) -> dict[str, object]:
         _ = (schema, images)
         self.prompt = prompt

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from ads_booster.agent.runs import AgentReview, AgentRunId, AgentRunResumer, AgentRunStore
 from ads_booster.candidate_generation.errors import CandidateImageStageError
 from ads_booster.workspace import (
     CandidateCreate,
@@ -11,14 +10,19 @@ from ads_booster.workspace import (
     CandidateRecord,
     CandidateStateError,
     CandidateStatus,
+    MarketingAccountId,
+    MarketingAccountRecord,
     RevisionConflictError,
     SqliteWorkspaceStore,
     WorkspaceId,
 )
 
 if TYPE_CHECKING:
-    from ads_booster.candidate_generation.agent_generator import CandidateGeneratorPort
-    from ads_booster.candidate_generation.agent_image_runner import CandidateImageRunnerPort
+    from ads_booster.candidate_generation.ports import (
+        CandidateGeneratorPort,
+        CandidateImageRunnerPort,
+        ImageReviewPort,
+    )
 
 _CANDIDATE_RECORD: Final = "candidate"
 _CORE_RUN_MISSING: Final = "candidate has no Agent run"
@@ -37,16 +41,27 @@ class CandidateWorkflow:
     store: SqliteWorkspaceStore
     generator: CandidateGeneratorPort
     image_runner: CandidateImageRunnerPort
-    agent_runs: AgentRunStore
+    image_review: ImageReviewPort
 
-    def list(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
-        return self.store.list_candidates(workspace_id)
+    def list(
+        self,
+        workspace_id: WorkspaceId,
+        account_id: MarketingAccountId | None = None,
+    ) -> tuple[CandidateRecord, ...]:
+        return self.store.list_candidates(workspace_id, account_id=account_id)
 
     def create(self, value: CandidateCreate) -> CandidateRecord:
         return self.store.create_candidate(value)
 
-    def generate(self, workspace_id: WorkspaceId) -> tuple[CandidateRecord, ...]:
-        return self.generator.generate(workspace_id)
+    def delete(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> None:
+        return self.store.delete_candidate(workspace_id, candidate_id)
+
+    def generate(
+        self,
+        workspace_id: WorkspaceId,
+        account: MarketingAccountRecord | None = None,
+    ) -> tuple[CandidateRecord, ...]:
+        return self.generator.generate(workspace_id, account=account)
 
     def review_caption(
         self,
@@ -90,15 +105,11 @@ class CandidateWorkflow:
             )
         if current.agent_run_id is None:
             raise CandidateImageStageError(_CORE_RUN_MISSING)
-        agent_run = self.agent_runs.get(AgentRunId(current.agent_run_id))
-        _ = AgentRunResumer(self.agent_runs).review(
-            agent_run.run_id,
-            AgentReview(
-                expected_revision=agent_run.revision,
-                accepted=decision.accepted,
-                note=decision.note,
-                at=decision.at,
-            ),
+        self.image_review.review(
+            current.agent_run_id,
+            accepted=decision.accepted,
+            note=decision.note,
+            at=decision.at,
         )
         return self.store.review_candidate_image(
             workspace_id,

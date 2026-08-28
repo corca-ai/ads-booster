@@ -1,0 +1,1073 @@
+from __future__ import annotations
+
+import json
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Final
+
+import pytest
+
+from ads_booster.auth.codex import OAuthError
+from ads_booster.candidate_generation import (
+    REQUIRED_DOCUMENTS,
+    CandidateAuthRequiredError,
+    CandidateContextMissingError,
+    CandidateContextSource,
+    CandidateDocument,
+    CandidateFormatError,
+    CandidateProviderError,
+    CaptionForm,
+    ScriptCandidateGenerator,
+    assign_caption_forms,
+    assign_domains,
+    build_instruction,
+    parse_candidate_drafts,
+)
+from ads_booster.providers.codex import ModelTurn
+from ads_booster.providers.errors import ProviderError
+from ads_booster.workspace import (
+    CandidateAccountBrief,
+    CandidateBackgroundSubject,
+    CandidateCreate,
+    CandidateHistoryEntry,
+    CandidateImageInputs,
+    CandidatePersonaDomain,
+    CandidateSource,
+    CandidateStatus,
+    LockScreenFont,
+    MarketingAccountCreate,
+    MarketingAccountId,
+    MarketingAccountIdentity,
+    MarketingAccountSchedule,
+    MarketingAccountTaste,
+    SqliteWorkspaceStore,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Sequence
+    from pathlib import Path
+
+    from ads_booster.agent.session import ModelClient
+    from ads_booster.contracts.tools import ToolDescriptor
+    from ads_booster.transport.json_types import JsonObject
+    from ads_booster.workspace import WorkspaceId
+
+
+# The generator assigns the least-covered domains; with the identity shuffle below and an
+# empty workspace that is the first three of the vocabulary, in declaration order.
+_ASSIGNED: Final = ("sports_fan", "idol_fandom", "exam_prepper")
+
+
+def _identity(
+    domains: Sequence[CandidatePersonaDomain],
+) -> Sequence[CandidatePersonaDomain]:
+    return tuple(domains)
+
+
+def _draft(topic: str = "시험기간 일정 관리", domain: str = "sports_fan") -> dict[str, object]:
+    return {
+        "topic": topic,
+        "country": "KR",
+        "persona_domain": domain,
+        "caption": f"{topic} — 잠금화면부터 바꾼다",
+        "hypothesis": "1인칭 감탄이 저장률을 올린다",
+        "refs_used": ["kr-001"],
+        "principles_applied": [1, 4],
+        "appium_prompt": "입력_일정: 9시 스터디\n기기_시각: 07:20",
+        "image_inputs": {
+            "trace_items": ["09:00 통계학 2교시", "13:00 스터디", "19:00 러닝"],
+            "device_time": "07:20",
+            "background_subject": "scenery",
+            "background_mood": "늦은 밤 책상 위 스탠드 불빛",
+            "language": "ko",
+        },
+    }
+
+
+def _answer(count: int = 3) -> str:
+    return json.dumps(
+        [_draft(f"주제 {index}", _ASSIGNED[index % len(_ASSIGNED)]) for index in range(count)],
+        ensure_ascii=False,
+    )
+
+
+@dataclass(slots=True)
+class FakeModelClient:
+    answers: list[str | Exception]
+    histories: list[tuple[JsonObject, ...]] = field(default_factory=list)
+
+    def respond(
+        self,
+        history: tuple[JsonObject, ...],
+        tools: tuple[ToolDescriptor, ...],
+    ) -> ModelTurn:
+        self.histories.append(history)
+        assert tools == ()
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return ModelTurn(text=answer, calls=())
+
+
+@dataclass(frozen=True, slots=True)
+class FakeModelSource:
+    client: FakeModelClient
+
+    @contextmanager
+    def open(self) -> Generator[ModelClient]:
+        yield self.client
+
+
+def _write_context(root: Path, *, skip: Sequence[str] = ()) -> Path:
+    directory = root / "context"
+    for relative_path in REQUIRED_DOCUMENTS:
+        if relative_path in skip:
+            continue
+        path = directory / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text(f"# {relative_path}\n내용", encoding="utf-8")
+    return directory
+
+
+def _generator(
+    tmp_path: Path,
+    store: SqliteWorkspaceStore,
+    client: FakeModelClient,
+) -> ScriptCandidateGenerator:
+    return ScriptCandidateGenerator(
+        store=store,
+        models=FakeModelSource(client),
+        context_source=CandidateContextSource(
+            _write_context(tmp_path), required=REQUIRED_DOCUMENTS
+        ),
+        model="gpt-5.5",
+        shuffle=_identity,
+    )
+
+
+def _manual_create(
+    workspace_id: WorkspaceId,
+    domain: CandidatePersonaDomain | None,
+    *,
+    source: CandidateSource,
+    topic: str = "시험기간 일정 관리",
+    account_id: MarketingAccountId | None = None,
+) -> CandidateCreate:
+    """One stored candidate, used to seed coverage counts and history."""
+    return CandidateCreate(
+        account_id=account_id,
+        workspace_id=workspace_id,
+        source=source,
+        country="KR",
+        topic=topic,
+        persona_domain=domain,
+        caption="캡션",
+        hypothesis="가설",
+        image_inputs=CandidateImageInputs(
+            trace_items=("09:00 통계학 2교시",),
+            device_time="07:20",
+            background_subject=CandidateBackgroundSubject.SCENERY,
+            background_mood="늦은 밤 책상 위 스탠드 불빛",
+            language="ko",
+        ),
+    )
+
+
+def _workspace(store: SqliteWorkspaceStore) -> WorkspaceId:
+    return store.create_workspace("Trace team").workspace.workspace_id
+
+
+def test_missing_context_file_names_the_file(tmp_path: Path) -> None:
+    # Given
+    directory = _write_context(tmp_path, skip=("core/FACTS.md", "references/KR/INDEX.md"))
+
+    # When / Then
+    with pytest.raises(CandidateContextMissingError) as failure:
+        _ = CandidateContextSource(directory, required=REQUIRED_DOCUMENTS).load()
+    assert failure.value.missing == ("core/FACTS.md", "references/KR/INDEX.md")
+    assert "core/FACTS.md" in failure.value.message
+    assert "references/KR/INDEX.md" in failure.value.message
+
+
+def test_blank_context_file_counts_as_missing(tmp_path: Path) -> None:
+    # Given
+    directory = _write_context(tmp_path)
+    _ = (directory / "core" / "VOICE-KR.md").write_text("   \n", encoding="utf-8")
+
+    # When / Then
+    with pytest.raises(CandidateContextMissingError) as failure:
+        _ = CandidateContextSource(directory, required=REQUIRED_DOCUMENTS).load()
+    assert failure.value.missing == ("core/VOICE-KR.md",)
+
+
+def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -> None:
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    for relative_path in REQUIRED_DOCUMENTS:
+        assert f"[context 문서: {relative_path}]" in instruction
+    assert "FACTS 문서에 없는 검증 가능한 사실을 주장하지 마세요." in instruction
+    assert "면책성 괄호 문구" in instruction
+    assert "VOICE 문서를 그대로 따르세요" in instruction
+    assert "INDEX 문서에 실제로 존재하는 id만" in instruction
+    assert "appium_prompt" in instruction
+    assert "정확히 3개의 객체" in instruction
+    assert "image_inputs" in instruction
+    assert "character_kitty" in instruction
+    assert "sports_team" in instruction
+    assert "5~7개를 권장합니다" in instruction
+    assert "모호어 대신 실제로 보이는 것을" in instruction
+    assert "실제로 잠금화면에 설정해뒀을 법한 배경" in instruction
+
+
+def test_instruction_keeps_the_job_out_of_the_schedule_and_the_caption(
+    tmp_path: Path,
+) -> None:
+    """Occupation is background, not subject matter.
+
+    The reference corpus is what settles this: the same lock-screen material reached 76x
+    fewer people once the caption spoke as the maker (kr-032 against kr-026), and the
+    maker story collapses 35x on its second use (kr-020 to kr-029). So a developer account
+    has to post about its life, not about building the product it is advertising.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    assert "직무 작업을 일정으로 늘어놓지 마세요" in instruction
+    assert "업무 티켓이 아닙니다" in instruction
+    assert "22:00 PR 리뷰" in instruction
+    assert "앱을 만든 사람의 목소리가 아니라 앱을 쓰는 사람의 목소리" in instruction
+    assert "제품·개발 용어를 캡션에 쓰지 마세요" in instruction
+    assert "메이커 화법을 쓰지 마세요" in instruction
+    assert "kr-032 대 kr-026" in instruction
+    assert "kr-020 → kr-029" in instruction
+    assert "직업은 이 사람의 배경이지 글의 소재가 아닙니다" in instruction
+
+
+def test_the_account_block_supplies_a_person_without_dictating_the_prose(
+    tmp_path: Path,
+) -> None:
+    """An account says who is writing and what they can write about — never how.
+
+    Style belongs to the reference corpus, which weighs each voice hypothesis against its
+    counter-examples. A one-line instruction here would quietly outrank all of it, and did:
+    the first accounts shipped a voice field and every caption opened by introducing itself.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+    account = CandidateAccountBrief(
+        display_name="김도현",
+        age=29,
+        region="서울 성동구",
+        occupation="백엔드 개발자",
+        concept="야근과 직관 사이에서 잠금화면 일정으로 버티는 4년차 개발자",
+        domain=CandidatePersonaDomain.SPORTS_FAN,
+        interests=("KIA 타이거즈", "주말 러닝"),
+        life_rhythm="평일 10시 출근, 주말 오전 러닝",
+        background_subject=CandidateBackgroundSubject.SPORTS_TEAM,
+        background_mood="야간 경기 조명이 켜진 외야 관중석",
+    )
+
+    # When
+    instruction = build_instruction(bundle, count=3, account=account)
+
+    # Then
+    assert "[이 계정으로 씁니다]" in instruction
+    assert "김도현" in instruction
+    assert "자기소개나 직업 소개로 캡션을 시작하지 마세요" in instruction
+    assert "컨셉 문장을 캡션에 그대로 옮겨 쓰지 마세요" in instruction
+    assert "직업은 이 사람이 어떤 시간을 사는지 알려줄 뿐" in instruction
+    assert "문체·어미·길이는 이 블록이 정하지 않습니다" in instruction
+    assert "말투:" not in instruction
+
+
+def _account() -> CandidateAccountBrief:
+    return CandidateAccountBrief(
+        display_name="김도현",
+        age=29,
+        region="서울 성동구",
+        occupation="백엔드 개발자",
+        concept="야근과 직관 사이에서 버티는 개발자",
+        domain=CandidatePersonaDomain.SPORTS_FAN,
+        interests=("KIA 타이거즈",),
+        life_rhythm="평일 10시 출근",
+        background_subject=CandidateBackgroundSubject.SPORTS_TEAM,
+        background_mood="야간 경기 조명이 켜진 외야 관중석",
+    )
+
+
+def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> None:
+    """Spreading one account's batch across domains would contradict the account."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(
+        bundle,
+        count=3,
+        domains=(CandidatePersonaDomain.PARENTING,) * 3,
+        account=_account(),
+    )
+
+    # Then
+    assert "누적 커버리지가 가장 적은 순서로" not in instruction
+    assert "persona_domain 은 sports_fan 으로 고정합니다." in instruction
+    assert "계정 블록이 있으면 그 계정의 도메인" in instruction
+
+
+def _assert_identity_invention_block(instruction: str) -> None:
+    """The half of the old persona block that only the account-less path may read."""
+    assert "[정체성 창작 규칙]" in instruction
+    assert '서로 다른 "구체 정체성"을 먼저 창작하고' in instruction
+    assert "도메인을 스포츠에 몰지 말고 넓게 흩으세요" in instruction
+    assert '"야구를 좋아함", "운동을 좋아함" 수준은 금지입니다.' in instruction
+    assert "어느 팀의 팬인지까지 정해진" in instruction
+
+
+def _assert_craft_block(instruction: str) -> None:
+    """The half both paths read: how surface detail is derived from whoever is writing."""
+    assert "[구체성 규칙]" in instruction
+    assert "그 사람의 실제 일주일에서 나올 법한" in instruction
+    assert "기아 vs LG 18:30 직관" in instruction
+    assert '"회의", "운동", "공부", "약속" 같은 범용 일정은 금지입니다.' in instruction
+    assert "그 사람의 생활 리듬과 맞아야 합니다" in instruction
+    assert (
+        "실존 인물명·캐릭터명·팀명을 쓰는 자리는 image_inputs.background_search_query 하나뿐입니다."
+        in instruction
+    )
+    assert "background_mood와 topic에는 넣지 마세요" in instruction
+    assert "캡션의 화자는 그 사람 본인입니다" in instruction
+
+
+def test_instruction_sanctions_real_names_only_in_the_background_search_query(
+    tmp_path: Path,
+) -> None:
+    """The model must author the search query, and it is the one field real names belong in."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then the rule block asks for a wallpaper, not an occupation scene, and allows proper
+    # nouns there
+    assert '"그 사람이 자기 폰 배경화면으로 저장해뒀을 사진"을 찾는 검색어' in instruction
+    assert (
+        "이 필드에 한해 실존 인물명·캐릭터명·팀명·아이돌 그룹명을 그대로 써도 됩니다."
+        in instruction
+    )
+    assert '"김도영 직캠"' in instruction
+    assert '"쿠로미 배경화면"' in instruction
+    # And the persona block no longer carries the blanket ban it used to contradict
+    assert "이미지 검색 질의로 쓰이는 필드에는" not in instruction
+    assert "실존 인물명·캐릭터명·브랜드 로고명을 넣지 마세요" not in instruction
+    # And the output contract names the field so the model actually emits it
+    assert '"background_search_query"' in instruction
+    assert (
+        "- background_search_query: 그 사람이 배경화면으로 저장했을 사진을 찾을 검색어"
+        in instruction
+    )
+
+
+def test_instruction_carries_the_persona_specificity_blocks(tmp_path: Path) -> None:
+    """Both blocks reach the model on the plain path, with the INDEX but no reference bodies."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    _assert_identity_invention_block(instruction)
+    _assert_craft_block(instruction)
+
+
+def test_persona_specificity_block_survives_added_reference_bodies(tmp_path: Path) -> None:
+    """Extra reference documents in the bundle must not push the block out of the prompt."""
+    # Given
+    loaded = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+    bundle = loaded.model_copy(
+        update={
+            "documents": (
+                *loaded.documents,
+                CandidateDocument(relative_path="references/KR/kr-001.md", text="# kr-001\n본문"),
+            )
+        }
+    )
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    assert "[context 문서: references/KR/kr-001.md]" in instruction
+    _assert_identity_invention_block(instruction)
+    _assert_craft_block(instruction)
+
+
+def test_an_account_batch_is_never_told_to_invent_a_person(tmp_path: Path) -> None:
+    """The two blocks used to contradict each other, and the invented person won.
+
+    "Author a different concrete identity per candidate" and "do not invent an identity,
+    the account is fixed" were both in the prompt whenever an account was chosen. So the
+    invention rules only belong to the path that has nobody to write as; the craft rules
+    belong to both.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When the batch is written as an existing account
+    instruction = build_instruction(bundle, count=3, account=_account())
+
+    # Then nothing asks it to author a person, while the craft rules still apply
+    assert "[정체성 창작 규칙]" not in instruction
+    assert '서로 다른 "구체 정체성"을 먼저 창작하고' not in instruction
+    assert "도메인을 스포츠에 몰지 말고 넓게 흩으세요" not in instruction
+    _assert_craft_block(instruction)
+
+
+def test_the_caption_never_announces_that_it_is_staged(tmp_path: Path) -> None:
+    """Accounts are run as concepts, so the writing does not declare itself a demo.
+
+    The old rule told the model to expose a life it had not lived through demo-frame verbs,
+    which is how "만들어봤어" ended up opening caption after caption — the maker's chair,
+    one sentence in.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then the demo frame is gone and its verbs are named as what not to write
+    assert "데모 프레임" not in instruction
+    assert "연출임을 글에서 선언하지 마세요" in instruction
+    assert '"만들어봤어", "올려봤어", "담아봤어", "세팅해봤어" 같은 시연 동사를 쓰지 마세요' in (
+        instruction
+    )
+    assert "겪지 않은 삶이라는 사실을 글 안에서 밝히거나 암시하지" in instruction
+    # And the maker-voice rule the corpus settled stays where it was
+    assert "메이커 화법을 쓰지 마세요" in instruction
+    assert "kr-032 대 kr-026" in instruction
+    assert "kr-020 → kr-029" in instruction
+
+
+def test_the_schedule_belongs_to_the_image_and_not_to_the_caption(tmp_path: Path) -> None:
+    """Captions were reading the lock screen back out loud, which is the image's job.
+
+    The two surfaces have different work: the image proves the schedule exists, the caption
+    has to stop the scroll. A caption that lists the same times is a caption of a capture,
+    and kr-001 — the highest reach in the corpus at relative 175.30 — lists nothing.
+    """
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then
+    assert "일정은 이미지가 보여줍니다" in instruction
+    assert "캡션이 image_inputs.trace_items를 낭독하지 마세요" in instruction
+    assert "시각이 붙은 일정 나열을 캡션에 넣지 마세요" in instruction
+    assert "일정 항목은 많아야 하나가 이야기 속에서 스칠 뿐입니다" in instruction
+    assert "이미지의 일은 증명이고 캡션의 일은 스크롤을 멈추는 것입니다" in instruction
+    assert "kr-001(relative 175.30)에는 일정 나열이 없습니다" in instruction
+
+
+def test_the_batch_is_assigned_one_caption_form_per_candidate(tmp_path: Path) -> None:
+    """Left to itself a batch opens three ways that are the same way."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then each candidate is bound to its own form, with the evidence for it
+    assert "[캡션 형태 배정]" in instruction
+    assert "- 후보 1: hook (훅글)" in instruction
+    assert "- 후보 2: daily (일상글)" in instruction
+    assert "- 후보 3: testimony (간증글)" in instruction
+    assert "근거 레퍼런스: kr-001, kr-003, kr-014." in instruction
+    assert "근거 레퍼런스: kr-010." in instruction
+    assert "주장은 FACTS 문서 범위 안에서만" in instruction
+    assert "간증글은 한 배치에 많아야 하나입니다" in instruction
+    # And every form is shown rather than only named
+    assert "예: 다들 시험기간엔 폰 어떻게 해요?" in instruction
+
+
+def test_the_form_assignment_reaches_an_account_batch_too(tmp_path: Path) -> None:
+    """One account writing three posts is exactly the case that needs three shapes."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3, account=_account())
+
+    # Then
+    assert "[캡션 형태 배정]" in instruction
+    assert "- 후보 3: testimony (간증글)" in instruction
+
+
+def test_a_batch_carries_at_most_one_testimonial() -> None:
+    """Testimony is the one form that claims something, so it is capped rather than cycled."""
+    # Given / When / Then no batch size turns the feed into an ad break
+    for count in range(1, 9):
+        forms = assign_caption_forms(count)
+        assert len(forms) == count
+        assert forms.count(CaptionForm.TESTIMONY) <= 1
+    # And a single candidate is not spent on the one form that talks about the product
+    assert assign_caption_forms(1) == (CaptionForm.HOOK,)
+    assert assign_caption_forms(0) == ()
+    # And the assignment is a function of the count, so a reviewer can predict it
+    assert assign_caption_forms(3) == (CaptionForm.HOOK, CaptionForm.DAILY, CaptionForm.TESTIMONY)
+
+
+def test_fenced_json_is_parsed() -> None:
+    # Given
+    fenced = f"```json\n{_answer()}\n```"
+
+    # When
+    drafts = parse_candidate_drafts(fenced, expected=3, country="KR")
+
+    # Then
+    assert len(drafts) == 3
+    assert drafts[0].appium_prompt.startswith("입력_일정")
+
+
+def test_parse_rejects_a_wrong_count_and_a_wrong_country() -> None:
+    # Given
+    two_items = json.dumps([_draft(), _draft("다른 주제")], ensure_ascii=False)
+    japanese = json.dumps([{**_draft(), "country": "JP"}], ensure_ascii=False)
+
+    # When / Then
+    with pytest.raises(CandidateFormatError) as count_failure:
+        _ = parse_candidate_drafts(two_items, expected=3, country="KR")
+    with pytest.raises(CandidateFormatError) as country_failure:
+        _ = parse_candidate_drafts(japanese, expected=1, country="KR")
+    assert count_failure.value.detail == "후보 3개가 필요하지만 2개를 받았습니다."
+    assert "country는 모두 KR" in country_failure.value.detail
+    assert (
+        count_failure.value.message == "AI 응답이 형식을 통과하지 못했습니다 — 다시 시도해 주세요."
+    )
+
+
+def test_parse_rejects_unusable_image_inputs() -> None:
+    # Given answers whose image inputs break the machine contract
+    def one(image_inputs: dict[str, object]) -> str:
+        return json.dumps([{**_draft(), "image_inputs": image_inputs}], ensure_ascii=False)
+
+    base = _draft()["image_inputs"]
+    assert isinstance(base, dict)
+    bad_time = one({**base, "device_time": "7시 20분"})
+    unknown_subject = one({**base, "background_subject": "감성적인 무언가"})
+    nine_items = one({**base, "trace_items": [f"일정 {index}" for index in range(9)]})
+    no_items = one({**base, "trace_items": []})
+
+    # When / Then
+    for payload, rejected_field in (
+        (bad_time, "device_time"),
+        (unknown_subject, "background_subject"),
+        (nine_items, "trace_items"),
+        (no_items, "trace_items"),
+    ):
+        with pytest.raises(CandidateFormatError) as failure:
+            _ = parse_candidate_drafts(payload, expected=1, country="KR")
+        assert rejected_field in failure.value.detail
+
+
+def test_parse_accepts_five_to_seven_schedule_items() -> None:
+    # Given answers at the recommended schedule lengths
+    base = _draft()["image_inputs"]
+    assert isinstance(base, dict)
+
+    # When / Then
+    for count in (5, 6, 7):
+        items = [f"{index:02d}:00 일정" for index in range(count)]
+        payload = json.dumps(
+            [{**_draft(), "image_inputs": {**base, "trace_items": items}}],
+            ensure_ascii=False,
+        )
+        drafts = parse_candidate_drafts(payload, expected=1, country="KR")
+        assert len(drafts[0].image_inputs.trace_items) == count
+
+
+def test_malformed_image_inputs_are_retried_once(tmp_path: Path) -> None:
+    # Given a first answer whose background subject is not in the vocabulary
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    base = _draft()["image_inputs"]
+    assert isinstance(base, dict)
+    invalid = json.dumps(
+        [
+            {**_draft(f"주제 {index}"), "image_inputs": {**base, "background_subject": "예쁜 배경"}}
+            for index in range(3)
+        ],
+        ensure_ascii=False,
+    )
+    client = FakeModelClient([invalid, _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    assert created[0].image_inputs is not None
+    assert created[0].image_inputs.background_subject is CandidateBackgroundSubject.SCENERY
+    retry_turn = client.histories[1][-1]
+    assert "background_subject" in str(retry_turn["content"])
+
+
+def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:
+    # Given
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    assert all(record.source is CandidateSource.AUTO for record in created)
+    assert all(record.status is CandidateStatus.AWAITING_REVIEW for record in created)
+    assert created[0].shooting_order.startswith("입력_일정")
+    assert created[0].refs_used == ("kr-001",)
+    assert len(store.list_candidates(workspace_id)) == 3
+    assert len(client.histories) == 1
+
+
+def test_generation_records_what_the_run_read_on_every_candidate(tmp_path: Path) -> None:
+    # Given a context directory whose documents the run will assemble
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([_answer()])
+    generator = _generator(tmp_path, store, client)
+    directory = _write_context(tmp_path)
+
+    # When the batch is generated
+    created = generator.generate(workspace_id)
+
+    # Then every candidate of the batch carries the same recorded provenance
+    provenances = [record.generation_provenance for record in created]
+    assert all(provenance == provenances[0] for provenance in provenances)
+    provenance = provenances[0]
+    assert provenance is not None
+    assert tuple(document.relative_path for document in provenance.documents) == REQUIRED_DOCUMENTS
+    assert [document.size_bytes for document in provenance.documents] == [
+        (directory / relative_path).stat().st_size for relative_path in REQUIRED_DOCUMENTS
+    ]
+    assert provenance.model == "gpt-5.5"
+    assert provenance.instruction_chars == len(str(client.histories[0][0]["content"]))
+    assert provenance.generated_at > 0
+
+    # And it survives the store round trip
+    stored = store.get_candidate(workspace_id, created[0].candidate_id)
+    assert stored.generation_provenance == provenance
+
+
+def test_one_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
+    # Given
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient(["설명만 있고 JSON이 없습니다", _answer()])
+    generator = _generator(tmp_path, store, client)
+
+    # When
+    created = generator.generate(workspace_id)
+
+    # Then
+    assert len(created) == 3
+    assert len(client.histories) == 2
+    retry_turn = client.histories[1][-1]
+    assert "직전 응답은 형식 검증을 통과하지 못했습니다." in str(retry_turn["content"])
+    assert "JSON 파싱 실패" in str(retry_turn["content"])
+
+
+def test_two_malformed_answers_store_nothing(tmp_path: Path) -> None:
+    # Given
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient(["nope", _answer(2)])
+    generator = _generator(tmp_path, store, client)
+
+    # When / Then
+    with pytest.raises(CandidateFormatError) as failure:
+        _ = generator.generate(workspace_id)
+    assert failure.value.message == "AI 응답이 형식을 통과하지 못했습니다 — 다시 시도해 주세요."
+    assert store.list_candidates(workspace_id) == ()
+
+
+def test_missing_credential_tells_the_operator_to_log_in(tmp_path: Path) -> None:
+    # Given
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = FakeModelClient([OAuthError("auth_missing", "OpenAI OAuth login is required")])
+    generator = _generator(tmp_path, store, client)
+
+    # When / Then
+    with pytest.raises(CandidateAuthRequiredError) as failure:
+        _ = generator.generate(workspace_id)
+    assert "trace-agent auth login" in failure.value.message
+    assert store.list_candidates(workspace_id) == ()
+
+
+def test_provider_failure_and_context_overflow_have_separate_messages(tmp_path: Path) -> None:
+    # Given
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    network = _generator(
+        tmp_path,
+        store,
+        FakeModelClient([ProviderError("provider_network", "boom")]),
+    )
+    overflow = _generator(
+        tmp_path,
+        store,
+        FakeModelClient([ProviderError("provider_http", "too long", context_overflow=True)]),
+    )
+
+    # When / Then
+    with pytest.raises(CandidateProviderError) as network_failure:
+        _ = network.generate(workspace_id)
+    with pytest.raises(CandidateProviderError) as overflow_failure:
+        _ = overflow.generate(workspace_id)
+    assert network_failure.value.message == (
+        "AI 요청에 실패했습니다 (provider_network) — 잠시 후 다시 시도해 주세요."
+    )
+    assert "context 파일이 너무 커서" in overflow_failure.value.message
+    assert store.list_candidates(workspace_id) == ()
+
+
+def test_instruction_forbids_occupation_still_life_queries_by_example(tmp_path: Path) -> None:
+    """The live failures were job-scene queries, so both are named as what not to write."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then the two queries that actually failed are quoted as bad examples
+    assert "직업 소품·작업 공간·물건 나열형 검색어는 금지입니다" in instruction
+    assert '"병원 사물함 간호사 명찰 볼펜 사진"' in instruction
+    assert '"개인 카페 에스프레소 머신 새벽 불빛"' in instruction
+
+    # And a nurse persona is shown choosing a wallpaper rather than a hospital photo
+    assert '간호사 페르소나 → "고양이 배경화면 고화질"' in instruction
+
+    # And the query must agree with the subject token that was chosen
+    assert "background_subject와 정합해야 합니다" in instruction
+    assert "scenery면 풍경, pet이면 반려동물" in instruction
+
+    # And the division of labour is stated: the schedule carries the job, the wallpaper the taste
+    assert "직업과 하루는 trace_items와 캡션이 드러냅니다" in instruction
+    assert (
+        "간호사라고 해서 병원 사진, 카페 사장이라고 해서 카페 사진을 깔지 않습니다" in instruction
+    )
+
+    # And the worked example is no longer an occupation still-life
+    assert "늦은 밤 원룸 책상 스탠드 불빛 사진" not in instruction
+    assert '"background_search_query": "제주 바다 노을 배경화면 고화질"' in instruction
+
+
+def test_assignment_picks_the_least_covered_domains(tmp_path: Path) -> None:
+    """Coverage decides the batch, so the genres nobody has written go first."""
+    # Given a workspace whose generated candidates lean on three domains
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    for domain in ("sports_fan", "sports_fan", "idol_fandom", "exam_prepper"):
+        _ = store.create_candidate(
+            _manual_create(
+                workspace_id, CandidatePersonaDomain(domain), source=CandidateSource.AUTO
+            )
+        )
+
+    # When the next batch is assigned with a deterministic tie-break
+    assigned = assign_domains(store.count_candidate_domains(workspace_id), 3, _identity)
+
+    # Then none of the covered domains is picked while untouched ones remain
+    assert CandidatePersonaDomain.SPORTS_FAN not in assigned
+    assert CandidatePersonaDomain.IDOL_FANDOM not in assigned
+    assert CandidatePersonaDomain.EXAM_PREPPER not in assigned
+    assert len(assigned) == 3
+
+
+def test_assignment_breaks_ties_with_the_injected_shuffle() -> None:
+    """Every domain at zero is a tie, and the tie-break is the only thing left to decide it."""
+
+    # Given a cold workspace and a shuffle that reverses the vocabulary
+    def _reversed(
+        domains: Sequence[CandidatePersonaDomain],
+    ) -> Sequence[CandidatePersonaDomain]:
+        return tuple(reversed(list(domains)))
+
+    # When two assignments are made from the same empty counts
+    forward = assign_domains({}, 3, _identity)
+    backward = assign_domains({}, 3, _reversed)
+
+    # Then the order of the tie follows the shuffle, not the declaration order
+    assert forward == tuple(CandidatePersonaDomain)[:3]
+    assert backward == tuple(reversed(list(CandidatePersonaDomain)))[:3]
+
+
+def test_counts_still_win_over_the_shuffle() -> None:
+    """A shuffle may reorder equals; it must never promote a covered domain over an empty one."""
+    # Given one domain that already has rows, and a shuffle that would put it first
+    counts = {CandidatePersonaDomain.SMALL_BUSINESS.value: 5}
+
+    def _business_first(
+        domains: Sequence[CandidatePersonaDomain],
+    ) -> Sequence[CandidatePersonaDomain]:
+        rest = [d for d in domains if d is not CandidatePersonaDomain.SMALL_BUSINESS]
+        return (CandidatePersonaDomain.SMALL_BUSINESS, *rest)
+
+    # When the batch is assigned
+    assigned = assign_domains(counts, 3, _business_first)
+
+    # Then the covered domain is still last in line
+    assert CandidatePersonaDomain.SMALL_BUSINESS not in assigned
+
+
+def test_the_instruction_binds_one_candidate_to_one_domain(tmp_path: Path) -> None:
+    # Given a batch assignment
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When the instruction is built
+    instruction = build_instruction(
+        bundle,
+        count=3,
+        domains=(
+            CandidatePersonaDomain.PET_OWNER,
+            CandidatePersonaDomain.SMALL_BUSINESS,
+            CandidatePersonaDomain.EXAM_PREPPER,
+        ),
+    )
+
+    # Then each candidate is bound to its own domain by position, not handed a pool
+    assert "후보 1: pet_owner (반려동물 보호자) 도메인의 구체 정체성으로" in instruction
+    assert "후보 2: small_business (자영업) 도메인의 구체 정체성으로" in instruction
+    assert "후보 3: exam_prepper (수험생) 도메인의 구체 정체성으로" in instruction
+    assert "한 도메인에 후보를 몰아넣지 마세요" in instruction
+    assert '"persona_domain": "배정받은 도메인 토큰"' in instruction
+
+
+def test_the_instruction_lists_recent_candidates_to_avoid_repeating(tmp_path: Path) -> None:
+    # Given a workspace that has already produced candidates
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+    history = (
+        CandidateHistoryEntry(
+            persona_domain=CandidatePersonaDomain.SPORTS_FAN, topic="기아 직관 준비"
+        ),
+        CandidateHistoryEntry(persona_domain=None, topic="레거시 후보"),
+    )
+
+    # When the instruction is built
+    instruction = build_instruction(bundle, count=3, history=history)
+
+    # Then the model is shown what not to repeat, legacy rows included
+    assert "[최근 생성된 후보 목록]" in instruction
+    assert "소재·정체성이 겹치지 않게" in instruction
+    assert "- [스포츠 팬] 기아 직관 준비" in instruction
+    assert "- [도메인 미기록] 레거시 후보" in instruction
+
+
+def test_an_unassigned_domain_in_the_answer_is_retried_once(tmp_path: Path) -> None:
+    # Given a first answer that ignores the assignment and writes its favourite domain
+    wrong = json.dumps(
+        [_draft(f"주제 {index}", "sports_fan") for index in range(3)], ensure_ascii=False
+    )
+    client = FakeModelClient([wrong, _answer()])
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+
+    # When the batch is generated
+    records = _generator(tmp_path, store, client).generate(workspace_id)
+
+    # Then the retry turn quoted the binding back and the second answer was accepted
+    retry = client.histories[1][-1]["content"]
+    assert isinstance(retry, str)
+    assert "persona_domain은 배정된 순서대로" in retry
+    assert [record.persona_domain for record in records] == [
+        CandidatePersonaDomain(domain) for domain in _ASSIGNED
+    ]
+
+
+def test_the_batch_records_which_domains_it_was_assigned(tmp_path: Path) -> None:
+    # Given a generated batch
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+
+    # When it runs
+    records = _generator(tmp_path, store, FakeModelClient([_answer()])).generate(workspace_id)
+
+    # Then the assignment is on every candidate's provenance for the panel to render
+    provenance = records[0].generation_provenance
+    assert provenance is not None
+    assert provenance.assigned_domains == tuple(
+        CandidatePersonaDomain(domain) for domain in _ASSIGNED
+    )
+
+
+def test_generated_history_is_read_back_newest_first_and_manual_rows_are_ignored(
+    tmp_path: Path,
+) -> None:
+    # Given one manual candidate and two generated ones
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    _ = store.create_candidate(
+        _manual_create(workspace_id, None, source=CandidateSource.MANUAL, topic="수동 후보")
+    )
+    _ = store.create_candidate(
+        _manual_create(
+            workspace_id,
+            CandidatePersonaDomain.PET_OWNER,
+            source=CandidateSource.AUTO,
+            topic="첫 생성",
+        )
+    )
+    _ = store.create_candidate(
+        _manual_create(
+            workspace_id,
+            CandidatePersonaDomain.PARENTING,
+            source=CandidateSource.AUTO,
+            topic="두번째 생성",
+        )
+    )
+
+    # When the next batch reads the history
+    history = store.recent_candidate_history(workspace_id, 15)
+
+    # Then only generated rows appear, newest first
+    assert [entry.topic for entry in history] == ["두번째 생성", "첫 생성"]
+    assert history[0].persona_domain is CandidatePersonaDomain.PARENTING
+
+
+def _create_account(store: SqliteWorkspaceStore, workspace_id: WorkspaceId, name: str) -> str:
+    """One running account, so history rows can belong to somebody."""
+    record = store.create_account(
+        workspace_id,
+        MarketingAccountCreate(
+            country="KR",
+            identity=MarketingAccountIdentity(
+                display_name=name,
+                age=27,
+                region="서울",
+                occupation="병동 간호사",
+                concept="3교대를 잠금화면 일정으로 버티는 간호사",
+                domain=CandidatePersonaDomain.OFFICE_WORKER,
+                interests=("쿠로미",),
+                life_rhythm="데이 출근일 5시 40분 기상",
+                taste=MarketingAccountTaste(
+                    background_subject=CandidateBackgroundSubject.CHARACTER_OTHER,
+                    background_mood="파스텔 톤의 캐릭터 배경",
+                    font=LockScreenFont.SF_PRO_ROUNDED,
+                ),
+            ),
+            schedule=MarketingAccountSchedule(language="ko", timezone="Asia/Seoul"),
+        ),
+    )
+    return record.account_id
+
+
+def test_history_is_read_within_one_account_rather_than_across_the_workspace(
+    tmp_path: Path,
+) -> None:
+    """Two accounts share a database and nothing else.
+
+    History is handed to the model as "do not repeat these", so read workspace-wide it made
+    every account steer around subjects its own readers have never seen — one account's
+    baseball post was quietly reserving the subject for everybody.
+    """
+    # Given two accounts that have each written one candidate, plus an unattached row
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    first = _create_account(store, workspace_id, "이서진")
+    second = _create_account(store, workspace_id, "김도현")
+    for account_id, topic in ((first, "이서진의 주제"), (second, "김도현의 주제")):
+        _ = store.create_candidate(
+            _manual_create(
+                workspace_id,
+                CandidatePersonaDomain.OFFICE_WORKER,
+                source=CandidateSource.AUTO,
+                topic=topic,
+                account_id=MarketingAccountId(account_id),
+            )
+        )
+    _ = store.create_candidate(
+        _manual_create(
+            workspace_id,
+            CandidatePersonaDomain.PET_OWNER,
+            source=CandidateSource.AUTO,
+            topic="계정 없는 후보",
+        )
+    )
+
+    # When history is read for one account, and for the workspace at large
+    scoped = store.recent_candidate_history(workspace_id, 15, account_id=MarketingAccountId(first))
+    everything = store.recent_candidate_history(workspace_id, 15)
+
+    # Then an account only ever sees what it wrote itself
+    assert [entry.topic for entry in scoped] == ["이서진의 주제"]
+    # And the unscoped read is unchanged, which is what the workspace-wide batch still needs
+    assert [entry.topic for entry in everything] == [
+        "계정 없는 후보",
+        "김도현의 주제",
+        "이서진의 주제",
+    ]
+
+
+def test_an_account_batch_is_only_shown_its_own_recent_topics(tmp_path: Path) -> None:
+    """The scoping has to reach the prompt, not just the store."""
+    # Given one account with a past candidate and another account's candidate beside it
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    mine = _create_account(store, workspace_id, "이서진")
+    theirs = _create_account(store, workspace_id, "김도현")
+    for account_id, topic in ((mine, "이서진의 지난 주제"), (theirs, "김도현의 지난 주제")):
+        _ = store.create_candidate(
+            _manual_create(
+                workspace_id,
+                CandidatePersonaDomain.OFFICE_WORKER,
+                source=CandidateSource.AUTO,
+                topic=topic,
+                account_id=MarketingAccountId(account_id),
+            )
+        )
+    account = store.get_account(workspace_id, MarketingAccountId(mine))
+    # An account fixes the domain for the whole batch, so the answer has to carry that one.
+    answer = json.dumps(
+        [_draft(f"주제 {index}", "office_worker") for index in range(3)], ensure_ascii=False
+    )
+    client = FakeModelClient([answer])
+
+    # When a batch is generated as that account
+    _ = _generator(tmp_path, store, client).generate(workspace_id, account=account)
+
+    # Then the instruction lists this account's history and not the other's
+    instruction = client.histories[0][0]["content"]
+    assert isinstance(instruction, str)
+    assert "이서진의 지난 주제" in instruction
+    assert "김도현의 지난 주제" not in instruction
+
+
+def test_the_persona_examples_are_marked_as_format_only(tmp_path: Path) -> None:
+    """The concrete names kept coming back verbatim, so every example block disclaims itself."""
+    # Given
+    bundle = CandidateContextSource(_write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+    # When
+    instruction = build_instruction(bundle, count=3)
+
+    # Then the disclaimer sits with each block that carries a team, a person, or a character
+    isolation = (
+        "위 예시는 형식 참고용입니다. 예시의 팀·인물·캐릭터를 그대로 쓰지 말고 새로 정하세요."
+    )
+    assert instruction.count(isolation) == 3

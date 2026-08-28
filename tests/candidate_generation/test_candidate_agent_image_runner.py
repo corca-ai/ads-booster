@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pytest
 
@@ -14,8 +15,11 @@ from ads_booster.contracts.results import TraceRunResult
 from ads_booster.contracts.run import TraceRunState
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.workspace import (
+    CandidateBackgroundProvenance,
     CandidateCreate,
+    CandidateImageAttachment,
     CandidateImageInputs,
+    CandidateImagePipeline,
     CandidateSource,
     CandidateStatus,
     SqliteWorkspaceStore,
@@ -25,15 +29,23 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.contracts.generation import MarketingContextBundle
-    from ads_booster.workspace import CandidateRecord, WorkspaceId
+    from ads_booster.workspace import CandidateId, CandidateRecord, WorkspaceId
 
 
 def _inputs() -> CandidateImageInputs:
-    return CandidateImageInputs(
-        trace_items=("09:00 통계학", "13:00 스터디", "19:00 러닝"),
-        device_time="07:20",
-        background_intent="늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방 사진",
-        language="ko",
+    """The intent-only shape the Trace connector writes, parsed as the store parses it.
+
+    Validated rather than constructed because that is the whole point of this shape: a
+    payload carrying only `background_intent` has to remain readable, and the subject and
+    mood are filled in from it rather than supplied.
+    """
+    return CandidateImageInputs.model_validate(
+        {
+            "trace_items": ("09:00 통계학", "13:00 스터디", "19:00 러닝"),
+            "device_time": "07:20",
+            "background_intent": "늦은 밤 책상 위 스탠드 불빛이 보이는 실제 공부방 사진",
+            "language": "ko",
+        }
     )
 
 
@@ -233,3 +245,173 @@ def test_candidate_image_rejects_a_failed_or_corrupt_core_artifact(tmp_path: Pat
         _ = _runner(tmp_path, store, corrupt).generate(workspace_id, corrupt_candidate.candidate_id)
     assert store.get_candidate(workspace_id, failed_candidate.candidate_id) == failed_candidate
     assert store.get_candidate(workspace_id, corrupt_candidate.candidate_id) == corrupt_candidate
+
+
+@dataclass(slots=True)
+class RecordingFallback:
+    """Stands in for the local composition, recording that it was the one that ran."""
+
+    store: SqliteWorkspaceStore
+    calls: list[CandidateId] = field(default_factory=list)
+
+    def generate(self, workspace_id: WorkspaceId, candidate_id: CandidateId) -> CandidateRecord:
+        self.calls.append(candidate_id)
+        record = self.store.get_candidate(workspace_id, candidate_id)
+        return self.store.attach_candidate_image(
+            workspace_id,
+            candidate_id,
+            CandidateImageAttachment(
+                path="candidates/x/r1/outputs/final.png",
+                sha256="e" * 64,
+                agent_run_id=f"candidate-{candidate_id}-r{record.revision}",
+                expected_revision=record.revision,
+                background_provenance=CandidateBackgroundProvenance(
+                    query="제주 바다 노을 배경화면",
+                    provider="ddgs",
+                    image_url="https://cdn.example/a.jpg",
+                    source_url="https://blog.example/a",
+                    sha256="a" * 64,
+                    pipeline=CandidateImagePipeline.LOCAL_FALLBACK,
+                ),
+            ),
+        )
+
+
+def test_no_capture_device_routes_to_the_local_composition_and_says_so(tmp_path: Path) -> None:
+    # Given a host with no usable Simulator but a local composition available
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+    core = RecordingCoreRunner(tmp_path)
+    fallback = RecordingFallback(store)
+    runner = CandidateImageRunner(
+        store=store,
+        runner=core,
+        device_resolver=FixedDeviceResolver(
+            MarketingExecutionError("native_simulator_unavailable")
+        ),
+        home=tmp_path,
+        clock=lambda: datetime(2026, 8, 26, 9, 30, tzinfo=UTC),
+        fallback=fallback,
+    )
+
+    # When the image stage runs
+    reviewed = runner.generate(workspace_id, candidate.candidate_id)
+
+    # Then no native work was attempted and the record says which path composed the image
+    assert core.bundles == []
+    assert fallback.calls == [candidate.candidate_id]
+    assert reviewed.status is CandidateStatus.IMAGE_AWAITING_REVIEW
+    assert reviewed.background_provenance is not None
+    assert reviewed.background_provenance.pipeline is CandidateImagePipeline.LOCAL_FALLBACK
+
+
+_RUNNER_UNAVAILABLE: Final = "native_runner_unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableRunner:
+    """A native runner this host cannot build, reported in the environment's vocabulary."""
+
+    def run(self, bundle: MarketingContextBundle) -> TraceRunResult:
+        del bundle
+        raise MarketingExecutionError(_RUNNER_UNAVAILABLE)
+
+
+def test_an_unavailable_native_runner_routes_to_the_local_composition_and_says_so(
+    tmp_path: Path,
+) -> None:
+    # Given a host whose Simulator resolves but which has no runner to drive it
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+    fallback = RecordingFallback(store)
+    runner = CandidateImageRunner(
+        store=store,
+        runner=UnavailableRunner(),
+        device_resolver=FixedDeviceResolver(),
+        home=tmp_path,
+        clock=lambda: datetime(2026, 8, 26, 9, 30, tzinfo=UTC),
+        fallback=fallback,
+    )
+
+    # When the image stage runs
+    reviewed = runner.generate(workspace_id, candidate.candidate_id)
+
+    # Then a missing runner reads like a missing device rather than a crash, and the record
+    # still says which path composed the image
+    assert fallback.calls == [candidate.candidate_id]
+    assert reviewed.status is CandidateStatus.IMAGE_AWAITING_REVIEW
+    assert reviewed.background_provenance is not None
+    assert reviewed.background_provenance.pipeline is CandidateImagePipeline.LOCAL_FALLBACK
+
+
+def test_an_unavailable_native_runner_without_a_fallback_still_fails_loudly(
+    tmp_path: Path,
+) -> None:
+    # Given the same host with no local composition behind it
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+    runner = CandidateImageRunner(
+        store=store,
+        runner=UnavailableRunner(),
+        device_resolver=FixedDeviceResolver(),
+        home=tmp_path,
+        clock=lambda: datetime(2026, 8, 26, 9, 30, tzinfo=UTC),
+    )
+
+    # When / Then the environment failure is named and the candidate is left where it was
+    with pytest.raises(CandidateImageStageError) as failure:
+        _ = runner.generate(workspace_id, candidate.candidate_id)
+    assert "실제 Trace 캡처 환경을 준비하지 못했습니다" in failure.value.message
+    assert store.get_candidate(workspace_id, candidate.candidate_id) == candidate
+
+
+def test_the_native_path_records_the_background_the_fetcher_wrote(tmp_path: Path) -> None:
+    # Given a native run whose background fetcher left its provenance artifact behind
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+    core = RecordingCoreRunner(tmp_path)
+    run_id = f"candidate-{candidate.candidate_id}-r{candidate.revision}"
+    artifact = tmp_path / "generated" / run_id / "inputs" / "background-source.json"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    _ = artifact.write_text(
+        json.dumps(
+            {
+                "schema_version": "trace.background-search.v1",
+                "query": "제주 바다 노을 배경화면",
+                "provider": "ddgs",
+                "image_url": "https://cdn.example/a.jpg",
+                "source_url": "https://blog.example/a",
+                "artifact_sha256": "a" * 64,
+                "selection": "ai_judged",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    # When the image stage runs natively
+    reviewed = _runner(tmp_path, store, core).generate(workspace_id, candidate.candidate_id)
+
+    # Then the candidate carries that background, marked as the native path
+    assert reviewed.background_provenance is not None
+    assert reviewed.background_provenance.source_url == "https://blog.example/a"
+    assert reviewed.background_provenance.pipeline is CandidateImagePipeline.NATIVE
+
+
+def test_a_missing_background_artifact_is_left_absent_rather_than_invented(tmp_path: Path) -> None:
+    # Given a native run that wrote no background provenance artifact
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    candidate = _candidate(store, workspace_id)
+
+    # When the image stage runs
+    reviewed = _runner(tmp_path, store, RecordingCoreRunner(tmp_path)).generate(
+        workspace_id, candidate.candidate_id
+    )
+
+    # Then nothing is recorded about a background nobody recorded
+    assert reviewed.background_provenance is None

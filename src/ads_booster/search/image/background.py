@@ -4,6 +4,7 @@ import io
 import json
 from dataclasses import dataclass
 from hashlib import sha256
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, override
 from urllib.parse import urlsplit
 
@@ -13,9 +14,11 @@ from PIL import Image, UnidentifiedImageError
 from ads_booster.search.image.contracts import ImageSearchError, ImageSearchProvider
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ads_booster.transport.http import HttpClient
+    from ads_booster.transport.json_types import JsonValue
 
 _HTTP_OK: Final = 200
 _MINIMUM_EDGE: Final = 640
@@ -29,6 +32,9 @@ _IMAGE_TOO_SMALL_CODE: Final = "background_search_image_too_small"
 _IMAGE_TOO_SMALL_MESSAGE: Final = (
     "image search returned a background image below the minimum resolution"
 )
+# A read-only mapping rather than a dict, so one shared empty default cannot be mutated
+# by a holder and cannot be rejected as a mutable dataclass default.
+_NO_DETAILS: Final[Mapping[str, JsonValue]] = MappingProxyType({})
 _APPROVED_SOURCE_HOSTS: Final = frozenset(
     {
         "unsplash.com",
@@ -64,16 +70,21 @@ class SearchedBackground:
     provider: str
     image_url: str
     source_url: str
+    # Extra facts the fetcher that produced this background wants on the artifact record,
+    # merged into the provenance file under their own keys. The stock-allowlist fetcher has
+    # none; the judged open-web fetcher records why this image beat the ones it was shown.
+    details: Mapping[str, JsonValue] = _NO_DETAILS
 
     def write_provenance(self, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, JsonValue] = {
             "schema_version": "trace.background-search.v1",
             "query": self.query,
             "provider": self.provider,
             "image_url": self.image_url,
             "source_url": self.source_url,
             "artifact_sha256": self.sha256,
+            **self.details,
         }
         _ = destination.write_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")),

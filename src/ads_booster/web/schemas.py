@@ -13,11 +13,14 @@ from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import (
     AssetId,
     AssetRelativePath,
+    CandidateBackgroundProvenance,
     CandidateCaption,
     CandidateCountry,
+    CandidateGenerationProvenance,
     CandidateHypothesis,
     CandidateId,
     CandidateImageInputs,
+    CandidatePersonaDomain,
     CandidatePostingSlot,
     CandidatePrinciple,
     CandidateReference,
@@ -28,6 +31,11 @@ from ads_booster.workspace import (
     CandidateTopic,
     ContextId,
     ContextKind,
+    MarketingAccountId,
+    MarketingAccountIdentity,
+    MarketingAccountRecord,
+    MarketingAccountSchedule,
+    MarketingAccountStatus,
     MemberId,
     PrivateSessionId,
     WorkspaceId,
@@ -238,6 +246,7 @@ class CandidateCreateRequest(WebModel):
     topic: CandidateTopic
     country: CandidateCountry
     posting_slot: CandidatePostingSlot = CandidatePostingSlot.MANUAL
+    persona_domain: CandidatePersonaDomain | None = None
     caption: CandidateCaption
     hypothesis: CandidateHypothesis
     image_inputs: CandidateImageInputs
@@ -263,6 +272,7 @@ class CandidateResponse(WebModel):
     country: str
     posting_slot: CandidatePostingSlot
     topic: str
+    persona_domain: CandidatePersonaDomain | None
     caption: str
     hypothesis: str
     refs_used: tuple[str, ...]
@@ -273,8 +283,76 @@ class CandidateResponse(WebModel):
     image_path: str | None
     image_sha256: str | None
     agent_run_id: str | None
+    generation_provenance: CandidateGenerationProvenance | None
+    background_provenance: CandidateBackgroundProvenance | None
     status: CandidateStatus
     review_note: str | None
     revision: int
     created_at: float
     updated_at: float
+
+
+class MarketingAccountCreateRequest(WebModel):
+    country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
+    identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
+    status: MarketingAccountStatus = MarketingAccountStatus.OBSERVING
+    note: Annotated[str, Field(max_length=400)] = ""
+
+
+class MarketingAccountUpdateRequest(WebModel):
+    identity: MarketingAccountIdentity
+    schedule: MarketingAccountSchedule
+    note: Annotated[str, Field(max_length=400)] = ""
+    expected_revision: int = Field(ge=1)
+
+
+class MarketingAccountStatusRequest(WebModel):
+    status: MarketingAccountStatus
+    expected_revision: int = Field(ge=1)
+
+
+class MarketingAccountResponse(WebModel):
+    """One account, flattened into the field names the hosted control plane already emits.
+
+    `display_name`, `language`, `timezone`, the two posting times and `generation_enabled`
+    are lifted out of the record so a card rendered from this response and a card rendered
+    from D1 read the same keys. `identity` carries the half the hosted table does not have
+    yet, and is what the shared shell shows once it is there.
+    """
+
+    workspace_id: WorkspaceId
+    account_id: MarketingAccountId
+    display_name: str
+    country: str
+    language: str
+    timezone: str
+    morning_time: str
+    evening_time: str
+    generation_enabled: bool
+    identity: MarketingAccountIdentity
+    status: MarketingAccountStatus
+    note: str
+    revision: int
+    created_at: float
+    updated_at: float
+
+    @classmethod
+    def of(cls, record: MarketingAccountRecord) -> MarketingAccountResponse:
+        return cls(
+            workspace_id=record.workspace_id,
+            account_id=record.account_id,
+            display_name=record.identity.display_name,
+            country=record.country,
+            language=record.schedule.language,
+            timezone=record.schedule.timezone,
+            morning_time=record.schedule.morning_time,
+            evening_time=record.schedule.evening_time,
+            generation_enabled=record.schedule.generation_enabled,
+            identity=record.identity,
+            status=record.status,
+            note=record.note,
+            revision=record.revision,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )

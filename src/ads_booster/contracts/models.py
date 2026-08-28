@@ -219,7 +219,10 @@ class CaptureProvenance(ContractModel):
     width: Annotated[int, Field(gt=0, le=8192)]
     height: Annotated[int, Field(gt=0, le=8192)]
     source_modified_at_ns: Annotated[int, Field(gt=0)]
-    source: Literal["native_appium"] = "native_appium"
+    # A capture claims where it came from. "native_appium" is the only value that can pass
+    # the connector's export gates; "offline_fixture" is what the local composition writes
+    # when there is no device, so a fixture layer can never be read as a device export.
+    source: Literal["native_appium", "offline_fixture"] = "native_appium"
     artifact_role: Literal["trace_components", "trace_wallpaper"] = "trace_components"
     native_export_nonce: Sha256Digest | None = None
     native_export_binding_verified: bool = False

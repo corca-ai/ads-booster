@@ -68,6 +68,7 @@ from ads_booster.marketing.worker_update import (
     update_drain_requested,
 )
 from ads_booster.providers.codex_cli import resolve_codex_executable
+from ads_booster.service.cli import serve, service_app, workspace_app
 from ads_booster.service.worker import build_production_runner
 from ads_booster.transport.http import create_http_client
 
@@ -81,6 +82,13 @@ _HTTP_SUCCESS_MAX = 300
 app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
 app.add_typer(worker_app, name="worker")
+app.add_typer(workspace_app, name="workspace")
+app.add_typer(service_app, name="service")
+# The local workspace surface outlived the model shell that used to expose it: #42 removed the
+# `trace-agent` entry point along with the custom harness, but `web/` and `service/` are still
+# built and tested. Registering `serve` here keeps the loopback workspace runnable under the CLI
+# that survived, without reviving an alias back to the old shell.
+_ = app.command("serve")(serve)
 
 
 class BridgeExecutor(StrEnum):

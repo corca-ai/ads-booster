@@ -11,7 +11,7 @@ class AgentSettings:
     workspace: Path
     model: str
     browser_command: tuple[str, ...]
-    reasoning_effort: str | None = "xhigh"
+    reasoning_effort: str | None = "medium"
     web_search_provider: str = "auto"
     web_search_timeout_seconds: float = 30.0
     context_window_tokens: int = 128_000
@@ -38,7 +38,7 @@ class AgentSettings:
             workspace=(workspace or Path.cwd()).resolve(),
             model=os.environ.get("TRACE_AGENT_MODEL", "gpt-5.6-luna"),
             browser_command=tuple(shlex.split(command)),
-            reasoning_effort=os.environ.get("TRACE_AGENT_REASONING_EFFORT", "xhigh") or None,
+            reasoning_effort=os.environ.get("TRACE_AGENT_REASONING_EFFORT", "medium") or None,
             web_search_provider=os.environ.get("TRACE_AGENT_WEB_SEARCH_PROVIDER", "auto"),
             web_search_timeout_seconds=float(
                 os.environ.get("TRACE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "30")
