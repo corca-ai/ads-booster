@@ -38,6 +38,7 @@ from ads_booster.candidate_generation.errors import (
     CandidateFormatError,
     CandidateProviderError,
 )
+from ads_booster.candidate_generation.models import CandidateBatch
 from ads_booster.candidate_generation.ports import (  # noqa: TC001 — dataclass field types
     CandidateCreator,
     CandidateModelSource,
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
     from ads_booster.agent.memory import MemoryStore
     from ads_booster.candidate_generation.models import CandidateContextBundle, CandidateDraft
     from ads_booster.config.settings import AgentSettings
-    from ads_booster.workspace import CandidateRecord, WorkspaceId
+    from ads_booster.workspace import WorkspaceId
 
 _CANDIDATE_TOOL: Final = "trace_propose_marketing_candidates"
 _BATCH_NOT_STORED: Final = "Agent did not propose a valid candidate batch"
@@ -123,7 +124,7 @@ class CandidateGenerator:
         workspace_id: WorkspaceId,
         *,
         run_context: str | None = None,
-    ) -> tuple[CandidateRecord, ...]:
+    ) -> CandidateBatch:
         context = self.context_source.load()
         connector = self.connector_factory(context)
         run_id = AgentRunId(self.id_factory())
@@ -166,9 +167,13 @@ class CandidateGenerator:
         if not drafts:
             raise CandidateFormatError(_BATCH_NOT_STORED)
         provenance = _provenance(context, finished)
-        return tuple(
-            self.store.create_candidate(_create(workspace_id, draft, provenance))
-            for draft in drafts
+        # One agent run writes the whole batch, so it either produced drafts or raised
+        # above; there is no partial outcome for this path to report.
+        return CandidateBatch(
+            records=tuple(
+                self.store.create_candidate(_create(workspace_id, draft, provenance))
+                for draft in drafts
+            )
         )
 
 

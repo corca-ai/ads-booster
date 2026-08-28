@@ -21,8 +21,12 @@ SYSTEM_INSTRUCTION: Final = (
 )
 
 _ROLE: Final = """당신은 Trace 마케팅 게시물의 후보 생성 에이전트입니다.
-아래에 첨부한 context 문서(원리, 요소, 문체, 사실, 레퍼런스 인덱스)를 유일한 근거로 삼아
+아래에 첨부한 context 문서(원리, 요소, 문체, 사실, 레퍼런스 본문과 인덱스)를 유일한 근거로 삼아
 KR(한국) 게시물 후보 {count}개를 서로 다른 주제로 만드세요."""
+
+_ROLE_ONE: Final = """당신은 Trace 마케팅 게시물의 후보 생성 에이전트입니다.
+아래에 첨부한 context 문서(원리, 요소, 문체, 사실, 레퍼런스 본문과 인덱스)를 유일한 근거로 삼아
+KR(한국) 게시물 후보 1개를 만드세요."""
 
 _RULES: Final = """[반드시 지킬 규칙]
 1. FACTS 문서에 없는 검증 가능한 사실을 주장하지 마세요.
@@ -31,7 +35,7 @@ _RULES: Final = """[반드시 지킬 규칙]
 3. 반말/존댓말과 어조는 VOICE 문서를 그대로 따르세요. 스스로 문체를 새로 정하지 마세요.
 4. refs_used에는 레퍼런스 INDEX 문서에 실제로 존재하는 id만 넣으세요. 없으면 빈 배열로 두세요.
 5. principles_applied에는 원리 문서에서 실제로 사용한 원리 번호만 넣으세요.
-6. {count}개 후보의 주제(topic)는 서로 겹치지 않아야 합니다.
+6. {distinct}
 7. image_inputs.background_subject는 그 페르소나가 실제로 잠금화면에 설정해뒀을 법한 배경을
    아래 토큰 중에서 고르세요. 토큰 외의 값이나 새 단어를 만들지 마세요.
    {subjects}
@@ -120,6 +124,11 @@ _CRAFT: Final = """[구체성 규칙]
    (background_mood와 topic은 사람이 읽는 설명 필드이므로 일반 명사로 씁니다.)
    일정 문자열과 캡션 본문 안에서는 팬 활동 맥락의 자연스러운 언급이 허용됩니다.
 4. 캡션의 화자는 그 사람 본인입니다. 검증 가능한 제품 사실은 FACTS 문서에서만 가져오세요."""
+
+_DISTINCT_MANY: Final = "{count}개 후보의 주제(topic)는 서로 겹치지 않아야 합니다."
+_DISTINCT_ONE: Final = (
+    "주제(topic)는 아래 [최근 생성된 후보 목록]의 어느 것과도 겹치지 않아야 합니다."
+)
 
 _OUTPUT: Final = """[출력 형식]
 설명, 머리말, 코드펜스 없이 JSON 배열 하나만 출력하세요.
@@ -262,8 +271,8 @@ _RETRY: Final = """직전 응답은 형식 검증을 통과하지 못했습니�
 
 
 _ACCOUNT_HEADER: Final = """[이 계정으로 씁니다]
-아래는 새로 만들 인물이 아니라 이미 운영 중인 계정입니다. 후보 {count}개 모두 이
-사람의 하루에서 나와야 합니다. 정체성을 새로 지어내지 말고, 소재만 서로 다르게 하세요.
+아래는 새로 만들 인물이 아니라 이미 운영 중인 계정입니다. 이 후보는 이 사람의
+하루에서 나와야 합니다. 정체성을 새로 지어내지 말고, 소재만 새로 고르세요.
 
 - 이름: {display_name} ({age}세, {region})
 - 직업: {occupation}
@@ -292,8 +301,8 @@ _ACCOUNT_HEADER: Final = """[이 계정으로 씁니다]
 
 def account_section(account: CandidateAccountBrief, *, count: int) -> str:
     """Describe the account the batch is written as, in the terms generation must obey."""
+    del count
     return _ACCOUNT_HEADER.format(
-        count=count,
         display_name=account.display_name,
         age=account.age,
         region=account.region,
@@ -307,13 +316,14 @@ def account_section(account: CandidateAccountBrief, *, count: int) -> str:
     )
 
 
-def build_instruction(
+def build_instruction(  # noqa: PLR0913 - each argument is one independent prompt section.
     bundle: CandidateContextBundle,
     *,
     count: int,
     domains: tuple[CandidatePersonaDomain, ...] = (),
     history: tuple[CandidateHistoryEntry, ...] = (),
     account: CandidateAccountBrief | None = None,
+    forms: tuple[CaptionForm, ...] | None = None,
 ) -> str:
     """Assemble the single generation instruction from the loaded context documents.
 
@@ -329,16 +339,24 @@ def build_instruction(
     contradiction that put a stranger in every account's captions. What survives both paths
     is the craft: how a schedule, a clock and a wallpaper are derived from whoever is
     writing.
+
+    `forms` is the caption shapes this instruction asks for, one per candidate. It is passed
+    in rather than derived here because a batch is now written one call per candidate: the
+    cap of one testimonial belongs to the batch, so the batch has to do the assigning and
+    hand each call its share. Left unset it assigns for `count` candidates, which is what a
+    single-call caller still wants.
     """
     subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
+    one = count == 1
+    distinct = _DISTINCT_ONE if one else _DISTINCT_MANY.format(count=count)
     sections = [
-        _ROLE.format(count=count),
-        _RULES.format(count=count, subjects=subjects),
+        (_ROLE_ONE if one else _ROLE.format(count=count)),
+        _RULES.format(subjects=subjects, distinct=distinct),
         *([_INVENT_IDENTITY] if account is None else []),
         _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
         *([_assignment_section(domains)] if domains and account is None else []),
-        _form_section(assign_caption_forms(count)),
+        _form_section(assign_caption_forms(count) if forms is None else forms),
         *([_history_section(history)] if history else []),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"

@@ -18,6 +18,7 @@ from ads_booster.workspace import (
 )
 
 if TYPE_CHECKING:
+    from ads_booster.candidate_generation.models import CandidateBatch
     from ads_booster.candidate_generation.ports import (
         CandidateGeneratorPort,
         CandidateImageRunnerPort,
@@ -60,7 +61,7 @@ class CandidateWorkflow:
         self,
         workspace_id: WorkspaceId,
         account: MarketingAccountRecord | None = None,
-    ) -> tuple[CandidateRecord, ...]:
+    ) -> CandidateBatch:
         return self.generator.generate(workspace_id, account=account)
 
     def review_caption(

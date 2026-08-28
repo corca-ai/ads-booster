@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -16,12 +18,18 @@ from ads_booster.candidate_generation import (
     CandidateDocument,
     CandidateFormatError,
     CandidateProviderError,
+    CandidateReferenceSource,
     CaptionForm,
     ScriptCandidateGenerator,
     assign_caption_forms,
     assign_domains,
     build_instruction,
     parse_candidate_drafts,
+    reference_id,
+)
+from ads_booster.candidate_generation.script_generator import (
+    DEFAULT_CANDIDATE_COUNT,
+    WrittenTopics,
 )
 from ads_booster.providers.codex import ModelTurn
 from ads_booster.providers.errors import ProviderError
@@ -56,6 +64,9 @@ if TYPE_CHECKING:
 # The generator assigns the least-covered domains; with the identity shuffle below and an
 # empty workspace that is the first three of the vocabulary, in declaration order.
 _ASSIGNED: Final = ("sports_fan", "idol_fandom", "exam_prepper")
+# The fake corpus: enough hits and flops for one 3-hit, 1-flop sample.
+_FAKE_HITS: Final = 4
+_FAKE_FLOPS: Final = 2
 
 
 def _identity(
@@ -84,6 +95,11 @@ def _draft(topic: str = "시험기간 일정 관리", domain: str = "sports_fan"
     }
 
 
+def _one(domain: str = "sports_fan", topic: str = "주제") -> str:
+    """The answer to one call: a single draft carrying that call's assigned domain."""
+    return json.dumps([_draft(topic, domain)], ensure_ascii=False)
+
+
 def _answer(count: int = 3) -> str:
     return json.dumps(
         [_draft(f"주제 {index}", _ASSIGNED[index % len(_ASSIGNED)]) for index in range(count)],
@@ -93,6 +109,8 @@ def _answer(count: int = 3) -> str:
 
 @dataclass(slots=True)
 class FakeModelClient:
+    """A fixed sequence of answers, for the tests that make exactly one candidate."""
+
     answers: list[str | Exception]
     histories: list[tuple[JsonObject, ...]] = field(default_factory=list)
 
@@ -109,13 +127,70 @@ class FakeModelClient:
         return ModelTurn(text=answer, calls=())
 
 
+_ASSIGNED_DOMAIN: Final = re.compile(r"- 후보 1: (\w+) \(")
+_ACCOUNT_DOMAIN: Final = re.compile(r"persona_domain 은 (\w+) 으로 고정합니다")
+
+
+def assigned_domain(instruction: str) -> str:
+    """Read back the domain this one call was told to write."""
+    match = _ACCOUNT_DOMAIN.search(instruction) or _ASSIGNED_DOMAIN.search(instruction)
+    assert match is not None, instruction
+    return match.group(1)
+
+
+@dataclass(slots=True)
+class DomainAnswerClient:
+    """Answers every call with a draft carrying the domain that call was assigned.
+
+    The batch runs its calls in parallel, so a list popped in order cannot say which answer
+    belongs to which candidate. Keying on the assignment makes the fake deterministic
+    however the threads interleave.
+    """
+
+    failures: dict[str, Exception] = field(default_factory=dict)
+    histories: list[tuple[JsonObject, ...]] = field(default_factory=list)
+    lock: Lock = field(default_factory=Lock)
+
+    def respond(
+        self,
+        history: tuple[JsonObject, ...],
+        tools: tuple[ToolDescriptor, ...],
+    ) -> ModelTurn:
+        assert tools == ()
+        with self.lock:
+            self.histories.append(history)
+        instruction = history[0]["content"]
+        assert isinstance(instruction, str)
+        domain = assigned_domain(instruction)
+        failure = self.failures.get(domain)
+        if failure is not None:
+            raise failure
+        return ModelTurn(
+            text=json.dumps([_draft(f"{domain} 주제", domain)], ensure_ascii=False),
+            calls=(),
+        )
+
+    def instructions(self) -> list[str]:
+        with self.lock:
+            texts = [entry[0]["content"] for entry in self.histories]
+        return [text for text in texts if isinstance(text, str)]
+
+
 @dataclass(frozen=True, slots=True)
 class FakeModelSource:
-    client: FakeModelClient
+    client: FakeModelClient | DomainAnswerClient
 
     @contextmanager
     def open(self) -> Generator[ModelClient]:
         yield self.client
+
+
+def _reference(outcome: str, index: int) -> str:
+    """One reference body shaped like the corpus: frontmatter first, verdict inside it."""
+    return (
+        f"---\nid: kr-9{index:02d}\ncountry: KR\noutcome: {outcome}\n"
+        f"relative: 1.0\n---\n\n# kr-9{index:02d} {outcome} 본문"
+    )
 
 
 def _write_context(root: Path, *, skip: Sequence[str] = ()) -> Path:
@@ -126,22 +201,41 @@ def _write_context(root: Path, *, skip: Sequence[str] = ()) -> Path:
         path = directory / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(f"# {relative_path}\n내용", encoding="utf-8")
+    references = directory / "references" / "KR"
+    references.mkdir(parents=True, exist_ok=True)
+    for index in range(_FAKE_HITS):
+        _ = (references / f"kr-9{index:02d}.md").write_text(
+            _reference("hit", index), encoding="utf-8"
+        )
+    for index in range(_FAKE_HITS, _FAKE_HITS + _FAKE_FLOPS):
+        _ = (references / f"kr-9{index:02d}.md").write_text(
+            _reference("flop", index), encoding="utf-8"
+        )
     return directory
+
+
+def _first(population: Sequence[CandidateDocument], count: int) -> Sequence[CandidateDocument]:
+    """A deterministic stand-in for random.sample, so a test can name the sample it expects."""
+    return list(population)[:count]
 
 
 def _generator(
     tmp_path: Path,
     store: SqliteWorkspaceStore,
-    client: FakeModelClient,
+    client: FakeModelClient | DomainAnswerClient,
+    *,
+    count: int = DEFAULT_CANDIDATE_COUNT,
 ) -> ScriptCandidateGenerator:
+    directory = _write_context(tmp_path)
     return ScriptCandidateGenerator(
         store=store,
         models=FakeModelSource(client),
-        context_source=CandidateContextSource(
-            _write_context(tmp_path), required=REQUIRED_DOCUMENTS
-        ),
+        context_source=CandidateContextSource(directory, required=REQUIRED_DOCUMENTS),
+        references=CandidateReferenceSource(directory),
         model="gpt-5.5",
+        count=count,
         shuffle=_identity,
+        sample_references=_first,
     )
 
 
@@ -599,93 +693,94 @@ def test_parse_accepts_five_to_seven_schedule_items() -> None:
 
 
 def test_malformed_image_inputs_are_retried_once(tmp_path: Path) -> None:
-    # Given a first answer whose background subject is not in the vocabulary
+    # Given one call whose first answer names a background subject outside the vocabulary
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
     base = _draft()["image_inputs"]
     assert isinstance(base, dict)
     invalid = json.dumps(
-        [
-            {**_draft(f"주제 {index}"), "image_inputs": {**base, "background_subject": "예쁜 배경"}}
-            for index in range(3)
-        ],
+        [{**_draft(), "image_inputs": {**base, "background_subject": "예쁜 배경"}}],
         ensure_ascii=False,
     )
-    client = FakeModelClient([invalid, _answer()])
-    generator = _generator(tmp_path, store, client)
+    client = FakeModelClient([invalid, _one()])
+    generator = _generator(tmp_path, store, client, count=1)
 
     # When
-    created = generator.generate(workspace_id)
+    batch = generator.generate(workspace_id)
 
     # Then
-    assert len(created) == 3
-    assert created[0].image_inputs is not None
-    assert created[0].image_inputs.background_subject is CandidateBackgroundSubject.SCENERY
+    assert len(batch.records) == 1
+    assert batch.records[0].image_inputs is not None
+    assert batch.records[0].image_inputs.background_subject is CandidateBackgroundSubject.SCENERY
     retry_turn = client.histories[1][-1]
     assert "background_subject" in str(retry_turn["content"])
 
 
-def test_generation_stores_three_automatic_candidates(tmp_path: Path) -> None:
+def test_generation_stores_three_automatic_candidates_from_three_calls(tmp_path: Path) -> None:
+    """One call per candidate: three candidates means three independent provider calls."""
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient([_answer()])
+    client = DomainAnswerClient()
     generator = _generator(tmp_path, store, client)
 
     # When
-    created = generator.generate(workspace_id)
+    batch = generator.generate(workspace_id)
 
     # Then
+    created = batch.records
     assert len(created) == 3
+    assert batch.failures == 0
     assert all(record.source is CandidateSource.AUTO for record in created)
     assert all(record.status is CandidateStatus.AWAITING_REVIEW for record in created)
     assert created[0].shooting_order.startswith("입력_일정")
     assert created[0].refs_used == ("kr-001",)
     assert len(store.list_candidates(workspace_id)) == 3
-    assert len(client.histories) == 1
+    assert len(client.instructions()) == 3
 
 
-def test_generation_records_what_the_run_read_on_every_candidate(tmp_path: Path) -> None:
+def test_generation_records_what_each_call_read_on_its_own_candidate(tmp_path: Path) -> None:
+    """Provenance is now per candidate, because each call read a different corpus slice."""
     # Given a context directory whose documents the run will assemble
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient([_answer()])
+    client = DomainAnswerClient()
     generator = _generator(tmp_path, store, client)
     directory = _write_context(tmp_path)
 
     # When the batch is generated
-    created = generator.generate(workspace_id)
+    batch = generator.generate(workspace_id)
 
-    # Then every candidate of the batch carries the same recorded provenance
-    provenances = [record.generation_provenance for record in created]
-    assert all(provenance == provenances[0] for provenance in provenances)
-    provenance = provenances[0]
-    assert provenance is not None
-    assert tuple(document.relative_path for document in provenance.documents) == REQUIRED_DOCUMENTS
-    assert [document.size_bytes for document in provenance.documents] == [
-        (directory / relative_path).stat().st_size for relative_path in REQUIRED_DOCUMENTS
-    ]
-    assert provenance.model == "gpt-5.5"
-    assert provenance.instruction_chars == len(str(client.histories[0][0]["content"]))
-    assert provenance.generated_at > 0
+    # Then every candidate names the core documents it read, plus its own reference sample
+    for record in batch.records:
+        provenance = record.generation_provenance
+        assert provenance is not None
+        paths = tuple(document.relative_path for document in provenance.documents)
+        assert paths[: len(REQUIRED_DOCUMENTS)] == REQUIRED_DOCUMENTS
+        assert [
+            document.size_bytes for document in provenance.documents[: len(REQUIRED_DOCUMENTS)]
+        ] == [(directory / relative_path).stat().st_size for relative_path in REQUIRED_DOCUMENTS]
+        assert provenance.model == "gpt-5.5"
+        assert provenance.instruction_chars > 0
+        assert provenance.generated_at > 0
 
     # And it survives the store round trip
-    stored = store.get_candidate(workspace_id, created[0].candidate_id)
-    assert stored.generation_provenance == provenance
+    stored = store.get_candidate(workspace_id, batch.records[0].candidate_id)
+    assert stored.generation_provenance == batch.records[0].generation_provenance
 
 
 def test_one_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient(["설명만 있고 JSON이 없습니다", _answer()])
-    generator = _generator(tmp_path, store, client)
+    client = FakeModelClient(["설명만 있고 JSON이 없습니다", _one()])
+    generator = _generator(tmp_path, store, client, count=1)
 
     # When
-    created = generator.generate(workspace_id)
+    batch = generator.generate(workspace_id)
 
     # Then
-    assert len(created) == 3
+    assert len(batch.records) == 1
     assert len(client.histories) == 2
     retry_turn = client.histories[1][-1]
     assert "직전 응답은 형식 검증을 통과하지 못했습니다." in str(retry_turn["content"])
@@ -696,8 +791,8 @@ def test_two_malformed_answers_store_nothing(tmp_path: Path) -> None:
     # Given
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
-    client = FakeModelClient(["nope", _answer(2)])
-    generator = _generator(tmp_path, store, client)
+    client = FakeModelClient(["nope", "여전히 JSON이 아닙니다"])
+    generator = _generator(tmp_path, store, client, count=1)
 
     # When / Then
     with pytest.raises(CandidateFormatError) as failure:
@@ -711,7 +806,7 @@ def test_missing_credential_tells_the_operator_to_log_in(tmp_path: Path) -> None
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
     client = FakeModelClient([OAuthError("auth_missing", "OpenAI OAuth login is required")])
-    generator = _generator(tmp_path, store, client)
+    generator = _generator(tmp_path, store, client, count=1)
 
     # When / Then
     with pytest.raises(CandidateAuthRequiredError) as failure:
@@ -728,11 +823,13 @@ def test_provider_failure_and_context_overflow_have_separate_messages(tmp_path: 
         tmp_path,
         store,
         FakeModelClient([ProviderError("provider_network", "boom")]),
+        count=1,
     )
     overflow = _generator(
         tmp_path,
         store,
         FakeModelClient([ProviderError("provider_http", "too long", context_overflow=True)]),
+        count=1,
     )
 
     # When / Then
@@ -904,40 +1001,180 @@ def test_the_instruction_lists_recent_candidates_to_avoid_repeating(tmp_path: Pa
 
 
 def test_an_unassigned_domain_in_the_answer_is_retried_once(tmp_path: Path) -> None:
-    # Given a first answer that ignores the assignment and writes its favourite domain
-    wrong = json.dumps(
-        [_draft(f"주제 {index}", "sports_fan") for index in range(3)], ensure_ascii=False
-    )
-    client = FakeModelClient([wrong, _answer()])
+    # Given one call whose first answer ignores its assignment and writes another domain
+    wrong = json.dumps([_draft("주제", "parenting")], ensure_ascii=False)
+    client = FakeModelClient([wrong, _one("sports_fan")])
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
 
-    # When the batch is generated
-    records = _generator(tmp_path, store, client).generate(workspace_id)
+    # When the candidate is generated
+    batch = _generator(tmp_path, store, client, count=1).generate(workspace_id)
 
     # Then the retry turn quoted the binding back and the second answer was accepted
     retry = client.histories[1][-1]["content"]
     assert isinstance(retry, str)
     assert "persona_domain은 배정된 순서대로" in retry
-    assert [record.persona_domain for record in records] == [
-        CandidatePersonaDomain(domain) for domain in _ASSIGNED
+    assert [record.persona_domain for record in batch.records] == [
+        CandidatePersonaDomain.SPORTS_FAN
     ]
 
 
-def test_the_batch_records_which_domains_it_was_assigned(tmp_path: Path) -> None:
+def test_every_candidate_records_the_domain_its_own_call_was_assigned(tmp_path: Path) -> None:
+    """Provenance is per call now, so each row names the one domain that call was given."""
     # Given a generated batch
     store = SqliteWorkspaceStore(tmp_path)
     workspace_id = _workspace(store)
 
     # When it runs
-    records = _generator(tmp_path, store, FakeModelClient([_answer()])).generate(workspace_id)
+    batch = _generator(tmp_path, store, DomainAnswerClient()).generate(workspace_id)
 
-    # Then the assignment is on every candidate's provenance for the panel to render
-    provenance = records[0].generation_provenance
-    assert provenance is not None
-    assert provenance.assigned_domains == tuple(
-        CandidatePersonaDomain(domain) for domain in _ASSIGNED
+    # Then the batch covers the assignment, one domain per candidate
+    assigned: list[CandidatePersonaDomain] = []
+    for record in batch.records:
+        provenance = record.generation_provenance
+        assert provenance is not None
+        assert len(provenance.assigned_domains) == 1
+        assert provenance.assigned_domains[0] == record.persona_domain
+        assigned.extend(provenance.assigned_domains)
+    assert sorted(domain.value for domain in assigned) == sorted(_ASSIGNED)
+
+
+def test_a_reference_sample_is_three_hits_and_one_flop(tmp_path: Path) -> None:
+    """A batch shown only winners writes pastiche of them.
+
+    What did not work is the half of the corpus that says where the line is, so every call
+    reads one flop alongside its three hits.
+    """
+    # Given the reference corpus classified by the outcome in each file's frontmatter
+    directory = _write_context(tmp_path)
+    pool = CandidateReferenceSource(directory).load()
+
+    # When one call draws its sample
+    sample = pool.sample(_first)
+
+    # Then it is three hits and one flop, and the INDEX table is not among them
+    assert len(pool.hits) == _FAKE_HITS
+    assert len(pool.flops) == _FAKE_FLOPS
+    assert [reference_id(document) for document in sample] == [
+        "kr-900",
+        "kr-901",
+        "kr-902",
+        "kr-904",
+    ]
+    assert "INDEX" not in " ".join(document.relative_path for document in sample)
+
+
+def test_a_corpus_shorter_than_the_sample_gives_what_it_has(tmp_path: Path) -> None:
+    """A country with two references still has to be able to generate."""
+    # Given a corpus with one hit and no flops
+    directory = tmp_path / "context" / "references" / "KR"
+    directory.mkdir(parents=True)
+    _ = (directory / "kr-900.md").write_text(_reference("hit", 0), encoding="utf-8")
+
+    # When a sample is drawn
+    pool = CandidateReferenceSource(tmp_path / "context").load()
+    sample = pool.sample(_first)
+
+    # Then it is the one document rather than a failure
+    assert [reference_id(document) for document in sample] == ["kr-900"]
+
+
+def test_only_the_frontmatter_decides_a_reference_outcome(tmp_path: Path) -> None:
+    """A reference body quotes other posts and their results; that is not its own verdict."""
+    # Given a hit whose prose happens to contain a flop line
+    directory = tmp_path / "context" / "references" / "KR"
+    directory.mkdir(parents=True)
+    _ = (directory / "kr-900.md").write_text(
+        f"{_reference('hit', 0)}\n\noutcome: flop 이라고 적힌 남의 게시물 인용",
+        encoding="utf-8",
     )
+    # And a file with no frontmatter at all
+    _ = (directory / "INDEX.md").write_text("# INDEX\noutcome: hit", encoding="utf-8")
+
+    # When the corpus is read
+    pool = CandidateReferenceSource(tmp_path / "context").load()
+
+    # Then the frontmatter verdict wins and the table is not a reference
+    assert [reference_id(document) for document in pool.hits] == ["kr-900"]
+    assert pool.flops == ()
+
+
+def test_every_call_reads_reference_bodies_and_records_which(tmp_path: Path) -> None:
+    """The model was citing reference ids from an INDEX table it had never read behind."""
+    # Given a batch
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = DomainAnswerClient()
+
+    # When it runs
+    batch = _generator(tmp_path, store, client).generate(workspace_id)
+
+    # Then every instruction carried the sampled bodies, not just the index
+    sampled = ["kr-900", "kr-901", "kr-902", "kr-904"]
+    for instruction in client.instructions():
+        for identifier in sampled:
+            assert f"[context 문서: references/KR/{identifier}.md]" in instruction
+        assert "hit 본문" in instruction
+        assert "flop 본문" in instruction
+
+    # And each candidate records the sample its own call read, for later attribution
+    for record in batch.records:
+        provenance = record.generation_provenance
+        assert provenance is not None
+        assert list(provenance.reference_ids) == sampled
+
+
+def test_a_call_that_fails_keeps_the_candidates_that_worked(tmp_path: Path) -> None:
+    """One call per candidate makes partial success the normal outcome, not an edge case."""
+    # Given a batch whose middle call never comes back
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = DomainAnswerClient(failures={"idol_fandom": ProviderError("provider_network", "boom")})
+
+    # When it runs
+    batch = _generator(tmp_path, store, client).generate(workspace_id)
+
+    # Then the two that worked are stored and the lost call is counted rather than hidden
+    assert len(batch.records) == 2
+    assert batch.failures == 1
+    assert len(store.list_candidates(workspace_id)) == 2
+    assert CandidatePersonaDomain.IDOL_FANDOM not in [
+        record.persona_domain for record in batch.records
+    ]
+
+
+def test_a_batch_whose_every_call_fails_still_raises(tmp_path: Path) -> None:
+    """Partial success is worth keeping; no success is the failure the caller asked about."""
+    # Given a batch where every call fails
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = DomainAnswerClient(
+        failures={domain: ProviderError("provider_network", "boom") for domain in _ASSIGNED}
+    )
+
+    # When / Then the typed failure reaches the caller and nothing is stored
+    with pytest.raises(CandidateProviderError):
+        _ = _generator(tmp_path, store, client).generate(workspace_id)
+    assert store.list_candidates(workspace_id) == ()
+
+
+def test_the_batch_puts_what_it_just_wrote_ahead_of_the_stored_history() -> None:
+    """In-batch topics have to reach the calls that have not built their instruction yet."""
+    # Given the stored history a batch starts from
+    written = WrittenTopics(
+        (CandidateHistoryEntry(persona_domain=CandidatePersonaDomain.PET_OWNER, topic="지난 주제"),)
+    )
+
+    # When this batch writes two candidates
+    written.add(CandidatePersonaDomain.SPORTS_FAN, "방금 만든 주제")
+    written.add(CandidatePersonaDomain.PARENTING, "그 다음 주제")
+
+    # Then the newest sits first, ahead of everything the store already had
+    assert [entry.topic for entry in written.entries()] == [
+        "그 다음 주제",
+        "방금 만든 주제",
+        "지난 주제",
+    ]
 
 
 def test_generated_history_is_read_back_newest_first_and_manual_rows_are_ignored(
@@ -1066,20 +1303,17 @@ def test_an_account_batch_is_only_shown_its_own_recent_topics(tmp_path: Path) ->
             )
         )
     account = store.get_account(workspace_id, MarketingAccountId(mine))
-    # An account fixes the domain for the whole batch, so the answer has to carry that one.
-    answer = json.dumps(
-        [_draft(f"주제 {index}", "office_worker") for index in range(3)], ensure_ascii=False
-    )
-    client = FakeModelClient([answer])
+    client = DomainAnswerClient()
 
     # When a batch is generated as that account
     _ = _generator(tmp_path, store, client).generate(workspace_id, account=account)
 
-    # Then the instruction lists this account's history and not the other's
-    instruction = client.histories[0][0]["content"]
-    assert isinstance(instruction, str)
-    assert "이서진의 지난 주제" in instruction
-    assert "김도현의 지난 주제" not in instruction
+    # Then every call was shown this account's history and never the other account's
+    instructions = client.instructions()
+    assert len(instructions) == 3
+    for instruction in instructions:
+        assert "이서진의 지난 주제" in instruction
+        assert "김도현의 지난 주제" not in instruction
 
 
 def test_the_persona_examples_are_marked_as_format_only(tmp_path: Path) -> None:

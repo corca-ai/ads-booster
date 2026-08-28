@@ -13,6 +13,7 @@ from ads_booster.candidate_generation.background_factory import ProductionCandid
 from ads_booster.candidate_generation.context_source import (
     REQUIRED_DOCUMENTS,
     CandidateContextSource,
+    CandidateReferenceSource,
     default_context_directory,
 )
 from ads_booster.candidate_generation.instruction import SYSTEM_INSTRUCTION
@@ -84,13 +85,12 @@ def build_script_candidate_generator(
     store: CandidateWriter,
 ) -> ScriptCandidateGenerator:
     """Compose the single-call generation engine from settings and the context directory."""
+    directory = default_context_directory(settings.workspace)
     return ScriptCandidateGenerator(
         store=store,
         models=ProductionCandidateModels(settings, instructions=SYSTEM_INSTRUCTION),
-        context_source=CandidateContextSource(
-            default_context_directory(settings.workspace),
-            required=REQUIRED_DOCUMENTS,
-        ),
+        context_source=CandidateContextSource(directory, required=REQUIRED_DOCUMENTS),
+        references=CandidateReferenceSource(directory),
         model=settings.model,
     )
 

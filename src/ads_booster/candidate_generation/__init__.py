@@ -2,7 +2,10 @@ from ads_booster.candidate_generation.context_source import (
     CONTEXT_DIR_ENVIRONMENT,
     REQUIRED_DOCUMENTS,
     CandidateContextSource,
+    CandidateReferenceSource,
+    ReferencePool,
     default_context_directory,
+    reference_id,
 )
 from ads_booster.candidate_generation.errors import (
     CandidateAuthRequiredError,
@@ -39,6 +42,7 @@ from ads_booster.candidate_generation.local_image_runner import (
     build_background_query,
 )
 from ads_booster.candidate_generation.models import (
+    CandidateBatch,
     CandidateContextBundle,
     CandidateDocument,
     CandidateDraft,
@@ -70,6 +74,7 @@ __all__ = [
     "CandidateAgent",
     "CandidateAgentPort",
     "CandidateAuthRequiredError",
+    "CandidateBatch",
     "CandidateContextBundle",
     "CandidateContextMissingError",
     "CandidateContextSource",
@@ -87,6 +92,7 @@ __all__ = [
     "CandidateImageStore",
     "CandidateModelSource",
     "CandidateProviderError",
+    "CandidateReferenceSource",
     "CandidateReviewDecision",
     "CandidateRunConflictError",
     "CandidateWorkflow",
@@ -95,6 +101,7 @@ __all__ = [
     "ImageReviewPort",
     "LocalCandidateImageRunner",
     "ProductionCandidateModels",
+    "ReferencePool",
     "ScriptCandidateGenerator",
     "assign_caption_forms",
     "assign_domains",
@@ -108,5 +115,6 @@ __all__ = [
     "default_context_directory",
     "default_domain_shuffle",
     "parse_candidate_drafts",
+    "reference_id",
     "strip_json_fence",
 ]

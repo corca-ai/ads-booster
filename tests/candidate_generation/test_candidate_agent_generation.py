@@ -180,7 +180,7 @@ def test_candidate_generation_runs_as_an_agent_tool_loop(tmp_path: Path) -> None
     generator = _generator(tmp_path, store, runs, model, "candidate-batch-run")
 
     # When automatic candidate generation executes
-    created = generator.generate(_workspace(store))
+    created = generator.generate(_workspace(store)).records
 
     # Then Core exposes only the typed Trace capability and durably completes the goal
     assert model.tool_names == [
@@ -234,7 +234,7 @@ def test_candidate_generation_replans_after_typed_tool_rejection(tmp_path: Path)
     generator = _generator(tmp_path, store, runs, model, "candidate-replan-run")
 
     # When the Agent executes the goal
-    created = generator.generate(_workspace(store))
+    created = generator.generate(_workspace(store)).records
 
     # Then typed tool feedback drives replanning without a fixed retry branch
     assert len(created) == 4
@@ -307,8 +307,10 @@ def test_the_connector_batch_records_its_agent_run_as_its_provenance(tmp_path: P
     )
 
     # When it stores its candidates
-    created = _generator(tmp_path, store, runs, model, "candidate-batch-run").generate(
-        _workspace(store)
+    created = (
+        _generator(tmp_path, store, runs, model, "candidate-batch-run")
+        .generate(_workspace(store))
+        .records
     )
 
     # Then each one names the run that produced it, so the durable conversation can be found

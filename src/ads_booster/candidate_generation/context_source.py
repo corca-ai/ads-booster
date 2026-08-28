@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Final
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Final
 
 from ads_booster.candidate_generation.errors import CandidateContextMissingError
 from ads_booster.candidate_generation.models import CandidateContextBundle, CandidateDocument
 from ads_booster.default_assets import default_candidate_context_path
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 CONTEXT_DIR_ENVIRONMENT: Final = "TRACE_AGENT_CONTEXT_DIR"
 CONTEXT_DIRECTORY_NAME: Final = "context"
@@ -81,3 +84,97 @@ def _read(path: Path) -> str | None:
     except _READ_ERRORS:
         return None
     return text if text.strip() else None
+
+
+REFERENCE_DIRECTORY: Final = "references/KR"
+_HIT_SAMPLE: Final = 3
+_FLOP_SAMPLE: Final = 1
+_OUTCOME_HIT: Final = "hit"
+_OUTCOME_FLOP: Final = "flop"
+_FRONTMATTER_FENCE: Final = "---"
+_OUTCOME_FIELD: Final = "outcome:"
+
+
+@dataclass(frozen=True, slots=True)
+class ReferencePool:
+    """Every reference body this country has, split by the outcome its frontmatter records.
+
+    Read once per batch and sampled per call. The corpus is 41 files: sending all of them
+    would dominate the instruction, and sending none — which is what happened until now —
+    left the model citing reference ids from an INDEX table it had never seen the writing
+    behind.
+    """
+
+    hits: tuple[CandidateDocument, ...]
+    flops: tuple[CandidateDocument, ...]
+
+    def sample(
+        self,
+        choose: Callable[[Sequence[CandidateDocument], int], Sequence[CandidateDocument]],
+        *,
+        hits: int = _HIT_SAMPLE,
+        flops: int = _FLOP_SAMPLE,
+    ) -> tuple[CandidateDocument, ...]:
+        """Draw the reference bodies one generation call reads.
+
+        Flops are drawn alongside hits on purpose: what did not work is the half of the
+        corpus that says where the line is, and a batch shown only winners writes pastiche
+        of them. Asking for more than the pool holds takes the pool rather than failing —
+        a country with two flops still has to be able to generate.
+        """
+        drawn = [
+            *choose(self.hits, min(hits, len(self.hits))),
+            *choose(self.flops, min(flops, len(self.flops))),
+        ]
+        return tuple(drawn)
+
+
+def reference_id(document: CandidateDocument) -> str:
+    """The corpus id of one reference body, which is its filename without the suffix."""
+    return PurePosixPath(document.relative_path).stem
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateReferenceSource:
+    """Loads the reference bodies under one country folder, classified by outcome."""
+
+    directory: Path
+    relative_directory: str = REFERENCE_DIRECTORY
+
+    def load(self) -> ReferencePool:
+        root = self.directory / self.relative_directory
+        hits: list[CandidateDocument] = []
+        flops: list[CandidateDocument] = []
+        if not root.is_dir():
+            return ReferencePool(hits=(), flops=())
+        for path in sorted(root.glob(_MARKDOWN_PATTERN)):
+            text = None if path.is_symlink() or not path.is_file() else _read(path)
+            if text is None:
+                continue
+            document = CandidateDocument(
+                relative_path=path.relative_to(self.directory).as_posix(),
+                text=text,
+            )
+            outcome = _outcome(text)
+            if outcome == _OUTCOME_HIT:
+                hits.append(document)
+            elif outcome == _OUTCOME_FLOP:
+                flops.append(document)
+        return ReferencePool(hits=tuple(hits), flops=tuple(flops))
+
+
+def _outcome(text: str) -> str | None:
+    """Read `outcome` out of the leading frontmatter block, or None when there is none.
+
+    Only the frontmatter is scanned: the body of a reference quotes other posts and their
+    results, and a line in the prose is not this document's own verdict.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != _FRONTMATTER_FENCE:
+        return None
+    for line in lines[1:]:
+        if line.strip() == _FRONTMATTER_FENCE:
+            return None
+        if line.startswith(_OUTCOME_FIELD):
+            return line[len(_OUTCOME_FIELD) :].strip() or None
+    return None
