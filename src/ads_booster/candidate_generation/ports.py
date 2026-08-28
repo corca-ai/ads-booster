@@ -15,11 +15,15 @@ if TYPE_CHECKING:
 
     from ads_booster.agent.session import ModelClient
     from ads_booster.candidate_generation.account_proposal import AccountProposal
+    from ads_booster.candidate_generation.draft_engine import CandidateDraftBatch
     from ads_booster.candidate_generation.models import CandidateBatch
     from ads_booster.workspace import (
+        CandidateAccountBrief,
         CandidateCreate,
+        CandidateHistoryEntry,
         CandidateId,
         CandidateImageAttachment,
+        CandidatePersonaDomain,
         CandidateRecord,
         MarketingAccountRecord,
         WorkspaceId,
@@ -28,6 +32,26 @@ if TYPE_CHECKING:
 
 class CandidateModelSource(Protocol):
     def open(self) -> AbstractContextManager[ModelClient]: ...
+
+
+class CandidateDraftPort(Protocol):
+    """Produces candidate drafts and records what produced them, storing nothing.
+
+    Stated here so the Mac worker can run the generation without depending on the class that
+    implements it — the same reason every other generation surface has a port. The caller
+    decides where the drafts go: the local surface writes them to its workspace, the worker
+    hands them back to the hosted control plane.
+    """
+
+    def draft(
+        self,
+        *,
+        corpus_country: str,
+        draft_country: str,
+        domains: tuple[CandidatePersonaDomain, ...],
+        brief: CandidateAccountBrief | None = None,
+        history: tuple[CandidateHistoryEntry, ...] = (),
+    ) -> CandidateDraftBatch: ...
 
 
 class CandidateCreator(Protocol):

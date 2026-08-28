@@ -17,6 +17,7 @@ from ads_booster.candidate_generation.context_source import (
     CandidateReferenceSource,
     default_context_directory,
 )
+from ads_booster.candidate_generation.draft_engine import CandidateDraftEngine
 from ads_booster.candidate_generation.instruction import SYSTEM_INSTRUCTION
 from ads_booster.candidate_generation.kernel import (
     CandidateGenerator,
@@ -102,6 +103,23 @@ def build_script_candidate_generator(
     directory = default_context_directory(settings.workspace)
     return ScriptCandidateGenerator(
         store=store,
+        models=ProductionCandidateModels(settings, instructions=SYSTEM_INSTRUCTION),
+        context_source=CandidateContextSource(directory, required=REQUIRED_DOCUMENTS),
+        references=CandidateReferenceSource(directory),
+        model=settings.model,
+    )
+
+
+def build_worker_draft_engine(settings: AgentSettings) -> CandidateDraftEngine:
+    """Compose the draft half of the engine for a host with no workspace to write into.
+
+    This is what the Mac worker runs for the hosted control plane: the same context
+    directory, the same instruction and the same model as
+    `build_script_candidate_generator`, minus the store — the rows for a hosted batch are
+    written in D1 by the Worker that published the job.
+    """
+    directory = default_context_directory(settings.workspace)
+    return CandidateDraftEngine(
         models=ProductionCandidateModels(settings, instructions=SYSTEM_INSTRUCTION),
         context_source=CandidateContextSource(directory, required=REQUIRED_DOCUMENTS),
         references=CandidateReferenceSource(directory),

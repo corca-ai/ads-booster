@@ -147,8 +147,7 @@ class CodexAppiumWallpaperExportAdapter:
                 raise CaptureAdapterError(
                     code=ErrorCode.SCENE_CAPTURE_FAILED,
                     message=(
-                        "Codex Appium job did not complete: "
-                        f"{result.error_code or result.status}"
+                        f"Codex Appium job did not complete: {result.error_code or result.status}"
                     ),
                 )
             return self.collector.collect(

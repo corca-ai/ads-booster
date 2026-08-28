@@ -1812,7 +1812,7 @@ const testUnregisteredMacDisablesHostedImageCapture = async () => {
     if (path === "/api/workers/status") {
       return response(200, {
         status: "not_configured",
-        counts: { online: 0, busy: 0, draining: 0, registered: 0 },
+        counts: { online: 0, busy: 0, draining: 0, registered: 0, generation_ready: 0 },
         workers: [],
       });
     }
@@ -1820,11 +1820,68 @@ const testUnregisteredMacDisablesHostedImageCapture = async () => {
   });
 
   assert.equal(fixture.workerTitle.textContent, "Mac worker 미등록");
+  // Captions are a Mac job now too, so the one sentence on this card has to say both.
   assert.equal(
     fixture.workerCopy.textContent,
-    "Mac worker를 등록하기 전에는 이미지 캡처를 시작할 수 없습니다.",
+    "Mac worker를 등록하기 전에는 캡션 생성과 이미지 캡처를 시작할 수 없습니다.",
   );
   assert.doesNotMatch(fixture.workerCopy.textContent, /Queue/u);
+};
+
+const testAnOutdatedMacSaysSoBeforeTheButtonIsPressed = async () => {
+  // A Mac from before caption generation is online and ready — for images. Saying "캡션·이미지
+  // 작업을 받을 수 있습니다" there sends the reader to press a button that answers 503.
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path === "/api/accounts") return response(200, []);
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) return response(200, { tasks: [] });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, {
+        status: "ready",
+        counts: { online: 1, ready: 1, busy: 0, draining: 0, registered: 1, generation_ready: 0 },
+        workers: [{ display_name: "Studio Mac", pool: "appium", status: "ready" }],
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.workerTitle.textContent, "Mac worker 업데이트 필요");
+  assert.match(fixture.workerCopy.textContent, /캡션 생성을 하려면 Mac 워커를 업데이트해 주세요/u);
+};
+
+const testAnUpdatedMacSaysItTakesBothKindsOfWork = async () => {
+  const fixture = makeLiveDocument();
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path === "/api/accounts") return response(200, []);
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) return response(200, { tasks: [] });
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, {
+        status: "ready",
+        counts: { online: 1, ready: 1, busy: 0, draining: 0, registered: 1, generation_ready: 1 },
+        workers: [{ display_name: "Studio Mac", pool: "appium", status: "ready" }],
+      });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  assert.equal(fixture.workerTitle.textContent, "Mac 작업 가능");
+  assert.match(fixture.workerCopy.textContent, /Studio Mac에서 캡션·이미지 작업을 받을 수 있습니다/u);
 };
 
 const testMarkupUsesTheAgreedTerminology = async () => {
@@ -1982,6 +2039,161 @@ const testOneAccountGeneratingLeavesEveryOtherAccountFree = async () => {
   assert.equal(fixture.autogenButton.disabled, false);
   assert.equal(fixture.autogenButton.textContent, label);
   assert.equal(fixture.timers.pending.size, 0);
+};
+
+// The fake clock never fires on its own, so a poll is stepped one tick at a time and the
+// screen in between is exactly what a person would be looking at.
+const fireLatestTimer = (fixture) => {
+  const entry = [...fixture.timers.pending.entries()].at(-1);
+  assert.ok(entry, "expected a pending timer");
+  const [id, callback] = entry;
+  fixture.timers.pending.delete(id);
+  callback();
+};
+
+const testHostedGenerationWaitsForTheMacWorkerThatWritesIt = async () => {
+  // The hosted surface no longer writes captions in the request: it publishes the batch and
+  // answers 202, and the candidates land when a Mac worker calls back. So the button has to
+  // stay locked through a wait it did not used to have, and let go when the batch is done.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [];
+  let taskState = "queued";
+  let published = false;
+  let stored = [];
+  const calls = [];
+  await loadLive(fixture, async (path, options = {}) => {
+    calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) {
+      return response(200, {
+        tasks: published
+          ? [{ task_id: "task-1", state: taskState, created: 4, failures: 0, failure_code: null }]
+          : [],
+      });
+    }
+    if (path.startsWith("/api/candidates/generate")) {
+      published = true;
+      return response(202, { task_id: "task-1", state: "queued", count: 4 });
+    }
+    if (path.startsWith("/api/candidates")) return response(200, stored);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, { status: "ready", counts: { online: 1, busy: 1, draining: 0, registered: 1 }, workers: [] });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  const label = fixture.autogenButton.textContent;
+  const running = fixture.autogenButton.click();
+  await nextTurn();
+  // The receipt is not a batch, so the label says who is actually writing it.
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "Mac 워커가 만드는 중… 0초 (보통 1~3분)");
+
+  // One poll that finds the batch still queued keeps waiting rather than clearing.
+  fireLatestTimer(fixture);
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, true);
+
+  // And the poll that finds it finished reloads the list and reports what was written.
+  taskState = "succeeded";
+  stored = [candidate({}), candidate({ candidate_id: "candidate-2", topic: "두 번째 주제" })];
+  fireLatestTimer(fixture);
+  await running;
+  await nextTurn();
+  assert.equal(fixture.notice.textContent, "후보 4개가 등록되었습니다.");
+  assert.equal(fixture.candidateList.children.length, 2);
+  assert.equal(fixture.autogenButton.disabled, false);
+  assert.equal(fixture.autogenButton.textContent, label);
+  assert.ok(calls.some(([path, method]) => path.startsWith("/api/candidates/generate") && method === "POST"));
+};
+
+const testHostedGenerationFailureNamesTheMacThatCouldNotRunIt = async () => {
+  // A worker Mac with no Codex login fails every batch until somebody logs in on that Mac.
+  // "요청에 실패했습니다" would send the reader to the browser; the fix is on the Mac.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [];
+  let taskState = "queued";
+  let published = false;
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) {
+      return response(200, {
+        tasks: published
+          ? [{
+            task_id: "task-1",
+            state: taskState,
+            created: 0,
+            failures: 0,
+            failure_code: "hosted_generation_ai_login_required",
+          }]
+          : [],
+      });
+    }
+    if (path.startsWith("/api/candidates/generate")) {
+      published = true;
+      return response(202, { task_id: "task-1", state: "queued", count: 4 });
+    }
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, { status: "ready", counts: { online: 1, busy: 0, draining: 0, registered: 1 }, workers: [] });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  const running = fixture.autogenButton.click();
+  await nextTurn();
+  taskState = "failed";
+  fireLatestTimer(fixture);
+  await running;
+  await nextTurn();
+  assert.equal(fixture.autogenFeedback.hidden, false);
+  assert.equal(
+    fixture.autogenFeedback.textContent,
+    "워커 Mac에 AI 로그인이 없습니다. 그 Mac에서 Codex 로그인을 먼저 끝내 주세요.",
+  );
+  assert.equal(fixture.autogenButton.disabled, false);
+};
+
+const testAHostedBatchAlreadyRunningIsAdoptedOnReload = async () => {
+  // A batch takes minutes and outlives the tab that asked for it. A reload used to show an
+  // idle button while a Mac was halfway through, and pressing it met a 409.
+  const fixture = makeLiveDocument();
+  fixture.accounts = [];
+  await loadLive(fixture, async (path) => {
+    if (path === "/api/auth/session") return _hostedSession();
+    if (path.startsWith("/api/personas")) return response(200, []);
+    if (path === "/api/context-countries") return response(200, []);
+    if (path === "/api/context-profiles") return response(200, []);
+    if (path.startsWith("/api/candidates/generation-tasks")) {
+      return response(200, {
+        tasks: [{ task_id: "task-1", state: "queued", created: 0, failures: 0, failure_code: null }],
+      });
+    }
+    if (path.startsWith("/api/candidates")) return response(200, []);
+    if (path === "/api/feedback-summary") {
+      return response(200, { rejected_reviews: 0, top_tags: [], rule_candidates: [], active_rules: [] });
+    }
+    if (path === "/api/workers/status") {
+      return response(200, { status: "ready", counts: { online: 1, busy: 1, draining: 0, registered: 1 }, workers: [] });
+    }
+    throw new Error(`unexpected path: ${path}`);
+  });
+
+  await nextTurn();
+  assert.equal(fixture.autogenButton.disabled, true);
+  assert.equal(fixture.autogenButton.textContent, "Mac 워커가 만드는 중… 0초 (보통 1~3분)");
 };
 
 const testTheApprovalStagesAreViewedOneAtATime = async () => {
@@ -2296,7 +2508,9 @@ const testHostedCandidateRequestsCarryTheCountryAndThePersonaSeparately = async 
   await openCountry(fixture, 0);
   await fixture.accountGrid.children[0].children.at(-1).click();
 
-  const inside = calls.filter((call) => call.path.startsWith("/api/candidates")).at(-1);
+  const inside = calls
+    .filter((call) => call.path === "/api/candidates" || call.path.startsWith("/api/candidates?"))
+    .at(-1);
   // The account parameter still names the country's operating account, which is what every
   // account lookup on that route resolves.
   assert.equal(inside.account, "trace_demo_kr");
@@ -2304,6 +2518,11 @@ const testHostedCandidateRequestsCarryTheCountryAndThePersonaSeparately = async 
   assert.equal(inside.persona, "persona-1");
   // The hosted list no longer puts the persona in the account query either.
   assert.equal(inside.path, "/api/candidates");
+  // The published-batch probe is scoped the same way, or a persona would adopt the wait for
+  // a batch another persona under the same country asked for.
+  const probe = calls.filter((call) => call.path.startsWith("/api/candidates/generation-tasks")).at(-1);
+  assert.equal(probe.account, "trace_demo_kr");
+  assert.equal(probe.persona, "persona-1");
 };
 
 const testTheLocalSurfaceStillReadsPersonasFromAccounts = async () => {
@@ -2505,6 +2724,10 @@ await testMacConnectionsAreManagedWithAnEphemeralControlToken();
 passed += 1;
 await testUnregisteredMacDisablesHostedImageCapture();
 passed += 1;
+await testAnOutdatedMacSaysSoBeforeTheButtonIsPressed();
+passed += 1;
+await testAnUpdatedMacSaysItTakesBothKindsOfWork();
+passed += 1;
 await testMarkupUsesTheAgreedTerminology();
 passed += 1;
 await testGenerationProvenanceIsVisibleOnEveryCandidate();
@@ -2534,6 +2757,12 @@ passed += 1;
 await testTheFirstAccountCreatesItsCountry();
 passed += 1;
 await testOneAccountGeneratingLeavesEveryOtherAccountFree();
+passed += 1;
+await testHostedGenerationWaitsForTheMacWorkerThatWritesIt();
+passed += 1;
+await testHostedGenerationFailureNamesTheMacThatCouldNotRunIt();
+passed += 1;
+await testAHostedBatchAlreadyRunningIsAdoptedOnReload();
 passed += 1;
 await testTheApprovalStagesAreViewedOneAtATime();
 passed += 1;

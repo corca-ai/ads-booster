@@ -29,10 +29,8 @@ from ads_booster.candidate_generation import (
     reference_directory,
     reference_id,
 )
-from ads_booster.candidate_generation.script_generator import (
-    DEFAULT_CANDIDATE_COUNT,
-    WrittenTopics,
-)
+from ads_booster.candidate_generation.draft_engine import WrittenTopics
+from ads_booster.candidate_generation.script_generator import DEFAULT_CANDIDATE_COUNT
 from ads_booster.providers.codex import ModelTurn
 from ads_booster.providers.errors import ProviderError
 from ads_booster.workspace import (
@@ -1157,6 +1155,66 @@ def test_an_account_batch_reads_its_own_country_corpus(tmp_path: Path) -> None:
     with pytest.raises(CandidateReferencesMissingError):
         _ = generator.generate(workspace_id, account=japanese)
     assert store.list_candidates(workspace_id) == ()
+
+
+def test_the_engine_drafts_without_a_workspace_to_write_into(tmp_path: Path) -> None:
+    """The Mac worker runs this half for the hosted control plane, which owns the rows.
+
+    Splitting production from storage is what lets one generator serve both surfaces: the
+    same instruction, the same reference sample, the same forms, and nothing written here.
+    """
+    # Given the generator's engine, addressed on its own
+    store = SqliteWorkspaceStore(tmp_path)
+    workspace_id = _workspace(store)
+    client = DomainAnswerClient()
+    engine = _generator(tmp_path, store, client).engine
+
+    # When one account's batch is drafted
+    batch = engine.draft(
+        corpus_country="KR",
+        draft_country="KR",
+        domains=(CandidatePersonaDomain.SPORTS_FAN,) * 2,
+        brief=_account(),
+    )
+
+    # Then the drafts and their provenance come back, and the workspace is untouched
+    assert len(batch.drafts) == 2
+    assert batch.failures == 0
+    assert store.list_candidates(workspace_id) == ()
+    for generated in batch.drafts:
+        assert generated.draft.persona_domain is CandidatePersonaDomain.SPORTS_FAN
+        assert generated.provenance.model == "gpt-5.5"
+        # The reference sample is per call, which is the whole reason a batch is many calls.
+        assert generated.provenance.reference_ids
+        assert generated.caption_form in set(CaptionForm)
+    # And the account block reached every instruction, so both candidates are that person.
+    for instruction in client.instructions():
+        assert "persona_domain 은 sports_fan 으로 고정합니다." in instruction
+
+
+def test_the_engine_avoids_the_history_its_caller_hands_it(tmp_path: Path) -> None:
+    """The recent-topic guard used to be read from the store the engine no longer has."""
+    # Given an engine drafting for an account, with a history supplied rather than queried
+    store = SqliteWorkspaceStore(tmp_path)
+    _ = _workspace(store)
+    client = DomainAnswerClient()
+    engine = _generator(tmp_path, store, client).engine
+
+    # When it runs
+    _ = engine.draft(
+        corpus_country="KR",
+        draft_country="KR",
+        domains=(CandidatePersonaDomain.SPORTS_FAN,),
+        brief=_account(),
+        history=(
+            CandidateHistoryEntry(
+                persona_domain=CandidatePersonaDomain.SPORTS_FAN, topic="지난 주제"
+            ),
+        ),
+    )
+
+    # Then the supplied topic is what the instruction was told not to repeat
+    assert any("지난 주제" in instruction for instruction in client.instructions())
 
 
 def test_every_call_reads_reference_bodies_and_records_which(tmp_path: Path) -> None:

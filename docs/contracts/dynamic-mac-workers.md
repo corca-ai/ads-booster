@@ -29,7 +29,12 @@ Appium PNG callback accepted by the current R2 boundary.
   execution barrier.
 - A worker-broker client and `trace-marketing worker` CLI for enrollment, doctor, foreground run,
   status, and macOS LaunchAgent lifecycle.
-- A sanitized public worker-status endpoint and workspace status surface.
+- A sanitized public worker-status endpoint and workspace status surface, including how many
+  online Macs can run caption generation.
+- Task kinds. A worker advertises the job kinds it can execute in its heartbeat capabilities
+  (`task_kinds`, comma-joined because non-scalar capability values are flattened to null), and the
+  claim only offers it tasks of those kinds. A worker that advertises nothing is read as
+  capture-only, which is what every Mac enrolled before caption generation could do.
 - A protected Mac connection manager in the hosted workspace for inventory, refresh, active/draining
   state, explicit two-step revocation, and one-time enrollment code plus target-Mac commands.
 - Legacy direct Queue pull remains available only for non-hosted simulation compatibility and
@@ -103,6 +108,8 @@ Appium PNG callback accepted by the current R2 boundary.
 - The worker does not persist Codex prompts, responses, tokens, API keys, or auth-cache files. Only
   validated plans and execution outcomes enter request-scoped durable state.
 - Offline and degraded workers receive no new task.
+- A worker is never leased a task kind it did not advertise. A Mac whose Python predates a job
+  kind leaves those tasks queued rather than taking and failing them.
 - A stale or revoked worker cannot complete a lease it no longer owns.
 - A late duplicate callback cannot change an already verified candidate result.
 - Fresh-installed CLI behavior, not a worktree-only invocation, is the product acceptance surface.
@@ -114,6 +121,9 @@ Appium PNG callback accepted by the current R2 boundary.
   unauthenticated Mac stays degraded and cannot claim a task.
 - One worker can be drained or revoked without changing another worker's credential.
 - Two workers racing for one task produce exactly one lease owner.
+- With only pre-`task_kinds` Macs online, a caption batch is refused at the route with an update
+  instruction rather than published, and the status card says so before the button is pressed. An
+  image capture is unaffected.
 - An expired lease that has not crossed the execution barrier returns to the claimable queue and can
   be completed by a different healthy worker.
 - After `execution_started_at`, expiry never assigns the task to another Mac; explicit two-step

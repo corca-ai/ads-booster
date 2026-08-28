@@ -12,6 +12,12 @@ from ads_booster.candidate_generation.context_source import (
     reference_directory,
     reference_id,
 )
+from ads_booster.candidate_generation.draft_engine import (
+    CandidateDraftBatch,
+    CandidateDraftEngine,
+    GeneratedCandidate,
+    WrittenTopics,
+)
 from ads_booster.candidate_generation.errors import (
     CandidateAuthRequiredError,
     CandidateContextMissingError,
@@ -29,6 +35,7 @@ from ads_booster.candidate_generation.factory import (
     build_candidate_image_runner,
     build_local_candidate_image_runner,
     build_script_candidate_generator,
+    build_worker_draft_engine,
 )
 from ads_booster.candidate_generation.instruction import (
     SYSTEM_INSTRUCTION,
@@ -58,6 +65,7 @@ from ads_booster.candidate_generation.parsing import parse_candidate_drafts, str
 from ads_booster.candidate_generation.ports import (
     AccountProposalPort,
     CandidateCreator,
+    CandidateDraftPort,
     CandidateGeneratorPort,
     CandidateImageRunnerPort,
     CandidateImageStore,
@@ -92,6 +100,9 @@ __all__ = [
     "CandidateCreator",
     "CandidateDocument",
     "CandidateDraft",
+    "CandidateDraftBatch",
+    "CandidateDraftEngine",
+    "CandidateDraftPort",
     "CandidateFormatError",
     "CandidateGenerationError",
     "CandidateGenerator",
@@ -110,11 +121,13 @@ __all__ = [
     "CandidateWorkflow",
     "CandidateWriter",
     "CaptionForm",
+    "GeneratedCandidate",
     "ImageReviewPort",
     "LocalCandidateImageRunner",
     "ProductionCandidateModels",
     "ReferencePool",
     "ScriptCandidateGenerator",
+    "WrittenTopics",
     "assign_caption_forms",
     "assign_domains",
     "build_account_proposal_generator",
@@ -125,6 +138,7 @@ __all__ = [
     "build_local_candidate_image_runner",
     "build_retry_instruction",
     "build_script_candidate_generator",
+    "build_worker_draft_engine",
     "default_context_directory",
     "default_domain_shuffle",
     "parse_candidate_drafts",

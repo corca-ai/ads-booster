@@ -16,7 +16,9 @@ is intentionally not implemented.
 - Mac worker CLI: `trace-marketing worker ...`
 - Native capture: Appium + XCUITest + the `com.corca.Trace` debug build
 - Planning model on a Mac: the official `codex` CLI using that macOS user's existing login
-- Hosted candidate model: Cloudflare Workers AI, configured by `WORKSPACE_AI_MODEL`
+- Hosted candidate model: the Mac worker's `codex` CLI, running the same
+  `candidate_generation` engine the local surface runs. Cloudflare Workers AI still backs
+  persona proposals and is configured by `WORKSPACE_AI_MODEL`.
 
 The former `trace-agent` / `trace-ads` custom model shell is no longer installed. The Mac pipeline
 does not use its OAuth store, Responses client, conversation memory, or tool loop.
@@ -24,8 +26,10 @@ does not use its OAuth store, Responses client, conversation memory, or tool loo
 ## Pipeline
 
 1. A teammate opens `workspace.borca.ai`, selects an account/country/profile, and generates or edits
-   candidates. Generated batches are structurally validated and record prompt/model/feedback-rule
-   provenance. Repeated rating-1–2 rejections from three distinct revisions in the same review stage
+   candidates. Generation publishes a `generate_candidates` task for a Mac worker to run and the
+   browser waits for it; with no worker registered, the request is refused rather than answered by a
+   second generator. Generated batches are structurally validated and record the context documents
+   read, the reference sample drawn, the assigned domain and caption form, and the model. Repeated rating-1–2 rejections from three distinct revisions in the same review stage
    activate only server-owned caption, concept, design, persona, or policy instructions; reviewer
    notes are never injected automatically. A rejected image's stage-valid tag instructions also
    guide that same candidate's immediate retry.
