@@ -27,7 +27,13 @@ if TYPE_CHECKING:
 _JSON_ROWS: TypeAdapter[list[JsonObject]] = TypeAdapter(list[JsonObject])
 _BRAVE_ENDPOINT: Final = "https://api.search.brave.com/res/v1/images/search"
 _HTTP_OK: Final = 200
-_MAX_RESULTS: Final = 10
+# Twenty rather than ten because the resolution gate downstream is the real limit: a page of
+# news photography is all 600x400, so ten rows routinely left nothing for the judge to look
+# at. Asking for more costs one request either way.
+_MAX_RESULTS: Final = 20
+# Open-web image search returns article photography by default, which is landscape and small.
+# A lock screen needs the opposite, and this is the one filter the provider itself can apply.
+_DDGS_SIZE: Final = "Large"
 _CODE_INVALID_ARGUMENTS: Final = "invalid_arguments"
 _CODE_HTTP: Final = "image_search_http"
 _CODE_NETWORK: Final = "image_search_network"
@@ -61,6 +67,8 @@ class DdgsImageSearchProvider:
                 query,
                 "--max_results",
                 str(count),
+                "--size",
+                _DDGS_SIZE,
                 "--output",
                 str(output_path),
                 "--no-color",
@@ -150,7 +158,7 @@ def create_image_search_provider(
 
 def _validated_count(max_results: int) -> int:
     if not 1 <= max_results <= _MAX_RESULTS:
-        message = "max_results must be between 1 and 10"
+        message = f"max_results must be between 1 and {_MAX_RESULTS}"
         raise ImageSearchError(_CODE_INVALID_ARGUMENTS, message)
     return max_results
 

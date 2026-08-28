@@ -32,7 +32,10 @@ if TYPE_CHECKING:
 _HTTP_OK: Final = 200
 _MINIMUM_EDGE: Final = 800
 _MAXIMUM_BYTES: Final = 20_000_000
-_MAX_RESULTS: Final = 8
+# Ask for twenty and let the physical checks do the narrowing. Eight rows of open-web image
+# search is a page of news photography — 600x400 landscape — and the 800px gate below threw
+# away all of it, so the judge was handed nothing to choose between.
+_MAX_RESULTS: Final = 20
 _MAX_COLLECTED: Final = 6
 _MAX_PER_HOST: Final = 2
 # Stock libraries only ever serve watermarked previews at this size, and the judge rejects
