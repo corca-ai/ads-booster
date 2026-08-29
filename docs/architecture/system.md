@@ -27,14 +27,17 @@ flowchart LR
 
 ## Request-time capture
 
-1. The workspace creates a `hosted_workspace_capture_v1` task from an approved candidate.
-2. A ready Mac claims the D1 lease and inserts the task in its local inbox before remote ack.
-3. Safe preparation resolves a Simulator, validates country locale/time zone, prepares a
+1. The workspace may create a `hosted_workspace_generation_v1` task for automatic candidate drafts.
+   A compatible Mac executes exactly one schema-constrained official Codex CLI turn and returns its
+   result through the same durable callback path; it has no Agent loop or plan object.
+2. The workspace creates a `hosted_workspace_capture_v1` task from an approved candidate.
+3. A ready Mac claims the D1 lease and inserts the task in its local inbox before remote ack.
+4. Safe capture preparation resolves a Simulator, validates country locale/time zone, prepares a
    provenance- and digest-verified `background_intent` image, creates a mode-0700 request root,
    and checks readiness. These failures have not started Appium.
-4. Local SQLite records the immutable admission digest/nonce. The worker then records the D1
+5. Local SQLite records the immutable admission digest/nonce. The worker then records the D1
    barrier. If it cannot, it does not start native work.
-5. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
+6. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
    user/project configuration disabled and the `trace-appium` permission profile. Commands can use
    the request workspace and the allowlisted loopback Appium endpoint, but cannot read home secrets
    or reach external hosts. The contract supplies context, prepared background, device/UDID, Trace
@@ -44,9 +47,9 @@ flowchart LR
    the Trace editor identifier and every requested title in the same Appium session, clears any
    earlier App Group export, and acknowledges Save only after that boundary. Collection therefore
    cannot accept a pre-Save lifecycle export carrying the same request binding.
-6. The worker independently requires the PNG and manifest SHA-256, request digest, nonce, bundle,
+7. The worker independently requires the PNG and manifest SHA-256, request digest, nonce, bundle,
    UDID, dimensions, native export binding, and `native_appium` provenance to agree.
-7. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
+8. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1 and opens human image review.
 
 The v2 contract fixes non-secret input and completion bindings, not selectors or UI procedures.

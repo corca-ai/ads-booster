@@ -515,3 +515,24 @@ def test_doctor_boots_the_selected_simulator_before_checking_trace(
         "simulator-1",
         "-b",
     ) in commands
+
+
+def test_the_worker_advertises_the_job_kinds_it_can_actually_run() -> None:
+    """The control plane leases by this, so what it says has to be what this build does.
+
+    A worker that says nothing is read as capture-only, which is exactly what a Mac enrolled
+    before caption generation existed can do. During the minutes between deploying the Worker
+    and that Mac updating itself, that default is what keeps a caption batch away from it.
+    """
+    # Given one worker's heartbeat
+    report = MacWorkerDoctorReport(ready=True, summary="ready", checks={}, version="0.3.12")
+
+    # When the control plane reads its capabilities
+    capabilities = report.heartbeat()["capabilities"]
+
+    # Then the advertisement is a scalar the control plane will not flatten to null, and it
+    # names both jobs this build routes.
+    assert isinstance(capabilities, dict)
+    assert capabilities["task_kinds"] == "capture,generate_candidates"
+    assert capabilities["native_appium"] is True
+    assert all(isinstance(value, str | bool) for value in capabilities.values())

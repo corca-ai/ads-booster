@@ -13,10 +13,14 @@ if TYPE_CHECKING:
 
 from pydantic import TypeAdapter, ValidationError
 
+from ads_booster.marketing.models import TaskKind
 from ads_booster.providers.codex_cli import resolve_codex_executable
 from ads_booster.transport.json_types import JsonObject
 
 _PACKAGE_NAME: Final = "trace-appium-capture"
+# The job kinds this build of the worker can run. `TaskKind` is the full vocabulary the
+# control plane knows; this is the subset a Mac worker actually executes today.
+TASK_KINDS: Final = (TaskKind.CAPTURE.value, TaskKind.GENERATE_CANDIDATES.value)
 _TRACE_BUNDLE_ID: Final = "com.corca.Trace"
 _RUNTIME_PART_COUNT: Final = 2
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -32,7 +36,16 @@ class MacWorkerDoctorReport:
     def heartbeat(self) -> JsonObject:
         return {
             "version": self.version,
-            "capabilities": {"native_appium": True, "hosted_workspace_capture_v1": True},
+            "capabilities": {
+                "native_appium": True,
+                "hosted_workspace_capture_v1": True,
+                # Which job kinds this worker can actually execute, so the control plane does
+                # not lease a caption batch to a Mac whose Python predates it. A comma-joined
+                # string rather than a list because the control plane flattens every non-scalar
+                # capability value to null; a worker that says nothing is read as capture-only,
+                # which is what a worker from before this field could do.
+                "task_kinds": ",".join(TASK_KINDS),
+            },
             "doctor": {"ready": self.ready, "summary": self.summary},
         }
 

@@ -8,13 +8,14 @@ import subprocess
 import tempfile
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 _DEFAULT_TIMEOUT_SECONDS: Final = 180.0
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _APPIUM_RECEIPT_NAME: Final = "codex-appium-invocation.json"
+_GENERATION_RECEIPT_NAME: Final = "codex-generation-invocation.json"
 _APPIUM_READY_NAME: Final = "codex-appium-ready.json"
 _APPIUM_READY_VERIFIED_NAME: Final = "codex-appium-ready-verified.json"
 _APPIUM_SAVED_NAME: Final = "codex-appium-saved.json"
@@ -29,6 +31,8 @@ _APPIUM_COLLECTED_NAME: Final = "codex-appium-collected.json"
 _APPIUM_PROFILE: Final = "trace-appium"
 _APPIUM_ALREADY_INVOKED: Final = "codex_appium_job_already_invoked"
 _APPIUM_RECEIPT_UNAVAILABLE: Final = "codex_appium_job_receipt_unavailable"
+_GENERATION_ALREADY_INVOKED: Final = "codex_generation_job_already_invoked"
+_GENERATION_RECEIPT_UNAVAILABLE: Final = "codex_generation_job_receipt_unavailable"
 _APPIUM_MARKER_LIMIT_BYTES: Final = 64 * 1024
 _APPIUM_MARKER_POLL_SECONDS: Final = 0.01
 _PRIVATE_FILE_MODE: Final = 0o600
@@ -43,6 +47,27 @@ _APPIUM_CONFIG: Final = (
     "permissions.trace-appium.network.allow_local_binding=false",
     'permissions.trace-appium.network.domains={"127.0.0.1"="allow",localhost="allow","::1"="allow"}',
 )
+
+
+def _strict_output_schema(schema: JsonObject) -> JsonObject:
+    strict_schema = deepcopy(schema)
+    _require_schema_properties(strict_schema)
+    return strict_schema
+
+
+def _require_schema_properties(value: JsonValue) -> None:
+    match value:
+        case dict() as item:
+            properties = item.get("properties")
+            if isinstance(properties, dict):
+                item["required"] = list(properties)
+            for nested in item.values():
+                _require_schema_properties(nested)
+        case list() as items:
+            for item in items:
+                _require_schema_properties(item)
+        case _:
+            return
 
 
 def _write_private_json(path: Path, payload: JsonObject) -> None:
@@ -132,6 +157,56 @@ class CodexCli:
             callbacks,
         )
 
+    def run_generation_job(
+        self,
+        prompt: str,
+        schema: JsonObject,
+        *,
+        workspace: Path,
+        timeout_seconds: float,
+    ) -> JsonObject:
+        self._record_generation_invocation(workspace)
+        turn = _StructuredTurn(
+            prompt=prompt,
+            schema=schema,
+            workspace=workspace,
+            timeout_seconds=timeout_seconds,
+            error_prefix="codex_generation_job",
+        )
+        if not turn.workspace.is_dir():
+            message = f"{turn.error_prefix}_workspace_unavailable"
+            raise CodexCliError(message)
+        with tempfile.TemporaryDirectory(prefix="trace-codex-") as directory:
+            root = Path(directory)
+            schema_path = root / "output.schema.json"
+            output_path = root / "output.json"
+            _ = schema_path.write_text(
+                json.dumps(
+                    _strict_output_schema(turn.schema), ensure_ascii=False, separators=(",", ":")
+                ),
+                encoding="utf-8",
+            )
+            command = self._structured_command(turn, schema_path, output_path)
+            try:
+                completed = subprocess.run(  # noqa: S603
+                    command,
+                    input=turn.prompt,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=turn.timeout_seconds,
+                )
+            except OSError as error:
+                message = f"{turn.error_prefix}_unavailable"
+                raise CodexCliError(message) from error
+            except subprocess.TimeoutExpired as error:
+                message = f"{turn.error_prefix}_timed_out"
+                raise CodexCliError(message) from error
+            if completed.returncode != 0:
+                message = f"{turn.error_prefix}_failed:{completed.returncode}"
+                raise CodexCliError(message)
+            return self._read_structured_output(turn, output_path)
+
     @staticmethod
     def _record_appium_invocation(workspace: Path) -> None:
         receipt = workspace / _APPIUM_RECEIPT_NAME
@@ -146,6 +221,20 @@ class CodexCli:
             raise CodexCliError(_APPIUM_ALREADY_INVOKED) from error
         except OSError as error:
             raise CodexCliError(_APPIUM_RECEIPT_UNAVAILABLE) from error
+
+    @staticmethod
+    def _record_generation_invocation(workspace: Path) -> None:
+        receipt = workspace / _GENERATION_RECEIPT_NAME
+        payload: JsonObject = {
+            "schema": "trace.codex-generation-invocation.v1",
+            "invocation_count": 1,
+        }
+        try:
+            _write_private_json(receipt, payload)
+        except FileExistsError as error:
+            raise CodexCliError(_GENERATION_ALREADY_INVOKED) from error
+        except OSError as error:
+            raise CodexCliError(_GENERATION_RECEIPT_UNAVAILABLE) from error
 
     def _run_appium_structured(
         self,
@@ -163,26 +252,9 @@ class CodexCli:
                 json.dumps(turn.schema, ensure_ascii=False, separators=(",", ":")),
                 encoding="utf-8",
             )
-            command = [str(self.executable), "exec"]
-            command.extend(
-                (
-                    "--ephemeral",
-                    "--ignore-user-config",
-                    "--ignore-rules",
-                    "--skip-git-repo-check",
-                    "--output-schema",
-                    str(schema_path),
-                    "--output-last-message",
-                    str(output_path),
-                    "--cd",
-                    str(turn.workspace.resolve()),
-                )
-            )
+            command = self._structured_command(turn, schema_path, output_path)
             for config in _APPIUM_CONFIG:
                 command.extend(("-c", config))
-            if self.model is not None:
-                command.extend(("--model", self.model))
-            command.append("-")
             with ThreadPoolExecutor(max_workers=1, thread_name_prefix="trace-codex") as executor:
                 future = executor.submit(
                     subprocess.run,
@@ -197,11 +269,41 @@ class CodexCli:
             if completed.returncode != 0:
                 message = f"{turn.error_prefix}_failed:{completed.returncode}"
                 raise CodexCliError(message)
-            try:
-                return _JSON_OBJECT.validate_json(output_path.read_text(encoding="utf-8"))
-            except (OSError, ValidationError) as error:
-                message = f"{turn.error_prefix}_output_invalid"
-                raise CodexCliError(message) from error
+            return self._read_structured_output(turn, output_path)
+
+    def _structured_command(
+        self,
+        turn: _StructuredTurn,
+        schema_path: Path,
+        output_path: Path,
+    ) -> list[str]:
+        command = [str(self.executable), "exec"]
+        command.extend(
+            (
+                "--ephemeral",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--skip-git-repo-check",
+                "--output-schema",
+                str(schema_path),
+                "--output-last-message",
+                str(output_path),
+                "--cd",
+                str(turn.workspace.resolve()),
+            )
+        )
+        if self.model is not None:
+            command.extend(("--model", self.model))
+        command.append("-")
+        return command
+
+    @staticmethod
+    def _read_structured_output(turn: _StructuredTurn, output_path: Path) -> JsonObject:
+        try:
+            return _JSON_OBJECT.validate_json(output_path.read_text(encoding="utf-8"))
+        except (OSError, ValidationError) as error:
+            message = f"{turn.error_prefix}_output_invalid"
+            raise CodexCliError(message) from error
 
     def _coordinate_appium_handshake(
         self,

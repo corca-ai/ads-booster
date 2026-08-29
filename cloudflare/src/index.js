@@ -1,6 +1,8 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
 import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
+import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
+import { HttpError } from "./http-error.js";
 import {
   MAX_HOSTED_CAPTURE_CALLBACK_BYTES,
   prepareHostedCaptureResult,
@@ -453,13 +455,6 @@ export default {
   },
 };
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
 function authorize(request, token) {
   if (!token || request.headers.get("authorization") !== `Bearer ${token}`) {
     throw new HttpError(401, "unauthorized");
@@ -633,7 +628,7 @@ async function startDueRuns(env) {
   }
 }
 
-async function receiveCallback(env, callback, worker = null) {
+export async function receiveCallback(env, callback, worker = null) {
   if (
     typeof callback.callback_id !== "string" ||
     callback.callback_id.length < 1 ||
@@ -649,11 +644,14 @@ async function receiveCallback(env, callback, worker = null) {
   const hostedTask = await env.DB.prepare(
     `SELECT task_id, run_id, account_id, candidate_id, candidate_revision,
             state, callback_id, result_json, dispatch_mode, worker_id, lease_id,
-            execution_started_at, callback_reservation_id
+            execution_started_at, callback_reservation_id, kind, persona_id, task_json
      FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
   )
     .bind(callback.task_id)
     .first();
+  if (hostedTask?.kind === "generate_candidates") {
+    return receiveHostedGenerationCallback(env, hostedTask, callback, worker);
+  }
   if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback, worker);
   if (resultBytes > MAX_CALLBACK_RESULT_BYTES) {
     throw new HttpError(413, `callback result exceeds ${MAX_CALLBACK_RESULT_BYTES} bytes`);

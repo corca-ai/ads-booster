@@ -168,7 +168,7 @@ jobs:
               process.exit(1);
             }
             const topKeys = ["counts", "online_window_seconds", "status", "workers"];
-            const countKeys = ["busy", "draining", "online", "ready", "registered"];
+            const countKeys = ["busy", "draining", "generation_ready", "online", "ready", "registered"];
             const workerKeys = ["display_name", "pool", "status"];
             const workerStatuses = new Set(["ready", "busy", "degraded", "draining", "offline"]);
             const exactKeys = (value, allowedKeys) =>

@@ -16,6 +16,10 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol
 import typer
 
 from ads_booster.marketing.errors import CloudflareQueueError
+from ads_booster.marketing.hosted_generation import (
+    HostedWorkspaceGenerationExecutor,
+    PlanlessHostedTaskExecutor,
+)
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.native_capture import build_hosted_capture_executor
 from ads_booster.marketing.worker_broker import (
@@ -54,7 +58,7 @@ from ads_booster.marketing.worker_update import (
     run_command,
     update_drain_requested,
 )
-from ads_booster.providers.codex_cli import resolve_codex_executable
+from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
@@ -630,7 +634,18 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
     try:
         with create_http_client(read_timeout=60.0) as http:
             broker = WorkerBrokerClient(http, config, credential, heartbeat)
-            executor = build_hosted_capture_executor(agent_home, http)
+            capture = build_hosted_capture_executor(agent_home, http)
+            executable = resolve_codex_executable()
+            if executable is None:
+                reason = "codex_exec_unavailable"
+                raise CloudflareQueueError(reason)
+            executor = PlanlessHostedTaskExecutor(
+                capture=capture,
+                generation=HostedWorkspaceGenerationExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+            )
             worker = MarketingWorkerLoop(
                 broker=broker,
                 inbox=MarketingInbox(root),

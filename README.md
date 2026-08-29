@@ -13,16 +13,20 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
 -> durable callback -> R2/D1 -> human review
 ```
 
-1. An approved hosted candidate creates an immutable task with its marketing context, Trace items,
+1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
+   `generate_candidates` task, and a compatible Mac runs one structured official Codex CLI turn to
+   return drafts. The worker never restores a plan object or custom Agent runtime; Cloudflare stores
+   the idempotent callback result for human candidate review.
+2. An approved hosted candidate creates an immutable task with its marketing context, Trace items,
    candidate revision, and `background_intent`.
-2. D1 leases it to a ready, enrolled Mac. The worker writes the task to its SQLite inbox before it
+3. D1 leases it to a ready, enrolled Mac. The worker writes the task to its SQLite inbox before it
    acknowledges the lease.
-3. Before side effects, the worker resolves an iPhone Simulator, validates locale/time zone, fetches
+4. Before capture side effects, the worker resolves an iPhone Simulator, validates locale/time zone, fetches
    the allowlisted background, records provenance and SHA-256, creates a private request directory,
    and checks Appium readiness.
-4. It commits local admission, then records `execution_started` in D1. Appium cannot start when
+5. It commits local admission, then records `execution_started` in D1. Codex cannot start when
    that barrier fails.
-5. It starts exactly one ephemeral `codex exec` with user/project configuration disabled and the
+6. It starts exactly one ephemeral `codex exec` with user/project configuration disabled and the
    `trace-appium` permission profile. Model-generated commands can read and write only the request
    workspace and can reach only the loopback Appium endpoint; home credentials and external network
    destinations stay blocked. The non-secret
@@ -33,10 +37,10 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
    confirms the editor identity and requested titles, clears any earlier export, and only then
    acknowledges Save. This binds collection to the final Save generation rather than an earlier
    lifecycle export from the same request.
-6. The worker independently verifies PNG size/SHA-256, request digest, nonce, bundle ID, Simulator
+7. The worker independently verifies PNG size/SHA-256, request digest, nonce, bundle ID, Simulator
    UDID, dimensions, and `native_appium` provenance from the native manifest. It queues a callback
    durably and retries callback delivery without rerunning the job.
-7. Cloudflare writes the accepted image to R2 and state to D1. A person reviews it; approval reaches
+8. Cloudflare writes the accepted image to R2 and state to D1. A person reviews it; approval reaches
    `submitted`. This product does not automatically publish anywhere.
 
 A manifest proves request-bound native export, not visual or semantic fidelity. Human review is the
