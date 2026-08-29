@@ -2116,6 +2116,7 @@ async function generateCandidateImage(env, candidateId) {
     idempotency_key: idempotencyKey,
     payload: {
       pipeline: "hosted_workspace_capture_v1",
+      workspace_id: workspaceId(env),
       candidate_id: candidateId,
       candidate_revision: nextRevision,
       country: candidate.country,

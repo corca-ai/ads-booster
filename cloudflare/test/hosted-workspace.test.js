@@ -1240,6 +1240,7 @@ test("an enrolled Mac receives revision-scoped capture context and learned desig
   const task = JSON.parse(state.captureTasks[0][6]);
   assert.equal(task.kind, "capture");
   assert.equal(task.payload.pipeline, "hosted_workspace_capture_v1");
+  assert.equal(task.payload.workspace_id, "cloudflare:trace_demo_kr");
   assert.equal(task.payload.candidate_revision, 4);
   assert.equal(task.payload.image_inputs.device_time, "07:20");
   assert.equal(task.payload.caption, "기존 캡션");
