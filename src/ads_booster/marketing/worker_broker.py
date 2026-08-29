@@ -6,9 +6,9 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
-from ads_booster.marketing.cloudflare_queue import CloudflareQueueError
+from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.models import MarketingTask, QueueLease, ReviewApproval, TaskCallback
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 _HTTP_SUCCESS_MIN: Final = 200
 _HTTP_SUCCESS_MAX: Final = 300
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+
+
+class InvalidLeaseAttemptError(ValueError):
+    """A control-plane lease supplied an attempt count outside the accepted scalar form."""
+
+
+class InvalidControlPlaneOriginError(ValueError):
+    """A worker control-plane URL is not an HTTPS origin accepted by the enrollment contract."""
 
 
 class MacWorkerConfig(BaseModel):
@@ -236,7 +244,8 @@ def _post_json(
 ) -> HttpResponse:
     try:
         return http.post_json(url, payload, headers)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
+        # The transport boundary fails closed so an unknown client failure cannot advance a lease.
         raise CloudflareQueueError("Mac worker transport request failed") from error
 
 
@@ -249,9 +258,9 @@ def _response_payload(response: HttpResponse, *, operation: str) -> JsonObject:
         raise CloudflareQueueError(f"{operation} returned invalid JSON") from error
 
 
-def _integer(value: object) -> int:
+def _integer(value: JsonValue) -> int:
     if isinstance(value, bool) or not isinstance(value, int | str):
-        raise ValueError
+        raise InvalidLeaseAttemptError
     return int(value)
 
 
@@ -260,7 +269,7 @@ def normalize_control_plane_origin(value: str) -> str:
     try:
         _ = parsed.port
     except ValueError as error:
-        raise ValueError("control plane URL must be an HTTPS origin") from error
+        raise InvalidControlPlaneOriginError("control plane URL must be an HTTPS origin") from error
     if (
         parsed.scheme != "https"
         or not parsed.hostname
@@ -270,5 +279,5 @@ def normalize_control_plane_origin(value: str) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError("control plane URL must be an HTTPS origin")
+        raise InvalidControlPlaneOriginError("control plane URL must be an HTTPS origin")
     return f"https://{parsed.netloc}"

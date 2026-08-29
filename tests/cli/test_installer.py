@@ -1,16 +1,22 @@
+"""# noqa: SIZE_OK - Installer assertions share one bootstrap fixture and command contract."""
+
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import plistlib
 import shlex
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict, runtime_checkable
 
 from pydantic import TypeAdapter
+
+if TYPE_CHECKING:
+    import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPOSITORY_ROOT / "install.sh"
@@ -21,6 +27,20 @@ ProjectTable = TypedDict("ProjectTable", {"requires-python": str})
 
 class PyprojectTable(TypedDict):
     project: ProjectTable
+
+
+@runtime_checkable
+class BootstrapModule(Protocol):
+    def finish_bootstrap_command(
+        self,
+        executable: Path,
+        home: Path,
+        install_root: Path,
+        uv: Path,
+        gh: Path,
+    ) -> str: ...
+
+    def remove_owned_legacy_plists(self) -> tuple[str, ...]: ...
 
 
 def run_installer(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -140,11 +160,7 @@ def test_bootstrap_has_a_fixed_repository_and_quotes_unenrolled_continuation(
     assert help_result.returncode == 0
     assert "--repository" not in help_result.stdout
 
-    spec = importlib.util.spec_from_file_location("trace_bootstrap_fixture", BOOTSTRAP)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_bootstrap_module()
     values = tuple(tmp_path / name for name in ("bin with space", "home", "root", "uv", "gh"))
 
     command = module.finish_bootstrap_command(*values)
@@ -163,6 +179,54 @@ def test_bootstrap_has_a_fixed_repository_and_quotes_unenrolled_continuation(
         str(values[4]),
     ]
     assert "<origin>" not in command
+
+
+def test_bootstrap_removes_only_owned_legacy_launchagents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_agents = tmp_path / "Library" / "LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    owned = launch_agents / "com.corca.trace-agent.plist"
+    malformed = launch_agents / "com.corca.trace-ads.plist"
+    _ = owned.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": "com.corca.trace-agent",
+                "ProgramArguments": ["/old/bin/trace-agent", "service"],
+            }
+        )
+    )
+    _ = malformed.write_bytes(b"not a plist")
+
+    removed = _load_bootstrap_module().remove_owned_legacy_plists()
+
+    assert removed == ("com.corca.trace-agent",)
+    assert not owned.exists()
+    assert malformed.read_bytes() == b"not a plist"
+
+
+def test_bootstrap_preserves_unowned_legacy_launchagent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_agents = tmp_path / "Library" / "LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    unowned = launch_agents / "com.corca.trace-agent.plist"
+    payload = plistlib.dumps(
+        {
+            "Label": "com.corca.trace-agent",
+            "ProgramArguments": ["/unowned/bin/not-trace-agent", "service"],
+        }
+    )
+    _ = unowned.write_bytes(payload)
+
+    removed = _load_bootstrap_module().remove_owned_legacy_plists()
+
+    assert removed == ()
+    assert unowned.read_bytes() == payload
 
 
 def _failed_attestation_environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
@@ -271,3 +335,13 @@ def test_readme_bootstrap_is_one_fail_fast_unit_before_code_execution(tmp_path: 
 
     assert result.returncode != 0
     assert not marker.exists()
+
+
+def _load_bootstrap_module() -> BootstrapModule:
+    spec = importlib.util.spec_from_file_location("trace_bootstrap_fixture", BOOTSTRAP)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert isinstance(module, BootstrapModule)
+    return module

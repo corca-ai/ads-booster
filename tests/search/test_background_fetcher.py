@@ -5,9 +5,10 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
 
+import pytest
 from PIL import Image
 
-from ads_booster.search.image.background import ImageSearchBackgroundFetcher
+from ads_booster.search.image.background import BackgroundSearchError, ImageSearchBackgroundFetcher
 from ads_booster.search.image.contracts import ImageSearchResponse, ImageSearchResult
 from ads_booster.transport.http import HttpResponse
 
@@ -28,6 +29,16 @@ class _SearchFixture:
     def search(self, query: str, max_results: int) -> ImageSearchResponse:
         assert query == "student study vertical photo site:pexels.com"
         assert max_results == 5
+        return self.response
+
+
+@dataclass(frozen=True, slots=True)
+class _UnsafeSourceSearchFixture:
+    response: ImageSearchResponse
+
+    def search(self, query: str, max_results: int) -> ImageSearchResponse:
+        assert max_results == 5
+        assert query.endswith(("site:pexels.com", "site:unsplash.com", "site:pixabay.com"))
         return self.response
 
 
@@ -109,3 +120,35 @@ def test_background_fetcher_when_first_result_is_invalid_then_it_saves_next_vali
     assert json.loads(provenance.read_text(encoding="utf-8"))["source_url"] == (
         "https://www.pexels.com/photo/background"
     )
+
+
+def test_background_fetcher_when_source_is_unapproved_then_it_fails_without_writing_an_artifact(
+    tmp_path: Path,
+) -> None:
+    # Given a search response whose only image comes from an unapproved host
+    image_url = "https://images.example/unsafe-background.jpg"
+    response = ImageSearchResponse(
+        provider="fixture-search",
+        query="student study vertical photo",
+        results=(
+            ImageSearchResult(
+                title="unsafe",
+                image_url=image_url,
+                thumbnail_url=image_url,
+                source_url="https://www.freepik.com/unsafe-background",
+            ),
+        ),
+    )
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_UnsafeSourceSearchFixture(response),
+        http=_HttpFixture({}),
+    )
+    destination = tmp_path / "inputs" / "background.png"
+
+    # When the hosted worker requests the background through the allowlisted fetcher
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, destination)
+
+    # Then no downloaded artifact can reach the worker's execution boundary
+    assert failure.value.code == "background_search_no_usable_image"
+    assert not destination.exists()

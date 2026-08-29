@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -9,14 +8,16 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from ads_booster.capture.app_group_collector import CommandResult
 from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureControl
+from ads_booster.capture.simctl_command import CommandResult
 from ads_booster.capture.wallpaper_collection import (
     SimctlAppGroupWallpaperCollector,
     WallpaperCollectionRequest,
     WallpaperExportBinding,
 )
+from ads_booster.capture.wallpaper_validation import read_wallpaper_export_manifest
 from ads_booster.contracts import ErrorCode
+from ads_booster.contracts.native_export import WallpaperExportManifest
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,6 +116,22 @@ def test_collect_when_fresh_rgb_wallpaper_has_matching_manifest(tmp_path: Path) 
     assert (tmp_path / "output" / "wallpaper.manifest.json").is_file()
 
 
+def test_read_manifest_when_native_wallpaper_export_is_complete_then_uses_native_export_contract(
+    tmp_path: Path,
+) -> None:
+    # Given a Trace App Group export with a complete native manifest
+    source = tmp_path / "container" / "trace_wallpaper.png"
+    write_wallpaper_png(source)
+    binding = binding_for(source)
+    write_manifest(source, binding)
+
+    # When the collector boundary parses its manifest
+    manifest = read_wallpaper_export_manifest(source.with_name("trace_wallpaper.manifest.json"))
+
+    # Then the retained native-export contract owns the wallpaper binding type
+    assert isinstance(manifest, WallpaperExportManifest)
+
+
 def test_collect_when_rgba_wallpaper_has_transparent_pixel_rejects(tmp_path: Path) -> None:
     # Given an otherwise valid export containing transparent wallpaper pixels
     source = tmp_path / "container" / "trace_wallpaper.png"
@@ -150,7 +167,7 @@ def test_collect_when_rgba_wallpaper_is_fully_opaque_accepts(tmp_path: Path) -> 
     assert provenance.native_export_binding_verified is True
 
 
-def test_collect_when_manifest_request_digest_does_not_match_rejects(tmp_path: Path) -> None:
+def test_collect_when_manifest_has_wrong_digest_rejects(tmp_path: Path) -> None:
     # Given native bytes whose manifest belongs to a different capture request
     source = tmp_path / "container" / "trace_wallpaper.png"
     write_wallpaper_png(source)
@@ -173,109 +190,45 @@ def test_collect_when_manifest_request_digest_does_not_match_rejects(tmp_path: P
     assert raised.value.code is ErrorCode.EXPORT_INVALID
 
 
-def test_collect_when_export_predates_current_session_rejects(tmp_path: Path) -> None:
-    # Given a wallpaper left behind before the Appium session cleared the App Group
+def test_collect_when_missing_manifest_rejects_unverified_export(tmp_path: Path) -> None:
+    # Given native wallpaper bytes without the request-bound manifest
     source = tmp_path / "container" / "trace_wallpaper.png"
     write_wallpaper_png(source)
-    old_ns = 1_700_000_000_000_000_000
-    os.utime(source, ns=(old_ns, old_ns))
-    binding = WallpaperExportBinding(
-        request_sha256="c" * 64,
-        bundle_id="com.corca.Trace",
-        device_udid=UDID,
-        session_id="appium-wallpaper-stale",
-        cleared_at_ns=old_ns + 1,
-    )
-    write_manifest(source, binding)
+    binding = binding_for(source)
     collector = SimctlAppGroupWallpaperCollector(
         runner=AppGroupRunner(container=source.parent),
+        manifest_grace_seconds=0,
     )
 
-    # When collection checks source freshness
+    # When collection checks native binding evidence
     with pytest.raises(CaptureAdapterError) as raised:
         _ = collector.collect(request_for(tmp_path, binding))
 
-    # Then stale native output is not reused
-    assert raised.value.code is ErrorCode.EXPORT_STALE
+    # Then result JSON or PNG bytes alone cannot prove success
+    assert raised.value.code is ErrorCode.EXPORT_UNVERIFIED
 
 
-def test_collect_when_manifest_predates_current_session_rejects(tmp_path: Path) -> None:
-    # Given current wallpaper bytes paired with a manifest from before session clearing
+def test_collect_when_manifest_has_wrong_nonce_rejects(tmp_path: Path) -> None:
+    # Given native bytes whose manifest carries another execution nonce
     source = tmp_path / "container" / "trace_wallpaper.png"
     write_wallpaper_png(source)
-    old_ns = 1_700_000_000_000_000_000
-    binding = WallpaperExportBinding(
-        request_sha256="e" * 64,
-        bundle_id="com.corca.Trace",
-        device_udid=UDID,
-        session_id="appium-wallpaper-stale-manifest",
-        cleared_at_ns=old_ns + 1,
-    )
+    binding = binding_for(source)
     write_manifest(source, binding)
-    os.utime(source, ns=(old_ns + 2, old_ns + 2))
     manifest_path = source.with_name("trace_wallpaper.manifest.json")
-    os.utime(manifest_path, ns=(old_ns, old_ns))
-    collector = SimctlAppGroupWallpaperCollector(
-        runner=AppGroupRunner(container=source.parent),
+    manifest = WallpaperExportManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
     )
-
-    # When the collector verifies all native publication timestamps
-    with pytest.raises(CaptureAdapterError) as raised:
-        _ = collector.collect(request_for(tmp_path, binding))
-
-    # Then stale binding metadata cannot authenticate new-looking bytes
-    assert raised.value.code is ErrorCode.EXPORT_STALE
-
-
-def test_collect_when_wallpaper_source_is_symlink_rejects(tmp_path: Path) -> None:
-    # Given the App Group path exposes wallpaper bytes through a symlink
-    real_source = tmp_path / "real" / "trace_wallpaper.png"
-    write_wallpaper_png(real_source)
-    source = tmp_path / "container" / "trace_wallpaper.png"
-    source.parent.mkdir()
-    source.symlink_to(real_source)
-    binding = binding_for(real_source)
-    write_manifest(real_source, binding)
-    collector = SimctlAppGroupWallpaperCollector(
-        runner=AppGroupRunner(container=source.parent),
-    )
-
-    # When the collector resolves its export paths
-    with pytest.raises(CaptureAdapterError) as raised:
-        _ = collector.collect(request_for(tmp_path, binding))
-
-    # Then symlinked native paths cannot smuggle alternate bytes
-    assert raised.value.code is ErrorCode.EXPORT_INVALID
-
-
-def test_collect_when_native_failure_marker_is_published_fails_typed(tmp_path: Path) -> None:
-    # Given Trace's App Group contains a typed full-wallpaper export failure marker
-    container = tmp_path / "container"
-    container.mkdir()
-    _ = (container / "trace_wallpaper.error.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "trace.wallpaper-export-failure.v1",
-                "code": "export_failed",
-                "message": "canonical wallpaper could not be written",
-            }
-        ),
+    _ = manifest_path.write_text(
+        manifest.model_copy(update={"export_nonce": "f" * 64}).model_dump_json(),
         encoding="utf-8",
     )
-    binding = WallpaperExportBinding(
-        request_sha256="d" * 64,
-        bundle_id="com.corca.Trace",
-        device_udid=UDID,
-        session_id="appium-wallpaper-failure",
-        cleared_at_ns=0,
-    )
     collector = SimctlAppGroupWallpaperCollector(
-        runner=AppGroupRunner(container=container),
+        runner=AppGroupRunner(container=source.parent),
     )
 
-    # When collection observes the native terminal result
+    # When collection validates the native nonce
     with pytest.raises(CaptureAdapterError) as raised:
         _ = collector.collect(request_for(tmp_path, binding))
 
-    # Then it returns the native failure instead of waiting until timeout
-    assert raised.value.code is ErrorCode.EXPORT_FAILED
+    # Then an export from another execution is rejected
+    assert raised.value.code is ErrorCode.EXPORT_INVALID

@@ -1,3 +1,5 @@
+"""# noqa: SIZE_OK - Managed release update owns receipt, source, install, and activation."""
+
 from __future__ import annotations
 
 import fcntl
@@ -65,6 +67,10 @@ class UpdateBusyError(WorkerUpdateError):
     pass
 
 
+class ReleaseContractError(ValueError):
+    """A Pydantic release or receipt validator rejected an incompatible immutable contract."""
+
+
 class ReleaseFile(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
@@ -92,12 +98,12 @@ class MacWorkerReleaseManifest(BaseModel):
     @model_validator(mode="after")
     def validate_linkage(self) -> MacWorkerReleaseManifest:
         if self.tag != f"v{self.version}":
-            raise ValueError("release manifest tag does not match version")
+            raise ReleaseContractError("release manifest tag does not match version")
         expected_bundle = f"trace-marketing-macos-arm64-v{self.version}.tar.gz"
         if self.bundle.name != expected_bundle:
-            raise ValueError("release manifest bundle name does not match version")
+            raise ReleaseContractError("release manifest bundle name does not match version")
         if self.bootstrap.name != _BOOTSTRAP_ASSET:
-            raise ValueError("release manifest bootstrap name is invalid")
+            raise ReleaseContractError("release manifest bootstrap name is invalid")
         return self
 
 
@@ -238,7 +244,7 @@ class HeartbeatReceipt(BaseModel):
     @classmethod
     def require_timezone(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("heartbeat receipt timestamp must include a timezone")
+            raise ReleaseContractError("heartbeat receipt timestamp must include a timezone")
         return value.astimezone(UTC)
 
 
@@ -260,7 +266,7 @@ class HeartbeatReceiptStore:
             return None
         try:
             return HeartbeatReceipt.model_validate_json(self.path.read_text(encoding="utf-8"))
-        except OSError, ValidationError:
+        except (OSError, ValidationError):  # fmt: skip
             return None
 
 
@@ -367,7 +373,8 @@ class GitHubReleaseSource:
     def _get_bytes(self, url: str) -> bytes:
         try:
             response = self.http.get(url, self._headers())
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
+            # This source boundary maps unknown HTTP client failures to a fail-closed update error.
             raise WorkerUpdateError("GitHub release request failed") from error
         if not _HTTP_SUCCESS_MIN <= response.status_code < _HTTP_SUCCESS_MAX:
             message = f"GitHub release request failed with HTTP {response.status_code}"
@@ -395,7 +402,7 @@ def default_install_root() -> Path:
 def update_drain_requested(path: Path) -> bool:
     try:
         payload = _JSON_OBJECT.validate_json(path.read_text(encoding="utf-8"))
-    except OSError, ValidationError:
+    except (OSError, ValidationError):  # fmt: skip
         return False
     if payload.get("schema_version") != "trace.marketing-update-guard.v1":
         return False
@@ -468,8 +475,8 @@ class WorkerQuiescence:
             "ready": self.ready,
             "received_tasks": self.inbox.received_tasks,
             "running_tasks": self.inbox.running_tasks,
+            "guarded_tasks": self.inbox.guarded_tasks,
             "pending_callbacks": self.inbox.pending_callbacks,
-            "pending_approvals": self.inbox.pending_approvals,
             "ambiguous_codex_runs": self.ambiguous_codex_runs,
         }
 

@@ -7,14 +7,14 @@ on:
       - .github/workflows/deploy-cloudflare.yml
       - cloudflare/**
       - src/ads_booster/assets/context/**
-      - src/ads_booster/web/static/**
+      - cloudflare/static/**
   push:
     branches: [main]
     paths:
       - .github/workflows/deploy-cloudflare.yml
       - cloudflare/**
       - src/ads_booster/assets/context/**
-      - src/ads_booster/web/static/**
+      - cloudflare/static/**
   workflow_dispatch:
 
 concurrency:

@@ -1,78 +1,35 @@
 from __future__ import annotations
 
-import base64
 import json
 from hashlib import sha256
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ads_booster.capture.worker import CaptureRequest
-    from ads_booster.contracts import WallpaperPlan
+    from ads_booster.transport.json_types import JsonObject
 
 
-class ProcessArguments(TypedDict):
-    args: list[str]
-    env: dict[str, str]
-
-
-def build_configuration_process_arguments(
-    request: CaptureRequest,
+def build_codex_appium_process_arguments(
     request_sha256: str,
-) -> ProcessArguments:
-    return build_process_arguments(request, request_sha256)
-
-
-def build_process_arguments(
-    request: CaptureRequest,
-    request_sha256: str,
-) -> ProcessArguments:
-    return ProcessArguments(
-        args=[
-            "-traceMarketingAutomation",
-            "-traceMarketingExportWallpaper",
-            "-traceMarketingRequestDigest",
-            request_sha256,
-            "-traceMarketingExportNonce",
-            request.capture_nonce,
-            "-traceMarketingDeviceUDID",
-            request.device.udid,
-        ],
-        env={},
+    export_nonce: str,
+    device_udid: str,
+) -> tuple[str, ...]:
+    return (
+        "-traceMarketingAutomation",
+        "-traceMarketingExportWallpaper",
+        "-traceMarketingRequestDigest",
+        request_sha256,
+        "-traceMarketingExportNonce",
+        export_nonce,
+        "-traceMarketingDeviceUDID",
+        device_udid,
     )
 
 
-def build_component_process_arguments(request: CaptureRequest) -> ProcessArguments:
-    encoded_components = base64.b64encode(
-        json.dumps(
-            request.scene.trace_data.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode(),
-    ).decode()
-    return ProcessArguments(
-        args=[
-            "-traceMarketingAutomation",
-            "-traceMarketingComponentPayload",
-            encoded_components,
-            "-traceMarketingExportComponents",
-            "-traceMarketingRequestDigest",
-            capture_request_digest(request),
-            "-traceMarketingExportNonce",
-            request.capture_nonce,
-            "-traceMarketingDeviceUDID",
-            request.device.udid,
-        ],
-        env={},
+def canonical_json_digest(payload: JsonObject) -> str:
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
     )
-
-
-def capture_request_digest(
-    request: CaptureRequest,
-    plan: WallpaperPlan | None = None,
-) -> str:
-    canonical = (
-        f"{request.job_id}\n{request.device.model_dump_json()}\n{request.scene.model_dump_json()}"
-    )
-    if plan is not None:
-        canonical = f"{canonical}\n{plan.model_dump_json()}"
-    return sha256(canonical.encode()).hexdigest()
+    return sha256(serialized.encode("utf-8")).hexdigest()

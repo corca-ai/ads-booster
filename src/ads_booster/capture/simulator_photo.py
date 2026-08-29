@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ads_booster.capture.app_group_collector import CommandRunner, SubprocessCommandRunner
 from ads_booster.capture.capture_safety import CaptureAdapterError
+from ads_booster.capture.simctl_command import CommandRunner, SubprocessCommandRunner
 from ads_booster.contracts import ErrorCode
 
 if TYPE_CHECKING:
