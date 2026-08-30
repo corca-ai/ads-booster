@@ -32,6 +32,11 @@ def parse_candidate_drafts(
     the domain it was assigned, and those are the two ways a batch quietly stops being what
     was asked for.
 
+    A short answer is accepted rather than thrown away. The whole batch is one call now, so
+    rejecting three good candidates because a fourth is missing would cost the request
+    everything to punish the model for a shortfall the caller can simply report. More than
+    was asked for is still a failure: the extra candidate has no assignment behind it.
+
     Raises `CandidateFormatError` with a detail the retry turn can quote back.
     """
     if not isinstance(payload, dict):
@@ -41,7 +46,7 @@ def parse_candidate_drafts(
     if not isinstance(candidates, list):
         no_key = f"최상위 객체에 {CANDIDATES_KEY} 배열이 없습니다."
         raise CandidateFormatError(no_key)
-    if len(candidates) != expected:
+    if not candidates or len(candidates) > expected:
         wrong_length = f"후보 {expected}개가 필요하지만 {len(candidates)}개를 받았습니다."
         raise CandidateFormatError(wrong_length)
     try:
@@ -64,11 +69,14 @@ def _require_assigned_domains(
     """Hold the batch to the 1:1 domain assignment it was given.
 
     The binding is positional on purpose: a model told "cover these three domains" will
-    happily return three candidates in its favourite one and call the set covered.
+    happily return three candidates in its favourite one and call the set covered. A short
+    answer is held to the first assignments rather than to all of them — the candidates
+    that did arrive still have to be the ones that were asked for, in order.
     """
     written = tuple(draft.persona_domain for draft in drafts)
-    if written != domains:
-        expected = ", ".join(domain.value for domain in domains)
+    assigned = domains[: len(written)]
+    if written != assigned:
+        expected = ", ".join(domain.value for domain in assigned)
         received = ", ".join("(없음)" if domain is None else domain.value for domain in written)
         mismatch = (
             f"persona_domain은 배정된 순서대로 [{expected}] 여야 하지만 [{received}] 를 받았습니다."

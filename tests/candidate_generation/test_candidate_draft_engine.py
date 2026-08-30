@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from threading import Barrier, BrokenBarrierError, Lock
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -15,6 +14,7 @@ from ads_booster.candidate_generation import (
     CandidateProviderError,
     CandidateReferenceSource,
     CaptionForm,
+    assign_candidates,
     assign_domains,
     assign_interests,
 )
@@ -33,16 +33,13 @@ if TYPE_CHECKING:
     from ads_booster.candidate_generation import CandidateDraftBatch
     from ads_booster.transport.json_types import JsonObject, JsonValue
 
-_ASSIGNED_DOMAIN: Final = re.compile(r"- 후보 1: (\w+) \(")
-_ACCOUNT_DOMAIN: Final = re.compile(r"persona_domain 은 (\w+) 으로 고정합니다")
-_ASSIGNED_INTEREST: Final = re.compile(r'이 후보는 "(.+?)" 에서 출발합니다')
-# Enough for the barrier to prove concurrency without hanging a suite if it never does.
-_BARRIER_TIMEOUT: Final = 5.0
+_ASSIGNED: Final = re.compile(r"- 후보 (\d+): 형태 (\w+) \(.+?\) · 도메인 (\w+) \(")
 
-_THREE: Final = (
+_FOUR: Final = (
     CandidatePersonaDomain.SPORTS_FAN,
     CandidatePersonaDomain.PARENTING,
     CandidatePersonaDomain.EXAM_PREPPER,
+    CandidatePersonaDomain.PET_OWNER,
 )
 
 
@@ -61,17 +58,11 @@ def _account() -> CandidateAccountBrief:
     )
 
 
-def assigned_domain(instruction: str) -> str:
-    """Read back the domain this one call was told to write."""
-    match = _ACCOUNT_DOMAIN.search(instruction) or _ASSIGNED_DOMAIN.search(instruction)
-    assert match is not None, instruction
-    return match.group(1)
-
-
-def assigned_interest(instruction: str) -> str | None:
-    """Read back the subject axis this one call was told to start from."""
-    match = _ASSIGNED_INTEREST.search(instruction)
-    return None if match is None else match.group(1)
+def assigned_domains(instruction: str) -> list[str]:
+    """Read back the domains this one call was told to write, in order."""
+    found: list[tuple[str, str, str]] = _ASSIGNED.findall(instruction)
+    assert found, instruction
+    return [domain for _, _, domain in found]
 
 
 def _draft(topic: str, domain: str) -> JsonObject:
@@ -102,79 +93,56 @@ def _draft(topic: str, domain: str) -> JsonObject:
 
 
 @dataclass(slots=True)
-class DomainAnswerClient:
-    """Answers every call with a draft keyed to what that call was assigned.
-
-    Keyed rather than sequenced because a parallel batch has no call order: a list popped
-    in turn cannot say which answer belongs to which candidate once the threads interleave.
-    """
+class BatchAnswerClient:
+    """Answers each call with one draft per domain that call was assigned."""
 
     failures: dict[str, Exception] = field(default_factory=dict)
-    malformed: dict[str, int] = field(default_factory=dict)
-    # Answers keyed by call id, for the tests that need one specific turn to differ.
-    topics: dict[str, str] = field(default_factory=dict)
-    # Turns that die at the provider boundary, named by call id rather than by domain.
-    failing_call_ids: frozenset[str] = frozenset()
-    # When set, every call waits here until this many are in flight at once.
-    barrier: Barrier | None = None
-    barrier_timeout: float = _BARRIER_TIMEOUT
+    # How many answers to leave out, so a short response can be asserted on.
+    short_by: int = 0
+    malformed: int = 0
     instructions: list[str] = field(default_factory=list)
     call_ids: list[str] = field(default_factory=list)
-    lock: Lock = field(default_factory=Lock)
 
     def draft(self, instruction: str, *, call_id: str) -> JsonValue:
-        with self.lock:
-            self.instructions.append(instruction)
-            self.call_ids.append(call_id)
-        if self.barrier is not None:
-            _ = self.barrier.wait(timeout=self.barrier_timeout)
-        if call_id in self.failing_call_ids:
-            timed_out = "codex_generation_job_timed_out"
-            raise RuntimeError(timed_out)
-        domain = assigned_domain(instruction)
-        failure = self.failures.get(domain)
+        self.instructions.append(instruction)
+        self.call_ids.append(call_id)
+        failure = self.failures.get(call_id)
         if failure is not None:
             raise failure
-        with self.lock:
-            remaining = self.malformed.get(domain, 0)
-            if remaining:
-                self.malformed[domain] = remaining - 1
-        if remaining:
+        if self.malformed:
+            self.malformed -= 1
             return {"candidates": [{"topic": "형식이 깨진 응답"}]}
-        # Distinct per turn by default: an account batch gives every call the same domain,
-        # and a fake that answered all of them identically would spend every test on the
-        # duplicate check rather than on what it meant to assert.
-        topic = self.topics.get(call_id, f"{domain} 주제 {call_id}")
-        return {"candidates": [_draft(topic, domain)]}
-
-    def instruction_for(self, domain: str) -> str:
-        with self.lock:
-            found = [text for text in self.instructions if assigned_domain(text) == domain]
-        assert found, domain
-        return found[0]
+        domains = assigned_domains(instruction)
+        kept = domains[: len(domains) - self.short_by] if self.short_by else domains
+        return {
+            "candidates": [
+                _draft(f"{domain} 주제 {call_id}-{position}", domain)
+                for position, domain in enumerate(kept)
+            ]
+        }
 
 
-def _engine(client: DomainAnswerClient, *, max_workers: int = 4) -> CandidateDraftEngine:
+def _engine(client: BatchAnswerClient, **overrides: int) -> CandidateDraftEngine:
     return CandidateDraftEngine(
         client=client,
         model="codex_cli",
         sample_references=first,
-        max_workers=max_workers,
+        **overrides,
     )
 
 
-def _run(  # noqa: PLR0913 - each argument is one independent input to the batch.
+def _run(  # noqa: PLR0913 - each argument is one independent input to the request.
     tmp_path: Path,
-    client: DomainAnswerClient,
+    client: BatchAnswerClient,
     *,
     domains: tuple[CandidatePersonaDomain, ...],
     brief: CandidateAccountBrief | None = None,
     interests: Sequence[str] = (),
     history: tuple[CandidateHistoryEntry, ...] = (),
-    max_workers: int = 4,
+    **overrides: int,
 ) -> CandidateDraftBatch:
     directory = write_context(tmp_path)
-    return _engine(client, max_workers=max_workers).draft(
+    return _engine(client, **overrides).draft(
         bundle=CandidateContextSource(directory, required=REQUIRED_DOCUMENTS).load(),
         pool=CandidateReferenceSource(directory).load("KR"),
         domains=domains,
@@ -184,214 +152,271 @@ def _run(  # noqa: PLR0913 - each argument is one independent input to the batch
     )
 
 
-def test_a_batch_is_one_provider_call_per_candidate(tmp_path: Path) -> None:
-    """One call for the whole batch had to keep every candidate distinct by itself."""
-    # Given three assigned domains
-    client = DomainAnswerClient()
+def test_a_batch_of_four_is_one_provider_call(tmp_path: Path) -> None:
+    """The whole batch is one Codex turn, and its candidates are told apart in the prompt."""
+    # Given four assigned domains
+    client = BatchAnswerClient()
 
     # When the batch is drafted
-    batch = _run(tmp_path, client, domains=_THREE)
+    batch = _run(tmp_path, client, domains=_FOUR)
 
-    # Then each candidate cost its own call, in its own place, with its own form
-    assert len(batch.drafts) == 3
+    # Then one call produced all four, each carrying its own assignment
+    assert client.call_ids == ["00"]
+    assert len(batch.drafts) == 4
     assert batch.failures == 0
-    assert sorted(client.call_ids) == ["00", "01", "02"]
+    assert batch.failure_reason is None
+    assert [drafted.draft.persona_domain for drafted in batch.drafts] == list(_FOUR)
     assert [drafted.caption_form for drafted in batch.drafts] == [
         CaptionForm.HOOK,
         CaptionForm.DAILY,
+        CaptionForm.HOOK,
         CaptionForm.TESTIMONY,
     ]
-    # And the results come back in the order the batch assigned them, not the order the
-    # turns happened to finish.
-    assert [drafted.draft.persona_domain for drafted in batch.drafts] == list(_THREE)
 
 
-def test_the_turns_actually_run_at_the_same_time(tmp_path: Path) -> None:
-    """A barrier is the only honest proof: three turns that never overlap cannot pass it.
+def test_the_instruction_states_one_assignment_line_per_candidate(tmp_path: Path) -> None:
+    """A batch left to differentiate itself writes the same post four times."""
+    # Given an account with two interests and a four-candidate batch
+    client = BatchAnswerClient()
+    brief = _account()
 
-    Nothing in the execution path serialises a generation turn — each is its own process in
-    its own workspace — so this is what that claim looks like when it is checked rather than
-    asserted. A sequential engine deadlocks here and the barrier times out.
-    """
-    # Given a fake that will not answer until three calls are in flight together
-    client = DomainAnswerClient(barrier=Barrier(3))
+    # When it runs
+    _ = _run(
+        tmp_path,
+        client,
+        domains=(brief.domain,) * 4,
+        brief=brief,
+        interests=brief.interests,
+    )
 
-    # When a three-candidate batch runs
-    batch = _run(tmp_path, client, domains=_THREE, max_workers=3)
+    # Then every candidate has its own line, naming its form, domain and subject axis
+    instruction = client.instructions[0]
+    assert "[후보별 배정]" in instruction
+    assert (
+        "- 후보 1: 형태 hook (훅글) · 도메인 sports_fan (스포츠 팬) · 소재 축 KIA 타이거즈"
+        in instruction
+    )
+    assert (
+        "- 후보 2: 형태 daily (일상글) · 도메인 sports_fan (스포츠 팬) · 소재 축 주말 러닝"
+        in instruction
+    )
+    assert (
+        "- 후보 4: 형태 testimony (간증글) · 도메인 sports_fan (스포츠 팬) · 소재 축 주말 러닝"
+        in instruction
+    )
+    # And each assigned form is explained once, with its evidence and an example
+    assert "- hook (훅글): 질문이나 한 문장 헤드라인으로 열고" in instruction
+    assert "근거 레퍼런스: kr-001, kr-003, kr-014." in instruction
+    assert "- testimony (간증글): 쓰기 전과 후에" in instruction
+    assert "근거 레퍼런스: kr-010." in instruction
+    assert "간증글은 한 배치에 많아야 하나입니다" in instruction
+    # And the axis is framed as where to start, not as words to copy
+    assert "캡션에 옮겨 적을 문구가 아니라" in instruction
 
-    # Then every turn got through, which only happens if all three overlapped
-    assert len(batch.drafts) == 3
-    assert batch.parallel is True
 
-
-def test_one_worker_runs_the_batch_in_order(tmp_path: Path) -> None:
-    """The fallback for an environment that cannot afford concurrent Codex turns."""
-    # Given a fake that would block forever if two calls ever overlapped
-    client = DomainAnswerClient(barrier=Barrier(2), barrier_timeout=0.05)
-
-    # When the batch is limited to one worker
-    with pytest.raises(CandidateProviderError):
-        _ = _run(tmp_path, client, domains=_THREE, max_workers=1)
-
-    # Then the calls went out one at a time and each waited alone until the barrier broke
-    assert client.call_ids[0] == "00"
-
-
-def test_a_sequential_batch_shows_each_call_what_the_earlier_ones_wrote(
-    tmp_path: Path,
-) -> None:
-    """Running in order buys one thing a parallel batch cannot have, and this is it."""
-    # Given a two-candidate batch limited to one worker
-    client = DomainAnswerClient()
+def test_a_form_nobody_was_assigned_is_not_explained(tmp_path: Path) -> None:
+    """A guide for a form nobody was given is an invitation to write it anyway."""
+    # Given a two-candidate batch, which gets a hook and a testimonial but no daily
+    client = BatchAnswerClient()
 
     # When it runs
     _ = _run(
         tmp_path,
         client,
         domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
-        max_workers=1,
     )
 
-    # Then the second call sees the first call's topic and the first has nothing to avoid
-    assert "sports_fan 주제" not in client.instructions[0]
-    assert "- [스포츠 팬] sports_fan 주제" in client.instructions[1]
-
-
-def test_a_parallel_batch_separates_candidates_by_assigned_axis(tmp_path: Path) -> None:
-    """A parallel call cannot be shown what the others wrote, so the axis carries it."""
-    # Given an account with two interests and a three-candidate batch
-    client = DomainAnswerClient()
-    brief = _account()
-
-    # When it runs
-    batch = _run(
-        tmp_path,
-        client,
-        domains=(brief.domain,) * 3,
-        brief=brief,
-        interests=brief.interests,
-    )
-
-    # Then each call was told which axis to start from, cycling through the interests
-    assert [drafted.assigned_interest for drafted in batch.drafts] == [
-        "KIA 타이거즈",
-        "주말 러닝",
-        "KIA 타이거즈",
-    ]
-    axes = sorted(
-        interest
-        for instruction in client.instructions
-        if (interest := assigned_interest(instruction)) is not None
-    )
-    assert axes == ["KIA 타이거즈", "KIA 타이거즈", "주말 러닝"]
-    # And the block says what an axis is for, so it is not copied into the caption
+    # Then only the two assigned forms are explained
     instruction = client.instructions[0]
-    assert "[이번 후보의 소재 축]" in instruction
-    assert "축은 소재를 고르는 출발점이지 캡션에 옮겨 적을 문구가 아닙니다" in instruction
-    # And no call was told to avoid a list it was never shown
-    assert "[최근 생성된 후보 목록]" not in instruction
+    assert "- hook (훅글):" in instruction
+    assert "- testimony (간증글):" in instruction
+    assert "- daily (일상글):" not in instruction
 
 
-def test_an_account_with_no_interests_still_generates(tmp_path: Path) -> None:
-    """No axis is honest when there is nothing to divide by; it is not a failure."""
-    # Given / When / Then
-    assert assign_interests((), 3) == (None, None, None)
-    client = DomainAnswerClient()
-    batch = _run(tmp_path, client, domains=_THREE, interests=())
+def test_a_batch_carries_at_most_one_testimonial(tmp_path: Path) -> None:
+    """Testimony is the one form that claims something, so it is capped rather than cycled."""
+    # Given / When / Then no batch size turns the feed into an ad break
+    for count in range(1, 5):
+        forms = [assignment.form for assignment in assign_candidates(_FOUR[:count])]
+        assert len(forms) == count
+        assert forms.count(CaptionForm.TESTIMONY) <= 1
+    # And a single candidate is not spent on the one form that talks about the product
+    batch = _run(tmp_path, BatchAnswerClient(), domains=(CandidatePersonaDomain.SPORTS_FAN,))
+    assert batch.drafts[0].caption_form is CaptionForm.HOOK
+
+
+def test_a_request_larger_than_one_batch_is_written_in_order(tmp_path: Path) -> None:
+    """Four full captions is already a long answer; eight is two calls, not one long shot."""
+    # Given eight candidates and the default batch ceiling of four
+    client = BatchAnswerClient()
+
+    # When the request runs
+    batch = _run(tmp_path, client, domains=(*_FOUR, *_FOUR))
+
+    # Then it was two calls, and the second was shown what the first wrote
+    assert client.call_ids == ["00", "01"]
+    assert len(batch.drafts) == 8
+    assert "[최근 생성된 후보 목록]" not in client.instructions[0]
+    assert "sports_fan 주제 00-0" in client.instructions[1]
+
+
+def test_a_failed_call_costs_its_own_candidates_and_names_why(tmp_path: Path) -> None:
+    """One batch of four and one failed call is four captions worth keeping."""
+    # Given the second of two calls dying at the provider boundary
+    client = BatchAnswerClient(failures={"01": RuntimeError("codex exited")})
+
+    # When the request runs
+    batch = _run(tmp_path, client, domains=(*_FOUR, *_FOUR))
+
+    # Then the first batch survives and the shortfall is reported with a reason
+    assert len(batch.drafts) == 4
+    assert batch.failures == 4
+    assert batch.failure_reason is not None
+    assert "AI 요청에 실패했습니다" in batch.failure_reason
+
+
+def test_a_short_answer_keeps_the_candidates_it_did_return(tmp_path: Path) -> None:
+    """Rejecting three good candidates because a fourth is missing costs the whole request."""
+    # Given a call that answers with three of the four it was asked for
+    client = BatchAnswerClient(short_by=1)
+
+    # When the batch runs
+    batch = _run(tmp_path, client, domains=_FOUR)
+
+    # Then the three arrive, bound to the first three assignments, and one is counted lost
     assert len(batch.drafts) == 3
-    assert all(drafted.assigned_interest is None for drafted in batch.drafts)
-    assert "[이번 후보의 소재 축]" not in client.instructions[0]
-
-
-def test_a_restated_topic_is_asked_again_once(tmp_path: Path) -> None:
-    """Parallel turns cannot see each other, so the check happens after they land."""
-    # Given two candidates that came back saying the same thing two ways
-    client = DomainAnswerClient(
-        topics={"00": "야간 근무 전날 밤", "01": "밤, 야간 근무 전날", "01-1": "주말 아침 등산"}
-    )
-
-    # When the batch runs
-    batch = _run(
-        tmp_path,
-        client,
-        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
-    )
-
-    # Then the later one was rewritten once, in its own place, and the earlier one kept its
-    # topic
-    assert [drafted.draft.topic for drafted in batch.drafts] == [
-        "야간 근무 전날 밤",
-        "주말 아침 등산",
+    assert batch.failures == 1
+    assert [drafted.draft.persona_domain for drafted in batch.drafts] == list(_FOUR[:3])
+    assert [drafted.caption_form for drafted in batch.drafts] == [
+        CaptionForm.HOOK,
+        CaptionForm.DAILY,
+        CaptionForm.HOOK,
     ]
-    assert [drafted.regenerated for drafted in batch.drafts] == [False, True]
-    assert not any(drafted.duplicate_topic for drafted in batch.drafts)
-    assert "01-1" in client.call_ids
-    # And the rewrite was shown exactly what it collided with
-    rewrite = client.instructions[client.call_ids.index("01-1")]
-    assert "야간 근무 전날 밤" in rewrite
 
 
-def test_a_rewrite_that_collides_again_is_kept_and_labelled(tmp_path: Path) -> None:
-    """Two flagged captions beat one candidate silently thrown away."""
-    # Given a rewrite that restates the same topic a second time
-    client = DomainAnswerClient(
-        topics={
-            "00": "야간 근무 전날 밤",
-            "01": "밤, 야간 근무 전날",
-            "01-1": "야간 근무 전날의 밤",
-        }
-    )
+def test_a_request_whose_every_call_fails_still_raises(tmp_path: Path) -> None:
+    # Given the only call failing at the provider boundary
+    client = BatchAnswerClient(failures={"00": RuntimeError("codex exited")})
+
+    # When / Then nothing is reported as a success
+    with pytest.raises(CandidateProviderError):
+        _ = _run(tmp_path, client, domains=_FOUR)
+
+
+def test_a_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
+    # Given a call whose first answer does not survive validation
+    client = BatchAnswerClient(malformed=1)
 
     # When the batch runs
+    batch = _run(tmp_path, client, domains=_FOUR)
+
+    # Then the retry quotes back what was wrong, in its own place
+    assert len(batch.drafts) == 4
+    assert client.call_ids == ["00", "00-retry"]
+    assert "직전 응답은 형식 검증을 통과하지 못했습니다." in client.instructions[1]
+    assert "검증 오류:" in client.instructions[1]
+
+
+def test_two_malformed_answers_give_up_on_that_batch(tmp_path: Path) -> None:
+    # Given a call that never returns a usable answer
+    client = BatchAnswerClient(malformed=2)
+
+    # When / Then the request raises rather than inventing candidates
+    with pytest.raises(CandidateFormatError):
+        _ = _run(tmp_path, client, domains=_FOUR)
+    assert client.call_ids == ["00", "00-retry"]
+
+
+def test_a_batch_reads_six_hits_and_two_flops(tmp_path: Path) -> None:
+    """One call carries the whole batch, so it can afford a wider sample than four calls."""
+    # Given the fake corpus, which has four hits and two flops
+    client = BatchAnswerClient()
+
+    # When a batch runs
+    batch = _run(tmp_path, client, domains=_FOUR)
+
+    # Then it asked for six and two, took what the corpus had, and recorded exactly that
+    provenance = batch.drafts[0].provenance
+    assert provenance.reference_ids == ("kr-900", "kr-901", "kr-902", "kr-903", "kr-904", "kr-905")
+    assert "# kr-905 flop 본문" in client.instructions[0]
+
+
+def test_the_sample_shrinks_until_the_instruction_fits(tmp_path: Path) -> None:
+    """The corpus keeps growing and the provider's context does not."""
+    # Given the size the same batch reaches with a full sample
+    full = _run(tmp_path, BatchAnswerClient(), domains=_FOUR).drafts[0].provenance
+    client = BatchAnswerClient()
+
+    # When it is written under a ceiling below that
     batch = _run(
         tmp_path,
         client,
-        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
+        domains=_FOUR,
+        max_instruction_chars=full.instruction_chars - 200,
     )
 
-    # Then both candidates survive and the second says what happened to it
-    assert len(batch.drafts) == 2
-    assert batch.drafts[1].regenerated is True
-    assert batch.drafts[1].duplicate_topic is True
-    assert batch.drafts[0].duplicate_topic is False
+    # Then it fits, having given up hits first — what did not work is the half of the
+    # corpus that says where the line is, so a flop survives
+    provenance = batch.drafts[0].provenance
+    assert provenance.instruction_chars <= full.instruction_chars - 200
+    assert len(provenance.reference_ids) < len(full.reference_ids)
+    assert "kr-905" in provenance.reference_ids
 
 
-def test_a_failed_rewrite_keeps_the_draft_it_was_replacing(tmp_path: Path) -> None:
-    """Losing a candidate because its rewrite timed out would be the worse trade."""
-    # Given two candidates that collided, and a rewrite that dies at the provider boundary
-    client = DomainAnswerClient(
-        topics={"00": "같은 주제", "01": "같은 주제"},
-        failing_call_ids=frozenset({"01-1"}),
-    )
+def test_the_core_documents_never_give_way(tmp_path: Path) -> None:
+    """An instruction without the voice or the facts is not shorter, it is different."""
+    # Given a ceiling no sample size can meet
+    client = BatchAnswerClient()
+
+    # When the batch is written anyway
+    batch = _run(tmp_path, client, domains=_FOUR, max_instruction_chars=1)
+
+    # Then it still carries every named document rather than refusing to write
+    paths = tuple(document.relative_path for document in batch.drafts[0].provenance.documents)
+    assert paths[: len(REQUIRED_DOCUMENTS)] == REQUIRED_DOCUMENTS
+    assert len(batch.drafts) == 4
+
+
+def test_the_history_it_is_handed_reaches_the_prompt(tmp_path: Path) -> None:
+    """The control plane knows what last week's batch said; the worker has no store."""
+    # Given topics the control plane sent with the request
+    client = BatchAnswerClient()
 
     # When the batch runs
-    batch = _run(
+    _ = _run(
         tmp_path,
         client,
-        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
+        domains=_FOUR,
+        history=(
+            CandidateHistoryEntry(persona_domain=None, topic="야간 근무 전날 밤"),
+            CandidateHistoryEntry(
+                persona_domain=CandidatePersonaDomain.PARENTING, topic="첫째 재우기"
+            ),
+        ),
     )
 
-    # Then the original draft is still delivered, flagged rather than discarded
-    assert len(batch.drafts) == 2
-    assert batch.drafts[1].draft.topic == "같은 주제"
-    assert batch.drafts[1].regenerated is True
-    assert batch.drafts[1].duplicate_topic is True
+    # Then they are in the prompt, with the domain shown only where one was recorded
+    instruction = client.instructions[0]
+    assert "[최근 생성된 후보 목록]" in instruction
+    assert "- [도메인 미기록] 야간 근무 전날 밤" in instruction
+    assert "- [육아] 첫째 재우기" in instruction
 
 
-def test_every_call_records_what_it_actually_read(tmp_path: Path) -> None:
+def test_the_call_records_what_it_read_and_how_many_it_wrote(tmp_path: Path) -> None:
     """Provenance is observed while the call runs, not asserted about it afterwards."""
     # Given
-    client = DomainAnswerClient()
+    client = BatchAnswerClient()
 
-    # When one candidate is drafted
-    batch = _run(tmp_path, client, domains=(CandidatePersonaDomain.SPORTS_FAN,))
+    # When a four-candidate batch is drafted
+    batch = _run(tmp_path, client, domains=_FOUR)
 
-    # Then the record names the documents, the sample and the instruction it paid for
+    # Then every candidate carries the record of the one call that wrote them all
     provenance = batch.drafts[0].provenance
+    assert all(drafted.provenance == provenance for drafted in batch.drafts)
     paths = tuple(document.relative_path for document in provenance.documents)
     assert paths[: len(REQUIRED_DOCUMENTS)] == REQUIRED_DOCUMENTS
-    assert provenance.reference_ids == ("kr-900", "kr-901", "kr-902", "kr-904")
-    assert provenance.assigned_domains == (CandidatePersonaDomain.SPORTS_FAN,)
+    assert provenance.assigned_domains == _FOUR
+    assert provenance.batch_size == 4
     assert provenance.model == "codex_cli"
     assert provenance.instruction_chars == len(client.instructions[0])
     assert all(document.size_bytes > 0 for document in provenance.documents)
@@ -400,10 +425,10 @@ def test_every_call_records_what_it_actually_read(tmp_path: Path) -> None:
 def test_every_call_reads_reference_bodies_not_only_the_index(tmp_path: Path) -> None:
     """The model used to cite ids from a table it had never seen the writing behind."""
     # Given
-    client = DomainAnswerClient()
+    client = BatchAnswerClient()
 
     # When
-    _ = _run(tmp_path, client, domains=(CandidatePersonaDomain.SPORTS_FAN,))
+    _ = _run(tmp_path, client, domains=_FOUR)
 
     # Then the bodies themselves are in the instruction
     instruction = client.instructions[0]
@@ -412,76 +437,18 @@ def test_every_call_reads_reference_bodies_not_only_the_index(tmp_path: Path) ->
     assert "# kr-904 flop 본문" in instruction
 
 
-def test_a_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
-    # Given a call whose first answer does not survive validation
-    client = DomainAnswerClient(malformed={"sports_fan": 1})
-
-    # When the batch runs
-    batch = _run(tmp_path, client, domains=(CandidatePersonaDomain.SPORTS_FAN,))
-
-    # Then the retry quotes back what was wrong, in its own place
-    assert len(batch.drafts) == 1
-    assert client.call_ids == ["00", "00-retry"]
-    assert "직전 응답은 형식 검증을 통과하지 못했습니다." in client.instructions[1]
-    assert "검증 오류:" in client.instructions[1]
-
-
-def test_two_malformed_answers_give_up_on_that_candidate(tmp_path: Path) -> None:
-    # Given a call that never returns a usable answer
-    client = DomainAnswerClient(malformed={"sports_fan": 2})
-
-    # When / Then the batch raises rather than inventing a candidate
-    with pytest.raises(CandidateFormatError):
-        _ = _run(tmp_path, client, domains=(CandidatePersonaDomain.SPORTS_FAN,))
-    assert client.call_ids == ["00", "00-retry"]
-
-
-def test_a_call_that_fails_keeps_the_candidates_that_worked(tmp_path: Path) -> None:
-    """Two captions and one timeout is two captions worth keeping."""
-    # Given one of three calls whose provider process dies
-    client = DomainAnswerClient(failures={"parenting": RuntimeError("codex exited")})
-
-    # When the batch runs
-    batch = _run(tmp_path, client, domains=_THREE)
-
-    # Then the shortfall is carried out rather than logged away
-    assert len(batch.drafts) == 2
-    assert batch.failures == 1
-    assert [drafted.draft.persona_domain for drafted in batch.drafts] == [
-        CandidatePersonaDomain.SPORTS_FAN,
-        CandidatePersonaDomain.EXAM_PREPPER,
-    ]
-
-
-def test_a_batch_whose_every_call_fails_still_raises(tmp_path: Path) -> None:
-    # Given every call failing at the provider boundary
-    client = DomainAnswerClient(
-        failures={
-            "sports_fan": RuntimeError("codex exited"),
-            "parenting": OSError("codex missing"),
-        }
-    )
-
-    # When / Then nothing is reported as a success
-    with pytest.raises(CandidateProviderError):
-        _ = _run(
-            tmp_path,
-            client,
-            domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
-        )
-
-
 def test_an_account_batch_writes_every_candidate_as_that_one_person(tmp_path: Path) -> None:
-    # Given an account and a three-candidate batch
-    client = DomainAnswerClient()
+    # Given an account and a four-candidate batch
+    client = BatchAnswerClient()
     brief = _account()
 
     # When the batch runs
-    batch = _run(tmp_path, client, domains=(brief.domain,) * 3, brief=brief)
+    batch = _run(tmp_path, client, domains=(brief.domain,) * 4, brief=brief)
 
-    # Then every call carries the account block and its fixed domain
-    assert len(batch.drafts) == 3
-    assert all("김도현" in instruction for instruction in client.instructions)
+    # Then the one call carries the account block and its fixed domain
+    assert len(batch.drafts) == 4
+    assert "김도현" in client.instructions[0]
+    assert "[정체성 창작 규칙]" not in client.instructions[0]
     assert all(
         drafted.draft.persona_domain is CandidatePersonaDomain.SPORTS_FAN
         for drafted in batch.drafts
@@ -510,18 +477,22 @@ def test_domain_assignment_binds_one_candidate_to_one_domain() -> None:
     assert len(set(assigned)) == 4
 
 
-def test_interest_assignment_cycles_when_there_are_fewer_axes_than_candidates() -> None:
+def test_interest_assignment_cycles_and_survives_an_account_with_none() -> None:
     """Two candidates on one axis is a weaker guarantee, not a broken batch."""
     # Given / When / Then
     assert assign_interests(("야구", "러닝"), 5) == ("야구", "러닝", "야구", "러닝", "야구")
-    assert assign_interests(("야구",), 2) == ("야구", "야구")
+    assert assign_interests((), 3) == (None, None, None)
 
 
-def test_the_barrier_helper_would_actually_catch_a_sequential_engine() -> None:
-    """Guards the concurrency test above: a barrier nobody else reaches must break."""
-    # Given a barrier expecting two parties and only one arriving
-    barrier = Barrier(2)
+def test_a_batch_without_interests_carries_no_axis(tmp_path: Path) -> None:
+    """No axis is honest when there is nothing to divide by; it is not a failure."""
+    # Given an account-less batch
+    client = BatchAnswerClient()
 
-    # When / Then it refuses rather than passing quietly
-    with pytest.raises(BrokenBarrierError):
-        _ = barrier.wait(timeout=0.05)
+    # When it runs
+    batch = _run(tmp_path, client, domains=_FOUR, interests=())
+
+    # Then the assignment lines carry a form and a domain and stop there
+    assert all(drafted.assigned_interest is None for drafted in batch.drafts)
+    assert "· 소재 축" not in client.instructions[0]
+    assert "- 후보 1: 형태 hook (훅글) · 도메인 sports_fan (스포츠 팬)" in client.instructions[0]

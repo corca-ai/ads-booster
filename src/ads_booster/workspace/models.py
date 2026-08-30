@@ -116,10 +116,14 @@ class CandidateGenerationProvenance(FrozenModel):
     # The domains this batch was told to write, one per candidate, assigned before any call
     # goes out.
     assigned_domains: Annotated[tuple[CandidatePersonaDomain, ...], Field(max_length=16)] = ()
-    # The reference bodies this one call was shown, drawn fresh per candidate. Recorded so
-    # "which references produce candidates worth approving" is a question the stored rows
-    # can answer later.
+    # The reference bodies this call was shown. Recorded so "which references produce
+    # candidates worth approving" is a question the stored rows can answer later.
     reference_ids: Annotated[tuple[CandidateReference, ...], Field(max_length=16)] = ()
+    # How many candidates this one call was asked for. Every candidate it produced carries
+    # the same provenance, so without this a reviewer cannot tell one call that wrote four
+    # from four calls that wrote one — and that is the difference the batching decision has
+    # to be judged on later.
+    batch_size: int = Field(default=1, ge=1)
 
 
 class CandidateHistoryEntry(FrozenModel):

@@ -9,11 +9,11 @@ from ads_booster.candidate_generation import (
     CandidateContextSource,
     CandidateDocument,
     CandidateFormatError,
-    CaptionForm,
-    assign_caption_forms,
+    assign_candidates,
     build_instruction,
     parse_candidate_drafts,
 )
+from ads_booster.candidate_generation.instruction import CandidateAssignment  # noqa: TC001
 from ads_booster.workspace import (
     CandidateAccountBrief,
     CandidateBackgroundSubject,
@@ -31,6 +31,18 @@ if TYPE_CHECKING:
 
 def _bundle(tmp_path: Path) -> CandidateContextBundle:
     return CandidateContextSource(write_context(tmp_path), required=REQUIRED_DOCUMENTS).load()
+
+
+_DOMAINS: tuple[CandidatePersonaDomain, ...] = (
+    CandidatePersonaDomain.SPORTS_FAN,
+    CandidatePersonaDomain.PARENTING,
+    CandidatePersonaDomain.EXAM_PREPPER,
+)
+
+
+def _for(count: int, interests: tuple[str, ...] = ()) -> tuple[CandidateAssignment, ...]:
+    """The assignment a batch of `count` candidates gets, for tests about the prose."""
+    return assign_candidates(_DOMAINS[:count], interests)
 
 
 def _account() -> CandidateAccountBrief:
@@ -84,7 +96,7 @@ def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then
     for relative_path in REQUIRED_DOCUMENTS:
@@ -111,7 +123,7 @@ def test_instruction_states_the_schedule_format_the_lock_screen_can_render(
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then the format is stated, and every example in the prompt obeys it
     assert '각 항목은 반드시 "HH:MM 제목" 형식입니다' in instruction
@@ -129,7 +141,7 @@ def test_instruction_states_the_country_and_language_the_request_asked_for(
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=2, country="JP", language="ja")
+    instruction = build_instruction(bundle, assignments=_for(2), country="JP", language="ja")
 
     # Then
     assert "JP 게시물 후보 2개" in instruction
@@ -152,7 +164,7 @@ def test_instruction_keeps_the_job_out_of_the_schedule_and_the_caption(
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then
     assert "직무 작업을 일정으로 늘어놓지 마세요" in instruction
@@ -179,7 +191,7 @@ def test_the_account_block_supplies_a_person_without_dictating_the_prose(
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3, account=_account())
+    instruction = build_instruction(bundle, assignments=_for(3), account=_account())
 
     # Then
     assert "[이 계정으로 씁니다]" in instruction
@@ -199,8 +211,7 @@ def test_an_account_replaces_the_per_candidate_domain_spread(tmp_path: Path) -> 
     # When
     instruction = build_instruction(
         bundle,
-        count=3,
-        domains=(CandidatePersonaDomain.PARENTING,) * 3,
+        assignments=assign_candidates((CandidatePersonaDomain.PARENTING,) * 3),
         account=_account(),
     )
 
@@ -242,7 +253,7 @@ def test_instruction_sanctions_real_names_only_in_the_background_search_query(
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then the rule block asks for a wallpaper, not an occupation scene, and allows proper
     # nouns there
@@ -267,7 +278,7 @@ def test_instruction_carries_the_persona_specificity_blocks(tmp_path: Path) -> N
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then
     _assert_identity_invention_block(instruction)
@@ -288,7 +299,7 @@ def test_persona_specificity_block_survives_added_reference_bodies(tmp_path: Pat
     )
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then
     assert "[context 문서: references/KR/kr-001.md]" in instruction
@@ -308,7 +319,7 @@ def test_an_account_batch_is_never_told_to_invent_a_person(tmp_path: Path) -> No
     bundle = _bundle(tmp_path)
 
     # When the batch is written as an existing account
-    instruction = build_instruction(bundle, count=3, account=_account())
+    instruction = build_instruction(bundle, assignments=_for(3), account=_account())
 
     # Then nothing asks it to author a person, while the craft rules still apply
     assert "[정체성 창작 규칙]" not in instruction
@@ -322,7 +333,7 @@ def test_the_caption_never_announces_that_it_is_staged(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then the demo frame is gone and its verbs are named as what not to write
     assert "데모 프레임" not in instruction
@@ -339,7 +350,7 @@ def test_the_schedule_belongs_to_the_image_and_not_to_the_caption(tmp_path: Path
     bundle = _bundle(tmp_path)
 
     # When
-    instruction = build_instruction(bundle, count=3)
+    instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then
     assert "일정은 이미지가 보여줍니다" in instruction
@@ -349,40 +360,6 @@ def test_the_schedule_belongs_to_the_image_and_not_to_the_caption(tmp_path: Path
     assert "kr-001(relative 175.30)에는 일정 나열이 없습니다" in instruction
 
 
-def test_the_batch_is_assigned_one_caption_form_per_candidate(tmp_path: Path) -> None:
-    """Left to itself a batch opens three ways that are the same way."""
-    # Given
-    bundle = _bundle(tmp_path)
-
-    # When
-    instruction = build_instruction(bundle, count=3)
-
-    # Then each candidate is bound to its own form, with the evidence for it
-    assert "[캡션 형태 배정]" in instruction
-    assert "- 후보 1: hook (훅글)" in instruction
-    assert "- 후보 2: daily (일상글)" in instruction
-    assert "- 후보 3: testimony (간증글)" in instruction
-    assert "근거 레퍼런스: kr-001, kr-003, kr-014." in instruction
-    assert "근거 레퍼런스: kr-010." in instruction
-    assert "간증글은 한 배치에 많아야 하나입니다" in instruction
-    # And every form is shown rather than only named
-    assert "예: 다들 시험기간엔 폰 어떻게 해요?" in instruction
-
-
-def test_a_batch_carries_at_most_one_testimonial() -> None:
-    """Testimony is the one form that claims something, so it is capped rather than cycled."""
-    # Given / When / Then no batch size turns the feed into an ad break
-    for count in range(1, 9):
-        forms = assign_caption_forms(count)
-        assert len(forms) == count
-        assert forms.count(CaptionForm.TESTIMONY) <= 1
-    # And a single candidate is not spent on the one form that talks about the product
-    assert assign_caption_forms(1) == (CaptionForm.HOOK,)
-    assert assign_caption_forms(0) == ()
-    # And the assignment is a function of the count, so a reviewer can predict it
-    assert assign_caption_forms(3) == (CaptionForm.HOOK, CaptionForm.DAILY, CaptionForm.TESTIMONY)
-
-
 def test_the_instruction_lists_recent_candidates_to_avoid_repeating(tmp_path: Path) -> None:
     # Given a history of what this batch has already written
     bundle = _bundle(tmp_path)
@@ -390,7 +367,7 @@ def test_the_instruction_lists_recent_candidates_to_avoid_repeating(tmp_path: Pa
     # When it is handed to the next call
     instruction = build_instruction(
         bundle,
-        count=1,
+        assignments=_for(1),
         history=(
             CandidateHistoryEntry(
                 persona_domain=CandidatePersonaDomain.PARENTING, topic="첫째 재우기"

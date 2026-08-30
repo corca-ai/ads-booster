@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING, Final
 
@@ -12,6 +13,8 @@ from ads_booster.workspace import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ads_booster.candidate_generation.models import CandidateContextBundle
 
 DEFAULT_COUNTRY: Final = "KR"
@@ -127,27 +130,14 @@ _CRAFT: Final = """[구체성 규칙]
    일정 문자열과 캡션 본문 안에서는 팬 활동 맥락의 자연스러운 언급이 허용됩니다.
 4. 캡션의 화자는 그 사람 본인입니다. 검증 가능한 제품 사실은 FACTS 문서에서만 가져오세요."""
 
-_DISTINCT_MANY: Final = "{count}개 후보의 주제(topic)는 서로 겹치지 않아야 합니다."
+_DISTINCT_MANY: Final = (
+    "{count}개 후보의 주제(topic)는 서로 겹치지 않아야 합니다. "
+    "아래 [후보별 배정]이 후보마다 다른 출발점을 정해 두었으니 그대로 따르세요."
+)
 _DISTINCT_ONE: Final = (
     "주제(topic)는 아래 [최근 생성된 후보 목록]의 어느 것과도 겹치지 않아야 합니다."
 )
-# A batch written in parallel has nothing recent to show its first calls, so the rule cannot
-# point at a list that is not in the prompt. What separates those candidates is the axis each
-# was assigned before it was sent.
-_DISTINCT_AXIS: Final = (
-    "주제(topic)는 아래에서 이 후보에 배정한 축에서 나와야 합니다. "
-    "같은 배치의 다른 후보는 다른 축을 받았습니다."
-)
 _DISTINCT_SOLO: Final = "주제(topic)는 이 계정이 이미 쓴 소재와 겹치지 않아야 합니다."
-
-_INTEREST: Final = """[이번 후보의 소재 축]
-이 후보는 "{interest}" 에서 출발합니다.
-같은 배치의 다른 후보는 각자 다른 축을 받았고, 서로 무엇을 쓰는지 모르는 채로 씁니다.
-축이 갈리는 것이 이 배치에서 후보가 서로 겹치지 않는 장치입니다.
-
-축은 소재를 고르는 출발점이지 캡션에 옮겨 적을 문구가 아닙니다.
-"{interest}" 라는 말을 캡션에 넣으라는 뜻이 아니라, 이 사람의 하루 중 그 축과 닿는
-장면 하나를 골라 거기서 글을 시작하라는 뜻입니다."""
 
 _OUTPUT: Final = """[출력 형식]
 설명, 머리말, 코드펜스 없이 JSON 객체 하나만 출력하세요.
@@ -248,15 +238,67 @@ _FORM_EXAMPLES: Final = {
     CaptionForm.TESTIMONY: "두 달째 쓰는데 이제 내일 뭐부터 하는지 확인하려고 앱을 안 연다",
 }
 
-_FORM_HEADER: Final = """[캡션 형태 배정]
-같은 사람이 써도 글마다 여는 방식이 달라야 합니다. 한 배치가 전부 같은 형태로 열리면
-피드가 한 장짜리 템플릿으로 읽힙니다. 후보별 형태는 코드가 배정했습니다.
+_ASSIGNMENT_HEADER: Final = """[후보별 배정]
+이 배치는 한 번에 {count}개를 씁니다. 무엇이 후보를 서로 다르게 만드는지는 코드가
+후보마다 미리 정해 두었습니다. 아래 배정을 그대로 따르세요.
 {lines}
-간증글은 한 배치에 많아야 하나입니다. 제품 이야기가 매 글에 오면 계정이 광고가 됩니다.
-형태는 무엇을 쓰느냐가 아니라 어떻게 여느냐입니다. 배정받은 도메인과 계정은 그대로 두고
-형태만 이 배정을 따르세요."""
+- 형태는 글을 여는 방식입니다. 같은 사람이 써도 글마다 다르게 열어야 하고,
+  한 배치가 전부 같은 형태로 열리면 피드가 한 장짜리 템플릿으로 읽힙니다.
+  간증글은 한 배치에 많아야 하나입니다. 제품 이야기가 매 글에 오면 계정이 광고가 됩니다.
+- 도메인은 persona_domain 필드에 그대로 적습니다. 그 후보에 적힌 토큰이어야 하고,
+  정해지지 않은 토큰이나 새 단어를 쓰면 안 됩니다.
+- 소재 축은 그 후보가 출발할 자리입니다.
+  캡션에 옮겨 적을 문구가 아니라, 이 사람의 하루 중 그 축과 닿는 장면 하나를 골라
+  거기서 글을 시작하라는 뜻입니다.
 
-_FORM_LINE: Final = "- 후보 {index}: {token} ({label}) — {guidance}\n  예: {example}"
+각 형태를 어떻게 쓰는지는 아래와 같습니다.
+{forms}"""
+
+_ASSIGNMENT_LINE: Final = "- 후보 {index}: 형태 {form} ({form_label}) · 도메인 {domain} ({label})"
+_ASSIGNMENT_INTEREST: Final = " · 소재 축 {interest}"
+_FORM_GUIDE_LINE: Final = "- {token} ({label}): {guidance}\n  예: {example}"
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateAssignment:
+    """What one candidate in the batch was told to be, decided before the call goes out.
+
+    The batch is one provider call now, so nothing separates the candidates except what the
+    instruction says about each of them. Keeping the three together — and bound to a
+    position in the output array — is what lets the parse step hold the answer to it.
+    """
+
+    domain: CandidatePersonaDomain
+    form: CaptionForm
+    # The account's own interest this candidate starts from. `None` when the account
+    # recorded none, which is honest: there is nothing to divide the batch by.
+    interest: str | None = None
+
+
+def assign_interests(interests: Sequence[str], count: int) -> tuple[str | None, ...]:
+    """Give each candidate its own subject axis out of the account's interests.
+
+    Cycling rather than failing when there are fewer interests than candidates: two
+    candidates on the same axis is a weaker guarantee than two on different ones, not a
+    broken batch. An account with no interests gets no axis at all, and the batch falls
+    back to the domain and the form to keep its candidates apart.
+    """
+    if not interests:
+        return (None,) * count
+    return tuple(interests[index % len(interests)] for index in range(count))
+
+
+def assign_candidates(
+    domains: Sequence[CandidatePersonaDomain],
+    interests: Sequence[str] = (),
+) -> tuple[CandidateAssignment, ...]:
+    """Bind a form and a subject axis to each of the batch's already-chosen domains."""
+    forms = assign_caption_forms(len(domains))
+    axes = assign_interests(interests, len(domains))
+    return tuple(
+        CandidateAssignment(domain=domain, form=forms[index], interest=axes[index])
+        for index, domain in enumerate(domains)
+    )
 
 
 def assign_caption_forms(count: int) -> tuple[CaptionForm, ...]:
@@ -277,14 +319,6 @@ def assign_caption_forms(count: int) -> tuple[CaptionForm, ...]:
     )
     return (*alternating, CaptionForm.TESTIMONY)
 
-
-_ASSIGNMENT_HEADER: Final = """[도메인 배정]
-이번 배치의 도메인은 누적 커버리지가 가장 적은 순서로 코드가 배정했습니다.
-후보와 도메인은 1:1입니다. 한 도메인에 후보를 몰아넣지 마세요.
-{lines}
-각 후보의 persona_domain 필드에는 위에서 그 후보에 배정된 토큰을 그대로 적으세요."""
-
-_ASSIGNMENT_LINE: Final = "- 후보 {index}: {token} ({label}) 도메인의 구체 정체성으로"
 
 _HISTORY_HEADER: Final = """[최근 생성된 후보 목록]
 아래는 이 워크스페이스가 최근에 만든 후보입니다.
@@ -351,62 +385,50 @@ def account_section(account: CandidateAccountBrief, *, count: int) -> str:
 def build_instruction(  # noqa: PLR0913 - each argument is one independent prompt section.
     bundle: CandidateContextBundle,
     *,
-    count: int,
+    assignments: tuple[CandidateAssignment, ...],
     country: str = DEFAULT_COUNTRY,
     language: str = DEFAULT_LANGUAGE,
-    domains: tuple[CandidatePersonaDomain, ...] = (),
     history: tuple[CandidateHistoryEntry, ...] = (),
     account: CandidateAccountBrief | None = None,
-    forms: tuple[CaptionForm, ...] | None = None,
-    interest: str | None = None,
 ) -> str:
-    """Assemble the single generation instruction from the loaded context documents.
+    """Assemble the one generation instruction this batch is written from.
 
-    `domains` binds one candidate to one domain by position, and `history` shows the model
-    what this workspace has already produced. Both are optional so a caller with no store
-    behind it still gets a usable instruction.
+    `assignments` is what makes the candidates different from each other, decided by code
+    before the call goes out: a caption form, a persona domain and a subject axis, one set
+    per candidate, bound positionally to the output array. A batch left to differentiate
+    itself writes the same post `count` times and reports variety, which is the failure this
+    section exists to prevent — and stating it per candidate is what lets the parse step
+    check that the model actually obeyed.
+
+    `history` shows the model what has already been written for this account, so a batch
+    does not repeat what last week's batch said. It arrives from the control plane rather
+    than from a local store.
 
     `account` replaces the invent-a-person half of the job: when the batch is written for
-    an existing account, spreading it across domains would be the bug rather than the
-    feature, so the per-candidate domain assignment is dropped and the account's own domain
-    stands for the whole batch. The identity-invention block goes with it — telling a batch
-    to author a fresh person and to stay inside an existing one at the same time is the
-    contradiction that put a stranger in every account's captions. What survives both paths
-    is the craft: how a schedule, a clock and a wallpaper are derived from whoever is
-    writing.
-
-    `forms` is the caption shapes this instruction asks for, one per candidate. It is passed
-    in rather than derived here because a batch is now written one call per candidate: the
-    cap of one testimonial belongs to the batch, so the batch has to do the assigning and
-    hand each call its share. Left unset it assigns for `count` candidates, which is what a
-    single-call caller still wants.
+    an existing account, the identity-invention block goes away — telling a batch to author
+    a fresh person and to stay inside an existing one at the same time is the contradiction
+    that put a stranger in every account's captions. What survives both paths is the craft:
+    how a schedule, a clock and a wallpaper are derived from whoever is writing.
 
     `country` and `language` are the request's, not constants, because the drafts are held
     to exactly those two values downstream. Stating them here is what keeps a batch from
     coming back labelled for a country it was never asked to write.
-
-    `interest` is the subject axis this one candidate was assigned out of the account's own
-    interests. It carries the separation that the recent-topic list cannot when a batch is
-    written in parallel: those calls run at the same time and none of them can be shown what
-    the others wrote, so what keeps them apart has to be decided before any of them is sent.
     """
+    count = len(assignments)
     subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
     one = count == 1
     distinct = _DISTINCT_MANY.format(count=count)
     if one:
-        # A lone candidate is separated by the history it is shown, or — when there is none
-        # because the batch is running in parallel — by its assigned axis. Naming a section
-        # that is not in the prompt would be an instruction to look at nothing.
-        distinct = _DISTINCT_ONE if history else _DISTINCT_AXIS if interest else _DISTINCT_SOLO
+        # Naming a section that is not in the prompt would be an instruction to look at
+        # nothing, so a lone candidate points at the history only when it has one.
+        distinct = _DISTINCT_ONE if history else _DISTINCT_SOLO
     sections = [
         (_ROLE_ONE.format(country=country) if one else _ROLE.format(count=count, country=country)),
         _RULES.format(subjects=subjects, distinct=distinct),
         *([_INVENT_IDENTITY] if account is None else []),
         _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
-        *([_INTEREST.format(interest=interest)] if interest else []),
-        *([_assignment_section(domains)] if domains and account is None else []),
-        _form_section(assign_caption_forms(count) if forms is None else forms),
+        assignment_section(assignments),
         *([_history_section(history)] if history else []),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"
@@ -417,30 +439,36 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
     return "\n\n".join(sections)
 
 
-def _form_section(forms: tuple[CaptionForm, ...]) -> str:
+def assignment_section(assignments: tuple[CandidateAssignment, ...]) -> str:
+    """State what each candidate in this batch was assigned, and how to write each form."""
     lines = "\n".join(
-        _FORM_LINE.format(
+        _ASSIGNMENT_LINE.format(
             index=index,
+            form=assignment.form.value,
+            form_label=_FORM_LABELS[assignment.form],
+            domain=assignment.domain.value,
+            label=PERSONA_DOMAIN_LABELS[assignment.domain],
+        )
+        + (
+            ""
+            if assignment.interest is None
+            else _ASSIGNMENT_INTEREST.format(interest=assignment.interest)
+        )
+        for index, assignment in enumerate(assignments, start=1)
+    )
+    # Only the forms this batch actually uses are explained. A guide for a form nobody was
+    # assigned is an invitation to write it anyway.
+    used = [form for form in CaptionForm if any(item.form is form for item in assignments)]
+    forms = "\n".join(
+        _FORM_GUIDE_LINE.format(
             token=form.value,
             label=_FORM_LABELS[form],
             guidance=_FORM_GUIDANCE[form],
             example=_FORM_EXAMPLES[form],
         )
-        for index, form in enumerate(forms, start=1)
+        for form in used
     )
-    return _FORM_HEADER.format(lines=lines)
-
-
-def _assignment_section(domains: tuple[CandidatePersonaDomain, ...]) -> str:
-    lines = "\n".join(
-        _ASSIGNMENT_LINE.format(
-            index=index,
-            token=domain.value,
-            label=PERSONA_DOMAIN_LABELS[domain],
-        )
-        for index, domain in enumerate(domains, start=1)
-    )
-    return _ASSIGNMENT_HEADER.format(lines=lines)
+    return _ASSIGNMENT_HEADER.format(count=len(assignments), lines=lines, forms=forms)
 
 
 def _history_section(history: tuple[CandidateHistoryEntry, ...]) -> str:

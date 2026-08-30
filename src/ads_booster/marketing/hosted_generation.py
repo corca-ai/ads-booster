@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ads_booster.candidate_generation import (
-    DEFAULT_MAX_WORKERS,
+    DEFAULT_MAX_BATCH,
     REQUIRED_DOCUMENTS,
     CandidateContextSource,
     CandidateDraftEngine,
@@ -37,6 +37,7 @@ from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import (
     CandidateAccountBrief,
     CandidateBackgroundSubject,
+    CandidateHistoryEntry,
     CandidatePersonaDomain,
 )
 
@@ -94,6 +95,14 @@ class HostedGenerationRequest(GenerationModel):
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
     count: Annotated[int, Field(ge=1, le=8)] = 4
     context_profile_id: Annotated[str | None, Field(max_length=128)] = None
+    # What this persona has already been given, newest first, so a batch does not restate
+    # last week's. Absent on a control plane that predates the field, which is why it
+    # defaults to empty rather than being required: an older publisher still gets captions,
+    # it just gets them without this guard.
+    recent_topics: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=200)], ...],
+        Field(max_length=32),
+    ] = ()
     requested_by: Literal["hosted_workspace"]
 
 
@@ -225,11 +234,9 @@ class HostedWorkspaceGenerationExecutor:
     shuffle: Callable[[Sequence[CandidatePersonaDomain]], Sequence[CandidatePersonaDomain]] = (
         default_domain_shuffle
     )
-    # How many Codex turns this worker runs at once. Nothing in the execution path
-    # serialises them — each turn is its own process in its own workspace, and the only
-    # file lock on this machine belongs to the simulator the capture path drives — so the
-    # ceiling is the Codex account's rather than ours. Set it to 1 to run one at a time.
-    max_workers: int = DEFAULT_MAX_WORKERS
+    # How many candidates one Codex turn is asked for. A request larger than this is
+    # written as several turns in order, each shown what the earlier ones wrote.
+    max_batch: int = DEFAULT_MAX_BATCH
 
     def prepare(self, task: MarketingTask) -> PreparedHostedGeneration:
         match task.kind:
@@ -282,7 +289,7 @@ class HostedWorkspaceGenerationExecutor:
             ),
             model=_CODEX_MODEL,
             sample_references=self.sample_references,
-            max_workers=self.max_workers,
+            max_batch=self.max_batch,
         )
         try:
             batch = engine.draft(
@@ -293,6 +300,7 @@ class HostedWorkspaceGenerationExecutor:
                 domains=prepared.domains,
                 brief=prepared.brief,
                 interests=() if persona is None else persona.interests,
+                history=_recent_history(prepared.request.recent_topics),
             )
         except CandidateFormatError as error:
             raise MarketingExecutionError(
@@ -319,8 +327,9 @@ class HostedWorkspaceGenerationExecutor:
                 "persona_id": prepared.request.persona_id,
                 "requested": prepared.request.count,
                 "failures": batch.failures,
+                "failure_reason": batch.failure_reason,
                 "candidates": [
-                    _candidate_output(candidate, drafted, parallel=batch.parallel)
+                    _candidate_output(candidate, drafted)
                     for candidate, drafted in zip(generated.candidates, batch.drafts, strict=True)
                 ],
             },
@@ -380,6 +389,16 @@ def _generation_schema() -> JsonObject:
     """
     schema: JsonObject = _JSON_OBJECT.validate_python(HostedGenerationResponse.model_json_schema())
     return schema
+
+
+def _recent_history(topics: Sequence[str]) -> tuple[CandidateHistoryEntry, ...]:
+    """Turn the control plane's recent topics into the history block the prompt shows.
+
+    No domain is carried across: the control plane stores the topic, and inventing a domain
+    to fill the field would put a fact in the prompt that nobody observed. The block renders
+    those as "도메인 미기록", which is what they are.
+    """
+    return tuple(CandidateHistoryEntry(persona_domain=None, topic=topic) for topic in topics)
 
 
 def _account_brief(persona: GenerationPersona) -> CandidateAccountBrief:
@@ -460,12 +479,7 @@ def _generated_candidate(drafted: DraftedCandidate) -> GeneratedCandidate:
     )
 
 
-def _candidate_output(
-    candidate: GeneratedCandidate,
-    drafted: DraftedCandidate,
-    *,
-    parallel: bool,
-) -> JsonObject:
+def _candidate_output(candidate: GeneratedCandidate, drafted: DraftedCandidate) -> JsonObject:
     image_inputs = candidate.image_inputs
     provenance = drafted.provenance
     return {
@@ -500,14 +514,12 @@ def _candidate_output(
             "assigned_domains": [domain.value for domain in provenance.assigned_domains],
             "reference_ids": list(provenance.reference_ids),
             "caption_form": drafted.caption_form.value,
-            # How this batch was run and what happened to this candidate inside it. The
-            # control plane's provenance normaliser keeps a fixed set of keys and drops
-            # these, so they survive in the task's stored result rather than on the
-            # candidate row — which is where someone asking "why do these two look alike"
-            # goes looking anyway.
+            # What this candidate was told to start from, and how many candidates shared
+            # the call that wrote it. The control plane's provenance normaliser keeps a
+            # fixed set of keys and drops these two, so they survive in the task's stored
+            # result rather than on the candidate row — which is where someone asking
+            # "why did this batch converge" goes looking anyway.
             "assigned_interest": drafted.assigned_interest,
-            "parallel": parallel,
-            "regenerated": drafted.regenerated,
-            "duplicate_topic": drafted.duplicate_topic,
+            "batch_size": provenance.batch_size,
         },
     }
