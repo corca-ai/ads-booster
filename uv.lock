@@ -710,7 +710,7 @@ wheels = [
 
 [[package]]
 name = "trace-appium-capture"
-version = "0.3.14"
+version = "0.3.15"
 source = { editable = "." }
 dependencies = [
     { name = "appium-python-client" },

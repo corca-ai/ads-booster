@@ -38,8 +38,12 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
    acknowledges Save. This binds collection to the final Save generation rather than an earlier
    lifecycle export from the same request.
 7. The worker independently verifies PNG size/SHA-256, request digest, nonce, bundle ID, Simulator
-   UDID, dimensions, and `native_appium` provenance from the native manifest. It queues a callback
-   durably and retries callback delivery without rerunning the job.
+   UDID, dimensions, and `native_appium` provenance from the native manifest. The verified native
+   PNG is passed as an image input to the same Codex CLI's ImageGen capability. ImageGen adds the
+   dynamic iOS lock-screen appearance while preserving the Trace cards; the worker keeps the native
+   middle/card pixels and uses only the generated top and bottom UI bands in the final review
+   artifact. It then queues the final callback durably and retries callback delivery without
+   rerunning the job.
 8. Cloudflare writes the accepted image to R2 and state to D1. A person reviews it; approval reaches
    `submitted`. This product does not automatically publish anywhere.
 

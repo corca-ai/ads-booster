@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-30
 
 ## Runtime boundary
 
@@ -49,7 +49,12 @@ flowchart LR
    cannot accept a pre-Save lifecycle export carrying the same request binding.
 7. The worker independently requires the PNG and manifest SHA-256, request digest, nonce, bundle,
    UDID, dimensions, native export binding, and `native_appium` provenance to agree.
-8. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
+8. The worker sends that verified native PNG to the same official Codex CLI's ImageGen capability.
+   ImageGen edits the lock-screen UI dynamically, preserves the Trace cards, and excludes Dynamic
+   Island, notch, settings controls, and a device frame. The worker uses only the generated top and
+   bottom UI bands and keeps the native middle/card pixels unchanged; the native source and edited
+   result remain separate so provenance is not lost.
+9. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1 and opens human image review.
 
 The v2 contract fixes non-secret input and completion bindings, not selectors or UI procedures.
