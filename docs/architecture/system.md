@@ -46,9 +46,12 @@ flowchart LR
    Before Save, Codex publishes its active wallpaper-editor state. The worker independently checks
    the Trace editor identifier, every requested title, and the live Trace process arguments in the
    same Appium session. A bundle-only terminate/activate cycle loses the immutable export binding,
-   so the worker rejects that session before Save. It checks the binding again at the saved marker,
-   clears any earlier App Group export, and acknowledges Save only after those boundaries.
-   Collection therefore cannot wait on or accept an export from an unbound process.
+   so the worker rejects that Ready marker before Save and permits one replacement Trace session.
+   Codex keeps request calendars, recreates the final Trace editor with the exact launch arguments,
+   restores the UI state, and submits a new Ready marker. The worker checks the binding again at the
+   saved marker, clears any earlier App Group export, and acknowledges Save only after those
+   boundaries. A second rejected Ready ends the turn without Save. Collection therefore cannot wait
+   on or accept an export from an unbound process.
 7. The worker independently requires the PNG and manifest SHA-256, request digest, nonce, bundle,
    UDID, dimensions, native export binding, and `native_appium` provenance to agree.
 8. The worker sends that verified native PNG to the same official Codex CLI's ImageGen capability.

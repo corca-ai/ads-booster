@@ -38,6 +38,7 @@ _IMAGE_EDIT_ALREADY_INVOKED: Final = "codex_image_edit_job_already_invoked"
 _IMAGE_EDIT_RECEIPT_UNAVAILABLE: Final = "codex_image_edit_job_receipt_unavailable"
 _APPIUM_MARKER_LIMIT_BYTES: Final = 64 * 1024
 _APPIUM_MARKER_POLL_SECONDS: Final = 0.01
+_APPIUM_READY_ATTEMPTS: Final = 2
 _PRIVATE_FILE_MODE: Final = 0o600
 _APPIUM_COLLECTED_UNAVAILABLE: Final = "codex_appium_job_collected_marker_unavailable"
 _APPIUM_READY_VERIFIED_UNAVAILABLE: Final = "codex_appium_job_ready_verified_marker_unavailable"
@@ -85,6 +86,24 @@ def _write_private_json(path: Path, payload: JsonObject) -> None:
             descriptor = -1
             json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
         os.link(temporary, path, follow_symlinks=False)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def _replace_private_json(path: Path, payload: JsonObject) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, _PRIVATE_FILE_MODE)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+        _ = temporary.replace(path)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -411,13 +430,25 @@ class CodexCli:
         future: Future[subprocess.CompletedProcess[str]],
         callbacks: CodexAppiumJobCallbacks,
     ) -> subprocess.CompletedProcess[str]:
-        ready = self._wait_for_ready_marker(turn, future)
-        self._require_running(future, f"{turn.error_prefix}_exited_before_ready_ack")
-        ready_verified = callbacks.on_ready(ready)
-        self._require_running(future, f"{turn.error_prefix}_exited_before_ready_ack")
-        self._write_ready_verified_marker(turn.workspace, ready, ready_verified)
-        if ready_verified:
-            self._coordinate_saved_handshake(turn, future, callbacks, ready)
+        ready: CodexAppiumReadyState | None = None
+        for attempt in range(1, _APPIUM_READY_ATTEMPTS + 1):
+            ready = self._wait_for_ready_marker(turn, future, previous=ready)
+            self._require_running(future, f"{turn.error_prefix}_exited_before_ready_ack")
+            ready_verified = callbacks.on_ready(ready)
+            self._require_running(future, f"{turn.error_prefix}_exited_before_ready_ack")
+            retry_allowed = not ready_verified and attempt < _APPIUM_READY_ATTEMPTS
+            self._write_ready_verified_marker(
+                turn.workspace,
+                ready,
+                ready_verified,
+                attempt=attempt,
+                retry_allowed=retry_allowed,
+            )
+            if ready_verified:
+                self._coordinate_saved_handshake(turn, future, callbacks, ready)
+                break
+            if not retry_allowed:
+                break
         return self._completed_process(turn, future)
 
     def _coordinate_saved_handshake(
@@ -451,20 +482,24 @@ class CodexCli:
         self,
         turn: _StructuredTurn,
         future: Future[subprocess.CompletedProcess[str]],
+        previous: CodexAppiumReadyState | None = None,
     ) -> CodexAppiumReadyState:
         ready_path = turn.workspace / _APPIUM_READY_NAME
         while True:
             try:
-                return self._read_ready_marker(ready_path, turn.error_prefix)
+                ready = self._read_ready_marker(ready_path, turn.error_prefix)
+                if previous is None or ready != previous:
+                    return ready
             except FileNotFoundError:
-                if future.done():
-                    completed = self._completed_process(turn, future)
-                    if completed.returncode != 0:
-                        message = f"{turn.error_prefix}_failed:{completed.returncode}"
-                        raise CodexCliError(message) from None
-                    message = f"{turn.error_prefix}_ready_marker_missing"
+                pass
+            if future.done():
+                completed = self._completed_process(turn, future)
+                if completed.returncode != 0:
+                    message = f"{turn.error_prefix}_failed:{completed.returncode}"
                     raise CodexCliError(message) from None
-                time.sleep(_APPIUM_MARKER_POLL_SECONDS)
+                message = f"{turn.error_prefix}_ready_marker_missing"
+                raise CodexCliError(message) from None
+            time.sleep(_APPIUM_MARKER_POLL_SECONDS)
 
     @staticmethod
     def _read_ready_marker(path: Path, error_prefix: str) -> CodexAppiumReadyState:
@@ -558,6 +593,9 @@ class CodexCli:
         workspace: Path,
         ready: CodexAppiumReadyState,
         ready_verified: bool,
+        *,
+        attempt: int,
+        retry_allowed: bool,
     ) -> None:
         path = workspace / _APPIUM_READY_VERIFIED_NAME
         payload: JsonObject = {
@@ -566,9 +604,12 @@ class CodexCli:
             "created_calendar_titles": list(ready.created_calendar_titles),
             "rendered_trace_item_titles": list(ready.rendered_trace_item_titles),
             "ready_verified": ready_verified,
+            "attempt": attempt,
+            "retry_allowed": retry_allowed,
+            "failure_code": None if ready_verified else "ready_verification_failed",
         }
         try:
-            _write_private_json(path, payload)
+            _replace_private_json(path, payload)
         except OSError as error:
             raise CodexCliError(_APPIUM_READY_VERIFIED_UNAVAILABLE) from error
 

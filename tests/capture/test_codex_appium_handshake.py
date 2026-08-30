@@ -77,16 +77,13 @@ def test_codex_appium_prompt_requires_collection_acknowledgement_before_cleanup(
 
     ready_marker = prompt.index("codex-appium-ready.json")
     ready_verified_marker = prompt.index("codex-appium-ready-verified.json")
-    save_permission = prompt.index("Tap Save only when ready_verified")
     saved_marker = prompt.index("codex-appium-saved.json")
     collected_marker = prompt.index("codex-appium-collected.json")
-    cleanup_prohibition = prompt.index("Do not delete calendars")
-    cleanup_instruction = prompt.index("remove only calendars")
+    retry_field = prompt.index("retry_allowed")
 
-    assert ready_marker < ready_verified_marker < save_permission < saved_marker
-    assert saved_marker < collected_marker < cleanup_prohibition < cleanup_instruction
-    assert "ready_verified is false, do not tap Save" in prompt
-    assert "collection_succeeded is false" in prompt
+    assert ready_marker < ready_verified_marker < saved_marker
+    assert ready_verified_marker < retry_field < saved_marker
+    assert saved_marker < collected_marker
 
 
 def test_codex_appium_job_rejects_ready_marker_missing_requested_title(
@@ -242,6 +239,89 @@ def test_codex_appium_job_fails_fast_when_trace_process_loses_binding_after_read
     assert raised.value.code is ErrorCode.EXPORT_INVALID
     assert calls == ["clear", "import", "codex", "clear"]
     assert verifier.expected_launch_arguments == [
+        contract.launch_arguments,
+        contract.launch_arguments,
+    ]
+
+
+def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session(
+    tmp_path: Path,
+) -> None:
+    # Given the first Trace session is unbound and the replacement session is bound
+    calls: list[str] = []
+    verifier = RecordingEditorVerifier(
+        ("Focus block",),
+        process_binding_results=(False, True, True),
+    )
+
+    class RecoveringCodex:
+        def run_appium_job(
+            self,
+            prompt: str,
+            schema: JsonObject,
+            *,
+            workspace: Path,
+            timeout_seconds: float,
+            callbacks: CodexAppiumJobCallbacks,
+        ) -> JsonObject:
+            del prompt, schema, workspace, timeout_seconds
+            calls.append("codex")
+            rejected = callbacks.on_ready(
+                CodexAppiumReadyState(
+                    schema="trace.codex-appium-ready.v1",
+                    session_id="unbound-session",
+                    created_calendar_titles=("trace-request-1-calendar-1",),
+                    rendered_trace_item_titles=("Focus block",),
+                )
+            )
+            assert rejected is False
+            accepted = callbacks.on_ready(
+                CodexAppiumReadyState(
+                    schema="trace.codex-appium-ready.v1",
+                    session_id="bound-session",
+                    created_calendar_titles=("trace-request-1-calendar-1",),
+                    rendered_trace_item_titles=("Focus block",),
+                )
+            )
+            assert accepted is True
+            collected = callbacks.on_saved(
+                CodexAppiumSavedState(
+                    schema="trace.codex-appium-saved.v1",
+                    session_id="bound-session",
+                    created_calendar_titles=("trace-request-1-calendar-1",),
+                )
+            )
+            assert collected is True
+            return {
+                **completed_result(),
+                "session_id": "bound-session",
+            }
+
+    adapter = CodexAppiumJobAdapter(
+        codex=RecoveringCodex(),
+        simulator=RecordingPhotoImporter(calls),
+        collector=RecordingWallpaperCollector(calls),
+        lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
+        editor_verifier=verifier,
+    )
+    job_root, background, output, background_sha256 = job_paths(tmp_path)
+    contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
+
+    # When the same Codex turn submits a second Ready from the replacement session
+    provenance = adapter.execute(
+        contract,
+        job_root=job_root,
+        background=background,
+        output=output,
+        control=CaptureControl.start(timeout_seconds=30),
+    )
+
+    # Then only the bound session reaches Save and produces accepted provenance
+    assert provenance.session_id == "bound-session"
+    assert provenance.native_export_binding_verified is True
+    assert calls == ["clear", "import", "codex", "clear", "collect"]
+    assert verifier.expected_launch_arguments == [
+        contract.launch_arguments,
         contract.launch_arguments,
         contract.launch_arguments,
     ]

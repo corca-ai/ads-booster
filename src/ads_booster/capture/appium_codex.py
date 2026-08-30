@@ -139,7 +139,7 @@ class CodexAppiumJobAdapter:
                     session_id = self._require_saved_state(
                         contract,
                         saved,
-                        ready_states[0],
+                        ready_states[-1],
                     )
                     self._require_live_process_binding(contract, session_id, control)
                     provenances.append(
@@ -171,7 +171,7 @@ class CodexAppiumJobAdapter:
                 verify_ready_editor,
                 collect_saved_export,
             )
-            if not ready_states or not self._result_matches_ready(result, ready_states[0]):
+            if not ready_states or not self._result_matches_ready(result, ready_states[-1]):
                 raise CaptureAdapterError(
                     code=ErrorCode.SCENE_CAPTURE_FAILED,
                     message="Codex Appium result does not match its ready marker",
@@ -186,7 +186,7 @@ class CodexAppiumJobAdapter:
             self._require_completed_result(
                 contract,
                 result,
-                ready_states[0],
+                ready_states[-1],
                 saved_states[0],
             )
             return provenances[0]

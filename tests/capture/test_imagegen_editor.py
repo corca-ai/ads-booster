@@ -80,9 +80,15 @@ def test_edit_when_imagegen_returns_png_then_writes_normalized_trace_lock_screen
     with Image.open(destination) as image:
         assert image.format == "PNG"
         assert image.size == (20, 30)
+        with image.crop((10, 7, 11, 8)) as top_pixel:
+            actual_top = io.BytesIO()
+            top_pixel.save(actual_top, format="PNG")
         with image.crop((10, 15, 11, 16)) as middle_pixel:
             actual = io.BytesIO()
             middle_pixel.save(actual, format="PNG")
+        expected_top = io.BytesIO()
+        Image.new("RGB", (1, 1), (80, 90, 100)).save(expected_top, format="PNG")
+        assert actual_top.getvalue() == expected_top.getvalue()
         expected = io.BytesIO()
         Image.new("RGB", (1, 1), (14, 24, 34)).save(expected, format="PNG")
         assert actual.getvalue() == expected.getvalue()

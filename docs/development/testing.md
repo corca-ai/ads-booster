@@ -9,7 +9,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 
 | Change | Command |
 | --- | --- |
-| v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/capture/test_appium_editor_verifier.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
+| v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/capture/test_appium_editor_verifier.py tests/providers/test_codex_cli_handshake.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
 | background and native validation | `uv run pytest tests/marketing/test_background.py tests/marketing/test_native_capture.py` |
 | hosted Codex candidate generation | `uv run pytest tests/marketing/test_hosted_generation.py tests/providers/test_codex_cli_generation.py` |
 | Codex ImageGen lock-screen edit | `uv run pytest tests/capture/test_imagegen_editor.py tests/providers/test_codex_cli_imagegen.py` |

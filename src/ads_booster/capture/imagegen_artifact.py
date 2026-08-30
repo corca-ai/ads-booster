@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _PRIVATE_FILE_MODE: Final = 0o600
 _IMAGE_PATH_MAX_LENGTH: Final = 4_096
-_UI_TOP_FRACTION: Final = 0.22
+_UI_TOP_FRACTION: Final = 0.30
 _UI_BOTTOM_FRACTION: Final = 0.84
 _SOURCE_UNAVAILABLE: Final = "native Trace image is unavailable or symlinked"
 _DESTINATION_UNAVAILABLE: Final = "ImageGen destination is unavailable or symlinked"
