@@ -106,6 +106,17 @@ class AcceptingEditorVerifier:
         control.checkpoint()
         return ready.rendered_trace_item_titles == expected_titles
 
+    def verify_process_binding(
+        self,
+        appium_server: str,
+        session_id: str,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
+    ) -> bool:
+        del appium_server, session_id
+        control.checkpoint()
+        return bool(expected_arguments)
+
 
 @dataclass(frozen=True, slots=True)
 class RecordingPhotoImporter:

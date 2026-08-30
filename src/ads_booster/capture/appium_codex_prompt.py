@@ -13,6 +13,14 @@ time zone. Use the Appium, XCUITest, Simulator, and Trace installations already 
 Inspect and operate the real Trace UI, diagnose failures, revise your approach, and continue until
 the goal is actually complete.
 
+Treat launch_arguments as an immutable export binding for the live Trace process. After creating
+the Appium session, never use terminate_app, activate_app, or the bundle-only mobile:
+terminateApp and mobile: activateApp commands because those operations drop the binding. If
+recovery requires a
+Trace relaunch, close the old session and create a new XCUITest session whose
+processArguments.args exactly equal launch_arguments, then use that new session_id in every marker.
+The worker independently rejects Ready and Saved markers when the live process lost this binding.
+
 Do not install or upgrade software, use git, access non-loopback network, read credentials, or edit,
 copy, fabricate, or replace the App Group export files. Before tapping Save, return to the Trace
 wallpaper editor and confirm its lockScreenWallpaperSave control and actual preview visibly contain

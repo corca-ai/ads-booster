@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.capture.appium_codex import (
-    CodexAppiumJobAdapter,
-    DefaultAppiumEditorVerifier,
-)
+from ads_booster.capture.appium_codex import CodexAppiumJobAdapter
 from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
@@ -21,7 +17,6 @@ from ads_booster.providers.codex_cli import (
     CodexAppiumReadyState,
     CodexAppiumSavedState,
 )
-from ads_booster.transport.http import HttpResponse
 
 from .codex_appium_support import (
     AcceptingEditorVerifier,
@@ -35,18 +30,22 @@ from .codex_appium_support import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
-    from types import TracebackType
 
     from ads_booster.capture.wallpaper_collection import WallpaperCollectionRequest
     from ads_booster.transport.json_types import JsonObject
 
 
 class RecordingEditorVerifier:
-    def __init__(self, visible_titles: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        visible_titles: tuple[str, ...],
+        process_binding_results: tuple[bool, ...] = (True,),
+    ) -> None:
         self.visible_titles: tuple[str, ...] = visible_titles
         self.expected_titles: tuple[str, ...] = ()
+        self.process_binding_results: list[bool] = list(process_binding_results)
+        self.expected_launch_arguments: list[tuple[str, ...]] = []
 
     def verify(
         self,
@@ -60,27 +59,17 @@ class RecordingEditorVerifier:
         self.expected_titles = expected_titles
         return all(title in self.visible_titles for title in expected_titles)
 
-
-@dataclass(frozen=True, slots=True)
-class SourceHttp:
-    response: HttpResponse
-    requested_urls: list[str]
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
+    def verify_process_binding(
         self,
-        _exc_type: type[BaseException] | None,
-        _exc_value: BaseException | None,
-        _traceback: TracebackType | None,
-    ) -> None:
-        return None
-
-    def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
-        assert not headers
-        self.requested_urls.append(url)
-        return self.response
+        appium_server: str,
+        session_id: str,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
+    ) -> bool:
+        del appium_server, session_id
+        control.checkpoint()
+        self.expected_launch_arguments.append(expected_arguments)
+        return self.process_binding_results.pop(0)
 
 
 def test_codex_appium_prompt_requires_collection_acknowledgement_before_cleanup() -> None:
@@ -183,95 +172,79 @@ def test_codex_appium_job_rejects_live_source_missing_requested_title(
     assert verifier.expected_titles == ("Focus block", "Lunch")
 
 
-def test_default_editor_verifier_requires_every_title_in_live_appium_source(
-    monkeypatch: pytest.MonkeyPatch,
+def test_codex_appium_job_rejects_ready_when_trace_process_lost_launch_binding(
+    tmp_path: Path,
 ) -> None:
-    # Given Appium exposes the active editor source outside the Codex sandbox
-    requested_urls: list[str] = []
-    response = HttpResponse(
-        200,
-        b"".join(
-            (
-                b'{"value":"<App name=\\"lockScreenWallpaperSave\\" ',
-                b'label=\\"Focus &amp; plan\\"><Text name=\\"Lunch\\"/></App>"}',
-            )
-        ),
-        {},
+    # Given Trace was relaunched without the immutable export-binding arguments
+    calls: list[str] = []
+    verifier = RecordingEditorVerifier(
+        ("Focus block",),
+        process_binding_results=(False,),
     )
-    http = SourceHttp(response, requested_urls)
-
-    def create_source_http(read_timeout: float | None = None) -> SourceHttp:
-        assert read_timeout is not None
-        return http
-
-    monkeypatch.setattr(
-        "ads_booster.capture.appium_codex.create_http_client",
-        create_source_http,
+    adapter = CodexAppiumJobAdapter(
+        codex=RecordingCodexJob(calls, completed_result()),
+        simulator=RecordingPhotoImporter(calls),
+        collector=RecordingWallpaperCollector(calls),
+        lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
+        editor_verifier=verifier,
     )
-    ready = CodexAppiumReadyState(
-        schema="trace.codex-appium-ready.v1",
-        session_id="appium/session-1",
-        created_calendar_titles=("trace-request-1-calendar-1",),
-        rendered_trace_item_titles=("Focus & plan", "Lunch"),
-    )
-    control = CaptureControl.start(timeout_seconds=30)
+    job_root, background, output, background_sha256 = job_paths(tmp_path)
+    contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
 
-    # When the default verifier fetches that exact session
-    verified = DefaultAppiumEditorVerifier().verify(
-        "http://127.0.0.1:4723",
-        ready,
-        ("Focus & plan", "Lunch"),
-        control,
-    )
-    missing_title = DefaultAppiumEditorVerifier().verify(
-        "http://127.0.0.1:4723",
-        ready,
-        ("Focus & plan", "Dinner"),
-        control,
-    )
-
-    # Then XML escaping is normalized and every requested title remains mandatory
-    assert verified is True
-    assert missing_title is False
-    assert requested_urls == [
-        "http://127.0.0.1:4723/session/appium%2Fsession-1/source",
-        "http://127.0.0.1:4723/session/appium%2Fsession-1/source",
-    ]
-
-
-def test_default_editor_verifier_rejects_requested_titles_outside_trace_wallpaper_editor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    response = HttpResponse(
-        200,
-        b'{"value":"<Calendar><Text name=\\"Focus block\\"/></Calendar>"}',
-        {},
-    )
-
-    def create_calendar_http(read_timeout: float | None = None) -> SourceHttp:
-        assert read_timeout is not None
-        return SourceHttp(response, [])
-
-    monkeypatch.setattr(
-        "ads_booster.capture.appium_codex.create_http_client",
-        create_calendar_http,
-    )
-    ready = CodexAppiumReadyState(
-        schema="trace.codex-appium-ready.v1",
-        session_id="appium-session-1",
-        created_calendar_titles=("trace-request-1-calendar-1",),
-        rendered_trace_item_titles=("Focus block",),
-    )
-
-    assert (
-        DefaultAppiumEditorVerifier().verify(
-            "http://127.0.0.1:4723",
-            ready,
-            ("Focus block",),
-            CaptureControl.start(timeout_seconds=30),
+    # When the worker verifies the live process before acknowledging Save
+    with pytest.raises(CaptureAdapterError, match="not verified before save"):
+        _ = adapter.execute(
+            contract,
+            job_root=job_root,
+            background=background,
+            output=output,
+            control=CaptureControl.start(timeout_seconds=30),
         )
-        is False
+
+    # Then Save and native collection stay blocked at the worker boundary
+    assert calls == ["clear", "import", "codex"]
+    assert verifier.expected_launch_arguments == [contract.launch_arguments]
+
+
+def test_codex_appium_job_fails_fast_when_trace_process_loses_binding_after_ready(
+    tmp_path: Path,
+) -> None:
+    # Given the process is bound at Ready but is relaunched before the saved marker
+    calls: list[str] = []
+    verifier = RecordingEditorVerifier(
+        ("Focus block",),
+        process_binding_results=(True, False),
     )
+    adapter = CodexAppiumJobAdapter(
+        codex=RecordingCodexJob(calls, completed_result()),
+        simulator=RecordingPhotoImporter(calls),
+        collector=RecordingWallpaperCollector(calls),
+        lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
+        editor_verifier=verifier,
+    )
+    job_root, background, output, background_sha256 = job_paths(tmp_path)
+    contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
+
+    # When the worker receives the post-Save handshake
+    with pytest.raises(
+        CaptureAdapterError,
+        match="lost its export launch binding",
+    ) as raised:
+        _ = adapter.execute(
+            contract,
+            job_root=job_root,
+            background=background,
+            output=output,
+            control=CaptureControl.start(timeout_seconds=30),
+        )
+
+    # Then collection is rejected immediately instead of polling for sixty minutes
+    assert raised.value.code is ErrorCode.EXPORT_INVALID
+    assert calls == ["clear", "import", "codex", "clear"]
+    assert verifier.expected_launch_arguments == [
+        contract.launch_arguments,
+        contract.launch_arguments,
+    ]
 
 
 def test_codex_appium_job_collects_saved_export_before_codex_cleanup_overwrites_it(

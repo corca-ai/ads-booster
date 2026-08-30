@@ -4,14 +4,15 @@ import json
 import re
 from dataclasses import dataclass, field
 from hashlib import sha256
-from html import unescape
 from typing import TYPE_CHECKING, Final, Literal, Protocol
-from urllib.parse import quote
 
-import httpx2
 from pydantic import Field, ValidationError
 
 from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
+from ads_booster.capture.appium_editor_verifier import (
+    DEFAULT_APPIUM_EDITOR_VERIFIER,
+    AppiumEditorVerifier,
+)
 from ads_booster.capture.appium_endpoint import validate_appium_server_url
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
@@ -30,7 +31,6 @@ from ads_booster.capture.wallpaper_collection import (
 from ads_booster.contracts import CaptureProvenance, ErrorCode
 from ads_booster.contracts.models import ContractModel
 from ads_booster.providers.codex_cli import CodexAppiumJobCallbacks
-from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,16 +55,6 @@ class StructuredCodexJob(Protocol):
         timeout_seconds: float,
         callbacks: CodexAppiumJobCallbacks,
     ) -> JsonObject: ...
-
-
-class AppiumEditorVerifier(Protocol):
-    def verify(
-        self,
-        appium_server: str,
-        ready: CodexAppiumReadyState,
-        expected_titles: tuple[str, ...],
-        control: CaptureControl,
-    ) -> bool: ...
 
 
 class SimulatorPhotoImporter(Protocol):
@@ -92,47 +82,7 @@ class CodexAppiumJobResult(ContractModel):
     error_code: str | None = Field(pattern=r"^[a-z0-9_]+$")
 
 
-class _AppiumSourceResponse(ContractModel):
-    value: str
-
-
 _TIME_PREFIX: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d\s+(.+)$")
-_HTTP_OK: Final = 200
-_HTTP_MULTIPLE_CHOICES: Final = 300
-_SOURCE_READ_TIMEOUT_SECONDS: Final = 10.0
-_WALLPAPER_EDITOR_IDENTIFIER: Final = "lockScreenWallpaperSave"
-
-
-@dataclass(frozen=True, slots=True)
-class DefaultAppiumEditorVerifier:
-    def verify(
-        self,
-        appium_server: str,
-        ready: CodexAppiumReadyState,
-        expected_titles: tuple[str, ...],
-        control: CaptureControl,
-    ) -> bool:
-        server = validate_appium_server_url(appium_server).rstrip("/")
-        timeout = min(control.remaining_seconds(), _SOURCE_READ_TIMEOUT_SECONDS)
-        source_url = f"{server}/session/{quote(ready.session_id, safe='')}/source"
-        try:
-            with create_http_client(read_timeout=timeout) as http:
-                response = http.get(source_url, {})
-        except httpx2.HTTPError:
-            return False
-        if not _HTTP_OK <= response.status_code < _HTTP_MULTIPLE_CHOICES:
-            return False
-        try:
-            source = _AppiumSourceResponse.model_validate_json(response.content).value
-        except ValidationError:
-            return False
-        visible_source = unescape(source)
-        return _WALLPAPER_EDITOR_IDENTIFIER in visible_source and all(
-            title in visible_source for title in expected_titles
-        )
-
-
-DEFAULT_APPIUM_EDITOR_VERIFIER: Final = DefaultAppiumEditorVerifier()
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +141,7 @@ class CodexAppiumJobAdapter:
                         saved,
                         ready_states[0],
                     )
+                    self._require_live_process_binding(contract, session_id, control)
                     provenances.append(
                         self.collector.collect(
                             WallpaperCollectionRequest(
@@ -386,12 +337,36 @@ class CodexAppiumJobAdapter:
             return False
         if ready.rendered_trace_item_titles != expected_titles:
             return False
-        return self.editor_verifier.verify(
+        if not self.editor_verifier.verify(
             contract.appium_server,
             ready,
             expected_titles,
             control,
+        ):
+            return False
+        return self.editor_verifier.verify_process_binding(
+            contract.appium_server,
+            ready.session_id,
+            contract.launch_arguments,
+            control,
         )
+
+    def _require_live_process_binding(
+        self,
+        contract: CodexAppiumJobContract,
+        session_id: str,
+        control: CaptureControl,
+    ) -> None:
+        if not self.editor_verifier.verify_process_binding(
+            contract.appium_server,
+            session_id,
+            contract.launch_arguments,
+            control,
+        ):
+            raise CaptureAdapterError(
+                code=ErrorCode.EXPORT_INVALID,
+                message="Trace process lost its export launch binding",
+            )
 
     @staticmethod
     def _result_matches_ready(
