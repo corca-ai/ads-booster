@@ -1410,6 +1410,35 @@ async function listCandidates(env, personaId = null) {
  * So this publishes the same kind of job the image capture publishes, and the candidates
  * arrive later on the worker callback.
  */
+// How much of this persona's back catalogue the next batch is shown. Enough to cover the
+// last few batches, short enough that it does not crowd out the corpus in the prompt.
+const RECENT_TOPIC_LIMIT = 12;
+
+/**
+ * The topics this persona has already been given, newest first.
+ *
+ * Read at publish time rather than at callback time because it is the request that has to
+ * carry them: the worker reads no database, so anything the generator should avoid has to
+ * travel with the job. Manual rows count — a person who wrote a candidate by hand has spent
+ * that subject just as much as the generator would have.
+ */
+async function recentCandidateTopics(env, personaId) {
+  const scope = personaId ? " AND persona_id = ?" : " AND persona_id IS NULL";
+  const parameters = personaId
+    ? [accountId(env), personaId, RECENT_TOPIC_LIMIT]
+    : [accountId(env), RECENT_TOPIC_LIMIT];
+  const result = await env.DB.prepare(
+    `SELECT topic FROM hosted_workspace_candidates
+     WHERE account_id = ?${scope}
+     ORDER BY created_at DESC LIMIT ?`,
+  )
+    .bind(...parameters)
+    .all();
+  return result.results
+    .map((row) => (typeof row.topic === "string" ? row.topic.slice(0, 200) : null))
+    .filter((topic) => topic);
+}
+
 async function publishCandidateGeneration(env, contextRegistry, profile, persona, body = null) {
   const account = await requireHostedAccount(env);
   const country = persona?.country ?? account.country;
@@ -1440,6 +1469,7 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
   // country are two batches; the country-wide request keeps the account's own window.
   await claimGenerationWindow(env, personaId);
   const count = generationCount(body?.count);
+  const recentTopics = await recentCandidateTopics(env, personaId);
   const taskId = crypto.randomUUID();
   const runId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -1460,6 +1490,10 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
       language: persona?.language ?? account.language,
       count,
       context_profile_id: profile?.profile_id ?? null,
+      // What this persona has already been given, newest first. The worker has no store of
+      // its own any more, so the only place that knows what last week's batch said is here,
+      // and a generator that cannot see it writes the same four posts every week.
+      recent_topics: recentTopics,
       requested_by: "hosted_workspace",
     },
     created_at: now,
