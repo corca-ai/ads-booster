@@ -1,30 +1,63 @@
-"""Planless, structured Codex turns for hosted candidate generation."""
+"""Planless, structured Codex turns for hosted candidate generation.
+
+The Codex execution path is the one from #60: one structured `codex exec` turn per call,
+schema-constrained output, and an execution admission recorded before the process starts.
+What sits on top of it is the marketing content engine — the context corpus, the reference
+sample and the rules the corpus settled — because a Codex turn that reads nothing produces
+a caption about nothing in particular, which is what the 540-character prompt it replaces
+was doing.
+"""
 
 from __future__ import annotations
 
+import random
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from ads_booster.candidate_generation import (
+    REQUIRED_DOCUMENTS,
+    CandidateContextSource,
+    CandidateDraftEngine,
+    CandidateFormatError,
+    CandidateGenerationError,
+    CandidateReferenceSource,
+    assign_domains,
+    default_context_directory,
+    default_domain_shuffle,
+)
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.transport.json_types import JsonObject
+from ads_booster.workspace import (
+    CandidateAccountBrief,
+    CandidateBackgroundSubject,
+    CandidatePersonaDomain,
+)
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Callable, Sequence
 
+    from ads_booster.candidate_generation import (
+        CandidateContextBundle,
+        CandidateDocument,
+        DraftedCandidate,
+        ReferencePool,
+    )
     from ads_booster.marketing.native_capture import (
         HostedWorkspaceCaptureExecutor,
         PreparedCodexAppiumJob,
     )
+    from ads_booster.transport.json_types import JsonValue
 
 PIPELINE: Final = "hosted_workspace_generation_v1"
 _DEFAULT_TIMEOUT_SECONDS: Final = 180.0
 _WORKSPACE_DIRECTORY: Final = "codex-generation"
+_CODEX_MODEL: Final = "codex_cli"
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
@@ -129,20 +162,68 @@ class StructuredCodexGeneration(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PreparedHostedGeneration:
+    """One admitted generation batch, with everything decided before any process starts.
+
+    The context bundle and the reference pool are read here rather than mid-batch: a corpus
+    that cannot be read is an ordinary failed task, and finding that out after the first
+    Codex turn has already run would make it an unknown side effect instead.
+    """
+
     request: HostedGenerationRequest
     execution_admission: ExecutionAdmission
-    prompt: str
     schema: JsonObject
     workspace: Path
+    bundle: CandidateContextBundle
+    pool: ReferencePool
+    domains: tuple[CandidatePersonaDomain, ...]
+    brief: CandidateAccountBrief | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CodexDraftClient:
+    """The engine's provider seam, spent as one structured Codex turn per candidate.
+
+    Each turn gets its own directory below the batch workspace because `run_generation_job`
+    records an invocation receipt and refuses a second run in the same place — which is the
+    whole point of that receipt, and the reason a batch cannot be one workspace.
+    """
+
+    codex: StructuredCodexGeneration
+    schema: JsonObject
+    workspace: Path
+    timeout_seconds: float
+
+    def draft(self, instruction: str, *, call_id: str) -> JsonValue:
+        workspace = self.workspace / f"call-{call_id}"
+        workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
+        workspace.chmod(0o700)
+        return self.codex.run_generation_job(
+            instruction,
+            self.schema,
+            workspace=workspace,
+            timeout_seconds=self.timeout_seconds,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class HostedWorkspaceGenerationExecutor:
-    """Prepare and execute one brokered generation turn without a plan object."""
+    """Prepare and execute one brokered generation batch without a plan object."""
 
     codex: StructuredCodexGeneration
     output_root: Path
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+    # Where the marketing corpus is read from. Left unset it resolves the operator override,
+    # then the working directory, then the copy packaged into the wheel — which is what a
+    # released Mac worker actually has.
+    context_directory: Path | None = None
+    # Injected in tests so a reference sample is predictable; production draws at random.
+    sample_references: Callable[[Sequence[CandidateDocument], int], Sequence[CandidateDocument]] = (
+        random.sample
+    )
+    # Breaks the domain order for an account-less batch; injected so a test can name it.
+    shuffle: Callable[[Sequence[CandidatePersonaDomain]], Sequence[CandidatePersonaDomain]] = (
+        default_domain_shuffle
+    )
 
     def prepare(self, task: MarketingTask) -> PreparedHostedGeneration:
         match task.kind:
@@ -157,35 +238,66 @@ class HostedWorkspaceGenerationExecutor:
             if pipeline != PIPELINE:
                 raise MarketingExecutionError("unsupported_hosted_generation_pipeline") from error
             raise MarketingExecutionError("hosted_generation_payload_invalid") from error
+        brief = None if request.persona is None else _account_brief(request.persona)
+        directory = (
+            default_context_directory(Path.cwd())
+            if self.context_directory is None
+            else self.context_directory
+        )
+        try:
+            bundle = CandidateContextSource(directory, required=REQUIRED_DOCUMENTS).load()
+            pool = CandidateReferenceSource(directory).load(request.country)
+        except CandidateGenerationError as error:
+            raise MarketingExecutionError("hosted_generation_context_unavailable") from error
         workspace, admission = self._prepare_workspace(task)
         return PreparedHostedGeneration(
             request=request,
             execution_admission=admission,
-            prompt=_generation_prompt(request),
             schema=_generation_schema(),
             workspace=workspace,
+            bundle=bundle,
+            pool=pool,
+            domains=(
+                assign_domains(request.count, self.shuffle)
+                if brief is None
+                else (brief.domain,) * request.count
+            ),
+            brief=brief,
         )
 
     def execute(self, prepared: PreparedHostedGeneration) -> TaskResult:
-        try:
-            raw_result = self.codex.run_generation_job(
-                prepared.prompt,
-                prepared.schema,
+        engine = CandidateDraftEngine(
+            client=_CodexDraftClient(
+                codex=self.codex,
+                schema=prepared.schema,
                 workspace=prepared.workspace,
                 timeout_seconds=self.timeout_seconds,
-            )
-        except (OSError, RuntimeError) as error:
-            raise MarketingExecutionError(
-                "hosted_generation_codex_failed",
-                unknown_side_effect=True,
-            ) from error
+            ),
+            model=_CODEX_MODEL,
+            sample_references=self.sample_references,
+        )
         try:
-            generated = HostedGenerationResponse.model_validate(raw_result)
-        except ValidationError as error:
+            batch = engine.draft(
+                bundle=prepared.bundle,
+                pool=prepared.pool,
+                country=prepared.request.country,
+                language=prepared.request.language,
+                domains=prepared.domains,
+                brief=prepared.brief,
+            )
+        except CandidateFormatError as error:
             raise MarketingExecutionError(
                 "hosted_generation_result_invalid",
                 unknown_side_effect=True,
             ) from error
+        except CandidateGenerationError as error:
+            raise MarketingExecutionError(
+                "hosted_generation_codex_failed",
+                unknown_side_effect=True,
+            ) from error
+        generated = HostedGenerationResponse(
+            candidates=tuple(_generated_candidate(drafted) for drafted in batch.drafts)
+        )
         if not _candidates_match_request(generated, prepared.request):
             raise MarketingExecutionError(
                 "hosted_generation_result_invalid",
@@ -197,10 +309,10 @@ class HostedWorkspaceGenerationExecutor:
                 "pipeline": PIPELINE,
                 "persona_id": prepared.request.persona_id,
                 "requested": prepared.request.count,
-                "failures": prepared.request.count - len(generated.candidates),
+                "failures": batch.failures,
                 "candidates": [
-                    _candidate_output(candidate, prepared.prompt)
-                    for candidate in generated.candidates
+                    _candidate_output(candidate, drafted)
+                    for candidate, drafted in zip(generated.candidates, batch.drafts, strict=True)
                 ],
             },
         )
@@ -249,19 +361,57 @@ class PlanlessHostedTaskExecutor:
         return self.capture.execute(prepared)
 
 
-def _generation_prompt(request: HostedGenerationRequest) -> str:
-    return (
-        "Generate distinct, truthful Trace marketing candidates from this hosted request. "
-        "Every image_inputs.trace_items item must be a real schedule in the exact HH:MM title "
-        "format, with five to seven items. Return only the schema-conforming JSON output. "
-        "Do not invent references or provenance.\n"
-        f"<hosted-generation-request>{request.model_dump_json()}</hosted-generation-request>"
+def _generation_schema() -> JsonObject:
+    """The output schema one Codex turn is held to.
+
+    This stays the hosted callback's own response model rather than a schema derived from
+    the draft type. The two describe the same candidate, and generating straight into the
+    delivery shape removes the failure mode where a caption the batch already paid for is
+    thrown away by a mapping mismatch.
+    """
+    schema: JsonObject = _JSON_OBJECT.validate_python(HostedGenerationResponse.model_json_schema())
+    return schema
+
+
+def _account_brief(persona: GenerationPersona) -> CandidateAccountBrief:
+    """Describe the requested persona in the terms the instruction states.
+
+    The two shapes already agree field for field; what differs is that the request carries
+    the domain and the background subject as free text while the instruction needs closed
+    vocabulary. An unusable domain fails the task, because the domain is what the whole
+    batch's identity is pinned to and quietly relabelling it is the exact drift this path
+    exists to stop. An unusable background subject degrades to `none`, which is a real
+    member of that vocabulary meaning "nothing was recorded".
+    """
+    domain = _persona_domain(persona.domain)
+    if domain is None:
+        raise MarketingExecutionError("hosted_generation_persona_domain_unknown")
+    return CandidateAccountBrief(
+        display_name=persona.display_name,
+        age=persona.age,
+        region=persona.region,
+        occupation=persona.occupation,
+        concept=persona.concept,
+        domain=domain,
+        interests=persona.interests,
+        life_rhythm=persona.life_rhythm,
+        background_subject=_background_subject(persona.taste.background_subject),
+        background_mood=persona.taste.background_mood,
     )
 
 
-def _generation_schema() -> JsonObject:
-    schema: JsonObject = _JSON_OBJECT.validate_python(HostedGenerationResponse.model_json_schema())
-    return schema
+def _persona_domain(value: str) -> CandidatePersonaDomain | None:
+    try:
+        return CandidatePersonaDomain(value)
+    except ValueError:
+        return None
+
+
+def _background_subject(value: str) -> CandidateBackgroundSubject:
+    try:
+        return CandidateBackgroundSubject(value)
+    except ValueError:
+        return CandidateBackgroundSubject.NONE
 
 
 def _candidates_match_request(
@@ -276,8 +426,34 @@ def _candidates_match_request(
     )
 
 
-def _candidate_output(candidate: GeneratedCandidate, prompt: str) -> JsonObject:
+def _generated_candidate(drafted: DraftedCandidate) -> GeneratedCandidate:
+    """Carry one validated draft across into the callback's own candidate shape."""
+    draft = drafted.draft
+    image_inputs = draft.image_inputs
+    return GeneratedCandidate(
+        topic=draft.topic,
+        country=draft.country,
+        caption=draft.caption,
+        hypothesis=draft.hypothesis,
+        posting_slot=draft.posting_slot.value,
+        persona_domain=None if draft.persona_domain is None else draft.persona_domain.value,
+        refs_used=draft.refs_used,
+        principles_applied=draft.principles_applied,
+        appium_prompt=draft.appium_prompt,
+        image_inputs=GeneratedImageInputs(
+            trace_items=image_inputs.trace_items,
+            device_time=image_inputs.device_time,
+            background_subject=image_inputs.background_subject.value,
+            background_mood=image_inputs.background_mood,
+            background_search_query=image_inputs.background_search_query,
+            language=image_inputs.language,
+        ),
+    )
+
+
+def _candidate_output(candidate: GeneratedCandidate, drafted: DraftedCandidate) -> JsonObject:
     image_inputs = candidate.image_inputs
+    provenance = drafted.provenance
     return {
         "topic": candidate.topic,
         "country": candidate.country,
@@ -296,15 +472,19 @@ def _candidate_output(candidate: GeneratedCandidate, prompt: str) -> JsonObject:
             "background_search_query": image_inputs.background_search_query,
             "language": image_inputs.language,
         },
+        # Observed while the call ran, not reconstructed afterwards: which documents were
+        # in the instruction and how big they were, how long the instruction actually was,
+        # which reference bodies this one call read, and which form it was told to write.
         "provenance": {
-            "documents": [],
-            "model": "codex_cli",
-            "instruction_chars": len(prompt),
-            "generated_at": datetime.now(UTC).timestamp(),
-            "assigned_domains": (
-                [] if candidate.persona_domain is None else [candidate.persona_domain]
-            ),
-            "reference_ids": list(candidate.refs_used),
-            "caption_form": "codex_structured",
+            "documents": [
+                {"relative_path": document.relative_path, "size_bytes": document.size_bytes}
+                for document in provenance.documents
+            ],
+            "model": provenance.model,
+            "instruction_chars": provenance.instruction_chars,
+            "generated_at": provenance.generated_at,
+            "assigned_domains": [domain.value for domain in provenance.assigned_domains],
+            "reference_ids": list(provenance.reference_ids),
+            "caption_form": drafted.caption_form.value,
         },
     }
