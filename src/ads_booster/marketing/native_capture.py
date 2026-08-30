@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, Final, Protocol
 
+from PIL import Image
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.capture.appium_codex import CodexAppiumJobAdapter
@@ -21,6 +22,7 @@ from ads_booster.capture.codex_appium_job import (
     CodexAppiumJobContract,
     CodexAppiumJobIdentity,
 )
+from ads_booster.capture.imagegen_editor import CodexImageGenEditor, ImageEditProvenance
 from ads_booster.capture.readiness import DefaultCaptureReadiness
 from ads_booster.capture.simulator_photo import SimctlPhotoImporter
 from ads_booster.capture.wallpaper_collection import SimctlAppGroupWallpaperCollector
@@ -74,6 +76,10 @@ _MAX_TRACE_ITEM_LENGTH: Final = 80
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _TRACE_ITEMS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 _REFERENCE_IDS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
+_IMAGE_POSTPROCESS_SOURCE: Final = "codex_imagegen"
+_IMAGE_POSTPROCESS_PROVENANCE_UNVERIFIED: Final = (
+    "native_capture_image_postprocess_provenance_unverified"
+)
 
 
 def build_hosted_capture_executor(
@@ -87,6 +93,7 @@ def build_hosted_capture_executor(
     timeout_seconds = _positive_timeout(
         os.environ.get("TRACE_AGENT_GENERATION_TIMEOUT_SECONDS", str(_DEFAULT_TIMEOUT_SECONDS))
     )
+    codex = CodexCli(executable=executable, timeout_seconds=timeout_seconds)
     return HostedWorkspaceCaptureExecutor(
         background_preparer=HostedBackgroundPreparer(
             ImageSearchBackgroundFetcher(
@@ -101,12 +108,13 @@ def build_hosted_capture_executor(
             )
         ),
         appium=CodexAppiumJobAdapter(
-            codex=CodexCli(executable=executable, timeout_seconds=timeout_seconds),
+            codex=codex,
             simulator=SimctlPhotoImporter(),
             collector=SimctlAppGroupWallpaperCollector(),
             readiness=DefaultCaptureReadiness(appium_server=appium_server),
         ),
         output_root=home / "generated",
+        image_editor=CodexImageGenEditor(codex=codex),
         appium_server=appium_server,
         timeout_seconds=timeout_seconds,
     )
@@ -136,6 +144,16 @@ class AppiumJobPort(Protocol):
         output: Path,
         control: CaptureControl,
     ) -> CaptureProvenance: ...
+
+
+class ImageGenEditor(Protocol):
+    def edit(
+        self,
+        source: Path,
+        destination: Path,
+        contract: CodexAppiumJobContract,
+        control: CaptureControl,
+    ) -> ImageEditProvenance: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,10 +214,20 @@ class PreparedCodexAppiumJob:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedNativeArtifact:
+    path: Path
+    manifest_path: Path
+    image: bytes
+    digest: str
+    manifest_bytes: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class HostedWorkspaceCaptureExecutor:
     background_preparer: BackgroundPreparer
     appium: AppiumJobPort
     output_root: Path
+    image_editor: ImageGenEditor | None = None
     device_resolver: DeviceResolver = SimctlDeviceResolver()
     appium_server: str = _DEFAULT_APPIUM_SERVER
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
@@ -303,7 +331,9 @@ class HostedWorkspaceCaptureExecutor:
             )
         try:
             image = image_path.read_bytes()
-            manifest = read_wallpaper_export_manifest(image_path.with_suffix(".manifest.json"))
+            manifest_path = image_path.with_suffix(".manifest.json")
+            manifest_bytes = manifest_path.read_bytes()
+            manifest = read_wallpaper_export_manifest(manifest_path)
         except (OSError, CaptureAdapterError) as error:
             raise MarketingExecutionError(
                 "native_capture_artifact_missing",
@@ -343,19 +373,173 @@ class HostedWorkspaceCaptureExecutor:
                 "native_capture_artifact_digest_mismatch",
                 unknown_side_effect=True,
             )
-        return TaskResult(
-            status=TaskStatus.SUCCEEDED,
-            output={
-                "pipeline": _PIPELINE,
-                "candidate_id": contract.identity.candidate_id,
-                "candidate_revision": contract.identity.candidate_revision,
-                "content_type": "image/png",
-                "image_sha256": digest,
-                "image_base64": base64.b64encode(image).decode("ascii"),
-                "capture_source": "native_appium",
-                "native_export_binding_verified": True,
-            },
+        native = VerifiedNativeArtifact(
+            path=image_path,
+            manifest_path=manifest_path,
+            image=image,
+            digest=digest,
+            manifest_bytes=manifest_bytes,
         )
+        if self.image_editor is None:
+            return _capture_result(
+                contract,
+                image=native.image,
+                image_digest=native.digest,
+                native_image_digest=native.digest,
+                image_postprocess_source="none",
+            )
+        edited_image = _postprocess_image(prepared, native, provenance, self.image_editor)
+        final_digest = sha256(edited_image).hexdigest()
+        return _capture_result(
+            contract,
+            image=edited_image,
+            image_digest=final_digest,
+            native_image_digest=native.digest,
+            image_postprocess_source=_IMAGE_POSTPROCESS_SOURCE,
+        )
+
+
+def _capture_result(
+    contract: CodexAppiumJobContract,
+    *,
+    image: bytes,
+    image_digest: str,
+    native_image_digest: str,
+    image_postprocess_source: str,
+) -> TaskResult:
+    return TaskResult(
+        status=TaskStatus.SUCCEEDED,
+        output={
+            "pipeline": _PIPELINE,
+            "candidate_id": contract.identity.candidate_id,
+            "candidate_revision": contract.identity.candidate_revision,
+            "content_type": "image/png",
+            "image_sha256": image_digest,
+            "image_base64": base64.b64encode(image).decode("ascii"),
+            "capture_source": "native_appium",
+            "native_image_sha256": native_image_digest,
+            "image_postprocess_source": image_postprocess_source,
+            "native_export_binding_verified": True,
+        },
+    )
+
+
+def _postprocess_image(
+    prepared: PreparedCodexAppiumJob,
+    native: VerifiedNativeArtifact,
+    provenance: CaptureProvenance,
+    editor: ImageGenEditor,
+) -> bytes:
+    final_path = prepared.job_root / "outputs" / "final.png"
+    try:
+        edited = editor.edit(
+            native.path,
+            final_path,
+            prepared.contract,
+            prepared.control,
+        )
+    except (CaptureAdapterError, OSError, RuntimeError, ValueError) as error:
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_failed",
+            unknown_side_effect=True,
+        ) from error
+    _require_native_artifact_unchanged(native)
+    final_image_path, final_image = _require_final_image(final_path)
+    dimensions = _validate_png(final_image_path)
+    if dimensions != (provenance.width, provenance.height):
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_dimensions_invalid",
+            unknown_side_effect=True,
+        )
+    _validate_image_edit_provenance(
+        edited,
+        prepared,
+        native,
+        provenance,
+        final_image,
+    )
+    return final_image
+
+
+def _validate_image_edit_provenance(
+    edited: ImageEditProvenance,
+    prepared: PreparedCodexAppiumJob,
+    native: VerifiedNativeArtifact,
+    provenance: CaptureProvenance,
+    final_image: bytes,
+) -> None:
+    if (
+        edited.source_path != native.path
+        or edited.destination_path != prepared.job_root / "outputs" / "final.png"
+        or edited.source_sha256 != native.digest
+        or edited.artifact_sha256 != sha256(final_image).hexdigest()
+        or edited.request_sha256 != prepared.contract.request_sha256
+        or edited.export_nonce != prepared.contract.export_nonce
+        or (edited.width, edited.height) != (provenance.width, provenance.height)
+    ):
+        raise MarketingExecutionError(
+            _IMAGE_POSTPROCESS_PROVENANCE_UNVERIFIED,
+            unknown_side_effect=True,
+        )
+
+
+def _require_native_artifact_unchanged(native: VerifiedNativeArtifact) -> None:
+    try:
+        unchanged = (
+            native.path.read_bytes() == native.image
+            and native.manifest_path.read_bytes() == native.manifest_bytes
+        )
+    except OSError as error:
+        raise MarketingExecutionError(
+            "native_capture_native_artifact_missing",
+            unknown_side_effect=True,
+        ) from error
+    if not unchanged:
+        raise MarketingExecutionError(
+            "native_capture_native_artifact_mutated",
+            unknown_side_effect=True,
+        )
+
+
+def _require_final_image(path: Path) -> tuple[Path, bytes]:
+    final_image = path.resolve()
+    if final_image != path or not final_image.is_file():
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_artifact_missing",
+            unknown_side_effect=True,
+        )
+    try:
+        image = final_image.read_bytes()
+    except OSError as error:
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_artifact_missing",
+            unknown_side_effect=True,
+        ) from error
+    if not image or len(image) > _MAX_IMAGE_BYTES:
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_size_invalid",
+            unknown_side_effect=True,
+        )
+    return final_image, image
+
+
+def _validate_png(path: Path) -> tuple[int, int]:
+    try:
+        with Image.open(path) as opened_image:
+            dimensions = opened_image.size
+            image_format = opened_image.format
+            opened_image.verify()
+    except (OSError, SyntaxError, ValueError) as error:
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_format_invalid",
+            unknown_side_effect=True,
+        ) from error
+    if image_format != "PNG":
+        raise MarketingExecutionError(
+            "native_capture_image_postprocess_format_invalid",
+            unknown_side_effect=True,
+        )
+    return dimensions
 
 
 def _simulator_candidates(
