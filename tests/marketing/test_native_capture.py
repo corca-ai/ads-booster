@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from ads_booster.capture.imagegen_editor import ImageEditProvenance
 from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
 from ads_booster.contracts.native_export import (
     PreparedBackground,
@@ -132,43 +131,6 @@ class RecordingAppiumAdapter:
         )
 
 
-@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
-class RecordingImageGenEditor:
-    calls: list[str]
-    width: int = 12
-    height: int = 20
-    fail: bool = False
-    tamper_source: bool = False
-
-    def edit(
-        self,
-        source: Path,
-        destination: Path,
-        contract: CodexAppiumJobContract,
-        control: CaptureControl,
-    ) -> ImageEditProvenance:
-        self.calls.append("edit")
-        control.checkpoint()
-        if self.fail:
-            raise RuntimeError
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (self.width, self.height), "green").save(
-            destination,
-            format="PNG",
-        )
-        return ImageEditProvenance(
-            source_path=source.parent / "other-native.png" if self.tamper_source else source,
-            destination_path=destination,
-            generated_image_path=destination,
-            source_sha256=sha256(source.read_bytes()).hexdigest(),
-            artifact_sha256=sha256(destination.read_bytes()).hexdigest(),
-            request_sha256=contract.request_sha256,
-            export_nonce=contract.export_nonce,
-            width=self.width,
-            height=self.height,
-        )
-
-
 def task_fixture() -> MarketingTask:
     return MarketingTask(
         task_id="c7dcc5a4-d841-49d0-bd34-f94afef98485",
@@ -211,15 +173,19 @@ def build_executor(
     calls: list[str],
     *,
     mutate: bool = False,
-    image_editor: RecordingImageGenEditor | None = None,
 ) -> HostedWorkspaceCaptureExecutor:
     return HostedWorkspaceCaptureExecutor(
         background_preparer=RecordingBackgroundPreparer(calls),
         appium=RecordingAppiumAdapter(calls, mutate_background=mutate),
         output_root=tmp_path / "generated",
-        image_editor=image_editor,
         device_resolver=FakeDeviceResolver(),
     )
+
+
+def test_hosted_capture_contract_has_no_imagegen_postprocess_seam() -> None:
+    field_names = {field.name for field in fields(HostedWorkspaceCaptureExecutor)}
+
+    assert "image_editor" not in field_names
 
 
 def test_hosted_capture_prepares_planless_job_before_execution(tmp_path: Path) -> None:
@@ -247,6 +213,8 @@ def test_hosted_capture_executes_once_and_independently_verifies_callback_png(
     digest = sha256(image).hexdigest()
     assert calls == ["background", "ready", "execute"]
     assert result.output["capture_source"] == "native_appium"
+    assert result.output["image_postprocess_source"] == "none"
+    assert result.output["native_image_sha256"] == digest
     assert result.output["image_sha256"] == digest
     assert base64.b64decode(str(result.output["image_base64"])) == image
     manifest = WallpaperExportManifest.model_validate_json(
@@ -270,79 +238,6 @@ def test_changed_background_fails_after_admission_without_second_codex_call(tmp_
 
     assert raised.value.unknown_side_effect is True
     assert calls.count("execute") == 0
-
-
-def test_hosted_capture_writes_and_returns_codex_imagegen_final_png(tmp_path: Path) -> None:
-    calls: list[str] = []
-    editor = RecordingImageGenEditor(calls)
-    executor = build_executor(tmp_path, calls, image_editor=editor)
-    prepared = executor.prepare(task_fixture())
-
-    result = executor.execute(prepared)
-
-    native_image = prepared.output.read_bytes()
-    final_image_path = prepared.job_root / "outputs" / "final.png"
-    final_image = final_image_path.read_bytes()
-    assert calls == ["background", "ready", "execute", "edit"]
-    assert final_image != native_image
-    assert result.output["image_postprocess_source"] == "codex_imagegen"
-    assert result.output["native_image_sha256"] == sha256(native_image).hexdigest()
-    assert result.output["image_sha256"] == sha256(final_image).hexdigest()
-    assert base64.b64decode(str(result.output["image_base64"])) == final_image
-    with Image.open(final_image_path) as image:
-        assert image.format == "PNG"
-        assert image.size == (12, 20)
-    manifest = WallpaperExportManifest.model_validate_json(
-        prepared.output.with_suffix(".manifest.json").read_text()
-    )
-    assert manifest.artifact_sha256 == sha256(native_image).hexdigest()
-
-
-def test_imagegen_failure_is_unknown_side_effect_after_native_capture(tmp_path: Path) -> None:
-    calls: list[str] = []
-    editor = RecordingImageGenEditor(calls, fail=True)
-    executor = build_executor(tmp_path, calls, image_editor=editor)
-    prepared = executor.prepare(task_fixture())
-
-    with pytest.raises(
-        MarketingExecutionError,
-        match="native_capture_image_postprocess_failed",
-    ) as raised:
-        _ = executor.execute(prepared)
-
-    assert raised.value.unknown_side_effect is True
-    assert calls.count("execute") == 1
-    assert calls.count("edit") == 1
-
-
-def test_imagegen_output_must_be_png_with_native_dimensions(tmp_path: Path) -> None:
-    calls: list[str] = []
-    editor = RecordingImageGenEditor(calls, width=11)
-    executor = build_executor(tmp_path, calls, image_editor=editor)
-    prepared = executor.prepare(task_fixture())
-
-    with pytest.raises(
-        MarketingExecutionError,
-        match="native_capture_image_postprocess_dimensions_invalid",
-    ) as raised:
-        _ = executor.execute(prepared)
-
-    assert raised.value.unknown_side_effect is True
-
-
-def test_imagegen_provenance_must_bind_to_verified_native_export(tmp_path: Path) -> None:
-    calls: list[str] = []
-    editor = RecordingImageGenEditor(calls, tamper_source=True)
-    executor = build_executor(tmp_path, calls, image_editor=editor)
-    prepared = executor.prepare(task_fixture())
-
-    with pytest.raises(
-        MarketingExecutionError,
-        match="native_capture_image_postprocess_provenance_unverified",
-    ) as raised:
-        _ = executor.execute(prepared)
-
-    assert raised.value.unknown_side_effect is True
 
 
 def test_invalid_hosted_bundle_fails_before_readiness(tmp_path: Path) -> None:

@@ -30,6 +30,7 @@ def _write_ready_marker(
     workspace: Path,
     *,
     rendered_trace_item_titles: list[str],
+    session_id: str = "appium-1",
 ) -> None:
     path = workspace / "codex-appium-ready.json"
     temporary = workspace / ".codex-appium-ready.tmp"
@@ -39,7 +40,7 @@ def _write_ready_marker(
         json.dump(
             {
                 "schema": "trace.codex-appium-ready.v1",
-                "session_id": "appium-1",
+                "session_id": session_id,
                 "created_calendar_titles": ["trace-request-1-calendar-1"],
                 "rendered_trace_item_titles": rendered_trace_item_titles,
             },
@@ -53,6 +54,7 @@ def _write_saved_marker(
     created_calendar_titles: list[str],
     *,
     mode: int = 0o600,
+    session_id: str = "appium-1",
 ) -> None:
     path = workspace / "codex-appium-saved.json"
     temporary = workspace / ".codex-appium-saved.tmp"
@@ -62,7 +64,7 @@ def _write_saved_marker(
         json.dump(
             {
                 "schema": "trace.codex-appium-saved.v1",
-                "session_id": "appium-1",
+                "session_id": session_id,
                 "created_calendar_titles": created_calendar_titles,
             },
             stream,
@@ -190,13 +192,27 @@ def test_codex_cli_rejected_ready_state_never_accepts_a_saved_marker(
     saved_callback_called = False
 
     def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
-        _write_ready_marker(workspace, rendered_trace_item_titles=[])
         verified = workspace / "codex-appium-ready-verified.json"
-        deadline = time.monotonic() + 1
-        while not verified.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        acknowledgement = _JSON_OBJECT.validate_json(verified.read_text(encoding="utf-8"))
-        assert acknowledgement["ready_verified"] is False
+
+        for attempt, session_id in enumerate(("unbound-1", "unbound-2"), start=1):
+            _write_ready_marker(
+                workspace,
+                rendered_trace_item_titles=[],
+                session_id=session_id,
+            )
+            deadline = time.monotonic() + 1
+            acknowledgement: JsonObject | None = None
+            while time.monotonic() < deadline:
+                if verified.exists():
+                    candidate = _JSON_OBJECT.validate_json(verified.read_text(encoding="utf-8"))
+                    if candidate.get("session_id") == session_id:
+                        acknowledgement = candidate
+                        break
+                time.sleep(0.001)
+            assert acknowledgement is not None
+            assert acknowledgement["ready_verified"] is False
+            assert acknowledgement["attempt"] == attempt
+            assert acknowledgement["retry_allowed"] is (attempt == 1)
         assert not (workspace / "codex-appium-saved.json").exists()
         output_path = Path(command[command.index("--output-last-message") + 1])
         _ = output_path.write_text('{"status":"failed"}', encoding="utf-8")
@@ -221,6 +237,90 @@ def test_codex_cli_rejected_ready_state_never_accepts_a_saved_marker(
     )
 
     assert saved_callback_called is False
+
+
+def test_codex_cli_retries_rejected_ready_with_new_bound_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given the first Trace session lost its launch binding before Ready
+    workspace = tmp_path / "job"
+    workspace.mkdir()
+    ready_sessions: list[str] = []
+    collected_sessions: list[str] = []
+
+    def wait_for_verified_session(session_id: str) -> JsonObject:
+        verified = workspace / "codex-appium-ready-verified.json"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if verified.exists():
+                payload = _JSON_OBJECT.validate_json(verified.read_text(encoding="utf-8"))
+                if payload.get("session_id") == session_id:
+                    return payload
+            time.sleep(0.001)
+        message = f"missing ready verification for {session_id}"
+        raise AssertionError(message)
+
+    def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
+        _write_ready_marker(
+            workspace,
+            rendered_trace_item_titles=["Focus block"],
+            session_id="unbound-session",
+        )
+        first = wait_for_verified_session("unbound-session")
+        assert first["ready_verified"] is False
+        assert first["retry_allowed"] is True
+        assert first["attempt"] == 1
+
+        _write_ready_marker(
+            workspace,
+            rendered_trace_item_titles=["Focus block"],
+            session_id="bound-session",
+        )
+        second = wait_for_verified_session("bound-session")
+        assert second["ready_verified"] is True
+        assert second["retry_allowed"] is False
+        assert second["attempt"] == 2
+
+        _write_saved_marker(
+            workspace,
+            ["trace-request-1-calendar-1"],
+            session_id="bound-session",
+        )
+        collected = workspace / "codex-appium-collected.json"
+        deadline = time.monotonic() + 2
+        while not collected.exists() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert collected.exists()
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        _ = output_path.write_text('{"status":"completed"}', encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ads_booster.providers.codex_cli.subprocess.run", run)
+
+    def verify_ready(ready: CodexAppiumReadyState) -> bool:
+        ready_sessions.append(ready.session_id)
+        return ready.session_id == "bound-session"
+
+    def collect(saved: CodexAppiumSavedState) -> bool:
+        collected_sessions.append(saved.session_id)
+        return True
+
+    # When Codex replaces the rejected marker with a newly bound session
+    _ = CodexCli(tmp_path / "codex").run_appium_job(
+        "Operate Trace",
+        {"type": "object"},
+        workspace=workspace,
+        timeout_seconds=3,
+        callbacks=CodexAppiumJobCallbacks(
+            on_ready=verify_ready,
+            on_saved=collect,
+        ),
+    )
+
+    # Then only the second session reaches Save and native collection
+    assert ready_sessions == ["unbound-session", "bound-session"]
+    assert collected_sessions == ["bound-session"]
 
 
 def test_codex_cli_rejects_insecure_saved_marker(

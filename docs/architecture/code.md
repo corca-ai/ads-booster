@@ -19,8 +19,6 @@ cli/marketing
         -> capture/codex_appium_job   immutable v2 contract
         -> capture/appium_codex       one job and native collector
            -> capture/appium_editor_verifier live UI and process-binding proof
-        -> capture/imagegen_editor    dynamic iOS lock-screen edit
-           -> capture/imagegen_artifact path/dimension/provenance-safe PNG handling
         -> providers/codex_cli        official CLI subprocess
 ```
 
@@ -32,13 +30,11 @@ cli/marketing
 | `inbox.py` | ingress, claim, admission, terminal result, callback retry | Cloudflare/Codex |
 | `worker_loop.py` | prepare-barrier-execute ordering and ambiguity handling | Trace UI method |
 | `background.py` | `background_intent`, digest, provenance | native export |
-| `native_capture.py` | hosted payload/context, request paths, native and final PNG validation | UI selectors, image editing |
+| `native_capture.py` | hosted payload/context, request paths, native preview PNG validation | UI selectors, image editing |
 | `codex_appium_job.py` | v2 context/device/digest/nonce/time/calendar contract | process execution |
 | `appium_codex.py` | device lock, contract file, one Codex result, native collection | UI reasoning |
 | `appium_editor_verifier.py` | live editor titles and Trace process launch-binding verification | UI navigation, export rendering |
-| `imagegen_editor.py` | one Codex CLI ImageGen edit, lock-screen instruction, edit provenance | fixed UI drawing, native export |
-| `imagegen_artifact.py` | generated-path safety, PNG normalization, native middle-pixel preservation | prompt/model selection |
-| `codex_cli.py` | schema-constrained official CLI subprocess, ImageGen image input, and localhost-only permission profile | custom agent/auth/thread state |
+| `codex_cli.py` | schema-constrained official CLI subprocess, bounded Ready-session recovery, and localhost-only permission profile | custom agent/auth/thread state, image generation |
 
 `CodexAppiumJobContract` uses `trace.codex-appium-job.v2`. Its canonical digest covers identity,
 marketing context, prepared background, device, locale/time zone, nonce, and calendar namespace.
