@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final
+from threading import Barrier, Lock
+from typing import TYPE_CHECKING, Final, final, override
 
 import pytest
 
+from ads_booster.candidate_generation import DEFAULT_MAX_WORKERS
 from ads_booster.marketing.hosted_generation import (
     PIPELINE,
     HostedWorkspaceGenerationExecutor,
@@ -26,6 +28,9 @@ if TYPE_CHECKING:
 
 _ACCOUNT_DOMAIN: Final = re.compile(r"persona_domain 은 (\w+) 으로 고정합니다")
 _ASSIGNED_DOMAIN: Final = re.compile(r"- 후보 1: (\w+) \(")
+_ASSIGNED_INTEREST: Final = re.compile(r'이 후보는 "(.+?)" 에서 출발합니다')
+# Enough for the barrier to prove concurrency without hanging a suite if it never does.
+_BARRIER_TIMEOUT: Final = 5.0
 
 
 def _payload(**overrides: JsonValue) -> JsonObject:
@@ -75,6 +80,11 @@ def _assigned_domain(prompt: str) -> str:
     return match.group(1)
 
 
+def _assigned_interest(prompt: str) -> str | None:
+    match = _ASSIGNED_INTEREST.search(prompt)
+    return None if match is None else match.group(1)
+
+
 def _candidate(topic: str, domain: str) -> JsonObject:
     return {
         "topic": topic,
@@ -105,7 +115,12 @@ def _candidate(topic: str, domain: str) -> JsonObject:
 
 @dataclass(slots=True)
 class FakeCodex:
-    """A narrow protocol fake that records the actual structured turn boundary."""
+    """A narrow protocol fake that records the actual structured turn boundary.
+
+    Every recording list is written under the lock because the batch runs its turns at the
+    same time, and keyed lookups rather than positional ones are how a test says which turn
+    it means once the threads interleave.
+    """
 
     error: RuntimeError | None = None
     malformed: bool = False
@@ -114,6 +129,7 @@ class FakeCodex:
     calls: list[tuple[Path, float]] = field(default_factory=list)
     prompts: list[str] = field(default_factory=list)
     schemas: list[JsonObject] = field(default_factory=list)
+    lock: Lock = field(default_factory=Lock)
 
     def run_generation_job(
         self,
@@ -123,29 +139,48 @@ class FakeCodex:
         workspace: Path,
         timeout_seconds: float,
     ) -> JsonObject:
-        self.calls.append((workspace, timeout_seconds))
-        self.prompts.append(prompt)
-        self.schemas.append(schema)
+        with self.lock:
+            self.calls.append((workspace, timeout_seconds))
+            self.prompts.append(prompt)
+            self.schemas.append(schema)
+            spent = len(self.calls)
         if self.error is not None:
             raise self.error
-        if self.fail_after is not None and len(self.calls) > self.fail_after:
+        if self.fail_after is not None and spent > self.fail_after:
             timed_out = "codex_generation_job_timed_out"
             raise RuntimeError(timed_out)
         if self.malformed:
             return {"candidates": [{"topic": "not enough fields"}]}
         domain = _assigned_domain(prompt)
-        return {"candidates": [_candidate(f"{domain} 주제", domain)]}
+        return {"candidates": [_candidate(f"{domain} 주제 {workspace.name}", domain)]}
+
+    def prompt_for(self, axis: str) -> str:
+        """The turn that was assigned this subject axis, whenever it happened to run."""
+        with self.lock:
+            found = [text for text in self.prompts if _assigned_interest(text) == axis]
+        assert found, axis
+        return found[0]
+
+    def workspace_names(self) -> list[str]:
+        with self.lock:
+            return sorted(workspace.name for workspace, _ in self.calls)
 
 
 def _first(population: Sequence[CandidateDocument], count: int) -> Sequence[CandidateDocument]:
     return list(population)[:count]
 
 
-def _executor(codex: FakeCodex, tmp_path: Path) -> HostedWorkspaceGenerationExecutor:
+def _executor(
+    codex: FakeCodex,
+    tmp_path: Path,
+    *,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+) -> HostedWorkspaceGenerationExecutor:
     return HostedWorkspaceGenerationExecutor(
         codex=codex,
         output_root=tmp_path,
         sample_references=_first,
+        max_workers=max_workers,
     )
 
 
@@ -173,9 +208,8 @@ def test_generation_job_returns_hosted_candidate_shape_after_structured_codex_tu
     assert len(candidates) == 2
     assert len(codex.calls) == 2
     # And each turn ran in its own directory, because the Codex invocation receipt refuses
-    # a second run in the same place.
-    assert [workspace.name for workspace, _ in codex.calls] == ["call-00", "call-01"]
-    assert len({workspace for workspace, _ in codex.calls}) == 2
+    # a second run in the same place — which is exactly what makes running them at once safe.
+    assert codex.workspace_names() == ["call-00", "call-01"]
     assert all(timeout == 180.0 for _, timeout in codex.calls)
     assert codex.schemas[0]["type"] == "object"
 
@@ -193,7 +227,7 @@ def test_the_prompt_carries_the_context_corpus_the_account_and_the_form(
     _ = executor.execute(prepared)
 
     # Then the core documents are in the prompt, by name and by body
-    prompt = codex.prompts[0]
+    prompt = codex.prompt_for("쿠로미")
     assert "[context 문서: core/PRINCIPLES-KR.md]" in prompt
     assert "[context 문서: core/VOICE-KR.md]" in prompt
     assert "[context 문서: core/FACTS.md]" in prompt
@@ -205,9 +239,10 @@ def test_the_prompt_carries_the_context_corpus_the_account_and_the_form(
     assert "이서진" in prompt
     assert "병동 간호사" in prompt
     assert "[정체성 창작 규칙]" not in prompt
-    # And the batch's two candidates were told to open in two different ways
-    assert "- 후보 1: hook (훅글)" in codex.prompts[0]
-    assert "- 후보 1: testimony (간증글)" in codex.prompts[1]
+    # And the batch's two candidates were told to open in two different ways, and to start
+    # from two different corners of the persona's own interests
+    assert "- 후보 1: hook (훅글)" in codex.prompt_for("쿠로미")
+    assert "- 후보 1: testimony (간증글)" in codex.prompt_for("필라테스")
     # And it is an instruction, not a sentence
     assert len(prompt) > 20_000
 
@@ -240,24 +275,83 @@ def test_provenance_records_what_the_call_read_rather_than_an_empty_shell(
         paths.append(relative_path)
     assert set(paths) >= {"core/FACTS.md", "core/VOICE-KR.md", "references/KR/INDEX.md"}
     assert provenance["model"] == "codex_cli"
-    assert provenance["instruction_chars"] == len(codex.prompts[0])
+    assert provenance["instruction_chars"] == len(codex.prompt_for("쿠로미"))
     assert provenance["reference_ids"] == ["kr-001", "kr-002", "kr-003", "kr-004"]
     assert provenance["assigned_domains"] == ["office_worker"]
     assert provenance["caption_form"] == "hook"
+    # And how the batch was run, plus what happened to this candidate inside it
+    assert provenance["assigned_interest"] == "쿠로미"
+    assert provenance["parallel"] is True
+    assert provenance["regenerated"] is False
+    assert provenance["duplicate_topic"] is False
 
 
-def test_a_second_call_is_told_what_the_first_one_already_wrote(tmp_path: Path) -> None:
-    """Topic separation is the guard that can only act while the batch is running."""
-    # Given
-    codex = FakeCodex()
+def test_the_batch_spends_its_codex_turns_at_the_same_time(tmp_path: Path) -> None:
+    """Nothing between here and the Codex process serialises a turn, and this checks it.
+
+    The execution admission is taken once for the task rather than once per turn, each turn
+    gets its own workspace and its own temporary directory, and the only file lock this
+    worker takes belongs to the simulator the capture path drives. A barrier is what turns
+    that reading of the code into an assertion.
+    """
+    # Given a Codex fake that will not answer until both turns are in flight together
+    codex = _BarrierCodex(barrier=Barrier(2, timeout=_BARRIER_TIMEOUT))
     executor = _executor(codex, tmp_path)
 
-    # When
-    _ = executor.execute(executor.prepare(_task()))
+    # When a two-candidate batch runs
+    result = executor.execute(executor.prepare(_task()))
 
-    # Then the second turn sees the first turn's topic and the first has nothing to avoid
+    # Then both turns got through, which only happens if they overlapped
+    assert result.status is TaskStatus.SUCCEEDED
+    assert len(codex.calls) == 2
+
+
+@final
+@dataclass(slots=True)
+class _BarrierCodex(FakeCodex):
+    """Answers only once as many turns as the barrier expects are running at once."""
+
+    barrier: Barrier | None = None
+
+    @override
+    def run_generation_job(
+        self,
+        prompt: str,
+        schema: JsonObject,
+        *,
+        workspace: Path,
+        timeout_seconds: float,
+    ) -> JsonObject:
+        with self.lock:
+            self.calls.append((workspace, timeout_seconds))
+            self.prompts.append(prompt)
+            self.schemas.append(schema)
+        assert self.barrier is not None
+        _ = self.barrier.wait()
+        domain = _assigned_domain(prompt)
+        return {"candidates": [_candidate(f"{domain} 주제 {workspace.name}", domain)]}
+
+
+def test_one_worker_falls_back_to_running_the_turns_in_order(tmp_path: Path) -> None:
+    """The escape hatch for a machine or an account that cannot afford concurrent turns."""
+    # Given a worker configured to run one turn at a time
+    codex = FakeCodex()
+    executor = _executor(codex, tmp_path, max_workers=1)
+
+    # When the batch runs
+    result = executor.execute(executor.prepare(_task()))
+
+    # Then the second turn is shown what the first one wrote, which is what running in
+    # order buys, and the record says the batch was not parallel
     assert "office_worker 주제" not in codex.prompts[0]
     assert "- [직군 직장인] office_worker 주제" in codex.prompts[1]
+    candidates = result.output["candidates"]
+    assert isinstance(candidates, list)
+    first_candidate = candidates[0]
+    assert isinstance(first_candidate, dict)
+    provenance = first_candidate["provenance"]
+    assert isinstance(provenance, dict)
+    assert provenance["parallel"] is False
 
 
 def test_a_request_without_a_persona_spreads_the_batch_across_domains(tmp_path: Path) -> None:

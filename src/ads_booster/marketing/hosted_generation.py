@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ads_booster.candidate_generation import (
+    DEFAULT_MAX_WORKERS,
     REQUIRED_DOCUMENTS,
     CandidateContextSource,
     CandidateDraftEngine,
@@ -224,6 +225,11 @@ class HostedWorkspaceGenerationExecutor:
     shuffle: Callable[[Sequence[CandidatePersonaDomain]], Sequence[CandidatePersonaDomain]] = (
         default_domain_shuffle
     )
+    # How many Codex turns this worker runs at once. Nothing in the execution path
+    # serialises them — each turn is its own process in its own workspace, and the only
+    # file lock on this machine belongs to the simulator the capture path drives — so the
+    # ceiling is the Codex account's rather than ours. Set it to 1 to run one at a time.
+    max_workers: int = DEFAULT_MAX_WORKERS
 
     def prepare(self, task: MarketingTask) -> PreparedHostedGeneration:
         match task.kind:
@@ -266,6 +272,7 @@ class HostedWorkspaceGenerationExecutor:
         )
 
     def execute(self, prepared: PreparedHostedGeneration) -> TaskResult:
+        persona = prepared.request.persona
         engine = CandidateDraftEngine(
             client=_CodexDraftClient(
                 codex=self.codex,
@@ -275,6 +282,7 @@ class HostedWorkspaceGenerationExecutor:
             ),
             model=_CODEX_MODEL,
             sample_references=self.sample_references,
+            max_workers=self.max_workers,
         )
         try:
             batch = engine.draft(
@@ -284,6 +292,7 @@ class HostedWorkspaceGenerationExecutor:
                 language=prepared.request.language,
                 domains=prepared.domains,
                 brief=prepared.brief,
+                interests=() if persona is None else persona.interests,
             )
         except CandidateFormatError as error:
             raise MarketingExecutionError(
@@ -311,7 +320,7 @@ class HostedWorkspaceGenerationExecutor:
                 "requested": prepared.request.count,
                 "failures": batch.failures,
                 "candidates": [
-                    _candidate_output(candidate, drafted)
+                    _candidate_output(candidate, drafted, parallel=batch.parallel)
                     for candidate, drafted in zip(generated.candidates, batch.drafts, strict=True)
                 ],
             },
@@ -451,7 +460,12 @@ def _generated_candidate(drafted: DraftedCandidate) -> GeneratedCandidate:
     )
 
 
-def _candidate_output(candidate: GeneratedCandidate, drafted: DraftedCandidate) -> JsonObject:
+def _candidate_output(
+    candidate: GeneratedCandidate,
+    drafted: DraftedCandidate,
+    *,
+    parallel: bool,
+) -> JsonObject:
     image_inputs = candidate.image_inputs
     provenance = drafted.provenance
     return {
@@ -486,5 +500,14 @@ def _candidate_output(candidate: GeneratedCandidate, drafted: DraftedCandidate) 
             "assigned_domains": [domain.value for domain in provenance.assigned_domains],
             "reference_ids": list(provenance.reference_ids),
             "caption_form": drafted.caption_form.value,
+            # How this batch was run and what happened to this candidate inside it. The
+            # control plane's provenance normaliser keeps a fixed set of keys and drops
+            # these, so they survive in the task's stored result rather than on the
+            # candidate row — which is where someone asking "why do these two look alike"
+            # goes looking anyway.
+            "assigned_interest": drafted.assigned_interest,
+            "parallel": parallel,
+            "regenerated": drafted.regenerated,
+            "duplicate_topic": drafted.duplicate_topic,
         },
     }

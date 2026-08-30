@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from threading import Barrier, BrokenBarrierError, Lock
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -15,6 +16,7 @@ from ads_booster.candidate_generation import (
     CandidateReferenceSource,
     CaptionForm,
     assign_domains,
+    assign_interests,
 )
 from ads_booster.workspace import (
     CandidateAccountBrief,
@@ -33,6 +35,15 @@ if TYPE_CHECKING:
 
 _ASSIGNED_DOMAIN: Final = re.compile(r"- 후보 1: (\w+) \(")
 _ACCOUNT_DOMAIN: Final = re.compile(r"persona_domain 은 (\w+) 으로 고정합니다")
+_ASSIGNED_INTEREST: Final = re.compile(r'이 후보는 "(.+?)" 에서 출발합니다')
+# Enough for the barrier to prove concurrency without hanging a suite if it never does.
+_BARRIER_TIMEOUT: Final = 5.0
+
+_THREE: Final = (
+    CandidatePersonaDomain.SPORTS_FAN,
+    CandidatePersonaDomain.PARENTING,
+    CandidatePersonaDomain.EXAM_PREPPER,
+)
 
 
 def _account() -> CandidateAccountBrief:
@@ -43,7 +54,7 @@ def _account() -> CandidateAccountBrief:
         occupation="백엔드 개발자",
         concept="야근과 직관 사이에서 버티는 개발자",
         domain=CandidatePersonaDomain.SPORTS_FAN,
-        interests=("KIA 타이거즈",),
+        interests=("KIA 타이거즈", "주말 러닝"),
         life_rhythm="평일 10시 출근",
         background_subject=CandidateBackgroundSubject.SPORTS_TEAM,
         background_mood="야간 경기 조명이 켜진 외야 관중석",
@@ -55,6 +66,12 @@ def assigned_domain(instruction: str) -> str:
     match = _ACCOUNT_DOMAIN.search(instruction) or _ASSIGNED_DOMAIN.search(instruction)
     assert match is not None, instruction
     return match.group(1)
+
+
+def assigned_interest(instruction: str) -> str | None:
+    """Read back the subject axis this one call was told to start from."""
+    match = _ASSIGNED_INTEREST.search(instruction)
+    return None if match is None else match.group(1)
 
 
 def _draft(topic: str, domain: str) -> JsonObject:
@@ -86,45 +103,83 @@ def _draft(topic: str, domain: str) -> JsonObject:
 
 @dataclass(slots=True)
 class DomainAnswerClient:
-    """Answers every call with a draft carrying the domain that call was assigned."""
+    """Answers every call with a draft keyed to what that call was assigned.
+
+    Keyed rather than sequenced because a parallel batch has no call order: a list popped
+    in turn cannot say which answer belongs to which candidate once the threads interleave.
+    """
 
     failures: dict[str, Exception] = field(default_factory=dict)
     malformed: dict[str, int] = field(default_factory=dict)
+    # Answers keyed by call id, for the tests that need one specific turn to differ.
+    topics: dict[str, str] = field(default_factory=dict)
+    # Turns that die at the provider boundary, named by call id rather than by domain.
+    failing_call_ids: frozenset[str] = frozenset()
+    # When set, every call waits here until this many are in flight at once.
+    barrier: Barrier | None = None
+    barrier_timeout: float = _BARRIER_TIMEOUT
     instructions: list[str] = field(default_factory=list)
     call_ids: list[str] = field(default_factory=list)
+    lock: Lock = field(default_factory=Lock)
 
     def draft(self, instruction: str, *, call_id: str) -> JsonValue:
-        self.instructions.append(instruction)
-        self.call_ids.append(call_id)
+        with self.lock:
+            self.instructions.append(instruction)
+            self.call_ids.append(call_id)
+        if self.barrier is not None:
+            _ = self.barrier.wait(timeout=self.barrier_timeout)
+        if call_id in self.failing_call_ids:
+            timed_out = "codex_generation_job_timed_out"
+            raise RuntimeError(timed_out)
         domain = assigned_domain(instruction)
         failure = self.failures.get(domain)
         if failure is not None:
             raise failure
-        remaining = self.malformed.get(domain, 0)
+        with self.lock:
+            remaining = self.malformed.get(domain, 0)
+            if remaining:
+                self.malformed[domain] = remaining - 1
         if remaining:
-            self.malformed[domain] = remaining - 1
             return {"candidates": [{"topic": "형식이 깨진 응답"}]}
-        return {"candidates": [_draft(f"{domain} 주제", domain)]}
+        # Distinct per turn by default: an account batch gives every call the same domain,
+        # and a fake that answered all of them identically would spend every test on the
+        # duplicate check rather than on what it meant to assert.
+        topic = self.topics.get(call_id, f"{domain} 주제 {call_id}")
+        return {"candidates": [_draft(topic, domain)]}
+
+    def instruction_for(self, domain: str) -> str:
+        with self.lock:
+            found = [text for text in self.instructions if assigned_domain(text) == domain]
+        assert found, domain
+        return found[0]
 
 
-def _engine(client: DomainAnswerClient) -> CandidateDraftEngine:
-    return CandidateDraftEngine(client=client, model="codex_cli", sample_references=first)
+def _engine(client: DomainAnswerClient, *, max_workers: int = 4) -> CandidateDraftEngine:
+    return CandidateDraftEngine(
+        client=client,
+        model="codex_cli",
+        sample_references=first,
+        max_workers=max_workers,
+    )
 
 
-def _run(
+def _run(  # noqa: PLR0913 - each argument is one independent input to the batch.
     tmp_path: Path,
     client: DomainAnswerClient,
     *,
     domains: tuple[CandidatePersonaDomain, ...],
     brief: CandidateAccountBrief | None = None,
+    interests: Sequence[str] = (),
     history: tuple[CandidateHistoryEntry, ...] = (),
+    max_workers: int = 4,
 ) -> CandidateDraftBatch:
     directory = write_context(tmp_path)
-    return _engine(client).draft(
+    return _engine(client, max_workers=max_workers).draft(
         bundle=CandidateContextSource(directory, required=REQUIRED_DOCUMENTS).load(),
         pool=CandidateReferenceSource(directory).load("KR"),
         domains=domains,
         brief=brief,
+        interests=interests,
         history=history,
     )
 
@@ -135,30 +190,192 @@ def test_a_batch_is_one_provider_call_per_candidate(tmp_path: Path) -> None:
     client = DomainAnswerClient()
 
     # When the batch is drafted
-    batch = _run(
-        tmp_path,
-        client,
-        domains=(
-            CandidatePersonaDomain.SPORTS_FAN,
-            CandidatePersonaDomain.PARENTING,
-            CandidatePersonaDomain.EXAM_PREPPER,
-        ),
-    )
+    batch = _run(tmp_path, client, domains=_THREE)
 
     # Then each candidate cost its own call, in its own place, with its own form
     assert len(batch.drafts) == 3
     assert batch.failures == 0
-    assert client.call_ids == ["00", "01", "02"]
+    assert sorted(client.call_ids) == ["00", "01", "02"]
     assert [drafted.caption_form for drafted in batch.drafts] == [
         CaptionForm.HOOK,
         CaptionForm.DAILY,
         CaptionForm.TESTIMONY,
     ]
-    assert [drafted.draft.persona_domain for drafted in batch.drafts] == [
-        CandidatePersonaDomain.SPORTS_FAN,
-        CandidatePersonaDomain.PARENTING,
-        CandidatePersonaDomain.EXAM_PREPPER,
+    # And the results come back in the order the batch assigned them, not the order the
+    # turns happened to finish.
+    assert [drafted.draft.persona_domain for drafted in batch.drafts] == list(_THREE)
+
+
+def test_the_turns_actually_run_at_the_same_time(tmp_path: Path) -> None:
+    """A barrier is the only honest proof: three turns that never overlap cannot pass it.
+
+    Nothing in the execution path serialises a generation turn — each is its own process in
+    its own workspace — so this is what that claim looks like when it is checked rather than
+    asserted. A sequential engine deadlocks here and the barrier times out.
+    """
+    # Given a fake that will not answer until three calls are in flight together
+    client = DomainAnswerClient(barrier=Barrier(3))
+
+    # When a three-candidate batch runs
+    batch = _run(tmp_path, client, domains=_THREE, max_workers=3)
+
+    # Then every turn got through, which only happens if all three overlapped
+    assert len(batch.drafts) == 3
+    assert batch.parallel is True
+
+
+def test_one_worker_runs_the_batch_in_order(tmp_path: Path) -> None:
+    """The fallback for an environment that cannot afford concurrent Codex turns."""
+    # Given a fake that would block forever if two calls ever overlapped
+    client = DomainAnswerClient(barrier=Barrier(2), barrier_timeout=0.05)
+
+    # When the batch is limited to one worker
+    with pytest.raises(CandidateProviderError):
+        _ = _run(tmp_path, client, domains=_THREE, max_workers=1)
+
+    # Then the calls went out one at a time and each waited alone until the barrier broke
+    assert client.call_ids[0] == "00"
+
+
+def test_a_sequential_batch_shows_each_call_what_the_earlier_ones_wrote(
+    tmp_path: Path,
+) -> None:
+    """Running in order buys one thing a parallel batch cannot have, and this is it."""
+    # Given a two-candidate batch limited to one worker
+    client = DomainAnswerClient()
+
+    # When it runs
+    _ = _run(
+        tmp_path,
+        client,
+        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
+        max_workers=1,
+    )
+
+    # Then the second call sees the first call's topic and the first has nothing to avoid
+    assert "sports_fan 주제" not in client.instructions[0]
+    assert "- [스포츠 팬] sports_fan 주제" in client.instructions[1]
+
+
+def test_a_parallel_batch_separates_candidates_by_assigned_axis(tmp_path: Path) -> None:
+    """A parallel call cannot be shown what the others wrote, so the axis carries it."""
+    # Given an account with two interests and a three-candidate batch
+    client = DomainAnswerClient()
+    brief = _account()
+
+    # When it runs
+    batch = _run(
+        tmp_path,
+        client,
+        domains=(brief.domain,) * 3,
+        brief=brief,
+        interests=brief.interests,
+    )
+
+    # Then each call was told which axis to start from, cycling through the interests
+    assert [drafted.assigned_interest for drafted in batch.drafts] == [
+        "KIA 타이거즈",
+        "주말 러닝",
+        "KIA 타이거즈",
     ]
+    axes = sorted(
+        interest
+        for instruction in client.instructions
+        if (interest := assigned_interest(instruction)) is not None
+    )
+    assert axes == ["KIA 타이거즈", "KIA 타이거즈", "주말 러닝"]
+    # And the block says what an axis is for, so it is not copied into the caption
+    instruction = client.instructions[0]
+    assert "[이번 후보의 소재 축]" in instruction
+    assert "축은 소재를 고르는 출발점이지 캡션에 옮겨 적을 문구가 아닙니다" in instruction
+    # And no call was told to avoid a list it was never shown
+    assert "[최근 생성된 후보 목록]" not in instruction
+
+
+def test_an_account_with_no_interests_still_generates(tmp_path: Path) -> None:
+    """No axis is honest when there is nothing to divide by; it is not a failure."""
+    # Given / When / Then
+    assert assign_interests((), 3) == (None, None, None)
+    client = DomainAnswerClient()
+    batch = _run(tmp_path, client, domains=_THREE, interests=())
+    assert len(batch.drafts) == 3
+    assert all(drafted.assigned_interest is None for drafted in batch.drafts)
+    assert "[이번 후보의 소재 축]" not in client.instructions[0]
+
+
+def test_a_restated_topic_is_asked_again_once(tmp_path: Path) -> None:
+    """Parallel turns cannot see each other, so the check happens after they land."""
+    # Given two candidates that came back saying the same thing two ways
+    client = DomainAnswerClient(
+        topics={"00": "야간 근무 전날 밤", "01": "밤, 야간 근무 전날", "01-1": "주말 아침 등산"}
+    )
+
+    # When the batch runs
+    batch = _run(
+        tmp_path,
+        client,
+        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
+    )
+
+    # Then the later one was rewritten once, in its own place, and the earlier one kept its
+    # topic
+    assert [drafted.draft.topic for drafted in batch.drafts] == [
+        "야간 근무 전날 밤",
+        "주말 아침 등산",
+    ]
+    assert [drafted.regenerated for drafted in batch.drafts] == [False, True]
+    assert not any(drafted.duplicate_topic for drafted in batch.drafts)
+    assert "01-1" in client.call_ids
+    # And the rewrite was shown exactly what it collided with
+    rewrite = client.instructions[client.call_ids.index("01-1")]
+    assert "야간 근무 전날 밤" in rewrite
+
+
+def test_a_rewrite_that_collides_again_is_kept_and_labelled(tmp_path: Path) -> None:
+    """Two flagged captions beat one candidate silently thrown away."""
+    # Given a rewrite that restates the same topic a second time
+    client = DomainAnswerClient(
+        topics={
+            "00": "야간 근무 전날 밤",
+            "01": "밤, 야간 근무 전날",
+            "01-1": "야간 근무 전날의 밤",
+        }
+    )
+
+    # When the batch runs
+    batch = _run(
+        tmp_path,
+        client,
+        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
+    )
+
+    # Then both candidates survive and the second says what happened to it
+    assert len(batch.drafts) == 2
+    assert batch.drafts[1].regenerated is True
+    assert batch.drafts[1].duplicate_topic is True
+    assert batch.drafts[0].duplicate_topic is False
+
+
+def test_a_failed_rewrite_keeps_the_draft_it_was_replacing(tmp_path: Path) -> None:
+    """Losing a candidate because its rewrite timed out would be the worse trade."""
+    # Given two candidates that collided, and a rewrite that dies at the provider boundary
+    client = DomainAnswerClient(
+        topics={"00": "같은 주제", "01": "같은 주제"},
+        failing_call_ids=frozenset({"01-1"}),
+    )
+
+    # When the batch runs
+    batch = _run(
+        tmp_path,
+        client,
+        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
+    )
+
+    # Then the original draft is still delivered, flagged rather than discarded
+    assert len(batch.drafts) == 2
+    assert batch.drafts[1].draft.topic == "같은 주제"
+    assert batch.drafts[1].regenerated is True
+    assert batch.drafts[1].duplicate_topic is True
 
 
 def test_every_call_records_what_it_actually_read(tmp_path: Path) -> None:
@@ -195,30 +412,6 @@ def test_every_call_reads_reference_bodies_not_only_the_index(tmp_path: Path) ->
     assert "# kr-904 flop 본문" in instruction
 
 
-def test_the_batch_puts_what_it_just_wrote_ahead_of_the_stored_history(tmp_path: Path) -> None:
-    """Running the calls in order is what makes the topic guard real rather than best effort."""
-    # Given a stored history and a two-candidate batch
-    client = DomainAnswerClient()
-
-    # When the batch runs
-    _ = _run(
-        tmp_path,
-        client,
-        domains=(CandidatePersonaDomain.SPORTS_FAN, CandidatePersonaDomain.PARENTING),
-        history=(
-            CandidateHistoryEntry(
-                persona_domain=CandidatePersonaDomain.PET_OWNER, topic="산책 시간표"
-            ),
-        ),
-    )
-
-    # Then the first call sees only the stored topic and the second also sees the first
-    assert "산책 시간표" in client.instructions[0]
-    assert "sports_fan 주제" not in client.instructions[0]
-    assert "- [스포츠 팬] sports_fan 주제" in client.instructions[1]
-    assert "산책 시간표" in client.instructions[1]
-
-
 def test_a_malformed_answer_is_retried_once_with_the_validation_error(tmp_path: Path) -> None:
     # Given a call whose first answer does not survive validation
     client = DomainAnswerClient(malformed={"sports_fan": 1})
@@ -249,15 +442,7 @@ def test_a_call_that_fails_keeps_the_candidates_that_worked(tmp_path: Path) -> N
     client = DomainAnswerClient(failures={"parenting": RuntimeError("codex exited")})
 
     # When the batch runs
-    batch = _run(
-        tmp_path,
-        client,
-        domains=(
-            CandidatePersonaDomain.SPORTS_FAN,
-            CandidatePersonaDomain.PARENTING,
-            CandidatePersonaDomain.EXAM_PREPPER,
-        ),
-    )
+    batch = _run(tmp_path, client, domains=_THREE)
 
     # Then the shortfall is carried out rather than logged away
     assert len(batch.drafts) == 2
@@ -323,3 +508,20 @@ def test_domain_assignment_binds_one_candidate_to_one_domain() -> None:
         CandidatePersonaDomain.PARENTING,
     )
     assert len(set(assigned)) == 4
+
+
+def test_interest_assignment_cycles_when_there_are_fewer_axes_than_candidates() -> None:
+    """Two candidates on one axis is a weaker guarantee, not a broken batch."""
+    # Given / When / Then
+    assert assign_interests(("야구", "러닝"), 5) == ("야구", "러닝", "야구", "러닝", "야구")
+    assert assign_interests(("야구",), 2) == ("야구", "야구")
+
+
+def test_the_barrier_helper_would_actually_catch_a_sequential_engine() -> None:
+    """Guards the concurrency test above: a barrier nobody else reaches must break."""
+    # Given a barrier expecting two parties and only one arriving
+    barrier = Barrier(2)
+
+    # When / Then it refuses rather than passing quietly
+    with pytest.raises(BrokenBarrierError):
+        _ = barrier.wait(timeout=0.05)

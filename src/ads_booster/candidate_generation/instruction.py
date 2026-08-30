@@ -131,6 +131,23 @@ _DISTINCT_MANY: Final = "{count}개 후보의 주제(topic)는 서로 겹치지 
 _DISTINCT_ONE: Final = (
     "주제(topic)는 아래 [최근 생성된 후보 목록]의 어느 것과도 겹치지 않아야 합니다."
 )
+# A batch written in parallel has nothing recent to show its first calls, so the rule cannot
+# point at a list that is not in the prompt. What separates those candidates is the axis each
+# was assigned before it was sent.
+_DISTINCT_AXIS: Final = (
+    "주제(topic)는 아래에서 이 후보에 배정한 축에서 나와야 합니다. "
+    "같은 배치의 다른 후보는 다른 축을 받았습니다."
+)
+_DISTINCT_SOLO: Final = "주제(topic)는 이 계정이 이미 쓴 소재와 겹치지 않아야 합니다."
+
+_INTEREST: Final = """[이번 후보의 소재 축]
+이 후보는 "{interest}" 에서 출발합니다.
+같은 배치의 다른 후보는 각자 다른 축을 받았고, 서로 무엇을 쓰는지 모르는 채로 씁니다.
+축이 갈리는 것이 이 배치에서 후보가 서로 겹치지 않는 장치입니다.
+
+축은 소재를 고르는 출발점이지 캡션에 옮겨 적을 문구가 아닙니다.
+"{interest}" 라는 말을 캡션에 넣으라는 뜻이 아니라, 이 사람의 하루 중 그 축과 닿는
+장면 하나를 골라 거기서 글을 시작하라는 뜻입니다."""
 
 _OUTPUT: Final = """[출력 형식]
 설명, 머리말, 코드펜스 없이 JSON 객체 하나만 출력하세요.
@@ -341,6 +358,7 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
     history: tuple[CandidateHistoryEntry, ...] = (),
     account: CandidateAccountBrief | None = None,
     forms: tuple[CaptionForm, ...] | None = None,
+    interest: str | None = None,
 ) -> str:
     """Assemble the single generation instruction from the loaded context documents.
 
@@ -366,16 +384,27 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
     `country` and `language` are the request's, not constants, because the drafts are held
     to exactly those two values downstream. Stating them here is what keeps a batch from
     coming back labelled for a country it was never asked to write.
+
+    `interest` is the subject axis this one candidate was assigned out of the account's own
+    interests. It carries the separation that the recent-topic list cannot when a batch is
+    written in parallel: those calls run at the same time and none of them can be shown what
+    the others wrote, so what keeps them apart has to be decided before any of them is sent.
     """
     subjects = ", ".join(subject.value for subject in CandidateBackgroundSubject)
     one = count == 1
-    distinct = _DISTINCT_ONE if one else _DISTINCT_MANY.format(count=count)
+    distinct = _DISTINCT_MANY.format(count=count)
+    if one:
+        # A lone candidate is separated by the history it is shown, or — when there is none
+        # because the batch is running in parallel — by its assigned axis. Naming a section
+        # that is not in the prompt would be an instruction to look at nothing.
+        distinct = _DISTINCT_ONE if history else _DISTINCT_AXIS if interest else _DISTINCT_SOLO
     sections = [
         (_ROLE_ONE.format(country=country) if one else _ROLE.format(count=count, country=country)),
         _RULES.format(subjects=subjects, distinct=distinct),
         *([_INVENT_IDENTITY] if account is None else []),
         _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
+        *([_INTEREST.format(interest=interest)] if interest else []),
         *([_assignment_section(domains)] if domains and account is None else []),
         _form_section(assign_caption_forms(count) if forms is None else forms),
         *([_history_section(history)] if history else []),
