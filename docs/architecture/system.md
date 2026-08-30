@@ -44,9 +44,11 @@ flowchart LR
    bundle, endpoint, locale/time zone, digest/nonce, and `trace-<request-id>` calendar namespace.
    Codex owns UI observation and navigation; the worker owns Simulator preparation and collection.
    Before Save, Codex publishes its active wallpaper-editor state. The worker independently checks
-   the Trace editor identifier and every requested title in the same Appium session, clears any
-   earlier App Group export, and acknowledges Save only after that boundary. Collection therefore
-   cannot accept a pre-Save lifecycle export carrying the same request binding.
+   the Trace editor identifier, every requested title, and the live Trace process arguments in the
+   same Appium session. A bundle-only terminate/activate cycle loses the immutable export binding,
+   so the worker rejects that session before Save. It checks the binding again at the saved marker,
+   clears any earlier App Group export, and acknowledges Save only after those boundaries.
+   Collection therefore cannot wait on or accept an export from an unbound process.
 7. The worker independently requires the PNG and manifest SHA-256, request digest, nonce, bundle,
    UDID, dimensions, native export binding, and `native_appium` provenance to agree.
 8. The worker sends that verified native PNG to the same official Codex CLI's ImageGen capability.
