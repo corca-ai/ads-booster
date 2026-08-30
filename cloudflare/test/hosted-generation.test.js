@@ -194,6 +194,19 @@ function environment(options = {}) {
                   : tasks.filter((row) => row.account_id === values[0]);
                 return { results: scoped.filter((row) => row.kind === "generate_candidates") };
               }
+              if (matches(sql, "SELECT topic FROM hosted_workspace_candidates")) {
+                const scoped = sql.includes("AND persona_id = ?")
+                  ? candidates.filter((row) => row.account_id === values[0]
+                    && row.persona_id === values[1])
+                  : candidates.filter((row) => row.account_id === values[0] && !row.persona_id);
+                const limit = values[values.length - 1];
+                return {
+                  results: [...scoped]
+                    .sort((left, right) => right.created_at - left.created_at)
+                    .slice(0, limit)
+                    .map((row) => ({ topic: row.topic })),
+                };
+              }
               throw new Error(`unexpected all SQL: ${sql}`);
             },
             async run() {
@@ -320,6 +333,32 @@ const callbackFor = (task, result) => ({
   kind: "generate_candidates",
   result,
   completed_at: "2026-08-28T00:00:00.000Z",
+});
+
+test("a published batch carries what this persona has already been given", async () => {
+  // The worker reads no database, so anything the generator has to avoid repeating has to
+  // travel with the job. Without this the same four posts come back every week.
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
+  state.candidates.push(
+    { account_id: ACCOUNT_ID, persona_id: "persona-1", topic: "야간 근무 전날 밤", created_at: 3 },
+    { account_id: ACCOUNT_ID, persona_id: "persona-1", topic: "퇴근 뒤 필라테스", created_at: 2 },
+    { account_id: ACCOUNT_ID, persona_id: "persona-2", topic: "다른 사람의 주제", created_at: 5 },
+  );
+
+  await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
+
+  // Newest first, this persona's only.
+  const published = JSON.parse(state.tasks[0].task_json);
+  assert.deepEqual(published.payload.recent_topics, ["야간 근무 전날 밤", "퇴근 뒤 필라테스"]);
+});
+
+test("a persona with no back catalogue publishes an empty recent list", async () => {
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
+
+  await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
+
+  const published = JSON.parse(state.tasks[0].task_json);
+  assert.deepEqual(published.payload.recent_topics, []);
 });
 
 test("the generate route publishes a worker job and answers before it is written", async () => {
