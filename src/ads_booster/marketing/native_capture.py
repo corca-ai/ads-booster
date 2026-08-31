@@ -37,6 +37,7 @@ from ads_booster.contracts.models import DeviceKind, DeviceTarget, TraceSchedule
 from ads_booster.marketing.background import HostedBackgroundPreparer
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskResult, TaskStatus
+from ads_booster.providers.codex_background_judge import CodexBackgroundJudge
 from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.search.image.background import ImageSearchBackgroundFetcher
 from ads_booster.search.image.providers import create_image_search_provider
@@ -109,6 +110,14 @@ def build_hosted_capture_executor(
                     ),
                 ),
                 http=http,
+                # Geometry alone cannot see what an image is, and a composed poster is cut
+                # to exactly the phone's proportions, so it wins the ranking on shape.
+                # Turned on by default; TRACE_AGENT_BACKGROUND_JUDGE=off runs without it.
+                judge=(
+                    None
+                    if os.environ.get("TRACE_AGENT_BACKGROUND_JUDGE", "on").lower() == "off"
+                    else CodexBackgroundJudge(codex=codex, http=http)
+                ),
             )
         ),
         appium=CodexAppiumJobAdapter(
