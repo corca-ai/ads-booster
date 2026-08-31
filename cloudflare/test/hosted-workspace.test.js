@@ -1265,6 +1265,7 @@ test("an enrolled Mac receives revision-scoped capture context and learned desig
 
 test("built public workspace has no login form and keeps candidate controls", async () => {
   const markup = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../dist/static/workspace.css", import.meta.url), "utf8");
 
   assert.doesNotMatch(markup, /workspace-entry/);
   assert.doesNotMatch(markup, /워크스페이스 접속 ID/);
@@ -1287,6 +1288,14 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /부팅 가능한 Simulator를 동적으로 찾습니다/);
   assert.doesNotMatch(markup, /Cloudflare 검수용 SVG 미리보기/);
   assert.match(markup, /data-candidate-submit/);
+  assert.match(markup, /data-image-preview/);
+  assert.match(markup, /id="image-preview-dialog"/);
+  assert.match(markup, /data-image-preview-close/);
+  assert.match(markup, /data-image-preview-image/);
+  assert.match(
+    styles,
+    /@media \(prefers-reduced-transparency: reduce\)[\s\S]*?background:\s*var\(--color-canvas\)/,
+  );
 });
 
 // The persona layer is the only hosted surface that both reads and writes rows across
