@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, Protocol, override
+from typing import ClassVar, Final, Protocol, override
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# One ceiling for the whole image-search path. The response contract and every provider read
+# it from here: when they disagreed, asking a provider for more rows than the response could
+# hold raised a bare ValidationError that no caller was catching.
+MAX_IMAGE_SEARCH_RESULTS: Final = 50
 
 
 class ImageSearchResult(BaseModel):
@@ -33,7 +38,7 @@ class ImageSearchResponse(BaseModel):
 
     provider: str = Field(min_length=1, max_length=64)
     query: str = Field(min_length=1, max_length=1_000)
-    results: tuple[ImageSearchResult, ...] = Field(max_length=10)
+    results: tuple[ImageSearchResult, ...] = Field(max_length=MAX_IMAGE_SEARCH_RESULTS)
 
 
 class ImageSearchProvider(Protocol):

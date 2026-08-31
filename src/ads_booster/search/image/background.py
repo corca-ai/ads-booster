@@ -26,7 +26,17 @@ if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonValue
 
 _HTTP_OK: Final = 200
+# The general floor, which exists to drop the small landscape article photography that open
+# web image search returns by default.
 _MINIMUM_EDGE: Final = 640
+# A real phone wallpaper is authored at phone width, so it is often narrower than the general
+# floor while being exactly the right shape. Measured against live results, the images the
+# flat 640 floor was discarding included 474x1026, 555x1200 and 576x1280 - all within a
+# hundredth of the lock screen ratio. Anything already shaped like the target screen is
+# judged on the screen's terms instead.
+_PHONE_MINIMUM_SHORT_EDGE: Final = 450
+_PHONE_MINIMUM_LONG_EDGE: Final = 950
+_PHONE_ASPECT_TOLERANCE: Final = 0.08
 _PREFERRED_WIDTH: Final = 1080
 _PREFERRED_HEIGHT: Final = 1920
 _LOCK_SCREEN_ASPECT_RATIO: Final = 9 / 19.5
@@ -43,17 +53,11 @@ _IMAGE_TOO_SMALL_MESSAGE: Final = (
 # A read-only mapping rather than a dict, so one shared empty default cannot be mutated
 # by a holder and cannot be rejected as a mutable dataclass default.
 _NO_DETAILS: Final[Mapping[str, JsonValue]] = MappingProxyType({})
-_APPROVED_SOURCE_HOSTS: Final = frozenset(
-    {
-        "unsplash.com",
-        "www.unsplash.com",
-        "pexels.com",
-        "www.pexels.com",
-        "pixabay.com",
-        "www.pixabay.com",
-    }
-)
-_APPROVED_SEARCH_DOMAINS: Final = ("pexels.com", "unsplash.com", "pixabay.com")
+# Only hosts that serve something unusable rather than merely unfamiliar. There is no source
+# allowlist: restricting sources to the free stock sites was measured against live searches
+# and discarded 65% of all candidates, leaving seven of ten queries with no background at
+# all. It also selected against the target - stock hero photography is landscape desktop
+# material, while the portrait wallpapers a lock screen needs live on the open web.
 _BLOCKED_IMAGE_HOSTS: Final = frozenset({"plus.unsplash.com"})
 _SEARCH_HEADERS: Final = {
     "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
@@ -123,7 +127,9 @@ class _BackgroundCandidate:
 class ImageSearchBackgroundFetcher:
     image_search: ImageSearchProvider
     http: HttpClient
-    max_results: int = 5
+    # The ranking can only be as good as the pool it sees. With one search rather than three,
+    # a wider page is what keeps the number of candidates reaching the ranking up.
+    max_results: int = 25
 
     def fetch(self, query: str, destination: Path) -> SearchedBackground:
         selected = max(self._candidates(query), key=lambda candidate: candidate.score, default=None)
@@ -150,25 +156,29 @@ class ImageSearchBackgroundFetcher:
         )
 
     def _candidates(self, query: str) -> Iterator[_BackgroundCandidate]:
-        for domain in _APPROVED_SEARCH_DOMAINS:
-            try:
-                response = self.image_search.search(f"{query} site:{domain}", self.max_results)
-            except ImageSearchError:
+        # One search on the query as written. The previous shape ran the query three times
+        # with a "site:" operator appended, which measured against live results restricted
+        # nothing - 27 of 30 such searches returned no result from the requested domain -
+        # while the extra tokens distorted the query badly enough to collapse some result
+        # pages from ten rows to one.
+        try:
+            response = self.image_search.search(query, self.max_results)
+        except ImageSearchError:
+            return
+        for result in response.results:
+            if not _is_usable_result(result):
                 continue
-            for result in response.results:
-                if not _is_approved_result(result):
-                    continue
-                try:
-                    http_response = self.http.get(result.image_url, _SEARCH_HEADERS)
-                except httpx2.HTTPError:
-                    continue
-                if http_response.status_code != _HTTP_OK:
-                    continue
-                try:
-                    candidate = _background_candidate(response, result, http_response.content)
-                except BackgroundSearchError:
-                    continue
-                yield candidate
+            try:
+                http_response = self.http.get(result.image_url, _SEARCH_HEADERS)
+            except httpx2.HTTPError:
+                continue
+            if http_response.status_code != _HTTP_OK:
+                continue
+            try:
+                candidate = _background_candidate(response, result, http_response.content)
+            except BackgroundSearchError:
+                continue
+            yield candidate
 
 
 def _background_candidate(
@@ -186,7 +196,7 @@ def _background_candidate(
             _INVALID_IMAGE_CODE,
             _INVALID_IMAGE_MESSAGE,
         ) from error
-    if min(width, height) < _MINIMUM_EDGE:
+    if not _is_large_enough(width, height):
         raise BackgroundSearchError(
             _IMAGE_TOO_SMALL_CODE,
             _IMAGE_TOO_SMALL_MESSAGE,
@@ -202,7 +212,24 @@ def _background_candidate(
     )
 
 
-def _is_approved_result(result: ImageSearchResult) -> bool:
-    source_host = urlsplit(result.source_url).hostname
-    image_host = urlsplit(result.image_url).hostname
-    return source_host in _APPROVED_SOURCE_HOSTS and image_host not in _BLOCKED_IMAGE_HOSTS
+def _is_lock_screen_shaped(width: int, height: int) -> bool:
+    return (
+        height > width
+        and abs((width / height) - _LOCK_SCREEN_ASPECT_RATIO) <= _PHONE_ASPECT_TOLERANCE
+    )
+
+
+def _is_large_enough(width: int, height: int) -> bool:
+    """Whether the image carries enough pixels to fill a lock screen.
+
+    An image already shaped like the target screen only has to be big enough for that screen,
+    which is a lower bar on the short edge than the general floor: phone wallpapers are
+    authored at phone width and would otherwise be rejected for being exactly right.
+    """
+    if _is_lock_screen_shaped(width, height):
+        return width >= _PHONE_MINIMUM_SHORT_EDGE and height >= _PHONE_MINIMUM_LONG_EDGE
+    return min(width, height) >= _MINIMUM_EDGE
+
+
+def _is_usable_result(result: ImageSearchResult) -> bool:
+    return urlsplit(result.image_url).hostname not in _BLOCKED_IMAGE_HOSTS
