@@ -49,7 +49,9 @@ class CalendarAutomationRequest(ContractModel):
     request_sha256: Sha256Digest
     calendar_namespace: Identifier
     calendar_identifier: Annotated[str, Field(min_length=1, max_length=256)] | None = None
-    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=8)
+    # A week of rows, not a day of them. The wallpaper draws a seven-day strip, and a
+    # request capped at a single day's worth would leave most of it blank.
+    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=24)
 
     @model_validator(mode="after")
     def require_operation_fields(self) -> CalendarAutomationRequest:
