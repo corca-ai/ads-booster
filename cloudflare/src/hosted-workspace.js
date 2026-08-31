@@ -505,7 +505,7 @@ export function candidateResponseSchema(country = "KR", referenceIds = []) {
               type: "object",
               additionalProperties: false,
               properties: {
-                trace_items: { type: "array", minItems: 5, maxItems: 7, items: { type: "string" } },
+                trace_items: { type: "array", minItems: 5, maxItems: 24, items: { type: "object" } },
                 device_time: { type: "string" },
                 background_subject: { type: "string", enum: [...ALLOWED_BACKGROUND_SUBJECTS] },
                 background_mood: { type: "string" },
@@ -551,13 +551,22 @@ export function validateGeneratedCandidateBatch(drafts, profile) {
       throw new Error("자동 생성 후보가 선택한 페르소나 밖의 레퍼런스를 사용했습니다.");
     }
     const traceItems = draft.image_inputs.trace_items;
-    if (traceItems.length < 5 || traceItems.length > 7) {
-      throw new Error("자동 생성 일정은 5~7개여야 합니다.");
+    if (traceItems.some((item) => !item || typeof item.title !== "string" || !item.title.trim())) {
+      throw new Error("자동 생성 일정은 제목을 가진 일정 항목이어야 합니다.");
     }
-    if (traceItems.some((item) => !/^(?:[01]\d|2[0-3]):[0-5]\d\s+\S/u.test(item))) {
-      throw new Error("자동 생성 일정은 모두 'HH:MM 제목' 형식이어야 합니다.");
+    if (traceItems.length < 5 || traceItems.length > MAX_TRACE_ITEMS) {
+      throw new Error(`자동 생성 일정은 5~${MAX_TRACE_ITEMS}개여야 합니다.`);
     }
-    const scheduleSignature = traceItems.map(normalizeGeneratedValue).join("\n");
+    // A week that lands every row on the captured day is the empty strip the widened
+    // contract exists to avoid. Only a payload that actually spoke the new shape is held to
+    // it: a legacy string row normalizes to day zero, and rejecting those would break the
+    // compatibility the rest of this path promises.
+    if (traceItems.length >= 5 && traceItems.every((item) => item.structured && item.day === 0)) {
+      throw new Error("자동 생성 일정이 하루에 몰려 있습니다.");
+    }
+    const scheduleSignature = traceItems
+      .map((item) => normalizeGeneratedValue(item.title))
+      .join("\n");
     if (scheduleSignatures.has(scheduleSignature)) {
       throw new Error("후보마다 서로 다른 일정 장면이 필요합니다.");
     }
@@ -2704,8 +2713,9 @@ function normalizeImageInputs(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new WorkspaceHttpError(400, "image_inputs가 필요합니다.");
   }
-  const traceItems = stringList(input.trace_items, 8, 80);
+  const traceItems = scheduleList(input.trace_items);
   if (traceItems.length < 1) throw new WorkspaceHttpError(400, "일정은 한 개 이상 필요합니다.");
+  const traceTodos = stringList(input.trace_todos ?? [], MAX_TRACE_TODOS, 60);
   const deviceTime = requiredString(input.device_time, "device_time", 5);
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(deviceTime)) {
     throw new WorkspaceHttpError(400, "device_time은 HH:MM 형식이어야 합니다.");
@@ -2716,6 +2726,7 @@ function normalizeImageInputs(input) {
   }
   const inputs = {
     trace_items: traceItems,
+    trace_todos: traceTodos,
     device_time: deviceTime,
     background_subject: backgroundSubject,
     background_mood: requiredString(input.background_mood, "background_mood", 40),
@@ -2729,9 +2740,16 @@ function normalizeImageInputs(input) {
   return inputs;
 }
 
+function describeScheduleEntry(entry) {
+  const when = entry.days > 1 ? `D+${entry.day}~D+${entry.day + entry.days - 1}` : `D+${entry.day}`;
+  const clock = entry.time ? ` ${entry.time}` : " 종일";
+  return `${when}${clock} ${entry.title}`;
+}
+
 function appiumPromptFrom(inputs) {
   return [
-    `입력_일정: ${inputs.trace_items.join(" | ")}`,
+    `입력_일정: ${inputs.trace_items.map(describeScheduleEntry).join(" | ")}`,
+    `입력_할일: ${inputs.trace_todos?.length ? inputs.trace_todos.join(" | ") : "없음"}`,
     `기기_시각: ${inputs.device_time}`,
     `배경화면: ${inputs.background_subject} · ${inputs.background_mood}`,
     `언어: ${inputs.language}`,
@@ -2759,6 +2777,71 @@ function optionalString(value, maxLength) {
     throw new WorkspaceHttpError(400, `입력이 ${maxLength}자를 초과했습니다.`);
   }
   return normalized;
+}
+
+const MAX_TRACE_ITEMS = 24;
+const MAX_TRACE_TODOS = 20;
+const WEEK_DAYS = 7;
+
+/**
+ * One week of lock-screen rows. A row used to be an "HH:MM 제목" string, which can only
+ * describe the captured day; it is now an object carrying the day it sits on, how many days
+ * it spans, and its colour. Strings are still read as a row on day zero so a draft written
+ * against the old contract is not thrown away at the delivery boundary.
+ */
+function scheduleList(value) {
+  if (!Array.isArray(value) || value.length > MAX_TRACE_ITEMS) {
+    throw new WorkspaceHttpError(400, `일정은 최대 ${MAX_TRACE_ITEMS}개까지 입력할 수 있습니다.`);
+  }
+  return value.map((item) => {
+    if (typeof item === "string") {
+      const match = /^((?:[01]\d|2[0-3]):[0-5]\d)\s+(\S.*)$/u.exec(item);
+      const title = match ? match[2] : item.trim();
+      if (!title) throw new WorkspaceHttpError(400, "일정 제목이 비어 있습니다.");
+      return {
+        title: title.slice(0, 40),
+        day: 0,
+        days: 1,
+        time: match ? match[1] : null,
+        color: null,
+        structured: false,
+      };
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new WorkspaceHttpError(400, "일정 항목의 형식이 올바르지 않습니다.");
+    }
+    const title = requiredString(item.title, "일정 제목", 40);
+    const day = boundedInteger(item.day ?? 0, 0, WEEK_DAYS - 1, "일정 day");
+    const days = boundedInteger(item.days ?? 1, 1, WEEK_DAYS, "일정 days");
+    if (day + days > WEEK_DAYS) {
+      throw new WorkspaceHttpError(400, "일정이 이번 주를 넘어갑니다.");
+    }
+    const time = optionalString(item.time, 5);
+    if (time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) {
+      throw new WorkspaceHttpError(400, "일정 시각은 HH:MM 형식이어야 합니다.");
+    }
+    const color = optionalString(item.color, 6);
+    if (color && !/^[0-9A-F]{6}$/u.test(color)) {
+      throw new WorkspaceHttpError(400, "일정 색상은 6자리 16진수여야 합니다.");
+    }
+    // Normalizing an already-normalized row must not promote a legacy string into a
+    // structured one; this path runs twice on the same draft.
+    return {
+      title,
+      day,
+      days,
+      time: time || null,
+      color: color || null,
+      structured: item.structured !== false,
+    };
+  });
+}
+
+function boundedInteger(value, minimum, maximum, label) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new WorkspaceHttpError(400, `${label}은(는) ${minimum}~${maximum} 사이의 정수여야 합니다.`);
+  }
+  return value;
 }
 
 function stringList(value, maxItems, maxLength) {

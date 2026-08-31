@@ -537,7 +537,7 @@ test("public session enters the Cloudflare workspace without an access ID", asyn
 test("candidate normalization always fills the Appium prompt", () => {
   const normalized = normalizeCandidateDraft(candidate());
 
-  assert.match(normalized.appium_prompt, /입력_일정: 09:00 통계학/);
+  assert.match(normalized.appium_prompt, /입력_일정: D\+0 09:00 통계학/);
   assert.match(normalized.appium_prompt, /기기_시각: 07:20/);
   assert.match(normalized.appium_prompt, /정지\/영상: 정지 이미지/);
 });
@@ -571,7 +571,7 @@ test("Workers AI schema uses provider-compatible constraints and keeps local uni
   assert.equal(candidates.items.properties.principles_applied.minItems, 1);
   assert.equal("uniqueItems" in candidates.items.properties.principles_applied, false);
   assert.equal(candidates.items.properties.image_inputs.properties.trace_items.minItems, 5);
-  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.maxItems, 7);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.maxItems, 24);
   assert.ok(candidates.items.required.includes("posting_slot"));
   assert.ok(candidates.items.required.includes("appium_prompt"));
   assert.ok(candidates.items.required.includes("image_inputs"));
@@ -593,7 +593,7 @@ test("generated batches reject repeated content and non-schedule trace items", (
   filenameSchedule[0].image_inputs.trace_items[0] = "trace-home.png";
   assert.throws(
     () => validateGeneratedCandidateBatch(filenameSchedule, profile),
-    /HH:MM 제목/u,
+    /제목을 가진 일정 항목/u,
   );
 });
 
