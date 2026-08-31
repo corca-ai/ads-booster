@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
+from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
 from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
 from ads_booster.contracts.native_export import (
     PreparedBackground,
@@ -132,6 +133,24 @@ class RecordingAppiumAdapter:
 
 
 def task_fixture() -> MarketingTask:
+    feedback = FeedbackContext.model_validate(
+        {
+            "schema_version": "trace.feedback-context.v1",
+            "stage": "image",
+            "scope": {"account_id": "trace_demo_kr", "context_profile_id": None},
+            "rules": [],
+            "immediate_correction": {
+                "source_event_id": "event-1",
+                "source_candidate_id": "candidate-1",
+                "source_candidate_revision": 3,
+                "source_capture_task_id": "capture-previous",
+                "source_artifact_sha256": "a" * 64,
+                "rating": 2,
+                "tags": ["앱 화면·데이터 오류"],
+                "note": "일정 한 줄이 승인본과 다릅니다.",
+            },
+        }
+    )
     return MarketingTask(
         task_id="c7dcc5a4-d841-49d0-bd34-f94afef98485",
         run_id="66dcd684-2e69-4cf1-bbf3-da3684102299",
@@ -150,6 +169,8 @@ def task_fixture() -> MarketingTask:
             "reference_ids": ["kr-study-day", "kr-020"],
             "creative_direction": "실제 캠퍼스 아침처럼 자연스럽게 구성",
             "background_intent": "scenery: 이른 아침 캠퍼스",
+            "feedback_context": feedback.model_dump(mode="json"),
+            "feedback_context_sha256": feedback_context_sha256(feedback),
             "image_inputs": {
                 "trace_items": ["09:00 통계학", "13:00 스터디"],
                 "device_time": "07:20",
@@ -198,6 +219,10 @@ def test_hosted_capture_prepares_planless_job_before_execution(tmp_path: Path) -
     assert prepared.execution_admission.job_digest == prepared.contract.request_sha256
     assert prepared.execution_admission.export_nonce == prepared.contract.export_nonce
     assert prepared.execution_admission.workspace_id == "workspace-1"
+    assert prepared.contract.context.feedback_context is not None
+    correction = prepared.contract.context.feedback_context.immediate_correction
+    assert correction is not None
+    assert correction.source_event_id == "event-1"
 
 
 def test_hosted_capture_executes_once_and_independently_verifies_callback_png(
@@ -216,6 +241,9 @@ def test_hosted_capture_executes_once_and_independently_verifies_callback_png(
     assert result.output["image_postprocess_source"] == "none"
     assert result.output["native_image_sha256"] == digest
     assert result.output["image_sha256"] == digest
+    assert result.output["feedback_application_sha256"] == (
+        prepared.contract.context.feedback_context_sha256
+    )
     assert base64.b64decode(str(result.output["image_base64"])) == image
     manifest = WallpaperExportManifest.model_validate_json(
         prepared.output.with_suffix(".manifest.json").read_text()
