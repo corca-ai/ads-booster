@@ -110,7 +110,7 @@ def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -
     assert "image_inputs" in instruction
     assert "character_kitty" in instruction
     assert "sports_team" in instruction
-    assert "5~7개를 권장합니다" in instruction
+    assert "18~22개를 만드세요" in instruction
     assert "모호어 대신 실제로 보이는 것을" in instruction
     assert "실제로 잠금화면에 설정해뒀을 법한 배경" in instruction
 
@@ -126,11 +126,11 @@ def test_instruction_states_the_schedule_format_the_lock_screen_can_render(
     instruction = build_instruction(bundle, assignments=_for(3))
 
     # Then the format is stated, and every example in the prompt obeys it
-    assert '각 항목은 반드시 "HH:MM 제목" 형식입니다' in instruction
-    assert "(최소 5개, 최대 8개)" in instruction
-    assert '"18:30 기아 vs LG 직관"' in instruction
-    assert '"05:50 한강 러닝"' in instruction
-    assert '각 "HH:MM 제목" 형식' in instruction
+    assert "각 항목은 문자열이 아니라 객체입니다" in instruction
+    assert "(최소 5개, 최대 24개)" in instruction
+    assert '"title": "기아전 직관"' in instruction
+    assert '"title": "제주 워크샵", "day": 4, "days": 3' in instruction
+    assert "day + days는 7을 넘을 수 없습니다" in instruction
 
 
 def test_instruction_states_the_country_and_language_the_request_asked_for(
@@ -169,7 +169,7 @@ def test_instruction_keeps_the_job_out_of_the_schedule_and_the_caption(
     # Then
     assert "직무 작업을 일정으로 늘어놓지 마세요" in instruction
     assert "업무 티켓이 아닙니다" in instruction
-    assert "22:00 PR 리뷰" in instruction
+    assert "staging 배포 확인" in instruction
     assert "앱을 만든 사람의 목소리가 아니라 앱을 쓰는 사람의 목소리" in instruction
     assert "제품·개발 용어를 캡션에 쓰지 마세요" in instruction
     assert "메이커 화법을 쓰지 마세요" in instruction
@@ -233,9 +233,9 @@ def _assert_identity_invention_block(instruction: str) -> None:
 def _assert_craft_block(instruction: str) -> None:
     """The half both paths read: how surface detail is derived from whoever is writing."""
     assert "[구체성 규칙]" in instruction
-    assert "그 사람의 실제 일주일에서 나올 법한" in instruction
-    assert "18:30 기아 vs LG 직관" in instruction
-    assert '"회의", "운동", "공부", "약속" 같은 범용 일정은 금지입니다.' in instruction
+    assert "그 사람의 실제 한 주에서 나올 법한" in instruction
+    assert "기아전 직관" in instruction
+    assert '"회의", "운동", "공부", "약속" 같은 범용 항목은 금지입니다.' in instruction
     assert "그 사람의 생활 리듬과 맞아야 합니다" in instruction
     assert (
         "실존 인물명·캐릭터명·팀명을 쓰는 자리는 image_inputs.background_search_query 하나뿐입니다."
