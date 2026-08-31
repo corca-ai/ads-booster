@@ -16,10 +16,11 @@ the goal is actually complete.
 Treat launch_arguments as an immutable export binding for the live Trace process. After creating
 the Appium session, never use terminate_app, activate_app, or the bundle-only mobile:
 terminateApp and mobile: activateApp commands because those operations drop the binding. If
-recovery requires a
-Trace relaunch, close the old session and create a new XCUITest session whose
+recovery requires a Trace relaunch, close the old session and create a new XCUITest session whose
 processArguments.args exactly equal launch_arguments, then use that new session_id in every marker.
-The worker independently rejects Ready and Saved markers when the live process lost this binding.
+Use separate Appium sessions for Calendar preparation and the final Trace editor. Create the final
+Trace session only after the request calendar and events exist. The worker independently verifies
+the live binding at Ready and Saved.
 
 Do not install or upgrade software, use git, access non-loopback network, read credentials, or edit,
 copy, fabricate, or replace the App Group export files. Before tapping Save, return to the Trace
@@ -29,10 +30,14 @@ in the current directory with exactly this shape:
 {"schema":"trace.codex-appium-ready.v1","session_id":"...","created_calendar_titles":["..."],
 "rendered_trace_item_titles":["..."]}. rendered_trace_item_titles must contain the exact visible
 title for every promotion_material.trace_items entry in request order, stripping only a valid HH:MM
-prefix. Wait for worker-created codex-appium-ready-verified.json. Tap Save only when ready_verified
-is true and its session_id, created_calendar_titles, and rendered_trace_item_titles match yours. If
-ready_verified is false, do not tap Save; remove only request-owned calendars, close the Appium
-session, and return status=failed.
+prefix. Wait for worker-created codex-appium-ready-verified.json. It also contains attempt,
+retry_allowed, and failure_code. Tap Save only when ready_verified is true and its session_id,
+created_calendar_titles, and rendered_trace_item_titles match yours. If ready_verified is false and
+retry_allowed is true, do not delete the request calendars. Close only the rejected Appium session,
+create a new Trace session with the exact launch_arguments, restore the requested editor state,
+atomically replace codex-appium-ready.json with the new session_id, and wait until the verified file
+also changes to that session_id. If retry_allowed is false, do not tap Save; remove only
+request-owned calendars, close the Appium session, and return status=failed.
 
 The completed outcome requires the requested wallpaper to be saved and both native export files to
 be observed. Immediately after tapping Save, while the saved wallpaper and its request calendars
