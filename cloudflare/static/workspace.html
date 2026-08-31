@@ -125,6 +125,18 @@
           <button class="button button-secondary" type="button" data-worker-manager-open>Mac 연결 관리</button>
         </section>
 
+        <section class="threads-console" data-hosted-only hidden aria-labelledby="threads-console-title">
+          <span class="signal-mark" data-threads-signal aria-hidden="true"></span>
+          <div class="worker-console__copy" role="status" aria-live="polite">
+            <strong id="threads-console-title">Threads 자동 발행</strong>
+            <p data-threads-copy>운영 권한을 열면 연결 프로필과 발행 설정을 확인할 수 있습니다.</p>
+          </div>
+          <div class="worker-console__badges" aria-label="Threads 자동 발행 상태">
+            <span class="worker-state" data-threads-state>OFF</span>
+          </div>
+          <button class="button button-secondary" type="button" data-threads-manager-open>Threads 연결 관리</button>
+        </section>
+
         <section class="account-home" data-account-home hidden aria-labelledby="account-home-title">
           <div class="account-home__bar">
             <button class="button button-quiet" type="button" data-country-back>← 국가 목록</button>
@@ -480,6 +492,63 @@
           <figcaption id="image-preview-caption" data-image-preview-caption>검수 카드의 이미지를 크게 보고 있습니다.</figcaption>
         </figure>
         <p class="candidate-feedback image-preview-dialog__error" data-image-preview-error role="alert" hidden>이미지를 불러올 수 없습니다.</p>
+      </div>
+    </dialog>
+    <dialog class="command-dialog threads-manager-dialog" data-threads-manager aria-labelledby="threads-manager-title">
+      <div class="threads-manager">
+        <div class="section-heading worker-manager__heading">
+          <div>
+            <h2 id="threads-manager-title">Threads 연결 관리</h2>
+            <p>프로필을 연결하고 기본 발행 대상을 정한 뒤 자동 발행을 켭니다.</p>
+          </div>
+          <button class="button button-quiet" type="button" data-threads-manager-close>닫기</button>
+        </div>
+
+        <section class="worker-manager__lock" data-threads-locked aria-labelledby="threads-lock-title">
+          <div>
+            <h3 id="threads-lock-title">운영 권한 열기</h3>
+            <p>제어 토큰은 이 탭 메모리에서만 사용하며 저장하거나 화면에 다시 표시하지 않습니다.</p>
+          </div>
+          <form class="stack-form worker-admin-form" data-threads-unlock-form novalidate aria-describedby="threads-unlock-help threads-feedback">
+            <label for="threads-control-token">제어 토큰<input id="threads-control-token" name="control-token" type="password" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <p class="form-help" id="threads-unlock-help">Cloudflare Worker의 CONTROL_PLANE_TOKEN을 입력하세요.</p>
+            <p class="candidate-feedback" id="threads-feedback" data-threads-feedback role="alert"></p>
+            <div class="form-actions"><button class="button button-primary" type="submit" data-threads-unlock>관리 열기</button></div>
+          </form>
+        </section>
+
+        <section class="threads-manager__panel" data-threads-panel hidden aria-labelledby="threads-settings-title">
+          <div class="worker-manager__toolbar">
+            <div>
+              <h3 id="threads-settings-title">자동 발행 설정</h3>
+              <p data-threads-summary role="status" aria-live="polite">설정을 불러오는 중입니다.</p>
+            </div>
+            <div class="form-actions">
+              <button class="button button-secondary" type="button" data-threads-refresh>새로고침</button>
+              <button class="button button-quiet" type="button" data-threads-lock>잠그기</button>
+            </div>
+          </div>
+          <p class="candidate-feedback" data-threads-action-feedback role="alert"></p>
+          <div class="threads-manager__settings">
+            <div>
+              <strong>승인 후 다음 슬롯에 자동 발행</strong>
+              <p>OFF로 바꾸면 아직 발행 장벽을 넘지 않은 예약만 취소되고, 이미 발행된 글의 반응 수집은 계속됩니다.</p>
+            </div>
+            <button class="button button-secondary" type="button" data-threads-toggle>자동 발행 켜기</button>
+          </div>
+          <div class="threads-manager__toolbar">
+            <div>
+              <h3>연결된 프로필</h3>
+              <p>기본 프로필은 새 오전·저녁 후보에만 snapshot됩니다.</p>
+            </div>
+            <button class="button button-primary" type="button" data-threads-connect>프로필 연결</button>
+          </div>
+          <div class="threads-profile-list" data-threads-profile-list role="list"></div>
+          <div class="empty-surface" data-threads-empty>
+            <h3>연결된 Threads 프로필이 없습니다</h3>
+            <p>프로필을 연결한 뒤 기본값을 정해야 자동 발행을 켤 수 있습니다.</p>
+          </div>
+        </section>
       </div>
     </dialog>
     <dialog class="command-dialog command-menu-dialog" data-command-dialog aria-labelledby="command-menu-title">

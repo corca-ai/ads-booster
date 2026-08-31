@@ -5,10 +5,11 @@ Last reviewed: 2026-08-31
 
 ## Runtime boundary
 
-Cloudflare owns hosted candidates, D1 leases/callback acceptance, R2 storage, and review state. An
-enrolled Mac owns local durability, admission, one official Codex CLI process, Appium side effects,
-and native export validation. A fresh managed `trace-marketing` install and deployed workspace are
-product evidence; a checkout is development evidence only.
+Cloudflare owns hosted candidates, D1 leases/callback acceptance, R2 storage, review state, Threads
+OAuth/token encryption, next-slot publication, and engagement polling. An enrolled Mac owns local
+durability, admission, one official Codex CLI process, Appium side effects, and native export
+validation. A fresh managed `trace-marketing` install and deployed workspace are product evidence; a
+checkout is development evidence only.
 
 ```mermaid
 flowchart LR
@@ -23,6 +24,9 @@ flowchart LR
   Validate --> Callback[Durable callback]
   Callback --> Store[R2 and D1]
   Store --> Review[Human review]
+  Review --> Decision[Threads schedule or OFF cancellation]
+  Decision --> Publish[Cloudflare publish barrier and readback]
+  Publish --> Poll[Metrics and top-level replies]
 ```
 
 ## Request-time capture
@@ -83,6 +87,26 @@ validation, R2 storage, review states, and the no-auto-publishing boundary are u
 
 The v2 contract fixes non-secret input and completion bindings, not selectors or UI procedures.
 
+## Threads publication and observation
+
+One account may connect multiple encrypted Threads profiles and choose one default. New morning and
+evening candidates snapshot that active default; an operator may select another account-owned active
+profile only before final image approval. Default changes never retarget existing candidates.
+
+Final image approval atomically freezes the selected profile, candidate revision, caption, image key
+and digest, IANA timezone, wall clock, and strictly-next slot. OFF creates a terminal cancellation and
+manual slots create no publication. A bounded Cloudflare scheduler claims each due row, validates the
+profile, token, scopes, and quota, signs a ten-minute account/publication/digest media capability,
+creates a Meta container, then rechecks toggle/profile state at `container_ready -> publishing`.
+Only that CAS is the irreversible barrier. Before it, OFF/disconnect cancels with zero publish POSTs;
+after it, an ambiguous result is `unknown_side_effect` and never an automatic retry.
+
+Successful publish stores the returned post ID before readback. Only matching authoritative readback
+produces `published` and a permalink. Readback failure with a durable post ID retries readback only.
+Published rows poll at +15m, +1h, +6h, +24h, then daily through day 30. Metrics and reply cursors are
+independent, OFF is not a polling predicate, 401/403 pauses the same profile for reconnect, and
+deleted posts become unavailable. Reply bodies and metric snapshots expire after 30 and 365 days.
+
 ## Failure, services, and compatibility
 
 A pre-barrier failure is ordinary task failure. A post-barrier crash or exception is
@@ -98,4 +122,5 @@ defer activation; it preserves that compatibility state across releases.
 
 `com.corca.trace-agent` and `com.corca.trace-ads` are migration-only old plist labels, not current
 service instructions. Native manifest validation does not prove visual semantics. Human review is
-mandatory, and no external marketing channel is auto-published.
+mandatory. Only the default-OFF hosted Threads path can publish; the Mac worker, generic `/v1`
+simulation path, and every other marketing channel cannot.

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-workspace.mjs",
-    "check": "npm run build && node --check src/index.js && node --check src/hosted-workspace.js && node --check src/hosted-generation-callback.js && node --check src/http-error.js && node --check src/mac-workers.js && node --test test/*.test.js",
+    "check": "npm run build && for file in src/*.js src/threads/*.js; do node --check \"$file\"; done && node --test test/*.test.js",
     "config": "node scripts/render-config.mjs",
     "dev": "npm run build && wrangler dev --config wrangler.generated.jsonc",
     "deploy": "npm run build && wrangler deploy --config wrangler.generated.jsonc",
