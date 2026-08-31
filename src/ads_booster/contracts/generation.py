@@ -6,6 +6,7 @@ from typing import Annotated, ClassVar, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
+from ads_booster.contracts.feedback import FeedbackContext  # noqa: TC001
 from ads_booster.contracts.models import (  # noqa: TC001
     CountryCode,
     DeviceTarget,
@@ -65,6 +66,8 @@ class MarketingContextBundle(BaseModel):
     persona: PersonaProfile
     promotion_material: PromotionMaterial
     reference_images: tuple[GenerationReferenceImage, ...] = ()
+    feedback_context: FeedbackContext | None = None
+    feedback_context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     reference_date: datetime
     device: DeviceTarget
 

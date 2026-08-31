@@ -173,7 +173,7 @@ def test_instruction_keeps_the_job_out_of_the_schedule_and_the_caption(
     assert "앱을 만든 사람의 목소리가 아니라 앱을 쓰는 사람의 목소리" in instruction
     assert "제품·개발 용어를 캡션에 쓰지 마세요" in instruction
     assert "메이커 화법을 쓰지 마세요" in instruction
-    assert "kr-032 대 kr-026" in instruction
+    assert "죽는 것은 메이커라는 신분이 아니라" in instruction
     assert "kr-020 → kr-029" in instruction
     assert "직업은 이 사람의 배경이지 글의 소재가 아닙니다" in instruction
 

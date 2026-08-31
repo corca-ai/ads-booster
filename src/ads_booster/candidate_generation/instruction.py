@@ -81,9 +81,13 @@ _RULES: Final = """[반드시 지킬 규칙]
 12. 캡션은 앱을 만든 사람의 목소리가 아니라 앱을 쓰는 사람의 목소리입니다.
    - 제품·개발 용어를 캡션에 쓰지 마세요. 배포, PR, 커밋, 리팩터링, staging, API,
      스프린트, 온보딩 같은 말은 등장하지 않습니다.
-   - "만들었다", "출시했다", "업데이트했다" 같은 메이커 화법을 쓰지 마세요. 레퍼런스에서
-     같은 잠금화면 소재라도 메이커 화법을 얹은 쪽이 도달 76배 열세였고(kr-032 대 kr-026),
-     만든 사람 서사는 계정당 한 번 쓰면 후속이 35배 급락합니다(kr-020 → kr-029).
+   - "만들었다", "출시했다", "업데이트했다" 같은 메이커 화법을 쓰지 마세요. 이 계정의 화자는
+     만든 사람이 아니라 쓰는 사람이기 때문입니다. 코퍼스에는 메이커 계정의 히트가 오히려
+     많지만(KR 26편 중 18편), 그것은 실제로 만든 사람이 자기 이름으로 쓴 글입니다.
+     이 계정은 그 자리가 아닙니다.
+   - 죽는 것은 메이커라는 신분이 아니라 기능 나열과 여백 없는 마무리입니다. 기능을 전부
+     늘어놓고 "한 번 써봐"로 닫은 kr-032는 relative 0.042로 죽었습니다. 같은 계정이 같은
+     서사를 반복해도 후속이 35배 급락합니다(kr-020 → kr-029).
    - 직업은 이 사람의 배경이지 글의 소재가 아닙니다. 무슨 일을 하는지는 일정에서 스칠
      뿐이고, 글이 그 직업에 대한 이야기가 되면 안 됩니다.
 13. 캡션은 이 사람이 자기 계정에 쓰는 생활글입니다. 연출임을 글에서 선언하지 마세요.
@@ -98,7 +102,21 @@ _RULES: Final = """[반드시 지킬 규칙]
    - 일정 항목은 많아야 하나가 이야기 속에서 스칠 뿐입니다.
    - 이미지의 일은 증명이고 캡션의 일은 스크롤을 멈추는 것입니다. 둘이 같은 말을 하면
      캡션이 캡처 설명문이 되고, 사람은 방금 본 것을 다시 읽지 않습니다.
-   - 코퍼스에서 도달이 가장 높았던 kr-001(relative 175.30)에는 일정 나열이 없습니다."""
+   - 코퍼스에서 도달이 가장 높았던 kr-001(relative 175.30)에는 일정 나열이 없습니다.
+15. 하루가 달라지는 자리에 이 사람이 한 동작 하나가 스치게 하세요.
+   - FACTS 문서의 [캡션이 써도 되는 동작]에서 **하나만** 고릅니다. 둘을 넣으면 기능 소개가
+     되고, 하나도 없으면 이 계정이 무엇으로 달라졌는지 읽는 사람이 짚을 수 없습니다.
+   - 그 동작을 설명하지 마세요. 그 순간에 그 사람이 한 일로 한 줄 지나가면 됩니다.
+   - FACTS의 [절대 쓰면 안 되는 문장]에 걸리는 서술은 쓰지 마세요. 특히 잠금화면 배경과
+     잠금화면 위젯은 다른 것이라, 한쪽의 성질을 다른 쪽에 얹으면 거짓이 됩니다.
+16. 요금제는 캡션의 소재가 아닙니다.
+   - 항목마다 무료·유료를 구분해 나열하지 마세요. 요금제 설명은 캡션이 할 일이 아닙니다.
+   - FACTS에서 유료로 표시된 동작을 쓸 때만, 그 문장 안에서 돈을 내고 쓰고 있다는 사실이
+     자연스럽게 드러나게 하세요. 예: "결제하고 쓰는 중인데", "유료 켜고부터는".
+   - 무료로 되는 일을 굳이 "무료로 된다"고 쓰지 마세요.
+17. 앱 이름을 캡션에 쓰지 마세요.
+   - 제품은 이미지와 동작으로 드러납니다. 가리켜야 할 때는 "이거"로 충분합니다.
+   - kr-026은 앱 이름을 첫 게시물 캡션에 넣지 않고 답글에서만 밝히면서 조회 60만을 냈습니다."""
 
 _INVENT_IDENTITY: Final = """[정체성 창작 규칙]
 이 배치에는 정해진 계정이 없습니다. 후보마다 서로 다른 "구체 정체성"을 먼저 창작하고,
@@ -210,12 +228,14 @@ class CaptionForm(StrEnum):
     DAILY = "daily"
     HOOK = "hook"
     TESTIMONY = "testimony"
+    RECOMMEND = "recommend"
 
 
 _FORM_LABELS: Final = {
     CaptionForm.DAILY: "일상글",
     CaptionForm.HOOK: "훅글",
     CaptionForm.TESTIMONY: "간증글",
+    CaptionForm.RECOMMEND: "추천글",
 }
 
 _FORM_GUIDANCE: Final = {
@@ -230,12 +250,18 @@ _FORM_GUIDANCE: Final = {
         "쓰기 전과 후에 무엇이 달라졌는지 씁니다. 다만 주장은 FACTS 문서 범위 안에서만 "
         "하세요. 근거 레퍼런스: kr-010."
     ),
+    CaptionForm.RECOMMEND: (
+        "쓰는 사람이 다른 사람에게 권하는 글입니다. 기능을 늘어놓지 말고 자기가 달라진 "
+        "지점 하나만 말한 뒤, 어떻게 하는지는 남겨두세요. 읽는 사람이 방법을 물어볼 자리가 "
+        "남아야 합니다. 근거 레퍼런스: kr-026."
+    ),
 }
 
 _FORM_EXAMPLES: Final = {
     CaptionForm.DAILY: "오늘도 알람 세 번 끄고 나왔는데 폰 켜니까 첫 줄이 벌써 지나 있었다",
     CaptionForm.HOOK: "다들 시험기간엔 폰 어떻게 해요?",
     CaptionForm.TESTIMONY: "두 달째 쓰는데 이제 내일 뭐부터 하는지 확인하려고 앱을 안 연다",
+    CaptionForm.RECOMMEND: "아이폰 쓰면 이거 한 번 해봐. 폰 켤 때마다 보여서 까먹을 수가 없음",
 }
 
 _ASSIGNMENT_HEADER: Final = """[후보별 배정]
@@ -244,7 +270,8 @@ _ASSIGNMENT_HEADER: Final = """[후보별 배정]
 {lines}
 - 형태는 글을 여는 방식입니다. 같은 사람이 써도 글마다 다르게 열어야 하고,
   한 배치가 전부 같은 형태로 열리면 피드가 한 장짜리 템플릿으로 읽힙니다.
-  간증글은 한 배치에 많아야 하나입니다. 제품 이야기가 매 글에 오면 계정이 광고가 됩니다.
+  간증글과 추천글은 각각 한 배치에 많아야 하나입니다. 제품 쪽으로 도는 글이 매 편에 오면
+  계정이 광고가 됩니다.
 - 도메인은 persona_domain 필드에 그대로 적습니다. 그 후보에 적힌 토큰이어야 하고,
   정해지지 않은 토큰이나 새 단어를 쓰면 안 됩니다.
 - 소재 축은 그 후보가 출발할 자리입니다.
@@ -301,23 +328,35 @@ def assign_candidates(
     )
 
 
-def assign_caption_forms(count: int) -> tuple[CaptionForm, ...]:
-    """Give each candidate in the batch a form, with at most one testimonial in it.
+_RECOMMENDATION_MINIMUM_BATCH: Final = 4
 
-    Testimony is the only form that makes a claim about the product, so it is capped rather
-    than cycled: a batch of three testimonials is an ad break, not an account. The rest
-    alternate between the hook and the day, which is enough to keep three captions from
-    opening the same way. The assignment is a function of the count alone, so the same
-    batch size always gets the same shape and a reviewer can predict what they are reading.
+
+def assign_caption_forms(count: int) -> tuple[CaptionForm, ...]:
+    """Give each candidate a form, with at most one testimonial and one recommendation.
+
+    Testimony and the recommendation are the two forms that turn toward the product — one
+    says what changed, the other says try it — so both are capped rather than cycled: a
+    batch of four of either is an ad break, not an account. The rest alternate between the
+    hook and the day, which is enough to keep the captions from opening the same way. The
+    assignment is a function of the count alone, so the same batch size always gets the
+    same shape and a reviewer can predict what they are reading.
     """
     if count <= 0:
         return ()
     if count == 1:
         return (CaptionForm.HOOK,)
-    alternating = tuple(
-        CaptionForm.HOOK if index % 2 == 0 else CaptionForm.DAILY for index in range(count - 1)
+    # The recommendation only earns a slot once the batch is wide enough to carry a
+    # testimonial beside it and still open on something that is not about the product.
+    capped: tuple[CaptionForm, ...] = (
+        (CaptionForm.RECOMMEND, CaptionForm.TESTIMONY)
+        if count >= _RECOMMENDATION_MINIMUM_BATCH
+        else (CaptionForm.TESTIMONY,)
     )
-    return (*alternating, CaptionForm.TESTIMONY)
+    alternating = tuple(
+        CaptionForm.HOOK if index % 2 == 0 else CaptionForm.DAILY
+        for index in range(count - len(capped))
+    )
+    return (*alternating, *capped)
 
 
 _HISTORY_HEADER: Final = """[최근 생성된 후보 목록]
@@ -390,6 +429,7 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
     language: str = DEFAULT_LANGUAGE,
     history: tuple[CandidateHistoryEntry, ...] = (),
     account: CandidateAccountBrief | None = None,
+    learned_feedback: tuple[str, ...] = (),
 ) -> str:
     """Assemble the one generation instruction this batch is written from.
 
@@ -428,6 +468,7 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
         *([_INVENT_IDENTITY] if account is None else []),
         _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
+        *([_feedback_section(learned_feedback)] if learned_feedback else []),
         assignment_section(assignments),
         *([_history_section(history)] if history else []),
         *(
@@ -437,6 +478,18 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
         _OUTPUT.format(count=count, country=country, language=language),
     ]
     return "\n\n".join(sections)
+
+
+def _feedback_section(instructions: tuple[str, ...]) -> str:
+    """Render only promoted caption rules; private review notes never enter this section."""
+    lines = "\n".join(
+        f"{index}. {instruction}" for index, instruction in enumerate(instructions, 1)
+    )
+    return (
+        "[이 계정의 검수에서 누적된 규칙]\n"
+        "아래 규칙은 같은 계정·프로필의 반복된 강한 반려에서 승격되었습니다. 모두 지키세요.\n"
+        f"{lines}"
+    )
 
 
 def assignment_section(assignments: tuple[CandidateAssignment, ...]) -> str:
