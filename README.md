@@ -31,8 +31,10 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
    workspace and can reach only the loopback Appium endpoint; home credentials and external network
    destinations stay blocked. The non-secret
    `trace.codex-appium-job.v2` contract binds context, background, device, digest, nonce,
-   locale/time zone, and request-owned calendar namespace. Codex observes and operates the real
-   Trace UI; Python does not prescribe click order.
+   locale/time zone, and request-owned calendar namespace. After the D1 barrier, the worker asks the
+   DEBUG Trace EventKit helper to seed and verify those events. Codex then observes and operates only
+   the real Trace UI, choosing its layout and settings without a prescribed click order. The worker
+   removes only the recorded request calendar after collection.
    Before Save, Codex publishes the active Trace wallpaper editor state; the worker independently
    confirms the editor identity and requested titles, clears any earlier export, and only then
    acknowledges Save. This binds collection to the final Save generation rather than an earlier
