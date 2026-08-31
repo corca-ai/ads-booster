@@ -1,7 +1,7 @@
 # Threads Marketing Agent
 
-Status: Draft — the P0 data contracts and migration foundation are implemented; feature ingestion,
-strategist execution, creative orchestration, attribution, experiment evaluation, and governed
+Status: Draft — P0 and the no-effect P1 shadow-strategist slice are implemented; installed-product
+evidence collection, creative orchestration, attribution, experiment evaluation, and governed
 learning remain unimplemented.
 
 Last reviewed: 2026-08-31
@@ -39,7 +39,7 @@ feature/build/release event
 No model conversation is canonical state. A source-only feature may be used for shadow strategy but
 cannot open the publication gate. A human approval cannot turn missing evidence into product truth.
 
-## Current slice
+## Implemented slices
 
 P0 establishes:
 
@@ -51,8 +51,18 @@ P0 establishes:
 - a new `agent_v1` D1 campaign/event epoch, separate from legacy `MarketingWorkflow` state;
 - shadow campaigns that cannot create any tool-action row.
 
-This slice does not dispatch Codex, create candidates, capture artifacts, publish posts, read live
-metrics, or promote learning.
+P1 adds:
+
+- account-scoped source-only packet ingestion at `/api/marketing-agent/campaigns`;
+- strict cross-runtime packet normalization and digest binding;
+- a broker-gated `marketing_judgment` job and distinct official Codex CLI receipt;
+- one private, ephemeral, schema-constrained shadow strategy turn;
+- claim/reference quarantine, exact input/output receipt validation, idempotent callback storage,
+  and a registered control/challenger experiment;
+- explicit failure states and task-kind-specific ambiguous-effect codes.
+
+P1 still creates no candidate, capture, publication, or tool-action effect. The source packet may
+support a strategy hypothesis, but its closed publication gate prevents product-availability claims.
 
 ## Fixed decisions
 
@@ -133,6 +143,9 @@ Pin the Trace repository ref to an immutable commit/tree, construct a source-onl
 availability claims, and run `marketing_judgment_v1` through the capability-gated Mac broker. The
 agent generates product-first hypotheses before references are exposed and returns a control plus a
 budget-feasible challenger portfolio.
+
+Implemented for manually supplied immutable source packets. Automatic GitHub webhook ingestion and
+fresh-installed runtime evidence remain deferred as stated below.
 
 ### P2 — creative orchestration
 

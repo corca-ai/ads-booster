@@ -2,6 +2,7 @@ import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
 import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
 import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
+import { receiveHostedMarketingJudgmentCallback } from "./hosted-marketing-judgment-callback.js";
 import { HttpError } from "./http-error.js";
 import {
   MAX_HOSTED_CAPTURE_CALLBACK_BYTES,
@@ -662,6 +663,9 @@ export async function receiveCallback(env, callback, worker = null) {
     .first();
   if (hostedTask?.kind === "generate_candidates") {
     return receiveHostedGenerationCallback(env, hostedTask, callback, worker);
+  }
+  if (hostedTask?.kind === "marketing_judgment") {
+    return receiveHostedMarketingJudgmentCallback(env, hostedTask, callback, worker);
   }
   if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback, worker);
   if (resultBytes > MAX_CALLBACK_RESULT_BYTES) {

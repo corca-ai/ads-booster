@@ -8,7 +8,11 @@ const MAX_WORKER_PAYLOAD_BYTES = 16 * 1024;
 const MAX_WORKER_CALLBACK_BYTES = 24 * 1024 * 1024;
 const WORKER_STATES = new Set(["active", "draining"]);
 // The job kinds a task row can carry. A worker only leases a task whose kind it advertises.
-export const WORKER_TASK_KINDS = Object.freeze(["capture", "generate_candidates"]);
+export const WORKER_TASK_KINDS = Object.freeze([
+  "capture",
+  "generate_candidates",
+  "marketing_judgment",
+]);
 // What a worker that advertises nothing can do. Every Mac enrolled before caption generation
 // existed is one of those, and capture is the only job its Python knows how to run.
 const LEGACY_WORKER_TASK_KINDS = Object.freeze(["capture"]);

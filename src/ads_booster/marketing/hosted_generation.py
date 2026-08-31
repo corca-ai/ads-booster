@@ -32,6 +32,10 @@ from ads_booster.candidate_generation import (
     default_domain_shuffle,
 )
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
+from ads_booster.marketing.hosted_judgment import (
+    HostedMarketingJudgmentExecutor,
+    PreparedMarketingJudgment,
+)
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.transport.json_types import JsonObject
@@ -386,19 +390,30 @@ class HostedWorkspaceGenerationExecutor:
 class PlanlessHostedTaskExecutor:
     capture: HostedWorkspaceCaptureExecutor
     generation: HostedWorkspaceGenerationExecutor
+    judgment: HostedMarketingJudgmentExecutor
 
-    def prepare(self, task: MarketingTask) -> PreparedCodexAppiumJob | PreparedHostedGeneration:
+    def prepare(
+        self,
+        task: MarketingTask,
+    ) -> PreparedCodexAppiumJob | PreparedHostedGeneration | PreparedMarketingJudgment:
         match task.kind:
             case TaskKind.CAPTURE:
                 return self.capture.prepare(task)
             case TaskKind.GENERATE_CANDIDATES:
                 return self.generation.prepare(task)
+            case TaskKind.MARKETING_JUDGMENT:
+                return self.judgment.prepare(task)
             case _:
                 raise MarketingExecutionError("unsupported_hosted_task")
 
-    def execute(self, prepared: PreparedCodexAppiumJob | PreparedHostedGeneration) -> TaskResult:
+    def execute(
+        self,
+        prepared: PreparedCodexAppiumJob | PreparedHostedGeneration | PreparedMarketingJudgment,
+    ) -> TaskResult:
         if isinstance(prepared, PreparedHostedGeneration):
             return self.generation.execute(prepared)
+        if isinstance(prepared, PreparedMarketingJudgment):
+            return self.judgment.execute(prepared)
         return self.capture.execute(prepared)
 
 

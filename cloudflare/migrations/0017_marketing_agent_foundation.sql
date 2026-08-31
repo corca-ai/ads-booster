@@ -1,3 +1,80 @@
+-- SQLite cannot widen the existing task-kind CHECK in place. Rebuild the broker task table
+-- byte-for-field before the agent tables are introduced; every existing capture and caption row
+-- keeps its identity, lease, barrier, callback reservation, and result state.
+ALTER TABLE hosted_workspace_capture_tasks RENAME TO hosted_workspace_capture_tasks_before_agent;
+
+CREATE TABLE hosted_workspace_capture_tasks (
+    task_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE,
+    account_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    candidate_revision INTEGER NOT NULL CHECK (candidate_revision >= 1),
+    idempotency_key TEXT NOT NULL UNIQUE,
+    task_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'succeeded', 'failed', 'unknown_side_effect')),
+    result_json TEXT,
+    callback_id TEXT UNIQUE,
+    last_dispatched_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    dispatch_mode TEXT NOT NULL DEFAULT 'legacy_queue'
+        CHECK (dispatch_mode IN ('legacy_queue', 'worker_broker')),
+    worker_id TEXT,
+    lease_id TEXT,
+    lease_expires_at TEXT,
+    lease_started_at TEXT,
+    lease_accepted_at TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    execution_started_at TEXT,
+    callback_reservation_id TEXT,
+    callback_reserved_at TEXT,
+    callback_result_sha256 TEXT,
+    kind TEXT NOT NULL DEFAULT 'capture'
+        CHECK (kind IN ('capture', 'generate_candidates', 'marketing_judgment')),
+    persona_id TEXT,
+    required_capability TEXT
+);
+
+INSERT INTO hosted_workspace_capture_tasks (
+    task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+    task_json, state, result_json, callback_id, last_dispatched_at, created_at, updated_at,
+    dispatch_mode, worker_id, lease_id, lease_expires_at, lease_started_at, lease_accepted_at,
+    attempt_count, execution_started_at, callback_reservation_id, callback_reserved_at,
+    callback_result_sha256, kind, persona_id, required_capability
+)
+SELECT
+    task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+    task_json, state, result_json, callback_id, last_dispatched_at, created_at, updated_at,
+    dispatch_mode, worker_id, lease_id, lease_expires_at, lease_started_at, lease_accepted_at,
+    attempt_count, execution_started_at, callback_reservation_id, callback_reserved_at,
+    callback_result_sha256, kind, persona_id, required_capability
+FROM hosted_workspace_capture_tasks_before_agent;
+
+DROP TABLE hosted_workspace_capture_tasks_before_agent;
+
+CREATE INDEX hosted_workspace_capture_tasks_candidate
+ON hosted_workspace_capture_tasks (account_id, candidate_id, created_at DESC);
+
+CREATE INDEX hosted_workspace_capture_tasks_dispatch
+ON hosted_workspace_capture_tasks (state, last_dispatched_at, created_at);
+
+CREATE INDEX hosted_workspace_capture_tasks_worker_claim
+ON hosted_workspace_capture_tasks (dispatch_mode, state, lease_expires_at, created_at);
+
+CREATE INDEX hosted_workspace_capture_tasks_worker_owner
+ON hosted_workspace_capture_tasks (worker_id, state, created_at);
+
+CREATE INDEX hosted_workspace_capture_tasks_safe_claim
+ON hosted_workspace_capture_tasks
+    (dispatch_mode, state, execution_started_at, lease_expires_at, created_at);
+
+CREATE UNIQUE INDEX hosted_workspace_capture_tasks_callback_reservation
+ON hosted_workspace_capture_tasks (callback_reservation_id)
+WHERE callback_reservation_id IS NOT NULL;
+
+CREATE INDEX hosted_workspace_capture_tasks_generation
+ON hosted_workspace_capture_tasks (account_id, kind, state, created_at DESC);
+
 CREATE TABLE hosted_marketing_feature_packets (
     packet_id TEXT PRIMARY KEY,
     feature_id TEXT NOT NULL,
@@ -17,6 +94,7 @@ CREATE TABLE hosted_marketing_feature_packets (
         CHECK (publication_allowed IN (0, 1)),
     observed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    UNIQUE (packet_id, packet_sha256),
     UNIQUE (feature_id, resolved_commit_sha, packet_sha256)
 );
 
@@ -56,7 +134,9 @@ CREATE TABLE hosted_marketing_campaigns (
     projection_revision INTEGER NOT NULL DEFAULT 0 CHECK (projection_revision >= 0),
     business_outcome TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (feature_packet_id, feature_packet_sha256)
+        REFERENCES hosted_marketing_feature_packets(packet_id, packet_sha256) ON DELETE RESTRICT
 );
 
 CREATE INDEX hosted_marketing_campaigns_account

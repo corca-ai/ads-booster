@@ -14,6 +14,7 @@ from ads_booster.transport.json_types import JsonObject
 class TaskKind(StrEnum):
     RESEARCH = "research"
     GENERATE_CANDIDATES = "generate_candidates"
+    MARKETING_JUDGMENT = "marketing_judgment"
     CAPTURE = "capture"
     PUBLISH = "publish"
     SAMPLE_METRICS = "sample_metrics"
@@ -24,6 +25,12 @@ class TaskStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     UNKNOWN_SIDE_EFFECT = "unknown_side_effect"
+
+
+def task_unknown_side_effect_code(kind: TaskKind) -> str:
+    if kind is TaskKind.CAPTURE:
+        return "native_appium_side_effect_unknown"
+    return f"{kind.value}_side_effect_unknown"
 
 
 @unique

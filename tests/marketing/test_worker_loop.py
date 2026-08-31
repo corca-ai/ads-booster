@@ -309,6 +309,28 @@ def test_interrupted_guarded_execution_creates_one_unknown_side_effect_callback_
     assert callbacks[0].result.failure_code == "native_appium_side_effect_unknown"
 
 
+def test_interrupted_marketing_judgment_uses_its_own_unknown_effect_code(
+    tmp_path: Path,
+) -> None:
+    inbox = MarketingInbox(tmp_path)
+    task = _task().model_copy(update={"kind": TaskKind.MARKETING_JUDGMENT})
+    assert inbox.ingest(task)
+    assert inbox.claim_next() == task
+    inbox.begin_execution(
+        task.task_id,
+        ExecutionAdmission(
+            job_digest="c" * 64,
+            export_nonce="nonce-judgment",
+            workspace_id="workspace-judgment",
+        ),
+    )
+
+    assert MarketingInbox(tmp_path).recover_interrupted().unknown_side_effects == 1
+    callback = inbox.pending_callbacks()[0]
+    assert callback.result.status is TaskStatus.UNKNOWN_SIDE_EFFECT
+    assert callback.result.failure_code == "marketing_judgment_side_effect_unknown"
+
+
 def test_existing_database_is_additively_migrated_without_losing_rows(
     tmp_path: Path,
 ) -> None:

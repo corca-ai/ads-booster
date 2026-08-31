@@ -108,11 +108,17 @@ packets, account-scoped campaign projections, ordered run events, context receip
 pre-registered experiments, approval grants, and tool-action intent. It does not dual-write these
 records into the legacy `MarketingWorkflow` / `MarketingAccountAgent` memory path.
 
-The first implemented boundary is contract-only: source evidence cannot open the publication gate,
-strategy briefs require one control and a bounded experiment, direct-response attribution is distinct
-from causal estimation, and a database trigger prevents shadow campaigns from creating tool actions.
-No strategist task, candidate, capture, publication, metric evaluation, or learning promotion is
-activated by this foundation alone. The staged execution contract is
+The hosted workspace now accepts a normalized, immutable source packet and creates a no-effect
+shadow campaign. D1 queues a `marketing_judgment` broker task only for a Mac that advertises that
+task kind. The Mac freezes feature, knowledge, capability, prompt, and output-schema digests, runs
+one private schema-constrained official Codex CLI turn, and returns a control/challenger strategy.
+Cloudflare independently verifies the task/output scope, digests, supported claim IDs, reference
+quarantine, control activation, and attribution semantics before atomically storing the receipt,
+brief, registered experiment, projection update, and ordered event.
+
+Source evidence cannot open the publication gate, and a database trigger prevents every shadow
+campaign from creating tool actions. This path creates no candidate, capture, publication, metric,
+or learning effect. Installed-product evidence and later stages remain governed by
 [`docs/plans/threads-marketing-agent.md`](../plans/threads-marketing-agent.md).
 
 ## Threads publication and observation

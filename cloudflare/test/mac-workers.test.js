@@ -55,7 +55,7 @@ function worker(workerId, overrides = {}) {
     display_name: workerId,
     pool: "appium",
     state: "active",
-    capabilities_json: '{"task_kinds":"capture,generate_candidates","feedback_context_v1":true}',
+    capabilities_json: '{"task_kinds":"capture,generate_candidates,marketing_judgment","feedback_context_v1":true,"marketing_judgment_v1":true}',
     doctor_json: '{"ready":true}',
     last_seen_at: "2026-08-26T00:00:00.000Z",
     current_task_id: null,
@@ -805,6 +805,22 @@ test("an updated Mac leases either kind, oldest first", async () => {
   assert.equal(leases[0].message_id, "task-1");
 });
 
+test("only a worker advertising marketing judgment leases a shadow strategy task", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"capture,generate_candidates","feedback_context_v1":true}',
+  });
+  const updated = worker("worker-updated");
+  const strategy = task({ kind: "marketing_judgment" });
+  const db = new ClaimDb([oldWorker, updated], [strategy]);
+
+  assert.deepEqual(await claimWorkerTasks(db, oldWorker, now), []);
+  assert.deepEqual(
+    (await claimWorkerTasks(db, updated, now)).map((lease) => lease.message_id),
+    ["task-1"],
+  );
+});
+
 test("a caption batch waits for the updated Mac rather than stalling on the old one", async () => {
   // Both Macs poll. The old one must skip the generation task and take the capture instead,
   // which is what keeps one un-updated Mac from blocking the queue for everyone.
@@ -826,8 +842,8 @@ test("a caption batch waits for the updated Mac rather than stalling on the old 
 test("an advertisement is read as the closed set it is, and silence as capture only", () => {
   // The value is a comma-joined string because the control plane flattens every non-scalar
   // capability to null; a worker that sent a list would read as having said nothing.
-  assert.deepEqual(workerTaskKinds({ task_kinds: "capture,generate_candidates" }),
-    ["capture", "generate_candidates"]);
+  assert.deepEqual(workerTaskKinds({ task_kinds: "capture,generate_candidates,marketing_judgment" }),
+    ["capture", "generate_candidates", "marketing_judgment"]);
   assert.deepEqual(workerTaskKinds({ task_kinds: " generate_candidates , capture " }),
     ["generate_candidates", "capture"]);
   // Tokens this control plane does not define are dropped rather than trusted.

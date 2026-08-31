@@ -69,6 +69,21 @@ def test_marketing_agent_foundation_preserves_existing_hosted_rows() -> None:
             VALUES ('candidate-before-agent', 'trace_kr', 'manual', 'KR', 'topic', 'caption',
                     'hypothesis', '[]', '[]', 'prompt', '{}', 'submitted', 1, 1, 1)"""
         )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_capture_tasks
+            (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+             task_json, state, result_json, callback_id, last_dispatched_at, created_at, updated_at,
+             dispatch_mode, worker_id, lease_id, lease_expires_at, lease_started_at,
+             lease_accepted_at, attempt_count, execution_started_at, callback_reservation_id,
+             callback_reserved_at, callback_result_sha256, kind, persona_id,
+             required_capability)
+            VALUES ('task-before-agent', 'run-before-agent', 'trace_kr',
+                    'candidate-before-agent', 1, 'capture:before-agent', '{}', 'queued', NULL,
+                    NULL, 'dispatched', 'created', 'updated', 'worker_broker', 'worker-1',
+                    'lease-1', 'expires', 'started', 'accepted', 2, NULL, 'reservation-1',
+                    'reserved', ?, 'generate_candidates', 'persona-1', 'feedback_context_v1')""",
+            ("d" * 64,),
+        )
 
         _ = connection.executescript(
             (MIGRATION_ROOT / "0017_marketing_agent_foundation.sql").read_text()
@@ -78,8 +93,37 @@ def test_marketing_agent_foundation_preserves_existing_hosted_rows() -> None:
             """SELECT status, revision FROM hosted_workspace_candidates
             WHERE candidate_id = 'candidate-before-agent'"""
         ).fetchone()
+        task = connection.execute(
+            """SELECT task_id, run_id, candidate_id, candidate_revision, state, dispatch_mode,
+                      worker_id, lease_id, attempt_count, callback_reservation_id,
+                      callback_result_sha256, kind, persona_id, required_capability
+               FROM hosted_workspace_capture_tasks WHERE task_id = 'task-before-agent'"""
+        ).fetchone()
 
         assert candidate == ("submitted", 1)
+        assert task == (
+            "task-before-agent",
+            "run-before-agent",
+            "candidate-before-agent",
+            1,
+            "queued",
+            "worker_broker",
+            "worker-1",
+            "lease-1",
+            2,
+            "reservation-1",
+            "d" * 64,
+            "generate_candidates",
+            "persona-1",
+            "feedback_context_v1",
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_capture_tasks
+            (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+             task_json, state, created_at, updated_at, dispatch_mode, kind)
+            VALUES ('judgment-task', 'judgment-run', 'trace_kr', '', 1, 'judgment:1', '{}',
+                    'queued', 'now', 'now', 'worker_broker', 'marketing_judgment')"""
+        )
 
 
 def test_shadow_marketing_campaign_cannot_create_tool_actions() -> None:

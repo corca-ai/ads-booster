@@ -171,6 +171,7 @@ class FeatureEvidencePacket(ContractModel):
 class MarketingHypothesis(ContractModel):
     hypothesis_id: AgentIdentifier
     role: PortfolioRole
+    claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=16)]
     value_frame: Annotated[str, Field(min_length=1, max_length=1000)]
     rationale: Annotated[str, Field(min_length=1, max_length=2000)]
     falsifier: Annotated[str, Field(min_length=1, max_length=1000)]

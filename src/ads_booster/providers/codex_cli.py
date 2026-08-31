@@ -24,6 +24,7 @@ _DEFAULT_TIMEOUT_SECONDS: Final = 180.0
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _APPIUM_RECEIPT_NAME: Final = "codex-appium-invocation.json"
 _GENERATION_RECEIPT_NAME: Final = "codex-generation-invocation.json"
+_MARKETING_JUDGMENT_RECEIPT_NAME: Final = "codex-marketing-judgment-invocation.json"
 _APPIUM_READY_NAME: Final = "codex-appium-ready.json"
 _APPIUM_READY_VERIFIED_NAME: Final = "codex-appium-ready-verified.json"
 _APPIUM_SAVED_NAME: Final = "codex-appium-saved.json"
@@ -33,6 +34,8 @@ _APPIUM_ALREADY_INVOKED: Final = "codex_appium_job_already_invoked"
 _APPIUM_RECEIPT_UNAVAILABLE: Final = "codex_appium_job_receipt_unavailable"
 _GENERATION_ALREADY_INVOKED: Final = "codex_generation_job_already_invoked"
 _GENERATION_RECEIPT_UNAVAILABLE: Final = "codex_generation_job_receipt_unavailable"
+_MARKETING_JUDGMENT_ALREADY_INVOKED: Final = "codex_marketing_judgment_already_invoked"
+_MARKETING_JUDGMENT_RECEIPT_UNAVAILABLE: Final = "codex_marketing_judgment_receipt_unavailable"
 _APPIUM_MARKER_LIMIT_BYTES: Final = 64 * 1024
 _APPIUM_MARKER_POLL_SECONDS: Final = 0.01
 _APPIUM_READY_ATTEMPTS: Final = 2
@@ -179,13 +182,36 @@ class CodexCli:
         timeout_seconds: float,
     ) -> JsonObject:
         self._record_generation_invocation(workspace)
-        turn = _StructuredTurn(
-            prompt=prompt,
-            schema=schema,
-            workspace=workspace,
-            timeout_seconds=timeout_seconds,
-            error_prefix="codex_generation_job",
+        return self._run_structured_job(
+            _StructuredTurn(
+                prompt=prompt,
+                schema=schema,
+                workspace=workspace,
+                timeout_seconds=timeout_seconds,
+                error_prefix="codex_generation_job",
+            )
         )
+
+    def run_marketing_judgment_job(
+        self,
+        prompt: str,
+        schema: JsonObject,
+        *,
+        workspace: Path,
+        timeout_seconds: float,
+    ) -> JsonObject:
+        self._record_marketing_judgment_invocation(workspace)
+        return self._run_structured_job(
+            _StructuredTurn(
+                prompt=prompt,
+                schema=schema,
+                workspace=workspace,
+                timeout_seconds=timeout_seconds,
+                error_prefix="codex_marketing_judgment",
+            )
+        )
+
+    def _run_structured_job(self, turn: _StructuredTurn) -> JsonObject:
         if not turn.workspace.is_dir():
             message = f"{turn.error_prefix}_workspace_unavailable"
             raise CodexCliError(message)
@@ -248,6 +274,20 @@ class CodexCli:
             raise CodexCliError(_GENERATION_ALREADY_INVOKED) from error
         except OSError as error:
             raise CodexCliError(_GENERATION_RECEIPT_UNAVAILABLE) from error
+
+    @staticmethod
+    def _record_marketing_judgment_invocation(workspace: Path) -> None:
+        receipt = workspace / _MARKETING_JUDGMENT_RECEIPT_NAME
+        payload: JsonObject = {
+            "schema": "trace.codex-marketing-judgment-invocation.v1",
+            "invocation_count": 1,
+        }
+        try:
+            _write_private_json(receipt, payload)
+        except FileExistsError as error:
+            raise CodexCliError(_MARKETING_JUDGMENT_ALREADY_INVOKED) from error
+        except OSError as error:
+            raise CodexCliError(_MARKETING_JUDGMENT_RECEIPT_UNAVAILABLE) from error
 
     def _run_appium_structured(
         self,

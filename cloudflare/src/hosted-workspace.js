@@ -1,4 +1,5 @@
 import { hasRegisteredBrokerWorker, hasWorkerForTaskKind } from "./mac-workers.js";
+import { handleHostedMarketingAgent } from "./marketing-agent.js";
 import { handleThreadsMediaRequest } from "./threads/media-capability.js";
 import { handleHostedThreadsProfiles } from "./threads/profiles-api.js";
 import { handleHostedThreadsStatus } from "./threads/status-api.js";
@@ -178,7 +179,13 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     }
 
     await ensureDefaultHostedAccount(env);
-    await requireHostedAccount(scopedEnv);
+    const hostedAccount = await requireHostedAccount(scopedEnv);
+    const marketingAgentResponse = await handleHostedMarketingAgent(
+      request,
+      scopedEnv,
+      hostedAccount,
+    );
+    if (marketingAgentResponse) return marketingAgentResponse;
     if (request.method === "GET" && url.pathname === "/api/personas") {
       return json(await listHostedPersonas(scopedEnv, url.searchParams.get("country")));
     }

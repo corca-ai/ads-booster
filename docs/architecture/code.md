@@ -6,8 +6,9 @@ Last reviewed: 2026-08-31
 ## Composition
 
 `ads_booster.cli.marketing` exports the sole CLI, `trace-marketing`. `worker run` composes a
-`MarketingWorkerLoop` from D1 `WorkerBrokerClient`, SQLite `MarketingInbox`, and
-`HostedWorkspaceCaptureExecutor`.
+`MarketingWorkerLoop` from D1 `WorkerBrokerClient`, SQLite `MarketingInbox`, and a planless hosted
+executor that routes immutable tasks to `HostedWorkspaceCaptureExecutor`, hosted caption
+generation, or `HostedMarketingJudgmentExecutor`.
 
 ```text
 cli/marketing
@@ -24,6 +25,8 @@ cli/marketing
            -> capture/appium_codex_validation paths and completion proof
            -> capture/appium_editor_verifier live UI and process-binding proof
         -> providers/codex_cli        official CLI subprocess
+     -> marketing/hosted_judgment     no-effect strategy prompt, schema, and receipt binding
+        -> providers/codex_cli        distinct official structured-judgment subprocess receipt
 ```
 
 ## Responsibility boundaries
@@ -86,16 +89,19 @@ configuration fails before deployment or scheduling.
 `hosted-workspace.js` owns candidate creation and dual human approval. It snapshots the default
 profile at candidate creation and inserts the immutable publication decision in the same D1 batch as
 accepted image review. `index.js` composes separate candidate-generation, publication, and engagement
-schedulers. None of these modules import or extend Mac worker task kinds or the generic `/v1` adapter.
+schedulers. Threads modules do not import or extend Mac worker task kinds or the generic `/v1`
+adapter; the sibling marketing-agent route delegates no-effect judgment tasks to that broker.
 
 ## Marketing-agent contracts
 
 `ads_booster.contracts.marketing_agent` owns the Python source contract for feature evidence,
 strategy portfolios, registered outcomes, and frozen context receipts. D1 migration
 `0017_marketing_agent_foundation.sql` owns the new `agent_v1` persistence epoch and its shadow
-no-tool-action guard. The current slice deliberately has no runtime composition root; a later
-capability-gated `marketing_judgment_v1` broker task will consume these contracts through the
-official Codex CLI provider.
+no-tool-action guard. `marketing/hosted_judgment.py` owns validation, private workspace admission,
+the schema-constrained strategy turn, claim/reference quarantine, and the bound result. Cloudflare
+`marketing-agent.js` owns campaign ingestion and task creation;
+`hosted-marketing-judgment-callback.js` independently validates and atomically persists successful
+strategy state. The generic worker broker owns leasing and callback transport only.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and

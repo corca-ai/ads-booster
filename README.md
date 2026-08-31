@@ -14,6 +14,19 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
 -> next-slot Threads decision -> Cloudflare publish barrier -> readback -> engagement polling
 ```
 
+A separate no-effect strategy path starts from immutable product evidence:
+
+```text
+feature packet -> agent_v1 shadow campaign -> marketing_judgment lease
+-> one structured official Codex turn -> bound context receipt + strategy + experiment
+```
+
+`POST /api/marketing-agent/campaigns` accepts an account-scoped source packet, business outcome,
+current control, and caller-chosen campaign ID. `GET /api/marketing-agent/campaigns` and
+`GET /api/marketing-agent/campaigns/:id` expose its durable state. This shadow path cannot create
+candidates, images, tool actions, or Threads publications. A source-only packet may shape a
+hypothesis, but cannot claim installed availability or open a publication gate.
+
 1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
    `generate_candidates` task, and a compatible Mac runs one structured official Codex CLI turn to
    return drafts. The worker never restores a plan object or custom Agent runtime; Cloudflare stores

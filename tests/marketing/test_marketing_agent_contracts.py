@@ -75,6 +75,7 @@ def _hypothesis(hypothesis_id: str, role: PortfolioRole) -> MarketingHypothesis:
     return MarketingHypothesis(
         hypothesis_id=hypothesis_id,
         role=role,
+        claim_ids=("claim-flow",),
         value_frame=f"value frame {hypothesis_id}",
         rationale="The product changes the lock screen throughout a user's day.",
         falsifier="The treatment does not improve the registered outcome.",

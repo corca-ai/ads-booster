@@ -20,6 +20,7 @@ from ads_booster.marketing.hosted_generation import (
     HostedWorkspaceGenerationExecutor,
     PlanlessHostedTaskExecutor,
 )
+from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.native_capture import build_hosted_capture_executor
 from ads_booster.marketing.worker_broker import (
@@ -642,6 +643,10 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
             executor = PlanlessHostedTaskExecutor(
                 capture=capture,
                 generation=HostedWorkspaceGenerationExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                judgment=HostedMarketingJudgmentExecutor(
                     codex=CodexCli(executable=executable),
                     output_root=agent_home / "generated",
                 ),

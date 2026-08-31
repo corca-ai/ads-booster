@@ -533,7 +533,8 @@ def test_the_worker_advertises_the_job_kinds_it_can_actually_run() -> None:
     # Then the advertisement is a scalar the control plane will not flatten to null, and it
     # names both jobs this build routes.
     assert isinstance(capabilities, dict)
-    assert capabilities["task_kinds"] == "capture,generate_candidates"
+    assert capabilities["task_kinds"] == "capture,generate_candidates,marketing_judgment"
     assert capabilities["native_appium"] is True
     assert capabilities["feedback_context_v1"] is True
+    assert capabilities["marketing_judgment_v1"] is True
     assert all(isinstance(value, str | bool) for value in capabilities.values())

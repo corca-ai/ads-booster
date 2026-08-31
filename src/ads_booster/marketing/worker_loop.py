@@ -17,6 +17,7 @@ from ads_booster.marketing.models import (
     TaskCallback,
     TaskResult,
     TaskStatus,
+    task_unknown_side_effect_code,
 )
 
 
@@ -110,7 +111,7 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         try:
             self.broker.mark_execution_started(task.task_id)
         except CloudflareQueueError:
-            _ = self.inbox.complete(task, self._unknown_side_effect())
+            _ = self.inbox.complete(task, self._unknown_side_effect(task))
             return
 
         try:
@@ -118,8 +119,8 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         except MarketingExecutionError as error:
             result = self._known_failure(error)
         except Exception:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
-            # The post-admission boundary never retries unknown native side effects after a crash.
-            result = self._unknown_side_effect()
+            # The post-admission boundary never replays a possibly spent Codex or native action.
+            result = self._unknown_side_effect(task)
         _ = self.inbox.complete(task, result)
 
     def _flush_callbacks(self) -> int:
@@ -140,8 +141,8 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         return TaskResult(status=status, failure_code=error.failure_code)
 
     @staticmethod
-    def _unknown_side_effect() -> TaskResult:
+    def _unknown_side_effect(task: MarketingTask) -> TaskResult:
         return TaskResult(
             status=TaskStatus.UNKNOWN_SIDE_EFFECT,
-            failure_code="native_appium_side_effect_unknown",
+            failure_code=task_unknown_side_effect_code(task.kind),
         )
