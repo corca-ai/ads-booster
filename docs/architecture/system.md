@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 ## Runtime boundary
 
@@ -32,9 +32,10 @@ flowchart LR
    result through the same durable callback path; it has no Agent loop or plan object.
 2. The workspace creates a `hosted_workspace_capture_v1` task from an approved candidate.
 3. A ready Mac claims the D1 lease and inserts the task in its local inbox before remote ack.
-4. Safe capture preparation resolves a Simulator, validates country locale/time zone, prepares a
-   provenance- and digest-verified `background_intent` image, creates a mode-0700 request root,
-   and checks readiness. These failures have not started Appium.
+4. Safe capture preparation resolves a Simulator, validates country locale/time zone, searches
+   allowlisted stock domains for tall wallpaper photos, deterministically selects the usable
+   portrait closest to the lock-screen aspect ratio, binds its provenance and digest, creates a
+   mode-0700 request root, and checks readiness. These failures have not started Appium.
 5. Local SQLite records the immutable admission digest/nonce. The worker then records the D1
    barrier. If it cannot, it does not start native work.
 6. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
