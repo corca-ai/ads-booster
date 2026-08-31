@@ -67,6 +67,9 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
 - Image approval ends at `submitted`; the UI never implies that Threads publishing occurred.
 - Errors stay next to the action that failed, while changes already visible in the list use silent
   success plus the global status line.
+- Image-bearing review cards expose the preview as a real button. It opens a native modal dialog with
+  the same candidate image in `contain` mode so the complete artifact remains visible; closing by
+  button, Escape, or the dialog edge returns focus to the image button.
 
 ## Responsive and accessibility constraints
 
@@ -77,6 +80,9 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
   positions. Textareas resize vertically.
 - Touch-reachable controls use at least a 44px block size, and status is never communicated by color
   alone.
+- The image preview dialog uses a backdrop blur only as a restrained visual cue, with a solid
+  backdrop fallback for reduced-transparency preferences. The preview image is bounded by the
+  viewport on desktop and mobile and does not replace the card's source or provenance.
 
 ## Progressive disclosure
 

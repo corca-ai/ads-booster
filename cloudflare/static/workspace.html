@@ -478,12 +478,28 @@
         </section>
       </div>
     </dialog>
+    <dialog id="image-preview-dialog" class="image-preview-dialog" data-image-preview aria-labelledby="image-preview-title" aria-describedby="image-preview-caption">
+      <div class="image-preview-dialog__surface">
+        <div class="image-preview-dialog__header">
+          <div>
+            <p class="image-preview-dialog__label">이미지 미리보기</p>
+            <h2 id="image-preview-title" data-image-preview-title>합성된 후보 이미지</h2>
+          </div>
+          <button class="button button-quiet" type="button" data-image-preview-close>닫기</button>
+        </div>
+        <figure class="image-preview-dialog__figure">
+          <img data-image-preview-image alt="" decoding="async" hidden>
+          <figcaption id="image-preview-caption" data-image-preview-caption>검수 카드의 이미지를 크게 보고 있습니다.</figcaption>
+        </figure>
+        <p class="candidate-feedback image-preview-dialog__error" data-image-preview-error role="alert" hidden>이미지를 불러올 수 없습니다.</p>
+      </div>
+    </dialog>
     <dialog class="command-dialog threads-manager-dialog" data-threads-manager aria-labelledby="threads-manager-title">
       <div class="threads-manager">
         <div class="section-heading worker-manager__heading">
           <div>
             <h2 id="threads-manager-title">Threads 연결 관리</h2>
-            <p>프로필을 연결하고 기본 발행 대상을 정한 뒤 자동 발행을 켭니다.</p>
+            <p>프로필과 자동 발행 대상을 설정합니다.</p>
           </div>
           <button class="button button-quiet" type="button" data-threads-manager-close>닫기</button>
         </div>
@@ -491,7 +507,7 @@
         <section class="worker-manager__lock" data-threads-locked aria-labelledby="threads-lock-title">
           <div>
             <h3 id="threads-lock-title">운영 권한 열기</h3>
-            <p>제어 토큰은 이 탭 메모리에서만 사용하며 저장하거나 화면에 다시 표시하지 않습니다.</p>
+            <p>토큰은 탭 전용입니다.<br>저장·재표시하지 않습니다.</p>
           </div>
           <form class="stack-form worker-admin-form" data-threads-unlock-form novalidate aria-describedby="threads-unlock-help threads-feedback">
             <label for="threads-control-token">제어 토큰<input id="threads-control-token" name="control-token" type="password" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
