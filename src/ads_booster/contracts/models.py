@@ -54,6 +54,8 @@ class DeviceTarget(ContractModel):
 class ErrorCode(StrEnum):
     INPUT_ASSET_MISSING = "input_asset_missing"
     APPIUM_UNAVAILABLE = "appium_unavailable"
+    CALENDAR_PREPARATION_FAILED = "calendar_preparation_failed"
+    CALENDAR_CLEANUP_FAILED = "calendar_cleanup_failed"
     SCENE_CAPTURE_FAILED = "scene_capture_failed"
     APPIUM_ENDPOINT_REJECTED = "appium_endpoint_rejected"
     CAPTURE_TIMED_OUT = "capture_timed_out"
