@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, override
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import httpx2
 from PIL import Image, UnidentifiedImageError
@@ -59,6 +59,48 @@ _NO_DETAILS: Final[Mapping[str, JsonValue]] = MappingProxyType({})
 # all. It also selected against the target - stock hero photography is landscape desktop
 # material, while the portrait wallpapers a lock screen needs live on the open web.
 _BLOCKED_IMAGE_HOSTS: Final = frozenset({"plus.unsplash.com"})
+# Sources that serve something nobody sets as a wallpaper. Each entry was measured against
+# the 211 distinct candidates a live run produced, and only the groups that rejected
+# wallpapers at a rate of zero are here: a wrong reject costs a usable background, while a
+# wrong accept only costs the ranking one row.
+#
+# Stock farms serve watermarked previews - every hit carried a visible CrowdPic, LovePik or
+# Shutterstock stamp across the image.
+_WATERMARKED_STOCK_HOSTS: Final = (
+    "lovepik", "shutterstock", "freepik", "123rf", "dreamstime",
+    "istockphoto", "gettyimages", "crowdpic", "vecteezy",
+)
+# Press photography: a real event, usually a real private person, and often a masthead
+# burned into the corner.
+_NEWS_HOSTS: Final = (
+    "news", "chosun", "donga", "joins", "joongang", "hani", "khan", "yna.co.kr",
+    "mk.co.kr", "hankyung", "sedaily", "topstarnews", "osen", "spotv", "mbn",
+    "sbs.co.kr", "kbs.co.kr", "imbc", "ytn", "nate.com", "newsis", "edaily",
+)
+_COMMERCE_HOSTS: Final = (
+    "ohou.se", "smartstore", "coupang", "11st", "gmarket", "auction.co.kr",
+    "wemakeprice", "tmon",
+)
+# Video thumbnails carry play affordances and burnt-in titles.
+_VIDEO_HOSTS: Final = ("youtube", "youtu.be", "douyin", "tiktok", "vimeo")
+# A listing rather than one photo: the image behind it answers the site's own search, not
+# ours. This is how a Vietnamese "remove limit" banner became a KIA Tigers background.
+_LISTING_PATHS: Final = ("/search", "/s/photos", "/ideas/", "/images/search", "/tag/", "/tags/")
+# Titles that name the desktop the image was cut for. Measured, these are the 1920x1080
+# cohort that "고화질" style queries pull in, and none of them is shaped for a phone.
+_DESKTOP_TITLE_TOKENS: Final = (
+    "1920x1080", "2560x1440", "1366x768", "바탕 화면", "바탕화면", "듀얼", "모니터",
+)
+# A brand asset, not a photograph. Kept to these two words: the wider list this started as
+# also matched "무료 다운로드" and "스톡", which ordinary Korean wallpaper sites put in
+# their titles, and it threw away cherry blossom and sunset wallpapers to catch one logo.
+_ASSET_TITLE_TOKENS: Final = ("로고", "엠블럼")
+_REJECTED_SOURCE_HOSTS: Final = (
+    *_WATERMARKED_STOCK_HOSTS,
+    *_NEWS_HOSTS,
+    *_COMMERCE_HOSTS,
+    *_VIDEO_HOSTS,
+)
 _SEARCH_HEADERS: Final = {
     "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     "User-Agent": "trace-agent/0.2.1",
@@ -232,4 +274,23 @@ def _is_large_enough(width: int, height: int) -> bool:
 
 
 def _is_usable_result(result: ImageSearchResult) -> bool:
-    return urlsplit(result.image_url).hostname not in _BLOCKED_IMAGE_HOSTS
+    """Whether the row could be a wallpaper at all, before anything is downloaded.
+
+    This is a reject rather than a preference: the ranking below chooses among wallpapers,
+    and handing it a press photo or a watermarked stock preview only lets one win when the
+    pool is thin. When every row is rejected the fetch fails, which is the intended
+    outcome - a job with no background is a job a person looks at, while a background that
+    is somebody's press photo goes out silently.
+    """
+    if urlsplit(result.image_url).hostname in _BLOCKED_IMAGE_HOSTS:
+        return False
+    source = urlsplit(result.source_url)
+    host = (source.hostname or "").lower()
+    if any(token in host for token in _REJECTED_SOURCE_HOSTS):
+        return False
+    if any(token in unquote(source.path or "").lower() for token in _LISTING_PATHS):
+        return False
+    lowered = result.title.lower()
+    if any(token.lower() in lowered for token in _DESKTOP_TITLE_TOKENS):
+        return False
+    return not any(token in result.title for token in _ASSET_TITLE_TOKENS)

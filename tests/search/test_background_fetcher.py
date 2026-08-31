@@ -287,3 +287,100 @@ def test_background_fetcher_skips_unsplash_plus_watermarked_previews(tmp_path: P
 
     # Then a watermarked premium preview cannot become the artifact
     assert background.image_url == free_url
+
+
+@pytest.mark.parametrize(
+    ("title", "source_url", "reason"),
+    [
+        (
+            "제주도 배경화면 일몰 석양",
+            "https://www.crowdpic.net/photo/제주도-141244",
+            "watermarked stock preview",
+        ),
+        (
+            "김도영 스캠 첫 안타 직캠",
+            "https://www.sportschosun.com/baseball/2025-02-22/2025",
+            "press photography",
+        ),
+        (
+            "간호사볼펜 의사펜 - 쿠팡",
+            "https://www.coupang.com/vp/products/9114174310",
+            "product listing",
+        ),
+        (
+            "김도영 데뷔 첫 홈런 직캠 - YouTube",
+            "https://www.youtube.com/watch?v=Mt6qq89",
+            "video thumbnail",
+        ),
+        (
+            "900개 이상 무료 노을 사진",
+            "https://pixabay.com/ko/photos/search/노을/",
+            "a listing, not one photo",
+        ),
+        ("고양이 배경화면 1920x1080", "https://kr.best-wallpaper.net/cat", "cut for a desktop"),
+        (
+            "기아 타이거즈 로고 배경화면",
+            "https://kr.pinterest.com/pin/77757531049933364/",
+            "a brand asset",
+        ),
+    ],
+)
+def test_background_fetcher_rejects_rows_that_are_not_wallpapers(
+    tmp_path: Path,
+    title: str,
+    source_url: str,
+    reason: str,
+) -> None:
+    # Given the only candidate is one of the shapes a live run showed is never a wallpaper
+    del reason
+    image_url = "https://images.example/candidate.png"
+    response = _response(
+        ImageSearchResult(
+            title=title,
+            image_url=image_url,
+            thumbnail_url=image_url,
+            source_url=source_url,
+        )
+    )
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        # The row is rejected before anything is downloaded, so the fetcher must never
+        # reach the transport: an empty response map would raise KeyError if it did.
+        http=_HttpFixture({}),
+    )
+    destination = tmp_path / "inputs" / "background.png"
+
+    # When the hosted worker requests a background
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, destination)
+
+    # Then the job fails rather than shipping it. A job with no background is one a person
+    # looks at; a background that is somebody's press photo goes out silently.
+    assert failure.value.code == "background_search_no_usable_image"
+    assert not destination.exists()
+
+
+def test_background_fetcher_keeps_a_wallpaper_site_that_merely_offers_a_download(
+    tmp_path: Path,
+) -> None:
+    # Given an ordinary wallpaper site, whose titles carry the words a stock farm also uses
+    image_url = "https://chiikawawallpaper.com/img/chiikawa.png"
+    response = _response(
+        ImageSearchResult(
+            title="치이카와 배경화면(chiikawa wallpaper) 무료 다운로드",
+            image_url=image_url,
+            thumbnail_url=image_url,
+            source_url="https://chiikawawallpaper.com/ko",
+        )
+    )
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        http=_HttpFixture({image_url: HttpResponse(200, _png_bytes((1200, 2600)), {})}),
+    )
+
+    # When the worker selects a background
+    background = fetcher.fetch(response.query, tmp_path / "background.png")
+
+    # Then it survives: rejecting on "무료 다운로드" and "스톡" was measured against live
+    # results and threw away cherry blossom and sunset wallpapers to catch one logo.
+    assert background.image_url == image_url
