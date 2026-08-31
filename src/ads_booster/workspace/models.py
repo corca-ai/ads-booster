@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum, unique
-from typing import Annotated, ClassVar, Final
+from typing import Annotated, ClassVar, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -83,6 +84,30 @@ CandidateScheduleItem = Annotated[
     str,
     Field(min_length=7, max_length=80, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d\s+.+$"),
 ]
+# The fifteen colours Trace assigns to an event. Changing an event's colour is a paid
+# feature, so a free capture account renders every row in the default blue no matter what
+# is written here — the mixed palette that fills a screen is only reachable on Pro.
+CandidateEventColor = Literal[
+    "6E86F7",
+    "3D73DD",
+    "8A2BE2",
+    "9B5DE5",
+    "F9C74F",
+    "F26419",
+    "D62246",
+    "DA4C93",
+    "B598F9",
+    "00B4D8",
+    "5FBDB0",
+    "2D936C",
+    "FF9E00",
+    "FF6B6B",
+    "AF3B6E",
+]
+_WEEK_DAYS: Final = 7
+_CLOCK: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+CandidateScheduleTitle = Annotated[str, Field(min_length=1, max_length=40)]
+CandidateTodoTitle = Annotated[str, Field(min_length=1, max_length=60)]
 CandidateDeviceTime = Annotated[str, Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")]
 CandidateBackgroundIntent = Annotated[str, Field(min_length=1, max_length=500)]
 CandidateBackgroundMood = Annotated[str, Field(min_length=1, max_length=40)]
@@ -153,6 +178,47 @@ class CandidateAccountBrief(FrozenModel):
     background_mood: str
 
 
+class CandidateScheduleEntry(FrozenModel):
+    """One row of the week the lock screen renders, placed on a day rather than a clock.
+
+    The old contract was a `"HH:MM 제목"` string, which can only describe today. A screen
+    that fills its week needs three things a string cannot carry: which day the row sits on,
+    how many days it spans, and what colour it draws in. The spanning bars are what actually
+    fill the strip — our own best-performing screen was mostly all-day rows, not timed ones.
+
+    A plain string is still accepted and read as an untimed-or-timed row on day zero, so
+    every draft written against the old contract keeps validating.
+    """
+
+    title: CandidateScheduleTitle
+    # Offset from the captured day. Zero is the day the screen shows.
+    day: Annotated[int, Field(ge=0, le=6)] = 0
+    # One is a single-day row; anything larger draws the multi-day bar that fills the strip.
+    days: Annotated[int, Field(ge=1, le=7)] = 1
+    # `None` renders as an all-day row, which is what most rows on a full screen are.
+    time: CandidateDeviceTime | None = None
+    color: CandidateEventColor | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_string(cls, value: JsonValue) -> JsonValue:
+        """Read the old `"HH:MM 제목"` row as a timed entry on the captured day."""
+        if not isinstance(value, str):
+            return value
+        head, separator, tail = value.partition(" ")
+        if separator and _CLOCK.fullmatch(head) and tail.strip():
+            return {"title": tail.strip(), "time": head}
+        return {"title": value.strip()}
+
+    @model_validator(mode="after")
+    def keep_the_span_inside_the_week(self) -> CandidateScheduleEntry:
+        """A bar that runs past the seventh day has nowhere to draw its remainder."""
+        if self.day + self.days > _WEEK_DAYS:
+            message = "a schedule entry may not span past the seventh day"
+            raise ValueError(message)
+        return self
+
+
 class CandidateImageInputs(FrozenModel):
     """Machine inputs the image stage needs to compose a lock-screen image.
 
@@ -163,7 +229,10 @@ class CandidateImageInputs(FrozenModel):
     writer does not supply it, so both halves of the contract stay satisfiable.
     """
 
-    trace_items: Annotated[tuple[CandidateScheduleItem, ...], Field(min_length=5, max_length=8)]
+    trace_items: Annotated[tuple[CandidateScheduleEntry, ...], Field(min_length=5, max_length=24)]
+    # Undated chores. Trace keeps them in a separate list, and the screen draws them in
+    # their own column beside the schedule — the pair is what our fullest screen showed.
+    trace_todos: Annotated[tuple[CandidateTodoTitle, ...], Field(max_length=20)] = ()
     device_time: CandidateDeviceTime
     background_subject: CandidateBackgroundSubject
     background_mood: CandidateBackgroundMood

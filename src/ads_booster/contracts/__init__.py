@@ -11,6 +11,7 @@ from ads_booster.contracts.models import (
     DeviceKind,
     DeviceTarget,
     ErrorCode,
+    TraceScheduleItem,
 )
 from ads_booster.contracts.native_export import (
     PreparedBackground,
@@ -31,5 +32,6 @@ __all__ = [
     "PreparedBackground",
     "PromotionMaterial",
     "TraceBackgroundSearchProvenance",
+    "TraceScheduleItem",
     "WallpaperExportManifest",
 ]

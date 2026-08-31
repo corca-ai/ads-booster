@@ -419,19 +419,25 @@ def test_parse_rejects_unusable_image_inputs() -> None:
 
     bad_time = one({**base, "device_time": "7시 20분"})
     unknown_subject = one({**base, "background_subject": "감성적인 무언가"})
-    nine_items = one({**base, "trace_items": [f"0{index}:00 일정" for index in range(9)]})
-    four_items = one({**base, "trace_items": [f"0{index}:00 일정" for index in range(4)]})
-    untimed = one({**base, "trace_items": [f"일정 {index}" for index in range(5)]})
-    single_digit = one({**base, "trace_items": [f"{index}:00 일정" for index in range(5)]})
+    week: list[JsonValue] = [{"title": f"일정 {index}", "day": index % 7} for index in range(25)]
+    too_many = one({**base, "trace_items": week})
+    four_items = one({**base, "trace_items": week[:4]})
+    past_the_week = one(
+        {**base, "trace_items": [{"title": "출장", "day": 5, "days": 4}, *week[:4]]}
+    )
+    outside: JsonValue = {"title": "출장", "day": 7}
+    eighth_day = one({**base, "trace_items": [outside, *week[:4]]})
+    too_many_todos = one({**base, "trace_todos": [f"할일 {index}" for index in range(21)]})
 
     # When / Then
     for payload, rejected_field in (
         (bad_time, "device_time"),
         (unknown_subject, "background_subject"),
-        (nine_items, "trace_items"),
+        (too_many, "trace_items"),
         (four_items, "trace_items"),
-        (untimed, "trace_items"),
-        (single_digit, "trace_items"),
+        (past_the_week, "trace_items"),
+        (eighth_day, "trace_items"),
+        (too_many_todos, "trace_todos"),
     ):
         with pytest.raises(CandidateFormatError) as failure:
             _ = parse_candidate_drafts(payload, expected=1, country="KR")

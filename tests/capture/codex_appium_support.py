@@ -21,6 +21,7 @@ from ads_booster.contracts import (
     PreparedBackground,
     PromotionMaterial,
     TraceBackgroundSearchProvenance,
+    TraceScheduleItem,
 )
 from ads_booster.providers.codex_cli import (
     CodexAppiumJobCallbacks,
@@ -206,7 +207,9 @@ def v2_contract(
             promotion_material_id="promotion-1",
             concept=inputs.concept,
             background_intent="quiet Seoul desk at dawn",
-            trace_items=inputs.trace_items,
+            trace_items=tuple(
+                TraceScheduleItem.model_validate(item) for item in inputs.trace_items
+            ),
         ),
         reference_date=datetime(2026, 8, 28, tzinfo=UTC),
         device=device,

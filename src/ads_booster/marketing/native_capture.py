@@ -32,7 +32,7 @@ from ads_booster.contracts.generation import (
     PersonaProfile,
     PromotionMaterial,
 )
-from ads_booster.contracts.models import DeviceKind, DeviceTarget
+from ads_booster.contracts.models import DeviceKind, DeviceTarget, TraceScheduleItem
 from ads_booster.marketing.background import HostedBackgroundPreparer
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskResult, TaskStatus
@@ -69,11 +69,16 @@ _TIME_ZONES: Final = {
 _DEFAULT_APPIUM_SERVER: Final = "http://127.0.0.1:4723"
 _DEFAULT_TIMEOUT_SECONDS: Final = 3600.0
 _RUNTIME_VERSION = re.compile(r"\.iOS-(\d+)-(\d+)$")
-_MAX_TRACE_ITEMS: Final = 8
+_MAX_TRACE_ITEMS: Final = 24
+_MAX_TRACE_TODOS: Final = 20
 _MAX_REFERENCE_IDS: Final = 16
 _MAX_TRACE_ITEM_LENGTH: Final = 80
+_MAX_TRACE_TODO_LENGTH: Final = 60
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
-_TRACE_ITEMS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
+_TRACE_ITEMS: TypeAdapter[tuple[TraceScheduleItem, ...]] = TypeAdapter(
+    tuple[TraceScheduleItem, ...]
+)
+_TRACE_TODOS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 _REFERENCE_IDS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 
 
@@ -415,10 +420,16 @@ def _context_bundle(
         trace_items = _TRACE_ITEMS.validate_python(image_inputs.get("trace_items"))
     except ValidationError as error:
         raise MarketingExecutionError("native_capture_trace_items_invalid") from error
-    if not 1 <= len(trace_items) <= _MAX_TRACE_ITEMS or any(
-        not item.strip() or len(item.strip()) > _MAX_TRACE_ITEM_LENGTH for item in trace_items
-    ):
+    if not 1 <= len(trace_items) <= _MAX_TRACE_ITEMS:
         raise MarketingExecutionError("native_capture_trace_items_invalid")
+    try:
+        trace_todos = _TRACE_TODOS.validate_python(image_inputs.get("trace_todos", ()))
+    except ValidationError as error:
+        raise MarketingExecutionError("native_capture_trace_todos_invalid") from error
+    if len(trace_todos) > _MAX_TRACE_TODOS or any(
+        not todo.strip() or len(todo.strip()) > _MAX_TRACE_TODO_LENGTH for todo in trace_todos
+    ):
+        raise MarketingExecutionError("native_capture_trace_todos_invalid")
     profile = task.payload.get("context_profile")
     selected_profile = profile if isinstance(profile, dict) else {}
     persona_id = selected_profile.get("persona_id")
@@ -475,7 +486,8 @@ def _context_bundle(
             reference_ids=reference_ids,
             creative_direction=creative_direction,
             background_intent=background_intent,
-            trace_items=tuple(item.strip() for item in trace_items),
+            trace_items=trace_items,
+            trace_todos=tuple(todo.strip() for todo in trace_todos),
         ),
         feedback_context=feedback_context,
         feedback_context_sha256=feedback_digest,
