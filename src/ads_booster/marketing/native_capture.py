@@ -112,11 +112,14 @@ def build_hosted_capture_executor(
                 http=http,
                 # Geometry alone cannot see what an image is, and a composed poster is cut
                 # to exactly the phone's proportions, so it wins the ranking on shape.
-                # Turned on by default; TRACE_AGENT_BACKGROUND_JUDGE=off runs without it.
+                # Off until somebody has watched it run. It fails closed - a judge that
+                # cannot see the images rejects every row - so defaulting it on would turn
+                # one unverified capability into no backgrounds at all.
+                # TRACE_AGENT_BACKGROUND_JUDGE=on enables it.
                 judge=(
-                    None
-                    if os.environ.get("TRACE_AGENT_BACKGROUND_JUDGE", "on").lower() == "off"
-                    else CodexBackgroundJudge(codex=codex, http=http)
+                    CodexBackgroundJudge(codex=codex, http=http)
+                    if os.environ.get("TRACE_AGENT_BACKGROUND_JUDGE", "off").lower() == "on"
+                    else None
                 ),
             )
         ),
