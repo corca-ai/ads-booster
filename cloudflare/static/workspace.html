@@ -466,6 +466,22 @@
         </section>
       </div>
     </dialog>
+    <dialog id="image-preview-dialog" class="image-preview-dialog" data-image-preview aria-labelledby="image-preview-title" aria-describedby="image-preview-caption">
+      <div class="image-preview-dialog__surface">
+        <div class="image-preview-dialog__header">
+          <div>
+            <p class="image-preview-dialog__label">이미지 미리보기</p>
+            <h2 id="image-preview-title" data-image-preview-title>합성된 후보 이미지</h2>
+          </div>
+          <button class="button button-quiet" type="button" data-image-preview-close>닫기</button>
+        </div>
+        <figure class="image-preview-dialog__figure">
+          <img data-image-preview-image alt="" decoding="async" hidden>
+          <figcaption id="image-preview-caption" data-image-preview-caption>검수 카드의 이미지를 크게 보고 있습니다.</figcaption>
+        </figure>
+        <p class="candidate-feedback image-preview-dialog__error" data-image-preview-error role="alert" hidden>이미지를 불러올 수 없습니다.</p>
+      </div>
+    </dialog>
     <dialog class="command-dialog command-menu-dialog" data-command-dialog aria-labelledby="command-menu-title">
       <div class="stack-form">
         <div class="section-heading">

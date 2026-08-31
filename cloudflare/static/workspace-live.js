@@ -11,6 +11,12 @@
   const inviteForm = one("[data-invite-form]"); const inviteName = one("[data-invite-name]");
   const inviteFeedback = one("[data-invite-feedback]"); const inviteResult = one("[data-invite-result]");
   const inviteToken = one("[data-invite-token]"); const inviteCopy = one("[data-invite-copy]");
+  const imagePreviewDialog = one("[data-image-preview]");
+  const imagePreviewTitle = one("[data-image-preview-title]");
+  const imagePreviewImage = one("[data-image-preview-image]");
+  const imagePreviewCaption = one("[data-image-preview-caption]");
+  const imagePreviewError = one("[data-image-preview-error]");
+  const imagePreviewClose = one("[data-image-preview-close]");
   const skipLink = one(".skip-link");
   const candidateEmpty = one("[data-candidate-empty]");
   const candidateFeedback = one("[data-candidate-feedback]");
@@ -73,6 +79,7 @@
   let workerAdminToken = "";
   let workerAdminPoll = null;
   let managedWorkers = [];
+  let imagePreviewTrigger = null;
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -1029,18 +1036,63 @@
     return actions;
   };
 
+  const candidateImageUrl = (record) => {
+    const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
+    return `/api/candidates/${encodeURIComponent(record.candidate_id)}/image${accountQuery}`;
+  };
+
+  const closeImagePreview = () => {
+    if (imagePreviewDialog?.open) imagePreviewDialog.close();
+  };
+
+  const openImagePreview = (record, trigger) => {
+    if (!imagePreviewDialog || !imagePreviewImage) return;
+    imagePreviewTrigger = trigger;
+    imagePreviewImage.hidden = false;
+    imagePreviewImage.src = candidateImageUrl(record);
+    imagePreviewImage.alt = `${record.topic || "합성된 후보 이미지"} 크게 보기`;
+    if (imagePreviewTitle) imagePreviewTitle.textContent = record.topic || "합성된 후보 이미지";
+    if (imagePreviewCaption) imagePreviewCaption.textContent = "검수 카드의 이미지를 크게 보고 있습니다.";
+    if (imagePreviewError) imagePreviewError.hidden = true;
+    if (!imagePreviewDialog.open) imagePreviewDialog.showModal();
+  };
+
+  imagePreviewImage?.addEventListener("error", () => {
+    imagePreviewImage.hidden = true;
+    if (imagePreviewError) imagePreviewError.hidden = false;
+  });
+  imagePreviewClose?.addEventListener("click", closeImagePreview);
+  imagePreviewDialog?.addEventListener("click", (event) => {
+    if (event.target === imagePreviewDialog) closeImagePreview();
+  });
+  imagePreviewDialog?.addEventListener("close", () => {
+    const trigger = imagePreviewTrigger;
+    imagePreviewTrigger = null;
+    imagePreviewImage?.removeAttribute("src");
+    if (imagePreviewImage) imagePreviewImage.hidden = true;
+    if (imagePreviewError) imagePreviewError.hidden = true;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  });
+
   const approvalVisual = (record) => {
     const visual = document.createElement("div"); visual.className = "approval-visual";
     if (record.image_path) {
+      const previewButton = document.createElement("button");
+      previewButton.className = "approval-visual__button";
+      previewButton.type = "button";
+      previewButton.setAttribute("aria-haspopup", "dialog");
+      previewButton.setAttribute("aria-controls", "image-preview-dialog");
+      previewButton.setAttribute("aria-label", `${record.topic || "합성된 후보 이미지"} 크게 보기`);
       const image = document.createElement("img");
-      const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
-      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image${accountQuery}`;
+      image.src = candidateImageUrl(record);
       image.alt = "합성된 후보 이미지";
       image.loading = "lazy";
       image.addEventListener("error", () => {
         visual.replaceChildren(badge("approval-visual__placeholder", "이미지를 불러올 수 없습니다"));
       });
-      visual.append(image);
+      previewButton.addEventListener("click", () => openImagePreview(record, previewButton));
+      previewButton.append(image);
+      visual.append(previewButton);
       return visual;
     }
     visual.append(badge("approval-visual__placeholder", "이미지 생성 전"));
