@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol
 import typer
 
 from ads_booster.marketing.errors import CloudflareQueueError
+from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
 from ads_booster.marketing.hosted_generation import (
     HostedWorkspaceGenerationExecutor,
     PlanlessHostedTaskExecutor,
@@ -647,6 +648,10 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     output_root=agent_home / "generated",
                 ),
                 judgment=HostedMarketingJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                creative_judgment=HostedCreativeJudgmentExecutor(
                     codex=CodexCli(executable=executable),
                     output_root=agent_home / "generated",
                 ),

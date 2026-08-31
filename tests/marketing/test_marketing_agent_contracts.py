@@ -6,19 +6,27 @@ import pytest
 from pydantic import ValidationError
 
 from ads_booster.contracts.marketing_agent import (
+    ArtifactRequest,
+    AttributionObservation,
     ClaimStatus,
+    CreativeFormat,
+    CreativeTreatment,
     EvidenceKind,
     EvidenceReference,
     EvidenceResult,
+    ExperimentEvaluation,
     ExperimentRegistration,
     FeatureClaim,
     FeatureEvidencePacket,
     FeatureGate,
     FeatureLifecycle,
+    LearningCandidate,
     MarketingHypothesis,
+    MediaPlan,
     OutcomeDefinition,
     OutcomeScope,
     PortfolioRole,
+    ProofKind,
     StrategyBrief,
     contract_sha256,
 )
@@ -185,3 +193,118 @@ def test_contract_digest_is_independent_of_input_key_order() -> None:
     restored = FeatureEvidencePacket.model_validate_json(packet.model_dump_json())
 
     assert contract_sha256(packet) == contract_sha256(restored)
+
+
+def _treatment(hypothesis_id: str) -> CreativeTreatment:
+    return CreativeTreatment(
+        treatment_id=f"treatment-{hypothesis_id}",
+        hypothesis_id=hypothesis_id,
+        format=CreativeFormat.NATIVE_SEQUENCE,
+        hook=f"hook {hypothesis_id}",
+        caption_direction="Explain one belief change without claiming installed behavior.",
+        manipulated_component_value=f"value {hypothesis_id}",
+        proof_narrative="Use a source-labeled explanatory sequence until runtime proof exists.",
+        claim_ids=("claim-flow",),
+        artifact_requests=(
+            ArtifactRequest(
+                request_id=f"artifact-{hypothesis_id}",
+                capability_id="compose.explanation",
+                proof_kind=ProofKind.COMPOSED_EXPLANATION,
+                claim_ids=("claim-flow",),
+                instructions="Compose a source-evidence-labeled explanation.",
+            ),
+        ),
+    )
+
+
+def test_media_plan_requires_one_treatment_per_distinct_hypothesis_and_human_review() -> None:
+    plan = MediaPlan(
+        schema_version="trace.media-plan.v1",
+        plan_id="plan-1",
+        campaign_id="campaign-1",
+        account_id="trace_kr",
+        experiment_id="experiment-1",
+        strategy_brief_sha256=DIGEST,
+        context_receipt_sha256="b" * 64,
+        treatments=(_treatment("control"), _treatment("challenger")),
+        publication_allowed=False,
+        human_review_required=True,
+        created_at=NOW,
+    )
+    assert len(plan.treatments) == 2
+
+    duplicate_hypothesis = _treatment("control").model_copy(
+        update={"treatment_id": "treatment-control-2"}
+    )
+    with pytest.raises(ValidationError, match="treatment_hypothesis_id"):
+        _ = plan.model_copy(
+            update={"treatments": (_treatment("control"), duplicate_hypothesis)}
+        ).model_validate(
+            plan.model_copy(
+                update={"treatments": (_treatment("control"), duplicate_hypothesis)}
+            ).model_dump()
+        )
+
+
+def test_artifact_request_cannot_escape_treatment_claims() -> None:
+    with pytest.raises(ValidationError, match="artifact requests may use only claims"):
+        _ = CreativeTreatment(
+            **{
+                **_treatment("control").model_dump(),
+                "artifact_requests": (
+                    ArtifactRequest(
+                        request_id="artifact-escape",
+                        capability_id="capture.native_png",
+                        proof_kind=ProofKind.INSTALLED_NATIVE_CAPTURE,
+                        claim_ids=("claim-unbound",),
+                        instructions="Capture the installed product.",
+                    ),
+                ),
+            }
+        )
+
+
+def test_attribution_match_and_experiment_conclusion_fail_closed() -> None:
+    with pytest.raises(ValidationError, match="matched attribution"):
+        _ = AttributionObservation(
+            schema_version="trace.attribution-observation.v1",
+            observation_id="observation-1",
+            campaign_id="campaign-1",
+            experiment_id="experiment-1",
+            assignment_id="assignment-1",
+            publication_id="publication-1",
+            scope="direct_response_attribution",
+            window_hours=72,
+            matched=True,
+            observed_at=NOW,
+        )
+
+    with pytest.raises(ValidationError, match="cannot name a winner"):
+        _ = ExperimentEvaluation(
+            schema_version="trace.experiment-evaluation.v1",
+            evaluation_id="evaluation-1",
+            campaign_id="campaign-1",
+            experiment_id="experiment-1",
+            state="inconclusive",
+            outcome_scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
+            eligible_blocks=1,
+            attribution_coverage=0.3,
+            winner_hypothesis_id="challenger",
+            interpretation="Too little eligible evidence.",
+            lineage_ids=("post-1",),
+            evaluated_at=NOW,
+        )
+
+
+def test_learning_candidate_requires_independent_replication_lineages() -> None:
+    with pytest.raises(ValidationError):
+        _ = LearningCandidate(
+            schema_version="trace.learning-candidate.v1",
+            learning_id="learning-1",
+            campaign_id="campaign-1",
+            statement="Character-time framing may improve qualified conversation.",
+            scope="KR iPhone source-supported feature campaigns",
+            independent_lineage_ids=("experiment-1",),
+            status="candidate",
+            created_at=NOW,
+        )

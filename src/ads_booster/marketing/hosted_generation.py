@@ -32,6 +32,10 @@ from ads_booster.candidate_generation import (
     default_domain_shuffle,
 )
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
+from ads_booster.marketing.hosted_creative_judgment import (
+    HostedCreativeJudgmentExecutor,
+    PreparedCreativeJudgment,
+)
 from ads_booster.marketing.hosted_judgment import (
     HostedMarketingJudgmentExecutor,
     PreparedMarketingJudgment,
@@ -391,29 +395,44 @@ class PlanlessHostedTaskExecutor:
     capture: HostedWorkspaceCaptureExecutor
     generation: HostedWorkspaceGenerationExecutor
     judgment: HostedMarketingJudgmentExecutor
+    creative_judgment: HostedCreativeJudgmentExecutor
 
     def prepare(
         self,
         task: MarketingTask,
-    ) -> PreparedCodexAppiumJob | PreparedHostedGeneration | PreparedMarketingJudgment:
+    ) -> (
+        PreparedCodexAppiumJob
+        | PreparedHostedGeneration
+        | PreparedMarketingJudgment
+        | PreparedCreativeJudgment
+    ):
         match task.kind:
             case TaskKind.CAPTURE:
                 return self.capture.prepare(task)
             case TaskKind.GENERATE_CANDIDATES:
                 return self.generation.prepare(task)
             case TaskKind.MARKETING_JUDGMENT:
+                if task.payload.get("judgment") == "creative_plan":
+                    return self.creative_judgment.prepare(task)
                 return self.judgment.prepare(task)
             case _:
                 raise MarketingExecutionError("unsupported_hosted_task")
 
     def execute(
         self,
-        prepared: PreparedCodexAppiumJob | PreparedHostedGeneration | PreparedMarketingJudgment,
+        prepared: (
+            PreparedCodexAppiumJob
+            | PreparedHostedGeneration
+            | PreparedMarketingJudgment
+            | PreparedCreativeJudgment
+        ),
     ) -> TaskResult:
         if isinstance(prepared, PreparedHostedGeneration):
             return self.generation.execute(prepared)
         if isinstance(prepared, PreparedMarketingJudgment):
             return self.judgment.execute(prepared)
+        if isinstance(prepared, PreparedCreativeJudgment):
+            return self.creative_judgment.execute(prepared)
         return self.capture.execute(prepared)
 
 

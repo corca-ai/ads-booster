@@ -27,6 +27,18 @@ current control, and caller-chosen campaign ID. `GET /api/marketing-agent/campai
 candidates, images, tool actions, or Threads publications. A source-only packet may shape a
 hypothesis, but cannot claim installed availability or open a publication gate.
 
+Exact strategy review at
+`POST /api/marketing-agent/campaigns/:id/strategy-approval` can request a second no-effect creative
+judgment. That judgment chooses proof and a medium per experiment arm, returning a reviewable
+MediaPlan without invoking Appium, recording, composition, Figma, candidate creation, or Threads.
+`POST /api/marketing-agent/campaigns/:id/media-approval` records exact plan review. The dormant
+`assignments` route accepts only an approved, publication-eligible assisted/live campaign; current
+source-only shadow campaigns therefore fail closed. Product-event ingestion, automatic artifact
+execution, campaign promotion, scheduled evaluation, and learning promotion are not current user
+operations. Strategy approval, MediaPlan approval, and assignment require the existing
+`CONTROL_PLANE_TOKEN`; the token stays in the operator's in-memory control surface and is never
+included in a task or campaign record.
+
 1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
    `generate_candidates` task, and a compatible Mac runs one structured official Codex CLI turn to
    return drafts. The worker never restores a plan object or custom Agent runtime; Cloudflare stores

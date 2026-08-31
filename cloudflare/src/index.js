@@ -1,6 +1,7 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
 import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
+import { receiveHostedCreativePlanCallback } from "./hosted-creative-plan-callback.js";
 import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
 import { receiveHostedMarketingJudgmentCallback } from "./hosted-marketing-judgment-callback.js";
 import { HttpError } from "./http-error.js";
@@ -665,6 +666,15 @@ export async function receiveCallback(env, callback, worker = null) {
     return receiveHostedGenerationCallback(env, hostedTask, callback, worker);
   }
   if (hostedTask?.kind === "marketing_judgment") {
+    let judgment = null;
+    try {
+      judgment = JSON.parse(hostedTask.task_json)?.payload?.judgment ?? null;
+    } catch {
+      // The strategy callback owns the stable malformed-payload error for this task kind.
+    }
+    if (judgment === "creative_plan") {
+      return receiveHostedCreativePlanCallback(env, hostedTask, callback, worker);
+    }
     return receiveHostedMarketingJudgmentCallback(env, hostedTask, callback, worker);
   }
   if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback, worker);

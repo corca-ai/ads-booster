@@ -2475,7 +2475,7 @@ async function threadsPublicationDecisionStatement(env, candidate, revision) {
        threads_user_id_snapshot, username_snapshot, state, caption_snapshot,
        image_key_snapshot, image_sha256_snapshot, timezone_snapshot,
        posting_slot_snapshot, wall_clock_snapshot, scheduled_at, canceled_at,
-       failure_code, created_at, updated_at)
+       failure_code, marketing_assignment_id, created_at, updated_at)
      SELECT ?, account.account_id, candidate.candidate_id, ?, profile.profile_id,
             profile.threads_user_id, profile.username,
             CASE WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
@@ -2485,7 +2485,7 @@ async function threadsPublicationDecisionStatement(env, candidate, revision) {
                  THEN NULL ELSE ? END,
             CASE WHEN account.threads_auto_publish_enabled = 0 THEN 'auto_publish_disabled'
                  WHEN profile.state != 'active' THEN 'profile_unavailable' ELSE NULL END,
-            ?, ?
+            candidate.marketing_assignment_id, ?, ?
      FROM hosted_workspace_accounts AS account
      JOIN hosted_workspace_candidates AS candidate ON candidate.account_id = account.account_id
      JOIN hosted_threads_profiles AS profile

@@ -82,6 +82,24 @@ class OutcomeScope(StrEnum):
     ESTIMATED_TREATMENT_EFFECT = "estimated_treatment_effect"
 
 
+@unique
+class CreativeFormat(StrEnum):
+    NATIVE_SEQUENCE = "native_sequence"
+    SCREEN_RECORDING = "screen_recording"
+    EXPLANATORY_CAROUSEL = "explanatory_carousel"
+    DESIGNED_STATIC = "designed_static"
+    TEXT_ONLY = "text_only"
+
+
+@unique
+class ProofKind(StrEnum):
+    INSTALLED_NATIVE_CAPTURE = "installed_native_capture"
+    BOUND_SCREEN_RECORDING = "bound_screen_recording"
+    COMPOSED_EXPLANATION = "composed_explanation"
+    DESIGN_RENDER = "design_render"
+    COPY_ONLY = "copy_only"
+
+
 class EvidenceReference(ContractModel):
     evidence_id: AgentIdentifier
     kind: EvidenceKind
@@ -289,6 +307,164 @@ class ContextReceipt(ContractModel):
     @model_validator(mode="after")
     def require_utc_created_at(self) -> Self:
         _require_utc(self.created_at, field="created_at")
+        return self
+
+
+class ArtifactRequest(ContractModel):
+    request_id: AgentIdentifier
+    capability_id: AgentIdentifier
+    proof_kind: ProofKind
+    claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
+    instructions: Annotated[str, Field(min_length=1, max_length=4000)]
+
+
+class CreativeTreatment(ContractModel):
+    treatment_id: AgentIdentifier
+    hypothesis_id: AgentIdentifier
+    format: CreativeFormat
+    hook: Annotated[str, Field(min_length=1, max_length=1000)]
+    caption_direction: Annotated[str, Field(min_length=1, max_length=2000)]
+    manipulated_component_value: Annotated[str, Field(min_length=1, max_length=1000)]
+    proof_narrative: Annotated[str, Field(min_length=1, max_length=2000)]
+    claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=16)]
+    artifact_requests: Annotated[tuple[ArtifactRequest, ...], Field(min_length=1, max_length=8)]
+
+    @model_validator(mode="after")
+    def validate_artifact_requests(self) -> Self:
+        request_ids = _require_unique(
+            (request.request_id for request in self.artifact_requests),
+            field="request_id",
+        )
+        if not request_ids:
+            _raise_contract_error(
+                "empty_artifact_request",
+                "every creative treatment requires a proof request",
+            )
+        treatment_claims = set(self.claim_ids)
+        for request in self.artifact_requests:
+            if not set(request.claim_ids).issubset(treatment_claims):
+                _raise_contract_error(
+                    "artifact_claim_escape",
+                    "artifact requests may use only claims in their creative treatment",
+                )
+        return self
+
+
+class MediaPlan(ContractModel):
+    schema_version: Literal["trace.media-plan.v1"]
+    plan_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    account_id: AgentIdentifier
+    experiment_id: AgentIdentifier
+    strategy_brief_sha256: Sha256Digest
+    context_receipt_sha256: Sha256Digest
+    treatments: Annotated[tuple[CreativeTreatment, ...], Field(min_length=2, max_length=8)]
+    publication_allowed: bool
+    human_review_required: Literal[True]
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_portfolio(self) -> Self:
+        _require_utc(self.created_at, field="created_at")
+        _ = _require_unique(
+            (treatment.treatment_id for treatment in self.treatments),
+            field="treatment_id",
+        )
+        _ = _require_unique(
+            (treatment.hypothesis_id for treatment in self.treatments),
+            field="treatment_hypothesis_id",
+        )
+        return self
+
+
+class ArtifactManifest(ContractModel):
+    schema_version: Literal["trace.artifact-manifest.v1"]
+    manifest_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    treatment_id: AgentIdentifier
+    request_id: AgentIdentifier
+    capability_id: AgentIdentifier
+    artifact_uri: Annotated[str, Field(min_length=1, max_length=2000)]
+    artifact_sha256: Sha256Digest
+    input_sha256: Sha256Digest
+    claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
+    evidence_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=32)] = ()
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def require_utc_created_at(self) -> Self:
+        _require_utc(self.created_at, field="created_at")
+        return self
+
+
+class AttributionObservation(ContractModel):
+    schema_version: Literal["trace.attribution-observation.v1"]
+    observation_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    experiment_id: AgentIdentifier
+    assignment_id: AgentIdentifier
+    publication_id: AgentIdentifier
+    product_event_id: AgentIdentifier | None = None
+    scope: Literal["direct_response_attribution"]
+    window_hours: Annotated[int, Field(ge=1, le=24 * 30)]
+    matched: bool
+    observed_at: datetime
+
+    @model_validator(mode="after")
+    def validate_match(self) -> Self:
+        _require_utc(self.observed_at, field="observed_at")
+        if self.matched != (self.product_event_id is not None):
+            _raise_contract_error(
+                "invalid_attribution_match",
+                "matched attribution requires exactly one product event identity",
+            )
+        return self
+
+
+class ExperimentEvaluation(ContractModel):
+    schema_version: Literal["trace.experiment-evaluation.v1"]
+    evaluation_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    experiment_id: AgentIdentifier
+    state: Literal["evaluated", "inconclusive", "stopped"]
+    outcome_scope: OutcomeScope
+    eligible_blocks: Annotated[int, Field(ge=0)]
+    attribution_coverage: Annotated[float, Field(ge=0, le=1)]
+    winner_hypothesis_id: AgentIdentifier | None = None
+    interpretation: Annotated[str, Field(min_length=1, max_length=4000)]
+    guardrail_failures: Annotated[tuple[str, ...], Field(max_length=32)] = ()
+    lineage_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=64)]
+    evaluated_at: datetime
+
+    @model_validator(mode="after")
+    def validate_conclusion(self) -> Self:
+        _require_utc(self.evaluated_at, field="evaluated_at")
+        _ = _require_unique(self.lineage_ids, field="evaluation_lineage_id")
+        if self.state != "evaluated" and self.winner_hypothesis_id is not None:
+            _raise_contract_error(
+                "winner_without_evaluation",
+                "inconclusive or stopped experiments cannot name a winner",
+            )
+        return self
+
+
+class LearningCandidate(ContractModel):
+    schema_version: Literal["trace.learning-candidate.v1"]
+    learning_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    statement: Annotated[str, Field(min_length=1, max_length=2000)]
+    scope: Annotated[str, Field(min_length=1, max_length=500)]
+    independent_lineage_ids: Annotated[
+        tuple[AgentIdentifier, ...],
+        Field(min_length=2, max_length=32),
+    ]
+    status: Literal["candidate"]
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def require_independent_lineage(self) -> Self:
+        _require_utc(self.created_at, field="created_at")
+        _ = _require_unique(self.independent_lineage_ids, field="independent_lineage_id")
         return self
 
 

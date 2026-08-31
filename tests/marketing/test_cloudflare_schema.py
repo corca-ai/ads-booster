@@ -189,6 +189,90 @@ def test_marketing_agent_events_have_single_ordered_revision_lineage() -> None:
             )
 
 
+def test_marketing_execution_ledger_blocks_shadow_candidate_effects() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _insert_marketing_execution_fixture(connection, mode="shadow")
+
+        with pytest.raises(sqlite3.IntegrityError, match="marketing candidate assignment"):
+            _ = connection.execute(
+                """UPDATE hosted_workspace_candidates
+                SET marketing_campaign_id = 'campaign-execution',
+                    marketing_experiment_id = 'experiment-execution',
+                    marketing_hypothesis_id = 'hypothesis-execution',
+                    marketing_treatment_id = 'treatment-execution',
+                    marketing_assignment_id = 'assignment-execution',
+                    marketing_assignment_sha256 = ?
+                WHERE candidate_id = 'candidate-execution'""",
+                ("9" * 64,),
+            )
+
+
+def test_artifact_manifests_are_immutable_and_principles_need_exact_learning_approval() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _insert_marketing_execution_fixture(connection, mode="assisted")
+        _ = connection.execute(
+            """UPDATE hosted_workspace_candidates
+            SET marketing_campaign_id = 'campaign-execution',
+                marketing_experiment_id = 'experiment-execution',
+                marketing_hypothesis_id = 'hypothesis-execution',
+                marketing_treatment_id = 'treatment-execution',
+                marketing_assignment_id = 'assignment-execution',
+                marketing_assignment_sha256 = ?
+            WHERE candidate_id = 'candidate-execution'""",
+            ("9" * 64,),
+        )
+        assert connection.execute(
+            """SELECT marketing_assignment_id FROM hosted_workspace_candidates
+            WHERE candidate_id = 'candidate-execution'"""
+        ).fetchone() == ("assignment-execution",)
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_artifact_manifests
+            (manifest_id, campaign_id, treatment_id, request_id, schema_version,
+             manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256,
+             created_at)
+            VALUES ('manifest-1', 'campaign-execution', 'treatment-execution',
+                    'request-execution', 'trace.artifact-manifest.v1', '{}', ?,
+                    'r2://artifact.png', ?, ?, 'now')""",
+            ("1" * 64, "2" * 64, "3" * 64),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            _ = connection.execute(
+                """UPDATE hosted_marketing_artifact_manifests
+                SET artifact_uri = 'r2://mutated.png' WHERE manifest_id = 'manifest-1'"""
+            )
+
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_learning_candidates
+            (learning_id, campaign_id, schema_version, candidate_json, candidate_sha256,
+             state, created_at, updated_at)
+            VALUES ('learning-1', 'campaign-execution', 'trace.learning-candidate.v1',
+                    '{}', ?, 'candidate', 'now', 'now')""",
+            ("4" * 64,),
+        )
+        principle_insert = """INSERT INTO hosted_marketing_principles
+            (principle_id, learning_id, approval_grant_id, principle_json,
+             principle_sha256, state, created_at, updated_at)
+            VALUES ('principle-1', 'learning-1', 'learning-grant', '{}', ?,
+                    'provisional', 'now', 'now')"""
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(principle_insert, ("5" * 64,))
+
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_approval_grants
+            (grant_id, campaign_id, scope, target_kind, target_id, target_sha256,
+             decision, reviewer_id, reviewed_at)
+            VALUES ('learning-grant', 'campaign-execution', 'learning',
+                    'learning_candidate', 'learning-1', ?, 'approved', 'reviewer-1', 'now')""",
+            ("4" * 64,),
+        )
+        _ = connection.execute(principle_insert, ("5" * 64,))
+        assert connection.execute(
+            "SELECT state FROM hosted_marketing_principles WHERE principle_id = 'principle-1'"
+        ).fetchone() == ("provisional",)
+
+
 def _insert_marketing_agent_account_and_packet(connection: sqlite3.Connection) -> None:
     _ = connection.execute(
         """INSERT INTO hosted_workspace_accounts
@@ -206,6 +290,106 @@ def _insert_marketing_agent_account_and_packet(connection: sqlite3.Connection) -
                 'source_candidate', 'corca-ai/Trace_iOS', 'refs/heads/develop', ?, ?, '{}', ?,
                 0, 'now', 'now')""",
         ("b" * 40, "c" * 40, "a" * 64),
+    )
+
+
+def _insert_marketing_execution_fixture(
+    connection: sqlite3.Connection,
+    *,
+    mode: str,
+) -> None:
+    _insert_marketing_agent_account_and_packet(connection)
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_campaigns
+        (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
+         mode, state, projection_revision, business_outcome, created_at, updated_at)
+        VALUES ('campaign-execution', 'trace_kr', 'packet-1', ?, 'agent_v1', ?,
+                'creative_planned', 4, 'outcome', 'now', 'now')""",
+        ("a" * 64, mode),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_context_receipts
+        (receipt_id, campaign_id, schema_version, receipt_json, receipt_sha256,
+         feature_packet_sha256, knowledge_snapshot_sha256, capability_snapshot_sha256,
+         prompt_sha256, output_schema_sha256, created_at)
+        VALUES ('receipt-execution', 'campaign-execution', 'trace.context-receipt.v1', '{}',
+                ?, ?, ?, ?, ?, ?, 'now')""",
+        ("6" * 64, "a" * 64, "7" * 64, "8" * 64, "9" * 64, "0" * 64),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_strategy_briefs
+        (brief_id, campaign_id, context_receipt_id, schema_version, brief_json,
+         brief_sha256, created_at)
+        VALUES ('brief-execution', 'campaign-execution', 'receipt-execution',
+                'trace.strategy-brief.v1', '{}', ?, 'now')""",
+        ("b" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_experiments
+        (experiment_id, campaign_id, strategy_brief_id, state, primary_outcome_scope,
+         registration_json, registration_sha256, created_at, updated_at)
+        VALUES ('experiment-execution', 'campaign-execution', 'brief-execution', 'registered',
+                'direct_response_attribution', '{}', ?, 'now', 'now')""",
+        ("c" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_hypotheses
+        (hypothesis_id, campaign_id, strategy_brief_id, portfolio_role, hypothesis_json,
+         hypothesis_sha256, created_at)
+        VALUES ('hypothesis-execution', 'campaign-execution', 'brief-execution', 'control',
+                '{}', ?, 'now')""",
+        ("d" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_media_plans
+        (plan_id, campaign_id, strategy_brief_id, context_receipt_id, schema_version,
+         plan_json, plan_sha256, publication_allowed, human_review_required, state,
+         created_at, updated_at)
+        VALUES ('plan-execution', 'campaign-execution', 'brief-execution', 'receipt-execution',
+                'trace.media-plan.v1', '{}', ?, 1, 1, 'approved', 'now', 'now')""",
+        ("e" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_approval_grants
+        (grant_id, campaign_id, scope, target_kind, target_id, target_sha256,
+         decision, reviewer_id, reviewed_at)
+        VALUES ('creative-grant', 'campaign-execution', 'creative', 'media_plan',
+                'plan-execution', ?, 'approved', 'reviewer-1', 'now')""",
+        ("e" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_creative_treatments
+        (treatment_id, plan_id, campaign_id, experiment_id, hypothesis_id, format,
+         treatment_json, treatment_sha256, created_at)
+        VALUES ('treatment-execution', 'plan-execution', 'campaign-execution',
+                'experiment-execution', 'hypothesis-execution', 'explanatory_carousel',
+                '{}', ?, 'now')""",
+        ("f" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_artifact_requests
+        (request_id, campaign_id, treatment_id, capability_id, proof_kind,
+         request_json, request_sha256, state, created_at, updated_at)
+        VALUES ('request-execution', 'campaign-execution', 'treatment-execution',
+                'compose.explanation', 'composed_explanation', '{}', ?, 'planned', 'now', 'now')""",
+        ("1" * 64,),
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_workspace_candidates
+        (candidate_id, account_id, source, country, topic, caption, hypothesis,
+         refs_json, principles_json, appium_prompt, image_inputs_json, status,
+         revision, created_at, updated_at)
+        VALUES ('candidate-execution', 'trace_kr', 'manual', 'KR', 'topic', 'caption',
+                'hypothesis', '[]', '[]', 'prompt', '{}', 'awaiting_review', 1, 1, 1)"""
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_post_assignments
+        (assignment_id, campaign_id, experiment_id, hypothesis_id, treatment_id,
+         candidate_id, eligible_block_id, assignment_json, assignment_sha256, assigned_at)
+        VALUES ('assignment-execution', 'campaign-execution', 'experiment-execution',
+                'hypothesis-execution', 'treatment-execution', 'candidate-execution',
+                'block-1', '{}', ?, 'now')""",
+        ("9" * 64,),
     )
 
 

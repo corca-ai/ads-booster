@@ -103,6 +103,18 @@ the schema-constrained strategy turn, claim/reference quarantine, and the bound 
 `hosted-marketing-judgment-callback.js` independently validates and atomically persists successful
 strategy state. The generic worker broker owns leasing and callback transport only.
 
+`marketing/hosted_creative_judgment.py` owns the proof-first MediaPlan proposal and creates no tool
+action. `hosted-creative-plan-callback.js` independently checks strategy-arm, claim, capability,
+digest, and publication bindings before storing plan/treatment/request records. The account-scoped
+marketing-agent routes own exact strategy and creative review records plus dormant assisted/live
+candidate assignments. `marketing/experiment_evaluation.py` owns complete-block, missingness,
+guardrail, non-causal attribution, and replication rules; it has no scheduler or database access.
+
+Migration `0018_marketing_agent_execution.sql` owns the new execution/observation lineage and adds
+nullable assignment snapshots to existing candidates and Threads publications. The existing
+candidate review, native capture, and `threads/*` modules remain the effect owners; marketing-agent
+code references them by immutable IDs rather than reimplementing them.
+
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
 `threads/*` modules keep their present responsibilities and will be referenced through immutable

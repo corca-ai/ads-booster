@@ -121,6 +121,22 @@ campaign from creating tool actions. This path creates no candidate, capture, pu
 or learning effect. Installed-product evidence and later stages remain governed by
 [`docs/plans/threads-marketing-agent.md`](../plans/threads-marketing-agent.md).
 
+After exact human strategy approval, the same broker may run one `creative_plan` judgment. It picks
+proof before medium and emits only a MediaPlan plus typed artifact requests; it cannot execute those
+requests. Cloudflare rechecks active-arm coverage, claim containment, capability containment,
+publication status, and both receipts before storing the plan. Exact creative review is recorded
+separately. Candidate assignment requires an approved plan, a non-shadow assisted/live campaign,
+an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
+control-plane authority. Reviewer authority never enters a worker payload.
+
+Migration `0018_marketing_agent_execution.sql` adds the dormant execution and observation ledger:
+immutable artifact manifests, candidate/post assignments, variant links, versioned product events,
+direct-response attribution observations, evaluations, learning candidates, and approval-bound
+principles. Existing Threads publication rows merely snapshot a candidate's optional assignment ID;
+publisher, OAuth, publish-once, readback, and metrics behavior are unchanged. No route currently
+promotes a source campaign to assisted/live or ingests Trace product events, so these later effects
+remain unavailable rather than simulated.
+
 ## Threads publication and observation
 
 Threads has three configuration states. Zero bindings means disabled: health remains successful with
