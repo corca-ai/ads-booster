@@ -49,7 +49,9 @@ class CalendarAutomationRequest(ContractModel):
     request_sha256: Sha256Digest
     calendar_namespace: Identifier
     calendar_identifier: Annotated[str, Field(min_length=1, max_length=256)] | None = None
-    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=8)
+    # A week of rows, not a day of them. The wallpaper draws a seven-day strip, and a
+    # request capped at a single day's worth would leave most of it blank.
+    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=24)
 
     @model_validator(mode="after")
     def require_operation_fields(self) -> CalendarAutomationRequest:
@@ -106,27 +108,29 @@ def build_calendar_events(
     trace_items = contract.context.promotion_material.trace_items or ()
     zone = ZoneInfo(contract.time_zone)
     local_reference = contract.context.reference_date.astimezone(zone)
-    start_of_day = datetime.combine(local_reference.date(), time(), tzinfo=zone)
     events: list[CalendarAutomationEvent] = []
     for item in trace_items:
-        matched = _TIME_PREFIX.fullmatch(item)
-        if matched is None:
-            start = start_of_day
-            end = start + timedelta(days=1)
-            title = item
+        # The row carries the day it sits on rather than only a clock, so a week's worth of
+        # events lands across the strip instead of piling onto the captured day.
+        day = local_reference.date() + timedelta(days=item.day)
+        if item.time is None:
+            start = datetime.combine(day, time(), tzinfo=zone)
+            # An all-day event ends at the start of the day after its last one, which is how
+            # a multi-day row draws as a single bar rather than as repeated one-day rows.
+            end = start + timedelta(days=item.days)
             is_all_day = True
         else:
+            hour, _, minute = item.time.partition(":")
             start = datetime.combine(
-                local_reference.date(),
-                time(hour=int(matched.group(1)), minute=int(matched.group(2))),
+                day,
+                time(hour=int(hour), minute=int(minute)),
                 tzinfo=zone,
             )
             end = start + timedelta(hours=1)
-            title = matched.group(3)
             is_all_day = False
         events.append(
             CalendarAutomationEvent(
-                title=title,
+                title=item.title,
                 starts_at_epoch=int(start.timestamp()),
                 ends_at_epoch=int(end.timestamp()),
                 is_all_day=is_all_day,

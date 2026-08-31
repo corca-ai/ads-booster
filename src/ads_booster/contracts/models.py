@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Annotated, ClassVar, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
 Identifier = Annotated[
@@ -14,6 +15,51 @@ Identifier = Annotated[
 CountryCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 Locale = Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})+$")]
 TraceItem = Annotated[str, Field(min_length=1, max_length=80)]
+_WEEK_DAYS = 7
+_CLOCK = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+TraceItemColor = Annotated[str, Field(pattern=r"^[0-9A-F]{6}$")]
+
+
+class TraceScheduleItem(BaseModel):
+    """One row the capture job creates in Trace, placed on a day of the shown week.
+
+    The job used to carry `"HH:MM 제목"` strings, which can only describe the captured day.
+    A screen that fills its week needs the day the row sits on, how many days it spans, and
+    the colour it draws in — the spanning bars are what actually fill the strip.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    title: Annotated[str, Field(min_length=1, max_length=40)]
+    # Offset from the captured day; zero is the day the wallpaper shows.
+    day: Annotated[int, Field(ge=0, le=6)] = 0
+    # One draws a single-day row; anything larger draws a bar across that many days.
+    days: Annotated[int, Field(ge=1, le=7)] = 1
+    # Absent means an all-day row, which is what most rows on a full screen are.
+    time: Annotated[str, Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")] | None = None
+    color: TraceItemColor | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_string(cls, value: object) -> object:
+        """Read the `"HH:MM 제목"` row the job used to carry as a row on the captured day."""
+        if not isinstance(value, str):
+            return value
+        head, separator, tail = value.partition(" ")
+        if separator and _CLOCK.fullmatch(head) and tail.strip():
+            return {"title": tail.strip(), "time": head}
+        return {"title": value.strip()}
+
+    @model_validator(mode="after")
+    def keep_the_span_inside_the_week(self) -> TraceScheduleItem:
+        """A bar that runs past the seventh day has nowhere to draw its remainder."""
+        if self.day + self.days > _WEEK_DAYS:
+            message = "a schedule item may not span past the seventh day"
+            raise ValueError(message)
+        return self
+
+
+TraceTodoItem = Annotated[str, Field(min_length=1, max_length=60)]
 
 
 def require_safe_relative_path(value: str) -> str:

@@ -606,6 +606,8 @@ def test_threads_oauth_reconnect_profile_is_account_scoped_and_deleted_with_prof
         assert connection.execute(
             "SELECT COUNT(*) FROM hosted_threads_oauth_states"
         ).fetchone() == (0,)
+
+
 def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"

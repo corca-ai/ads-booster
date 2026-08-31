@@ -13,7 +13,8 @@ from ads_booster.contracts.models import (  # noqa: TC001
     Identifier,
     Locale,
     RelativePath,
-    TraceItem,
+    TraceScheduleItem,
+    TraceTodoItem,
 )
 
 NON_UTC_REFERENCE_DATE: Final = "non_utc_reference_date"
@@ -44,7 +45,12 @@ class PromotionMaterial(BaseModel):
     reference_ids: Annotated[tuple[str, ...], Field(max_length=16)] = ()
     creative_direction: Annotated[str, Field(min_length=1, max_length=20_000)] | None = None
     background_intent: Annotated[str, Field(min_length=1, max_length=500)] | None = None
-    trace_items: Annotated[tuple[TraceItem, ...], Field(min_length=1, max_length=8)] | None = None
+    trace_items: (
+        Annotated[tuple[TraceScheduleItem, ...], Field(min_length=1, max_length=24)] | None
+    ) = None
+    # Undated chores. Trace keeps them in their own list and the screen draws them in a
+    # column beside the schedule.
+    trace_todos: Annotated[tuple[TraceTodoItem, ...], Field(max_length=20)] = ()
 
 
 class GenerationReferenceImage(BaseModel):
