@@ -1,4 +1,7 @@
 import { hasRegisteredBrokerWorker, hasWorkerForTaskKind } from "./mac-workers.js";
+import { handleThreadsMediaRequest } from "./threads/media-capability.js";
+import { handleHostedThreadsProfiles } from "./threads/profiles-api.js";
+import { handleHostedThreadsStatus } from "./threads/status-api.js";
 
 const DEFAULT_ACCOUNT_ID = "trace_demo_kr";
 export const DEFAULT_WORKSPACE_AI_MODEL = "@cf/openai/gpt-oss-20b";
@@ -121,6 +124,12 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
   try {
     const requestedAccountId = accountIdFromRequest(request, env);
     const scopedEnv = withHostedAccount(env, requestedAccountId);
+    const mediaResponse = await handleThreadsMediaRequest(request, scopedEnv);
+    if (mediaResponse) return mediaResponse;
+    const threadsStatusResponse = await handleHostedThreadsStatus(request, scopedEnv);
+    if (threadsStatusResponse) return threadsStatusResponse;
+    const threadsResponse = await handleHostedThreadsProfiles(request, scopedEnv);
+    if (threadsResponse) return threadsResponse;
     // A persona is a different layer from the operating account, so it is a different
     // parameter. Sending it as the account id is what made "delete this candidate" answer
     // "워크스페이스 계정을 찾을 수 없습니다".
@@ -284,7 +293,7 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     }
 
     const route = url.pathname.match(
-      /^\/api\/candidates\/([^/]+)(?:\/(review|generate-image|review-image|image))?$/,
+      /^\/api\/candidates\/([^/]+)(?:\/(review|generate-image|review-image|image|threads-profile))?$/,
     );
     if (!route) return null;
     const candidateId = decodeURIComponent(route[1]);
@@ -297,6 +306,18 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     }
     if (request.method === "POST" && action === "review-image") {
       return json(await reviewCandidateImage(scopedEnv, candidateId, await readJson(request)));
+    }
+    if (request.method === "POST" && action === "threads-profile") {
+      authorizeHostedOperation(request, scopedEnv);
+      const body = await readJson(request);
+      const revision = positiveInteger(body?.expected_revision, null);
+      if (revision === null) throw new WorkspaceHttpError(400, "expected_revision이 필요합니다.");
+      return json(await setCandidateThreadsProfile(
+        scopedEnv,
+        candidateId,
+        requiredString(body?.threads_profile_id, "threads_profile_id", 120),
+        revision,
+      ));
     }
     if (request.method === "GET" && action === "image") {
       return readCandidateImage(scopedEnv, candidateId);
@@ -1107,6 +1128,8 @@ function hostedAccountFromRow(row) {
     evening_time: row.evening_time,
     generation_enabled: row.generation_enabled === 1,
     next_generation_at: row.next_generation_at,
+    threads_auto_publish_enabled: row.threads_auto_publish_enabled === 1,
+    default_threads_profile_id: row.default_threads_profile_id ?? null,
     revision: row.revision,
   };
 }
@@ -1133,8 +1156,8 @@ export function nextDailyGenerationAt(timezone, time, after = new Date()) {
     hour,
     minute,
   };
-  let next = instantForZonedParts(desired, timezone);
-  if (next.getTime() <= after.getTime()) {
+  let next = futureInstantForZonedParts(desired, timezone, after);
+  if (!next) {
     const tomorrow = new Date(Date.UTC(desired.year, desired.month - 1, desired.day + 1));
     desired = {
       ...desired,
@@ -1142,9 +1165,30 @@ export function nextDailyGenerationAt(timezone, time, after = new Date()) {
       month: tomorrow.getUTCMonth() + 1,
       day: tomorrow.getUTCDate(),
     };
-    next = instantForZonedParts(desired, timezone);
+    next = futureInstantForZonedParts(desired, timezone, after);
   }
+  if (!next) throw new WorkspaceHttpError(400, "다음 게시 시각을 계산할 수 없습니다.");
   return next;
+}
+
+function futureInstantForZonedParts(desired, timezone, after) {
+  const seed = instantForZonedParts(desired, timezone);
+  const matches = [];
+  for (let offset = -180; offset <= 180; offset += 15) {
+    const candidate = new Date(seed.getTime() + offset * 60_000);
+    const actual = zonedParts(candidate, timezone);
+    if (
+      actual.year === desired.year
+      && actual.month === desired.month
+      && actual.day === desired.day
+      && actual.hour === desired.hour
+      && actual.minute === desired.minute
+    ) matches.push(candidate);
+  }
+  const future = matches.find((candidate) => candidate.getTime() > after.getTime());
+  if (future) return future;
+  if (matches.length === 0 && seed.getTime() > after.getTime()) return seed;
+  return null;
 }
 
 function instantForZonedParts(desired, timezone) {
@@ -1392,8 +1436,16 @@ async function listCandidates(env, personaId = null) {
     ? [accountId(env), personaId, MAX_CANDIDATES]
     : [accountId(env), MAX_CANDIDATES];
   const result = await env.DB.prepare(
-    `SELECT * FROM hosted_workspace_candidates
-     WHERE account_id = ?${scope} ORDER BY created_at DESC LIMIT ?`,
+    `SELECT candidate.*, profile.threads_user_id AS threads_profile_user_id,
+            profile.username AS threads_profile_username,
+            profile.state AS threads_profile_state
+     FROM (
+       SELECT * FROM hosted_workspace_candidates
+       WHERE account_id = ?${scope} ORDER BY created_at DESC LIMIT ?
+     ) AS candidate
+     LEFT JOIN hosted_threads_profiles AS profile
+       ON profile.account_id = candidate.account_id
+      AND profile.profile_id = candidate.threads_profile_id`,
   )
     .bind(...parameters)
     .all();
@@ -1928,6 +1980,47 @@ export function aiCandidates(result) {
   return response.candidates;
 }
 
+async function activeDefaultThreadsProfile(env) {
+  const account = await env.DB.prepare(
+    "SELECT * FROM hosted_workspace_accounts WHERE account_id = ? AND enabled = 1",
+  ).bind(accountId(env)).first();
+  if (!account?.default_threads_profile_id) return null;
+  return env.DB.prepare(
+    `SELECT profile_id, username, state FROM hosted_threads_profiles
+     WHERE account_id = ? AND profile_id = ? AND state = 'active'`,
+  ).bind(accountId(env), account.default_threads_profile_id).first();
+}
+
+async function setCandidateThreadsProfile(env, candidateId, profileId, revision) {
+  const current = await requireCandidate(env, candidateId);
+  if (!canSetCandidateThreadsProfile(current.status)) {
+    throw new WorkspaceHttpError(409, "최종 이미지 승인 전 후보만 Threads 프로필을 변경할 수 있습니다.");
+  }
+  const profile = await env.DB.prepare(
+    `SELECT profile_id FROM hosted_threads_profiles
+     WHERE account_id = ? AND profile_id = ? AND state = 'active'`,
+  ).bind(accountId(env), profileId).first();
+  if (!profile) throw new WorkspaceHttpError(409, "선택할 수 있는 활성 Threads 프로필이 아닙니다.");
+  const updated = await env.DB.prepare(
+    `UPDATE hosted_workspace_candidates
+     SET threads_profile_id = ?, revision = revision + 1, updated_at = ?
+     WHERE account_id = ? AND candidate_id = ? AND revision = ?
+       AND status IN ('awaiting_review', 'caption_approved', 'image_awaiting_review')`,
+  ).bind(profileId, Date.now() / 1000, accountId(env), candidateId, revision).run();
+  if (updated.meta.changes !== 1) {
+    throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
+  }
+  return requireCandidate(env, candidateId);
+}
+
+export function candidateThreadsProfileSnapshot(postingSlot, defaultProfileId) {
+  return postingSlot === "manual" ? null : defaultProfileId ?? null;
+}
+
+export function canSetCandidateThreadsProfile(status) {
+  return ["awaiting_review", "caption_approved", "image_awaiting_review"].includes(status);
+}
+
 async function insertCandidates(
   env,
   drafts,
@@ -1946,6 +2039,7 @@ async function insertCandidates(
   const now = Date.now() / 1000;
   const contextSnapshot = profile ? JSON.stringify(profile) : null;
   const batchId = source === "auto" ? requestedBatchId ?? crypto.randomUUID() : null;
+  const defaultThreadsProfile = await activeDefaultThreadsProfile(env);
   const inserts = drafts.map((draft, index) => {
     assertProfileCountry(profile, draft.country);
     const candidateId = crypto.randomUUID();
@@ -1958,8 +2052,8 @@ async function insertCandidates(
          context_profile_id, context_snapshot_json, posting_slot, generation_batch_id,
          generation_prompt_version, generation_prompt_sha256, generation_model,
          feedback_rules_json, persona_id, generation_provenance_json,
-         status, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         threads_profile_id, status, revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                'awaiting_review', 1, ?, ?)`,
       ).bind(
         candidateId,
@@ -1984,6 +2078,7 @@ async function insertCandidates(
         JSON.stringify(generationProvenance?.feedback_rules ?? []),
         personaId,
         workerProvenances?.[index] ? JSON.stringify(workerProvenances[index]) : null,
+        candidateThreadsProfileSnapshot(draft.posting_slot, defaultThreadsProfile?.profile_id),
         now + index / 1000,
         now + index / 1000,
       ),
@@ -2256,10 +2351,83 @@ async function reviewCandidateImage(env, candidateId, body) {
       candidateId,
       revision,
     );
-  const [recorded, transitioned] = await env.DB.batch([feedbackStatement, transitionStatement]);
+  const publicationStatement = accepted
+    ? await threadsPublicationDecisionStatement(env, current, revision)
+    : null;
+  const statements = publicationStatement
+    ? [publicationStatement, feedbackStatement, transitionStatement]
+    : [feedbackStatement, transitionStatement];
+  const results = await env.DB.batch(statements);
+  const publicationRecorded = publicationStatement ? results[0] : null;
+  const recorded = results[publicationStatement ? 1 : 0];
+  const transitioned = results[publicationStatement ? 2 : 1];
+  if (publicationRecorded && publicationRecorded.meta.changes !== 1) {
+    throw new WorkspaceHttpError(409, "Threads 발행 결정이 다른 요청에서 먼저 변경되었습니다.");
+  }
   await assertReviewBatchCommitted(env, candidateId, recorded, transitioned);
   if (!accepted && current.image_path) await env.ARTIFACTS.delete(current.image_path);
   return requireCandidate(env, candidateId);
+}
+
+async function threadsPublicationDecisionStatement(env, candidate, revision) {
+  if (candidate.posting_slot === "manual") return null;
+  if (
+    !candidate.threads_profile?.profile_id
+    || candidate.threads_profile.state !== "active"
+    || !candidate.threads_profile.threads_user_id
+    || !candidate.image_path
+    || !candidate.image_sha256
+  ) {
+    throw new WorkspaceHttpError(409, "활성 Threads 프로필과 승인할 이미지가 필요합니다.");
+  }
+  const account = await requireHostedAccount(env);
+  const slotTime = candidate.posting_slot === "morning"
+    ? account.morning_time
+    : account.evening_time;
+  const reviewedAt = new Date();
+  const scheduledAt = nextDailyGenerationAt(account.timezone, slotTime, reviewedAt);
+  const now = reviewedAt.toISOString();
+  return env.DB.prepare(
+    `INSERT INTO hosted_threads_publications
+      (publication_id, account_id, candidate_id, candidate_revision, profile_id,
+       threads_user_id_snapshot, username_snapshot, state, caption_snapshot,
+       image_key_snapshot, image_sha256_snapshot, timezone_snapshot,
+       posting_slot_snapshot, wall_clock_snapshot, scheduled_at, canceled_at,
+       failure_code, created_at, updated_at)
+     SELECT ?, account.account_id, candidate.candidate_id, ?, profile.profile_id,
+            profile.threads_user_id, profile.username,
+            CASE WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
+                 THEN 'scheduled' ELSE 'canceled' END,
+            ?, ?, ?, account.timezone, ?, ?, ?,
+            CASE WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
+                 THEN NULL ELSE ? END,
+            CASE WHEN account.threads_auto_publish_enabled = 0 THEN 'auto_publish_disabled'
+                 WHEN profile.state != 'active' THEN 'profile_unavailable' ELSE NULL END,
+            ?, ?
+     FROM hosted_workspace_accounts AS account
+     JOIN hosted_workspace_candidates AS candidate ON candidate.account_id = account.account_id
+     JOIN hosted_threads_profiles AS profile
+       ON profile.account_id = candidate.account_id
+      AND profile.profile_id = candidate.threads_profile_id
+     WHERE account.account_id = ? AND account.enabled = 1
+       AND candidate.candidate_id = ? AND candidate.revision = ?
+       AND candidate.status = 'image_awaiting_review'`,
+  ).bind(
+    crypto.randomUUID(),
+    revision,
+    candidate.caption,
+    candidate.image_path,
+    candidate.image_sha256,
+    candidate.posting_slot,
+    JSON.stringify({ timezone: account.timezone, time: slotTime }),
+    scheduledAt.toISOString(),
+    now,
+    now,
+    now,
+    accountId(env),
+    candidate.candidate_id,
+    revision,
+  );
 }
 
 async function readCandidateImage(env, candidateId) {
@@ -2474,7 +2642,15 @@ async function requireCandidate(env, candidateId) {
 
 async function findCandidate(env, candidateId) {
   const row = await env.DB.prepare(
-    "SELECT * FROM hosted_workspace_candidates WHERE account_id = ? AND candidate_id = ?",
+    `SELECT candidate.*, profile.threads_user_id AS threads_profile_user_id,
+            profile.username AS threads_profile_username,
+            profile.state AS threads_profile_state
+     FROM (
+       SELECT * FROM hosted_workspace_candidates WHERE account_id = ? AND candidate_id = ?
+     ) AS candidate
+     LEFT JOIN hosted_threads_profiles AS profile
+       ON profile.account_id = candidate.account_id
+      AND profile.profile_id = candidate.threads_profile_id`,
   )
     .bind(accountId(env), candidateId)
     .first();
@@ -2498,6 +2674,12 @@ function candidateFromRow(row) {
     ai_verdict: row.ai_verdict,
     context_profile: row.context_snapshot_json ? JSON.parse(row.context_snapshot_json) : null,
     posting_slot: row.posting_slot ?? "manual",
+    threads_profile: row.threads_profile_id ? {
+      profile_id: row.threads_profile_id,
+      threads_user_id: row.threads_profile_user_id ?? null,
+      username: row.threads_profile_username ?? null,
+      state: row.threads_profile_state ?? null,
+    } : null,
     generation_batch_id: row.generation_batch_id ?? null,
     generation_provenance: generationProvenanceFromRow(row),
     image_path: row.image_key,
@@ -2660,6 +2842,15 @@ function accountId(env) {
   return safeAccountId(
     env.HOSTED_WORKSPACE_ACCOUNT_ID || env.PUBLIC_WORKSPACE_ACCOUNT_ID || DEFAULT_ACCOUNT_ID,
   );
+}
+
+function authorizeHostedOperation(request, env) {
+  if (
+    !env.CONTROL_PLANE_TOKEN
+    || request.headers.get("authorization") !== `Bearer ${env.CONTROL_PLANE_TOKEN}`
+  ) {
+    throw new WorkspaceHttpError(401, "unauthorized");
+  }
 }
 
 function personaIdFromRequest(request) {
