@@ -41,7 +41,6 @@ def _write_ready_marker(
             {
                 "schema": "trace.codex-appium-ready.v1",
                 "session_id": session_id,
-                "created_calendar_titles": ["trace-request-1-calendar-1"],
                 "rendered_trace_item_titles": rendered_trace_item_titles,
             },
             stream,
@@ -51,7 +50,6 @@ def _write_ready_marker(
 
 def _write_saved_marker(
     workspace: Path,
-    created_calendar_titles: list[str],
     *,
     mode: int = 0o600,
     session_id: str = "appium-1",
@@ -65,7 +63,6 @@ def _write_saved_marker(
             {
                 "schema": "trace.codex-appium-saved.v1",
                 "session_id": session_id,
-                "created_calendar_titles": created_calendar_titles,
             },
             stream,
         )
@@ -91,7 +88,7 @@ def test_codex_cli_acknowledges_failed_collection_before_process_cleanup(
 
     def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
         _write_ready_and_wait_for_ack(workspace)
-        _write_saved_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_saved_marker(workspace)
         acknowledgement = workspace / "codex-appium-collected.json"
         deadline = time.monotonic() + 1
         while not acknowledgement.exists() and time.monotonic() < deadline:
@@ -146,7 +143,7 @@ def test_codex_cli_verifies_live_editor_before_save_and_collection(
         acknowledgement = _JSON_OBJECT.validate_json(verified.read_text(encoding="utf-8"))
         assert acknowledgement["ready_verified"] is True
         events.append("save")
-        _write_saved_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_saved_marker(workspace)
         collected = workspace / "codex-appium-collected.json"
         while not collected.exists() and time.monotonic() < deadline:
             time.sleep(0.001)
@@ -284,7 +281,6 @@ def test_codex_cli_retries_rejected_ready_with_new_bound_session(
 
         _write_saved_marker(
             workspace,
-            ["trace-request-1-calendar-1"],
             session_id="bound-session",
         )
         collected = workspace / "codex-appium-collected.json"
@@ -332,7 +328,7 @@ def test_codex_cli_rejects_insecure_saved_marker(
 
     def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
         _write_ready_and_wait_for_ack(workspace)
-        _write_saved_marker(workspace, [], mode=0o644)
+        _write_saved_marker(workspace, mode=0o644)
         time.sleep(0.05)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -413,7 +409,7 @@ def test_codex_cli_rejects_process_exit_before_collection_acknowledgement(
 
     def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
         _write_ready_and_wait_for_ack(workspace)
-        _write_saved_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_saved_marker(workspace)
         assert collection_started.wait(timeout=1)
         process_finished.set()
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")

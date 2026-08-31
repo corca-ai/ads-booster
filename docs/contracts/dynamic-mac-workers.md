@@ -1,10 +1,12 @@
 # Dynamic Mac Workers
 
 Status: Active
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-31
 
 An enrolled Mac has a revocable worker identity and private local credential. It has no Cloudflare
-account token, fixed UDID, or another person's Codex login.
+account token, Threads OAuth token, publishing capability, fixed UDID, or another person's Codex
+login. Threads publication and engagement remain Cloudflare-owned and never expand the worker task
+kinds, inbox, Appium contract, or callback payload.
 
 ```text
 heartbeat -> D1 claim -> SQLite inbox -> safe prepare -> local admission
@@ -18,9 +20,12 @@ Safe preparation validates the task, resolves a Simulator, checks readiness, and
 hosted `background_intent` with digest/provenance. Admission persists job digest, export nonce, and
 workspace identity before D1 barrier. The one v2 job gives Codex context, background, device,
 digest/nonce, locale/time zone, and request-owned calendar namespace, but no execution plan.
+After the D1 barrier, the worker runs the DEBUG Trace EventKit helper to seed and verify the exact
+request-owned calendar before Codex starts.
 The `trace-appium` permission profile restricts commands to the request workspace and allowlisted
 loopback Appium. It blocks home credential reads and external hosts. The worker, outside that
-sandbox, owns Simulator readiness, background import, and App Group collection.
+sandbox, owns Simulator readiness, Calendar seed/cleanup, background import, and App Group
+collection. Codex owns only Trace layout, settings, and Save.
 
 PNG and native manifest must independently bind request digest, nonce, bundle, Simulator,
 dimensions, SHA-256, and native provenance. Callback retries only redeliver. A post-barrier crash or

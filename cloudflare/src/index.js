@@ -17,6 +17,9 @@ import {
   reserveWorkerTaskCallback,
 } from "./mac-workers.js";
 import { deploymentHealth } from "./deployment-health.js";
+import { runHostedThreadsEngagement } from "./threads/engagement.js";
+import { dispatchHostedThreadsPublication } from "./threads/publication.js";
+import { runHostedThreadsPublications } from "./threads/scheduling.js";
 
 import {
   accountName,
@@ -451,6 +454,8 @@ export default {
     ctx.waitUntil(Promise.all([
       startDueRuns(env),
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
+      runHostedThreadsPublications(env, dispatchHostedThreadsPublication),
+      runHostedThreadsEngagement(env),
     ]));
   },
 };

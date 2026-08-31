@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.capture.appium_codex import CodexAppiumJobAdapter
+from ads_booster.capture.calendar_preparation import SimctlEventKitCalendarDataPort
 from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureControl
 from ads_booster.capture.codex_appium_job import (
     CodexAppiumJobContract,
@@ -106,6 +107,7 @@ def build_hosted_capture_executor(
             codex=codex,
             simulator=SimctlPhotoImporter(),
             collector=SimctlAppGroupWallpaperCollector(),
+            calendar=SimctlEventKitCalendarDataPort(),
             readiness=DefaultCaptureReadiness(appium_server=appium_server),
         ),
         output_root=home / "generated",
