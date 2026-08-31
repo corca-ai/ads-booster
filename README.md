@@ -16,9 +16,14 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
 1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
    `generate_candidates` task, and a compatible Mac runs one structured official Codex CLI turn to
    return drafts. The worker never restores a plan object or custom Agent runtime; Cloudflare stores
-   the idempotent callback result for human candidate review.
+   the idempotent callback result for human candidate review. Repeated strong rejections from three
+   distinct candidates can add a scoped caption rule to the task; the callback must return the
+   selected feedback digest before Cloudflare accepts it.
 2. An approved hosted candidate creates an immutable task with its marketing context, Trace items,
-   candidate revision, and `background_intent`.
+   candidate revision, and `background_intent`. An image retry also receives the exact preceding
+   rejection for that candidate and any promoted image rules. This feedback input is additive;
+   candidate fields, PNG/manifest output, R2 storage, and review-state transitions keep their
+   existing contracts.
 3. D1 leases it to a ready, enrolled Mac. The worker writes the task to its SQLite inbox before it
    acknowledges the lease.
 4. Before capture side effects, the worker resolves an iPhone Simulator, validates locale/time zone, fetches
@@ -48,6 +53,11 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
 
 A manifest proves request-bound native export, not visual or semantic fidelity. Human review is the
 visual approval boundary.
+
+The workspace's 생성 근거 panel shows whether feedback was selected and whether the Mac returned
+the matching consumption receipt. This is transport provenance, not a claim that the generated
+content followed every instruction. A token-authorized control-plane request can disable a promoted
+rule while retaining its underlying review evidence.
 
 ## Bootstrap a verified Mac worker release
 

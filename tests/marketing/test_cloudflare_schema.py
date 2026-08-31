@@ -164,3 +164,30 @@ def test_hosted_feedback_keeps_reviewed_revision_and_generation_provenance() -> 
             "@cf/openai/gpt-oss-20b",
             "[]",
         )
+
+
+def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
+        for migration in sorted(migration_root.glob("*.sql")):
+            _ = connection.executescript(migration.read_text())
+
+        candidate_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(hosted_workspace_candidates)")
+        }
+        feedback_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(hosted_workspace_feedback_events)")
+        }
+        task_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(hosted_workspace_capture_tasks)")
+        }
+
+        assert {
+            "last_image_feedback_event_id",
+            "capture_feedback_context_sha256",
+            "capture_feedback_application_sha256",
+        } <= candidate_columns
+        assert {"capture_task_id", "artifact_sha256"} <= feedback_columns
+        assert "required_capability" in task_columns
