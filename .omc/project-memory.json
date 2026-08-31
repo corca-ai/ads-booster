@@ -1,0 +1,173 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1788137446584,
+  "projectRoot": "/Users/corca-park/Desktop/회사/마케팅/ads-booster",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "pytest",
+        "version": null,
+        "category": "testing"
+      }
+    ],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "pytest",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "appium": {
+      "path": "appium",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1788137446572,
+      "keyFiles": []
+    },
+    "cloudflare": {
+      "path": "cloudflare",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1788137446573,
+      "keyFiles": [
+        "package-lock.json",
+        "package.json",
+        "wrangler.template.jsonc"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 0,
+      "lastAccessed": 1788137446573,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1788137446574,
+      "keyFiles": [
+        "bootstrap-mac-worker.py",
+        "build-mac-worker-release.py",
+        "github-release-state.py"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1788137446574,
+      "keyFiles": []
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 1,
+      "lastAccessed": 1788137446574,
+      "keyFiles": [
+        "__init__.py"
+      ]
+    },
+    "cloudflare/dist": {
+      "path": "cloudflare/dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 1,
+      "lastAccessed": 1788137446575,
+      "keyFiles": [
+        "index.html"
+      ]
+    },
+    "cloudflare/migrations": {
+      "path": "cloudflare/migrations",
+      "purpose": "Database migrations",
+      "fileCount": 14,
+      "lastAccessed": 1788137446575,
+      "keyFiles": [
+        "0001_initial.sql",
+        "0002_one_active_run_per_account.sql",
+        "0003_review_event_receipts.sql"
+      ]
+    },
+    "cloudflare/scripts": {
+      "path": "cloudflare/scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 2,
+      "lastAccessed": 1788137446575,
+      "keyFiles": [
+        "build-workspace.mjs",
+        "render-config.mjs"
+      ]
+    },
+    "cloudflare/src": {
+      "path": "cloudflare/src",
+      "purpose": "Source code",
+      "fileCount": 9,
+      "lastAccessed": 1788137446576,
+      "keyFiles": [
+        "deployment-health.js",
+        "generated-workspace-context.js",
+        "hosted-capture-result.js"
+      ]
+    },
+    "cloudflare/static": {
+      "path": "cloudflare/static",
+      "purpose": "Static files",
+      "fileCount": 5,
+      "lastAccessed": 1788137446576,
+      "keyFiles": [
+        "design-tokens.css",
+        "workspace-live.js",
+        "workspace-navigation.js"
+      ]
+    },
+    "cloudflare/test": {
+      "path": "cloudflare/test",
+      "purpose": "Test files",
+      "fileCount": 6,
+      "lastAccessed": 1788137446576,
+      "keyFiles": [
+        "deployment-health.test.js",
+        "hosted-capture-result.test.js",
+        "hosted-generation.test.js"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}
