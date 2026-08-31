@@ -36,7 +36,7 @@ def test_existing_hosted_rows_survive_the_legacy_migration_chain() -> None:
             (worker_id, display_name, pool, token_sha256, state, created_at, updated_at)
             VALUES ('worker-legacy', 'Legacy Mac', 'appium', 'digest', 'active', 'now', 'now')"""
         )
-        _ = connection.executescript((MIGRATION_ROOT / "0015_hosted_threads.sql").read_text())
+        _ = connection.executescript((MIGRATION_ROOT / "0016_hosted_threads.sql").read_text())
 
         rows = cast(
             "tuple[str, str] | None",

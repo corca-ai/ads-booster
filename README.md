@@ -151,7 +151,7 @@ wrangler secret put THREADS_MEDIA_SIGNING_KEY
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. `CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile
-mutation, reply content, and unknown-outcome resolution. Deploy D1 migration `0015_hosted_threads.sql`
+mutation, reply content, and unknown-outcome resolution. Deploy D1 migration `0016_hosted_threads.sql`
 before enabling the feature, complete Meta App Review for the four documented scopes, connect a test
 profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and
 engagement canary. Source or fake-Graph success is not live Meta proof.
