@@ -205,7 +205,7 @@ def test_the_instruction_states_one_assignment_line_per_candidate(tmp_path: Path
         in instruction
     )
     # And each assigned form is explained once, with its evidence and an example
-    assert "- hook (훅글): 질문이나 한 문장 헤드라인으로 열고" in instruction
+    assert "- hook (훅글): 질문이나 한 문장 반전으로 열고" in instruction
     assert "근거 레퍼런스: kr-001, kr-003, kr-014." in instruction
     assert "- testimony (간증글): 쓰기 전과 후에" in instruction
     assert "근거 레퍼런스: kr-010." in instruction
