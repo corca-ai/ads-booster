@@ -7,12 +7,53 @@ from typing import cast
 
 import pytest
 
+# allow: SIZE_OK - this file is the executable contract for the ordered D1 migration chain.
+
+MIGRATION_ROOT = Path(__file__).parents[2] / "cloudflare" / "migrations"
+
+
+def apply_migrations(connection: sqlite3.Connection, *, through: str | None = None) -> None:
+    _ = connection.execute("PRAGMA foreign_keys = ON")
+    for migration in sorted(MIGRATION_ROOT.glob("*.sql")):
+        if through is not None and migration.name > through:
+            break
+        _ = connection.executescript(migration.read_text())
+
+
+def test_existing_hosted_rows_survive_the_legacy_migration_chain() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection, through="0014_worker_caption_generation.sql")
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json, status,
+             revision, created_at, updated_at)
+            VALUES ('candidate-legacy', 'trace_kr', 'manual', 'KR', 'topic', 'caption',
+                    'hypothesis', '[]', '[]', 'prompt', '{}', 'submitted', 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            """INSERT INTO mac_workers
+            (worker_id, display_name, pool, token_sha256, state, created_at, updated_at)
+            VALUES ('worker-legacy', 'Legacy Mac', 'appium', 'digest', 'active', 'now', 'now')"""
+        )
+        _ = connection.executescript((MIGRATION_ROOT / "0016_hosted_threads.sql").read_text())
+
+        rows = cast(
+            "tuple[str, str] | None",
+            connection.execute(
+                """SELECT
+                    (SELECT status FROM hosted_workspace_candidates
+                     WHERE candidate_id = 'candidate-legacy'),
+                    (SELECT state FROM mac_workers WHERE worker_id = 'worker-legacy')"""
+            ).fetchone(),
+        )
+
+        assert rows == ("submitted", "active")
+
 
 def test_schema_allows_only_one_active_run_per_account() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
-        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
-        for migration in sorted(migration_root.glob("*.sql")):
-            _ = connection.executescript(migration.read_text())
+        apply_migrations(connection)
         _ = connection.execute(
             """INSERT INTO shared_instructions
             (body, body_sha256, active, created_at) VALUES (?, ?, 1, ?)""",
@@ -53,9 +94,7 @@ def test_schema_allows_only_one_active_run_per_account() -> None:
 
 def test_schema_deduplicates_workspace_review_events() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
-        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
-        for migration in sorted(migration_root.glob("*.sql")):
-            _ = connection.executescript(migration.read_text())
+        apply_migrations(connection)
         _ = connection.execute(
             """INSERT INTO shared_instructions
             (body, body_sha256, active, created_at) VALUES ('instruction', 'digest', 1, 'now')"""
@@ -84,9 +123,7 @@ def test_schema_deduplicates_workspace_review_events() -> None:
 
 def test_dynamic_mac_workers_have_revocable_identities_and_single_task_leases() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
-        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
-        for migration in sorted(migration_root.glob("*.sql")):
-            _ = connection.executescript(migration.read_text())
+        apply_migrations(connection)
         _ = connection.execute(
             """INSERT INTO mac_workers
             (worker_id, display_name, pool, token_sha256, state, created_at, updated_at)
@@ -121,9 +158,7 @@ def test_dynamic_mac_workers_have_revocable_identities_and_single_task_leases() 
 
 def test_hosted_feedback_keeps_reviewed_revision_and_generation_provenance() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
-        migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
-        for migration in sorted(migration_root.glob("*.sql")):
-            _ = connection.executescript(migration.read_text())
+        apply_migrations(connection)
 
         _ = connection.execute(
             """INSERT INTO hosted_workspace_candidates
@@ -149,12 +184,15 @@ def test_hosted_feedback_keeps_reviewed_revision_and_generation_provenance() -> 
             ("b" * 64, "a" * 64),
         )
 
-        feedback = connection.execute(
-            """SELECT candidate_revision, candidate_snapshot_sha256,
-                      generation_prompt_version, generation_prompt_sha256,
-                      generation_model, feedback_rules_json
-               FROM hosted_workspace_feedback_events WHERE event_id = 'event-1'"""
-        ).fetchone()
+        feedback = cast(
+            "tuple[int, str, str, str, str, str] | None",
+            connection.execute(
+                """SELECT candidate_revision, candidate_snapshot_sha256,
+                          generation_prompt_version, generation_prompt_sha256,
+                          generation_model, feedback_rules_json
+                   FROM hosted_workspace_feedback_events WHERE event_id = 'event-1'"""
+            ).fetchone(),
+        )
 
         assert feedback == (
             3,
@@ -164,6 +202,410 @@ def test_hosted_feedback_keeps_reviewed_revision_and_generation_provenance() -> 
             "@cf/openai/gpt-oss-20b",
             "[]",
         )
+
+
+def test_threads_profiles_are_account_scoped_encrypted_and_default_off() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace Korea', 'KR', 'ko', 'Asia/Seoul',
+                    '07:30', '19:30', 1, 1, 1)"""
+        )
+        settings = cast(
+            "tuple[int, str | None] | None",
+            connection.execute(
+                """SELECT threads_auto_publish_enabled, default_threads_profile_id
+                FROM hosted_workspace_accounts WHERE account_id = 'trace_kr'"""
+            ).fetchone(),
+        )
+        oauth_insert = """INSERT INTO hosted_threads_oauth_states
+            (oauth_state_id, account_id, state_sha256, redirect_uri, created_at, expires_at)
+            VALUES (?, 'trace_kr', ?, 'https://workspace.example/callback', 't0', 't1')"""
+        _ = connection.execute(oauth_insert, ("oauth-1", "f" * 64))
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """INSERT INTO hosted_workspace_accounts
+                (account_id, display_name, country, language, timezone, morning_time,
+                 evening_time, revision, created_at, updated_at, default_threads_profile_id)
+                VALUES ('trace_invalid', 'Invalid', 'KR', 'ko', 'Asia/Seoul',
+                        '07:30', '19:30', 1, 1, 1, 'missing-profile')"""
+            )
+        profile_insert = """INSERT INTO hosted_threads_profiles
+            (profile_id, account_id, threads_user_id, username, scopes_json,
+             token_ciphertext, token_nonce, token_key_version, token_expires_at,
+             state, created_at, updated_at)
+            VALUES (?, ?, ?, ?, '["threads_basic","threads_content_publish"]',
+                    ?, ?, 'v1', '2026-12-01T00:00:00Z', ?, 'now', 'now')"""
+        _ = connection.executemany(
+            profile_insert,
+            [
+                (
+                    "profile-a",
+                    "trace_kr",
+                    "threads-a",
+                    "trace_a",
+                    b"cipher-a",
+                    b"nonce-a",
+                    "active",
+                ),
+                (
+                    "profile-b",
+                    "trace_kr",
+                    "threads-b",
+                    "trace_b",
+                    b"cipher-b",
+                    b"nonce-b",
+                    "active",
+                ),
+            ],
+        )
+        _ = connection.execute(
+            """UPDATE hosted_workspace_accounts SET default_threads_profile_id = 'profile-a'
+            WHERE account_id = 'trace_kr'"""
+        )
+
+        assert settings == (0, None)
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                profile_insert,
+                ("profile-duplicate", "trace_kr", "threads-a", "other", b"c", b"n", "active"),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                profile_insert,
+                ("profile-invalid", "trace_kr", "threads-c", "other", b"c", b"n", "invalid"),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                profile_insert,
+                ("profile-missing", "missing", "threads-c", "other", b"c", b"n", "active"),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """INSERT INTO hosted_threads_profiles
+                (profile_id, account_id, threads_user_id, username, scopes_json,
+                 token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+                VALUES ('profile-key-invalid', 'trace_kr', 'threads-key-invalid', 'other', '[]',
+                        X'01', X'02', '1', 'active', 'now', 'now')"""
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(oauth_insert, ("oauth-2", "f" * 64))
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                "UPDATE hosted_workspace_accounts SET default_threads_profile_id = 'missing'"
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                "DELETE FROM hosted_threads_profiles WHERE profile_id = 'profile-a'"
+            )
+        _ = connection.execute("DELETE FROM hosted_threads_profiles WHERE profile_id = 'profile-b'")
+        default_binding = cast(
+            "tuple[int] | None",
+            connection.execute(
+                """SELECT COUNT(*) FROM hosted_workspace_accounts AS account
+                JOIN hosted_threads_profiles AS profile
+                  ON profile.account_id = account.account_id
+                 AND profile.profile_id = account.default_threads_profile_id"""
+            ).fetchone(),
+        )
+        profile_columns = cast(
+            "list[tuple[int, str, str, int, str | None, int]]",
+            connection.execute("PRAGMA table_info(hosted_threads_profiles)").fetchall(),
+        )
+        assert default_binding == (1,)
+        assert "access_token" not in {row[1] for row in profile_columns}
+
+
+def test_threads_publications_and_engagement_are_durable_and_duplicate_safe() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace Korea', 'KR', 'ko', 'Asia/Seoul',
+                    '07:30', '19:30', 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json, image_key,
+             image_sha256, status, revision, created_at, updated_at)
+            VALUES ('candidate-1', 'trace_kr', 'auto', 'KR', 'topic', 'caption', 'why',
+                    '[]', '[]', 'prompt', '{}', 'image.png', ?, 'submitted', 3, 1, 1)""",
+            ("a" * 64,),
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_threads_profiles
+            (profile_id, account_id, threads_user_id, username, scopes_json,
+             token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+            VALUES ('profile-a', 'trace_kr', 'threads-a', 'trace_a', '[]',
+                    X'01', X'02', 'v1', 'active', 'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_jp', 'Trace Japan', 'JP', 'ja', 'Asia/Tokyo',
+                    '07:30', '19:30', 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json, status,
+             revision, created_at, updated_at)
+            VALUES ('candidate-foreign', 'trace_jp', 'auto', 'JP', 'topic', 'caption',
+                    'why', '[]', '[]', 'prompt', '{}', 'submitted', 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json, status,
+             revision, created_at, updated_at)
+            VALUES ('candidate-2', 'trace_kr', 'auto', 'KR', 'topic', 'caption',
+                    'why', '[]', '[]', 'prompt', '{}', 'submitted', 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            """UPDATE hosted_workspace_candidates SET threads_profile_id = 'profile-a'
+            WHERE candidate_id = 'candidate-1'"""
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                "DELETE FROM hosted_threads_profiles WHERE profile_id = 'profile-a'"
+            )
+        publication_insert = """INSERT INTO hosted_threads_publications
+            (publication_id, account_id, candidate_id, candidate_revision, profile_id,
+             state, caption_snapshot, image_key_snapshot, image_sha256_snapshot,
+             timezone_snapshot, posting_slot_snapshot, scheduled_at, created_at, updated_at)
+            VALUES (?, 'trace_kr', 'candidate-1', ?, 'profile-a', ?, 'caption',
+                    'image.png', ?, 'Asia/Seoul', 'evening',
+                    '2026-09-01T10:30:00Z', 'now', 'now')"""
+        _ = connection.execute(publication_insert, ("publication-1", 3, "scheduled", "a" * 64))
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """UPDATE hosted_threads_publications SET candidate_revision = 4
+                WHERE publication_id = 'publication-1'"""
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """UPDATE hosted_threads_publications
+                SET candidate_id = 'candidate-2', candidate_revision = 1
+                WHERE publication_id = 'publication-1'"""
+            )
+        _ = connection.execute(
+            """UPDATE hosted_threads_publications
+            SET candidate_id = 'candidate-1', candidate_revision = 3
+            WHERE publication_id = 'publication-1'"""
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """UPDATE hosted_threads_publications
+                SET candidate_id = 'candidate-foreign' WHERE publication_id = 'publication-1'"""
+            )
+        states = (
+            "canceled",
+            "creating_container",
+            "container_ready",
+            "publishing",
+            "published",
+            "unknown_side_effect",
+            "failed",
+            "rate_limited",
+            "auth_required",
+            "unavailable",
+        )
+        _ = connection.executemany(
+            publication_insert,
+            [
+                (f"publication-{index}", index, state, "a" * 64)
+                for index, state in enumerate(states, 10)
+            ],
+        )
+        metric_insert = """INSERT INTO hosted_threads_metric_snapshots
+            (snapshot_id, account_id, publication_id, observed_at, views, likes, replies,
+             reposts, quotes, shares, delete_after)
+            VALUES (?, 'trace_kr', 'publication-1', ?, ?, 2, 3, 4, 5, 6, '2027-09-01')"""
+        _ = connection.executemany(metric_insert, [("metric-1", "t1", 10), ("metric-2", "t2", 8)])
+        reply_insert = """INSERT INTO hosted_threads_replies
+            (reply_id, account_id, publication_id, threads_reply_id, root_threads_post_id,
+             body, replied_at, first_seen_at, last_seen_at, delete_after)
+            VALUES (?, 'trace_kr', 'publication-1', 'reply-external', 'post-1',
+                    'reply text', 't0', 't1', 't1', '2026-10-01')"""
+        _ = connection.execute(reply_insert, ("reply-1",))
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                publication_insert, ("publication-duplicate", 3, "scheduled", "a" * 64)
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                publication_insert, ("publication-invalid", 99, "invalid", "a" * 64)
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(reply_insert, ("reply-2",))
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(metric_insert, ("metric-3", "t1", 7))
+        assert connection.execute(
+            "SELECT COUNT(*), MIN(views), MAX(views) FROM hosted_threads_metric_snapshots"
+        ).fetchone() == (2, 8, 10)
+        indexes = {
+            row[0]
+            for row in cast(
+                "list[tuple[str]]",
+                connection.execute(
+                    """SELECT name FROM sqlite_master
+                    WHERE type = 'index' AND name LIKE 'hosted_threads_%'"""
+                ).fetchall(),
+            )
+        }
+        assert {
+            "hosted_threads_oauth_states_expiry",
+            "hosted_threads_profiles_token_expiry",
+            "hosted_threads_publications_scheduling",
+            "hosted_threads_publications_poll",
+            "hosted_threads_metric_snapshots_cleanup",
+            "hosted_threads_replies_cleanup",
+        } <= indexes
+        _ = connection.execute(
+            """UPDATE hosted_workspace_candidates SET threads_profile_id = NULL
+            WHERE candidate_id = 'candidate-1'"""
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                "DELETE FROM hosted_threads_profiles WHERE profile_id = 'profile-a'"
+            )
+        _ = connection.execute(
+            "DELETE FROM hosted_threads_publications WHERE profile_id = 'profile-a'"
+        )
+        _ = connection.execute("DELETE FROM hosted_threads_profiles WHERE profile_id = 'profile-a'")
+        dangling = cast(
+            "tuple[int, int] | None",
+            connection.execute(
+                """SELECT
+                    (SELECT COUNT(*) FROM hosted_workspace_candidates
+                     WHERE threads_profile_id IS NOT NULL),
+                    (SELECT COUNT(*) FROM hosted_threads_publications
+                     WHERE profile_id = 'profile-a')"""
+            ).fetchone(),
+        )
+        assert dangling == (0, 0)
+
+
+def test_threads_profile_cannot_move_to_a_different_account_when_bound() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.executemany(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES (?, ?, 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 'now', 'now')""",
+            [("account-a", "Account A"), ("account-b", "Account B")],
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_threads_profiles
+            (profile_id, account_id, threads_user_id, username, scopes_json,
+             token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+            VALUES ('profile-a', 'account-a', 'external-a', 'account_a', '[]',
+                    X'01', X'02', 'v1', 'active', 'now', 'now')"""
+        )
+        _ = connection.execute(
+            """UPDATE hosted_workspace_accounts SET default_threads_profile_id = 'profile-a'
+            WHERE account_id = 'account-a'"""
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """UPDATE hosted_threads_profiles SET account_id = 'account-b'
+                WHERE profile_id = 'profile-a'"""
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """UPDATE hosted_threads_profiles SET profile_id = 'profile-moved'
+                WHERE profile_id = 'profile-a'"""
+            )
+
+
+def test_threads_publication_candidate_cannot_move_to_a_different_account() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.executemany(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES (?, ?, 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 'now', 'now')""",
+            [("account-a", "Account A"), ("account-b", "Account B")],
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json, image_key,
+             image_sha256, status, revision, created_at, updated_at)
+            VALUES ('candidate-a', 'account-a', 'auto', 'KR', 'topic', 'caption', 'why',
+                    '[]', '[]', 'prompt', '{}', 'image.png', ?, 'submitted', 1, 'now', 'now')""",
+            ("a" * 64,),
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_threads_profiles
+            (profile_id, account_id, threads_user_id, username, scopes_json,
+             token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+            VALUES ('profile-a', 'account-a', 'external-a', 'account_a', '[]',
+                    X'01', X'02', 'v1', 'active', 'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_threads_publications
+            (publication_id, account_id, candidate_id, candidate_revision, profile_id,
+             state, caption_snapshot, image_key_snapshot, image_sha256_snapshot,
+             timezone_snapshot, posting_slot_snapshot, scheduled_at, created_at, updated_at)
+            VALUES ('publication-a', 'account-a', 'candidate-a', 1, 'profile-a', 'scheduled',
+                    'caption', 'image.png', ?, 'Asia/Seoul', 'morning', 'later', 'now', 'now')""",
+            ("a" * 64,),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """UPDATE hosted_workspace_candidates SET account_id = 'account-b'
+                WHERE candidate_id = 'candidate-a'"""
+            )
+
+
+def test_threads_oauth_reconnect_profile_is_account_scoped_and_deleted_with_profile() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.executemany(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES (?, ?, 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 'now', 'now')""",
+            [("account-a", "Account A"), ("account-b", "Account B")],
+        )
+        _ = connection.executemany(
+            """INSERT INTO hosted_threads_profiles
+            (profile_id, account_id, threads_user_id, username, scopes_json,
+             token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+            VALUES (?, ?, ?, ?, '[]', X'01', X'02', 'v1', 'active', 'now', 'now')""",
+            [
+                ("profile-a", "account-a", "external-a", "account_a"),
+                ("profile-b", "account-b", "external-b", "account_b"),
+            ],
+        )
+        oauth_insert = """INSERT INTO hosted_threads_oauth_states
+            (oauth_state_id, account_id, state_sha256, reconnect_profile_id, redirect_uri,
+             created_at, expires_at)
+            VALUES (?, 'account-a', ?, ?, 'https://workspace.example/callback', 't0', 't1')"""
+        _ = connection.execute(oauth_insert, ("oauth-a", "a" * 64, "profile-a"))
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(oauth_insert, ("oauth-b", "b" * 64, "profile-b"))
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(oauth_insert, ("oauth-missing", "c" * 64, "missing"))
+        _ = connection.execute("DELETE FROM hosted_threads_profiles WHERE profile_id = 'profile-a'")
+
+        assert connection.execute(
+            "SELECT COUNT(*) FROM hosted_threads_oauth_states"
+        ).fetchone() == (0,)
 
 
 def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() -> None:

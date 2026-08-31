@@ -67,6 +67,10 @@ jobs:
       CF_D1_DATABASE_ID: ${{ vars.CF_D1_DATABASE_ID }}
       TRACE_DEPLOY_SHA: ${{ github.sha }}
       TRACE_MARKETING_HEALTH_URL: ${{ vars.TRACE_MARKETING_HEALTH_URL }}
+      THREADS_APP_ID: ${{ vars.THREADS_APP_ID }}
+      THREADS_GRAPH_API_VERSION: ${{ vars.THREADS_GRAPH_API_VERSION }}
+      THREADS_PUBLIC_ORIGIN: ${{ vars.THREADS_PUBLIC_ORIGIN }}
+      THREADS_REDIRECT_URI: ${{ vars.THREADS_REDIRECT_URI }}
 
     steps:
       - name: Check out the merged revision
@@ -114,7 +118,7 @@ jobs:
                 --retry 3 --retry-all-errors --retry-delay 3 \
                 "$url")"
               if jq -e --arg sha "$TRACE_DEPLOY_SHA" \
-                '.ok == true and .commit_sha == $sha' <<<"$response" >/dev/null; then
+                '.ok == true and .commit_sha == $sha and (.threads_ready | type) == "boolean"' <<<"$response" >/dev/null; then
                 printf '%s\n' "$response"
                 return 0
               fi
@@ -133,6 +137,7 @@ jobs:
           test "${workspace#*data-workspace-live}" != "$workspace"
           test "${workspace#*data-context-select}" != "$workspace"
           test "${workspace#*data-worker-title}" != "$workspace"
+          test "${workspace#*data-threads-manager-open}" != "$workspace"
           test "${workspace#*워크스페이스 접속 ID}" = "$workspace"
 
           session="$(curl --fail --silent --show-error \

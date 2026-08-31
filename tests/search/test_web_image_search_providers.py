@@ -21,15 +21,15 @@ if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class RecordingHttp:
     response: HttpResponse
-    url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
 
     def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
-        self.url = url
-        self.headers = dict(headers)
+        _ = url
+        self.headers.clear()
+        self.headers.update(headers)
         return self.response
 
     def post_json(
@@ -92,15 +92,9 @@ def test_ddgs_image_provider_reads_cli_json_output_file(
     assert response.results[0].width == 1200
 
 
-def test_ddgs_image_provider_asks_the_search_engine_for_large_images(
+def test_ddgs_image_provider_asks_for_tall_wallpaper_photos(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Open-web image search answers with news photography unless told otherwise.
-
-    Every row came back around 600x400 landscape, which the 800px composition gate then
-    threw away, so the judge was handed an empty pool. The size filter is the one narrowing
-    the provider itself can do, before anything is downloaded.
-    """
     # Given a ddgs-compatible command that records how it was invoked
     seen: list[tuple[str, ...]] = []
 
@@ -126,9 +120,12 @@ def test_ddgs_image_provider_asks_the_search_engine_for_large_images(
     # When an image search runs
     _ = DdgsImageSearchProvider(timeout_seconds=5).search("KIA 타이거즈 배경화면", 20)
 
-    # Then the request carries the size filter alongside the query it was given
+    # Then the provider narrows open-web results to safe portrait wallpaper photography
     argv = seen[0]
-    assert argv[argv.index("--size") + 1] == "Large"
+    assert argv[argv.index("--size") + 1] == "Wallpaper"
+    assert argv[argv.index("--layout") + 1] == "Tall"
+    assert argv[argv.index("--type_image") + 1] == "photo"
+    assert argv[argv.index("--safesearch") + 1] == "moderate"
     assert argv[argv.index("--query") + 1] == "KIA 타이거즈 배경화면"
     assert argv[argv.index("--max_results") + 1] == "20"
 

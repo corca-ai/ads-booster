@@ -17,6 +17,10 @@ import {
   reserveWorkerTaskCallback,
 } from "./mac-workers.js";
 import { deploymentHealth } from "./deployment-health.js";
+import { runHostedThreadsEngagement } from "./threads/engagement.js";
+import { dispatchHostedThreadsPublication } from "./threads/publication.js";
+import { runHostedThreadsPublications } from "./threads/scheduling.js";
+import { threadsConfigurationState } from "./threads/config.js";
 
 import {
   accountName,
@@ -448,9 +452,16 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
+    const threadsTasks = threadsConfigurationState(env) === "ready"
+      ? [
+          runHostedThreadsPublications(env, dispatchHostedThreadsPublication),
+          runHostedThreadsEngagement(env),
+        ]
+      : [];
     ctx.waitUntil(Promise.all([
       startDueRuns(env),
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
+      ...threadsTasks,
     ]));
   },
 };

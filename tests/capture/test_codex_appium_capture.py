@@ -15,10 +15,11 @@ from ads_booster.capture.codex_appium_job import (
     CodexAppiumJobContract,
     write_codex_appium_job_contract,
 )
-from ads_booster.contracts import PreparedBackground, TraceBackgroundSearchProvenance
+from ads_booster.contracts import ErrorCode, PreparedBackground, TraceBackgroundSearchProvenance
 
 from .codex_appium_support import (
     AcceptingEditorVerifier,
+    RecordingCalendarDataPort,
     RecordingCodexJob,
     RecordingPhotoImporter,
     RecordingReadiness,
@@ -114,6 +115,7 @@ def test_codex_appium_job_single_turn_when_executed_then_collects_native_export(
     readiness = RecordingReadiness(calls)
     adapter = CodexAppiumJobAdapter(
         codex=codex,
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -136,7 +138,16 @@ def test_codex_appium_job_single_turn_when_executed_then_collects_native_export(
     )
 
     # Then one Codex turn sits between native setup and independent collection
-    assert calls == ["ready", "clear", "import", "codex", "clear", "collect"]
+    assert calls == [
+        "ready",
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect",
+        "calendar_cleanup",
+    ]
     assert provenance.native_export_binding_verified is True
     assert provenance.session_id == "appium-session-1"
     recorded_payload = codex.payloads[0]
@@ -148,17 +159,20 @@ def test_codex_appium_job_single_turn_when_executed_then_collects_native_export(
     assert "worker_credential" not in recorded_payload
 
 
-def test_codex_appium_job_when_calendar_is_outside_namespace_then_rejects_before_collection(
+def test_codex_appium_job_when_calendar_preparation_fails_then_stops_before_capture(
     tmp_path: Path,
 ) -> None:
-    # Given Codex reports a calendar outside the request-owned namespace
+    # Given worker-owned Calendar preparation fails before Trace editing starts
     calls: list[str] = []
-    result = completed_result()
-    result["created_calendar_titles"] = ["Personal"]
+    preparation_error = CaptureAdapterError(
+        code=ErrorCode.CALENDAR_PREPARATION_FAILED,
+        message="calendar preparation failed",
+    )
     adapter = CodexAppiumJobAdapter(
-        codex=RecordingCodexJob(
+        codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(
             calls,
-            result,
+            prepare_error=preparation_error,
         ),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
@@ -168,8 +182,8 @@ def test_codex_appium_job_when_calendar_is_outside_namespace_then_rejects_before
     job_root, background, output, background_sha256 = job_paths(tmp_path)
     contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
 
-    # When completion evidence is validated
-    with pytest.raises(CaptureAdapterError, match="not verified before save"):
+    # When post-barrier execution asks the Calendar port to prepare data
+    with pytest.raises(CaptureAdapterError, match="calendar preparation failed") as raised:
         _ = adapter.execute(
             contract,
             job_root=job_root,
@@ -178,19 +192,23 @@ def test_codex_appium_job_when_calendar_is_outside_namespace_then_rejects_before
             control=CaptureControl.start(timeout_seconds=30),
         )
 
-    # Then no native artifact is accepted
-    assert calls == ["clear", "import", "codex"]
+    # Then no later device side effect starts and there is nothing to clean up
+    assert raised.value.code is ErrorCode.CALENDAR_PREPARATION_FAILED
+    assert calls == ["calendar_prepare"]
 
 
-def test_codex_appium_job_when_cleanup_is_incomplete_then_rejects_collected_provenance(
+def test_codex_appium_job_when_codex_fails_then_cleans_up_worker_calendar(
     tmp_path: Path,
 ) -> None:
-    # Given Codex leaves one request-owned calendar behind
+    # Given worker Calendar preparation succeeds but Codex reports capture failure
     calls: list[str] = []
     result = completed_result()
-    result["remaining_calendar_titles"] = ["trace-request-1-calendar-1"]
+    result["status"] = "failed"
+    result["session_closed"] = False
+    result["error_code"] = "editor_failed"
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, result),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -199,8 +217,8 @@ def test_codex_appium_job_when_cleanup_is_incomplete_then_rejects_collected_prov
     job_root, background, output, background_sha256 = job_paths(tmp_path)
     contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
 
-    # When completion evidence is validated
-    with pytest.raises(CaptureAdapterError, match="did not complete cleanup"):
+    # When completion evidence is rejected after native collection
+    with pytest.raises(CaptureAdapterError, match="did not complete"):
         _ = adapter.execute(
             contract,
             job_root=job_root,
@@ -209,8 +227,148 @@ def test_codex_appium_job_when_cleanup_is_incomplete_then_rejects_collected_prov
             control=CaptureControl.start(timeout_seconds=30),
         )
 
-    # Then the already-collected artifact is not accepted as a completed job
-    assert calls == ["clear", "import", "codex", "clear", "collect"]
+    # Then the request-owned Calendar is still cleaned up
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect",
+        "calendar_cleanup",
+    ]
+
+
+def test_codex_appium_job_when_capture_and_cleanup_fail_then_preserves_cleanup_evidence(
+    tmp_path: Path,
+) -> None:
+    # Given Codex fails and worker Calendar cleanup also fails
+    calls: list[str] = []
+    result = completed_result()
+    result["status"] = "failed"
+    result["session_closed"] = False
+    result["error_code"] = "editor_failed"
+    cleanup_error = CaptureAdapterError(
+        code=ErrorCode.CALENDAR_CLEANUP_FAILED,
+        message="calendar cleanup failed",
+    )
+    adapter = CodexAppiumJobAdapter(
+        codex=RecordingCodexJob(calls, result),
+        calendar=RecordingCalendarDataPort(calls, cleanup_error=cleanup_error),
+        simulator=RecordingPhotoImporter(calls),
+        collector=RecordingWallpaperCollector(calls),
+        lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
+        editor_verifier=AcceptingEditorVerifier(),
+    )
+    job_root, background, output, background_sha256 = job_paths(tmp_path)
+    contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
+
+    # When the primary capture error exits through worker cleanup
+    with pytest.raises(CaptureAdapterError) as raised:
+        _ = adapter.execute(
+            contract,
+            job_root=job_root,
+            background=background,
+            output=output,
+            control=CaptureControl.start(timeout_seconds=30),
+        )
+
+    # Then the capture failure remains primary and cleanup evidence is retained
+    assert raised.value.code is ErrorCode.SCENE_CAPTURE_FAILED
+    assert raised.value.cleanup_error == "calendar cleanup failed"
+    assert calls[-1] == "calendar_cleanup"
+
+
+def test_codex_appium_job_when_cancelled_after_prepare_then_uses_cleanup_budget(
+    tmp_path: Path,
+) -> None:
+    # Given cancellation arrives after the request-owned Calendar was prepared
+    calls: list[str] = []
+    cancel_file = tmp_path / "cancel"
+
+    class CancellingPhotoImporter:
+        def import_background(
+            self,
+            udid: str,
+            background: Path,
+            control: CaptureControl,
+        ) -> None:
+            del udid, background, control
+            calls.append("import")
+            _ = cancel_file.write_text("cancel", encoding="utf-8")
+            raise CaptureAdapterError(
+                code=ErrorCode.CAPTURE_CANCELLED,
+                message="capture cancelled",
+            )
+
+    adapter = CodexAppiumJobAdapter(
+        codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
+        simulator=CancellingPhotoImporter(),
+        collector=RecordingWallpaperCollector(calls),
+        lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
+        editor_verifier=AcceptingEditorVerifier(),
+    )
+    job_root, background, output, background_sha256 = job_paths(tmp_path)
+    contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
+
+    # When the post-barrier capture exits through cancellation
+    with pytest.raises(CaptureAdapterError) as raised:
+        _ = adapter.execute(
+            contract,
+            job_root=job_root,
+            background=background,
+            output=output,
+            control=CaptureControl.start(timeout_seconds=30, cancel_file=cancel_file),
+        )
+
+    # Then cleanup ignores the cancelled work budget and removes only its Calendar
+    assert raised.value.code is ErrorCode.CAPTURE_CANCELLED
+    assert raised.value.cleanup_error is None
+    assert calls == ["calendar_prepare", "clear", "import", "calendar_cleanup"]
+
+
+def test_codex_appium_job_when_unexpected_error_occurs_then_still_cleans_calendar(
+    tmp_path: Path,
+) -> None:
+    # Given an unexpected adapter defect occurs after Calendar preparation
+    calls: list[str] = []
+
+    class ExplodingPhotoImporter:
+        def import_background(
+            self,
+            udid: str,
+            background: Path,
+            control: CaptureControl,
+        ) -> None:
+            del udid, background, control
+            calls.append("import")
+            message = "unexpected adapter defect"
+            raise AssertionError(message)
+
+    adapter = CodexAppiumJobAdapter(
+        codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
+        simulator=ExplodingPhotoImporter(),
+        collector=RecordingWallpaperCollector(calls),
+        lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
+        editor_verifier=AcceptingEditorVerifier(),
+    )
+    job_root, background, output, background_sha256 = job_paths(tmp_path)
+    contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
+
+    # When execution exits through that unexpected error
+    with pytest.raises(AssertionError, match="unexpected adapter defect"):
+        _ = adapter.execute(
+            contract,
+            job_root=job_root,
+            background=background,
+            output=output,
+            control=CaptureControl.start(timeout_seconds=30),
+        )
+
+    # Then the original error propagates after request-owned Calendar cleanup
+    assert calls == ["calendar_prepare", "clear", "import", "calendar_cleanup"]
 
 
 def test_codex_appium_job_when_background_digest_changes_then_fails_before_side_effect(
@@ -220,6 +378,7 @@ def test_codex_appium_job_when_background_digest_changes_then_fails_before_side_
     calls: list[str] = []
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -249,6 +408,7 @@ def test_codex_appium_job_when_workspace_has_symlink_then_fails_before_side_effe
     calls: list[str] = []
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
