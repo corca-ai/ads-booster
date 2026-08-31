@@ -26,6 +26,18 @@ export async function receiveHostedGenerationCallback(env, task, callback, worke
   if (!["succeeded", "failed", "unknown_side_effect"].includes(status)) {
     throw new HttpError(400, "invalid hosted generation result status");
   }
+  let publishedPayload = {};
+  try {
+    publishedPayload = JSON.parse(task.task_json)?.payload ?? {};
+  } catch {
+    throw new HttpError(409, "hosted generation task payload is invalid");
+  }
+  if (status === "succeeded" && publishedPayload.feedback_context_sha256 && (
+    callback.result?.output?.feedback_application_sha256
+      !== publishedPayload.feedback_context_sha256
+  )) {
+    throw new HttpError(409, "hosted generation feedback receipt does not match task");
+  }
   const storedResultJson = JSON.stringify(callback.result);
   if (task.callback_id) {
     if (task.callback_id !== callback.callback_id) throw new HttpError(409, "conflicting callback");
@@ -40,12 +52,6 @@ export async function receiveHostedGenerationCallback(env, task, callback, worke
   }
   let created = 0;
   if (status === "succeeded") {
-    let profileId = null;
-    try {
-      profileId = JSON.parse(task.task_json)?.payload?.context_profile_id ?? null;
-    } catch {
-      profileId = null;
-    }
     // A batch that produced three of four is three worth keeping, so a partial result is
     // stored and the shortfall is reported through the task row rather than thrown away.
     const applied = await applyHostedGenerationResult(
@@ -54,7 +60,9 @@ export async function receiveHostedGenerationCallback(env, task, callback, worke
         task_id: task.task_id,
         account_id: task.account_id,
         persona_id: task.persona_id ?? null,
-        context_profile_id: profileId,
+        context_profile_id: publishedPayload.context_profile_id ?? null,
+        feedback_rules: publishedPayload.feedback_context?.rules ?? [],
+        feedback_context_sha256: publishedPayload.feedback_context_sha256 ?? null,
       },
       callback.result?.output,
     );

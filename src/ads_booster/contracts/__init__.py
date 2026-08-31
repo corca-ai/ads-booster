@@ -1,3 +1,4 @@
+from ads_booster.contracts.feedback import FeedbackContext
 from ads_booster.contracts.generation import (
     GenerationReferenceImage,
     MarketingContextBundle,
@@ -23,6 +24,7 @@ __all__ = [
     "DeviceKind",
     "DeviceTarget",
     "ErrorCode",
+    "FeedbackContext",
     "GenerationReferenceImage",
     "MarketingContextBundle",
     "PersonaProfile",

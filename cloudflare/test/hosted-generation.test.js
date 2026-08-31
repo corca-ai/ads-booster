@@ -18,7 +18,7 @@ import { receiveHostedGenerationCallback } from "../src/hosted-generation-callba
 
 const ACCOUNT_ID = "trace_demo_kr";
 // What an updated worker advertises, and what one that predates the field says instead.
-const CAPABLE = { task_kinds: "capture,generate_candidates" };
+const CAPABLE = { task_kinds: "capture,generate_candidates", feedback_context_v1: true };
 const LEGACY = { native_appium: true };
 const REGISTRY = { global: "전역", countries: { KR: "한국", JP: "일본" } };
 
@@ -187,6 +187,12 @@ function environment(options = {}) {
                   })),
                 };
               }
+              if (matches(sql, "FROM hosted_workspace_feedback_events")) {
+                return { results: options.feedbackRows ?? [] };
+              }
+              if (matches(sql, "FROM hosted_workspace_feedback_rule_overrides")) {
+                return { results: options.feedbackOverrides ?? [] };
+              }
               if (matches(sql, "FROM hosted_workspace_capture_tasks", "kind = 'generate_candidates'")) {
                 const scoped = sql.includes("AND persona_id = ?")
                   ? tasks.filter((row) => row.account_id === values[0]
@@ -221,7 +227,8 @@ function environment(options = {}) {
               }
               if (matches(sql, "INSERT INTO hosted_workspace_capture_tasks")) {
                 if (workers.length === 0) return { meta: { changes: 0 } };
-                const [taskId, runId, accountId, idempotencyKey, taskJson, personaId, createdAt] =
+                const [taskId, runId, accountId, idempotencyKey, taskJson, personaId,
+                  requiredCapability, createdAt] =
                   values;
                 tasks.push({
                   task_id: taskId,
@@ -235,6 +242,7 @@ function environment(options = {}) {
                   dispatch_mode: "worker_broker",
                   kind: "generate_candidates",
                   persona_id: personaId,
+                  required_capability: requiredCapability,
                   worker_id: "worker-1",
                   lease_id: "lease-1",
                   execution_started_at: createdAt,
@@ -324,16 +332,22 @@ const generateRequest = (personaId = null) =>
     body: JSON.stringify({ context_profile_id: "profile-1" }),
   });
 
-const callbackFor = (task, result) => ({
+const callbackFor = (task, result) => {
+  const expectedFeedback = JSON.parse(task.task_json).payload.feedback_context_sha256;
+  const received = result.status === "succeeded"
+    ? { ...result, output: { ...result.output, feedback_application_sha256: expectedFeedback } }
+    : result;
+  return ({
   schema_version: "1",
   callback_id: `${task.task_id}:completed`,
   task_id: task.task_id,
   run_id: task.run_id,
   account_id: task.account_id,
   kind: "generate_candidates",
-  result,
+  result: received,
   completed_at: "2026-08-28T00:00:00.000Z",
-});
+  });
+};
 
 test("a published batch carries what this persona has already been given", async () => {
   // The worker reads no database, so anything the generator has to avoid repeating has to
@@ -388,6 +402,33 @@ test("the generate route publishes a worker job and answers before it is written
   assert.equal(state.tasks[0].persona_id, "persona-1");
   assert.equal(state.tasks[0].kind, "generate_candidates");
   assert.equal(state.tasks[0].dispatch_mode, "worker_broker");
+  assert.equal(state.tasks[0].required_capability, "feedback_context_v1");
+});
+
+test("promoted caption feedback is bound to the published batch by digest", async () => {
+  const feedbackRows = [1, 2, 3].map((index) => ({
+    candidate_id: `reviewed-${index}`,
+    candidate_revision: index,
+    tags_json: JSON.stringify(["컨셉이 약함"]),
+    rating: 2,
+    stage: "caption",
+    created_at: 100 - index,
+  }));
+  const state = environment({
+    workers: [CAPABLE],
+    personas: [personaRow()],
+    feedbackRows,
+  });
+
+  const response = await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
+
+  assert.equal(response.status, 202);
+  const payload = JSON.parse(state.tasks[0].task_json).payload;
+  assert.equal(payload.feedback_context.schema_version, "trace.feedback-context.v1");
+  assert.equal(payload.feedback_context.stage, "caption");
+  assert.equal(payload.feedback_context.scope.context_profile_id, "profile-1");
+  assert.equal(payload.feedback_context.rules[0].rule_id, "caption-concept-specificity");
+  assert.match(payload.feedback_context_sha256, /^[a-f0-9]{64}$/u);
 });
 
 test("a persona's country decides the corpus the worker is asked to read", async () => {
@@ -532,6 +573,24 @@ test("the worker callback stores the batch under its persona and keeps the gener
   // A partial batch is stored and the shortfall is reported rather than thrown away.
   assert.equal(JSON.parse(task.result_json).output.failures, 1);
   assert.equal(task.state, "succeeded");
+});
+
+test("a successful callback without the selected feedback receipt is refused", async () => {
+  const state = environment({ workers: [CAPABLE], personas: [personaRow()] });
+  await handleHostedWorkspace(generateRequest("persona-1"), state.env, REGISTRY);
+  const callback = callbackFor(state.tasks[0], {
+    status: "succeeded",
+    output: { candidates: [workerDraft()] },
+  });
+  callback.result.output.feedback_application_sha256 = "f".repeat(64);
+
+  await assert.rejects(
+    receiveHostedGenerationCallback(state.env, state.tasks[0], callback, {
+      worker_id: "worker-1",
+    }),
+    /feedback receipt does not match/u,
+  );
+  assert.equal(state.candidates.length, 0);
 });
 
 test("a callback retried after the rows were written does not write them twice", async () => {

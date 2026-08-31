@@ -189,6 +189,7 @@ class CandidateDraftEngine:
         brief: CandidateAccountBrief | None = None,
         interests: Sequence[str] = (),
         history: tuple[CandidateHistoryEntry, ...] = (),
+        learned_feedback: tuple[str, ...] = (),
     ) -> CandidateDraftBatch:
         """Write the requested candidates, one provider call per batch of `max_batch`.
 
@@ -216,6 +217,7 @@ class CandidateDraftEngine:
                     country=country,
                     language=language,
                     history=written.entries(),
+                    learned_feedback=learned_feedback,
                 )
             except CandidateGenerationError as error:
                 failures += len(chunk)
@@ -257,6 +259,7 @@ class CandidateDraftEngine:
         country: str,
         language: str,
         history: tuple[CandidateHistoryEntry, ...],
+        learned_feedback: tuple[str, ...],
     ) -> tuple[DraftedCandidate, ...]:
         """Write one batch: size the sample to fit, ask once, record what the call read."""
         sampled, instruction = self._instruction(
@@ -267,6 +270,7 @@ class CandidateDraftEngine:
             country=country,
             language=language,
             history=history,
+            learned_feedback=learned_feedback,
         )
         provenance = self._provenance(bundle, instruction, assignments, sampled)
         drafts = self._draft(f"{index:02d}", instruction, assignments, country)
@@ -290,6 +294,7 @@ class CandidateDraftEngine:
         country: str,
         language: str,
         history: tuple[CandidateHistoryEntry, ...],
+        learned_feedback: tuple[str, ...],
     ) -> tuple[tuple[CandidateDocument, ...], str]:
         """Build the instruction, shrinking the reference sample until it fits.
 
@@ -309,6 +314,7 @@ class CandidateDraftEngine:
                 language=language,
                 history=history,
                 account=brief,
+                learned_feedback=learned_feedback,
             )
             if len(instruction) <= self.max_instruction_chars:
                 return sampled, instruction

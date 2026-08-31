@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 ## Runtime boundary
 
@@ -60,6 +60,26 @@ flowchart LR
    pixels unchanged; no image model or fixed-band compositor participates.
 8. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1 and opens human image review.
+
+## Hosted feedback loop
+
+Caption and image review events are durable D1 evidence. A rule is promoted only from rating 1–2
+rejections by three distinct candidate IDs in the same account, context-profile scope, stage, and
+tag. An unprofiled event stays in the explicit `unprofiled` scope. A control-plane override can
+disable a promoted rule without deleting its evidence.
+
+Before generation or capture, Cloudflare freezes a `trace.feedback-context.v1` envelope and its
+canonical SHA-256 into the task. Caption tasks carry promoted caption rules. Image tasks carry
+promoted image rules plus, only for the same candidate retry, the exact preceding image rejection
+event, capture task, reviewed artifact digest, tags, and private note. The note is untrusted task
+data: it is never promoted or copied into another candidate's task.
+
+Workers advertise `feedback_context_v1`; D1 does not lease new feedback-aware work to older
+workers. A successful callback must return the selected envelope digest as
+`feedback_application_sha256`, otherwise Cloudflare refuses it. This receipt proves that the
+worker consumed the selected context boundary, not that the model semantically obeyed it. Human
+review remains the semantic and visual gate. Candidate/image schemas, native PNG/manifest
+validation, R2 storage, review states, and the no-auto-publishing boundary are unchanged.
 
 The v2 contract fixes non-secret input and completion bindings, not selectors or UI procedures.
 

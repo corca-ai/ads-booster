@@ -169,7 +169,7 @@ def test_a_batch_of_four_is_one_provider_call(tmp_path: Path) -> None:
     assert [drafted.caption_form for drafted in batch.drafts] == [
         CaptionForm.HOOK,
         CaptionForm.DAILY,
-        CaptionForm.HOOK,
+        CaptionForm.RECOMMEND,
         CaptionForm.TESTIMONY,
     ]
 
@@ -209,7 +209,7 @@ def test_the_instruction_states_one_assignment_line_per_candidate(tmp_path: Path
     assert "근거 레퍼런스: kr-001, kr-003, kr-014." in instruction
     assert "- testimony (간증글): 쓰기 전과 후에" in instruction
     assert "근거 레퍼런스: kr-010." in instruction
-    assert "간증글은 한 배치에 많아야 하나입니다" in instruction
+    assert "간증글과 추천글은 각각 한 배치에 많아야 하나입니다" in instruction
     # And the axis is framed as where to start, not as words to copy
     assert "캡션에 옮겨 적을 문구가 아니라" in instruction
 
@@ -240,6 +240,7 @@ def test_a_batch_carries_at_most_one_testimonial(tmp_path: Path) -> None:
         forms = [assignment.form for assignment in assign_candidates(_FOUR[:count])]
         assert len(forms) == count
         assert forms.count(CaptionForm.TESTIMONY) <= 1
+        assert forms.count(CaptionForm.RECOMMEND) <= 1
     # And a single candidate is not spent on the one form that talks about the product
     batch = _run(tmp_path, BatchAnswerClient(), domains=(CandidatePersonaDomain.SPORTS_FAN,))
     assert batch.drafts[0].caption_form is CaptionForm.HOOK
@@ -290,7 +291,7 @@ def test_a_short_answer_keeps_the_candidates_it_did_return(tmp_path: Path) -> No
     assert [drafted.caption_form for drafted in batch.drafts] == [
         CaptionForm.HOOK,
         CaptionForm.DAILY,
-        CaptionForm.HOOK,
+        CaptionForm.RECOMMEND,
     ]
 
 
