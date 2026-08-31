@@ -10,6 +10,7 @@ from ads_booster.contracts.generation import MarketingContextBundle
 from ads_booster.contracts.native_export import PreparedBackground, TraceBackgroundSearchProvenance
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.search.image.background import BackgroundSearchError, ImageSearchBackgroundFetcher
+from ads_booster.search.image.contracts import BackgroundBrief
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,7 +35,7 @@ class HostedBackgroundPreparer:
         background_path = job_root / _BACKGROUND_PATH
         provenance_path = job_root / _BACKGROUND_PROVENANCE_PATH
         try:
-            background = self.fetcher.fetch(query, background_path)
+            background = self.fetcher.fetch(query, background_path, _brief(bundle, query))
         except BackgroundSearchError as error:
             raise MarketingExecutionError(error.code) from error
         if background.path != background_path or not background_path.is_file():
@@ -66,3 +67,21 @@ class HostedBackgroundPreparer:
             sha256=digest,
             provenance=loaded,
         )
+
+
+def _brief(bundle: MarketingContextBundle, query: str) -> BackgroundBrief:
+    """Describe whose lock screen this is, for the judge downstream.
+
+    Only what a picture can be checked against: the country, so a background does not put
+    somebody else's street in a Korean persona's phone, and what this person is into, so a
+    row belonging to a different life is visible as such. The subject vocabulary term would
+    belong here too, but it never reaches this contract - the worker composes the intent
+    from it and sends only that.
+    """
+    persona = bundle.persona
+    about = [persona.occupation or "", *persona.interests, *persona.traits]
+    return BackgroundBrief(
+        query=query,
+        country=persona.country,
+        persona=", ".join(part for part in about if part)[:500],
+    )

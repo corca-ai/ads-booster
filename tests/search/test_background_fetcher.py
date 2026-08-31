@@ -10,9 +10,11 @@ from PIL import Image
 
 from ads_booster.search.image.background import BackgroundSearchError, ImageSearchBackgroundFetcher
 from ads_booster.search.image.contracts import (
+    BackgroundBrief,
     ImageSearchError,
     ImageSearchResponse,
     ImageSearchResult,
+    JudgeCandidate,
 )
 from ads_booster.transport.http import HttpResponse
 
@@ -25,6 +27,7 @@ if TYPE_CHECKING:
 _IMAGE_MODEL_CALL_MESSAGE = "background search must not call an image model"
 _POST_MESSAGE = "background search must not post data"
 _EXPECTED_MAX_RESULTS = 25
+_JUDGE_DOWN_MESSAGE = "judge timed out"
 _PROVIDER_DOWN_CODE = "image_search_unavailable"
 _PROVIDER_DOWN_MESSAGE = "provider is down"
 
@@ -384,3 +387,131 @@ def test_background_fetcher_keeps_a_wallpaper_site_that_merely_offers_a_download
     # Then it survives: rejecting on "무료 다운로드" and "스톡" was measured against live
     # results and threw away cherry blossom and sunset wallpapers to catch one logo.
     assert background.image_url == image_url
+
+
+@dataclass
+class _RecordingJudge:
+    """Accepts the urls it is told to, and records how it was called."""
+
+    accept: tuple[str, ...]
+    calls: list[tuple[BackgroundBrief, tuple[JudgeCandidate, ...]]]
+
+    def choose(
+        self,
+        brief: BackgroundBrief,
+        candidates: tuple[JudgeCandidate, ...],
+    ) -> tuple[str, ...]:
+        self.calls.append((brief, candidates))
+        return tuple(url for url in self.accept if any(c.image_url == url for c in candidates))
+
+
+@dataclass(frozen=True, slots=True)
+class _BrokenJudge:
+    def choose(
+        self,
+        brief: BackgroundBrief,
+        candidates: tuple[JudgeCandidate, ...],
+    ) -> NoReturn:
+        del brief, candidates
+        raise TimeoutError(_JUDGE_DOWN_MESSAGE)
+
+
+def _poster_and_photo() -> tuple[ImageSearchResponse, dict[str, HttpResponse]]:
+    """A poster cut to exactly the phone's proportions, and a smaller real photograph.
+
+    This is the measured failure: geometry prefers the poster, because a composed graphic
+    is authored at the target resolution while a photograph is whatever shape it was shot.
+    """
+    poster_url = "https://images.example/champions-poster.png"
+    photo_url = "https://images.example/quiet-photo.png"
+    response = _response(
+        _result(poster_url, "https://kr.pinterest.com/pin/1", (1090, 1902)),
+        _result(photo_url, "https://blog.example/jeju", (773, 1031)),
+        query="KIA 타이거즈 배경화면",
+    )
+    http = {
+        poster_url: HttpResponse(200, _png_bytes((1090, 1902)), {}),
+        photo_url: HttpResponse(200, _png_bytes((773, 1031)), {}),
+    }
+    return response, http
+
+
+def test_background_fetcher_without_a_judge_still_prefers_the_phone_shaped_row(
+    tmp_path: Path,
+) -> None:
+    # Given no judge is wired
+    response, http = _poster_and_photo()
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response), http=_HttpFixture(http)
+    )
+
+    # When a background is fetched
+    background = fetcher.fetch(response.query, tmp_path / "background.png")
+
+    # Then geometry alone wins, which is exactly the behaviour the judge exists to correct
+    assert background.image_url == "https://images.example/champions-poster.png"
+
+
+def test_background_fetcher_lets_the_judge_overturn_the_geometry_winner(
+    tmp_path: Path,
+) -> None:
+    # Given a judge that rejects the poster and keeps the photograph
+    response, http = _poster_and_photo()
+    judge = _RecordingJudge(accept=("https://images.example/quiet-photo.png",), calls=[])
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response), http=_HttpFixture(http), judge=judge
+    )
+    brief = BackgroundBrief(
+        query=response.query, subject="sports_team", country="KR", persona="기아 팬 직장인"
+    )
+
+    # When a background is fetched
+    background = fetcher.fetch(response.query, tmp_path / "background.png", brief)
+
+    # Then the row geometry liked best is gone
+    assert background.image_url == "https://images.example/quiet-photo.png"
+    # And the judge saw the whole shortlist in one call, by thumbnail rather than original
+    assert len(judge.calls) == 1
+    seen_brief, seen_candidates = judge.calls[0]
+    assert seen_brief.subject == "sports_team"
+    assert len(seen_candidates) == 2
+    assert {c.thumbnail_url for c in seen_candidates} == set(http)
+
+
+def test_background_fetcher_when_the_judge_keeps_nothing_then_the_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    # Given a judge that finds nothing belonging on this persona's screen
+    response, http = _poster_and_photo()
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        http=_HttpFixture(http),
+        judge=_RecordingJudge(accept=(), calls=[]),
+    )
+    destination = tmp_path / "background.png"
+
+    # When a background is fetched
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, destination)
+
+    # Then it fails rather than falling back to geometry, which would hand the job the very
+    # row the judge just refused
+    assert failure.value.code == "background_search_judge_rejected_all"
+    assert not destination.exists()
+
+
+def test_background_fetcher_reports_an_unreachable_judge_under_its_own_code(
+    tmp_path: Path,
+) -> None:
+    # Given the judge cannot be reached
+    response, http = _poster_and_photo()
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response), http=_HttpFixture(http), judge=_BrokenJudge()
+    )
+
+    # When a background is fetched
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, tmp_path / "background.png")
+
+    # Then an outage is distinguishable from a verdict
+    assert failure.value.code == "background_search_judge_unavailable"

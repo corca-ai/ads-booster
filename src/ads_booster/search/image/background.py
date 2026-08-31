@@ -12,10 +12,13 @@ import httpx2
 from PIL import Image, UnidentifiedImageError
 
 from ads_booster.search.image.contracts import (
+    BackgroundBrief,
+    BackgroundJudge,
     ImageSearchError,
     ImageSearchProvider,
     ImageSearchResponse,
     ImageSearchResult,
+    JudgeCandidate,
 )
 
 if TYPE_CHECKING:
@@ -46,6 +49,10 @@ _NO_USABLE_IMAGE_CODE: Final = "background_search_no_usable_image"
 _NO_USABLE_IMAGE_MESSAGE: Final = "image search returned no usable approved background image"
 _INVALID_IMAGE_CODE: Final = "background_search_invalid_image"
 _INVALID_IMAGE_MESSAGE: Final = "image search returned an unreadable background image"
+_JUDGE_REJECTED_CODE: Final = "background_search_judge_rejected_all"
+_JUDGE_REJECTED_MESSAGE: Final = "no searched background belonged on this persona's screen"
+_JUDGE_FAILED_CODE: Final = "background_search_judge_unavailable"
+_JUDGE_FAILED_MESSAGE: Final = "the background judge could not be reached"
 _IMAGE_TOO_SMALL_CODE: Final = "background_search_image_too_small"
 _IMAGE_TOO_SMALL_MESSAGE: Final = (
     "image search returned a background image below the minimum resolution"
@@ -172,9 +179,27 @@ class ImageSearchBackgroundFetcher:
     # The ranking can only be as good as the pool it sees. With one search rather than three,
     # a wider page is what keeps the number of candidates reaching the ranking up.
     max_results: int = 25
+    # Optional so the fetcher keeps working where no judge is wired. Without one the choice
+    # is geometry alone, and geometry cannot see what an image is: measured on a live pool,
+    # it picked a KIA championship poster over eighteen alternatives and a cricket
+    # photograph for a query about a plain minimal wallpaper, because posters and cropped
+    # press photography are cut to exactly the phone's proportions.
+    judge: BackgroundJudge | None = None
 
-    def fetch(self, query: str, destination: Path) -> SearchedBackground:
-        selected = max(self._candidates(query), key=lambda candidate: candidate.score, default=None)
+    def fetch(
+        self,
+        query: str,
+        destination: Path,
+        brief: BackgroundBrief | None = None,
+    ) -> SearchedBackground:
+        shortlist = tuple(self._candidates(query))
+        if not shortlist:
+            raise BackgroundSearchError(
+                _NO_USABLE_IMAGE_CODE,
+                _NO_USABLE_IMAGE_MESSAGE,
+            )
+        shortlist = self._judged(shortlist, brief or BackgroundBrief(query=query))
+        selected = max(shortlist, key=lambda candidate: candidate.score, default=None)
         if selected is None:
             raise BackgroundSearchError(
                 _NO_USABLE_IMAGE_CODE,
@@ -196,6 +221,44 @@ class ImageSearchBackgroundFetcher:
             image_url=selected.result.image_url,
             source_url=selected.result.source_url,
         )
+
+    def _judged(
+        self,
+        shortlist: tuple[_BackgroundCandidate, ...],
+        brief: BackgroundBrief,
+    ) -> tuple[_BackgroundCandidate, ...]:
+        """Narrow the shortlist to what the judge says belongs on this person's screen.
+
+        Judging happens after the resolution gate so the call carries the rows that could
+        actually be used, and it is one call for the whole shortlist.
+
+        A judge that rejects everything fails the fetch rather than falling back to
+        geometry. Falling back would hand the job the very row the judge just refused,
+        since the poster it rejects is usually the one geometry likes best. A judge that
+        cannot be reached fails too, under its own code so an operator can tell an outage
+        from a verdict.
+        """
+        if self.judge is None:
+            return shortlist
+        candidates = tuple(
+            JudgeCandidate(
+                image_url=candidate.result.image_url,
+                thumbnail_url=candidate.result.thumbnail_url,
+                title=candidate.result.title,
+                width=candidate.width,
+                height=candidate.height,
+            )
+            for candidate in shortlist
+        )
+        try:
+            accepted = self.judge.choose(brief, candidates)
+        except Exception as error:  # any judge failure is one outcome here
+            raise BackgroundSearchError(_JUDGE_FAILED_CODE, _JUDGE_FAILED_MESSAGE) from error
+        approved = set(accepted)
+        kept = tuple(c for c in shortlist if c.result.image_url in approved)
+        if not kept:
+            raise BackgroundSearchError(_JUDGE_REJECTED_CODE, _JUDGE_REJECTED_MESSAGE)
+        return kept
 
     def _candidates(self, query: str) -> Iterator[_BackgroundCandidate]:
         # One search on the query as written. The previous shape ran the query three times
