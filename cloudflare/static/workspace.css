@@ -2443,7 +2443,7 @@ textarea:focus-visible {
   .worker-manager,
   .threads-manager { padding: var(--space-3); }
 
-  .worker-manager__heading,
+  .command-dialog .worker-manager__heading,
   .worker-manager__toolbar { align-items: stretch; flex-direction: column; }
 
   .worker-manager__heading > .button,
