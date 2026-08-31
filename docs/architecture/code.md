@@ -17,7 +17,11 @@ cli/marketing
      -> marketing/native_capture      prepare/execute and final validation
         -> marketing/background       background intent/provenance
         -> capture/codex_appium_job   immutable v2 contract
+        -> capture/calendar_automation_contract typed EventKit file contract
+        -> capture/calendar_preparation post-barrier seed/verify/cleanup
+        -> capture/calendar_lifecycle cleanup on every post-prepare exit
         -> capture/appium_codex       one job and native collector
+           -> capture/appium_codex_validation paths and completion proof
            -> capture/appium_editor_verifier live UI and process-binding proof
         -> providers/codex_cli        official CLI subprocess
 ```
@@ -33,7 +37,11 @@ cli/marketing
 | `native_capture.py` | hosted payload/context, request paths, native preview PNG validation | UI selectors, image editing |
 | `contracts/feedback.py` | strict `trace.feedback-context.v1` shape and canonical digest | rule promotion, review storage |
 | `codex_appium_job.py` | v2 context/device/digest/nonce/time/calendar contract | process execution |
-| `appium_codex.py` | device lock, contract file, one Codex result, native collection | UI reasoning |
+| `calendar_automation_contract.py` | typed prepare/cleanup request, result, and event time projection | EventKit execution, layout |
+| `calendar_preparation.py` | post-barrier Trace helper launch, Calendar proof and request-owned cleanup | Trace layout, Calendar UI navigation |
+| `calendar_lifecycle.py` | independent cleanup budget and primary/cleanup error preservation | EventKit execution |
+| `appium_codex.py` | device lock, Calendar lifetime, contract file, one Codex result, native collection | UI reasoning |
+| `appium_codex_validation.py` | request paths, result/Ready/Saved consistency, expected titles | process execution |
 | `appium_editor_verifier.py` | live editor titles and Trace process launch-binding verification | UI navigation, export rendering |
 | `codex_cli.py` | schema-constrained official CLI subprocess, bounded Ready-session recovery, and localhost-only permission profile | custom agent/auth/thread state, image generation |
 
@@ -41,8 +49,11 @@ cli/marketing
 marketing context, prepared background, device, locale/time zone, nonce, and calendar namespace.
 The contract is mode 0600 in a mode-0700 request root. Codex runs without user/project configuration;
 its commands can access the workspace and loopback Appium, but not home secrets or external hosts.
-The result reports UI completion, namespaced cleanup, and session close. Only the worker collector
-proves the App Group export and validates the manifest.
+The worker starts the DEBUG Trace EventKit helper only after execution admission. Its helper launch
+adds `-traceMarketingCalendarAutomation`; the final Codex editor keeps the original immutable launch
+arguments. Codex reports UI completion and session close only. Worker-owned Calendar proof and
+cleanup never enter Ready/Saved/result schemas. Only the worker collector proves the App Group export
+and validates the manifest.
 
 Cloudflare owns review-event binding, distinct-candidate rule promotion, override state, task
 selection, and callback receipt comparison. Python validates the same feedback envelope, inserts

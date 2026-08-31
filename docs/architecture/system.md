@@ -18,9 +18,10 @@ flowchart LR
   Inbox --> Prepare[Context background readiness]
   Prepare --> Admit[Local admission]
   Admit --> Barrier[D1 execution barrier]
-  Barrier --> Codex[One codex exec]
+  Barrier --> Calendar[EventKit seed and verify]
+  Calendar --> Codex[One codex exec]
   Codex --> Export[Trace PNG and manifest]
-  Export --> Validate[Independent validation]
+  Export --> Validate[Independent validation and Calendar cleanup]
   Validate --> Callback[Durable callback]
   Callback --> Store[R2 and D1]
   Store --> Review[Human review]
@@ -41,28 +42,40 @@ flowchart LR
    and checks readiness. These failures have not started Appium.
 5. Local SQLite records the immutable admission digest/nonce. The worker then records the D1
    barrier. If it cannot, it does not start native work.
-6. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
+6. After the barrier, the worker writes a digest-bound Calendar request into the Trace App Group and
+   launches the DEBUG Trace EventKit helper. The helper creates or reuses only the
+   `trace-<request-id>` calendar, writes the requested events, re-reads their exact titles and times,
+   and returns its calendar identifier and count. Every temporary event carries the request digest
+   as its ownership marker. A title collision without that marker is rejected, and a failure after
+   EventKit commit rolls the new calendar back before returning failure. This helper launch adds
+   `-traceMarketingCalendarAutomation`; it is not the final editor process.
+7. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
    user/project configuration disabled and the `trace-appium` permission profile. Commands can use
    the request workspace and the allowlisted loopback Appium endpoint, but cannot read home secrets
    or reach external hosts. The contract supplies context, prepared background, device/UDID, Trace
    bundle, endpoint, locale/time zone, digest/nonce, and `trace-<request-id>` calendar namespace.
-   Codex owns UI observation and navigation; the worker owns Simulator preparation and collection.
+   Codex owns Trace UI observation, layout, settings, and navigation. It does not open Calendar or
+   create, edit, or delete Calendar data. The worker owns deterministic data preparation, Simulator
+   preparation, collection, and cleanup.
    Before Save, Codex publishes its active wallpaper-editor state. The worker independently checks
    the Trace editor identifier, every requested title, and the live Trace process arguments in the
    same Appium session. A bundle-only terminate/activate cycle loses the immutable export binding,
    so the worker rejects that Ready marker before Save and permits one replacement Trace session.
-   Codex keeps request calendars, recreates the final Trace editor with the exact launch arguments,
-   restores the UI state, and submits a new Ready marker. The worker checks the binding again at the
+   Codex recreates the final Trace editor with the exact original launch arguments, restores the UI
+   state, and submits a new Ready marker. The worker checks the binding again at the
    saved marker, clears any earlier App Group export, and acknowledges Save only after those
    boundaries. A second rejected Ready ends the turn without Save. Collection therefore cannot wait
    on or accept an export from an unbound process.
-7. When Save is accepted, Trace renders the same complete SwiftUI `wallpaperPreview` visible in the
+8. When Save is accepted, Trace renders the same complete SwiftUI `wallpaperPreview` visible in the
    lock-screen settings flow. The native PNG contains its configured background, Trace content,
    date, clock, and lower lock-screen controls, without editor chrome or a Dynamic Island. The
    worker independently requires its PNG and manifest SHA-256, request digest, nonce, bundle, UDID,
    dimensions, native export binding, and `native_appium` provenance to agree. It returns those
-   pixels unchanged; no image model or fixed-band compositor participates.
-8. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
+   pixels unchanged; no image model or fixed-band compositor participates. After collection or a
+   terminal capture failure, the worker asks the helper to delete only the recorded request-owned
+   calendar whose identifier, namespace, digest marker, and events all match. Cleanup has an
+   independent bounded budget; a cleanup failure remains attached to the primary capture failure.
+9. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1 and opens human image review.
 
 ## Hosted feedback loop
@@ -109,7 +122,8 @@ deleted posts become unavailable. Reply bodies and metric snapshots expire after
 
 ## Failure, services, and compatibility
 
-A pre-barrier failure is ordinary task failure. A post-barrier crash or exception is
+A pre-barrier failure is ordinary task failure. Calendar preparation is a post-barrier side effect.
+A post-barrier crash or exception is
 `unknown_side_effect`; the worker never repeats potentially completed Trace work. Restart recovery
 requeues interrupted safe work and leaves post-barrier ambiguity visible. Callback retries are
 delivery-only.

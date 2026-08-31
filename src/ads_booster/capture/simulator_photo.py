@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, slots=True)
 class SimctlPhotoImporter:
     xcrun: str = "xcrun"
+    bundle_id: str = "com.corca.Trace"
     runner: CommandRunner = field(default_factory=SubprocessCommandRunner)
 
     def import_background(
@@ -29,6 +30,24 @@ class SimctlPhotoImporter:
                 code=ErrorCode.INPUT_ASSET_MISSING,
                 message="searched wallpaper background is unavailable",
             )
+        permission = self.runner.run(
+            (
+                self.xcrun,
+                "simctl",
+                "privacy",
+                udid,
+                "grant",
+                "photos",
+                self.bundle_id,
+            ),
+            control.remaining_seconds(),
+        )
+        if permission.returncode != 0:
+            raise CaptureAdapterError(
+                code=ErrorCode.SCENE_CAPTURE_FAILED,
+                message="Trace photo access could not be granted on the Simulator",
+            )
+        control.checkpoint()
         completed = self.runner.run(
             (self.xcrun, "simctl", "addmedia", udid, str(background)),
             control.remaining_seconds(),

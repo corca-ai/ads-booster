@@ -116,9 +116,6 @@ class CodexAppiumSavedState(BaseModel):
 
     schema_version: Literal["trace.codex-appium-saved.v1"] = Field(alias="schema")
     session_id: str = Field(min_length=1, max_length=200)
-    created_calendar_titles: tuple[Annotated[str, Field(min_length=1, max_length=200)], ...] = (
-        Field(min_length=1, max_length=8)
-    )
 
 
 class CodexAppiumReadyState(BaseModel):
@@ -126,9 +123,6 @@ class CodexAppiumReadyState(BaseModel):
 
     schema_version: Literal["trace.codex-appium-ready.v1"] = Field(alias="schema")
     session_id: str = Field(min_length=1, max_length=200)
-    created_calendar_titles: tuple[Annotated[str, Field(min_length=1, max_length=200)], ...] = (
-        Field(min_length=1, max_length=8)
-    )
     rendered_trace_item_titles: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...] = (
         Field(max_length=8)
     )
@@ -480,7 +474,6 @@ class CodexCli:
         payload: JsonObject = {
             "schema": "trace.codex-appium-collected.v1",
             "session_id": saved.session_id,
-            "created_calendar_titles": list(saved.created_calendar_titles),
             "collection_succeeded": collection_succeeded,
         }
         try:
@@ -501,7 +494,6 @@ class CodexCli:
         payload: JsonObject = {
             "schema": "trace.codex-appium-ready-verified.v1",
             "session_id": ready.session_id,
-            "created_calendar_titles": list(ready.created_calendar_titles),
             "rendered_trace_item_titles": list(ready.rendered_trace_item_titles),
             "ready_verified": ready_verified,
             "attempt": attempt,
@@ -518,10 +510,7 @@ class CodexCli:
         saved: CodexAppiumSavedState,
         ready: CodexAppiumReadyState,
     ) -> bool:
-        return (
-            saved.session_id == ready.session_id
-            and saved.created_calendar_titles == ready.created_calendar_titles
-        )
+        return saved.session_id == ready.session_id
 
     @staticmethod
     def _completed_process(

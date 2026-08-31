@@ -9,6 +9,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 
 | Change | Command |
 | --- | --- |
+| deterministic Calendar prepare/cleanup | `uv run pytest tests/capture/test_calendar_preparation.py tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/providers/test_codex_cli_handshake.py` |
 | v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/capture/test_appium_editor_verifier.py tests/providers/test_codex_cli_handshake.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
 | background and native validation | `uv run pytest tests/marketing/test_background.py tests/marketing/test_native_capture.py` |
 | hosted Codex candidate generation | `uv run pytest tests/marketing/test_hosted_generation.py tests/providers/test_codex_cli_generation.py` |
@@ -23,6 +24,8 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 
 For changed Python paths, run the matching scoped Ruff, formatter, BasedPyright, and
 `git diff --check`. Do not run the full suite or repository-wide static checks unless requested.
+The Trace checkout additionally runs `TraceTests/MarketingCalendarAutomationTests` on the selected
+iPhone Simulator. A source parse or Python fake does not prove EventKit authorization or data flow.
 
 ## Installed-worker proof
 
