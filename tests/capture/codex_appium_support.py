@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from PIL import Image
 
+from ads_booster.capture.calendar_automation_contract import CalendarPreparation
 from ads_booster.capture.codex_appium_job import (
     CodexAppiumJobContract,
     CodexAppiumJobIdentity,
@@ -31,7 +32,7 @@ from ads_booster.providers.codex_cli import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.capture.capture_safety import CaptureControl
+    from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureControl
     from ads_booster.capture.wallpaper_collection import WallpaperCollectionRequest
     from ads_booster.transport.json_types import JsonObject
 
@@ -61,15 +62,10 @@ class RecordingCodexJob:
         assert stat.S_IMODE(context_path.stat().st_mode) == 0o600
         self.calls.append("codex")
         session_id = self.result.get("session_id")
-        created_titles = self.result.get("created_calendar_titles")
         assert isinstance(session_id, str)
-        assert isinstance(created_titles, list)
-        parsed_titles = tuple(title for title in created_titles if isinstance(title, str))
-        assert len(parsed_titles) == len(created_titles)
         ready = self.ready_state or CodexAppiumReadyState(
             schema="trace.codex-appium-ready.v1",
             session_id=session_id,
-            created_calendar_titles=parsed_titles,
             rendered_trace_item_titles=("Focus block",),
         )
         if not callbacks.on_ready(ready):
@@ -77,7 +73,6 @@ class RecordingCodexJob:
         saved = self.saved_state or CodexAppiumSavedState(
             schema="trace.codex-appium-saved.v1",
             session_id=session_id,
-            created_calendar_titles=parsed_titles,
         )
         _ = callbacks.on_saved(saved)
         return self.result
@@ -91,6 +86,45 @@ class RecordingReadiness:
         del device
         control.checkpoint()
         self.calls.append("ready")
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingCalendarDataPort:
+    calls: list[str]
+    prepare_error: CaptureAdapterError | None = None
+    cleanup_error: CaptureAdapterError | None = None
+    preparations: list[CalendarPreparation] = field(default_factory=list)
+
+    def prepare(
+        self,
+        contract: CodexAppiumJobContract,
+        control: CaptureControl,
+    ) -> CalendarPreparation:
+        control.checkpoint()
+        self.calls.append("calendar_prepare")
+        if self.prepare_error is not None:
+            raise self.prepare_error
+        preparation = CalendarPreparation(
+            request_sha256=contract.request_sha256,
+            calendar_namespace=contract.calendar_namespace,
+            calendar_identifier="trace-calendar-identifier",
+            event_count=len(contract.context.promotion_material.trace_items or ()),
+        )
+        self.preparations.append(preparation)
+        return preparation
+
+    def cleanup(
+        self,
+        contract: CodexAppiumJobContract,
+        preparation: CalendarPreparation,
+        control: CaptureControl,
+    ) -> None:
+        control.checkpoint()
+        assert preparation.request_sha256 == contract.request_sha256
+        assert preparation.calendar_namespace == contract.calendar_namespace
+        self.calls.append("calendar_cleanup")
+        if self.cleanup_error is not None:
+            raise self.cleanup_error
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,13 +290,10 @@ def job_paths(tmp_path: Path) -> tuple[Path, Path, Path, str]:
     return job_root, background, output, sha256(background.read_bytes()).hexdigest()
 
 
-def completed_result(namespace: str = "trace-request-1") -> JsonObject:
+def completed_result() -> JsonObject:
     return {
         "status": "completed",
         "session_id": "appium-session-1",
-        "created_calendar_titles": [f"{namespace}-calendar-1"],
-        "remaining_calendar_titles": [],
-        "cleanup_completed": True,
         "session_closed": True,
         "error_code": None,
     }

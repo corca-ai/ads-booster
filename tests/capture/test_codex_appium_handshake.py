@@ -20,6 +20,7 @@ from ads_booster.providers.codex_cli import (
 
 from .codex_appium_support import (
     AcceptingEditorVerifier,
+    RecordingCalendarDataPort,
     RecordingCodexJob,
     RecordingPhotoImporter,
     RecordingWallpaperCollector,
@@ -94,12 +95,12 @@ def test_codex_appium_job_rejects_ready_marker_missing_requested_title(
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
         session_id="appium-session-1",
-        created_calendar_titles=("trace-request-1-calendar-1",),
         rendered_trace_item_titles=("Focus block",),
     )
     verifier = RecordingEditorVerifier(("Focus block", "Lunch"))
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result(), ready_state=ready),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -124,7 +125,7 @@ def test_codex_appium_job_rejects_ready_marker_missing_requested_title(
         )
 
     # Then Save collection never starts
-    assert calls == ["clear", "import", "codex"]
+    assert calls == ["calendar_prepare", "clear", "import", "codex", "calendar_cleanup"]
 
 
 def test_codex_appium_job_rejects_live_source_missing_requested_title(
@@ -135,12 +136,12 @@ def test_codex_appium_job_rejects_live_source_missing_requested_title(
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
         session_id="appium-session-1",
-        created_calendar_titles=("trace-request-1-calendar-1",),
         rendered_trace_item_titles=("Focus block", "Lunch"),
     )
     verifier = RecordingEditorVerifier(("Focus block",))
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result(), ready_state=ready),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -165,7 +166,7 @@ def test_codex_appium_job_rejects_live_source_missing_requested_title(
         )
 
     # Then collection remains blocked and valid HH:MM prefixes alone were stripped
-    assert calls == ["clear", "import", "codex"]
+    assert calls == ["calendar_prepare", "clear", "import", "codex", "calendar_cleanup"]
     assert verifier.expected_titles == ("Focus block", "Lunch")
 
 
@@ -180,6 +181,7 @@ def test_codex_appium_job_rejects_ready_when_trace_process_lost_launch_binding(
     )
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -199,7 +201,7 @@ def test_codex_appium_job_rejects_ready_when_trace_process_lost_launch_binding(
         )
 
     # Then Save and native collection stay blocked at the worker boundary
-    assert calls == ["clear", "import", "codex"]
+    assert calls == ["calendar_prepare", "clear", "import", "codex", "calendar_cleanup"]
     assert verifier.expected_launch_arguments == [contract.launch_arguments]
 
 
@@ -214,6 +216,7 @@ def test_codex_appium_job_fails_fast_when_trace_process_loses_binding_after_read
     )
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -237,7 +240,14 @@ def test_codex_appium_job_fails_fast_when_trace_process_loses_binding_after_read
 
     # Then collection is rejected immediately instead of polling for sixty minutes
     assert raised.value.code is ErrorCode.EXPORT_INVALID
-    assert calls == ["clear", "import", "codex", "clear"]
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "calendar_cleanup",
+    ]
     assert verifier.expected_launch_arguments == [
         contract.launch_arguments,
         contract.launch_arguments,
@@ -270,7 +280,6 @@ def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session
                 CodexAppiumReadyState(
                     schema="trace.codex-appium-ready.v1",
                     session_id="unbound-session",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                     rendered_trace_item_titles=("Focus block",),
                 )
             )
@@ -279,7 +288,6 @@ def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session
                 CodexAppiumReadyState(
                     schema="trace.codex-appium-ready.v1",
                     session_id="bound-session",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                     rendered_trace_item_titles=("Focus block",),
                 )
             )
@@ -288,7 +296,6 @@ def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session
                 CodexAppiumSavedState(
                     schema="trace.codex-appium-saved.v1",
                     session_id="bound-session",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                 )
             )
             assert collected is True
@@ -299,6 +306,7 @@ def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session
 
     adapter = CodexAppiumJobAdapter(
         codex=RecoveringCodex(),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -319,7 +327,15 @@ def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session
     # Then only the bound session reaches Save and produces accepted provenance
     assert provenance.session_id == "bound-session"
     assert provenance.native_export_binding_verified is True
-    assert calls == ["clear", "import", "codex", "clear", "collect"]
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect",
+        "calendar_cleanup",
+    ]
     assert verifier.expected_launch_arguments == [
         contract.launch_arguments,
         contract.launch_arguments,
@@ -327,19 +343,14 @@ def test_codex_appium_job_collects_after_recovering_with_new_bound_ready_session
     ]
 
 
-def test_codex_appium_job_collects_saved_export_before_codex_cleanup_overwrites_it(
+def test_codex_appium_job_collects_saved_export_before_worker_calendar_cleanup(
     tmp_path: Path,
 ) -> None:
-    # Given Trace rewrites the native export after request calendars are deleted
+    # Given the worker owns Calendar cleanup after the Codex editor turn
     calls: list[str] = []
     result = completed_result()
 
-    class CleanupOverwritingCodex:
-        export_state: str
-
-        def __init__(self) -> None:
-            self.export_state = "saved"
-
+    class SavingCodex:
         def run_appium_job(
             self,
             prompt: str,
@@ -355,7 +366,6 @@ def test_codex_appium_job_collects_saved_export_before_codex_cleanup_overwrites_
                 CodexAppiumReadyState(
                     schema="trace.codex-appium-ready.v1",
                     session_id="appium-session-1",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                     rendered_trace_item_titles=("Focus block",),
                 )
             )
@@ -363,41 +373,22 @@ def test_codex_appium_job_collects_saved_export_before_codex_cleanup_overwrites_
                 CodexAppiumSavedState(
                     schema="trace.codex-appium-saved.v1",
                     session_id="appium-session-1",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                 )
             )
-            self.export_state = "blank-after-cleanup"
-            calls.append("cleanup")
             return result
 
-    class StateAwareCollector:
-        codex: CleanupOverwritingCodex
-
-        def __init__(self, codex: CleanupOverwritingCodex) -> None:
-            self.codex = codex
-
-        def clear(self, udid: str, control: CaptureControl) -> int:
-            del udid
-            control.checkpoint()
-            calls.append("clear")
-            return 1
-
-        def collect(self, request: WallpaperCollectionRequest) -> CaptureProvenance:
-            assert self.codex.export_state == "saved"
-            return RecordingWallpaperCollector(calls).collect(request)
-
-    codex = CleanupOverwritingCodex()
     adapter = CodexAppiumJobAdapter(
-        codex=codex,
+        codex=SavingCodex(),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
-        collector=StateAwareCollector(codex),
+        collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
         editor_verifier=AcceptingEditorVerifier(),
     )
     job_root, background, output, background_sha256 = job_paths(tmp_path)
     contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
 
-    # When one Codex turn saves, waits for collection, then cleans up
+    # When one Codex turn saves and the worker collects the native export
     provenance = adapter.execute(
         contract,
         job_root=job_root,
@@ -406,8 +397,16 @@ def test_codex_appium_job_collects_saved_export_before_codex_cleanup_overwrites_
         control=CaptureControl.start(timeout_seconds=30),
     )
 
-    # Then the worker-owned artifact is captured before the cleanup rewrite
-    assert calls == ["clear", "import", "codex", "clear", "collect", "cleanup"]
+    # Then the worker-owned artifact is captured before Calendar cleanup
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect",
+        "calendar_cleanup",
+    ]
     assert provenance.native_export_binding_verified is True
 
 
@@ -438,6 +437,7 @@ def test_codex_appium_job_clears_early_exports_at_the_verified_save_boundary(
     collector = GenerationRecordingCollector()
     adapter = CodexAppiumJobAdapter(
         codex=RecordingCodexJob(calls, completed_result()),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=collector,
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -455,7 +455,15 @@ def test_codex_appium_job_clears_early_exports_at_the_verified_save_boundary(
 
     assert collector.clear_count == 2
     assert collector.collected_after_ns == 2
-    assert calls == ["clear", "import", "codex", "clear", "collect"]
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect",
+        "calendar_cleanup",
+    ]
 
 
 def test_codex_appium_job_acknowledges_collection_failure_then_propagates_it(
@@ -480,7 +488,6 @@ def test_codex_appium_job_acknowledges_collection_failure_then_propagates_it(
                 CodexAppiumReadyState(
                     schema="trace.codex-appium-ready.v1",
                     session_id="appium-session-1",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                     rendered_trace_item_titles=("Focus block",),
                 )
             )
@@ -488,11 +495,10 @@ def test_codex_appium_job_acknowledges_collection_failure_then_propagates_it(
                 CodexAppiumSavedState(
                     schema="trace.codex-appium-saved.v1",
                     session_id="appium-session-1",
-                    created_calendar_titles=("trace-request-1-calendar-1",),
                 )
             )
             assert collected is False
-            calls.append("cleanup")
+            calls.append("codex_cleanup")
             return completed_result()
 
     class FailingCollector:
@@ -512,6 +518,7 @@ def test_codex_appium_job_acknowledges_collection_failure_then_propagates_it(
 
     adapter = CodexAppiumJobAdapter(
         codex=CleanupRecordingCodex(),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=FailingCollector(),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -530,8 +537,17 @@ def test_codex_appium_job_acknowledges_collection_failure_then_propagates_it(
             control=CaptureControl.start(timeout_seconds=30),
         )
 
-    # Then Codex cleans up before the original typed collection error escapes
-    assert calls == ["clear", "import", "codex", "clear", "collect_failed", "cleanup"]
+    # Then Codex closes first and worker Calendar cleanup precedes the typed error
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect_failed",
+        "codex_cleanup",
+        "calendar_cleanup",
+    ]
 
 
 def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
@@ -542,12 +558,10 @@ def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
     saved = CodexAppiumSavedState(
         schema="trace.codex-appium-saved.v1",
         session_id="appium-session-before-cleanup",
-        created_calendar_titles=("trace-request-1-calendar-1",),
     )
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
         session_id="appium-session-before-cleanup",
-        created_calendar_titles=("trace-request-1-calendar-1",),
         rendered_trace_item_titles=("Focus block",),
     )
     adapter = CodexAppiumJobAdapter(
@@ -557,6 +571,7 @@ def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
             ready_state=ready,
             saved_state=saved,
         ),
+        calendar=RecordingCalendarDataPort(calls),
         simulator=RecordingPhotoImporter(calls),
         collector=RecordingWallpaperCollector(calls),
         lease_factory=UdidCaptureLeaseFactory(tmp_path / "leases"),
@@ -565,7 +580,7 @@ def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
     job_root, background, output, background_sha256 = job_paths(tmp_path)
     contract = v2_contract(V2JobInputs(background_sha256=background_sha256))
 
-    # When cleanup completion evidence is checked against the saved evidence
+    # When completion evidence is checked against the saved evidence
     with pytest.raises(CaptureAdapterError, match="does not match its ready marker"):
         _ = adapter.execute(
             contract,
@@ -576,4 +591,12 @@ def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
         )
 
     # Then the collected artifact is not returned as a successful capture
-    assert calls == ["clear", "import", "codex", "clear", "collect"]
+    assert calls == [
+        "calendar_prepare",
+        "clear",
+        "import",
+        "codex",
+        "clear",
+        "collect",
+        "calendar_cleanup",
+    ]

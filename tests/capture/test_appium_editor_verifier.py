@@ -76,7 +76,6 @@ def test_default_editor_verifier_requires_every_title_in_live_appium_source(
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
         session_id="appium/session-1",
-        created_calendar_titles=("trace-request-1-calendar-1",),
         rendered_trace_item_titles=("Focus & plan", "Lunch"),
     )
     control = CaptureControl.start(timeout_seconds=30)
@@ -124,7 +123,6 @@ def test_default_editor_verifier_rejects_requested_titles_outside_trace_wallpape
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
         session_id="appium-session-1",
-        created_calendar_titles=("trace-request-1-calendar-1",),
         rendered_trace_item_titles=("Focus block",),
     )
 

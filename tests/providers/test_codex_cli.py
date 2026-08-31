@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 
 def _write_saved_marker(
     workspace: Path,
-    created_calendar_titles: list[str],
     *,
     mode: int = 0o600,
 ) -> None:
@@ -35,14 +34,13 @@ def _write_saved_marker(
             {
                 "schema": "trace.codex-appium-saved.v1",
                 "session_id": "appium-1",
-                "created_calendar_titles": created_calendar_titles,
             },
             stream,
         )
     _ = temporary.replace(path)
 
 
-def _write_ready_marker(workspace: Path, created_calendar_titles: list[str]) -> None:
+def _write_ready_marker(workspace: Path) -> None:
     path = workspace / "codex-appium-ready.json"
     temporary = workspace / ".codex-appium-ready.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -52,7 +50,6 @@ def _write_ready_marker(workspace: Path, created_calendar_titles: list[str]) -> 
             {
                 "schema": "trace.codex-appium-ready.v1",
                 "session_id": "appium-1",
-                "created_calendar_titles": created_calendar_titles,
                 "rendered_trace_item_titles": ["Focus block"],
             },
             stream,
@@ -76,9 +73,9 @@ def test_codex_cli_runs_appium_job_with_trace_appium_permission_profile(
     saved_states: list[CodexAppiumSavedState] = []
 
     def run(command: list[str], **kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
-        _write_ready_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_ready_marker(workspace)
         _wait_for_marker(workspace / "codex-appium-ready-verified.json")
-        _write_saved_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_saved_marker(workspace)
         collected_path = workspace / "codex-appium-collected.json"
         _wait_for_marker(collected_path)
         output_path = Path(command[command.index("--output-last-message") + 1])
@@ -87,7 +84,7 @@ def test_codex_cli_runs_appium_job_with_trace_appium_permission_profile(
                 {
                     "status": "completed",
                     "session_id": "appium-1",
-                    "cleanup_completed": True,
+                    "session_closed": True,
                     "error_code": None,
                 }
             ),
@@ -123,7 +120,6 @@ def test_codex_cli_runs_appium_job_with_trace_appium_permission_profile(
         CodexAppiumReadyState(
             schema="trace.codex-appium-ready.v1",
             session_id="appium-1",
-            created_calendar_titles=("trace-request-1-calendar-1",),
             rendered_trace_item_titles=("Focus block",),
         )
     ]
@@ -131,7 +127,6 @@ def test_codex_cli_runs_appium_job_with_trace_appium_permission_profile(
         CodexAppiumSavedState(
             schema="trace.codex-appium-saved.v1",
             session_id="appium-1",
-            created_calendar_titles=("trace-request-1-calendar-1",),
         )
     ]
     assert len(calls) == 1
@@ -170,7 +165,6 @@ def test_codex_cli_runs_appium_job_with_trace_appium_permission_profile(
     assert json.loads(acknowledgement.read_text(encoding="utf-8")) == {
         "schema": "trace.codex-appium-collected.v1",
         "session_id": "appium-1",
-        "created_calendar_titles": ["trace-request-1-calendar-1"],
         "collection_succeeded": True,
     }
 
@@ -184,9 +178,9 @@ def test_codex_cli_refuses_second_appium_invocation_from_same_workspace(
     def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
         nonlocal calls
         calls += 1
-        _write_ready_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_ready_marker(workspace)
         _wait_for_marker(workspace / "codex-appium-ready-verified.json")
-        _write_saved_marker(workspace, ["trace-request-1-calendar-1"])
+        _write_saved_marker(workspace)
         collected_path = workspace / "codex-appium-collected.json"
         _wait_for_marker(collected_path)
         output_path = Path(command[command.index("--output-last-message") + 1])
