@@ -643,7 +643,8 @@ test("every country is told how to read deprecated and unverified findings", () 
     const documents = contextForCountry(WORKSPACE_CONTEXT, country);
     assert.ok(documents.includes("core/PIPELINE-SCOPE.md"));
     assert.match(documents, /취소선/);
-    assert.match(documents, /자동 게시하지 않는다/);
+    assert.match(documents, /default-OFF Cloudflare scheduler/);
+    assert.match(documents, /다른\s+채널에는 자동 게시하지 않는다/);
   }
 });
 
