@@ -71,6 +71,9 @@ _DEFAULT_APPIUM_SERVER: Final = "http://127.0.0.1:4723"
 _DEFAULT_TIMEOUT_SECONDS: Final = 3600.0
 _RUNTIME_VERSION = re.compile(r"\.iOS-(\d+)-(\d+)$")
 _MAX_TRACE_ITEMS: Final = 24
+# Matches the generation contract's ceiling for the field, so a query that generation
+# accepted is never dropped here for being too long.
+_SEARCH_QUERY_MAX: Final = 200
 _MAX_TRACE_TODOS: Final = 20
 _MAX_REFERENCE_IDS: Final = 16
 _MAX_TRACE_ITEM_LENGTH: Final = 80
@@ -458,7 +461,7 @@ def _context_bundle(
     caption = _required_text(task.payload, "caption", 10_000)
     hypothesis = _required_text(task.payload, "hypothesis", 2_000)
     creative_direction = _required_text(task.payload, "creative_direction", 20_000)
-    background_intent = _required_text(task.payload, "background_intent", 500)
+    background_intent = _background_query(task.payload, image_inputs)
     reference_ids = _reference_ids(task.payload.get("reference_ids"))
     language = _required_text(image_inputs, "language", 8)
     if language != _LOCALES[country].split("-", maxsplit=1)[0]:
@@ -559,6 +562,23 @@ def _reference_ids(value: JsonValue) -> tuple[str, ...]:
             raise MarketingExecutionError("native_capture_reference_ids_invalid")
         identifiers.append(item)
     return tuple(identifiers)
+
+
+def _background_query(payload: JsonObject, image_inputs: JsonObject) -> str:
+    """The string the image stage runs as its background search.
+
+    `background_search_query` is the one field generation is allowed to put a real
+    character, person or team name in, and it is what the background search is meant to
+    run. The worker also sends `background_intent`, which is composed mechanically as
+    "<subject>: <mood>" and carries no proper noun at all - searching it returns news
+    photography and shopping listings for the mood phrase, with the persona's actual
+    interest nowhere in the results. Prefer the authored query and keep the composed
+    intent as the fallback for candidates generated before the field existed.
+    """
+    query = image_inputs.get("background_search_query")
+    if isinstance(query, str) and query.strip() and len(query.strip()) <= _SEARCH_QUERY_MAX:
+        return query.strip()
+    return _required_text(payload, "background_intent", 500)
 
 
 def _required_text(payload: JsonObject, key: str, max_length: int) -> str:
