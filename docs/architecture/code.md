@@ -87,3 +87,17 @@ configuration fails before deployment or scheduling.
 profile at candidate creation and inserts the immutable publication decision in the same D1 batch as
 accepted image review. `index.js` composes separate candidate-generation, publication, and engagement
 schedulers. None of these modules import or extend Mac worker task kinds or the generic `/v1` adapter.
+
+## Marketing-agent contracts
+
+`ads_booster.contracts.marketing_agent` owns the Python source contract for feature evidence,
+strategy portfolios, registered outcomes, and frozen context receipts. D1 migration
+`0017_marketing_agent_foundation.sql` owns the new `agent_v1` persistence epoch and its shadow
+no-tool-action guard. The current slice deliberately has no runtime composition root; a later
+capability-gated `marketing_judgment_v1` broker task will consume these contracts through the
+official Codex CLI provider.
+
+The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
+the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
+`threads/*` modules keep their present responsibilities and will be referenced through immutable
+IDs and receipts rather than generalized or reimplemented.

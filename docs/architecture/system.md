@@ -101,6 +101,20 @@ validation, R2 storage, review states, and the no-auto-publishing boundary are u
 
 The v2 contract fixes non-secret input and completion bindings, not selectors or UI procedures.
 
+## Marketing-agent foundation
+
+New strategy work uses a separate `agent_v1` hosted campaign epoch. D1 owns immutable feature
+packets, account-scoped campaign projections, ordered run events, context receipts, strategy briefs,
+pre-registered experiments, approval grants, and tool-action intent. It does not dual-write these
+records into the legacy `MarketingWorkflow` / `MarketingAccountAgent` memory path.
+
+The first implemented boundary is contract-only: source evidence cannot open the publication gate,
+strategy briefs require one control and a bounded experiment, direct-response attribution is distinct
+from causal estimation, and a database trigger prevents shadow campaigns from creating tool actions.
+No strategist task, candidate, capture, publication, metric evaluation, or learning promotion is
+activated by this foundation alone. The staged execution contract is
+[`docs/plans/threads-marketing-agent.md`](../plans/threads-marketing-agent.md).
+
 ## Threads publication and observation
 
 Threads has three configuration states. Zero bindings means disabled: health remains successful with

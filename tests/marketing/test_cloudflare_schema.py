@@ -51,6 +51,120 @@ def test_existing_hosted_rows_survive_the_legacy_migration_chain() -> None:
         assert rows == ("submitted", "active")
 
 
+def test_marketing_agent_foundation_preserves_existing_hosted_rows() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection, through="0016_hosted_threads.sql")
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace Korea', 'KR', 'ko', 'Asia/Seoul',
+                    '07:30', '19:30', 1, 1, 1)"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_candidates
+            (candidate_id, account_id, source, country, topic, caption, hypothesis,
+             refs_json, principles_json, appium_prompt, image_inputs_json, status,
+             revision, created_at, updated_at)
+            VALUES ('candidate-before-agent', 'trace_kr', 'manual', 'KR', 'topic', 'caption',
+                    'hypothesis', '[]', '[]', 'prompt', '{}', 'submitted', 1, 1, 1)"""
+        )
+
+        _ = connection.executescript(
+            (MIGRATION_ROOT / "0017_marketing_agent_foundation.sql").read_text()
+        )
+
+        candidate = connection.execute(
+            """SELECT status, revision FROM hosted_workspace_candidates
+            WHERE candidate_id = 'candidate-before-agent'"""
+        ).fetchone()
+
+        assert candidate == ("submitted", 1)
+
+
+def test_shadow_marketing_campaign_cannot_create_tool_actions() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _insert_marketing_agent_account_and_packet(connection)
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_campaigns
+            (campaign_id, account_id, feature_packet_id, feature_packet_sha256,
+             runtime_epoch, mode, state, business_outcome, created_at, updated_at)
+            VALUES ('campaign-shadow', 'trace_kr', 'packet-1', ?, 'agent_v1', 'shadow',
+                    'evidence_candidate', 'completed setup', 'now', 'now')""",
+            ("a" * 64,),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="shadow campaigns"):
+            _ = connection.execute(
+                """INSERT INTO hosted_marketing_tool_actions
+                (action_id, campaign_id, capability_id, effect_class, state, action_json,
+                 action_sha256, idempotency_key, created_at, updated_at)
+                VALUES ('action-1', 'campaign-shadow', 'capture.native_png', 'local_artifact',
+                        'queued', '{}', ?, 'campaign-shadow:action-1', 'now', 'now')""",
+                ("b" * 64,),
+            )
+
+        assert connection.execute(
+            "SELECT count(*) FROM hosted_marketing_tool_actions"
+        ).fetchone() == (0,)
+
+
+def test_marketing_agent_events_have_single_ordered_revision_lineage() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _insert_marketing_agent_account_and_packet(connection)
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_campaigns
+            (campaign_id, account_id, feature_packet_id, feature_packet_sha256,
+             runtime_epoch, mode, state, business_outcome, created_at, updated_at)
+            VALUES ('campaign-1', 'trace_kr', 'packet-1', ?, 'agent_v1', 'shadow',
+                    'evidence_candidate', 'completed setup', 'now', 'now')""",
+            ("a" * 64,),
+        )
+        insert = """INSERT INTO hosted_marketing_run_events
+            (event_id, campaign_id, sequence, prior_revision, resulting_revision, event_type,
+             event_json, event_sha256, idempotency_key, correlation_id, event_time, observed_at,
+             actor_type)
+            VALUES (?, 'campaign-1', ?, ?, ?, 'campaign_created', '{}', ?, ?,
+                    'correlation-1', 'now', 'now', 'runtime')"""
+        _ = connection.execute(
+            insert,
+            ("event-1", 1, 0, 1, "c" * 64, "campaign-1:create"),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                insert,
+                ("event-duplicate-sequence", 1, 1, 2, "d" * 64, "campaign-1:other"),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                insert,
+                ("event-invalid-revision", 2, 1, 3, "e" * 64, "campaign-1:invalid"),
+            )
+
+
+def _insert_marketing_agent_account_and_packet(connection: sqlite3.Connection) -> None:
+    _ = connection.execute(
+        """INSERT INTO hosted_workspace_accounts
+        (account_id, display_name, country, language, timezone, morning_time,
+         evening_time, revision, created_at, updated_at)
+        VALUES ('trace_kr', 'Trace Korea', 'KR', 'ko', 'Asia/Seoul',
+                '07:30', '19:30', 1, 1, 1)"""
+    )
+    _ = connection.execute(
+        """INSERT INTO hosted_marketing_feature_packets
+        (packet_id, feature_id, schema_version, lifecycle, repository, mutable_ref,
+         resolved_commit_sha, tree_sha, packet_json, packet_sha256, publication_allowed,
+         observed_at, created_at)
+        VALUES ('packet-1', 'trace.lockscreen.ai-concepts', 'trace.feature-evidence.v1',
+                'source_candidate', 'corca-ai/Trace_iOS', 'refs/heads/develop', ?, ?, '{}', ?,
+                0, 'now', 'now')""",
+        ("b" * 40, "c" * 40, "a" * 64),
+    )
+
+
 def test_schema_allows_only_one_active_run_per_account() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection)
@@ -606,6 +720,8 @@ def test_threads_oauth_reconnect_profile_is_account_scoped_and_deleted_with_prof
         assert connection.execute(
             "SELECT COUNT(*) FROM hosted_threads_oauth_states"
         ).fetchone() == (0,)
+
+
 def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         migration_root = Path(__file__).parents[2] / "cloudflare" / "migrations"
