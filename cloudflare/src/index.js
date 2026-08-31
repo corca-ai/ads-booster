@@ -725,6 +725,18 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
     throw new HttpError(error.status ?? 400, error.message);
   }
   const { status, image, image_digest: imageDigest, stored_result: storedResult } = prepared;
+  let publishedPayload = {};
+  try {
+    publishedPayload = JSON.parse(task.task_json)?.payload ?? {};
+  } catch {
+    throw new HttpError(409, "hosted capture task payload is invalid");
+  }
+  if (status === "succeeded" && publishedPayload.feedback_context_sha256 && (
+    storedResult?.output?.feedback_application_sha256
+      !== publishedPayload.feedback_context_sha256
+  )) {
+    throw new HttpError(409, "hosted capture feedback receipt does not match task");
+  }
   let imageKey = null;
   if (status === "succeeded") {
     imageKey = `workspace/${task.account_id}/candidates/${task.candidate_id}/${task.task_id}.png`;
@@ -759,6 +771,7 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
       `UPDATE hosted_workspace_candidates
        SET status = 'image_awaiting_review', image_key = ?, image_sha256 = ?,
            capture_state = NULL, capture_error = NULL,
+           capture_feedback_application_sha256 = ?,
            revision = revision + 1, updated_at = ?
        WHERE account_id = ? AND candidate_id = ? AND status = 'caption_approved'
          AND capture_state = 'queued' AND capture_task_id = ? AND revision = ?`,
@@ -766,6 +779,7 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
       .bind(
         imageKey,
         imageDigest,
+        storedResult.output.feedback_application_sha256 ?? null,
         Date.now() / 1000,
         task.account_id,
         task.candidate_id,

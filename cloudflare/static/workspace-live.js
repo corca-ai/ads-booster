@@ -1005,6 +1005,15 @@
         ? "수동 등록 — 생성 근거 없음"
         : "생성 근거가 기록되지 않은 후보입니다.";
       body.append(missing);
+      if (record.capture_feedback_context_sha256) {
+        const receipt = document.createElement("span");
+        receipt.className = "provenance__batch";
+        receipt.textContent = record.capture_feedback_application_sha256
+          === record.capture_feedback_context_sha256
+          ? "선택됨 · 이미지 워커 소비 확인"
+          : "선택됨 · 이미지 워커 소비 확인 대기";
+        body.append(provenanceField("이미지 피드백", receipt));
+      }
       panel.append(summary, body);
       return panel;
     }
@@ -1028,6 +1037,24 @@
       );
     }
     body.append(provenanceField("모델", model));
+    if (provenance.feedback_context_sha256) {
+      const receipt = document.createElement("span");
+      receipt.className = "provenance__batch";
+      receipt.textContent = provenance.feedback_application_sha256
+        === provenance.feedback_context_sha256
+        ? "선택됨 · 워커 소비 확인"
+        : "선택됨 · 소비 확인 대기";
+      body.append(provenanceField("피드백", receipt));
+    }
+    if (record.capture_feedback_context_sha256) {
+      const receipt = document.createElement("span");
+      receipt.className = "provenance__batch";
+      receipt.textContent = record.capture_feedback_application_sha256
+        === record.capture_feedback_context_sha256
+        ? "선택됨 · 이미지 워커 소비 확인"
+        : "선택됨 · 이미지 워커 소비 확인 대기";
+      body.append(provenanceField("이미지 피드백", receipt));
+    }
     const assigned = provenance.assigned_domains ?? [];
     if (assigned.length) {
       const batch = document.createElement("span");

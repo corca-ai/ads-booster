@@ -15,6 +15,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | Threads D1 contract | `uv run pytest tests/marketing/test_cloudflare_schema.py -q` |
 | Threads Graph/profile/scheduling/publication/engagement | `node --test cloudflare/test/threads-client.test.js cloudflare/test/hosted-threads-profiles.test.js cloudflare/test/hosted-threads-candidates.test.js cloudflare/test/threads-scheduling.test.js cloudflare/test/threads-publication.test.js cloudflare/test/threads-engagement.test.js` |
 | Threads workspace/status/security | `npm --prefix cloudflare run build && node --test cloudflare/test/workspace-static.test.js cloudflare/test/hosted-threads-ui-api.test.js cloudflare/test/threads-security.test.js` |
+| hosted feedback selection, worker receipt, and schema | `uv run pytest tests/marketing/test_hosted_generation.py tests/marketing/test_native_capture.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `node --test test/hosted-workspace.test.js test/hosted-generation.test.js test/mac-workers.test.js test/hosted-capture-result.test.js` |
 | native Trace lock-screen preview passthrough | `uv run pytest tests/marketing/test_native_capture.py tests/capture/test_codex_appium_handshake.py` |
 | inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
 | update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
