@@ -2,8 +2,7 @@
   "schema_version": "trace.workspace-context-manifest.v2",
   "global_documents": [
     "core/PIPELINE-SCOPE.md",
-    "core/PRINCIPLES-GLOBAL.md",
-    "core/FACTS.md"
+    "core/PRINCIPLES-GLOBAL.md"
   ],
   "global_assets": [
     "core/AXES.md"
