@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 ## Focused checks
 
@@ -12,6 +12,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/capture/test_appium_editor_verifier.py tests/providers/test_codex_cli_handshake.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
 | background and native validation | `uv run pytest tests/marketing/test_background.py tests/marketing/test_native_capture.py` |
 | hosted Codex candidate generation | `uv run pytest tests/marketing/test_hosted_generation.py tests/providers/test_codex_cli_generation.py` |
+| hosted feedback selection, worker receipt, and schema | `uv run pytest tests/marketing/test_hosted_generation.py tests/marketing/test_native_capture.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `node --test test/hosted-workspace.test.js test/hosted-generation.test.js test/mac-workers.test.js test/hosted-capture-result.test.js` |
 | native Trace lock-screen preview passthrough | `uv run pytest tests/marketing/test_native_capture.py tests/capture/test_codex_appium_handshake.py` |
 | inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
 | update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |

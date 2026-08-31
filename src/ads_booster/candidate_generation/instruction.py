@@ -390,6 +390,7 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
     language: str = DEFAULT_LANGUAGE,
     history: tuple[CandidateHistoryEntry, ...] = (),
     account: CandidateAccountBrief | None = None,
+    learned_feedback: tuple[str, ...] = (),
 ) -> str:
     """Assemble the one generation instruction this batch is written from.
 
@@ -428,6 +429,7 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
         *([_INVENT_IDENTITY] if account is None else []),
         _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
+        *([_feedback_section(learned_feedback)] if learned_feedback else []),
         assignment_section(assignments),
         *([_history_section(history)] if history else []),
         *(
@@ -437,6 +439,18 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
         _OUTPUT.format(count=count, country=country, language=language),
     ]
     return "\n\n".join(sections)
+
+
+def _feedback_section(instructions: tuple[str, ...]) -> str:
+    """Render only promoted caption rules; private review notes never enter this section."""
+    lines = "\n".join(
+        f"{index}. {instruction}" for index, instruction in enumerate(instructions, 1)
+    )
+    return (
+        "[이 계정의 검수에서 누적된 규칙]\n"
+        "아래 규칙은 같은 계정·프로필의 반복된 강한 반려에서 승격되었습니다. 모두 지키세요.\n"
+        f"{lines}"
+    )
 
 
 def assignment_section(assignments: tuple[CandidateAssignment, ...]) -> str:
