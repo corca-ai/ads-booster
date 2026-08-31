@@ -33,7 +33,7 @@ cli/marketing
 | `worker_broker.py` | D1 claim, acknowledgement, barrier, callback HTTP | SQLite/Appium |
 | `inbox.py` | ingress, claim, admission, terminal result, callback retry | Cloudflare/Codex |
 | `worker_loop.py` | prepare-barrier-execute ordering and ambiguity handling | Trace UI method |
-| `background.py` | `background_intent`, digest, provenance | native export |
+| `background.py` | `background_intent`, allowlisted candidate ranking, digest, provenance | native export |
 | `native_capture.py` | hosted payload/context, request paths, native preview PNG validation | UI selectors, image editing |
 | `contracts/feedback.py` | strict `trace.feedback-context.v1` shape and canonical digest | rule promotion, review storage |
 | `codex_appium_job.py` | v2 context/device/digest/nonce/time/calendar contract | process execution |

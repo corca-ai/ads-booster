@@ -33,7 +33,10 @@ _HTTP_OK: Final = 200
 _MAX_RESULTS: Final = 20
 # Open-web image search returns article photography by default, which is landscape and small.
 # A lock screen needs the opposite, and this is the one filter the provider itself can apply.
-_DDGS_SIZE: Final = "Large"
+_DDGS_SIZE: Final = "Wallpaper"
+_DDGS_LAYOUT: Final = "Tall"
+_DDGS_TYPE: Final = "photo"
+_DDGS_SAFESEARCH: Final = "moderate"
 _CODE_INVALID_ARGUMENTS: Final = "invalid_arguments"
 _CODE_HTTP: Final = "image_search_http"
 _CODE_NETWORK: Final = "image_search_network"
@@ -69,6 +72,12 @@ class DdgsImageSearchProvider:
                 str(count),
                 "--size",
                 _DDGS_SIZE,
+                "--layout",
+                _DDGS_LAYOUT,
+                "--type_image",
+                _DDGS_TYPE,
+                "--safesearch",
+                _DDGS_SAFESEARCH,
                 "--output",
                 str(output_path),
                 "--no-color",

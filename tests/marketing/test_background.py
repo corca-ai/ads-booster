@@ -35,7 +35,7 @@ class _BackgroundSearchFixture:
     response: ImageSearchResponse
 
     def search(self, query: str, max_results: int) -> ImageSearchResponse:
-        assert query == "early morning campus site:pexels.com"
+        assert query.endswith(("site:pexels.com", "site:unsplash.com", "site:pixabay.com"))
         assert max_results == 5
         return self.response
 

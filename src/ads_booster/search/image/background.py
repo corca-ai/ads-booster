@@ -11,10 +11,15 @@ from urllib.parse import urlsplit
 import httpx2
 from PIL import Image, UnidentifiedImageError
 
-from ads_booster.search.image.contracts import ImageSearchError, ImageSearchProvider
+from ads_booster.search.image.contracts import (
+    ImageSearchError,
+    ImageSearchProvider,
+    ImageSearchResponse,
+    ImageSearchResult,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
     from ads_booster.transport.http import HttpClient
@@ -22,6 +27,9 @@ if TYPE_CHECKING:
 
 _HTTP_OK: Final = 200
 _MINIMUM_EDGE: Final = 640
+_PREFERRED_WIDTH: Final = 1080
+_PREFERRED_HEIGHT: Final = 1920
+_LOCK_SCREEN_ASPECT_RATIO: Final = 9 / 19.5
 _WRITE_FAILED_CODE: Final = "background_artifact_write_failed"
 _WRITE_FAILED_MESSAGE: Final = "searched background could not be written"
 _NO_USABLE_IMAGE_CODE: Final = "background_search_no_usable_image"
@@ -46,6 +54,7 @@ _APPROVED_SOURCE_HOSTS: Final = frozenset(
     }
 )
 _APPROVED_SEARCH_DOMAINS: Final = ("pexels.com", "unsplash.com", "pixabay.com")
+_BLOCKED_IMAGE_HOSTS: Final = frozenset({"plus.unsplash.com"})
 _SEARCH_HEADERS: Final = {
     "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     "User-Agent": "trace-agent/0.2.1",
@@ -93,19 +102,61 @@ class SearchedBackground:
 
 
 @dataclass(frozen=True, slots=True)
+class _BackgroundCandidate:
+    response: ImageSearchResponse
+    result: ImageSearchResult
+    png: bytes
+    width: int
+    height: int
+
+    @property
+    def score(self) -> tuple[bool, bool, float, int]:
+        return (
+            self.height > self.width,
+            self.width >= _PREFERRED_WIDTH and self.height >= _PREFERRED_HEIGHT,
+            -abs((self.width / self.height) - _LOCK_SCREEN_ASPECT_RATIO),
+            self.width * self.height,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ImageSearchBackgroundFetcher:
     image_search: ImageSearchProvider
     http: HttpClient
     max_results: int = 5
 
     def fetch(self, query: str, destination: Path) -> SearchedBackground:
+        selected = max(self._candidates(query), key=lambda candidate: candidate.score, default=None)
+        if selected is None:
+            raise BackgroundSearchError(
+                _NO_USABLE_IMAGE_CODE,
+                _NO_USABLE_IMAGE_MESSAGE,
+            )
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            _ = destination.write_bytes(selected.png)
+        except OSError as error:
+            raise BackgroundSearchError(
+                _WRITE_FAILED_CODE,
+                _WRITE_FAILED_MESSAGE,
+            ) from error
+        return SearchedBackground(
+            path=destination,
+            sha256=sha256(selected.png).hexdigest(),
+            query=selected.response.query,
+            provider=selected.response.provider,
+            image_url=selected.result.image_url,
+            source_url=selected.result.source_url,
+        )
+
+    def _candidates(self, query: str) -> Iterator[_BackgroundCandidate]:
         for domain in _APPROVED_SEARCH_DOMAINS:
             try:
                 response = self.image_search.search(f"{query} site:{domain}", self.max_results)
             except ImageSearchError:
                 continue
             for result in response.results:
-                if not _is_approved_source(result.source_url):
+                if not _is_approved_result(result):
                     continue
                 try:
                     http_response = self.http.get(result.image_url, _SEARCH_HEADERS)
@@ -114,29 +165,17 @@ class ImageSearchBackgroundFetcher:
                 if http_response.status_code != _HTTP_OK:
                     continue
                 try:
-                    _write_png(http_response.content, destination)
+                    candidate = _background_candidate(response, result, http_response.content)
                 except BackgroundSearchError:
                     continue
-                except OSError as error:
-                    raise BackgroundSearchError(
-                        _WRITE_FAILED_CODE,
-                        _WRITE_FAILED_MESSAGE,
-                    ) from error
-                return SearchedBackground(
-                    path=destination,
-                    sha256=sha256(destination.read_bytes()).hexdigest(),
-                    query=response.query,
-                    provider=response.provider,
-                    image_url=result.image_url,
-                    source_url=result.source_url,
-                )
-        raise BackgroundSearchError(
-            _NO_USABLE_IMAGE_CODE,
-            _NO_USABLE_IMAGE_MESSAGE,
-        )
+                yield candidate
 
 
-def _write_png(content: bytes, destination: Path) -> None:
+def _background_candidate(
+    response: ImageSearchResponse,
+    result: ImageSearchResult,
+    content: bytes,
+) -> _BackgroundCandidate:
     try:
         with Image.open(io.BytesIO(content)) as image:
             _ = image.load()
@@ -152,10 +191,18 @@ def _write_png(content: bytes, destination: Path) -> None:
             _IMAGE_TOO_SMALL_CODE,
             _IMAGE_TOO_SMALL_MESSAGE,
         )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    normalized.save(destination, format="PNG")
+    buffer = io.BytesIO()
+    normalized.save(buffer, format="PNG")
+    return _BackgroundCandidate(
+        response=response,
+        result=result,
+        png=buffer.getvalue(),
+        width=width,
+        height=height,
+    )
 
 
-def _is_approved_source(source_url: str) -> bool:
-    host = urlsplit(source_url).hostname
-    return host in _APPROVED_SOURCE_HOSTS
+def _is_approved_result(result: ImageSearchResult) -> bool:
+    source_host = urlsplit(result.source_url).hostname
+    image_host = urlsplit(result.image_url).hostname
+    return source_host in _APPROVED_SOURCE_HOSTS and image_host not in _BLOCKED_IMAGE_HOSTS
