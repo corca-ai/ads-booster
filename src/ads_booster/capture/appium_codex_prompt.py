@@ -16,9 +16,10 @@ the goal is actually complete.
 The worker has already created and verified the request-owned Calendar data. Do not open Calendar,
 create, edit, or delete calendars or events. Own only the Trace layout, component selection, visual
 settings, preview inspection, Save action, and Appium session lifecycle.
-Start from Trace Orb and continue through Trace's existing lock-screen setup until the actual
-lockScreenWallpaperSave editor appears. Selecting the prepared calendar and background inside Trace
-is allowed; creating source data outside Trace is forbidden.
+The bound Trace launch opens the actual lockScreenWallpaperSave editor. Wait for that editor and
+configure it directly. Never use Trace Orb or Quick Setup and never open Shortcuts. Selecting the
+prepared calendar and background inside Trace is allowed; creating source data outside Trace is
+forbidden.
 
 Treat launch_arguments as an immutable export binding for the live Trace process. After creating
 the Appium session, never use terminate_app, activate_app, or the bundle-only mobile:
