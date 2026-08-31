@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 from ads_booster.candidate_generation import DEFAULT_MAX_BATCH
+from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
 from ads_booster.marketing.hosted_generation import (
     PIPELINE,
     HostedWorkspaceGenerationExecutor,
@@ -58,6 +59,30 @@ def _payload(**overrides: JsonValue) -> JsonObject:
     }
     payload.update(overrides)
     return payload
+
+
+def _feedback_payload() -> tuple[JsonObject, str]:
+    context = FeedbackContext.model_validate(
+        {
+            "schema_version": "trace.feedback-context.v1",
+            "stage": "caption",
+            "scope": {"account_id": "trace_demo_kr", "context_profile_id": "profile-1"},
+            "rules": [
+                {
+                    "rule_id": "caption-concept-specificity",
+                    "definition_version": "1",
+                    "dimension": "concept",
+                    "instruction": "한 장면과 한 갈등이 보이는 구체적인 컨셉을 만든다.",
+                    "stage": "caption",
+                    "tag": "컨셉이 약함",
+                    "evidence_count": 3,
+                    "targets": ["candidate_generation"],
+                }
+            ],
+            "immediate_correction": None,
+        }
+    )
+    return context.model_dump(mode="json"), feedback_context_sha256(context)
 
 
 def _task(payload: JsonObject | None = None) -> MarketingTask:
@@ -300,6 +325,29 @@ def test_recent_topics_from_the_control_plane_reach_the_prompt(tmp_path: Path) -
     assert "[최근 생성된 후보 목록]" in prompt
     assert "- [도메인 미기록] 야간 근무 전날 밤" in prompt
     assert "- [도메인 미기록] 퇴근 뒤 필라테스" in prompt
+
+
+def test_promoted_feedback_reaches_the_prompt_and_returns_a_consumption_receipt(
+    tmp_path: Path,
+) -> None:
+    context, digest = _feedback_payload()
+    codex = FakeCodex()
+    executor = _executor(codex, tmp_path)
+
+    result = executor.execute(
+        executor.prepare(
+            _task(
+                _payload(
+                    feedback_context=context,
+                    feedback_context_sha256=digest,
+                )
+            )
+        )
+    )
+
+    assert "[이 계정의 검수에서 누적된 규칙]" in codex.prompts[0]
+    assert "한 장면과 한 갈등이 보이는 구체적인 컨셉" in codex.prompts[0]
+    assert result.output["feedback_application_sha256"] == digest
 
 
 def test_a_publisher_that_sends_no_recent_topics_still_generates(tmp_path: Path) -> None:

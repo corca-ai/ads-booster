@@ -27,6 +27,7 @@ from ads_booster.capture.simulator_photo import SimctlPhotoImporter
 from ads_booster.capture.wallpaper_collection import SimctlAppGroupWallpaperCollector
 from ads_booster.capture.wallpaper_validation import read_wallpaper_export_manifest
 from ads_booster.contracts import CaptureProvenance, PreparedBackground
+from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
 from ads_booster.contracts.generation import (
     MarketingContextBundle,
     PersonaProfile,
@@ -373,6 +374,7 @@ def _capture_result(
             "native_image_sha256": image_digest,
             "image_postprocess_source": "none",
             "native_export_binding_verified": True,
+            "feedback_application_sha256": contract.context.feedback_context_sha256,
         },
     )
 
@@ -450,6 +452,7 @@ def _context_bundle(
     language = _required_text(image_inputs, "language", 8)
     if language != _LOCALES[country].split("-", maxsplit=1)[0]:
         raise MarketingExecutionError("native_capture_language_mismatch")
+    feedback_context, feedback_digest = _feedback_context(task)
     return MarketingContextBundle(
         schema_version="trace.marketing-context.v1",
         request_id=request_id,
@@ -476,9 +479,44 @@ def _context_bundle(
             background_intent=background_intent,
             trace_items=tuple(item.strip() for item in trace_items),
         ),
+        feedback_context=feedback_context,
+        feedback_context_sha256=feedback_digest,
         reference_date=reference_date,
         device=device,
     )
+
+
+def _feedback_context(task: MarketingTask) -> tuple[FeedbackContext | None, str | None]:
+    raw = task.payload.get("feedback_context")
+    digest = task.payload.get("feedback_context_sha256")
+    if raw is None and digest is None:
+        return None, None
+    if not isinstance(digest, str):
+        raise MarketingExecutionError("native_capture_feedback_context_invalid")
+    try:
+        context = FeedbackContext.model_validate(raw)
+    except ValidationError as error:
+        raise MarketingExecutionError("native_capture_feedback_context_invalid") from error
+    profile = task.payload.get("context_profile")
+    profile_id = profile.get("profile_id") if isinstance(profile, dict) else None
+    correction = context.immediate_correction
+    candidate_id = _required_text(task.payload, "candidate_id", 80)
+    candidate_revision = _required_integer(task.payload, "candidate_revision")
+    if (
+        context.stage != "image"
+        or context.scope.account_id != task.account_id
+        or context.scope.context_profile_id != profile_id
+        or (
+            correction is not None
+            and (
+                correction.source_candidate_id != candidate_id
+                or correction.source_candidate_revision >= candidate_revision
+            )
+        )
+        or feedback_context_sha256(context) != digest
+    ):
+        raise MarketingExecutionError("native_capture_feedback_context_invalid")
+    return context, digest
 
 
 def _profile_text(profile: JsonObject, key: str, default: str, max_length: int) -> str:

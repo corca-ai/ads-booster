@@ -127,12 +127,15 @@ export function workerTaskKinds(capabilities) {
 }
 
 /** True when some non-revoked worker advertises this job kind. */
-export async function hasWorkerForTaskKind(db, kind) {
+export async function hasWorkerForTaskKind(db, kind, requiredCapability = null) {
   const result = await db.prepare(
     "SELECT capabilities_json FROM mac_workers WHERE state != 'revoked'",
   ).bind().all();
-  return result.results.some((row) =>
-    workerTaskKinds(parseObject(row.capabilities_json)).includes(kind));
+  return result.results.some((row) => {
+    const capabilities = parseObject(row.capabilities_json);
+    return workerTaskKinds(capabilities).includes(kind)
+      && (!requiredCapability || capabilities[requiredCapability] === true);
+  });
 }
 
 export async function publicWorkerStatus(db, now = new Date()) {
@@ -146,19 +149,23 @@ export async function publicWorkerStatus(db, now = new Date()) {
     pool: row.pool,
     status: workerOperationalStatus(row, now),
     kinds: workerTaskKinds(parseObject(row.capabilities_json)),
+    feedback_context: parseObject(row.capabilities_json).feedback_context_v1 === true,
   }));
   // The screen names the Macs; it does not say what each one can run. What it needs is the
   // one number a person acts on: whether any Mac online right now can write captions.
-  const workers = rows.map(({ kinds, ...worker }) => worker);
+  const workers = rows.map(({ kinds, feedback_context, ...worker }) => worker);
   const counts = {
     registered: workers.length,
     online: workers.filter((worker) => ["ready", "busy", "degraded"].includes(worker.status)).length,
     ready: workers.filter((worker) => worker.status === "ready").length,
     busy: workers.filter((worker) => worker.status === "busy").length,
     draining: workers.filter((worker) => worker.status === "draining").length,
-    generation_ready: rows.filter((row) =>
-      ["ready", "busy"].includes(row.status) && row.kinds.includes("generate_candidates")).length,
+    generation_ready: 0,
   };
+  counts.generation_ready = rows.filter((row) =>
+    ["ready", "busy"].includes(row.status)
+      && row.kinds.includes("generate_candidates")
+      && row.feedback_context).length;
   let status = "not_configured";
   if (counts.ready > 0 || counts.busy > 0) status = "ready";
   else if (counts.online > 0 || counts.draining > 0) status = "degraded";
@@ -185,8 +192,10 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
   await clearStaleWorkerAssignment(db, worker.worker_id, now);
   // What this Mac says it can run, read back from the row the heartbeat just wrote rather
   // than from the token lookup, so a worker that updated itself is trusted on this poll.
-  const kinds = await claimableTaskKinds(db, worker.worker_id);
+  const advertised = await claimableWorkerCapabilities(db, worker.worker_id);
+  const kinds = advertised.kinds;
   if (kinds.length === 0) return [];
+  const supportedCapability = advertised.feedbackContext ? "feedback_context_v1" : "__none__";
   const kindPlaceholders = kinds.map(() => "?").join(", ");
   const current = await db.prepare(
     `SELECT task_id, task_json, lease_id, attempt_count
@@ -195,8 +204,9 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
        AND callback_id IS NULL AND callback_reservation_id IS NULL
        AND execution_started_at IS NULL AND lease_expires_at > ?
        AND kind IN (${kindPlaceholders})
+       AND (required_capability IS NULL OR required_capability = ?)
      ORDER BY created_at LIMIT 1`,
-  ).bind(worker.worker_id, now.toISOString(), ...kinds).first();
+  ).bind(worker.worker_id, now.toISOString(), ...kinds, supportedCapability).first();
   if (current) return [leaseResponse(current)];
 
   const reservation = `claim:${crypto.randomUUID()}`;
@@ -213,8 +223,9 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND callback_reservation_id IS NULL AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND kind IN (${kindPlaceholders})
+         AND (required_capability IS NULL OR required_capability = ?)
        ORDER BY created_at LIMIT 1`,
-    ).bind(now.toISOString(), ...kinds).first();
+    ).bind(now.toISOString(), ...kinds, supportedCapability).first();
     if (!task) {
       await clearWorkerReservation(db, worker.worker_id, reservation, now);
       return [];
@@ -231,6 +242,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND kind IN (${kindPlaceholders})
+         AND (required_capability IS NULL OR required_capability = ?)
          AND EXISTS (SELECT 1 FROM mac_workers
                      WHERE worker_id = ? AND state = 'active' AND current_task_id = ?)`,
     ).bind(
@@ -242,6 +254,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
       task.task_id,
       now.toISOString(),
       ...kinds,
+      supportedCapability,
       worker.worker_id,
       reservation,
     ).run();
@@ -275,12 +288,16 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
  * The claim route heartbeats before it claims, so this row is the worker's current
  * advertisement rather than whatever it said when its token was last looked up.
  */
-async function claimableTaskKinds(db, workerId) {
+async function claimableWorkerCapabilities(db, workerId) {
   const row = await db.prepare(
     "SELECT capabilities_json FROM mac_workers WHERE worker_id = ?",
   ).bind(workerId).first();
-  if (!row) return [];
-  return workerTaskKinds(parseObject(row.capabilities_json));
+  if (!row) return { kinds: [], feedbackContext: false };
+  const capabilities = parseObject(row.capabilities_json);
+  return {
+    kinds: workerTaskKinds(capabilities),
+    feedbackContext: capabilities.feedback_context_v1 === true,
+  };
 }
 
 async function clearWorkerReservation(db, workerId, reservation, now) {

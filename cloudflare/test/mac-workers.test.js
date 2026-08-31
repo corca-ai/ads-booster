@@ -32,6 +32,7 @@ function task(overrides = {}) {
     state: "queued",
     dispatch_mode: "worker_broker",
     kind: "capture",
+    required_capability: null,
     callback_id: null,
     worker_id: null,
     lease_id: null,
@@ -54,7 +55,7 @@ function worker(workerId, overrides = {}) {
     display_name: workerId,
     pool: "appium",
     state: "active",
-    capabilities_json: '{"task_kinds":"capture,generate_candidates"}',
+    capabilities_json: '{"task_kinds":"capture,generate_candidates","feedback_context_v1":true}',
     doctor_json: '{"ready":true}',
     last_seen_at: "2026-08-26T00:00:00.000Z",
     current_task_id: null,
@@ -99,23 +100,27 @@ class ClaimStatement {
     }
     if (this.sql.includes("WHERE worker_id = ?") && this.sql.includes("lease_expires_at > ?")) {
       const [workerId, now] = this.values;
-      const kinds = this.values.slice(2);
+      const kinds = this.values.slice(2, -1);
+      const requiredCapability = this.values.at(-1);
       return [...this.db.tasks.values()].find((row) =>
         row.worker_id === workerId && row.dispatch_mode === "worker_broker" &&
         row.state === "queued" && !row.callback_id && !row.execution_started_at &&
         (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
         kinds.includes(row.kind) &&
+        (!row.required_capability || row.required_capability === requiredCapability) &&
         row.lease_expires_at > now
       ) ?? null;
     }
     if (this.sql.includes("SELECT task_id FROM hosted_workspace_capture_tasks") &&
         this.sql.includes("worker_id IS NULL")) {
       const [now] = this.values;
-      const kinds = this.values.slice(1);
+      const kinds = this.values.slice(1, -1);
+      const requiredCapability = this.values.at(-1);
       return [...this.db.tasks.values()].find((row) =>
         row.dispatch_mode === "worker_broker" && row.state === "queued" && !row.callback_id &&
         (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
         kinds.includes(row.kind) &&
+        (!row.required_capability || row.required_capability === requiredCapability) &&
         !row.execution_started_at && (!row.worker_id || !row.lease_expires_at || row.lease_expires_at <= now)
       ) ?? null;
     }
@@ -168,13 +173,15 @@ class ClaimStatement {
       // The kind list sits between the task predicate and the owner check, so the last two
       // values are read from the end rather than by a fixed index.
       const [ownerWorkerId, reservation] = this.values.slice(-2);
-      const kinds = this.values.slice(7, -2);
+      const requiredCapability = this.values.at(-3);
+      const kinds = this.values.slice(7, -3);
       const row = this.db.tasks.get(taskId);
       const owner = this.db.workers.get(ownerWorkerId);
       if (!row || row.dispatch_mode !== "worker_broker" || row.state !== "queued" ||
           row.callback_id || row.execution_started_at || (row.worker_id && row.lease_expires_at && row.lease_expires_at > now) ||
           (this.sql.includes("callback_reservation_id IS NULL") && row.callback_reservation_id) ||
           !kinds.includes(row.kind) ||
+          (row.required_capability && row.required_capability !== requiredCapability) ||
           owner?.state !== "active" || owner.current_task_id !== reservation) {
         return { meta: { changes: 0 } };
       }
@@ -772,6 +779,19 @@ test("a Mac that predates caption generation still leases image captures", async
 
   assert.equal(leases.length, 1);
   assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+});
+
+test("a worker without feedback context support cannot lease new feedback-aware work", async () => {
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"capture,generate_candidates"}',
+  });
+  const feedbackTask = task({ required_capability: "feedback_context_v1" });
+  const db = new ClaimDb([oldWorker], [feedbackTask]);
+
+  const leases = await claimWorkerTasks(db, oldWorker, new Date("2026-08-26T00:00:00.000Z"));
+
+  assert.deepEqual(leases, []);
+  assert.equal(feedbackTask.worker_id, null);
 });
 
 test("an updated Mac leases either kind, oldest first", async () => {

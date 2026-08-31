@@ -3,7 +3,7 @@
 Status: Draft — the attempt feedback foundation is implemented; offline evaluation, prompt
 experiments, and post-publication measurement are not yet implemented.
 
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-31
 
 ## Goal
 
@@ -34,6 +34,8 @@ Primary references:
 - Three distinct candidates promote a rule. Rules are inspectable, disableable, and do not modify
   canonical account/profile context.
 - Caption rules and image rules enter different prompt boundaries.
+- Tasks and worker callbacks bind the selected feedback envelope by SHA-256. This proves selection
+  and worker consumption only; semantic compliance still requires human review.
 
 ## Quality dimensions and scorecard
 

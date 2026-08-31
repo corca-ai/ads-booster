@@ -31,6 +31,7 @@ from ads_booster.candidate_generation import (
     default_context_directory,
     default_domain_shuffle,
 )
+from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.transport.json_types import JsonObject
@@ -103,6 +104,8 @@ class HostedGenerationRequest(GenerationModel):
         tuple[Annotated[str, Field(min_length=1, max_length=200)], ...],
         Field(max_length=32),
     ] = ()
+    feedback_context: FeedbackContext | None = None
+    feedback_context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     requested_by: Literal["hosted_workspace"]
 
 
@@ -251,6 +254,16 @@ class HostedWorkspaceGenerationExecutor:
             if pipeline != PIPELINE:
                 raise MarketingExecutionError("unsupported_hosted_generation_pipeline") from error
             raise MarketingExecutionError("hosted_generation_payload_invalid") from error
+        if (request.feedback_context is None) != (request.feedback_context_sha256 is None):
+            raise MarketingExecutionError("hosted_generation_feedback_context_invalid")
+        if request.feedback_context is not None and (
+            request.feedback_context.stage != "caption"
+            or request.feedback_context.scope.account_id != task.account_id
+            or request.feedback_context.scope.context_profile_id != request.context_profile_id
+            or request.feedback_context.immediate_correction is not None
+            or feedback_context_sha256(request.feedback_context) != request.feedback_context_sha256
+        ):
+            raise MarketingExecutionError("hosted_generation_feedback_context_invalid")
         brief = None if request.persona is None else _account_brief(request.persona)
         directory = (
             default_context_directory(Path.cwd())
@@ -301,6 +314,15 @@ class HostedWorkspaceGenerationExecutor:
                 brief=prepared.brief,
                 interests=() if persona is None else persona.interests,
                 history=_recent_history(prepared.request.recent_topics),
+                learned_feedback=tuple(
+                    rule.instruction
+                    for rule in (
+                        prepared.request.feedback_context.rules
+                        if prepared.request.feedback_context
+                        else ()
+                    )
+                    if rule.stage == "caption" and "candidate_generation" in rule.targets
+                ),
             )
         except CandidateFormatError as error:
             raise MarketingExecutionError(
@@ -328,6 +350,7 @@ class HostedWorkspaceGenerationExecutor:
                 "requested": prepared.request.count,
                 "failures": batch.failures,
                 "failure_reason": batch.failure_reason,
+                "feedback_application_sha256": prepared.request.feedback_context_sha256,
                 "candidates": [
                     _candidate_output(candidate, drafted)
                     for candidate, drafted in zip(generated.candidates, batch.drafts, strict=True)

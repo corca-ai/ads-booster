@@ -35,6 +35,7 @@ cli/marketing
 | `worker_loop.py` | prepare-barrier-execute ordering and ambiguity handling | Trace UI method |
 | `background.py` | `background_intent`, digest, provenance | native export |
 | `native_capture.py` | hosted payload/context, request paths, native preview PNG validation | UI selectors, image editing |
+| `contracts/feedback.py` | strict `trace.feedback-context.v1` shape and canonical digest | rule promotion, review storage |
 | `codex_appium_job.py` | v2 context/device/digest/nonce/time/calendar contract | process execution |
 | `calendar_automation_contract.py` | typed prepare/cleanup request, result, and event time projection | EventKit execution, layout |
 | `calendar_preparation.py` | post-barrier Trace helper launch, Calendar proof and request-owned cleanup | Trace layout, Calendar UI navigation |
@@ -53,6 +54,12 @@ adds `-traceMarketingCalendarAutomation`; the final Codex editor keeps the origi
 arguments. Codex reports UI completion and session close only. Worker-owned Calendar proof and
 cleanup never enter Ready/Saved/result schemas. Only the worker collector proves the App Group export
 and validates the manifest.
+
+Cloudflare owns review-event binding, distinct-candidate rule promotion, override state, task
+selection, and callback receipt comparison. Python validates the same feedback envelope, inserts
+caption rules into the candidate instruction or carries image correction context in the Appium job,
+and returns only the selected digest as its consumption receipt. Neither side changes generated
+candidate fields or native artifact fields to transport feedback.
 
 The package deliberately keeps no alternate execution runtime or legacy command compatibility.
 `trace-agent` and `trace-ads` are migration-only names.
