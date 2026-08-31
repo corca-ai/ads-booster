@@ -56,6 +56,25 @@
   const workerAgentPrompt = one("[data-worker-agent-prompt]");
   const workerAgentPromptCopy = one("[data-worker-agent-prompt-copy]");
   const workerAgentPromptFeedback = one("[data-worker-agent-prompt-feedback]");
+  const threadsManager = one("[data-threads-manager]");
+  const threadsManagerOpen = one("[data-threads-manager-open]");
+  const threadsManagerClose = one("[data-threads-manager-close]");
+  const threadsLocked = one("[data-threads-locked]");
+  const threadsPanel = one("[data-threads-panel]");
+  const threadsUnlockForm = one("[data-threads-unlock-form]");
+  const threadsTokenField = one("#threads-control-token");
+  const threadsFeedback = one("[data-threads-feedback]");
+  const threadsActionFeedback = one("[data-threads-action-feedback]");
+  const threadsRefresh = one("[data-threads-refresh]");
+  const threadsLock = one("[data-threads-lock]");
+  const threadsConnect = one("[data-threads-connect]");
+  const threadsToggle = one("[data-threads-toggle]");
+  const threadsProfileList = one("[data-threads-profile-list]");
+  const threadsEmpty = one("[data-threads-empty]");
+  const threadsSummary = one("[data-threads-summary]");
+  const threadsState = one("[data-threads-state]");
+  const threadsCopy = one("[data-threads-copy]");
+  const threadsSignal = one("[data-threads-signal]");
   let hostedCandidateControls = false;
   let editingCandidate = null;
   let editingCandidateContextChanged = false;
@@ -70,9 +89,14 @@
   let capturePoll = null;
   let workerPoll = null;
   let macWorkerStatus = null;
-  let workerAdminToken = "";
+  let controlPlaneToken = "";
   let workerAdminPoll = null;
   let managedWorkers = [];
+  let threadsProfiles = [];
+  let threadsSettings = null;
+  let threadsPublications = new Map();
+  let threadsPopup = null;
+  let threadsPopupPoll = null;
 
   const HANGUL = /[가-힣]/;
   const ERROR_MESSAGES = Object.freeze({
@@ -473,24 +497,25 @@
     "완료 보고에는 Mac 이름, 설치 version/commit, doctor, worker/updater 상태, 화면 heartbeat 버전과 남은 문제만 포함한다. secret과 enrollment code는 포함하지 말고 실제 capture canary는 실행하지 않았다고 명시한다.",
   ].join("\n");
 
-  const workerAdminRequest = async (path, options = {}) => {
-    if (!workerAdminToken) {
-      const failure = new Error("Mac 관리 토큰을 다시 입력해 주세요.");
+  const controlPlaneRequest = async (path, options = {}) => {
+    if (!controlPlaneToken) {
+      const failure = new Error("운영 제어 토큰을 다시 입력해 주세요.");
       failure.status = 401;
       throw failure;
     }
     const headers = new Headers(options.headers ?? {});
-    headers.set("Authorization", `Bearer ${workerAdminToken}`);
+    headers.set("Authorization", `Bearer ${controlPlaneToken}`);
+    if (selectedAccountId) headers.set("X-Trace-Account-ID", selectedAccountId);
     const response = await fetch(path, { credentials: "same-origin", ...options, headers });
     const payload = response.status === 204 ? null : await response.json();
     if (!response.ok) {
       const message = ({
         400: "요청 값을 확인해 주세요.",
         401: "제어 토큰이 맞지 않습니다. Cloudflare의 CONTROL_PLANE_TOKEN 값을 확인해 주세요.",
-        404: "Mac 연결을 찾지 못했습니다. 목록을 새로고침해 주세요.",
+        404: "요청한 운영 대상을 찾지 못했습니다. 목록을 새로고침해 주세요.",
         409: "다른 작업이 먼저 상태를 바꿨습니다. 목록을 새로고침해 주세요.",
       })[response.status] ?? `Mac 관리 요청에 실패했습니다 (${response.status}).`;
-      const failure = new Error(message);
+      const failure = new Error(payload?.detail || message);
       failure.status = response.status;
       throw failure;
     }
@@ -540,7 +565,7 @@
     setWorkerAdminActionFeedback("");
     setWorkerActionBusy(button, true, "변경 중…");
     try {
-      await workerAdminRequest(`/v1/workers/${encodeURIComponent(worker.worker_id)}/state`, {
+      await controlPlaneRequest(`/v1/workers/${encodeURIComponent(worker.worker_id)}/state`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state }),
@@ -558,7 +583,7 @@
     setWorkerAdminActionFeedback("");
     setWorkerActionBusy(button, true, "폐기 중…");
     try {
-      await workerAdminRequest(`/v1/workers/${encodeURIComponent(worker.worker_id)}/revoke`, {
+      await controlPlaneRequest(`/v1/workers/${encodeURIComponent(worker.worker_id)}/revoke`, {
         method: "POST",
       });
       await Promise.all([loadManagedWorkers(), loadMacWorkerStatus()]);
@@ -667,7 +692,7 @@
   const scheduleWorkerAdminPoll = () => {
     if (workerAdminPoll) window.clearTimeout(workerAdminPoll);
     workerAdminPoll = null;
-    if (!workerAdminToken || !workerManager?.open) return;
+    if (!controlPlaneToken || !workerManager?.open) return;
     workerAdminPoll = window.setTimeout(() => {
       loadManagedWorkers().catch((error) => {
         if (error.status === 401) lockWorkerManager(error.message);
@@ -677,7 +702,7 @@
   };
 
   const loadManagedWorkers = async () => {
-    const result = await workerAdminRequest("/v1/workers");
+    const result = await controlPlaneRequest("/v1/workers");
     managedWorkers = Array.isArray(result?.workers) ? result.workers : [];
     renderManagedWorkers();
     scheduleWorkerAdminPoll();
@@ -692,7 +717,7 @@
   };
 
   const lockWorkerManager = (message = "") => {
-    workerAdminToken = "";
+    controlPlaneToken = "";
     managedWorkers = [];
     if (workerAdminPoll) window.clearTimeout(workerAdminPoll);
     workerAdminPoll = null;
@@ -703,6 +728,182 @@
     clearWorkerEnrollmentResult();
     setWorkerAdminFeedback(message);
     setWorkerAdminActionFeedback("");
+    if (hostedCandidateControls && candidateRecords.length > 0) {
+      void loadCandidates().catch((error) => setNotice(error.message));
+    }
+  };
+
+  const setThreadsFeedback = (message) => {
+    if (!threadsFeedback) return;
+    threadsFeedback.hidden = !message;
+    threadsFeedback.textContent = message;
+  };
+
+  const setThreadsActionFeedback = (message) => {
+    if (!threadsActionFeedback) return;
+    threadsActionFeedback.hidden = !message;
+    threadsActionFeedback.textContent = message;
+  };
+
+  const renderThreadsConsole = () => {
+    const enabled = threadsSettings?.threads_auto_publish_enabled === true;
+    if (threadsState) {
+      threadsState.textContent = enabled ? "ON" : "OFF";
+      threadsState.dataset.state = enabled ? "ready" : "offline";
+    }
+    if (threadsSignal) threadsSignal.dataset.state = enabled ? "ready" : "offline";
+    if (threadsCopy) {
+      const active = threadsProfiles.filter((profile) => profile.state === "active").length;
+      threadsCopy.textContent = threadsSettings
+        ? `활성 프로필 ${active}개 · ${enabled ? "다음 승인 후보부터 예약 발행" : "자동 발행 꺼짐"}`
+        : "운영 권한을 열면 연결 프로필과 발행 설정을 확인할 수 있습니다.";
+    }
+  };
+
+  const threadsProfileRow = (profile) => {
+    const row = document.createElement("article");
+    row.className = "threads-profile-row";
+    row.setAttribute("role", "listitem");
+    const identity = document.createElement("div");
+    identity.className = "threads-profile-row__identity";
+    const name = document.createElement("strong");
+    name.textContent = `@${profile.username}`;
+    const meta = document.createElement("span");
+    meta.className = "threads-profile-row__meta";
+    const expiry = profile.token_expires_at
+      ? new Date(profile.token_expires_at).toLocaleDateString("ko-KR")
+      : "토큰 없음";
+    meta.textContent = `${profile.state} · 권한 ${profile.scopes.length}개 · ${expiry}`;
+    identity.append(name, meta);
+    const actions = document.createElement("div");
+    actions.className = "threads-profile-row__actions";
+    if (profile.is_default) actions.append(badge("worker-state", "기본 프로필"));
+    else if (profile.state === "active") {
+      const select = document.createElement("button");
+      select.className = "button button-secondary";
+      select.type = "button";
+      select.textContent = "기본으로 설정";
+      select.addEventListener("click", async () => {
+        setWorkerActionBusy(select, true, "변경 중…");
+        try {
+          await controlPlaneRequest(`/api/threads/profiles/${encodeURIComponent(profile.profile_id)}/default`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ expected_revision: threadsSettings.revision }),
+          });
+          await loadThreadsOperations();
+          await loadCandidates();
+        } catch (error) {
+          setThreadsActionFeedback(error.message);
+        } finally {
+          setWorkerActionBusy(select, false);
+        }
+      });
+      actions.append(select);
+    }
+    const lifecycle = document.createElement("button");
+    lifecycle.className = "button button-quiet";
+    lifecycle.type = "button";
+    lifecycle.textContent = profile.state === "active" ? "연결 해제" : "다시 연결";
+    lifecycle.addEventListener("click", async () => {
+      if (profile.state !== "active") {
+        await openThreadsOAuth(`/api/threads/profiles/${encodeURIComponent(profile.profile_id)}/reconnect`);
+        return;
+      }
+      setWorkerActionBusy(lifecycle, true, "해제 중…");
+      try {
+        await controlPlaneRequest(`/api/threads/profiles/${encodeURIComponent(profile.profile_id)}/disconnect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expected_revision: threadsSettings.revision }),
+        });
+        await loadThreadsOperations();
+        await loadCandidates();
+      } catch (error) {
+        setThreadsActionFeedback(error.message);
+      } finally {
+        setWorkerActionBusy(lifecycle, false);
+      }
+    });
+    actions.append(lifecycle);
+    row.append(identity, actions);
+    return row;
+  };
+
+  const renderThreadsOperations = () => {
+    if (threadsProfileList) threadsProfileList.replaceChildren(...threadsProfiles.map(threadsProfileRow));
+    if (threadsEmpty) threadsEmpty.hidden = threadsProfiles.length > 0;
+    if (threadsSummary && threadsSettings) {
+      const defaultProfile = threadsProfiles.find((profile) => profile.is_default);
+      threadsSummary.textContent = defaultProfile
+        ? `기본 @${defaultProfile.username} · revision ${threadsSettings.revision}`
+        : `기본 프로필 없음 · revision ${threadsSettings.revision}`;
+    }
+    if (threadsToggle && threadsSettings) {
+      const enabled = threadsSettings.threads_auto_publish_enabled === true;
+      const activeDefault = threadsProfiles.some((profile) => profile.is_default && profile.state === "active");
+      threadsToggle.textContent = enabled ? "자동 발행 끄기" : "자동 발행 켜기";
+      threadsToggle.className = enabled ? "button button-secondary" : "button button-primary";
+      threadsToggle.disabled = !enabled && !activeDefault;
+      threadsToggle.setAttribute("aria-pressed", String(enabled));
+    }
+    renderThreadsConsole();
+  };
+
+  const loadThreadsOperations = async () => {
+    const [profileResult, settings] = await Promise.all([
+      controlPlaneRequest("/api/threads/profiles"),
+      controlPlaneRequest("/api/threads/settings"),
+    ]);
+    threadsProfiles = Array.isArray(profileResult?.profiles) ? profileResult.profiles : [];
+    threadsSettings = settings;
+    renderThreadsOperations();
+  };
+
+  const stopThreadsPopupPoll = () => {
+    if (threadsPopupPoll) window.clearInterval(threadsPopupPoll);
+    threadsPopupPoll = null;
+  };
+
+  const openThreadsOAuth = async (path = "/api/threads/oauth/start") => {
+    setThreadsActionFeedback("");
+    try {
+      const result = await controlPlaneRequest(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      threadsPopup = window.open(result.authorization_url, "trace-threads-oauth", "popup,width=560,height=720");
+      if (!threadsPopup) throw new Error("팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.");
+      stopThreadsPopupPoll();
+      threadsPopupPoll = window.setInterval(() => {
+        if (!threadsPopup?.closed) return;
+        stopThreadsPopupPoll();
+        threadsPopup = null;
+        setThreadsActionFeedback("Threads 연결 창이 완료 메시지 없이 닫혔습니다. 다시 시도해 주세요.");
+      }, 500);
+    } catch (error) {
+      setThreadsActionFeedback(error.message);
+    }
+  };
+
+  const lockThreadsManager = (message = "") => {
+    controlPlaneToken = "";
+    threadsProfiles = [];
+    threadsSettings = null;
+    stopThreadsPopupPoll();
+    if (threadsPopup && !threadsPopup.closed) threadsPopup.close();
+    threadsPopup = null;
+    threadsUnlockForm?.reset();
+    threadsTokenField?.removeAttribute("aria-invalid");
+    if (threadsLocked) threadsLocked.hidden = false;
+    if (threadsPanel) threadsPanel.hidden = true;
+    setThreadsFeedback(message);
+    setThreadsActionFeedback("");
+    renderThreadsConsole();
+    if (hostedCandidateControls && candidateRecords.length > 0) {
+      void loadCandidates().catch((error) => setNotice(error.message));
+    }
   };
 
   const copyWorkerSetupText = async (
@@ -908,6 +1109,198 @@
     return wrap;
   };
 
+  const threadsProfileTargetNode = (record) => {
+    const wrap = document.createElement("div");
+    wrap.className = "threads-profile-target";
+    const current = document.createElement("span");
+    current.className = "candidate-context";
+    current.textContent = record.threads_profile?.username
+      ? `Threads · @${record.threads_profile.username}`
+      : "Threads · 대상 미지정";
+    wrap.append(current);
+    if (!canSetThreadsProfile(record.status)) return wrap;
+    const label = document.createElement("label");
+    label.textContent = "발행 프로필";
+    const select = document.createElement("select");
+    select.dataset.threadsProfileSelect = "";
+    const activeProfiles = threadsProfiles.filter((profile) => profile.state === "active");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = controlPlaneToken ? "프로필 선택" : "운영 권한 필요";
+    select.append(placeholder);
+    for (const profile of activeProfiles) {
+      const option = document.createElement("option");
+      option.value = profile.profile_id;
+      option.textContent = `@${profile.username}${profile.is_default ? " · 기본" : ""}`;
+      option.selected = profile.profile_id === record.threads_profile?.profile_id;
+      select.append(option);
+    }
+    select.disabled = !controlPlaneToken || activeProfiles.length === 0;
+    select.addEventListener("change", async () => {
+      if (!select.value) return;
+      select.disabled = true;
+      try {
+        await controlPlaneRequest(`/api/candidates/${encodeURIComponent(record.candidate_id)}/threads-profile`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threads_profile_id: select.value,
+            expected_revision: record.revision,
+          }),
+        });
+        await loadCandidates();
+        setNotice("후보의 Threads 발행 프로필을 변경했습니다.");
+      } catch (error) {
+        setNotice(error.message);
+        select.value = record.threads_profile?.profile_id ?? "";
+        select.disabled = false;
+      }
+    });
+    label.append(select);
+    wrap.append(label);
+    return wrap;
+  };
+
+  const canSetThreadsProfile = (status) => [
+    "awaiting_review",
+    "caption_approved",
+    "image_awaiting_review",
+  ].includes(status);
+
+  const THREADS_PUBLICATION_LABELS = Object.freeze({
+    scheduled: "예약됨",
+    creating_container: "미디어 준비 중",
+    container_ready: "게시 직전 확인",
+    publishing: "게시 확인 중",
+    published: "게시 완료",
+    canceled: "예약 취소",
+    failed: "게시 실패",
+    unknown_side_effect: "게시 결과 확인 필요",
+    rate_limited: "Threads 제한 대기",
+    auth_required: "프로필 다시 연결 필요",
+    unavailable: "게시물 확인 불가",
+  });
+
+  const publicationGuidance = (publication) => ({
+    scheduled: "승인 시점에 고정된 다음 슬롯까지 기다립니다.",
+    creating_container: "이미지를 Threads가 가져갈 수 있도록 준비하고 있습니다.",
+    container_ready: "자동 발행 설정과 프로필을 마지막으로 다시 확인합니다.",
+    publishing: publication.failure_code === "readback_pending"
+      ? "게시물 ID는 보존됐고 readback만 다시 확인합니다. publish는 반복하지 않습니다."
+      : "publish 장벽을 넘었습니다. 결과를 확인하는 중입니다.",
+    published: "발행된 글의 반응 수집은 자동 발행 OFF와 무관하게 계속됩니다.",
+    canceled: publication.failure_code === "auto_publish_disabled"
+      ? "승인 시 자동 발행이 OFF여서 이 예약은 다시 살아나지 않습니다."
+      : "게시 장벽 전에 안전하게 취소됐습니다.",
+    failed: "실패 코드를 확인한 뒤 운영자가 원인을 해결해야 합니다.",
+    unknown_side_effect: "게시 여부를 추측하거나 publish를 다시 누르지 말고 post ID로 확인하세요.",
+    rate_limited: "표시된 시각 이후 읽기 작업을 다시 시도합니다.",
+    auth_required: "같은 Threads 사용자로 프로필을 다시 연결해 주세요.",
+    unavailable: "Threads에서 게시물이 삭제됐거나 더 이상 읽을 수 없습니다.",
+  })[publication.state] ?? "Threads 게시 상태를 확인하고 있습니다.";
+
+  const publicationDate = (value) => {
+    const timestamp = Date.parse(value ?? "");
+    return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString("ko-KR") : "시각 없음";
+  };
+
+  const publicationStateNode = (record) => {
+    const publication = record.threads_publication;
+    if (!publication) return null;
+    const panel = document.createElement("section");
+    panel.className = "publication-panel";
+    panel.dataset.state = publication.state;
+    const heading = document.createElement("div");
+    heading.className = "publication-panel__heading";
+    const title = document.createElement("strong");
+    title.textContent = `Threads · ${THREADS_PUBLICATION_LABELS[publication.state] ?? publication.state}`;
+    heading.append(title, badge(`worker-state ${publication.state}`, publication.profile.username ? `@${publication.profile.username}` : "프로필"));
+    const guidance = document.createElement("p");
+    guidance.textContent = publicationGuidance(publication);
+    const timing = document.createElement("p");
+    timing.className = "publication-panel__meta";
+    timing.textContent = publication.state === "published"
+      ? `게시 ${publicationDate(publication.published_at)} · 마지막 동기화 ${publicationDate(publication.metrics_polled_at ?? publication.replies_polled_at)}`
+      : `고정 예약 ${publicationDate(publication.scheduled_at)} · ${publication.timezone}`;
+    panel.append(heading, guidance, timing);
+    if (publication.permalink) {
+      const link = document.createElement("a");
+      link.className = "background-source__link";
+      link.href = publication.permalink;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Threads 게시물 열기";
+      panel.append(link);
+    }
+    if (publication.metrics) {
+      const metrics = document.createElement("div");
+      metrics.className = "publication-metrics";
+      for (const [label, key] of [
+        ["조회", "views"], ["좋아요", "likes"], ["답글", "replies"],
+        ["리포스트", "reposts"], ["인용", "quotes"], ["공유", "shares"],
+      ]) metrics.append(badge("approval-badge", `${label} ${publication.metrics[key]}`));
+      panel.append(metrics);
+    }
+    if (publication.state === "published" && controlPlaneToken) {
+      const repliesButton = document.createElement("button");
+      repliesButton.className = "button button-quiet";
+      repliesButton.type = "button";
+      repliesButton.textContent = "최상위 답글 보기";
+      repliesButton.addEventListener("click", async () => {
+        setWorkerActionBusy(repliesButton, true, "불러오는 중…");
+        try {
+          const result = await controlPlaneRequest(`/api/threads/publications/${encodeURIComponent(publication.publication_id)}/replies`);
+          const list = document.createElement("ul");
+          list.className = "publication-replies";
+          for (const reply of result.replies) {
+            const item = document.createElement("li");
+            item.textContent = `${reply.body} · ${publicationDate(reply.replied_at)}`;
+            list.append(item);
+          }
+          if (result.replies.length === 0) {
+            const empty = document.createElement("li");
+            empty.textContent = "수집된 최상위 답글이 없습니다.";
+            list.append(empty);
+          }
+          repliesButton.replaceWith(list);
+        } catch (error) {
+          setNotice(error.message);
+          setWorkerActionBusy(repliesButton, false);
+        }
+      });
+      panel.append(repliesButton);
+    }
+    if (publication.state === "unknown_side_effect" && controlPlaneToken) {
+      const controls = document.createElement("div");
+      controls.className = "publication-resolution";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "확인된 Threads post ID";
+      input.setAttribute("aria-label", "확인된 Threads post ID");
+      const reconcile = document.createElement("button");
+      reconcile.className = "button button-secondary";
+      reconcile.type = "button";
+      reconcile.textContent = "ID로 readback 확인";
+      const failed = document.createElement("button");
+      failed.className = "button button-quiet";
+      failed.type = "button";
+      failed.textContent = "게시 실패로 확정";
+      const resolve = async (decision) => {
+        await controlPlaneRequest(`/api/threads/publications/${encodeURIComponent(publication.publication_id)}/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decision, threads_post_id: input.value.trim() || undefined }),
+        });
+        await loadCandidates();
+      };
+      reconcile.addEventListener("click", () => resolve("reconcile").catch((error) => setNotice(error.message)));
+      failed.addEventListener("click", () => resolve("failed").catch((error) => setNotice(error.message)));
+      controls.append(input, reconcile, failed);
+      panel.append(controls);
+    }
+    return panel;
+  };
+
   const candidateNode = (record) => {
     const row = document.createElement("article"); row.className = "candidate-row";
     const source = badge("candidate-source", candidateSourceLabel(record.source));
@@ -925,6 +1318,9 @@
     if (record.review_rating) {
       content.append(badge("candidate-context", `최근 평가 · ${record.review_rating}점`));
     }
+    content.append(threadsProfileTargetNode(record));
+    const publication = publicationStateNode(record);
+    if (publication) content.append(publication);
     content.append(journeyNode(record), provenanceNode(record));
     const trailing = document.createElement("span"); trailing.className = "candidate-row__trailing";
     trailing.append(badge(
@@ -1056,12 +1452,16 @@
     return actions;
   };
 
+  const candidateImageUrl = (record) => {
+    const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
+    return `/api/candidates/${encodeURIComponent(record.candidate_id)}/image${accountQuery}`;
+  };
+
   const approvalVisual = (record) => {
     const visual = document.createElement("div"); visual.className = "approval-visual";
     if (record.image_path) {
       const image = document.createElement("img");
-      const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
-      image.src = `/api/candidates/${encodeURIComponent(record.candidate_id)}/image${accountQuery}`;
+      image.src = candidateImageUrl(record);
       image.alt = "합성된 후보 이미지";
       image.loading = "lazy";
       image.addEventListener("error", () => {
@@ -1100,6 +1500,9 @@
       approvalField("참조", record.refs_used.length ? record.refs_used.join(", ") : "—"),
       approvalField("AI 검수", record.ai_verdict || "—"),
     );
+    facts.append(threadsProfileTargetNode(record));
+    const publication = publicationStateNode(record);
+    if (publication) facts.append(publication);
     const order = shootingOrderNode(record);
     const actions = document.createElement("div"); actions.className = "approval-card__actions";
     actions.append(reviewControls(record, "caption", "캡션·주제 승인 · 5점"), deleteControl(record, true));
@@ -1237,6 +1640,9 @@
     );
     const body = document.createElement("div"); body.className = "approval-card__body";
     body.append(imageSummary(record), approvalVisual(record));
+    body.append(threadsProfileTargetNode(record));
+    const publication = publicationStateNode(record);
+    if (publication) body.append(publication);
     const actions = document.createElement("div"); actions.className = "approval-card__actions";
     const feedback = document.createElement("p");
     feedback.className = "candidate-feedback";
@@ -1369,16 +1775,28 @@
     // Scoped to the open account: another account's drafts are another person's.
     const scope = candidateScope();
     const listPath = scope ? `/api/candidates?${scope}` : "/api/candidates";
-    const records = await request(listPath);
-    candidateRecords = records;
+    const [records, publicationResult] = await Promise.all([
+      request(listPath),
+      request("/api/threads/publications"),
+    ]);
+    threadsPublications = new Map();
+    for (const publication of publicationResult?.publications ?? []) {
+      if (!threadsPublications.has(publication.candidate_id)) {
+        threadsPublications.set(publication.candidate_id, publication);
+      }
+    }
+    candidateRecords = records.map((record) => ({
+      ...record,
+      threads_publication: threadsPublications.get(record.candidate_id) ?? null,
+    }));
     renderCandidateList();
-    const pending = records.filter((record) => record.status === "awaiting_review");
+    const pending = candidateRecords.filter((record) => record.status === "awaiting_review");
     one("[data-approval-list]")?.replaceChildren(...pending.map(approvalNode));
     const approvalEmpty = one("[data-approval-empty]");
     if (approvalEmpty) approvalEmpty.hidden = pending.length > 0;
     const approvalCount = one("[data-approval-count]");
     if (approvalCount) approvalCount.textContent = `캡션·주제 검수 대기 ${pending.length}건`;
-    const imageStage = records.filter(
+    const imageStage = candidateRecords.filter(
       (record) => record.status === "caption_approved" || record.status === "image_awaiting_review",
     );
     one("[data-image-list]")?.replaceChildren(...imageStage.map(imageNode));
@@ -1394,7 +1812,7 @@
       imageCount.textContent = `생성 가능 ${ready}건 · Mac 대기·실행 ${queued}건 · 실패 ${failed}건 · 검수 대기 ${reviewPending.length}건`;
     }
     if (capturePoll) window.clearTimeout(capturePoll);
-    if (records.some((record) => record.capture_state === "queued")) {
+    if (candidateRecords.some((record) => record.capture_state === "queued")) {
       capturePoll = window.setTimeout(() => {
         loadCandidates().catch((error) => setNotice(error.message));
       }, 5000);
@@ -2302,6 +2720,126 @@
 
   inviteDialog?.querySelector("[value='cancel']")?.addEventListener("click", () => inviteDialog?.close());
 
+  threadsManagerOpen?.addEventListener("click", () => {
+    threadsManager?.showModal();
+    if (controlPlaneToken) {
+      if (threadsLocked) threadsLocked.hidden = true;
+      if (threadsPanel) threadsPanel.hidden = false;
+      void loadThreadsOperations().catch((error) => setThreadsActionFeedback(error.message));
+    } else {
+      lockThreadsManager();
+      threadsTokenField?.focus();
+    }
+  });
+
+  threadsManagerClose?.addEventListener("click", () => threadsManager?.close());
+  threadsManager?.addEventListener("close", () => {
+    stopThreadsPopupPoll();
+    if (controlPlaneToken) void loadCandidates().catch((error) => setNotice(error.message));
+  });
+  threadsManager?.addEventListener("click", (event) => {
+    if (event.target === threadsManager) threadsManager.close();
+  });
+
+  threadsUnlockForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    const token = String(new FormData(target).get("control-token") ?? "").trim();
+    threadsTokenField?.removeAttribute("aria-invalid");
+    setThreadsFeedback("");
+    if (!token) {
+      threadsTokenField?.setAttribute("aria-invalid", "true");
+      setThreadsFeedback("Cloudflare CONTROL_PLANE_TOKEN 값을 입력해 주세요.");
+      threadsTokenField?.focus();
+      return;
+    }
+    controlPlaneToken = token;
+    target.reset();
+    setWorkerActionBusy(one("[data-threads-unlock]"), true, "확인 중…");
+    try {
+      await loadThreadsOperations();
+      if (threadsLocked) threadsLocked.hidden = true;
+      if (threadsPanel) threadsPanel.hidden = false;
+      await loadCandidates();
+    } catch (error) {
+      controlPlaneToken = "";
+      threadsTokenField?.setAttribute("aria-invalid", "true");
+      setThreadsFeedback(error.message);
+      threadsTokenField?.focus();
+    } finally {
+      setWorkerActionBusy(one("[data-threads-unlock]"), false);
+    }
+  });
+
+  threadsRefresh?.addEventListener("click", async () => {
+    setThreadsActionFeedback("");
+    setWorkerActionBusy(threadsRefresh, true, "새로고침 중…");
+    try {
+      await loadThreadsOperations();
+      await loadCandidates();
+    } catch (error) {
+      if (error.status === 401) lockThreadsManager(error.message);
+      else setThreadsActionFeedback(error.message);
+    } finally {
+      setWorkerActionBusy(threadsRefresh, false);
+    }
+  });
+
+  threadsLock?.addEventListener("click", () => {
+    lockThreadsManager();
+    threadsTokenField?.focus();
+  });
+
+  threadsConnect?.addEventListener("click", () => openThreadsOAuth());
+
+  threadsToggle?.addEventListener("click", async () => {
+    if (!threadsSettings) return;
+    const enabled = threadsSettings.threads_auto_publish_enabled !== true;
+    setThreadsActionFeedback("");
+    setWorkerActionBusy(threadsToggle, true, enabled ? "켜는 중…" : "끄는 중…");
+    try {
+      await controlPlaneRequest("/api/threads/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, expected_revision: threadsSettings.revision }),
+      });
+      await loadThreadsOperations();
+      setNotice(enabled ? "Threads 자동 발행을 켰습니다." : "Threads 자동 발행을 껐습니다.");
+    } catch (error) {
+      setThreadsActionFeedback(error.message);
+    } finally {
+      setWorkerActionBusy(threadsToggle, false);
+      renderThreadsOperations();
+    }
+  });
+
+  window.addEventListener("message", async (event) => {
+    if (
+      event.origin !== window.location.origin
+      || event.source !== threadsPopup
+      || event.data?.type !== "threads-oauth-complete"
+    ) return;
+    stopThreadsPopupPoll();
+    threadsPopup = null;
+    if (event.data.status !== "connected") {
+      setThreadsActionFeedback("Threads 프로필 연결을 완료하지 못했습니다.");
+      return;
+    }
+    try {
+      await loadThreadsOperations();
+      await loadCandidates();
+      setNotice("Threads 프로필을 연결했습니다.");
+    } catch (error) {
+      setThreadsActionFeedback(error.message);
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    controlPlaneToken = "";
+    stopThreadsPopupPoll();
+    if (threadsPopup && !threadsPopup.closed) threadsPopup.close();
+  });
+
   workerManagerOpen?.addEventListener("click", () => {
     lockWorkerManager();
     workerManager?.showModal();
@@ -2327,7 +2865,7 @@
       workerAdminTokenField?.focus();
       return;
     }
-    workerAdminToken = token;
+    controlPlaneToken = token;
     target.reset();
     setWorkerActionBusy(workerAdminSubmit, true, "확인 중…");
     try {
@@ -2335,7 +2873,7 @@
       if (workerAdminLocked) workerAdminLocked.hidden = true;
       if (workerAdminPanel) workerAdminPanel.hidden = false;
     } catch (error) {
-      workerAdminToken = "";
+      controlPlaneToken = "";
       workerAdminTokenField?.setAttribute("aria-invalid", "true");
       setWorkerAdminFeedback(error.message);
       workerAdminTokenField?.focus();
@@ -2392,7 +2930,7 @@
     }
     setWorkerActionBusy(workerEnrollmentSubmit, true, "코드 만드는 중…");
     try {
-      const enrollment = await workerAdminRequest("/v1/worker-enrollments", {
+      const enrollment = await controlPlaneRequest("/v1/worker-enrollments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2681,6 +3219,7 @@
     const next = accountSelect.value;
     if (!hostedAccounts.some((account) => account.account_id === next)) return;
     selectedAccountId = next;
+    if (threadsManager?.open) lockThreadsManager("계정이 바뀌었습니다. 운영 권한을 다시 열어 주세요.");
     try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
       if (!(error instanceof DOMException)) throw error;
     }

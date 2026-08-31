@@ -594,7 +594,8 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--color-canvas) 80%, transparent);
 }
 
-.worker-manager-dialog {
+.worker-manager-dialog,
+.threads-manager-dialog {
   block-size: fit-content;
   inline-size: min(68rem, calc(100% - var(--space-4)));
   inset: 0;
@@ -605,7 +606,8 @@ textarea:focus-visible {
   position: fixed;
 }
 
-.worker-manager {
+.worker-manager,
+.threads-manager {
   display: grid;
   gap: var(--space-5);
   padding: var(--space-4);
@@ -614,7 +616,10 @@ textarea:focus-visible {
 .worker-manager h2,
 .worker-manager h3,
 .worker-manager h4,
-.worker-manager p { margin: 0; }
+.worker-manager p,
+.threads-manager h2,
+.threads-manager h3,
+.threads-manager p { margin: 0; }
 
 .worker-manager__heading {
   align-items: start;
@@ -1566,7 +1571,8 @@ textarea:focus-visible {
   font-size: var(--font-small);
 }
 
-.worker-console {
+.worker-console,
+.threads-console {
   align-items: center;
   background: var(--color-surface-raised);
   border: var(--border-width) solid var(--color-border);
@@ -1576,6 +1582,118 @@ textarea:focus-visible {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   min-inline-size: 0;
   padding: var(--space-3);
+}
+
+.threads-console .signal-mark { background: var(--color-text-quiet); }
+
+.threads-manager__panel,
+.threads-profile-list {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.threads-manager__settings,
+.threads-profile-row {
+  align-items: center;
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-3);
+}
+
+.threads-manager__settings > div,
+.threads-profile-row__identity {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.threads-manager__settings p,
+.threads-profile-row__meta {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  line-height: var(--leading-small);
+  margin: 0;
+}
+
+.threads-profile-row__actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.threads-profile-target {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.threads-profile-target label {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+}
+
+.publication-panel {
+  background: var(--color-surface-hover);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--space-3);
+}
+
+.publication-panel[data-state="published"] { border-color: var(--color-success); }
+.publication-panel[data-state="unknown_side_effect"],
+.publication-panel[data-state="rate_limited"],
+.publication-panel[data-state="auth_required"] { border-color: var(--color-warning); }
+.publication-panel[data-state="failed"],
+.publication-panel[data-state="unavailable"] { border-color: var(--color-danger); }
+
+.publication-panel__heading,
+.publication-metrics,
+.publication-resolution {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.publication-panel__heading { justify-content: space-between; }
+
+.publication-panel p,
+.publication-replies { margin: 0; }
+
+.publication-panel__meta,
+.publication-replies {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  line-height: var(--leading-small);
+}
+
+.publication-replies {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-4);
+}
+
+.publication-resolution input {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  flex: 1 1 16rem;
+  min-block-size: var(--control-min-block);
+  min-inline-size: 0;
+  padding-inline: var(--space-3);
 }
 
 .worker-console__copy { display: grid; gap: var(--space-1); min-inline-size: 0; }
@@ -2183,15 +2301,19 @@ textarea:focus-visible {
 @media (max-width: 39.99rem) {
   .workspace-toolbar .status-line { white-space: normal; }
 
-  .worker-console { grid-template-columns: auto minmax(0, 1fr); }
+  .worker-console,
+  .threads-console { grid-template-columns: auto minmax(0, 1fr); }
 
   .worker-console__badges { grid-column: 1 / -1; justify-content: start; }
 
-  .worker-console > .button { grid-column: 1 / -1; inline-size: 100%; }
+  .worker-console > .button,
+  .threads-console > .button { grid-column: 1 / -1; inline-size: 100%; }
 
-  .worker-manager-dialog { inline-size: calc(100% - var(--space-2)); }
+  .worker-manager-dialog,
+  .threads-manager-dialog { inline-size: calc(100% - var(--space-2)); }
 
-  .worker-manager { padding: var(--space-3); }
+  .worker-manager,
+  .threads-manager { padding: var(--space-3); }
 
   .worker-manager__heading,
   .worker-manager__toolbar { align-items: stretch; flex-direction: column; }
