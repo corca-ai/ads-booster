@@ -2,15 +2,16 @@
 
 `ads-booster` runs the hosted Trace marketing workspace and its replaceable macOS capture worker.
 The only installed command is `trace-marketing`. It uses the same macOS user's official Codex CLI
-login to operate the Trace debug app through Appium. It is a direct request-bound execution path
-with no automatic publishing.
+login to operate the Trace debug app through Appium. The Mac remains a request-bound image worker;
+default-OFF Threads publishing and engagement polling run only in the hosted Cloudflare boundary.
 
 ## Current request path
 
 ```text
 hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admission
 -> D1 execution barrier -> one Codex/Appium job -> independent PNG/manifest validation
--> durable callback -> R2/D1 -> human review
+-> durable callback -> R2/D1 -> caption and image review
+-> next-slot Threads decision -> Cloudflare publish barrier -> readback -> engagement polling
 ```
 
 1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
@@ -43,8 +44,16 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
    configured Trace content and lock-screen UI, into that bound PNG. The worker returns this native
    preview unchanged; it does not ask ImageGen to redraw iPhone UI or splice fixed image bands. It
    then queues the final callback durably and retries callback delivery without rerunning the job.
-8. Cloudflare writes the accepted image to R2 and state to D1. A person reviews it; approval reaches
-   `submitted`. This product does not automatically publish anywhere.
+8. Cloudflare writes the accepted image to R2 and state to D1. Caption and image review remain
+   mandatory. Final image approval reaches `submitted` and atomically records either a strictly-next
+   morning/evening publication or a terminal OFF cancellation; manual-slot candidates are excluded.
+9. When the account's default-OFF Threads setting is enabled, Cloudflare alone decrypts the selected
+   profile token, checks quota, gives Meta a short-lived digest-bound PNG URL, rechecks the setting and
+   profile at the irreversible D1 barrier, calls publish once, and requires post-ID readback before
+   `published`. Ambiguous results become `unknown_side_effect` and are never blindly retried.
+10. Confirmed posts collect bounded lifetime metrics and top-level replies independently of the
+    auto-publish toggle. Reply bodies expire after 30 days and metric snapshots after 365 days; none
+    of this data is fed back into candidate generation automatically.
 
 A manifest proves request-bound native export, not visual or semantic fidelity. Human review is the
 visual approval boundary.
@@ -115,6 +124,28 @@ The administrator creates the enrollment code. The Mac stores its distinct revoc
 credential under `~/.trace-agent`; the LaunchAgent pins the selected `codex` executable but stores
 neither machine nor Codex credentials.
 
+## Threads Cloudflare configuration
+
+Config generation requires `THREADS_APP_ID`, `THREADS_REDIRECT_URI`,
+`THREADS_GRAPH_API_VERSION`, and `THREADS_PUBLIC_ORIGIN` alongside `CF_D1_DATABASE_ID`. The redirect
+and public origin must use HTTPS and the Graph version must be pinned as `vN.N`.
+
+Store secret values only with Wrangler; do not put them in the generated config or repository:
+
+```bash
+cd cloudflare
+wrangler secret put THREADS_APP_SECRET
+wrangler secret put THREADS_TOKEN_ENCRYPTION_KEY
+wrangler secret put THREADS_MEDIA_SIGNING_KEY
+```
+
+`THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
+key is at least 32 random bytes. `CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile
+mutation, reply content, and unknown-outcome resolution. Deploy D1 migration `0015_hosted_threads.sql`
+before enabling the feature, complete Meta App Review for the four documented scopes, connect a test
+profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and
+engagement canary. Source or fake-Graph success is not live Meta proof.
+
 ## Managed releases and compatibility
 
 Managed releases live under `~/.local/share/trace-marketing` and switch `current` atomically.
@@ -131,7 +162,8 @@ and drain them separately. The current labels are
 - A checkout or `uv run` proves source behavior, not a managed installation.
 - A doctor report proves local prerequisites, not Cloudflare state or image output.
 - PNG/manifest checks prove export bindings, not visual quality.
-- Human image approval is the final product gate; it does not create an external post.
+- Human image approval is the final creative gate. With Threads auto-publish ON it creates a frozen
+  next-slot publication decision; only authoritative Cloudflare post-ID readback proves publication.
 
 See [system architecture](docs/architecture/system.md),
 [code architecture](docs/architecture/code.md), [dynamic workers](docs/contracts/dynamic-mac-workers.md),

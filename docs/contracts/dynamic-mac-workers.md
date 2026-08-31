@@ -1,10 +1,12 @@
 # Dynamic Mac Workers
 
 Status: Active
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-31
 
 An enrolled Mac has a revocable worker identity and private local credential. It has no Cloudflare
-account token, fixed UDID, or another person's Codex login.
+account token, Threads OAuth token, publishing capability, fixed UDID, or another person's Codex
+login. Threads publication and engagement remain Cloudflare-owned and never expand the worker task
+kinds, inbox, Appium contract, or callback payload.
 
 ```text
 heartbeat -> D1 claim -> SQLite inbox -> safe prepare -> local admission

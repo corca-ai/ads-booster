@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 ## Composition
 
@@ -45,3 +45,22 @@ proves the App Group export and validates the manifest.
 
 The package deliberately keeps no alternate execution runtime or legacy command compatibility.
 `trace-agent` and `trace-ads` are migration-only names.
+
+## Hosted Threads modules
+
+| Module | Owns |
+| --- | --- |
+| `cloudflare/src/threads/client.js` | pinned Graph operations and strict public client surface |
+| `transport.js` / `responses.js` | bounded GET retry, no-retry POST, typed Graph parsing |
+| `crypto.js` | versioned AES-GCM token encryption |
+| `profiles-api.js` / `profiles-store.js` | account-scoped OAuth state, profile lifecycle, default and toggle CAS |
+| `media-capability.js` | short-lived HMAC/digest/account/publication-bound private PNG fetch |
+| `scheduling.js` | bounded due publication selection and per-row isolation |
+| `publication.js` | quota, container, irreversible barrier, publish-once, post-ID readback |
+| `engagement.js` | independent metric/reply polling, cursors, reauth/deletion, retention |
+| `status-api.js` | public-safe status/metrics plus privileged replies and unknown resolution |
+
+`hosted-workspace.js` owns candidate creation and dual human approval. It snapshots the default
+profile at candidate creation and inserts the immutable publication decision in the same D1 batch as
+accepted image review. `index.js` composes separate candidate-generation, publication, and engagement
+schedulers. None of these modules import or extend Mac worker task kinds or the generic `/v1` adapter.

@@ -1,7 +1,7 @@
 # Cloudflare Marketing Loop
 
 Status: Active
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-31
 
 The hosted workspace owns candidate/review state, D1 worker registration and leases, callback
 acceptance, and R2 image storage. Workers AI may create hosted candidates. A caption-approved
@@ -21,9 +21,19 @@ for that identity and validates candidate revision, PNG type/size/digest, native
 current D1 owner. The Mac outbox retries delivery only; it does not rerun Codex/Appium. Post-barrier
 failure remains `unknown_side_effect`.
 
-The image becomes `image_awaiting_review`; approval reaches `submitted`. PNG/manifest checks
-prove request binding, not aesthetics. Human review is the only visual semantic approval. The runtime
-does not auto-post to Threads, Notion, or another external channel and does not collect live metrics.
+The image becomes `image_awaiting_review`; approval reaches `submitted`. PNG/manifest checks prove
+request binding, not aesthetics. Human review is the only visual semantic approval. The same D1
+batch freezes the candidate revision, selected Threads profile, caption, image digest, timezone, and
+strictly-next morning/evening slot. Manual slots create no publication. Auto-publish OFF records a
+terminal `canceled/auto_publish_disabled` decision that ON never resurrects.
+
+Cloudflare owns OAuth token encryption, quota preflight, signed private-R2 media delivery, the
+container and publish state machine, the irreversible CAS barrier, authoritative post-ID readback,
+and bounded engagement polling. OFF or disconnect before the barrier produces zero publish POSTs.
+After the barrier an ambiguous response becomes `unknown_side_effect`; automatic publish retry and
+caption/time matching are forbidden. Confirmed posts keep collecting metrics and top-level replies
+while auto-publish is OFF. Replies expire after 30 days, metric snapshots after 365 days, and neither
+is injected into generation. Notion and every channel other than Threads remain non-publishing.
 
 Use `trace-marketing worker run` or `trace-marketing worker install-service`. The migration-only
 names `trace-agent` and `trace-ads`, including their historic plists, are not production paths.
