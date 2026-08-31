@@ -23,6 +23,22 @@ test("deployment health exposes the exact deployed commit", () => {
   });
 });
 
+test("deployment health keeps Threads disabled when every binding is absent", () => {
+  const commitSha = "0123456789abcdef0123456789abcdef01234567";
+  assert.deepEqual(deploymentHealth({ TRACE_DEPLOY_SHA: commitSha }), {
+    ok: true,
+    commit_sha: commitSha,
+    threads_ready: false,
+  });
+});
+
+test("deployment health rejects partial Threads runtime configuration", () => {
+  assert.throws(
+    () => deploymentHealth({ THREADS_APP_ID: "configured" }),
+    /Threads bindings must be configured together/u,
+  );
+});
+
 test("deployment health rejects ambiguous production provenance", () => {
   assert.throws(
     () => deploymentHealth(threadsEnvironment({ TRACE_DEPLOY_SHA: "main" })),

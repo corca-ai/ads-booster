@@ -103,6 +103,11 @@ The v2 contract fixes non-secret input and completion bindings, not selectors or
 
 ## Threads publication and observation
 
+Threads has three configuration states. Zero bindings means disabled: health remains successful with
+`threads_ready: false`, config omits Threads variables, and both Threads schedulers skip. A complete
+set of four public variables and three runtime secrets means ready. Any partial or invalid set fails
+closed. Threads auto-publish remains OFF until an operator connects a profile and enables it.
+
 One account may connect multiple encrypted Threads profiles and choose one default. New morning and
 evening candidates snapshot that active default; an operator may select another account-owned active
 profile only before final image approval. Default changes never retarget existing candidates.

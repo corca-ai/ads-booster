@@ -4,20 +4,22 @@ import test from "node:test";
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("generated config declares public Threads values but no secret values", async () => {
+test("generated config keeps optional public Threads values separate from secrets", async () => {
   const template = await source("wrangler.template.jsonc");
   const renderer = await source("scripts/render-config.mjs");
-  for (const name of [
-    "THREADS_APP_ID",
-    "THREADS_GRAPH_API_VERSION",
-    "THREADS_PUBLIC_ORIGIN",
-    "THREADS_REDIRECT_URI",
-  ]) {
-    assert.match(template, new RegExp(`__${name}__`, "u"));
-    assert.match(renderer, new RegExp(`${name}: process\\.env\\.${name}`, "u"));
-  }
-  assert.match(renderer, /\$\{name\} is required/u);
+  assert.match(template, /__THREADS_VARIABLES__/u);
+  assert.match(renderer, /threadsPublicVariables\(env\)/u);
   assert.doesNotMatch(template, /THREADS_APP_SECRET|THREADS_TOKEN_ENCRYPTION_KEY|THREADS_MEDIA_SIGNING_KEY/u);
+});
+
+test("deployment keeps absent Threads configuration disabled", async () => {
+  const [workflow, index] = await Promise.all([
+    source("../.github/workflows/deploy-cloudflare.yml"),
+    source("src/index.js"),
+  ]);
+  assert.doesNotMatch(workflow, /missing THREADS_[A-Z_]+ repository variable/u);
+  assert.match(workflow, /\(\.threads_ready \| type\) == "boolean"/u);
+  assert.match(index, /threadsConfigurationState\(env\) === "ready"/u);
 });
 
 test("browser assets never serialize Graph credentials or signed media capability", async () => {
