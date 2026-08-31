@@ -138,9 +138,13 @@ neither machine nor Codex credentials.
 
 ## Threads Cloudflare configuration
 
-Config generation requires `THREADS_APP_ID`, `THREADS_REDIRECT_URI`,
-`THREADS_GRAPH_API_VERSION`, and `THREADS_PUBLIC_ORIGIN` alongside `CF_D1_DATABASE_ID`. The redirect
-and public origin must use HTTPS and the Graph version must be pinned as `vN.N`.
+Threads is optional and disabled by default. With no `THREADS_*` configuration, config generation
+omits its public variables, `/health` reports `threads_ready: false`, and scheduled publication and
+engagement do not run. Existing workspace, candidate, review, and Mac worker paths still deploy.
+
+To enable Threads, configure `THREADS_APP_ID`, `THREADS_REDIRECT_URI`,
+`THREADS_GRAPH_API_VERSION`, and `THREADS_PUBLIC_ORIGIN` together. Partial configuration fails
+closed. The redirect and public origin must use HTTPS, and the Graph version must use `vN.N`.
 
 Store secret values only with Wrangler; do not put them in the generated config or repository:
 
@@ -152,7 +156,8 @@ wrangler secret put THREADS_MEDIA_SIGNING_KEY
 ```
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
-key is at least 32 random bytes. `CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile
+key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile
 mutation, reply content, and unknown-outcome resolution. Deploy D1 migration `0016_hosted_threads.sql`
 before enabling the feature, complete Meta App Review for the four documented scopes, connect a test
 profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and

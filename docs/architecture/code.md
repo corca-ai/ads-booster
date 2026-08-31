@@ -68,6 +68,7 @@ The package deliberately keeps no alternate execution runtime or legacy command 
 
 | Module | Owns |
 | --- | --- |
+| `cloudflare/src/threads/config.js` | disabled/ready classification, all-or-none bindings, public config rendering contract |
 | `cloudflare/src/threads/client.js` | pinned Graph operations and strict public client surface |
 | `transport.js` / `responses.js` | bounded GET retry, no-retry POST, typed Graph parsing |
 | `crypto.js` | versioned AES-GCM token encryption |
@@ -77,6 +78,10 @@ The package deliberately keeps no alternate execution runtime or legacy command 
 | `publication.js` | quota, container, irreversible barrier, publish-once, post-ID readback |
 | `engagement.js` | independent metric/reply polling, cursors, reauth/deletion, retention |
 | `status-api.js` | public-safe status/metrics plus privileged replies and unknown resolution |
+
+`render-config.mjs`, deployment health, and `index.js` share the same configuration owner. Disabled
+deployments omit public Threads variables and skip publication and engagement tasks; partial
+configuration fails before deployment or scheduling.
 
 `hosted-workspace.js` owns candidate creation and dual human approval. It snapshots the default
 profile at candidate creation and inserts the immutable publication decision in the same D1 batch as
