@@ -25,6 +25,8 @@ from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.marketing.feature_launch_evidence_brief import (
     FeatureLaunchEvidenceBrief,
     FeatureLaunchEvidenceBriefProjection,
+    FeatureLaunchEvidenceBriefVerificationError,
+    FeatureLaunchEvidenceBriefVerifier,
 )
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
@@ -277,6 +279,7 @@ class FeatureLaunchDependencies:
     registry: FeatureLaunchSkillRegistry
     hand: FeatureLaunchHand
     evaluator: FeatureLaunchEvaluator
+    brief_verifier: FeatureLaunchEvidenceBriefVerifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,6 +448,10 @@ class FeatureLaunchExperimentOperator:
             if briefs[0] != context.task.evidence_brief:
                 raise FeatureLaunchOperatorError("persisted_feature_launch_brief_mismatch")
             return session
+        try:
+            context.dependencies.brief_verifier.verify(context.task.evidence_brief)
+        except FeatureLaunchEvidenceBriefVerificationError as error:
+            raise FeatureLaunchOperatorError("feature_launch_evidence_brief_unverified") from error
         if any(
             event.event_type in {"feature_goal_committed", "feature_decision_committed"}
             for event in session.events

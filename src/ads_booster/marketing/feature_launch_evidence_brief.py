@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, model_validator
 
@@ -11,6 +11,10 @@ from ads_booster.contracts.marketing_agent import AgentIdentifier, contract_sha2
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 
 type BriefScope = Literal["product_truth", "customer_intelligence", "market_evidence"]
+
+
+class FeatureLaunchEvidenceBriefVerificationError(ValueError):
+    """The launch boundary could not prove that a brief came from validated research."""
 
 
 class BriefEvidenceItem(ContractModel):
@@ -65,6 +69,17 @@ class FeatureLaunchEvidenceBrief(ContractModel):
         if set(evidence_scopes) != set(self.required_scopes):
             raise ValueError("brief evidence must cover exactly the required scopes")
         return self
+
+
+class FeatureLaunchEvidenceBriefVerifier(Protocol):
+    """Verify a brief at the research-to-launch authority boundary.
+
+    The Feature Launch vertical owns neither the Evidence Research session store nor its evaluator.
+    A verifier therefore resolves that provenance at admission time without transferring research
+    authority into the launch planner or hand.
+    """
+
+    def verify(self, brief: FeatureLaunchEvidenceBrief) -> None: ...
 
 
 class BriefEvidenceProjection(ContractModel):

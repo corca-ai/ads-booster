@@ -15,6 +15,8 @@ from ads_booster.contracts.marketing_agent import (
     FeatureEvidencePacket,
     FeatureGate,
     FeatureLifecycle,
+    OutcomeDefinition,
+    OutcomeScope,
     contract_sha256,
 )
 from ads_booster.marketing.evidence_research_operator import (
@@ -34,9 +36,29 @@ from ads_booster.marketing.evidence_research_operator import (
     ResearchScope,
     ResearchState,
     ResearchStepEvaluation,
+    ValidatedResearchEvidenceBriefVerifier,
     build_feature_launch_evidence_brief,
 )
-from ads_booster.marketing.feature_launch_evidence_brief import FeatureLaunchEvidenceBriefProjection
+from ads_booster.marketing.feature_launch_evidence_brief import (
+    FeatureLaunchEvidenceBrief,
+    FeatureLaunchEvidenceBriefProjection,
+    FeatureLaunchEvidenceBriefVerificationError,
+)
+from ads_booster.marketing.feature_launch_operator import (
+    AvailableAction,
+    DecisionProposal,
+    FeatureLaunchDependencies,
+    FeatureLaunchEvaluator,
+    FeatureLaunchExperimentOperator,
+    FeatureLaunchHand,
+    FeatureLaunchObservation,
+    FeatureLaunchOperatorError,
+    FeatureLaunchPlanningContext,
+    FeatureLaunchRuntimeContext,
+    FeatureLaunchSkillRegistry,
+    FeatureLaunchTask,
+    MarketingGoal,
+)
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
@@ -57,6 +79,8 @@ if TYPE_CHECKING:
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 REGISTRY_SNAPSHOT = "a" * 64
 SKILL_SHA256 = "b" * 64
+FEATURE_REGISTRY_SNAPSHOT = "c" * 64
+FEATURE_SKILL_SHA256 = "d" * 64
 RECEIPT_DIGESTS = {
     ResearchScope.PRODUCT_TRUTH: "1" * 64,
     ResearchScope.CUSTOMER_INTELLIGENCE: "2" * 64,
@@ -157,6 +181,84 @@ class FakeResearchHand(EvidenceResearchHand):
             source_sha256="4" * 64,
             supported_claim_ids=("claim-feature",),
             evidence_status=self.status,
+            observed_at=NOW,
+        )
+
+
+class BriefBackedFeaturePlanner:
+    """Test-only planner that can choose only evidence IDs projected from a completed brief."""
+
+    def __init__(self, task: FeatureLaunchTask) -> None:
+        self.task: FeatureLaunchTask = task
+        self.contexts: list[FeatureLaunchPlanningContext] = []
+        self.proposal: DecisionProposal | None = None
+
+    def propose(self, context: FeatureLaunchPlanningContext) -> DecisionProposal:
+        self.contexts.append(context)
+        proposal = DecisionProposal(
+            schema_version="trace.feature-launch-decision.v1",
+            proposal_id="launch-proposal-1",
+            goal_id=self.task.goal.goal_id,
+            skill_id="feature_launch_experiment.v1",
+            skill_sha256=FEATURE_SKILL_SHA256,
+            action_id="observe.feature_launch_experiment",
+            evidence_brief_sha256=context.evidence.brief_sha256,
+            research_observation_ids=tuple(
+                item.research_observation_id for item in context.evidence.evidence
+            ),
+            claim_ids=("claim-feature",),
+            control_frame="A useful lock screen keeps a plan visible.",
+            challenger_frame="A character-based scene can make the plan feel personal.",
+            counter_evidence_question="Does the audience understand the scheduled change?",
+            falsifier="The challenger does not improve setup completion in the registered window.",
+            measurement=OutcomeDefinition(
+                name="setup_completed",
+                scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
+                window_hours=72,
+            ),
+        )
+        self.proposal = proposal
+        return proposal
+
+
+class BriefBackedFeatureHand(FeatureLaunchHand):
+    """Test-only observe hand whose output must preserve the selected brief lineage."""
+
+    def __init__(self, task: FeatureLaunchTask, planner: BriefBackedFeaturePlanner) -> None:
+        self.task: FeatureLaunchTask = task
+        self.planner: BriefBackedFeaturePlanner = planner
+        self.calls: list[ToolCall] = []
+
+    @override
+    def execute(self, call: ToolCall) -> ToolReceipt:
+        self.calls.append(call)
+        return ToolReceipt(
+            call.call_id,
+            call.digest,
+            None,
+            EffectDisposition.SUCCEEDED,
+            1,
+            "f" * 64,
+        )
+
+    @override
+    def observation_for(self, receipt: ToolReceipt) -> FeatureLaunchObservation:
+        proposal = self.planner.proposal
+        assert proposal is not None
+        return FeatureLaunchObservation(
+            schema_version="trace.feature-launch-observation.v1",
+            observation_id="launch-observation-1",
+            receipt_sha256=receipt.receipt_sha256,
+            call_sha256=receipt.call_sha256,
+            request_sha256=self.calls[-1].input_sha256,
+            feature_packet_sha256=contract_sha256(self.task.feature_packet),
+            evidence_brief_sha256=contract_sha256(self.task.evidence_brief),
+            research_observation_ids=proposal.research_observation_ids,
+            proposal_sha256=contract_sha256(proposal),
+            source_ref="fake://independent-feature-observation",
+            source_sha256="e" * 64,
+            evidence_status="sufficient",
+            counter_evidence_found=False,
             observed_at=NOW,
         )
 
@@ -273,6 +375,76 @@ def _hands(
     }
 
 
+def _completed_research_context_and_brief(
+    tmp_path: Path, packet: FeatureEvidencePacket
+) -> tuple[AgentSession, EvidenceResearchRuntimeContext, FeatureLaunchEvidenceBrief]:
+    scopes = tuple(ResearchScope)
+    task = _task(packet, scopes)
+    planner = SequencePlanner(task, scopes)
+    hands = _hands(task, planner)
+    context = _context(JsonSessionStore(tmp_path / "research"), task, planner, hands)
+    session = EvidenceResearchOperator(MarketingAgentRuntime()).run(
+        AgentSession("research-session-1", Budget(3, 3)), context
+    )
+    brief = build_feature_launch_evidence_brief(
+        session,
+        context,
+        brief_id="feature-launch-brief-1",
+        now=NOW,
+    )
+    return session, context, brief
+
+
+def _feature_registry() -> FeatureLaunchSkillRegistry:
+    return FeatureLaunchSkillRegistry(
+        snapshot_sha256=FEATURE_REGISTRY_SNAPSHOT,
+        skill_sha256=FEATURE_SKILL_SHA256,
+        action=AvailableAction(
+            action_id="observe.feature_launch_experiment",
+            capability=ToolCapability("observe.feature_launch_experiment", "7" * 64, "observe", 1),
+            request_schema_sha256="8" * 64,
+        ),
+    )
+
+
+def _launch_context(
+    tmp_path: Path,
+    packet: FeatureEvidencePacket,
+    brief: FeatureLaunchEvidenceBrief,
+    research_context: EvidenceResearchRuntimeContext,
+) -> tuple[BriefBackedFeaturePlanner, BriefBackedFeatureHand, FeatureLaunchRuntimeContext]:
+    task = FeatureLaunchTask(
+        MarketingGoal(
+            schema_version="trace.marketing-goal.v1",
+            goal_id="launch-goal-1",
+            feature_packet_id=packet.packet_id,
+            feature_packet_sha256=contract_sha256(packet),
+            outcome="feature_launch_experiment",
+            pinned_skill_registry_sha256=FEATURE_REGISTRY_SNAPSHOT,
+        ),
+        packet,
+        brief,
+    )
+    planner = BriefBackedFeaturePlanner(task)
+    hand = BriefBackedFeatureHand(task, planner)
+    return (
+        planner,
+        hand,
+        FeatureLaunchRuntimeContext(
+            JsonSessionStore(tmp_path / "launch"),
+            task,
+            FeatureLaunchDependencies(
+                planner,
+                _feature_registry(),
+                hand,
+                FeatureLaunchEvaluator(),
+                ValidatedResearchEvidenceBriefVerifier(research_context),
+            ),
+            NOW,
+        ),
+    )
+
+
 def test_research_orchestrator_selects_three_isolated_hands_and_replans(tmp_path: Path) -> None:
     packet = _packet()
     scopes = tuple(ResearchScope)
@@ -335,6 +507,65 @@ def test_completed_research_freezes_a_planner_safe_feature_launch_brief(tmp_path
     assert all(item.supported_allowed_claim_ids == ("claim-feature",) for item in brief.evidence)
     assert "untrusted" not in projection.model_dump_json()
     assert "source_ref" not in projection.model_dump_json()
+
+
+def test_held_out_research_to_launch_trace_requires_the_immutable_brief(tmp_path: Path) -> None:
+    """Grade the first real two-session agent path by trace and outcome, not final copy."""
+    packet = _packet(feature_id="trace.focus-mode.scenes")
+    research_session, research_context, brief = _completed_research_context_and_brief(
+        tmp_path, packet
+    )
+    launch_planner, launch_hand, launch_context = _launch_context(
+        tmp_path, packet, brief, research_context
+    )
+
+    launch_session = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("launch-session-1", Budget(1, 1)), launch_context
+    )
+
+    assert research_session.state is RuntimeState.COMPLETED
+    assert launch_session.state is RuntimeState.COMPLETED
+    assert research_session.session_id != launch_session.session_id
+    assert launch_session.events[0].event_type == "feature_launch_brief_committed"
+    assert launch_planner.proposal is not None
+    assert launch_planner.proposal.research_observation_ids == tuple(
+        item.research_observation_id for item in brief.evidence
+    )
+    assert len(launch_hand.calls) == 1
+    assert "untrusted" not in launch_planner.contexts[0].evidence.model_dump_json()
+    assert all(event.event_type != "feature_stopped" for event in launch_session.events)
+
+
+def test_launch_rejects_a_brief_that_cannot_be_rederived_from_its_research_source(
+    tmp_path: Path,
+) -> None:
+    packet = _packet(feature_id="trace.focus-mode.scenes")
+    _, research_context, brief = _completed_research_context_and_brief(tmp_path, packet)
+    forged_brief = brief.model_copy(update={"research_trace_sha256": "0" * 64})
+    planner, hand, context = _launch_context(tmp_path, packet, forged_brief, research_context)
+
+    with pytest.raises(
+        FeatureLaunchOperatorError, match="feature_launch_evidence_brief_unverified"
+    ):
+        _ = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+            AgentSession("launch-session-1", Budget(1, 1)), context
+        )
+
+    assert planner.contexts == []
+    assert hand.calls == []
+    assert context.store.load("launch-session-1") is None
+
+
+def test_research_verifier_normalizes_a_corrupt_source_session(tmp_path: Path) -> None:
+    packet = _packet(feature_id="trace.focus-mode.scenes")
+    _, research_context, brief = _completed_research_context_and_brief(tmp_path, packet)
+    source_path = tmp_path / "research" / "research-session-1.json"
+    _ = source_path.write_text("{not-valid-json", encoding="utf-8")
+
+    with pytest.raises(
+        FeatureLaunchEvidenceBriefVerificationError, match="research_source_session_invalid"
+    ):
+        ValidatedResearchEvidenceBriefVerifier(research_context).verify(brief)
 
 
 def test_inconclusive_research_cannot_create_a_feature_launch_brief(tmp_path: Path) -> None:

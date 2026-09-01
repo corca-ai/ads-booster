@@ -26,6 +26,7 @@ from ads_booster.marketing.feature_launch_evidence_brief import (
     BriefEvidenceItem,
     BriefScope,
     FeatureLaunchEvidenceBrief,
+    FeatureLaunchEvidenceBriefVerificationError,
 )
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
@@ -646,6 +647,41 @@ def build_feature_launch_evidence_brief(
         evidence=evidence,
         created_at=now,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedResearchEvidenceBriefVerifier:
+    """Resolve and re-derive one brief from its completed Evidence Research source session.
+
+    This local adapter is the first provenance verifier. A hosted implementation can resolve the
+    same immutable source through its artifact store, but Feature Launch continues to depend only on
+    the small verifier protocol rather than an Evidence Research runtime import.
+    """
+
+    context: EvidenceResearchRuntimeContext
+
+    def verify(self, brief: FeatureLaunchEvidenceBrief) -> None:
+        try:
+            source_session = self.context.store.load(brief.research_session_id)
+        except ValueError as error:
+            raise FeatureLaunchEvidenceBriefVerificationError(
+                "research_source_session_invalid"
+            ) from error
+        if source_session is None:
+            raise FeatureLaunchEvidenceBriefVerificationError("research_source_session_not_found")
+        try:
+            rederived = build_feature_launch_evidence_brief(
+                source_session,
+                self.context,
+                brief_id=brief.brief_id,
+                now=brief.created_at,
+            )
+        except ValueError as error:
+            raise FeatureLaunchEvidenceBriefVerificationError(
+                "research_source_session_not_eligible"
+            ) from error
+        if rederived != brief:
+            raise FeatureLaunchEvidenceBriefVerificationError("research_source_brief_mismatch")
 
 
 def _process_reasons(

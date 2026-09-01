@@ -81,6 +81,13 @@ class NoCallPlanner:
         raise AssertionError(message)
 
 
+class TestOnlyBriefVerifier:
+    """Keeps focused Feature Launch tests isolated from the research-source adapter."""
+
+    def verify(self, brief: FeatureLaunchEvidenceBrief) -> None:
+        _ = brief
+
+
 @dataclass(frozen=True, slots=True)
 class FakeFeatureLaunchLineage:
     packet_sha256: str
@@ -305,7 +312,9 @@ def _context(
     return FeatureLaunchRuntimeContext(
         store,
         task,
-        FeatureLaunchDependencies(planner, _registry(), hand, FeatureLaunchEvaluator()),
+        FeatureLaunchDependencies(
+            planner, _registry(), hand, FeatureLaunchEvaluator(), TestOnlyBriefVerifier()
+        ),
         NOW,
     )
 
@@ -775,7 +784,9 @@ def test_non_observe_registry_capability_is_stopped_before_the_hand_runs(tmp_pat
     context = FeatureLaunchRuntimeContext(
         JsonSessionStore(tmp_path),
         task,
-        FeatureLaunchDependencies(planner, unsafe_registry, hand, FeatureLaunchEvaluator()),
+        FeatureLaunchDependencies(
+            planner, unsafe_registry, hand, FeatureLaunchEvaluator(), TestOnlyBriefVerifier()
+        ),
         NOW,
     )
 

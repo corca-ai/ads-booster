@@ -173,11 +173,12 @@ invoke them yet. The local fake-backend verticals below only establish replay, r
 evaluation contracts.
 
 The first exercise is `feature_launch_operator`: a provider-neutral, observe-only Feature Launch
-Experiment Operator. A new launch session first commits an immutable research evidence brief, then
-persists a feature goal, strict planner decision, runtime-owned tool receipt, receipt-bound
-observation, deterministic process/outcome evaluation, and a terminal result as canonical session
-events. The brief must precede the goal and appear exactly once; its digest and selected research
-observation IDs bind the proposal, derived call input, launch observation, and evaluation. It exposes
+Experiment Operator. A new launch session first verifies an immutable research evidence brief by
+reloading and re-deriving the completed source session, then commits that brief before it persists a
+feature goal, strict planner decision, runtime-owned tool receipt, receipt-bound observation,
+deterministic process/outcome evaluation, and a terminal result as canonical session events. The brief
+must precede the goal and appear exactly once; its digest and selected research observation IDs bind the
+proposal, derived call input, launch observation, and evaluation. It exposes
 exactly one registry action,
 `observe.feature_launch_experiment`; the registry derives a descriptor-bound call from the feature
 packet, approved claim IDs, brief-supported claim set, and request-schema digest. A restart replays a

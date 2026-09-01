@@ -147,19 +147,22 @@ and instructions remain outside planner context.
 `marketing/feature_launch_evidence_brief.py` owns the immutable contract between completed Evidence
 Research and a new Feature Launch session. It contains only research-trace provenance digests,
 scope-complete receipt-bound observation digests, and allowed supported claim IDs, plus the data-only
-projection used by the Feature Launch planner. It imports no runtime, planner, registry, hand, or
-session owner. `evidence_research_operator.py` alone converts an already terminal validated research
-trace into this contract; `feature_launch_operator.py` consumes and commits it. No module combines the
-two sessions or transfers a research tool authority into launch.
+projection used by the Feature Launch planner. It also owns the narrow verifier protocol and its
+failure type, but imports no runtime, planner, registry, hand, or session owner.
+`evidence_research_operator.py` alone converts an already terminal validated research trace into this
+contract and supplies the local verifier that reloads and re-derives its source session. Before its
+first brief commit, `feature_launch_operator.py` requires that verifier to pass; it depends on the
+protocol, not the research runtime. No module combines the two sessions or transfers a research tool
+authority into launch.
 
 `marketing/feature_launch_operator.py` owns the first, narrow reasoning vertical over that harness.
 It defines `MarketingGoal`, a strict `DecisionProposal`, one versioned skill registry action, receipt-
 bound observation, and deterministic process/outcome graders. The planner can return a proposal but
 never a `ToolCall`; `FeatureLaunchSkillRegistry` derives the call from the pinned feature packet,
 approved claim set, evidence-brief-supported claim set, action schema, and descriptor. It commits
-exactly one evidence brief before its goal, and propagates the brief digest and selected research
-observation IDs through proposal, derived call, observation, and evaluation. The planner receives only
-the shared data-only product and evidence-brief projections rather than raw evidence text. It
+exactly one source-verified evidence brief before its goal, and propagates the brief digest and selected
+research observation IDs through proposal, derived call, observation, and evaluation. The planner
+receives only the shared data-only product and evidence-brief projections rather than raw evidence text. It
 revalidates a persisted decision, observation, and evaluation against the registry, runtime receipt,
 and event-time prefix before finalizing; terminal sessions audit that trace without calling a hand.
 This module accepts only an observe effect class and has no Cloudflare or live-channel backend.
