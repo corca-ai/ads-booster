@@ -214,8 +214,24 @@ observation, evaluation, replay, and terminal audit. Raw source locations, sourc
 questions remain outside the next planner context. This is a local fake-backend hand-off contract, not
 a hosted orchestrator, adapter, or live-market evaluation claim.
 
-Next: run a named held-out multi-skill evaluation corpus rather than only fixture tests. Before any
-external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
+Implemented: `trace.marketing-os-scorecard.v1` is a named test-owned, versioned five-case adversarial
+regression corpus that executes separate Evidence Research -> immutable Brief -> Feature Launch
+sessions. Its opaque runner input contains only the feature packet, bounded research scopes, and budget;
+test tool behavior and grader expectations live separately. The runner returns raw canonical terminal
+traces and the attempted brief. The scorecard replays each trace through the runtime reducer and derives
+budget, brief lineage, claim containment, process, and environment grades itself. It emits a corpus
+digest, runner metadata, and an enforceable threshold. The baseline covers sufficient evidence, missing
+customer evidence, counter-evidence, a blocked claim, and a mismatched brief. It is deterministic
+regression evidence for the local fake-backend vertical, not private held-out model evidence,
+hosted-runtime proof, or a market-outcome claim.
+
+The scorecard's pinned grader-side vertical verifier separately re-runs the completed Research and
+Feature Launch contracts. A failed verifier is an invalid trial and fails the scorecard even where the
+expected safe result itself has `process_passed: false`; a rehashed but fabricated trace cannot borrow
+the semantics of a blocked-claim stop.
+
+Next: introduce a private corpus loader and pinned provider/model repeated trials before making any
+model-quality claim. Before any external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
 receipt proof, validated registry-manifest binding, a closed effect-class contract, and provider
 idempotency/readback/reconciliation. The local ledger derives its own checkpoint, but a hosted
 monotonic authority ledger/CAS lease must own the external effect. Then run fresh design critique

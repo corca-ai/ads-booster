@@ -50,7 +50,7 @@ Implemented provider-neutral foundations:
 
 Not implemented or claimed:
 
-- a real multi-skill model evaluation corpus, trusted remote adapter receipts, execution-time
+- a real provider/model evaluation corpus, trusted remote adapter receipts, execution-time
   approval revalidation, provider idempotency/reconciliation, cross-session external approval
   authority, or a hosted runtime adapter;
 - shared tenant marketing context, customer-signal ingestion, approval inbox, collaboration surfaces,
@@ -129,27 +129,39 @@ and learning contracts remain their current owners until a bounded adapter consu
 
 ### 0. Prove the decision loop — now
 
-Complete a test-owned, held-out multi-skill evaluation corpus for:
+Implemented baseline: a test-owned, versioned five-case adversarial regression corpus for:
 
 ```text
 Evidence Research session -> immutable Evidence Brief -> Feature Launch session
 ```
 
-It must grade environment outcome and trace process separately. The first corpus covers normal
-completion, insufficient and counter-evidence, prompt-injection-like source data, forged receipt or
-evaluation, duplicate dispatch, restart after execution-start, stale/revoked approval, and evidence
-brief mismatch. A scorecard records grounded claim containment, evidence coverage, invalid tool calls,
-unapproved effect attempts, cost/time per useful experiment, and outcome coverage. A fluent final
-answer cannot pass the corpus alone.
+It grades environment outcome and trace process separately. Runner input contains only an opaque case
+ID, feature packet, research scopes, and budget; test tool behavior and the grader reference are kept
+outside it. The runner returns raw canonical terminal traces and an attempted brief. The scorecard
+replays those traces through the runtime reducer and derives bounded tool calls, cost, claim
+containment, brief lineage, terminal state, and typed reasons without accepting self-reported quality
+booleans. The first implemented cases cover normal completion, insufficient customer evidence,
+counter-evidence, blocked claims, and evidence-brief mismatch. A fluent final answer cannot pass this
+corpus alone.
+
+The grader pins a vertical verifier that re-runs Research and Feature Launch contracts. Failure is an
+invalid trial rather than an expected `process_passed: false` result, so a canonicalized fabricated
+trace cannot pass by imitating a safe blocked-claim stop.
+
+Next, extend the regression baseline with forged receipt/evaluation, duplicate dispatch, restart after
+execution-start, and stale/revoked approval; use a private corpus loader plus real provider/model
+repeated trials for model validation. Do not call the source-visible baseline a model-quality or
+market-effectiveness result.
 
 Exit: a cross-session run is reproducible from fixtures; each failure has a typed reason; an independent
 review can distinguish a regression in a skill, tool, evaluator, or runtime.
 
 ### Immediate implementation sequence
 
-The first cross-session fixture now exercises a completed Research session, an immutable brief, and a
-distinct Feature Launch session; it independently re-derives the source brief before any launch
-planning or hand call. The runtime now also has a `BoundToolInvocation`: a schema-bound,
+The first named scorecard now executes a completed Research session, an immutable brief, and a distinct
+Feature Launch session through five adversarial regression scenarios. It independently replays exported
+canonical event traces and re-derives brief lineage, claim containment, tool calls, and cost instead of
+accepting runner summaries. The runtime now also has a `BoundToolInvocation`: a schema-bound,
 canonical, non-secret request that is persisted with the pending call and received by the backend.
 One UTF-8 canonical JSON policy covers event, call, and request digests; reload rejects a missing or
 mismatched invocation and an execution checkpoint that contradicts its committed start event. The
@@ -159,8 +171,8 @@ v1/v2 terminal traces are read-only, while pre-header pending or non-terminal tr
 rather than being upgraded or re-executed.
 The next additions stay in this order:
 
-1. turn the representative cases into a named test-owned scorecard with separate environment and
-   process grades; do not call it model-quality validation until it contains model/provider runs;
+1. extend the named test-owned scorecard with more adversarial traces, then add a private corpus
+   loader and model/provider trials before treating it as model-quality validation;
 2. introduce `MarketingContextSnapshot` and `CustomerSignal` as read-only, tenant-scoped sources;
 3. then expose a minimal approval packet and campaign queue over the existing ledger.
 

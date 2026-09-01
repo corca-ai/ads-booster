@@ -176,7 +176,9 @@ its call and grant digests bind to that pending call. Backend exceptions and rej
 `awaiting_reconciliation`. This harness has no Cloudflare, Appium, Threads, or model-provider import
 and is not a hosted worker or an automatic-publication path. Its public effect surface is the
 persisted admission/execution sequence; non-durable transition helpers are private unit-test
-primitives, so a future hand cannot skip the checkpoints. Current serialization is explicitly
+primitives, so a future hand cannot skip the checkpoints. A read-only `replay_session(events)` export
+reconstructs the same checkpoint for an offline trace grader; it confers no execution authority.
+Current serialization is explicitly
 versioned: v3 writes the ledger header, while verified pre-header v1/v2 terminal traces are read-only
 and pre-header pending or non-terminal sessions fail closed rather than being rewritten or re-executed.
 General live planning, skill routing, and outcome evaluation remain deferred; no live tool can

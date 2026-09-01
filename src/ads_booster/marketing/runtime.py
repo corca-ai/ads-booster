@@ -303,6 +303,31 @@ def session_trace_sha256(session: AgentSession) -> str:
     )
 
 
+def replay_session(events: tuple[SessionEvent, ...]) -> AgentSession:
+    """Reconstruct the authoritative runtime checkpoint from a v3 append-only event trace.
+
+    Callers that only have an exported trace must use this reducer rather than trusting a separately
+    supplied session checkpoint.  It deliberately returns no pending invocation after a terminal
+    trace unless the ledger itself proves that state.
+    """
+    derived = _replay_runtime_events(events)
+    return AgentSession(
+        session_id=derived.session_id,
+        budget=derived.budget,
+        state=derived.state,
+        spent_cost_units=derived.spent_cost_units,
+        reserved_cost_units=derived.reserved_cost_units,
+        tool_calls=derived.tool_calls,
+        pending_call=derived.pending_call,
+        pending_invocation=derived.pending_invocation,
+        pending_grant_sha256=derived.pending_grant_sha256,
+        execution_started=derived.execution_started,
+        dispatched_idempotency_keys=derived.dispatched_idempotency_keys,
+        consumed_grant_sha256s=derived.consumed_grant_sha256s,
+        events=events,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class JsonSessionStore:
     """Atomic local single-writer store for replayable runtime sessions.

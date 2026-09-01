@@ -1,0 +1,115 @@
+{
+  "schema_version": "trace.marketing-os-regression-inputs.v2",
+  "cases": [
+    {
+      "schema_version": "trace.marketing-os-scorecard-input.v2",
+      "case_id": "trace.marketing-os.v2.case-001",
+      "feature_packet": {
+        "schema_version": "trace.feature-evidence.v1",
+        "packet_id": "packet-001",
+        "feature_id": "trace.focus-mode.scenes",
+        "title": "Trace feature",
+        "lifecycle": "installed_confirmed",
+        "repository": "corca-ai/Trace_iOS",
+        "mutable_ref": "refs/heads/develop",
+        "resolved_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+        "tree_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "claims": [{"claim_id": "claim-feature", "text": "The feature creates a scheduled changing lock-screen experience.", "status": "installed_confirmed", "evidence_ids": ["installed-proof"]}],
+        "evidence": [{"evidence_id": "installed-proof", "kind": "install_receipt", "source_uri": "trace://install/verified", "immutable_ref": "install-1", "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555", "result": "pass", "collected_at": "2026-09-01T00:00:00Z"}],
+        "gate": {"publication_allowed": true, "allowed_claim_ids": ["claim-feature"]},
+        "observed_at": "2026-09-01T00:00:00Z"
+      },
+      "required_scopes": ["product_truth", "customer_intelligence", "market_evidence"],
+      "max_tool_calls": 4,
+      "max_cost_units": 4
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-input.v2",
+      "case_id": "trace.marketing-os.v2.case-002",
+      "feature_packet": {
+        "schema_version": "trace.feature-evidence.v1",
+        "packet_id": "packet-002",
+        "feature_id": "trace.focus-mode.scenes",
+        "title": "Trace feature",
+        "lifecycle": "installed_confirmed",
+        "repository": "corca-ai/Trace_iOS",
+        "mutable_ref": "refs/heads/develop",
+        "resolved_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+        "tree_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "claims": [{"claim_id": "claim-feature", "text": "The feature creates a scheduled changing lock-screen experience.", "status": "installed_confirmed", "evidence_ids": ["installed-proof"]}],
+        "evidence": [{"evidence_id": "installed-proof", "kind": "install_receipt", "source_uri": "trace://install/verified", "immutable_ref": "install-1", "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555", "result": "pass", "collected_at": "2026-09-01T00:00:00Z"}],
+        "gate": {"publication_allowed": true, "allowed_claim_ids": ["claim-feature"]},
+        "observed_at": "2026-09-01T00:00:00Z"
+      },
+      "required_scopes": ["product_truth", "customer_intelligence", "market_evidence"],
+      "max_tool_calls": 3,
+      "max_cost_units": 3
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-input.v2",
+      "case_id": "trace.marketing-os.v2.case-003",
+      "feature_packet": {
+        "schema_version": "trace.feature-evidence.v1",
+        "packet_id": "packet-003",
+        "feature_id": "trace.focus-mode.scenes",
+        "title": "Trace feature",
+        "lifecycle": "installed_confirmed",
+        "repository": "corca-ai/Trace_iOS",
+        "mutable_ref": "refs/heads/develop",
+        "resolved_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+        "tree_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "claims": [{"claim_id": "claim-feature", "text": "The feature creates a scheduled changing lock-screen experience.", "status": "installed_confirmed", "evidence_ids": ["installed-proof"]}],
+        "evidence": [{"evidence_id": "installed-proof", "kind": "install_receipt", "source_uri": "trace://install/verified", "immutable_ref": "install-1", "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555", "result": "pass", "collected_at": "2026-09-01T00:00:00Z"}],
+        "gate": {"publication_allowed": true, "allowed_claim_ids": ["claim-feature"]},
+        "observed_at": "2026-09-01T00:00:00Z"
+      },
+      "required_scopes": ["product_truth", "customer_intelligence", "market_evidence"],
+      "max_tool_calls": 4,
+      "max_cost_units": 4
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-input.v2",
+      "case_id": "trace.marketing-os.v2.case-004",
+      "feature_packet": {
+        "schema_version": "trace.feature-evidence.v1",
+        "packet_id": "packet-004",
+        "feature_id": "trace.focus-mode.scenes",
+        "title": "Trace feature",
+        "lifecycle": "installed_confirmed",
+        "repository": "corca-ai/Trace_iOS",
+        "mutable_ref": "refs/heads/develop",
+        "resolved_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+        "tree_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "claims": [{"claim_id": "claim-feature", "text": "The feature creates a scheduled changing lock-screen experience.", "status": "installed_confirmed", "evidence_ids": ["installed-proof"]}],
+        "evidence": [{"evidence_id": "installed-proof", "kind": "install_receipt", "source_uri": "trace://install/verified", "immutable_ref": "install-1", "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555", "result": "pass", "collected_at": "2026-09-01T00:00:00Z"}],
+        "gate": {"publication_allowed": true, "allowed_claim_ids": ["claim-feature"]},
+        "observed_at": "2026-09-01T00:00:00Z"
+      },
+      "required_scopes": ["product_truth", "customer_intelligence", "market_evidence"],
+      "max_tool_calls": 4,
+      "max_cost_units": 4
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-input.v2",
+      "case_id": "trace.marketing-os.v2.case-005",
+      "feature_packet": {
+        "schema_version": "trace.feature-evidence.v1",
+        "packet_id": "packet-005",
+        "feature_id": "trace.focus-mode.scenes",
+        "title": "Trace feature",
+        "lifecycle": "installed_confirmed",
+        "repository": "corca-ai/Trace_iOS",
+        "mutable_ref": "refs/heads/develop",
+        "resolved_commit_sha": "ffffffffffffffffffffffffffffffffffffffff",
+        "tree_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "claims": [{"claim_id": "claim-feature", "text": "The feature creates a scheduled changing lock-screen experience.", "status": "installed_confirmed", "evidence_ids": ["installed-proof"]}],
+        "evidence": [{"evidence_id": "installed-proof", "kind": "install_receipt", "source_uri": "trace://install/verified", "immutable_ref": "install-1", "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555", "result": "pass", "collected_at": "2026-09-01T00:00:00Z"}],
+        "gate": {"publication_allowed": true, "allowed_claim_ids": ["claim-feature"]},
+        "observed_at": "2026-09-01T00:00:00Z"
+      },
+      "required_scopes": ["product_truth", "customer_intelligence", "market_evidence"],
+      "max_tool_calls": 4,
+      "max_cost_units": 4
+    }
+  ]
+}

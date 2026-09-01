@@ -1,0 +1,10 @@
+{
+  "schema_version": "trace.marketing-os-regression-tool-environment.v1",
+  "cases": {
+    "trace.marketing-os.v2.case-001": {},
+    "trace.marketing-os.v2.case-002": {"customer_status": "insufficient"},
+    "trace.marketing-os.v2.case-003": {"counter_evidence_found": true},
+    "trace.marketing-os.v2.case-004": {"blocked_claim": true},
+    "trace.marketing-os.v2.case-005": {"mismatched_brief": true}
+  }
+}

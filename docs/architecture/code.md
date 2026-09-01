@@ -142,8 +142,9 @@ header. It rejects a missing/mismatched pending invocation, rewritten budget or 
 invalid event digest/time, unknown reserved event, or an event after finalization. It supplies
 host-local append-only CAS persistence, file locking, atomic replacement, and serialization
 integrity checking for replay tests; it is not a distributed lease or production control-plane store.
-Only the persisted admission and execution methods are public effect APIs; the non-durable transforms
-are private test primitives. General planner, skill-registry, context-projection, and
+`replay_session(events)` is the matching public read-only reducer for an exported v3 trace; it returns
+only the checkpoint re-derived from that ledger. The persisted admission and execution methods remain
+the only public effect APIs; non-durable transforms are private test primitives. General planner, skill-registry, context-projection, and
 outcome-evaluation owners remain separate from effect adapters; the implemented fake-backend
 verticals are described below. Verified pre-header v1/v2 terminal traces are read-only; pre-header
 pending/non-terminal sessions and all legacy saves fail closed.
@@ -189,6 +190,17 @@ condition, and deterministic completed/inconclusive evaluation; it does not own 
 provider, Cloudflare adapter, campaign mutation, or publication. It can only freeze a completed
 validated trace as the contract owned by `feature_launch_evidence_brief.py`; it cannot start Feature
 Launch or merge the two sessions.
+
+`marketing/marketing_os_scorecard.py` owns a pure offline evaluation contract rather than a planner,
+runtime, tool, or provider adapter. Each named corpus case separates the runner-visible packet/scope
+input from its grader-only expectation and test-only tool environment. The runner returns canonical
+terminal event traces plus an attempted brief—not self-reported quality booleans—and the scorecard
+replays the traces through the runtime reducer before it derives budget, brief lineage, claim
+containment, process, and environment grades. A pinned grader-side vertical verifier re-runs the
+Research and Feature Launch trace contracts; its failure makes a trial invalid regardless of whether a
+safe expected outcome is `inconclusive`. The report pins the corpus digest and
+runner/model/prompt/registry metadata. This versioned regression corpus proves local vertical behavior
+only; it is neither private held-out model evidence, hosted authority, nor a live marketing result.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
