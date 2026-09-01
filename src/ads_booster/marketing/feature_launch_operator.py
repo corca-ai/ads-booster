@@ -7,10 +7,8 @@ observation. It deliberately cannot publish, spend, contact customers, or mutate
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from hashlib import sha256
 from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, model_validator
@@ -37,9 +35,9 @@ from ads_booster.marketing.runtime import (
     SessionStore,
     ToolAdmission,
     ToolBackend,
-    ToolCall,
     ToolCapability,
     ToolReceipt,
+    bind_tool_invocation,
     tool_receipt_from_event,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -146,7 +144,6 @@ class FeatureLaunchEvaluation(ContractModel):
 class AvailableAction:
     action_id: str
     capability: ToolCapability
-    request_schema_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,24 +198,18 @@ class FeatureLaunchSkillRegistry:
         _validate_feature_launch_action(self)
         _validate_feature_launch_task(task, self, packet_sha256)
         _validate_feature_launch_proposal(task, self, proposal, brief_sha256)
-        input_sha256 = _canonical_sha256(
-            {
+        invocation = bind_tool_invocation(
+            self.action.capability,
+            call_id=f"{task.goal.goal_id}-{proposal.proposal_id}",
+            idempotency_key=f"{task.goal.goal_id}:{proposal.proposal_id}:{proposal.action_id}",
+            request={
                 "goal": task.goal.model_dump(mode="json"),
                 "feature_packet_sha256": packet_sha256,
                 "evidence_brief_sha256": brief_sha256,
                 "proposal": proposal.model_dump(mode="json"),
-                "request_schema_sha256": self.action.request_schema_sha256,
-            }
+            },
         )
-        call = ToolCall(
-            call_id=f"{task.goal.goal_id}-{proposal.proposal_id}",
-            idempotency_key=f"{task.goal.goal_id}:{proposal.proposal_id}:{proposal.action_id}",
-            capability_id=self.action.capability.capability_id,
-            descriptor_sha256=self.action.capability.descriptor_sha256,
-            input_sha256=input_sha256,
-            effect_class=self.action.capability.effect_class,
-        )
-        return ToolAdmission(self.action.capability, call)
+        return ToolAdmission(self.action.capability, invocation)
 
 
 def _validate_feature_launch_action(registry: FeatureLaunchSkillRegistry) -> None:
@@ -837,8 +828,3 @@ def _observation_matches(
 
 def _json_payload(contract: ContractModel) -> JsonObject:
     return contract.model_dump(mode="json")
-
-
-def _canonical_sha256(value: JsonObject) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return sha256(encoded.encode()).hexdigest()

@@ -35,8 +35,9 @@ general multi-channel marketing product.
 
 Implemented provider-neutral foundations:
 
-- append-only, restart-safe session trace; descriptor-bound tool call, receipt, budget, approval
-  grant, idempotency, and reconciliation contracts;
+- append-only, restart-safe session trace; a capability/schema-bound `BoundToolInvocation` with
+  canonical non-secret request payload, receipt, budget, approval grant, idempotency, and
+  reconciliation contracts;
 - an observe-only evidence-research vertical across product truth, customer intelligence, and market
   evidence;
 - a separate Feature Launch experiment vertical whose planner cannot create a raw tool call;
@@ -48,8 +49,9 @@ Implemented provider-neutral foundations:
 
 Not implemented or claimed:
 
-- a real multi-skill model evaluation corpus, trusted remote adapter receipts, cross-session external
-  approval authority, or a hosted runtime adapter;
+- a real multi-skill model evaluation corpus, trusted remote adapter receipts, execution-time
+  approval revalidation, provider idempotency/reconciliation, cross-session external approval
+  authority, or a hosted runtime adapter;
 - shared tenant marketing context, customer-signal ingestion, approval inbox, collaboration surfaces,
   billing, or public SaaS onboarding;
 - automatic post publication, ad spend, cold outreach, generic CRM mutation, or autonomous budget
@@ -146,14 +148,18 @@ review can distinguish a regression in a skill, tool, evaluator, or runtime.
 
 The first cross-session fixture now exercises a completed Research session, an immutable brief, and a
 distinct Feature Launch session; it independently re-derives the source brief before any launch
-planning or hand call. The next additions stay in this order:
+planning or hand call. The runtime now also has a `BoundToolInvocation`: a schema-bound,
+canonical, non-secret request that is persisted with the pending call and received by the backend.
+One UTF-8 canonical JSON policy covers event, call, and request digests; reload rejects a missing or
+mismatched invocation and an execution checkpoint that contradicts its committed start event. The
+serialization format is versioned: a verified versionless terminal trace is read-only, while a
+versionless pending or non-terminal trace fails closed rather than being upgraded or re-executed.
+The next additions stay in this order:
 
 1. turn the representative cases into a named test-owned scorecard with separate environment and
    process grades; do not call it model-quality validation until it contains model/provider runs;
-2. add a bound tool-invocation envelope—the schema-validated, non-secret request payload plus its
-   digest—before a real connector receives an input rather than only `input_sha256`;
-3. introduce `MarketingContextSnapshot` and `CustomerSignal` as read-only, tenant-scoped sources;
-4. then expose a minimal approval packet and campaign queue over the existing ledger.
+2. introduce `MarketingContextSnapshot` and `CustomerSignal` as read-only, tenant-scoped sources;
+3. then expose a minimal approval packet and campaign queue over the existing ledger.
 
 Deliberately not doing in this slice: a generic multi-agent graph, tool-specific logic in the
 strategist, raw interview or web text in planner context, a new publisher, or an autonomous budget.
@@ -161,7 +167,13 @@ strategist, raw interview or web text in planner context, a new publisher, or an
 Before an effect-capable hosted adapter is admitted, add a persisted brief-verification marker and an
 explicit compatibility policy for pre-marker launch sessions. Current local replay validates an already
 committed brief from its canonical launch trace without reopening the research source; it must not
-silently grant that legacy behavior to a new external-effect path.
+silently grant that legacy behavior to a new external-effect path. The same pre-effect gate must add
+all of: live approval/revocation verification immediately before the effect, a versioned verifiable
+receipt proof bound to the invocation, a validated capability-registry manifest digest, a closed
+effect-class enum, and provider idempotency/readback/reconciliation rules. It must also derive the
+authorization, budget, idempotency, and terminal/reconciliation checkpoint from the runtime event
+ledger before treating that checkpoint as external-effect authority. A generic JSON-schema engine,
+secret-pattern scanner, or production connector is intentionally not part of this foundation.
 
 ### 1. Add governed marketing context and signals
 

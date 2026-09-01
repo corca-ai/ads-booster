@@ -43,6 +43,9 @@ class EffectDisposition(StrEnum):
 
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+_BOUND_TOOL_INVOCATION_SCHEMA_VERSION = "trace.bound-tool-invocation.v1"
+_SESSION_SERIALIZATION_VERSION = "trace.marketing-session.v2"
+_LEGACY_SESSION_SERIALIZATION_VERSION = "trace.marketing-session.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,7 @@ class Budget:
 class ToolCapability:
     capability_id: str
     descriptor_sha256: str
+    request_schema_sha256: str
     effect_class: str
     worst_case_cost_units: int
 
@@ -65,20 +69,85 @@ class ToolCall:
     idempotency_key: str
     capability_id: str
     descriptor_sha256: str
+    request_schema_sha256: str
     input_sha256: str
     effect_class: str
 
     @property
     def digest(self) -> str:
-        parts = (
-            self.call_id,
-            self.idempotency_key,
-            self.capability_id,
-            self.descriptor_sha256,
-            self.input_sha256,
-            self.effect_class,
+        return _json_digest(
+            {
+                "schema_version": "trace.tool-call.v1",
+                "call_id": self.call_id,
+                "idempotency_key": self.idempotency_key,
+                "capability_id": self.capability_id,
+                "descriptor_sha256": self.descriptor_sha256,
+                "request_schema_sha256": self.request_schema_sha256,
+                "input_sha256": self.input_sha256,
+                "effect_class": self.effect_class,
+            }
         )
-        return _digest("|".join(parts))
+
+
+@dataclass(frozen=True, slots=True)
+class BoundToolInvocation:
+    """One canonical, non-secret request bound to a descriptor-bound tool call.
+
+    Backends receive this envelope rather than a digest-only call. Connector secrets remain outside
+    the request and are resolved by the adapter owner from the capability identity.
+    """
+
+    call: ToolCall
+    request_json: str
+    schema_version: str = _BOUND_TOOL_INVOCATION_SCHEMA_VERSION
+
+    @property
+    def request(self) -> JsonObject:
+        try:
+            return _JSON_OBJECT.validate_json(self.request_json)
+        except ValueError as error:
+            raise MarketingRuntimeError("tool_invocation_request_invalid") from error
+
+    def validate(self) -> None:
+        if self.schema_version != _BOUND_TOOL_INVOCATION_SCHEMA_VERSION:
+            raise MarketingRuntimeError("tool_invocation_schema_version_invalid")
+        if canonical_json_object(self.request) != self.request_json:
+            raise MarketingRuntimeError("tool_invocation_request_not_canonical")
+        if self.call.input_sha256 != _invocation_input_sha256(
+            self.schema_version,
+            self.call.request_schema_sha256,
+            self.request,
+        ):
+            raise MarketingRuntimeError("tool_invocation_input_digest_mismatch")
+
+
+def bind_tool_invocation(
+    capability: ToolCapability,
+    *,
+    call_id: str,
+    idempotency_key: str,
+    request: JsonObject,
+) -> BoundToolInvocation:
+    """Create the only supported call/request binding for a capability handoff."""
+    request_json = canonical_json_object(request)
+    invocation = BoundToolInvocation(
+        ToolCall(
+            call_id=call_id,
+            idempotency_key=idempotency_key,
+            capability_id=capability.capability_id,
+            descriptor_sha256=capability.descriptor_sha256,
+            request_schema_sha256=capability.request_schema_sha256,
+            input_sha256=_invocation_input_sha256(
+                _BOUND_TOOL_INVOCATION_SCHEMA_VERSION,
+                capability.request_schema_sha256,
+                _JSON_OBJECT.validate_json(request_json),
+            ),
+            effect_class=capability.effect_class,
+        ),
+        request_json,
+    )
+    invocation.validate()
+    return invocation
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,8 +196,12 @@ class ToolReceipt:
 @dataclass(frozen=True, slots=True)
 class ToolAdmission:
     capability: ToolCapability
-    call: ToolCall
+    invocation: BoundToolInvocation
     grant: ApprovalGrant | None = None
+
+    @property
+    def call(self) -> ToolCall:
+        return self.invocation.call
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,15 +222,17 @@ class AgentSession:
     reserved_cost_units: int = 0
     tool_calls: int = 0
     pending_call: ToolCall | None = None
+    pending_invocation: BoundToolInvocation | None = None
     pending_grant_sha256: str | None = None
     execution_started: bool = False
     dispatched_idempotency_keys: tuple[str, ...] = ()
     consumed_grant_sha256s: tuple[str, ...] = ()
     events: tuple[SessionEvent, ...] = ()
+    serialization_version: str = _SESSION_SERIALIZATION_VERSION
 
 
 class ToolBackend(Protocol):
-    def execute(self, call: ToolCall) -> ToolReceipt: ...
+    def execute(self, invocation: BoundToolInvocation) -> ToolReceipt: ...
 
 
 class SessionStore(Protocol):
@@ -219,15 +294,42 @@ class JsonSessionStore:
         data = _as_object(_JSON_OBJECT.validate_json(path.read_bytes()))
         expected_digest = _string(data, "session_sha256")
         serialized = {key: value for key, value in data.items() if key != "session_sha256"}
-        if _json_digest(serialized) != expected_digest:
+        version_value = data.get("serialization_version")
+        serialization_version = (
+            _LEGACY_SESSION_SERIALIZATION_VERSION
+            if version_value is None
+            else _string(data, "serialization_version")
+        )
+        session_digest = (
+            _legacy_json_digest(serialized)
+            if serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION
+            else _json_digest(serialized)
+        )
+        if serialization_version not in {
+            _LEGACY_SESSION_SERIALIZATION_VERSION,
+            _SESSION_SERIALIZATION_VERSION,
+        }:
+            raise MarketingRuntimeError("session_serialization_version_invalid")
+        if session_digest != expected_digest:
             raise MarketingRuntimeError("session_json_digest_mismatch")
         budget = _object(data, "budget")
         event_items = _array(data, "events")
         pending_value = data.get("pending_call")
+        if (
+            pending_value is not None
+            and serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION
+        ):
+            raise MarketingRuntimeError("legacy_pending_session_unverifiable")
         pending_call = (
             None if pending_value is None else _tool_call_from_json(_as_object(pending_value))
         )
-        return AgentSession(
+        pending_invocation_value = data.get("pending_invocation")
+        pending_invocation = (
+            None
+            if pending_invocation_value is None
+            else _tool_invocation_from_json(_as_object(pending_invocation_value))
+        )
+        session = AgentSession(
             session_id=_string(data, "session_id"),
             budget=Budget(_integer(budget, "max_tool_calls"), _integer(budget, "max_cost_units")),
             state=RuntimeState(_string(data, "state")),
@@ -235,6 +337,7 @@ class JsonSessionStore:
             reserved_cost_units=_integer(data, "reserved_cost_units"),
             tool_calls=_integer(data, "tool_calls"),
             pending_call=pending_call,
+            pending_invocation=pending_invocation,
             pending_grant_sha256=_optional_string(data, "pending_grant_sha256"),
             execution_started=_boolean(data, "execution_started"),
             dispatched_idempotency_keys=tuple(
@@ -243,10 +346,29 @@ class JsonSessionStore:
             consumed_grant_sha256s=tuple(
                 _string_value(item) for item in _array(data, "consumed_grant_sha256s")
             ),
-            events=tuple(_event_from_json(_as_object(item)) for item in event_items),
+            events=tuple(
+                _event_from_json(
+                    _as_object(item),
+                    legacy_digest=serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION,
+                )
+                for item in event_items
+            ),
+            serialization_version=serialization_version,
         )
+        if serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION:
+            if session.state not in {
+                RuntimeState.STOPPED,
+                RuntimeState.INCONCLUSIVE,
+                RuntimeState.COMPLETED,
+            }:
+                raise MarketingRuntimeError("legacy_nonterminal_session_unverifiable")
+            return session
+        _validate_loaded_session_checkpoint(session)
+        return session
 
     def save(self, session: AgentSession, *, expected_sequence: int) -> None:
+        if session.serialization_version != _SESSION_SERIALIZATION_VERSION:
+            raise MarketingRuntimeError("legacy_session_read_only")
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         with self._lock(session.session_id):
             current = self.load(session.session_id)
@@ -257,6 +379,7 @@ class JsonSessionStore:
                 raise MarketingRuntimeError("session_event_regression")
             if current is not None and session.events[:current_sequence] != current.events:
                 raise MarketingRuntimeError("session_event_history_mismatch")
+            _validate_loaded_session_checkpoint(session)
             self._atomic_write(self._path(session.session_id), _stored_session_json(session))
 
     def _path(self, session_id: str) -> Path:
@@ -310,13 +433,14 @@ class MarketingAgentRuntime:
         self,
         session: AgentSession,
         capability: ToolCapability,
-        call: ToolCall,
+        invocation: BoundToolInvocation,
         *,
         now: datetime,
         grant: ApprovalGrant | None = None,
     ) -> AgentSession:
+        call = invocation.call
         self._validate_dispatch_state(session)
-        self._validate_call(capability, call)
+        self._validate_invocation(capability, invocation)
         grant_digest: str | None = None
         if call.effect_class == "external":
             if grant is None:
@@ -363,6 +487,7 @@ class MarketingAgentRuntime:
                 reserved_cost_units=session.reserved_cost_units + capability.worst_case_cost_units,
                 tool_calls=session.tool_calls + 1,
                 pending_call=call,
+                pending_invocation=invocation,
                 pending_grant_sha256=grant_digest,
                 dispatched_idempotency_keys=(
                     *session.dispatched_idempotency_keys,
@@ -375,7 +500,11 @@ class MarketingAgentRuntime:
             ),
             RuntimeState.EXECUTING,
             "tool_dispatched",
-            _tool_call_json(call),
+            _tool_dispatch_json(
+                invocation,
+                grant_digest,
+                capability.worst_case_cost_units,
+            ),
             now,
         )
 
@@ -384,8 +513,24 @@ class MarketingAgentRuntime:
     ) -> AgentSession:
         if session.state is not RuntimeState.EXECUTING or session.pending_call is None:
             raise MarketingRuntimeError("tool_execution_without_pending_call")
+        if session.pending_invocation is None:
+            return self._reconciliation_required(
+                session,
+                "tool_invocation_missing",
+                _reference_payload(session.pending_call.digest),
+                now,
+            )
         try:
-            receipt = backend.execute(session.pending_call)
+            self._validate_pending_invocation(session)
+        except MarketingRuntimeError:
+            return self._reconciliation_required(
+                session,
+                "tool_invocation_rejected",
+                _reference_payload(session.pending_call.digest),
+                now,
+            )
+        try:
+            receipt = backend.execute(session.pending_invocation)
         except Exception:  # noqa: BLE001 -- dispatch began; every backend failure is ambiguous.
             return self._reconciliation_required(
                 session,
@@ -416,7 +561,7 @@ class MarketingAgentRuntime:
         updated = self._request_tool(
             session,
             admission.capability,
-            admission.call,
+            admission.invocation,
             now=now,
             grant=admission.grant,
         )
@@ -432,6 +577,7 @@ class MarketingAgentRuntime:
             raise MarketingRuntimeError("tool_execution_without_pending_call")
         if session.execution_started:
             raise MarketingRuntimeError("tool_execution_already_started")
+        self._validate_pending_invocation(session)
         started = self._append(
             replace(session, execution_started=True),
             RuntimeState.EXECUTING,
@@ -542,6 +688,7 @@ class MarketingAgentRuntime:
                 spent_cost_units=session.spent_cost_units + receipt.actual_cost_units,
                 reserved_cost_units=0,
                 pending_call=None,
+                pending_invocation=None,
                 pending_grant_sha256=None,
                 execution_started=False,
             ),
@@ -552,13 +699,24 @@ class MarketingAgentRuntime:
         )
 
     @staticmethod
-    def _validate_call(capability: ToolCapability, call: ToolCall) -> None:
+    def _validate_invocation(capability: ToolCapability, invocation: BoundToolInvocation) -> None:
+        invocation.validate()
+        call = invocation.call
         if (
             capability.capability_id != call.capability_id
             or capability.descriptor_sha256 != call.descriptor_sha256
+            or capability.request_schema_sha256 != call.request_schema_sha256
             or capability.effect_class != call.effect_class
         ):
             raise MarketingRuntimeError("tool_call_capability_mismatch")
+
+    @staticmethod
+    def _validate_pending_invocation(session: AgentSession) -> None:
+        if session.pending_call is None or session.pending_invocation is None:
+            raise MarketingRuntimeError("tool_invocation_missing")
+        if session.pending_invocation.call != session.pending_call:
+            raise MarketingRuntimeError("tool_invocation_call_mismatch")
+        session.pending_invocation.validate()
 
     @staticmethod
     def _validate_dispatch_state(session: AgentSession) -> None:
@@ -619,6 +777,7 @@ def _digest(value: str) -> str:
 
 def _session_json(session: AgentSession) -> dict[str, object]:
     return {
+        "serialization_version": session.serialization_version,
         "session_id": session.session_id,
         "budget": {
             "max_tool_calls": session.budget.max_tool_calls,
@@ -630,6 +789,11 @@ def _session_json(session: AgentSession) -> dict[str, object]:
         "tool_calls": session.tool_calls,
         "pending_call": (
             None if session.pending_call is None else _tool_call_json(session.pending_call)
+        ),
+        "pending_invocation": (
+            None
+            if session.pending_invocation is None
+            else _tool_invocation_json(session.pending_invocation)
         ),
         "pending_grant_sha256": session.pending_grant_sha256,
         "execution_started": session.execution_started,
@@ -660,8 +824,34 @@ def _tool_call_json(call: ToolCall) -> JsonObject:
             "idempotency_key": call.idempotency_key,
             "capability_id": call.capability_id,
             "descriptor_sha256": call.descriptor_sha256,
+            "request_schema_sha256": call.request_schema_sha256,
             "input_sha256": call.input_sha256,
             "effect_class": call.effect_class,
+        }
+    )
+
+
+def _tool_invocation_json(invocation: BoundToolInvocation) -> JsonObject:
+    invocation.validate()
+    return _JSON_OBJECT.validate_python(
+        {
+            "schema_version": invocation.schema_version,
+            "call": _tool_call_json(invocation.call),
+            "request": invocation.request,
+        }
+    )
+
+
+def _tool_dispatch_json(
+    invocation: BoundToolInvocation,
+    approval_grant_sha256: str | None,
+    reserved_cost_units: int,
+) -> JsonObject:
+    return _JSON_OBJECT.validate_python(
+        {
+            "invocation": _tool_invocation_json(invocation),
+            "approval_grant_sha256": approval_grant_sha256,
+            "reserved_cost_units": reserved_cost_units,
         }
     )
 
@@ -689,12 +879,23 @@ def _tool_call_from_json(value: dict[str, object]) -> ToolCall:
         idempotency_key=_string(value, "idempotency_key"),
         capability_id=_string(value, "capability_id"),
         descriptor_sha256=_string(value, "descriptor_sha256"),
+        request_schema_sha256=_string(value, "request_schema_sha256"),
         input_sha256=_string(value, "input_sha256"),
         effect_class=_string(value, "effect_class"),
     )
 
 
-def _event_from_json(value: dict[str, object]) -> SessionEvent:
+def _tool_invocation_from_json(value: dict[str, object]) -> BoundToolInvocation:
+    invocation = BoundToolInvocation(
+        call=_tool_call_from_json(_object(value, "call")),
+        request_json=canonical_json_object(_JSON_OBJECT.validate_python(_object(value, "request"))),
+        schema_version=_string(value, "schema_version"),
+    )
+    invocation.validate()
+    return invocation
+
+
+def _event_from_json(value: dict[str, object], *, legacy_digest: bool = False) -> SessionEvent:
     payload = _object(value, "payload")
     event = SessionEvent(
         sequence=_integer(value, "sequence"),
@@ -703,13 +904,117 @@ def _event_from_json(value: dict[str, object]) -> SessionEvent:
         payload_sha256=_string(value, "payload_sha256"),
         occurred_at=datetime.fromisoformat(_string(value, "occurred_at")),
     )
-    if _json_digest(event.payload) != event.payload_sha256:
+    payload_digest = (
+        _legacy_json_digest(event.payload) if legacy_digest else _json_digest(event.payload)
+    )
+    if payload_digest != event.payload_sha256:
         raise MarketingRuntimeError("session_event_payload_digest_mismatch")
     return event
 
 
+def canonical_json_object(value: JsonObject) -> str:
+    """Encode one non-secret object with the canonical UTF-8 JSON policy used for bindings."""
+    canonical = _JSON_OBJECT.validate_python(value)
+    return json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def canonical_json_sha256(value: JsonObject) -> str:
+    """Digest a canonical object with the same policy used by bound tool requests."""
+    return _digest(canonical_json_object(value))
+
+
+def _invocation_input_sha256(
+    schema_version: str, request_schema_sha256: str, request: JsonObject
+) -> str:
+    """Bind a canonical request to the concrete request-schema version that owns it."""
+    return canonical_json_sha256(
+        _JSON_OBJECT.validate_python(
+            {
+                "schema_version": schema_version,
+                "request_schema_sha256": request_schema_sha256,
+                "request": request,
+            }
+        )
+    )
+
+
 def _json_digest(value: Mapping[str, object]) -> str:
+    return canonical_json_sha256(_JSON_OBJECT.validate_python(value))
+
+
+def _legacy_json_digest(value: Mapping[str, object]) -> str:
+    """Verify versionless v1 storage without upgrading its digest or execution authority."""
     return _digest(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def _validate_loaded_session_checkpoint(session: AgentSession) -> None:
+    """Reject a checkpoint that could redeliver a call after its persisted start marker."""
+    if session.pending_call is None:
+        if session.pending_invocation is not None or session.execution_started:
+            raise MarketingRuntimeError("session_pending_invocation_checkpoint_mismatch")
+        return
+    if (
+        session.pending_invocation is None
+        or session.pending_invocation.call != session.pending_call
+    ):
+        raise MarketingRuntimeError("session_pending_invocation_checkpoint_mismatch")
+    dispatches = tuple(
+        (index, _tool_dispatch_from_event(event))
+        for index, event in enumerate(session.events)
+        if event.event_type == "tool_dispatched"
+    )
+    matching_dispatches = tuple(
+        (index, invocation, grant_sha256, reserved_cost_units)
+        for index, (invocation, grant_sha256, reserved_cost_units) in dispatches
+        if invocation == session.pending_invocation
+    )
+    if (
+        not dispatches
+        or len(matching_dispatches) != 1
+        or matching_dispatches[-1][0] != dispatches[-1][0]
+    ):
+        raise MarketingRuntimeError("session_pending_dispatch_checkpoint_mismatch")
+    dispatch_index, _, dispatch_grant_sha256, dispatch_reserved_cost_units = matching_dispatches[0]
+    if dispatch_grant_sha256 != session.pending_grant_sha256:
+        raise MarketingRuntimeError("session_pending_grant_checkpoint_mismatch")
+    if dispatch_reserved_cost_units != session.reserved_cost_units:
+        raise MarketingRuntimeError("session_pending_budget_checkpoint_mismatch")
+    start_indexes = tuple(
+        index
+        for index, event in enumerate(session.events)
+        if event.event_type == "tool_execution_started"
+        and event.payload.get("reference_sha256") == session.pending_call.digest
+    )
+    if len(start_indexes) > 1 or any(index <= dispatch_index for index in start_indexes):
+        raise MarketingRuntimeError("session_execution_checkpoint_mismatch")
+    if bool(start_indexes) != session.execution_started:
+        raise MarketingRuntimeError("session_execution_checkpoint_mismatch")
+    receipt_indexes = tuple(
+        index
+        for index, event in enumerate(session.events)
+        if event.event_type in {f"tool_{item}" for item in EffectDisposition}
+        and tool_receipt_from_event(event).call_sha256 == session.pending_call.digest
+    )
+    if any(index > dispatch_index for index in receipt_indexes):
+        raise MarketingRuntimeError("session_pending_receipt_checkpoint_mismatch")
+
+
+def _tool_dispatch_from_event(event: SessionEvent) -> tuple[BoundToolInvocation, str | None, int]:
+    try:
+        payload = _as_object(event.payload)
+        return (
+            _tool_invocation_from_json(_object(payload, "invocation")),
+            _optional_string(payload, "approval_grant_sha256"),
+            _integer(payload, "reserved_cost_units"),
+        )
+    except MarketingRuntimeError as error:
+        raise MarketingRuntimeError("session_tool_dispatch_invalid") from error
 
 
 def _as_object(value: object) -> dict[str, object]:

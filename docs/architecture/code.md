@@ -127,17 +127,25 @@ effect class, enabled state, and whether a capability is active or reference-onl
 generic dispatcher or move capture/Threads effect ownership.
 
 `marketing/runtime.py` owns the provider-neutral, local session-and-dispatch harness. It has no
-Cloudflare, Appium, Threads, or model-provider import. `MarketingAgentRuntime` admits one
-descriptor-bound `ToolCall` at a time, reserves budget, requires and consumes an exact one-use
-grant for external effects, and validates the returned receipt against the pending call and approval
-digest. `request_persisted_tool` CASes the admission; `execute_persisted_tool` CASes an
-execution-start event before it calls a `ToolBackend`, and a restart-recovered execution can only be
-closed by `reconcile_interrupted_execution`. `JsonSessionStore` supplies host-local append-only CAS
-persistence, file locking, atomic replacement, and serialization integrity checking for replay tests;
-it is not a distributed lease or production control-plane store. Only the persisted admission and
-execution methods are public effect APIs; the non-durable transforms are private test primitives.
-General planner, skill-registry, context-projection, and outcome-evaluation owners remain separate
-from effect adapters; the implemented fake-backend verticals are described below.
+Cloudflare, Appium, Threads, or model-provider import. `ToolCapability` owns both descriptor and
+request-schema digests. `bind_tool_invocation` is the single construction boundary for a
+`BoundToolInvocation`: canonical non-secret request JSON, schema version, and a `ToolCall` whose
+digest binds capability, schema, payload digest, idempotency, and effect class. `ToolBackend`
+receives this envelope rather than a digest-only call; connector-secret resolution remains with the
+adapter owner. `MarketingAgentRuntime` admits one invocation at a time, reserves budget, requires
+and consumes an exact one-use grant for external effects, and validates the returned receipt against
+the pending call and approval digest. `request_persisted_tool` CASes the call and invocation;
+`execute_persisted_tool` CASes an execution-start event before it calls a `ToolBackend`, and a
+restart-recovered execution can only be closed by `reconcile_interrupted_execution`. On reload,
+`JsonSessionStore` rejects a missing/mismatched pending invocation or an execution checkpoint that
+disagrees with the committed start event. It supplies host-local append-only CAS persistence, file
+locking, atomic replacement, and serialization integrity checking for replay tests; it is not a
+distributed lease or production control-plane store. Only the persisted admission and execution
+methods are public effect APIs; the non-durable transforms are private test primitives. General
+planner, skill-registry, context-projection, and outcome-evaluation owners remain separate from
+effect adapters; the implemented fake-backend verticals are described below. Session v2 records its
+canonicalization version. A versionless v1 terminal trace can be loaded read-only after historical
+digest verification; v1 pending/non-terminal sessions and all legacy saves fail closed.
 
 `marketing/planning_projections.py` owns `FeaturePlanningProjection`, the shared data-only planner
 projection for the Feature Launch and Evidence Research verticals. It contains packet identity/digest,

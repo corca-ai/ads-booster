@@ -7,11 +7,9 @@ explicit inconclusive result. Observations never grant capabilities or modify re
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from hashlib import sha256
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, Self
 
 from pydantic import Field, model_validator
@@ -37,9 +35,9 @@ from ads_booster.marketing.runtime import (
     SessionStore,
     ToolAdmission,
     ToolBackend,
-    ToolCall,
     ToolCapability,
     ToolReceipt,
+    bind_tool_invocation,
     session_trace_sha256,
     tool_receipt_from_event,
 )
@@ -187,7 +185,6 @@ class ResearchAction:
     action_id: str
     scope: ResearchScope
     capability: ToolCapability
-    request_schema_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,25 +228,19 @@ class EvidenceResearchSkillRegistry:
         action = self._action_for(decision)
         self._validate_task(task, packet_sha256)
         self._validate_decision(task, decision, observed_scopes)
-        input_sha256 = _canonical_sha256(
-            {
-                "goal": task.goal.model_dump(mode="json"),
-                "feature_packet_sha256": packet_sha256,
-                "decision": decision.model_dump(mode="json"),
-                "request_schema_sha256": action.request_schema_sha256,
-            }
-        )
-        call = ToolCall(
+        invocation = bind_tool_invocation(
+            action.capability,
             call_id=f"research-{task.goal.goal_id}-{decision.decision_id}",
             idempotency_key=(
                 f"research:{task.goal.goal_id}:{decision.iteration}:{decision.action_id}"
             ),
-            capability_id=action.capability.capability_id,
-            descriptor_sha256=action.capability.descriptor_sha256,
-            input_sha256=input_sha256,
-            effect_class=action.capability.effect_class,
+            request={
+                "goal": task.goal.model_dump(mode="json"),
+                "feature_packet_sha256": packet_sha256,
+                "decision": decision.model_dump(mode="json"),
+            },
         )
-        return ToolAdmission(action.capability, call)
+        return ToolAdmission(action.capability, invocation)
 
     def _action_for(self, decision: ResearchDecision) -> ResearchAction:
         action = next((item for item in self.actions if item.action_id == decision.action_id), None)
@@ -946,8 +937,3 @@ def _validate_terminal_research_session(
 
 def _json_payload(contract: ContractModel) -> JsonObject:
     return contract.model_dump(mode="json")
-
-
-def _canonical_sha256(value: JsonObject) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return sha256(encoded.encode()).hexdigest()

@@ -42,12 +42,12 @@ from ads_booster.marketing.feature_launch_operator import (
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
+    BoundToolInvocation,
     Budget,
     EffectDisposition,
     JsonSessionStore,
     MarketingAgentRuntime,
     RuntimeState,
-    ToolCall,
     ToolCapability,
     ToolReceipt,
 )
@@ -109,15 +109,15 @@ class FakeFeatureLaunchHand(FeatureLaunchHand):
         self.evidence_status: Literal["sufficient", "insufficient"] = evidence_status
         self.counter_evidence_found: bool = counter_evidence_found
         self.mismatched_lineage: bool = mismatched_lineage
-        self.calls: list[ToolCall] = []
+        self.calls: list[BoundToolInvocation] = []
         self.observation_calls: list[ToolReceipt] = []
 
     @override
-    def execute(self, call: ToolCall) -> ToolReceipt:
-        self.calls.append(call)
+    def execute(self, invocation: BoundToolInvocation) -> ToolReceipt:
+        self.calls.append(invocation)
         return ToolReceipt(
-            call.call_id,
-            call.digest,
+            invocation.call.call_id,
+            invocation.call.digest,
             None,
             EffectDisposition.SUCCEEDED,
             1,
@@ -127,13 +127,13 @@ class FakeFeatureLaunchHand(FeatureLaunchHand):
     @override
     def observation_for(self, receipt: ToolReceipt) -> FeatureLaunchObservation:
         self.observation_calls.append(receipt)
-        call = self.calls[-1]
+        invocation = self.calls[-1]
         return FeatureLaunchObservation(
             schema_version="trace.feature-launch-observation.v1",
             observation_id="observation-1",
             receipt_sha256=receipt.receipt_sha256,
             call_sha256=receipt.call_sha256,
-            request_sha256=call.input_sha256,
+            request_sha256=invocation.call.input_sha256,
             feature_packet_sha256=(
                 "d" * 64 if self.mismatched_lineage else self.lineage.packet_sha256
             ),
@@ -210,8 +210,9 @@ def _registry() -> FeatureLaunchSkillRegistry:
         skill_sha256=SKILL_SHA256,
         action=AvailableAction(
             action_id="observe.feature_launch_experiment",
-            capability=ToolCapability("observe.feature_launch_experiment", "3" * 64, "observe", 1),
-            request_schema_sha256="4" * 64,
+            capability=ToolCapability(
+                "observe.feature_launch_experiment", "3" * 64, "4" * 64, "observe", 1
+            ),
         ),
     )
 
@@ -777,8 +778,7 @@ def test_non_observe_registry_capability_is_stopped_before_the_hand_runs(tmp_pat
         _registry(),
         action=AvailableAction(
             action_id="observe.feature_launch_experiment",
-            capability=ToolCapability("local.render", "6" * 64, "local_artifact", 1),
-            request_schema_sha256="4" * 64,
+            capability=ToolCapability("local.render", "6" * 64, "4" * 64, "local_artifact", 1),
         ),
     )
     context = FeatureLaunchRuntimeContext(

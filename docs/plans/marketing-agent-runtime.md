@@ -63,7 +63,7 @@ control-plane action.
 | `Decision` | observation refs, alternatives, selected skill, expected evidence, cost estimate | harness |
 | `ApprovalGrant` | pending call digest, authority scope, approver, expiry, revocation/policy version, use count | policy/human |
 | `Skill` | version/digest, entry/exit criteria, tool allowlist, procedure, stop rules | skill registry |
-| `ToolCall` / `ToolReceipt` | call/idempotency IDs, capability descriptor digest, scoped input/schema digest, grant/policy refs, effect disposition, actual usage/cost | hand/backend |
+| `ToolCapability` / `BoundToolInvocation` / `ToolReceipt` | capability descriptor and request-schema digests; canonical non-secret request, schema version, call/idempotency and schema-bound payload digest; grant/policy refs, effect disposition, actual usage/cost | registry / hand/backend |
 | `Observation` | source/receipt ref, digest, product scope, freshness, uncertainty, trust and retention labels | tool/backend |
 | `Evaluation` | outcome state, trace assessment, grader evidence, score dimensions | evaluator |
 | `PlaybookCandidate` | scoped learning, evidence coverage, counter-evidence, approval state | evaluator/human |
@@ -179,10 +179,18 @@ quality proxies.
 ## First implementation slice
 
 Implemented: `ads_booster.marketing.runtime` now supplies provider-neutral domain contracts, a
-host-local JSON session store with append-only CAS/atomic persistence, canonical event payloads, one
-pending dispatch, one-use external grant consumption, receipt binding, and a fake-backend test seam.
-Its durable driver persists the pending dispatch and an execution-start checkpoint before any backend
-call; a restart after that checkpoint only reconciles, never retries the effect.
+host-local JSON session store with append-only CAS/atomic persistence, canonical UTF-8 event payloads,
+and a `BoundToolInvocation` handoff. A capability owns descriptor and request-schema digests; the
+single invocation factory persists a canonical non-secret request whose schema-bound payload digest
+is carried by the descriptor-bound call. Backends receive that exact envelope rather than a
+digest-only call and retain ownership of connector-secret resolution. The store persists the pending
+call and invocation together, rejects a missing/mismatched legacy pending call, and rejects an
+execution checkpoint that disagrees with its immutable start event. One-use external grant
+consumption, receipt binding, and a fake-backend test seam remain in place. Its durable driver
+persists the pending dispatch and an execution-start checkpoint before any backend call; a restart
+after that checkpoint only reconciles, never retries the effect. The v2 serialization format names
+its canonical digest policy. A verified versionless terminal trace is read-only; a versionless
+pending/non-terminal session fails closed rather than being re-executed or automatically upgraded.
 
 Implemented: `feature_launch_operator` adds the first strict planner protocol, a versioned one-action
 skill registry, decision replay without another planner call, receipt/observation lineage validation,
@@ -204,6 +212,10 @@ observation, evaluation, replay, and terminal audit. Raw source locations, sourc
 questions remain outside the next planner context. This is a local fake-backend hand-off contract, not
 a hosted orchestrator, adapter, or live-market evaluation claim.
 
-Next: add trusted backend receipt verification and cross-session grant ownership, run a held-out
-multi-skill evaluation corpus rather than only fixture tests, then run fresh design critique before
-adding a thin control-plane adapter in a new post-merge PR.
+Next: run a named held-out multi-skill evaluation corpus rather than only fixture tests. Before any
+external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
+receipt proof, validated registry-manifest binding, a closed effect-class contract, and provider
+idempotency/readback/reconciliation. Derive authorization, budget, idempotency, and
+terminal/reconciliation checkpoint state from the append-only runtime ledger before it becomes
+external-effect authority. Then run fresh design critique before adding a thin
+control-plane adapter in a new post-merge PR.
