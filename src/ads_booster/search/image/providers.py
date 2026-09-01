@@ -14,6 +14,7 @@ import httpx2
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.search.image.contracts import (
+    MAX_IMAGE_SEARCH_RESULTS,
     ImageSearchError,
     ImageSearchProvider,
     ImageSearchResponse,
@@ -27,12 +28,17 @@ if TYPE_CHECKING:
 _JSON_ROWS: TypeAdapter[list[JsonObject]] = TypeAdapter(list[JsonObject])
 _BRAVE_ENDPOINT: Final = "https://api.search.brave.com/res/v1/images/search"
 _HTTP_OK: Final = 200
-# Twenty rather than ten because the resolution gate downstream is the real limit: a page of
-# news photography is all 600x400, so ten rows routinely left nothing for the judge to look
-# at. Asking for more costs one request either way.
-_MAX_RESULTS: Final = 20
+# The response contract sets the ceiling; reading it from there keeps the two from drifting
+# apart again. The resolution gate downstream is the real limit: a page of news photography
+# is all 600x400, so a short page routinely left nothing for the judge to look at. Asking for
+# more costs one request either way.
+_MAX_RESULTS: Final = MAX_IMAGE_SEARCH_RESULTS
 # Open-web image search returns article photography by default, which is landscape and small.
-# A lock screen needs the opposite, and this is the one filter the provider itself can apply.
+# A lock screen needs the opposite. These are asked for, but do not count on them: measured
+# against live searches, --layout Tall changes nothing at all - "고양이 배경화면 고화질"
+# returned 1 portrait image in 20 with the flag and 2 in 20 without it, and "쿠로미 배경화면"
+# returned the same 3 either way. Orientation has to come from the query wording and from
+# ranking a wide pool downstream, not from the provider.
 _DDGS_SIZE: Final = "Wallpaper"
 _DDGS_LAYOUT: Final = "Tall"
 _DDGS_TYPE: Final = "photo"

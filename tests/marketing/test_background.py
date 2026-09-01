@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject
 
 _POST_FORBIDDEN = "hosted background preparation must not post data"
+_EXPECTED_MAX_RESULTS = 25
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +36,10 @@ class _BackgroundSearchFixture:
     response: ImageSearchResponse
 
     def search(self, query: str, max_results: int) -> ImageSearchResponse:
-        assert query.endswith(("site:pexels.com", "site:unsplash.com", "site:pixabay.com"))
-        assert max_results == 5
+        # The intent reaches the provider as written: the fetcher no longer appends a
+        # "site:" operator, which restricted nothing and distorted the query.
+        assert "site:" not in query
+        assert max_results == _EXPECTED_MAX_RESULTS
         return self.response
 
 

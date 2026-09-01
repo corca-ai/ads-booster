@@ -9,7 +9,13 @@ import pytest
 from PIL import Image
 
 from ads_booster.search.image.background import BackgroundSearchError, ImageSearchBackgroundFetcher
-from ads_booster.search.image.contracts import ImageSearchResponse, ImageSearchResult
+from ads_booster.search.image.contracts import (
+    BackgroundBrief,
+    ImageSearchError,
+    ImageSearchResponse,
+    ImageSearchResult,
+    JudgeCandidate,
+)
 from ads_booster.transport.http import HttpResponse
 
 if TYPE_CHECKING:
@@ -20,6 +26,10 @@ if TYPE_CHECKING:
 
 _IMAGE_MODEL_CALL_MESSAGE = "background search must not call an image model"
 _POST_MESSAGE = "background search must not post data"
+_EXPECTED_MAX_RESULTS = 25
+_JUDGE_DOWN_MESSAGE = "judge timed out"
+_PROVIDER_DOWN_CODE = "image_search_unavailable"
+_PROVIDER_DOWN_MESSAGE = "provider is down"
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,28 +37,18 @@ class _SearchFixture:
     response: ImageSearchResponse
 
     def search(self, query: str, max_results: int) -> ImageSearchResponse:
-        assert query.endswith(("site:pexels.com", "site:unsplash.com", "site:pixabay.com"))
-        assert max_results == 5
+        # The query reaches the provider as written. Appending a "site:" operator restricted
+        # nothing against live search and distorted the query, so it is gone.
+        assert "site:" not in query
+        assert max_results == _EXPECTED_MAX_RESULTS
         return self.response
 
 
 @dataclass(frozen=True, slots=True)
-class _UnsafeSourceSearchFixture:
-    response: ImageSearchResponse
-
-    def search(self, query: str, max_results: int) -> ImageSearchResponse:
-        assert max_results == 5
-        assert query.endswith(("site:pexels.com", "site:unsplash.com", "site:pixabay.com"))
-        return self.response
-
-
-@dataclass(frozen=True, slots=True)
-class _DomainSearchFixture:
-    responses: Mapping[str, ImageSearchResponse]
-
-    def search(self, query: str, max_results: int) -> ImageSearchResponse:
-        assert max_results == 5
-        return self.responses[query]
+class _FailingSearchFixture:
+    def search(self, query: str, max_results: int) -> NoReturn:
+        del query, max_results
+        raise ImageSearchError(_PROVIDER_DOWN_CODE, _PROVIDER_DOWN_MESSAGE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,29 +87,35 @@ def _png_bytes(
     return buffer.getvalue()
 
 
+def _result(
+    image_url: str,
+    source_url: str,
+    size: tuple[int, int] | None = None,
+) -> ImageSearchResult:
+    return ImageSearchResult(
+        title="candidate",
+        image_url=image_url,
+        thumbnail_url=image_url,
+        source_url=source_url,
+        width=None if size is None else size[0],
+        height=None if size is None else size[1],
+    )
+
+
+def _response(*results: ImageSearchResult, query: str = "쿠로미 배경화면") -> ImageSearchResponse:
+    return ImageSearchResponse(provider="fixture-search", query=query, results=results)
+
+
 def test_background_fetcher_when_first_result_is_invalid_then_it_saves_next_valid_search_image(
     tmp_path: Path,
 ) -> None:
     # Given image search results with one invalid response before a portrait photo
     invalid_url = "https://images.example/invalid"
     valid_url = "https://images.example/background.png"
-    response = ImageSearchResponse(
-        provider="fixture-search",
+    response = _response(
+        _result(invalid_url, "https://www.freepik.com/invalid"),
+        _result(valid_url, "https://www.pexels.com/photo/background"),
         query="student study vertical photo",
-        results=(
-            ImageSearchResult(
-                title="invalid",
-                image_url=invalid_url,
-                thumbnail_url=invalid_url,
-                source_url="https://www.freepik.com/invalid",
-            ),
-            ImageSearchResult(
-                title="background",
-                image_url=valid_url,
-                thumbnail_url=valid_url,
-                source_url="https://www.pexels.com/photo/background",
-            ),
-        ),
     )
     fetcher = ImageSearchBackgroundFetcher(
         image_search=_SearchFixture(response),
@@ -126,7 +132,7 @@ def test_background_fetcher_when_first_result_is_invalid_then_it_saves_next_vali
     provenance = tmp_path / "inputs" / "background-source.json"
     background.write_provenance(provenance)
 
-    # Then it retains only the validated approved image and its public source provenance
+    # Then it retains only the validated image and its source provenance
     assert background.path.is_file()
     assert background.image_url == valid_url
     assert json.loads(provenance.read_text(encoding="utf-8"))["source_url"] == (
@@ -134,123 +140,145 @@ def test_background_fetcher_when_first_result_is_invalid_then_it_saves_next_vali
     )
 
 
-def test_background_fetcher_when_source_is_unapproved_then_it_fails_without_writing_an_artifact(
+def test_background_fetcher_accepts_a_wallpaper_from_a_source_outside_the_stock_sites(
     tmp_path: Path,
 ) -> None:
-    # Given a search response whose only image comes from an unapproved host
-    image_url = "https://images.example/unsafe-background.jpg"
-    response = ImageSearchResponse(
-        provider="fixture-search",
-        query="student study vertical photo",
-        results=(
-            ImageSearchResult(
-                title="unsafe",
-                image_url=image_url,
-                thumbnail_url=image_url,
-                source_url="https://www.freepik.com/unsafe-background",
-            ),
-        ),
-    )
+    # Given the only candidate comes from an ordinary wallpaper site rather than free stock
+    image_url = "https://kr.best-wallpaper.net/wallpaper/kuromi.jpg"
+    response = _response(_result(image_url, "https://kr.best-wallpaper.net/kuromi"))
     fetcher = ImageSearchBackgroundFetcher(
-        image_search=_UnsafeSourceSearchFixture(response),
+        image_search=_SearchFixture(response),
+        http=_HttpFixture({image_url: HttpResponse(200, _png_bytes((1125, 1939)), {})}),
+    )
+    destination = tmp_path / "inputs" / "background.png"
+
+    # When the hosted worker requests the background
+    background = fetcher.fetch(response.query, destination)
+
+    # Then it is kept: a source allowlist of the free stock sites was measured against live
+    # searches, discarded 65% of every candidate, and selected for landscape desktop
+    # photography over the portrait wallpapers a lock screen actually needs.
+    assert background.image_url == image_url
+    assert destination.is_file()
+
+
+def test_background_fetcher_when_the_search_provider_fails_then_no_artifact_is_written(
+    tmp_path: Path,
+) -> None:
+    # Given the image search provider is unavailable
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_FailingSearchFixture(),
         http=_HttpFixture({}),
     )
     destination = tmp_path / "inputs" / "background.png"
 
-    # When the hosted worker requests the background through the allowlisted fetcher
+    # When the hosted worker requests a background
     with pytest.raises(BackgroundSearchError) as failure:
-        _ = fetcher.fetch(response.query, destination)
+        _ = fetcher.fetch("쿠로미 배경화면", destination)
 
-    # Then no downloaded artifact can reach the worker's execution boundary
+    # Then the caller sees the no-usable-image contract and nothing reaches the job root
     assert failure.value.code == "background_search_no_usable_image"
     assert not destination.exists()
 
 
-def test_background_fetcher_selects_the_best_lock_screen_candidate_across_domains(
+def test_background_fetcher_selects_the_best_lock_screen_candidate_from_one_search(
     tmp_path: Path,
 ) -> None:
-    # Given usable results from all approved domains with different shapes and resolutions
-    query = "quiet mountain sunrise"
-    candidates = (
-        (
-            "pexels.com",
-            "https://images.example/landscape.png",
-            "https://www.pexels.com/photo/landscape",
-            (2000, 1200),
-        ),
-        (
-            "unsplash.com",
-            "https://images.example/lock-screen.png",
-            "https://unsplash.com/photos/lock-screen",
-            (1200, 2600),
-        ),
-        (
-            "pixabay.com",
-            "https://images.example/portrait.png",
-            "https://pixabay.com/photos/portrait-1",
-            (1800, 2400),
-        ),
-    )
-    responses = {
-        f"{query} site:{domain}": ImageSearchResponse(
-            provider="fixture-search",
-            query=f"{query} site:{domain}",
-            results=(
-                ImageSearchResult(
-                    title=domain,
-                    image_url=image_url,
-                    thumbnail_url=image_url,
-                    source_url=source_url,
-                    width=size[0],
-                    height=size[1],
-                ),
-            ),
-        )
-        for domain, image_url, source_url, size in candidates
+    # Given one search returning candidates of different shapes and resolutions
+    landscape_url = "https://images.example/landscape.png"
+    lock_screen_url = "https://images.example/lock-screen.png"
+    portrait_url = "https://images.example/portrait.png"
+    sizes = {
+        landscape_url: (2000, 1200),
+        lock_screen_url: (1200, 2600),
+        portrait_url: (1800, 2400),
     }
-    http = _HttpFixture(
-        {
-            image_url: HttpResponse(200, _png_bytes(size), {})
-            for _domain, image_url, _source_url, size in candidates
-        }
+    response = _response(
+        _result(landscape_url, "https://www.pexels.com/photo/landscape", sizes[landscape_url]),
+        _result(lock_screen_url, "https://unsplash.com/photos/lock-screen", sizes[lock_screen_url]),
+        _result(portrait_url, "https://pixabay.com/photos/portrait-1", sizes[portrait_url]),
+        query="quiet mountain sunrise",
     )
     fetcher = ImageSearchBackgroundFetcher(
-        image_search=_DomainSearchFixture(responses),
-        http=http,
+        image_search=_SearchFixture(response),
+        http=_HttpFixture(
+            {url: HttpResponse(200, _png_bytes(size), {}) for url, size in sizes.items()}
+        ),
     )
     destination = tmp_path / "inputs" / "background.png"
 
     # When the hosted worker selects a searched background
-    background = fetcher.fetch(query, destination)
+    background = fetcher.fetch("quiet mountain sunrise", destination)
 
     # Then it prefers the high-resolution portrait nearest the lock-screen aspect ratio
-    assert background.image_url == "https://images.example/lock-screen.png"
-    assert background.query == "quiet mountain sunrise site:unsplash.com"
+    assert background.image_url == lock_screen_url
+    assert background.query == "quiet mountain sunrise"
     with Image.open(destination) as image:
         assert image.size == (1200, 2600)
 
 
+def test_background_fetcher_keeps_a_phone_sized_wallpaper_below_the_general_floor(
+    tmp_path: Path,
+) -> None:
+    # Given the only candidate is narrower than the general 640px floor but phone shaped
+    image_url = "https://images.example/kuromi-phone.png"
+    response = _response(_result(image_url, "https://kr.best-wallpaper.net/kuromi"))
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        http=_HttpFixture({image_url: HttpResponse(200, _png_bytes((474, 1026)), {})}),
+    )
+    destination = tmp_path / "inputs" / "background.png"
+
+    # When the hosted worker selects a background
+    background = fetcher.fetch(response.query, destination)
+
+    # Then it survives: an image authored at phone width for a phone screen was being
+    # rejected for being exactly the shape the lock screen wants.
+    assert background.image_url == image_url
+    with Image.open(destination) as image:
+        assert image.size == (474, 1026)
+
+
+@pytest.mark.parametrize(
+    ("size", "reason"),
+    [
+        ((500, 889), "portrait but 16:9, so it is judged on the general floor"),
+        ((318, 690), "lock-screen shaped but too few pixels to fill the screen"),
+        ((600, 400), "small landscape article photography"),
+    ],
+)
+def test_background_fetcher_rejects_images_too_small_for_a_lock_screen(
+    tmp_path: Path,
+    size: tuple[int, int],
+    reason: str,
+) -> None:
+    # Given the only candidate is too small to fill a lock screen
+    del reason
+    image_url = "https://images.example/too-small.png"
+    response = _response(_result(image_url, "https://kr.best-wallpaper.net/small"))
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        http=_HttpFixture({image_url: HttpResponse(200, _png_bytes(size), {})}),
+    )
+    destination = tmp_path / "inputs" / "background.png"
+
+    # When the hosted worker requests a background
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, destination)
+
+    # Then nothing is written
+    assert failure.value.code == "background_search_no_usable_image"
+    assert not destination.exists()
+
+
 def test_background_fetcher_skips_unsplash_plus_watermarked_previews(tmp_path: Path) -> None:
-    # Given a premium Unsplash preview before a usable free stock photo
+    # Given a premium Unsplash preview before a usable photo
     premium_url = "https://plus.unsplash.com/premium_photo-watermarked"
     free_url = "https://images.pexels.com/photos/free-photo.jpeg"
-    response = ImageSearchResponse(
-        provider="fixture-search",
+    response = _response(
+        _result(premium_url, "https://unsplash.com/s/photos/misty-coast"),
+        _result(free_url, "https://www.pexels.com/photo/free-photo"),
         query="misty coast",
-        results=(
-            ImageSearchResult(
-                title="premium preview",
-                image_url=premium_url,
-                thumbnail_url=premium_url,
-                source_url="https://unsplash.com/s/photos/misty-coast",
-            ),
-            ImageSearchResult(
-                title="free photo",
-                image_url=free_url,
-                thumbnail_url=free_url,
-                source_url="https://www.pexels.com/photo/free-photo",
-            ),
-        ),
     )
     fetcher = ImageSearchBackgroundFetcher(
         image_search=_SearchFixture(response),
@@ -258,7 +286,232 @@ def test_background_fetcher_skips_unsplash_plus_watermarked_previews(tmp_path: P
     )
 
     # When the worker selects a background
-    background = fetcher.fetch("student study vertical photo", tmp_path / "background.png")
+    background = fetcher.fetch("misty coast", tmp_path / "background.png")
 
     # Then a watermarked premium preview cannot become the artifact
     assert background.image_url == free_url
+
+
+@pytest.mark.parametrize(
+    ("title", "source_url", "reason"),
+    [
+        (
+            "제주도 배경화면 일몰 석양",
+            "https://www.crowdpic.net/photo/제주도-141244",
+            "watermarked stock preview",
+        ),
+        (
+            "김도영 스캠 첫 안타 직캠",
+            "https://www.sportschosun.com/baseball/2025-02-22/2025",
+            "press photography",
+        ),
+        (
+            "간호사볼펜 의사펜 - 쿠팡",
+            "https://www.coupang.com/vp/products/9114174310",
+            "product listing",
+        ),
+        (
+            "김도영 데뷔 첫 홈런 직캠 - YouTube",
+            "https://www.youtube.com/watch?v=Mt6qq89",
+            "video thumbnail",
+        ),
+        (
+            "900개 이상 무료 노을 사진",
+            "https://pixabay.com/ko/photos/search/노을/",
+            "a listing, not one photo",
+        ),
+        ("고양이 배경화면 1920x1080", "https://kr.best-wallpaper.net/cat", "cut for a desktop"),
+        (
+            "기아 타이거즈 로고 배경화면",
+            "https://kr.pinterest.com/pin/77757531049933364/",
+            "a brand asset",
+        ),
+    ],
+)
+def test_background_fetcher_rejects_rows_that_are_not_wallpapers(
+    tmp_path: Path,
+    title: str,
+    source_url: str,
+    reason: str,
+) -> None:
+    # Given the only candidate is one of the shapes a live run showed is never a wallpaper
+    del reason
+    image_url = "https://images.example/candidate.png"
+    response = _response(
+        ImageSearchResult(
+            title=title,
+            image_url=image_url,
+            thumbnail_url=image_url,
+            source_url=source_url,
+        )
+    )
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        # The row is rejected before anything is downloaded, so the fetcher must never
+        # reach the transport: an empty response map would raise KeyError if it did.
+        http=_HttpFixture({}),
+    )
+    destination = tmp_path / "inputs" / "background.png"
+
+    # When the hosted worker requests a background
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, destination)
+
+    # Then the job fails rather than shipping it. A job with no background is one a person
+    # looks at; a background that is somebody's press photo goes out silently.
+    assert failure.value.code == "background_search_no_usable_image"
+    assert not destination.exists()
+
+
+def test_background_fetcher_keeps_a_wallpaper_site_that_merely_offers_a_download(
+    tmp_path: Path,
+) -> None:
+    # Given an ordinary wallpaper site, whose titles carry the words a stock farm also uses
+    image_url = "https://chiikawawallpaper.com/img/chiikawa.png"
+    response = _response(
+        ImageSearchResult(
+            title="치이카와 배경화면(chiikawa wallpaper) 무료 다운로드",
+            image_url=image_url,
+            thumbnail_url=image_url,
+            source_url="https://chiikawawallpaper.com/ko",
+        )
+    )
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        http=_HttpFixture({image_url: HttpResponse(200, _png_bytes((1200, 2600)), {})}),
+    )
+
+    # When the worker selects a background
+    background = fetcher.fetch(response.query, tmp_path / "background.png")
+
+    # Then it survives: rejecting on "무료 다운로드" and "스톡" was measured against live
+    # results and threw away cherry blossom and sunset wallpapers to catch one logo.
+    assert background.image_url == image_url
+
+
+@dataclass
+class _RecordingJudge:
+    """Accepts the urls it is told to, and records how it was called."""
+
+    accept: tuple[str, ...]
+    calls: list[tuple[BackgroundBrief, tuple[JudgeCandidate, ...]]]
+
+    def choose(
+        self,
+        brief: BackgroundBrief,
+        candidates: tuple[JudgeCandidate, ...],
+    ) -> tuple[str, ...]:
+        self.calls.append((brief, candidates))
+        return tuple(url for url in self.accept if any(c.image_url == url for c in candidates))
+
+
+@dataclass(frozen=True, slots=True)
+class _BrokenJudge:
+    def choose(
+        self,
+        brief: BackgroundBrief,
+        candidates: tuple[JudgeCandidate, ...],
+    ) -> NoReturn:
+        del brief, candidates
+        raise TimeoutError(_JUDGE_DOWN_MESSAGE)
+
+
+def _poster_and_photo() -> tuple[ImageSearchResponse, dict[str, HttpResponse]]:
+    """A poster cut to exactly the phone's proportions, and a smaller real photograph.
+
+    This is the measured failure: geometry prefers the poster, because a composed graphic
+    is authored at the target resolution while a photograph is whatever shape it was shot.
+    """
+    poster_url = "https://images.example/champions-poster.png"
+    photo_url = "https://images.example/quiet-photo.png"
+    response = _response(
+        _result(poster_url, "https://kr.pinterest.com/pin/1", (1090, 1902)),
+        _result(photo_url, "https://blog.example/jeju", (773, 1031)),
+        query="KIA 타이거즈 배경화면",
+    )
+    http = {
+        poster_url: HttpResponse(200, _png_bytes((1090, 1902)), {}),
+        photo_url: HttpResponse(200, _png_bytes((773, 1031)), {}),
+    }
+    return response, http
+
+
+def test_background_fetcher_without_a_judge_still_prefers_the_phone_shaped_row(
+    tmp_path: Path,
+) -> None:
+    # Given no judge is wired
+    response, http = _poster_and_photo()
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response), http=_HttpFixture(http)
+    )
+
+    # When a background is fetched
+    background = fetcher.fetch(response.query, tmp_path / "background.png")
+
+    # Then geometry alone wins, which is exactly the behaviour the judge exists to correct
+    assert background.image_url == "https://images.example/champions-poster.png"
+
+
+def test_background_fetcher_lets_the_judge_overturn_the_geometry_winner(
+    tmp_path: Path,
+) -> None:
+    # Given a judge that rejects the poster and keeps the photograph
+    response, http = _poster_and_photo()
+    judge = _RecordingJudge(accept=("https://images.example/quiet-photo.png",), calls=[])
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response), http=_HttpFixture(http), judge=judge
+    )
+    brief = BackgroundBrief(
+        query=response.query, subject="sports_team", country="KR", persona="기아 팬 직장인"
+    )
+
+    # When a background is fetched
+    background = fetcher.fetch(response.query, tmp_path / "background.png", brief)
+
+    # Then the row geometry liked best is gone
+    assert background.image_url == "https://images.example/quiet-photo.png"
+    # And the judge saw the whole shortlist in one call, by thumbnail rather than original
+    assert len(judge.calls) == 1
+    seen_brief, seen_candidates = judge.calls[0]
+    assert seen_brief.subject == "sports_team"
+    assert len(seen_candidates) == 2
+    assert {c.thumbnail_url for c in seen_candidates} == set(http)
+
+
+def test_background_fetcher_when_the_judge_keeps_nothing_then_the_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    # Given a judge that finds nothing belonging on this persona's screen
+    response, http = _poster_and_photo()
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response),
+        http=_HttpFixture(http),
+        judge=_RecordingJudge(accept=(), calls=[]),
+    )
+    destination = tmp_path / "background.png"
+
+    # When a background is fetched
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, destination)
+
+    # Then it fails rather than falling back to geometry, which would hand the job the very
+    # row the judge just refused
+    assert failure.value.code == "background_search_judge_rejected_all"
+    assert not destination.exists()
+
+
+def test_background_fetcher_reports_an_unreachable_judge_under_its_own_code(
+    tmp_path: Path,
+) -> None:
+    # Given the judge cannot be reached
+    response, http = _poster_and_photo()
+    fetcher = ImageSearchBackgroundFetcher(
+        image_search=_SearchFixture(response), http=_HttpFixture(http), judge=_BrokenJudge()
+    )
+
+    # When a background is fetched
+    with pytest.raises(BackgroundSearchError) as failure:
+        _ = fetcher.fetch(response.query, tmp_path / "background.png")
+
+    # Then an outage is distinguishable from a verdict
+    assert failure.value.code == "background_search_judge_unavailable"

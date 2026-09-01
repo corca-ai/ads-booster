@@ -1,6 +1,6 @@
 [project]
 name = "trace-appium-capture"
-version = "0.4.7"
+version = "0.4.8"
 description = "Codex-driven Appium worker for verified Trace marketing captures"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
