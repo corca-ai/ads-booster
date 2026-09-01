@@ -135,9 +135,10 @@ class AcceptingEditorVerifier:
         appium_server: str,
         ready: CodexAppiumReadyState,
         expected_titles: tuple[str, ...],
+        expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
-        del appium_server
+        del appium_server, expected_todos
         control.checkpoint()
         return ready.rendered_trace_item_titles == expected_titles
 
