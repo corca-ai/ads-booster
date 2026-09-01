@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ads_booster.marketing.runtime import (
     AgentSession,
     ApprovalGrant,
     Budget,
     EffectDisposition,
+    JsonSessionStore,
     MarketingAgentRuntime,
     MarketingRuntimeError,
     RuntimeState,
@@ -67,3 +74,18 @@ def test_capability_id_alone_cannot_authorize_tool_call() -> None:
         _ = MarketingAgentRuntime().request_tool(
             AgentSession("session-1", Budget(2, 10)), CAPABILITY, wrong, now=NOW
         )
+
+
+def test_serialized_session_reopens_with_exact_event_history_and_cas(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    grant = ApprovalGrant(CALL.digest, "reviewer", NOW + timedelta(minutes=1))
+    dispatched = runtime.request_tool(
+        AgentSession("session-1", Budget(2, 10)), CAPABILITY, CALL, now=NOW, grant=grant
+    )
+    store = JsonSessionStore(tmp_path)
+    store.save(dispatched, expected_sequence=0)
+
+    reopened = JsonSessionStore(tmp_path).load("session-1")
+    assert reopened == dispatched
+    with pytest.raises(MarketingRuntimeError, match="compare_and_swap"):
+        store.save(dispatched, expected_sequence=0)
