@@ -22,6 +22,11 @@ from ads_booster.contracts.marketing_agent import (
     contract_sha256,
 )
 from ads_booster.contracts.models import ContractModel, Sha256Digest
+from ads_booster.marketing.feature_launch_evidence_brief import (
+    BriefEvidenceItem,
+    BriefScope,
+    FeatureLaunchEvidenceBrief,
+)
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
@@ -34,6 +39,7 @@ from ads_booster.marketing.runtime import (
     ToolCall,
     ToolCapability,
     ToolReceipt,
+    session_trace_sha256,
     tool_receipt_from_event,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -63,6 +69,13 @@ class ResearchState(StrEnum):
     CONTINUE = "continue"
     COMPLETED = "completed"
     INCONCLUSIVE = "inconclusive"
+
+
+_BRIEF_SCOPE_BY_RESEARCH_SCOPE: dict[ResearchScope, BriefScope] = {
+    ResearchScope.PRODUCT_TRUTH: "product_truth",
+    ResearchScope.CUSTOMER_INTELLIGENCE: "customer_intelligence",
+    ResearchScope.MARKET_EVIDENCE: "market_evidence",
+}
 
 
 class EvidenceResearchGoal(ContractModel):
@@ -570,6 +583,69 @@ class EvidenceResearchOperator:
             reason=reason,
             now=context.now,
         )
+
+
+def build_feature_launch_evidence_brief(
+    session: AgentSession,
+    context: EvidenceResearchRuntimeContext,
+    *,
+    brief_id: AgentIdentifier,
+    now: datetime,
+) -> FeatureLaunchEvidenceBrief:
+    """Freeze a completed research trace for a distinct Feature Launch session.
+
+    This function has no launch planner, hand, registry, or session-store side effect. It only
+    converts an already terminal, independently validated research trace into immutable provenance.
+    """
+    if session.state is not RuntimeState.COMPLETED:
+        raise EvidenceResearchOperatorError("research_brief_requires_completed_session")
+    _validate_terminal_research_session(session, context)
+    goal = _latest_model(session, "research_goal_committed", EvidenceResearchGoal)
+    if goal is None:
+        raise EvidenceResearchOperatorError("research_brief_goal_missing")
+    evaluations = _evaluations(session)
+    if len(evaluations) != len(_observations(session)) or not evaluations:
+        raise EvidenceResearchOperatorError("research_brief_evaluation_missing")
+    evaluation = evaluations[-1]
+    if evaluation.state is not ResearchState.COMPLETED:
+        raise EvidenceResearchOperatorError("research_brief_evaluation_not_completed")
+    allowed_claim_ids = set(context.task.feature_packet.gate.allowed_claim_ids)
+    evidence = tuple(
+        BriefEvidenceItem(
+            scope=_BRIEF_SCOPE_BY_RESEARCH_SCOPE[observation.scope],
+            research_observation_id=observation.observation_id,
+            research_observation_sha256=contract_sha256(observation),
+            receipt_sha256=observation.receipt_sha256,
+            call_sha256=observation.call_sha256,
+            request_sha256=observation.request_sha256,
+            decision_sha256=observation.decision_sha256,
+            source_sha256=observation.source_sha256,
+            supported_allowed_claim_ids=tuple(
+                claim_id
+                for claim_id in observation.supported_claim_ids
+                if claim_id in allowed_claim_ids
+            ),
+        )
+        for observation in _observations(session)
+    )
+    return FeatureLaunchEvidenceBrief(
+        schema_version="trace.feature-launch-evidence-brief.v1",
+        brief_id=brief_id,
+        feature_packet_id=context.task.feature_packet.packet_id,
+        feature_packet_sha256=contract_sha256(context.task.feature_packet),
+        research_goal_id=goal.goal_id,
+        research_goal_sha256=contract_sha256(goal),
+        research_registry_snapshot_sha256=goal.pinned_skill_registry_sha256,
+        research_session_id=session.session_id,
+        research_trace_sha256=session_trace_sha256(session),
+        research_evaluation_id=evaluation.evaluation_id,
+        research_evaluation_sha256=contract_sha256(evaluation),
+        required_scopes=tuple(
+            _BRIEF_SCOPE_BY_RESEARCH_SCOPE[scope] for scope in goal.required_scopes
+        ),
+        evidence=evidence,
+        created_at=now,
+    )
 
 
 def _process_reasons(

@@ -22,6 +22,10 @@ from ads_booster.contracts.marketing_agent import (
     contract_sha256,
 )
 from ads_booster.contracts.models import ContractModel, Sha256Digest
+from ads_booster.marketing.feature_launch_evidence_brief import (
+    FeatureLaunchEvidenceBrief,
+    FeatureLaunchEvidenceBriefProjection,
+)
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
@@ -61,6 +65,10 @@ class DecisionProposal(ContractModel):
     skill_id: Literal["feature_launch_experiment.v1"]
     skill_sha256: Sha256Digest
     action_id: Literal["observe.feature_launch_experiment"]
+    evidence_brief_sha256: Sha256Digest
+    research_observation_ids: Annotated[
+        tuple[AgentIdentifier, ...], Field(min_length=1, max_length=3)
+    ]
     claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=16)]
     control_frame: Annotated[str, Field(min_length=1, max_length=1000)]
     challenger_frame: Annotated[str, Field(min_length=1, max_length=1000)]
@@ -72,6 +80,8 @@ class DecisionProposal(ContractModel):
     def require_distinct_experiment_arms(self) -> Self:
         if len(set(self.claim_ids)) != len(self.claim_ids):
             raise ValueError("decision claim IDs must be unique")
+        if len(set(self.research_observation_ids)) != len(self.research_observation_ids):
+            raise ValueError("decision research observation IDs must be unique")
         if self.control_frame == self.challenger_frame:
             raise ValueError("control and challenger frames must differ")
         return self
@@ -84,6 +94,10 @@ class FeatureLaunchObservation(ContractModel):
     call_sha256: Sha256Digest
     request_sha256: Sha256Digest
     feature_packet_sha256: Sha256Digest
+    evidence_brief_sha256: Sha256Digest
+    research_observation_ids: Annotated[
+        tuple[AgentIdentifier, ...], Field(min_length=1, max_length=3)
+    ]
     proposal_sha256: Sha256Digest
     source_ref: Annotated[str, Field(min_length=1, max_length=1000)]
     source_sha256: Sha256Digest
@@ -97,6 +111,8 @@ class FeatureLaunchObservation(ContractModel):
             self.observed_at
         ):
             raise ValueError("observed_at must be UTC")
+        if len(set(self.research_observation_ids)) != len(self.research_observation_ids):
+            raise ValueError("observation research IDs must be unique")
         return self
 
 
@@ -104,6 +120,7 @@ class FeatureLaunchEvaluation(ContractModel):
     schema_version: Literal["trace.feature-launch-evaluation.v1"]
     evaluation_id: AgentIdentifier
     goal_id: AgentIdentifier
+    evidence_brief_sha256: Sha256Digest
     proposal_sha256: Sha256Digest
     observation_sha256: Sha256Digest
     process_passed: bool
@@ -134,12 +151,14 @@ class AvailableAction:
 class FeatureLaunchTask:
     goal: MarketingGoal
     feature_packet: FeatureEvidencePacket
+    evidence_brief: FeatureLaunchEvidenceBrief
 
 
 @dataclass(frozen=True, slots=True)
 class FeatureLaunchPlanningContext:
     goal: MarketingGoal
     product: FeaturePlanningProjection
+    evidence: FeatureLaunchEvidenceBriefProjection
     available_actions: tuple[AvailableAction, ...]
 
 
@@ -176,26 +195,15 @@ class FeatureLaunchSkillRegistry:
 
     def admit(self, task: FeatureLaunchTask, proposal: DecisionProposal) -> ToolAdmission:
         packet_sha256 = contract_sha256(task.feature_packet)
-        if self.action.capability.effect_class != "observe":
-            raise FeatureLaunchOperatorError("feature_launch_action_must_be_observe")
-        if task.goal.feature_packet_id != task.feature_packet.packet_id:
-            raise FeatureLaunchOperatorError("goal_feature_packet_id_mismatch")
-        if task.goal.feature_packet_sha256 != packet_sha256:
-            raise FeatureLaunchOperatorError("goal_feature_packet_digest_mismatch")
-        if task.goal.pinned_skill_registry_sha256 != self.snapshot_sha256:
-            raise FeatureLaunchOperatorError("goal_skill_registry_digest_mismatch")
-        if proposal.goal_id != task.goal.goal_id:
-            raise FeatureLaunchOperatorError("proposal_goal_mismatch")
-        if proposal.skill_sha256 != self.skill_sha256:
-            raise FeatureLaunchOperatorError("proposal_skill_digest_mismatch")
-        if proposal.action_id != self.action.action_id:
-            raise FeatureLaunchOperatorError("proposal_action_not_available")
-        if not set(proposal.claim_ids).issubset(task.feature_packet.gate.allowed_claim_ids):
-            raise FeatureLaunchOperatorError("proposal_claim_not_allowed")
+        brief_sha256 = contract_sha256(task.evidence_brief)
+        _validate_feature_launch_action(self)
+        _validate_feature_launch_task(task, self, packet_sha256)
+        _validate_feature_launch_proposal(task, self, proposal, brief_sha256)
         input_sha256 = _canonical_sha256(
             {
                 "goal": task.goal.model_dump(mode="json"),
                 "feature_packet_sha256": packet_sha256,
+                "evidence_brief_sha256": brief_sha256,
                 "proposal": proposal.model_dump(mode="json"),
                 "request_schema_sha256": self.action.request_schema_sha256,
             }
@@ -209,6 +217,58 @@ class FeatureLaunchSkillRegistry:
             effect_class=self.action.capability.effect_class,
         )
         return ToolAdmission(self.action.capability, call)
+
+
+def _validate_feature_launch_action(registry: FeatureLaunchSkillRegistry) -> None:
+    if registry.action.capability.effect_class != "observe":
+        raise FeatureLaunchOperatorError("feature_launch_action_must_be_observe")
+
+
+def _validate_feature_launch_task(
+    task: FeatureLaunchTask,
+    registry: FeatureLaunchSkillRegistry,
+    packet_sha256: str,
+) -> None:
+    if task.goal.feature_packet_id != task.feature_packet.packet_id:
+        raise FeatureLaunchOperatorError("goal_feature_packet_id_mismatch")
+    if task.goal.feature_packet_sha256 != packet_sha256:
+        raise FeatureLaunchOperatorError("goal_feature_packet_digest_mismatch")
+    if task.evidence_brief.feature_packet_id != task.feature_packet.packet_id:
+        raise FeatureLaunchOperatorError("brief_feature_packet_id_mismatch")
+    if task.evidence_brief.feature_packet_sha256 != packet_sha256:
+        raise FeatureLaunchOperatorError("brief_feature_packet_digest_mismatch")
+    if task.goal.pinned_skill_registry_sha256 != registry.snapshot_sha256:
+        raise FeatureLaunchOperatorError("goal_skill_registry_digest_mismatch")
+
+
+def _validate_feature_launch_proposal(
+    task: FeatureLaunchTask,
+    registry: FeatureLaunchSkillRegistry,
+    proposal: DecisionProposal,
+    brief_sha256: str,
+) -> None:
+    if proposal.goal_id != task.goal.goal_id:
+        raise FeatureLaunchOperatorError("proposal_goal_mismatch")
+    if proposal.skill_sha256 != registry.skill_sha256:
+        raise FeatureLaunchOperatorError("proposal_skill_digest_mismatch")
+    if proposal.action_id != registry.action.action_id:
+        raise FeatureLaunchOperatorError("proposal_action_not_available")
+    if proposal.evidence_brief_sha256 != brief_sha256:
+        raise FeatureLaunchOperatorError("proposal_evidence_brief_digest_mismatch")
+    evidence_by_observation_id = {
+        item.research_observation_id: item for item in task.evidence_brief.evidence
+    }
+    if not set(proposal.research_observation_ids).issubset(evidence_by_observation_id):
+        raise FeatureLaunchOperatorError("proposal_research_observation_not_in_brief")
+    supported_claim_ids = {
+        claim_id
+        for observation_id in proposal.research_observation_ids
+        for claim_id in evidence_by_observation_id[observation_id].supported_allowed_claim_ids
+    }
+    if not set(proposal.claim_ids).issubset(task.feature_packet.gate.allowed_claim_ids):
+        raise FeatureLaunchOperatorError("proposal_claim_not_allowed")
+    if not set(proposal.claim_ids).issubset(supported_claim_ids):
+        raise FeatureLaunchOperatorError("proposal_claim_not_supported_by_brief")
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +306,7 @@ class FeatureLaunchEvaluator:
     ) -> Assessment:
         event_types = tuple(event.event_type for event in session.events)
         required = (
+            "feature_launch_brief_committed",
             "feature_goal_committed",
             "feature_decision_committed",
             "tool_dispatched",
@@ -291,6 +352,10 @@ class FeatureLaunchEvaluator:
             reasons.append("claim_outside_feature_gate")
         if observation.feature_packet_sha256 != contract_sha256(execution.task.feature_packet):
             reasons.append("observation_feature_packet_mismatch")
+        if observation.evidence_brief_sha256 != contract_sha256(execution.task.evidence_brief):
+            reasons.append("observation_evidence_brief_mismatch")
+        if observation.research_observation_ids != execution.proposal.research_observation_ids:
+            reasons.append("observation_research_observation_mismatch")
         if observation.proposal_sha256 != contract_sha256(execution.proposal):
             reasons.append("observation_proposal_mismatch")
         if observation.evidence_status != "sufficient":
@@ -317,6 +382,7 @@ class FeatureLaunchEvaluator:
             schema_version="trace.feature-launch-evaluation.v1",
             evaluation_id=f"evaluation-{execution.task.goal.goal_id}",
             goal_id=execution.task.goal.goal_id,
+            evidence_brief_sha256=contract_sha256(execution.task.evidence_brief),
             proposal_sha256=contract_sha256(execution.proposal),
             observation_sha256=contract_sha256(observation),
             process_passed=process.passed,
@@ -354,7 +420,8 @@ class FeatureLaunchExperimentOperator:
     def _prepare(
         self, session: AgentSession, context: FeatureLaunchRuntimeContext
     ) -> FeatureLaunchExecution | AgentSession:
-        current = self._commit_or_validate_goal(session, context)
+        current = self._commit_or_validate_brief(session, context)
+        current = self._commit_or_validate_goal(current, context)
         if current.state in {
             RuntimeState.STOPPED,
             RuntimeState.INCONCLUSIVE,
@@ -368,12 +435,37 @@ class FeatureLaunchExperimentOperator:
             return self._stop(current, context, str(error))
         return FeatureLaunchExecution(current, context.task, proposal, admission)
 
+    def _commit_or_validate_brief(
+        self, session: AgentSession, context: FeatureLaunchRuntimeContext
+    ) -> AgentSession:
+        briefs = _models(session, "feature_launch_brief_committed", FeatureLaunchEvidenceBrief)
+        if len(briefs) > 1:
+            raise FeatureLaunchOperatorError("feature_launch_brief_count_exceeds_one")
+        if briefs:
+            if briefs[0] != context.task.evidence_brief:
+                raise FeatureLaunchOperatorError("persisted_feature_launch_brief_mismatch")
+            return session
+        if any(
+            event.event_type in {"feature_goal_committed", "feature_decision_committed"}
+            for event in session.events
+        ):
+            raise FeatureLaunchOperatorError("feature_launch_brief_must_precede_goal")
+        return self._runtime.append_persisted_event(
+            context.store,
+            session,
+            event_type="feature_launch_brief_committed",
+            payload=_json_payload(context.task.evidence_brief),
+            now=context.now,
+        )
+
     def _commit_or_validate_goal(
         self, session: AgentSession, context: FeatureLaunchRuntimeContext
     ) -> AgentSession:
-        existing = _latest_model(session, "feature_goal_committed", MarketingGoal)
-        if existing is not None:
-            if existing != context.task.goal:
+        goals = _models(session, "feature_goal_committed", MarketingGoal)
+        if len(goals) > 1:
+            raise FeatureLaunchOperatorError("feature_goal_count_exceeds_one")
+        if goals:
+            if goals[0] != context.task.goal:
                 raise FeatureLaunchOperatorError("persisted_goal_mismatch")
             return session
         return self._runtime.append_persisted_event(
@@ -396,6 +488,7 @@ class FeatureLaunchExperimentOperator:
             FeatureLaunchPlanningContext(
                 context.task.goal,
                 FeaturePlanningProjection.from_packet(context.task.feature_packet),
+                FeatureLaunchEvidenceBriefProjection.from_brief(context.task.evidence_brief),
                 context.dependencies.registry.available_actions(),
             )
         )
@@ -576,6 +669,7 @@ def _evaluation_matches(
     return (
         persisted.evaluation_id == expected.evaluation_id
         and persisted.goal_id == expected.goal_id
+        and persisted.evidence_brief_sha256 == expected.evidence_brief_sha256
         and persisted.proposal_sha256 == expected.proposal_sha256
         and persisted.observation_sha256 == expected.observation_sha256
         and persisted.process_passed == expected.process_passed
@@ -620,11 +714,52 @@ def _validate_terminal_feature_session(
 def _validate_terminal_feature_envelope(
     session: AgentSession, context: FeatureLaunchRuntimeContext
 ) -> None:
-    goal = _latest_model(session, "feature_goal_committed", MarketingGoal)
-    if goal is None:
+    _validate_terminal_feature_goal(session, context)
+    _validate_terminal_feature_brief(session, context)
+    _validate_terminal_feature_brief_order(session)
+    _validate_terminal_feature_finalization(session)
+
+
+def _validate_terminal_feature_goal(
+    session: AgentSession, context: FeatureLaunchRuntimeContext
+) -> None:
+    goals = _models(session, "feature_goal_committed", MarketingGoal)
+    if not goals:
         raise FeatureLaunchOperatorError("terminal_feature_goal_missing")
-    if goal != context.task.goal:
+    if len(goals) != 1:
+        raise FeatureLaunchOperatorError("terminal_feature_goal_count_invalid")
+    if goals[0] != context.task.goal:
         raise FeatureLaunchOperatorError("persisted_goal_mismatch")
+
+
+def _validate_terminal_feature_brief(
+    session: AgentSession, context: FeatureLaunchRuntimeContext
+) -> None:
+    briefs = _models(session, "feature_launch_brief_committed", FeatureLaunchEvidenceBrief)
+    if not briefs:
+        raise FeatureLaunchOperatorError("terminal_feature_brief_missing")
+    if len(briefs) != 1:
+        raise FeatureLaunchOperatorError("terminal_feature_brief_count_invalid")
+    if briefs[0] != context.task.evidence_brief:
+        raise FeatureLaunchOperatorError("persisted_feature_launch_brief_mismatch")
+
+
+def _validate_terminal_feature_brief_order(session: AgentSession) -> None:
+    brief_position = next(
+        index
+        for index, event in enumerate(session.events)
+        if event.event_type == "feature_launch_brief_committed"
+    )
+    goal_position = next(
+        index
+        for index, event in enumerate(session.events)
+        if event.event_type == "feature_goal_committed"
+    )
+    if brief_position >= goal_position:
+        raise FeatureLaunchOperatorError("terminal_feature_brief_order_invalid")
+
+
+def _validate_terminal_feature_finalization(session: AgentSession) -> None:
     if not session.events or session.events[-1].event_type != "session_finalized":
         raise FeatureLaunchOperatorError("terminal_feature_finalization_missing")
     if session.events[-1].payload.get("state") != session.state:
@@ -660,15 +795,6 @@ def _validate_terminal_feature_evaluation(
         raise FeatureLaunchOperatorError(error or "terminal_feature_evaluation_invalid")
 
 
-def _latest_model[T: ContractModel](
-    session: AgentSession, event_type: str, model: type[T]
-) -> T | None:
-    for event in reversed(session.events):
-        if event.event_type == event_type:
-            return model.model_validate(event.payload)
-    return None
-
-
 def _models[T: ContractModel](
     session: AgentSession, event_type: str, model: type[T]
 ) -> tuple[T, ...]:
@@ -696,6 +822,8 @@ def _observation_matches(
         and observation.call_sha256 == receipt.call_sha256
         and observation.request_sha256 == execution.admission.call.input_sha256
         and observation.feature_packet_sha256 == contract_sha256(execution.task.feature_packet)
+        and observation.evidence_brief_sha256 == contract_sha256(execution.task.evidence_brief)
+        and observation.research_observation_ids == execution.proposal.research_observation_ids
         and observation.proposal_sha256 == contract_sha256(execution.proposal)
     )
 

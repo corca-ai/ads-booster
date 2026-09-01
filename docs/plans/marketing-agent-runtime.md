@@ -195,6 +195,15 @@ observation lineage, raw-source-and-claim-text-free planning projections, one-us
 historical and terminal evaluation revalidation, deterministic stop at sufficient coverage or the
 three-step limit, and a held-out packet fixture.
 
+Implemented: a completed Evidence Research session can now be frozen as
+`FeatureLaunchEvidenceBrief` for a distinct Feature Launch session. The brief pins the research goal,
+registry snapshot, terminal evaluation, canonical event-trace digest, receipt-bound scope evidence,
+and only feature-gate-allowed supported claim IDs. Feature Launch commits that immutable brief before
+its goal and binds its digest and selected research observations into its proposal, derived call,
+observation, evaluation, replay, and terminal audit. Raw source locations, source text, and research
+questions remain outside the next planner context. This is a local fake-backend hand-off contract, not
+a hosted orchestrator, adapter, or live-market evaluation claim.
+
 Next: add trusted backend receipt verification and cross-session grant ownership, run a held-out
 multi-skill evaluation corpus rather than only fixture tests, then run fresh design critique before
 adding a thin control-plane adapter in a new post-merge PR.

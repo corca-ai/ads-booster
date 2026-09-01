@@ -34,7 +34,9 @@ from ads_booster.marketing.evidence_research_operator import (
     ResearchScope,
     ResearchState,
     ResearchStepEvaluation,
+    build_feature_launch_evidence_brief,
 )
+from ads_booster.marketing.feature_launch_evidence_brief import FeatureLaunchEvidenceBriefProjection
 from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
@@ -46,6 +48,7 @@ from ads_booster.marketing.runtime import (
     ToolCall,
     ToolCapability,
     ToolReceipt,
+    session_trace_sha256,
 )
 
 if TYPE_CHECKING:
@@ -302,6 +305,62 @@ def test_research_orchestrator_selects_three_isolated_hands_and_replans(tmp_path
         for summary in context.observations
     )
     assert all(not hasattr(context.product, "claims") for context in planner.contexts)
+
+
+def test_completed_research_freezes_a_planner_safe_feature_launch_brief(tmp_path: Path) -> None:
+    packet = _packet()
+    scopes = tuple(ResearchScope)
+    task = _task(packet, scopes)
+    planner = SequencePlanner(task, scopes)
+    hands = _hands(task, planner)
+    context = _context(JsonSessionStore(tmp_path), task, planner, hands)
+
+    completed = EvidenceResearchOperator(MarketingAgentRuntime()).run(
+        AgentSession("research-session-1", Budget(3, 3)), context
+    )
+    brief = build_feature_launch_evidence_brief(
+        completed,
+        context,
+        brief_id="feature-launch-brief-1",
+        now=NOW,
+    )
+    projection = FeatureLaunchEvidenceBriefProjection.from_brief(brief)
+
+    assert completed.state is RuntimeState.COMPLETED
+    assert brief.feature_packet_sha256 == contract_sha256(packet)
+    assert brief.research_trace_sha256 == session_trace_sha256(completed)
+    assert brief.research_evaluation_id == "research-evaluation-research-goal-1-3"
+    assert brief.required_scopes == ("product_truth", "customer_intelligence", "market_evidence")
+    assert tuple(item.scope for item in brief.evidence) == brief.required_scopes
+    assert all(item.supported_allowed_claim_ids == ("claim-feature",) for item in brief.evidence)
+    assert "untrusted" not in projection.model_dump_json()
+    assert "source_ref" not in projection.model_dump_json()
+
+
+def test_inconclusive_research_cannot_create_a_feature_launch_brief(tmp_path: Path) -> None:
+    packet = _packet()
+    scopes = (ResearchScope.PRODUCT_TRUTH, ResearchScope.CUSTOMER_INTELLIGENCE)
+    task = _task(packet, scopes)
+    planner = SequencePlanner(task, scopes)
+    hands = _hands(task, planner, customer_status="insufficient")
+    context = _context(JsonSessionStore(tmp_path), task, planner, hands)
+    result = EvidenceResearchOperator(MarketingAgentRuntime()).run(
+        AgentSession("research-session-1", Budget(2, 2)), context
+    )
+    call_counts = {scope: len(hand.calls) for scope, hand in hands.items()}
+
+    with pytest.raises(
+        EvidenceResearchOperatorError, match="research_brief_requires_completed_session"
+    ):
+        _ = build_feature_launch_evidence_brief(
+            result,
+            context,
+            brief_id="feature-launch-brief-1",
+            now=NOW,
+        )
+
+    assert result.state is RuntimeState.INCONCLUSIVE
+    assert {scope: len(hand.calls) for scope, hand in hands.items()} == call_counts
 
 
 def test_research_decision_replays_after_restart_without_planner_call(tmp_path: Path) -> None:

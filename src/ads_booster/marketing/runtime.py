@@ -185,6 +185,23 @@ def tool_receipt_from_event(event: SessionEvent) -> ToolReceipt:
     )
 
 
+def session_trace_sha256(session: AgentSession) -> str:
+    """Return stable provenance for the observable, append-only event trace."""
+    return _json_digest(
+        {
+            "events": [
+                {
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "payload_sha256": event.payload_sha256,
+                    "occurred_at": event.occurred_at.isoformat(),
+                }
+                for event in session.events
+            ]
+        }
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class JsonSessionStore:
     """Atomic local single-writer store for replayable runtime sessions.

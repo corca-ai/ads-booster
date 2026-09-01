@@ -173,16 +173,20 @@ invoke them yet. The local fake-backend verticals below only establish replay, r
 evaluation contracts.
 
 The first exercise is `feature_launch_operator`: a provider-neutral, observe-only Feature Launch
-Experiment Operator. It persists a feature goal, strict planner decision, runtime-owned tool receipt,
-receipt-bound observation, deterministic process/outcome evaluation, and a terminal result as
-canonical session events. It exposes exactly one registry action,
+Experiment Operator. A new launch session first commits an immutable research evidence brief, then
+persists a feature goal, strict planner decision, runtime-owned tool receipt, receipt-bound
+observation, deterministic process/outcome evaluation, and a terminal result as canonical session
+events. The brief must precede the goal and appear exactly once; its digest and selected research
+observation IDs bind the proposal, derived call input, launch observation, and evaluation. It exposes
+exactly one registry action,
 `observe.feature_launch_experiment`; the registry derives a descriptor-bound call from the feature
-packet, approved claim IDs, and request-schema digest. A restart replays a committed decision without
-calling the planner. Planner context receives only the shared data-only product projection, and replay
-revalidates persisted observation/evaluation lineage before completion; terminal sessions audit the
-same trace without a hand reinvocation. Sufficient evidence still becomes inconclusive if the
-observation finds counter-evidence against the proposed falsifier. This is an evaluation vertical, not
-a new live research or publication path.
+packet, approved claim IDs, brief-supported claim set, and request-schema digest. A restart replays a
+committed decision without calling the planner. Planner context receives only the shared data-only
+product projection plus a data-only brief projection, and replay revalidates persisted
+observation/evaluation lineage before completion; terminal sessions audit the same trace without a
+hand reinvocation. Sufficient evidence still becomes inconclusive if the observation finds
+counter-evidence against the proposed falsifier. This is an evaluation vertical, not a new live
+research or publication path.
 
 `evidence_research_operator` is the first bounded multi-step research vertical. It lets a strict
 planner choose exactly one unobserved, observe-only hand at a time from `product_truth`,
@@ -196,6 +200,14 @@ new hand can run; terminal sessions audit the same trace without reinvoking a ha
 completes only after every required scope has sufficient receipt-bound evidence; otherwise its
 at-most-three iterations end in an explicit inconclusive result. This is research preparation over
 fake hands, not a claim-authoring, publication, Cloudflare, or live-market-performance path.
+
+A completed Evidence Research session can be converted without any new planner, hand, or session-store
+side effect into `trace.feature-launch-evidence-brief.v1`. Its provenance pins the completed research
+goal, registry snapshot, terminal evaluation, and canonical event-trace digest. The brief retains only
+receipt/call/request/decision/source digests and allowed supported claim IDs for each required scope;
+it excludes source locations, source text, and research questions. The next Feature Launch run is a
+separate session with a distinct budget and registry. This is an immutable hand-off contract, not a
+merged multi-skill loop or proof of a live-market outcome.
 
 ## Threads publication and observation
 

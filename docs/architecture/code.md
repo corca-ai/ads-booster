@@ -144,15 +144,25 @@ projection for the Feature Launch and Evidence Research verticals. It contains p
 lifecycle, and claim IDs only; raw claim text, source references, evidence payloads, capability data,
 and instructions remain outside planner context.
 
+`marketing/feature_launch_evidence_brief.py` owns the immutable contract between completed Evidence
+Research and a new Feature Launch session. It contains only research-trace provenance digests,
+scope-complete receipt-bound observation digests, and allowed supported claim IDs, plus the data-only
+projection used by the Feature Launch planner. It imports no runtime, planner, registry, hand, or
+session owner. `evidence_research_operator.py` alone converts an already terminal validated research
+trace into this contract; `feature_launch_operator.py` consumes and commits it. No module combines the
+two sessions or transfers a research tool authority into launch.
+
 `marketing/feature_launch_operator.py` owns the first, narrow reasoning vertical over that harness.
 It defines `MarketingGoal`, a strict `DecisionProposal`, one versioned skill registry action, receipt-
 bound observation, and deterministic process/outcome graders. The planner can return a proposal but
 never a `ToolCall`; `FeatureLaunchSkillRegistry` derives the call from the pinned feature packet,
-approved claim set, action schema, and descriptor. Canonical workflow events carry validated payloads,
-so the operator can reconstruct a committed proposal after restart without reinvoking the planner.
-It revalidates a persisted decision, observation, and evaluation against the registry, runtime receipt,
-and event-time prefix before finalizing; terminal sessions audit that trace without calling a hand. This
-module accepts only an observe effect class and has no Cloudflare or live-channel backend.
+approved claim set, evidence-brief-supported claim set, action schema, and descriptor. It commits
+exactly one evidence brief before its goal, and propagates the brief digest and selected research
+observation IDs through proposal, derived call, observation, and evaluation. The planner receives only
+the shared data-only product and evidence-brief projections rather than raw evidence text. It
+revalidates a persisted decision, observation, and evaluation against the registry, runtime receipt,
+and event-time prefix before finalizing; terminal sessions audit that trace without calling a hand.
+This module accepts only an observe effect class and has no Cloudflare or live-channel backend.
 
 `marketing/evidence_research_operator.py` owns a separate bounded research loop over the same
 runtime. Its registry maps the three distinct research scopes—product truth, customer intelligence,
@@ -164,7 +174,9 @@ receipt-bound sufficient observation and revalidates each persisted decision/rec
 historical evaluation against its trace prefix before another hand can run. The module owns replay of a
 committed decision, terminal trace audit without hand reinvocation, the at-most-three-step stop
 condition, and deterministic completed/inconclusive evaluation; it does not own a live research
-provider, Cloudflare adapter, campaign mutation, or publication.
+provider, Cloudflare adapter, campaign mutation, or publication. It can only freeze a completed
+validated trace as the contract owned by `feature_launch_evidence_brief.py`; it cannot start Feature
+Launch or merge the two sessions.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
