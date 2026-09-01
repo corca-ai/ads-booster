@@ -331,6 +331,13 @@ class FeatureLaunchExperimentOperator:
         self._runtime: MarketingAgentRuntime = runtime
 
     def run(self, session: AgentSession, context: FeatureLaunchRuntimeContext) -> AgentSession:
+        if session.state in {
+            RuntimeState.AWAITING_RECONCILIATION,
+            RuntimeState.STOPPED,
+            RuntimeState.INCONCLUSIVE,
+            RuntimeState.COMPLETED,
+        }:
+            return session
         prepared = self._prepare(session, context)
         if isinstance(prepared, AgentSession):
             return prepared

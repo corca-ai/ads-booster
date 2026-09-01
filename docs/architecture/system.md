@@ -168,8 +168,9 @@ and rejected receipts become `awaiting_reconciliation`. This harness has no Clou
 Threads, or model-provider import and is not a hosted worker or an automatic-publication path.
 Its public effect surface is the persisted admission/execution sequence; non-durable transition
 helpers are private unit-test primitives, so a future hand cannot skip the checkpoints.
-General multi-step planning, skill routing, and outcome evaluation remain deferred beyond the first
-fake-backend vertical below; no live tool can invoke them yet.
+General live planning, skill routing, and outcome evaluation remain deferred; no live tool can
+invoke them yet. The local fake-backend verticals below only establish replay, receipt, and bounded
+evaluation contracts.
 
 The first exercise is `feature_launch_operator`: a provider-neutral, observe-only Feature Launch
 Experiment Operator. It persists a feature goal, strict planner decision, runtime-owned tool receipt,
@@ -178,6 +179,19 @@ canonical session events. It exposes exactly one registry action,
 `observe.feature_launch_experiment`; the registry derives a descriptor-bound call from the feature
 packet, approved claim IDs, and request-schema digest. A restart replays a committed decision without
 calling the planner. This is an evaluation vertical, not a new live research or publication path.
+
+`evidence_research_operator` is the first bounded multi-step research vertical. It lets a strict
+planner choose exactly one unobserved, observe-only hand at a time from `product_truth`,
+`customer_intelligence`, and `market_evidence`. Each hand must produce a runtime receipt before its
+observation can be recorded. The next planning turn receives only a whitelisted scope/status/claim-ID
+summary and a product projection of packet ID, digest, lifecycle, and claim IDs—never raw source,
+claim text, or instructions. The registry rechecks the pinned packet, skill snapshot, canonical
+action-to-scope mapping, claim IDs, iteration, and effect class. On replay it reconstructs every
+decision/receipt/observation lineage and deterministically regrades every prior evaluation before a
+new hand can run; terminal sessions audit the same trace without reinvoking a hand. The loop
+completes only after every required scope has sufficient receipt-bound evidence; otherwise its
+at-most-three iterations end in an explicit inconclusive result. This is research preparation over
+fake hands, not a claim-authoring, publication, Cloudflare, or live-market-performance path.
 
 ## Threads publication and observation
 

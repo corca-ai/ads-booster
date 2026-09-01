@@ -384,6 +384,50 @@ def test_restart_after_persisted_evaluation_recovers_the_terminal_state(tmp_path
     assert no_call_hand.calls == []
 
 
+def test_awaiting_reconciliation_feature_session_returns_without_reinvocation(
+    tmp_path: Path,
+) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    store = JsonSessionStore(tmp_path)
+    runtime = MarketingAgentRuntime()
+    session = runtime.append_persisted_event(
+        store,
+        AgentSession("session-1", Budget(1, 1)),
+        event_type="feature_goal_committed",
+        payload=task.goal.model_dump(mode="json"),
+        now=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_decision_committed",
+        payload=proposal.model_dump(mode="json"),
+        now=NOW,
+    )
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+    admission = _registry().admit(task, proposal)
+    session = runtime.request_persisted_tool(store, session, admission, now=NOW)
+    interrupted = runtime.start_persisted_tool_execution(store, session, now=NOW)
+    planner = NoCallPlanner()
+    operator = FeatureLaunchExperimentOperator(runtime)
+
+    awaiting = operator.run(interrupted, _context(store, task, planner, hand))
+    reopened = store.load("session-1")
+    assert awaiting.state is RuntimeState.AWAITING_RECONCILIATION
+    assert reopened is not None
+    assert reopened == awaiting
+
+    returned = operator.run(reopened, _context(store, task, planner, hand))
+
+    assert returned == awaiting
+    assert planner.calls == 0
+    assert hand.calls == []
+
+
 def test_non_observe_registry_capability_is_stopped_before_the_hand_runs(tmp_path: Path) -> None:
     packet = _packet()
     task = _task(packet)

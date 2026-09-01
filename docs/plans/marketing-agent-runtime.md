@@ -39,6 +39,17 @@ observe-only `feature_launch_experiment.v1` skill. It can persist/replay a stric
 registry-bound observation call, require a receipt-bound observation, and deterministically grade the
 trace and experiment proposal. It has no real external side effect.
 
+The second vertical, `evidence_research.v1`, makes the research portion genuinely iterative without
+loosening authority: it can choose an unobserved `product_truth`, `customer_intelligence`, or
+`market_evidence` hand after every receipt-bound observation. The planner receives a whitelisted
+observation summary and product identity/lifecycle/claim IDs, rather than raw source or claim text;
+a pinned registry derives every observe-only call and fixes each action to its scope. Before every
+advance, the evaluator replays all prior decision/receipt/observation lineage and historical
+evaluation prefixes; terminal sessions audit that trace without invoking a hand. Required scopes with
+sufficient evidence complete; missing or invalid evidence after the bounded three iterations is
+inconclusive. It remains a fake-hand preparation loop and cannot author a public claim or run a
+control-plane action.
+
 ### Entities
 
 | Entity | Required fields | Owner |
@@ -175,6 +186,12 @@ skill registry, decision replay without another planner call, receipt/observatio
 separate deterministic process/outcome graders, and held-out fixture coverage. It accepts only an
 observe action, so it has no Cloudflare import and no real external side effect.
 
-Next: expand from the one-shot observe skill to bounded re-planning for insufficient evidence, add
-trusted backend receipt verification and cross-session grant ownership, then run fresh design critique
-before adding a thin control-plane adapter in a new post-merge PR.
+Implemented: `evidence_research_operator` adds the bounded re-planning contract: three isolated
+observe-only scope actions with canonical action/scope mapping, decision replay, receipt-bound
+observation lineage, raw-source-and-claim-text-free planning projections, one-use scope coverage,
+historical and terminal evaluation revalidation, deterministic stop at sufficient coverage or the
+three-step limit, and a held-out packet fixture.
+
+Next: add trusted backend receipt verification and cross-session grant ownership, run a held-out
+multi-skill evaluation corpus rather than only fixture tests, then run fresh design critique before
+adding a thin control-plane adapter in a new post-merge PR.
