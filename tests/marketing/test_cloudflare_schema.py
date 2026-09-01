@@ -187,6 +187,35 @@ def test_adapter_capability_migration_seeds_trace_reference_installations() -> N
         }
         assert "capability_binding_sha256" in columns
 
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_feature_packets
+            (packet_id, feature_id, schema_version, lifecycle, repository, mutable_ref,
+             resolved_commit_sha, tree_sha, packet_json, packet_sha256, publication_allowed,
+             observed_at, created_at)
+            VALUES ('packet-1', 'trace.lockscreen.ai-concepts', 'trace.feature-evidence.v1',
+                    'installed_confirmed', 'corca-ai/Trace_iOS', 'develop', ?, ?, '{}', ?,
+                    1, 'now', 'now')""",
+            ("b" * 40, "c" * 40, "a" * 64),
+        )
+
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_campaigns
+            (campaign_id, account_id, feature_packet_id, feature_packet_sha256,
+             runtime_epoch, mode, state, business_outcome, created_at, updated_at)
+                VALUES ('campaign-assisted', 'trace_kr', 'packet-1', ?, 'agent_v1', 'live',
+                    'creative_planned', 'outcome', 'now', 'now')""",
+            ("a" * 64,),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="active capability"):
+            _ = connection.execute(
+                """INSERT INTO hosted_marketing_tool_actions
+                (action_id, campaign_id, capability_id, effect_class, state, action_json,
+                 action_sha256, idempotency_key, created_at, updated_at)
+                VALUES ('threads-action', 'campaign-assisted', 'publish.threads', 'external',
+                        'queued', '{}', ?, 'threads-action', 'now', 'now')""",
+                ("b" * 64,),
+            )
+
 
 def test_marketing_agent_events_have_single_ordered_revision_lineage() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:

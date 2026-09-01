@@ -39,6 +39,57 @@ ALTER TABLE hosted_marketing_artifact_manifests
 CREATE INDEX hosted_marketing_capability_bindings_receipt
 ON hosted_marketing_capability_bindings (context_receipt_id, capability_id);
 
+-- A catalog row is not merely descriptive.  Every future tool action must use the current,
+-- enabled, active descriptor for the campaign account; a reference registration can never queue an
+-- effect.  Existing shadow guard remains the earlier, stricter rejection for shadow campaigns.
+CREATE TRIGGER hosted_marketing_tool_action_requires_active_capability
+BEFORE INSERT ON hosted_marketing_tool_actions
+WHEN EXISTS (
+    SELECT 1 FROM hosted_marketing_campaigns
+    WHERE campaign_id = NEW.campaign_id AND mode != 'shadow'
+)
+AND NOT EXISTS (
+    SELECT 1
+    FROM hosted_marketing_campaigns AS campaign
+    JOIN hosted_marketing_adapter_capabilities AS capability
+      ON capability.account_id = campaign.account_id
+     AND capability.capability_id = NEW.capability_id
+     AND capability.effect_class = NEW.effect_class
+     AND capability.enabled = 1
+     AND capability.activation_state = 'active'
+    WHERE campaign.campaign_id = NEW.campaign_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'marketing tool action requires an active capability registration');
+END;
+
+-- Account creation is the new-account provisioning path. Keep it in D1 so a newly created Trace
+-- account has the same safe defaults as an account backfilled by this migration.
+CREATE TRIGGER hosted_workspace_account_marketing_capabilities
+AFTER INSERT ON hosted_workspace_accounts
+BEGIN
+    INSERT INTO hosted_marketing_adapter_capabilities
+        (account_id, capability_id, descriptor_json, descriptor_sha256, effect_class,
+         request_schema_sha256, receipt_schema_sha256, owner_id, enabled, activation_state,
+         created_at, updated_at)
+    VALUES (NEW.account_id, 'capture.native_png',
+       '{"activation_state":"active","capability_id":"capture.native_png","effect_class":"local_artifact","owner_id":"trace.native_capture","receipt_schema_sha256":"368888b194fc57a818cf666788ff2e8fe79dab96c17a4c6b79f908e92a9dd91c","request_schema_sha256":"fa609647bf7cfc267927f5e42c63ed3ae42d60a1f14962b80a0664107e8f2a80","schema_version":"trace.adapter-capability.v1"}',
+       'aefd9c88b195f8bb98a3db8974d3bbcbbfd7e510552725b85013ca6fabc31b82',
+       'local_artifact', 'fa609647bf7cfc267927f5e42c63ed3ae42d60a1f14962b80a0664107e8f2a80',
+       '368888b194fc57a818cf666788ff2e8fe79dab96c17a4c6b79f908e92a9dd91c',
+       'trace.native_capture', 1, 'active', NEW.created_at, NEW.updated_at);
+    INSERT INTO hosted_marketing_adapter_capabilities
+        (account_id, capability_id, descriptor_json, descriptor_sha256, effect_class,
+         request_schema_sha256, receipt_schema_sha256, owner_id, enabled, activation_state,
+         created_at, updated_at)
+    VALUES (NEW.account_id, 'publish.threads',
+       '{"activation_state":"registered_reference","capability_id":"publish.threads","effect_class":"external","owner_id":"threads.publisher","receipt_schema_sha256":"368888b194fc57a818cf666788ff2e8fe79dab96c17a4c6b79f908e92a9dd91c","request_schema_sha256":"fa609647bf7cfc267927f5e42c63ed3ae42d60a1f14962b80a0664107e8f2a80","schema_version":"trace.adapter-capability.v1"}',
+       'f4ce306e0b4d6c1a67d8bb773ddf911c79bb8bc353a7db3fae99212067fca7c3',
+       'external', 'fa609647bf7cfc267927f5e42c63ed3ae42d60a1f14962b80a0664107e8f2a80',
+       '368888b194fc57a818cf666788ff2e8fe79dab96c17a4c6b79f908e92a9dd91c',
+       'threads.publisher', 1, 'registered_reference', NEW.created_at, NEW.updated_at);
+END;
+
 -- Seed the existing Trace installations.  New-account provisioning uses the same immutable
 -- descriptors in the runtime resolver; this migration preserves accounts that predate the catalog.
 INSERT INTO hosted_marketing_adapter_capabilities
