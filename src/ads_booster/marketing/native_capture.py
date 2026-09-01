@@ -33,10 +33,11 @@ from ads_booster.contracts.generation import (
     PersonaProfile,
     PromotionMaterial,
 )
-from ads_booster.contracts.models import DeviceKind, DeviceTarget
+from ads_booster.contracts.models import DeviceKind, DeviceTarget, TraceScheduleItem
 from ads_booster.marketing.background import HostedBackgroundPreparer
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskResult, TaskStatus
+from ads_booster.providers.codex_background_judge import CodexBackgroundJudge
 from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.search.image.background import ImageSearchBackgroundFetcher
 from ads_booster.search.image.providers import create_image_search_provider
@@ -70,11 +71,19 @@ _TIME_ZONES: Final = {
 _DEFAULT_APPIUM_SERVER: Final = "http://127.0.0.1:4723"
 _DEFAULT_TIMEOUT_SECONDS: Final = 3600.0
 _RUNTIME_VERSION = re.compile(r"\.iOS-(\d+)-(\d+)$")
-_MAX_TRACE_ITEMS: Final = 8
+_MAX_TRACE_ITEMS: Final = 24
+# Matches the generation contract's ceiling for the field, so a query that generation
+# accepted is never dropped here for being too long.
+_SEARCH_QUERY_MAX: Final = 200
+_MAX_TRACE_TODOS: Final = 20
 _MAX_REFERENCE_IDS: Final = 16
 _MAX_TRACE_ITEM_LENGTH: Final = 80
+_MAX_TRACE_TODO_LENGTH: Final = 60
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
-_TRACE_ITEMS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
+_TRACE_ITEMS: TypeAdapter[tuple[TraceScheduleItem, ...]] = TypeAdapter(
+    tuple[TraceScheduleItem, ...]
+)
+_TRACE_TODOS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 _REFERENCE_IDS: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
 
 
@@ -101,6 +110,17 @@ def build_hosted_capture_executor(
                     ),
                 ),
                 http=http,
+                # Geometry alone cannot see what an image is, and a composed poster is cut
+                # to exactly the phone's proportions, so it wins the ranking on shape.
+                # Off until somebody has watched it run. It fails closed - a judge that
+                # cannot see the images rejects every row - so defaulting it on would turn
+                # one unverified capability into no backgrounds at all.
+                # TRACE_AGENT_BACKGROUND_JUDGE=on enables it.
+                judge=(
+                    CodexBackgroundJudge(codex=codex, http=http)
+                    if os.environ.get("TRACE_AGENT_BACKGROUND_JUDGE", "off").lower() == "on"
+                    else None
+                ),
             )
         ),
         appium=CodexAppiumJobAdapter(
@@ -417,10 +437,16 @@ def _context_bundle(
         trace_items = _TRACE_ITEMS.validate_python(image_inputs.get("trace_items"))
     except ValidationError as error:
         raise MarketingExecutionError("native_capture_trace_items_invalid") from error
-    if not 1 <= len(trace_items) <= _MAX_TRACE_ITEMS or any(
-        not item.strip() or len(item.strip()) > _MAX_TRACE_ITEM_LENGTH for item in trace_items
-    ):
+    if not 1 <= len(trace_items) <= _MAX_TRACE_ITEMS:
         raise MarketingExecutionError("native_capture_trace_items_invalid")
+    try:
+        trace_todos = _TRACE_TODOS.validate_python(image_inputs.get("trace_todos", ()))
+    except ValidationError as error:
+        raise MarketingExecutionError("native_capture_trace_todos_invalid") from error
+    if len(trace_todos) > _MAX_TRACE_TODOS or any(
+        not todo.strip() or len(todo.strip()) > _MAX_TRACE_TODO_LENGTH for todo in trace_todos
+    ):
+        raise MarketingExecutionError("native_capture_trace_todos_invalid")
     profile = task.payload.get("context_profile")
     selected_profile = profile if isinstance(profile, dict) else {}
     persona_id = selected_profile.get("persona_id")
@@ -447,7 +473,7 @@ def _context_bundle(
     caption = _required_text(task.payload, "caption", 10_000)
     hypothesis = _required_text(task.payload, "hypothesis", 2_000)
     creative_direction = _required_text(task.payload, "creative_direction", 20_000)
-    background_intent = _required_text(task.payload, "background_intent", 500)
+    background_intent = _background_query(task.payload, image_inputs)
     reference_ids = _reference_ids(task.payload.get("reference_ids"))
     language = _required_text(image_inputs, "language", 8)
     if language != _LOCALES[country].split("-", maxsplit=1)[0]:
@@ -477,7 +503,8 @@ def _context_bundle(
             reference_ids=reference_ids,
             creative_direction=creative_direction,
             background_intent=background_intent,
-            trace_items=tuple(item.strip() for item in trace_items),
+            trace_items=trace_items,
+            trace_todos=tuple(todo.strip() for todo in trace_todos),
         ),
         feedback_context=feedback_context,
         feedback_context_sha256=feedback_digest,
@@ -547,6 +574,23 @@ def _reference_ids(value: JsonValue) -> tuple[str, ...]:
             raise MarketingExecutionError("native_capture_reference_ids_invalid")
         identifiers.append(item)
     return tuple(identifiers)
+
+
+def _background_query(payload: JsonObject, image_inputs: JsonObject) -> str:
+    """The string the image stage runs as its background search.
+
+    `background_search_query` is the one field generation is allowed to put a real
+    character, person or team name in, and it is what the background search is meant to
+    run. The worker also sends `background_intent`, which is composed mechanically as
+    "<subject>: <mood>" and carries no proper noun at all - searching it returns news
+    photography and shopping listings for the mood phrase, with the persona's actual
+    interest nowhere in the results. Prefer the authored query and keep the composed
+    intent as the fallback for candidates generated before the field existed.
+    """
+    query = image_inputs.get("background_search_query")
+    if isinstance(query, str) and query.strip() and len(query.strip()) <= _SEARCH_QUERY_MAX:
+        return query.strip()
+    return _required_text(payload, "background_intent", 500)
 
 
 def _required_text(payload: JsonObject, key: str, max_length: int) -> str:

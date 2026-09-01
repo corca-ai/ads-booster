@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.search.image.contracts import ImageSearchError
+from ads_booster.search.image.contracts import MAX_IMAGE_SEARCH_RESULTS, ImageSearchError
 from ads_booster.search.image.providers import (
     BraveImageSearchProvider,
     DdgsImageSearchProvider,
@@ -130,7 +130,7 @@ def test_ddgs_image_provider_asks_for_tall_wallpaper_photos(
     assert argv[argv.index("--max_results") + 1] == "20"
 
 
-def test_image_providers_accept_twenty_results_and_refuse_more(
+def test_image_providers_accept_the_contract_ceiling_and_refuse_more(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The downstream resolution gate, not the provider, is what thins the pool."""
@@ -155,17 +155,20 @@ def test_image_providers_accept_twenty_results_and_refuse_more(
     monkeypatch.setattr("ads_booster.search.image.providers.subprocess.run", run)
     provider = DdgsImageSearchProvider(timeout_seconds=5)
 
-    # When twenty results are requested, and then one more than the bound
-    accepted = provider.search("Trace", 20)
-    with pytest.raises(ImageSearchError, match="between 1 and 20"):
-        _ = provider.search("Trace", 21)
+    # When the ceiling is requested, and then one more than the bound
+    accepted = provider.search("Trace", MAX_IMAGE_SEARCH_RESULTS)
+    bound = f"between 1 and {MAX_IMAGE_SEARCH_RESULTS}"
+    with pytest.raises(ImageSearchError, match=bound):
+        _ = provider.search("Trace", MAX_IMAGE_SEARCH_RESULTS + 1)
 
-    # Then twenty is inside the contract and the bound is reported in its own terms
+    # Then the ceiling is inside the contract and the bound is reported in its own terms.
+    # Provider and response contract read it from one constant: when they disagreed, asking
+    # for more rows than the response could hold raised a ValidationError no caller caught.
     assert accepted.results == ()
-    with pytest.raises(ImageSearchError, match="between 1 and 20"):
+    with pytest.raises(ImageSearchError, match=bound):
         _ = BraveImageSearchProvider(
             http=RecordingHttp(HttpResponse(200, b"{}", {})), api_key="secret"
-        ).search("Trace", 21)
+        ).search("Trace", MAX_IMAGE_SEARCH_RESULTS + 1)
 
 
 def test_brave_image_provider_normalizes_properties_and_limits_results() -> None:

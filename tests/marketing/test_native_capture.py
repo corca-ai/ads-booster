@@ -23,6 +23,7 @@ from ads_booster.marketing.models import MarketingTask, TaskKind
 from ads_booster.marketing.native_capture import (
     HostedWorkspaceCaptureExecutor,
     SimctlDeviceResolver,
+    _context_bundle,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -306,3 +307,56 @@ def test_simulator_is_discovered_at_runtime_without_a_fixed_udid(
     assert device.device_name == "iPhone 17 Pro"
     assert device.platform_version == "26.5"
     assert device.udid == "E1FB798D-79E6-4B25-A987-D298A4FD122A"
+
+
+def _bundle_for(task: MarketingTask) -> MarketingContextBundle:
+    return _context_bundle(
+        task,
+        "11111111-2222-3333-4444-555555555555",
+        FakeDeviceResolver().resolve(),
+    )
+
+
+def _task_with_query(query: str | None) -> MarketingTask:
+    task = task_fixture()
+    image_inputs = dict(task.payload["image_inputs"])
+    if query is not None:
+        image_inputs["background_search_query"] = query
+    return task.model_copy(update={"payload": {**task.payload, "image_inputs": image_inputs}})
+
+
+def test_hosted_capture_searches_the_authored_query_not_the_composed_intent() -> None:
+    # Given a candidate carrying the query generation authored for this persona
+    task = _task_with_query("쿠로미 배경화면")
+
+    # When the hosted bundle is assembled
+    bundle = _bundle_for(task)
+
+    # Then the background search runs that query. "scenery: 이른 아침 캠퍼스" carries no
+    # proper noun at all, so searching it returns the mood phrase's news and shopping
+    # photography with the persona's actual interest nowhere in the results.
+    assert bundle.promotion_material.background_intent == "쿠로미 배경화면"
+
+
+def test_hosted_capture_falls_back_to_the_composed_intent_when_no_query_was_authored() -> None:
+    # Given a candidate generated before the authored query existed
+    task = _task_with_query(None)
+    assert "background_search_query" not in task.payload["image_inputs"]
+
+    # When the hosted bundle is assembled
+    bundle = _bundle_for(task)
+
+    # Then the composed intent still drives the search, so older candidates keep working
+    assert bundle.promotion_material.background_intent == "scenery: 이른 아침 캠퍼스"
+
+
+@pytest.mark.parametrize("query", ["", "   ", "가" * 201])
+def test_hosted_capture_ignores_an_unusable_authored_query(query: str) -> None:
+    # Given an authored query that is empty or past the generation contract's ceiling
+    task = _task_with_query(query)
+
+    # When the hosted bundle is assembled
+    bundle = _bundle_for(task)
+
+    # Then it is not searched and the composed intent takes over
+    assert bundle.promotion_material.background_intent == "scenery: 이른 아침 캠퍼스"

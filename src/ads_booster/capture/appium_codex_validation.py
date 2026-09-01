@@ -70,12 +70,13 @@ def validate_execution_paths(
 def expected_trace_item_titles(
     contract: CodexAppiumJobContract,
 ) -> tuple[str, ...]:
+    """The titles the saved wallpaper has to show, one per requested row.
+
+    The job carries the title as its own field now, so there is no prefix left to strip:
+    a row's title is what the screen must render, whether the row is timed or all-day.
+    """
     trace_items = contract.context.promotion_material.trace_items or ()
-    titles: list[str] = []
-    for item in trace_items:
-        matched = _TIME_PREFIX.fullmatch(item)
-        titles.append(matched.group(1) if matched is not None else item)
-    return tuple(titles)
+    return tuple(item.title for item in trace_items)
 
 
 def result_matches_ready(

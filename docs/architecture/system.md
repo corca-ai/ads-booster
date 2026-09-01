@@ -55,9 +55,10 @@ flowchart LR
    the request workspace and the allowlisted loopback Appium endpoint, but cannot read home secrets
    or reach external hosts. The contract supplies context, prepared background, device/UDID, Trace
    bundle, endpoint, locale/time zone, digest/nonce, and `trace-<request-id>` calendar namespace.
-   Codex owns Trace UI observation, layout, settings, and navigation. It does not open Calendar or
-   create, edit, or delete Calendar data. The worker owns deterministic data preparation, Simulator
-   preparation, collection, and cleanup.
+   The final bound Trace launch opens the wallpaper editor directly. Codex owns editor observation,
+   layout, component settings, preview inspection, and Save. It does not enter Trace Orb/Quick Setup,
+   open Shortcuts or Calendar, or create, edit, or delete Calendar data. The worker owns deterministic
+   data preparation, Simulator preparation, collection, and cleanup.
    Before Save, Codex publishes its active wallpaper-editor state. The worker independently checks
    the Trace editor identifier, every requested title, and the live Trace process arguments in the
    same Appium session. A bundle-only terminate/activate cycle loses the immutable export binding,

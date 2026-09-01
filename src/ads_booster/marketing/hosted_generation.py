@@ -11,13 +11,14 @@ was doing.
 from __future__ import annotations
 
 import random
+import re
 import secrets
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from ads_booster.candidate_generation import (
     DEFAULT_MAX_BATCH,
@@ -58,14 +59,17 @@ from ads_booster.marketing.hosted_reference_research import (
 )
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
-from ads_booster.marketing.native_capture import (
-    HostedWorkspaceCaptureExecutor,
-    PreparedCodexAppiumJob,
+
+# Imported at runtime: pydantic resolves the "before" validator's annotation while it
+# builds the model, so a type-checking-only import would fail there.
+from ads_booster.transport.json_types import (
+    JsonObject,
+    JsonValue,
 )
-from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import (
     CandidateAccountBrief,
     CandidateBackgroundSubject,
+    CandidateEventColor,
     CandidateHistoryEntry,
     CandidatePersonaDomain,
 )
@@ -79,7 +83,10 @@ if TYPE_CHECKING:
         DraftedCandidate,
         ReferencePool,
     )
-    from ads_booster.transport.json_types import JsonValue
+    from ads_booster.marketing.native_capture import (
+        HostedWorkspaceCaptureExecutor,
+        PreparedCodexAppiumJob,
+    )
 
 PIPELINE: Final = "hosted_workspace_generation_v1"
 _DEFAULT_TIMEOUT_SECONDS: Final = 180.0
@@ -133,20 +140,54 @@ class HostedGenerationRequest(GenerationModel):
     requested_by: Literal["hosted_workspace"]
 
 
+_LEGACY_CLOCK: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+
+class GeneratedScheduleEntry(GenerationModel):
+    """One row of the week, as the generating model writes it.
+
+    Every field is required and the optional ones are nullable rather than defaulted: a
+    strict structured-output schema drops properties it may omit, and a row that arrives
+    without a day would silently pile onto the captured day with the rest.
+    """
+
+    title: Annotated[str, Field(min_length=1, max_length=40)]
+    day: Annotated[int, Field(ge=0, le=6)]
+    days: Annotated[int, Field(ge=1, le=7)]
+    time: Annotated[str, Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")] | None
+    color: CandidateEventColor | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_string(cls, value: JsonValue) -> JsonValue:
+        """Read the old `"HH:MM 제목"` row rather than losing the batch it came with.
+
+        The schema asks for objects, so a string here means the model answered in the shape
+        it was not given. That is a reason to place the row on the captured day, not a
+        reason to throw away three captions that arrived beside it.
+        """
+        if not isinstance(value, str):
+            return value
+        head, separator, tail = value.partition(" ")
+        timed = separator and _LEGACY_CLOCK.fullmatch(head) and tail.strip()
+        title = tail.strip() if timed else value.strip()
+        return {
+            "title": title,
+            "day": 0,
+            "days": 1,
+            "time": head if timed else None,
+            "color": None,
+        }
+
+
 class GeneratedImageInputs(GenerationModel):
-    trace_items: tuple[
-        Annotated[
-            str,
-            Field(
-                min_length=7,
-                max_length=80,
-                pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d\s+.+$",
-            ),
-        ],
-        ...,
-    ] = Field(
+    trace_items: tuple[GeneratedScheduleEntry, ...] = Field(
         min_length=5,
-        max_length=8,
+        max_length=24,
+    )
+    trace_todos: tuple[Annotated[str, Field(min_length=1, max_length=60)], ...] = Field(
+        default=(),
+        max_length=20,
     )
     device_time: Annotated[str, Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")]
     background_subject: Literal[
@@ -601,7 +642,17 @@ def _generated_candidate(drafted: DraftedCandidate) -> GeneratedCandidate:
         principles_applied=draft.principles_applied,
         appium_prompt=draft.appium_prompt,
         image_inputs=GeneratedImageInputs(
-            trace_items=image_inputs.trace_items,
+            trace_items=tuple(
+                GeneratedScheduleEntry(
+                    title=entry.title,
+                    day=entry.day,
+                    days=entry.days,
+                    time=entry.time,
+                    color=entry.color,
+                )
+                for entry in image_inputs.trace_items
+            ),
+            trace_todos=image_inputs.trace_todos,
             device_time=image_inputs.device_time,
             background_subject=image_inputs.background_subject.value,
             background_mood=image_inputs.background_mood,
@@ -625,7 +676,8 @@ def _candidate_output(candidate: GeneratedCandidate, drafted: DraftedCandidate) 
         "principles_applied": list(candidate.principles_applied),
         "appium_prompt": candidate.appium_prompt,
         "image_inputs": {
-            "trace_items": list(image_inputs.trace_items),
+            "trace_items": [entry.model_dump() for entry in image_inputs.trace_items],
+            "trace_todos": list(image_inputs.trace_todos),
             "device_time": image_inputs.device_time,
             "background_subject": image_inputs.background_subject,
             "background_mood": image_inputs.background_mood,
