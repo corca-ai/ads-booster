@@ -2330,7 +2330,18 @@ async function generateCandidateImage(env, candidateId) {
       creative_direction: creativeDirection,
       background_intent: backgroundIntent,
       appium_prompt: candidate.shooting_order,
-      image_inputs: candidate.image_inputs,
+      image_inputs: {
+        ...candidate.image_inputs,
+        trace_items: candidate.image_inputs.trace_items.map((item) => typeof item === "string"
+          ? item
+          : {
+              title: item.title,
+              day: item.day,
+              days: item.days,
+              time: item.time,
+              color: item.color,
+            }),
+      },
       context_profile: candidate.context_profile,
       feedback_context: feedbackContext,
       feedback_context_sha256: feedbackContextSha256,
