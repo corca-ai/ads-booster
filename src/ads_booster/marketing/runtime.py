@@ -20,6 +20,7 @@ from pydantic import TypeAdapter
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
     from typing import TextIO
 
@@ -30,6 +31,7 @@ class RuntimeState(StrEnum):
     AWAITING_HUMAN = "awaiting_human"
     AWAITING_RECONCILIATION = "awaiting_reconciliation"
     STOPPED = "stopped"
+    INCONCLUSIVE = "inconclusive"
     COMPLETED = "completed"
 
 
@@ -133,6 +135,7 @@ class ToolAdmission:
 class SessionEvent:
     sequence: int
     event_type: str
+    payload: JsonObject
     payload_sha256: str
     occurred_at: datetime
 
@@ -165,6 +168,21 @@ class SessionStore(Protocol):
 
 class MarketingRuntimeError(ValueError):
     """A deterministic harness admission or receipt error."""
+
+
+def tool_receipt_from_event(event: SessionEvent) -> ToolReceipt:
+    """Read a receipt only from the runtime-reserved event that persisted it."""
+    if event.event_type not in {f"tool_{item}" for item in EffectDisposition}:
+        raise MarketingRuntimeError("event_does_not_contain_tool_receipt")
+    payload = _as_object(event.payload)
+    return ToolReceipt(
+        call_id=_string(payload, "call_id"),
+        call_sha256=_string(payload, "call_sha256"),
+        approval_grant_sha256=_optional_string(payload, "approval_grant_sha256"),
+        disposition=EffectDisposition(_string(payload, "disposition")),
+        actual_cost_units=_integer(payload, "actual_cost_units"),
+        receipt_sha256=_string(payload, "receipt_sha256"),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,15 +226,7 @@ class JsonSessionStore:
             consumed_grant_sha256s=tuple(
                 _string_value(item) for item in _array(data, "consumed_grant_sha256s")
             ),
-            events=tuple(
-                SessionEvent(
-                    sequence=_integer(_as_object(item), "sequence"),
-                    event_type=_string(_as_object(item), "event_type"),
-                    payload_sha256=_string(_as_object(item), "payload_sha256"),
-                    occurred_at=datetime.fromisoformat(_string(_as_object(item), "occurred_at")),
-                )
-                for item in event_items
-            ),
+            events=tuple(_event_from_json(_as_object(item)) for item in event_items),
         )
 
     def save(self, session: AgentSession, *, expected_sequence: int) -> None:
@@ -279,7 +289,7 @@ class _SessionLock:
 class MarketingAgentRuntime:
     """Small single-writer harness; model planning stays outside this authority boundary."""
 
-    def request_tool(
+    def _request_tool(
         self,
         session: AgentSession,
         capability: ToolCapability,
@@ -294,7 +304,11 @@ class MarketingAgentRuntime:
         if call.effect_class == "external":
             if grant is None:
                 return self._append(
-                    session, RuntimeState.AWAITING_HUMAN, "tool_approval_required", call.digest, now
+                    session,
+                    RuntimeState.AWAITING_HUMAN,
+                    "tool_approval_required",
+                    _reference_payload(call.digest),
+                    now,
                 )
             if (
                 not grant.allows(call, now)
@@ -307,7 +321,11 @@ class MarketingAgentRuntime:
             raise MarketingRuntimeError("duplicate_tool_idempotency_key")
         if session.tool_calls >= session.budget.max_tool_calls:
             return self._append(
-                session, RuntimeState.STOPPED, "budget_tool_calls_exhausted", call.digest, now
+                session,
+                RuntimeState.STOPPED,
+                "budget_tool_calls_exhausted",
+                _reference_payload(call.digest),
+                now,
             )
         if (
             session.spent_cost_units
@@ -316,7 +334,11 @@ class MarketingAgentRuntime:
             > session.budget.max_cost_units
         ):
             return self._append(
-                session, RuntimeState.STOPPED, "budget_cost_exhausted", call.digest, now
+                session,
+                RuntimeState.STOPPED,
+                "budget_cost_exhausted",
+                _reference_payload(call.digest),
+                now,
             )
         return self._append(
             replace(
@@ -336,11 +358,11 @@ class MarketingAgentRuntime:
             ),
             RuntimeState.EXECUTING,
             "tool_dispatched",
-            call.digest,
+            _tool_call_json(call),
             now,
         )
 
-    def execute_tool(
+    def _execute_tool(
         self, session: AgentSession, backend: ToolBackend, *, now: datetime
     ) -> AgentSession:
         if session.state is not RuntimeState.EXECUTING or session.pending_call is None:
@@ -349,13 +371,19 @@ class MarketingAgentRuntime:
             receipt = backend.execute(session.pending_call)
         except Exception:  # noqa: BLE001 -- dispatch began; every backend failure is ambiguous.
             return self._reconciliation_required(
-                session, "tool_backend_exception", session.pending_call.digest, now
+                session,
+                "tool_backend_exception",
+                _reference_payload(session.pending_call.digest),
+                now,
             )
         try:
             return self.record_receipt(session, receipt, now=now)
         except MarketingRuntimeError:
             return self._reconciliation_required(
-                session, "tool_receipt_rejected", receipt.receipt_sha256, now
+                session,
+                "tool_receipt_rejected",
+                _reference_payload(receipt.receipt_sha256),
+                now,
             )
 
     def request_persisted_tool(
@@ -368,7 +396,7 @@ class MarketingAgentRuntime:
     ) -> AgentSession:
         """Commit an admission decision before a future effect executor can see it."""
         self._require_current_session(store, session)
-        updated = self.request_tool(
+        updated = self._request_tool(
             session,
             admission.capability,
             admission.call,
@@ -391,7 +419,7 @@ class MarketingAgentRuntime:
             replace(session, execution_started=True),
             RuntimeState.EXECUTING,
             "tool_execution_started",
-            session.pending_call.digest,
+            _reference_payload(session.pending_call.digest),
             now,
         )
         self._persist_transition(store, session, started)
@@ -406,7 +434,7 @@ class MarketingAgentRuntime:
         recovery. It must be resolved through ``reconcile_interrupted_execution``.
         """
         started = self.start_persisted_tool_execution(store, session, now=now)
-        result = self.execute_tool(started, backend, now=now)
+        result = self._execute_tool(started, backend, now=now)
         try:
             self._persist_transition(store, started, result)
         except MarketingRuntimeError as error:
@@ -427,10 +455,51 @@ class MarketingAgentRuntime:
         ):
             raise MarketingRuntimeError("no_interrupted_tool_execution")
         reconciled = self._reconciliation_required(
-            session, "tool_execution_interrupted", session.pending_call.digest, now
+            session,
+            "tool_execution_interrupted",
+            _reference_payload(session.pending_call.digest),
+            now,
         )
         self._persist_transition(store, session, reconciled)
         return reconciled
+
+    def append_persisted_event(
+        self,
+        store: SessionStore,
+        session: AgentSession,
+        *,
+        event_type: str,
+        payload: JsonObject,
+        now: datetime,
+    ) -> AgentSession:
+        """Commit a workflow event without granting access to reserved tool event names."""
+        if event_type.startswith("tool_"):
+            raise MarketingRuntimeError("tool_events_are_runtime_reserved")
+        self._require_current_session(store, session)
+        updated = self._append(session, session.state, event_type, payload, now)
+        self._persist_transition(store, session, updated)
+        return updated
+
+    def finalize_persisted_session(
+        self,
+        store: SessionStore,
+        session: AgentSession,
+        *,
+        state: RuntimeState,
+        reason: str,
+        now: datetime,
+    ) -> AgentSession:
+        """Persist an explicit terminal result only after all effects have been resolved."""
+        if state not in {RuntimeState.STOPPED, RuntimeState.INCONCLUSIVE, RuntimeState.COMPLETED}:
+            raise MarketingRuntimeError("session_final_state_invalid")
+        if session.pending_call is not None:
+            raise MarketingRuntimeError("session_finalization_has_pending_tool")
+        self._require_current_session(store, session)
+        updated = self._append(
+            session, state, "session_finalized", {"reason": reason, "state": state}, now
+        )
+        self._persist_transition(store, session, updated)
+        return updated
 
     def record_receipt(
         self, session: AgentSession, receipt: ToolReceipt, *, now: datetime
@@ -461,7 +530,7 @@ class MarketingAgentRuntime:
             ),
             state,
             f"tool_{receipt.disposition}",
-            receipt.receipt_sha256,
+            _tool_receipt_json(receipt),
             now,
         )
 
@@ -476,7 +545,11 @@ class MarketingAgentRuntime:
 
     @staticmethod
     def _validate_dispatch_state(session: AgentSession) -> None:
-        if session.state in {RuntimeState.STOPPED, RuntimeState.COMPLETED}:
+        if session.state in {
+            RuntimeState.STOPPED,
+            RuntimeState.INCONCLUSIVE,
+            RuntimeState.COMPLETED,
+        }:
             raise MarketingRuntimeError("tool_dispatch_after_terminal_state")
         if session.state is RuntimeState.AWAITING_RECONCILIATION:
             raise MarketingRuntimeError("tool_dispatch_requires_reconciliation")
@@ -484,7 +557,7 @@ class MarketingAgentRuntime:
             raise MarketingRuntimeError("tool_dispatch_already_pending")
 
     def _reconciliation_required(
-        self, session: AgentSession, event_type: str, payload: str, now: datetime
+        self, session: AgentSession, event_type: str, payload: JsonObject, now: datetime
     ) -> AgentSession:
         return self._append(session, RuntimeState.AWAITING_RECONCILIATION, event_type, payload, now)
 
@@ -504,11 +577,22 @@ class MarketingAgentRuntime:
 
     @staticmethod
     def _append(
-        session: AgentSession, state: RuntimeState, event_type: str, payload: str, now: datetime
+        session: AgentSession,
+        state: RuntimeState,
+        event_type: str,
+        payload: JsonObject,
+        now: datetime,
     ) -> AgentSession:
         if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
             raise MarketingRuntimeError("event_time_must_be_utc")
-        event = SessionEvent(len(session.events) + 1, event_type, _digest(payload), now)
+        canonical_payload = _JSON_OBJECT.validate_python(payload)
+        event = SessionEvent(
+            len(session.events) + 1,
+            event_type,
+            canonical_payload,
+            _json_digest(canonical_payload),
+            now,
+        )
         return replace(session, state=state, events=(*session.events, event))
 
 
@@ -538,6 +622,7 @@ def _session_json(session: AgentSession) -> dict[str, object]:
             {
                 "sequence": event.sequence,
                 "event_type": event.event_type,
+                "payload": event.payload,
                 "payload_sha256": event.payload_sha256,
                 "occurred_at": event.occurred_at.isoformat(),
             }
@@ -551,15 +636,34 @@ def _stored_session_json(session: AgentSession) -> dict[str, object]:
     return {**payload, "session_sha256": _json_digest(payload)}
 
 
-def _tool_call_json(call: ToolCall) -> dict[str, object]:
-    return {
-        "call_id": call.call_id,
-        "idempotency_key": call.idempotency_key,
-        "capability_id": call.capability_id,
-        "descriptor_sha256": call.descriptor_sha256,
-        "input_sha256": call.input_sha256,
-        "effect_class": call.effect_class,
-    }
+def _tool_call_json(call: ToolCall) -> JsonObject:
+    return _JSON_OBJECT.validate_python(
+        {
+            "call_id": call.call_id,
+            "idempotency_key": call.idempotency_key,
+            "capability_id": call.capability_id,
+            "descriptor_sha256": call.descriptor_sha256,
+            "input_sha256": call.input_sha256,
+            "effect_class": call.effect_class,
+        }
+    )
+
+
+def _tool_receipt_json(receipt: ToolReceipt) -> JsonObject:
+    return _JSON_OBJECT.validate_python(
+        {
+            "call_id": receipt.call_id,
+            "call_sha256": receipt.call_sha256,
+            "approval_grant_sha256": receipt.approval_grant_sha256,
+            "disposition": receipt.disposition,
+            "actual_cost_units": receipt.actual_cost_units,
+            "receipt_sha256": receipt.receipt_sha256,
+        }
+    )
+
+
+def _reference_payload(reference_sha256: str) -> JsonObject:
+    return _JSON_OBJECT.validate_python({"reference_sha256": reference_sha256})
 
 
 def _tool_call_from_json(value: dict[str, object]) -> ToolCall:
@@ -573,7 +677,21 @@ def _tool_call_from_json(value: dict[str, object]) -> ToolCall:
     )
 
 
-def _json_digest(value: dict[str, object]) -> str:
+def _event_from_json(value: dict[str, object]) -> SessionEvent:
+    payload = _object(value, "payload")
+    event = SessionEvent(
+        sequence=_integer(value, "sequence"),
+        event_type=_string(value, "event_type"),
+        payload=_JSON_OBJECT.validate_python(payload),
+        payload_sha256=_string(value, "payload_sha256"),
+        occurred_at=datetime.fromisoformat(_string(value, "occurred_at")),
+    )
+    if _json_digest(event.payload) != event.payload_sha256:
+        raise MarketingRuntimeError("session_event_payload_digest_mismatch")
+    return event
+
+
+def _json_digest(value: Mapping[str, object]) -> str:
     return _digest(json.dumps(value, sort_keys=True, separators=(",", ":")))
 
 

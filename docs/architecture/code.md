@@ -134,9 +134,18 @@ digest. `request_persisted_tool` CASes the admission; `execute_persisted_tool` C
 execution-start event before it calls a `ToolBackend`, and a restart-recovered execution can only be
 closed by `reconcile_interrupted_execution`. `JsonSessionStore` supplies host-local append-only CAS
 persistence, file locking, atomic replacement, and serialization integrity checking for replay tests;
-it is not a distributed lease or production control-plane store. Planner, skill registry, context
-projection, and outcome evaluation intentionally remain separate, unimplemented owners rather than
-being embedded in effect adapters.
+it is not a distributed lease or production control-plane store. Only the persisted admission and
+execution methods are public effect APIs; the non-durable transforms are private test primitives.
+General planner, skill-registry, context-projection, and outcome-evaluation owners remain separate
+from effect adapters; the only implemented vertical is described below.
+
+`marketing/feature_launch_operator.py` owns the first, narrow reasoning vertical over that harness.
+It defines `MarketingGoal`, a strict `DecisionProposal`, one versioned skill registry action, receipt-
+bound observation, and deterministic process/outcome graders. The planner can return a proposal but
+never a `ToolCall`; `FeatureLaunchSkillRegistry` derives the call from the pinned feature packet,
+approved claim set, action schema, and descriptor. Canonical workflow events carry validated payloads,
+so the operator can reconstruct a committed proposal after restart without reinvoking the planner.
+This module accepts only an observe effect class and has no Cloudflare or live-channel backend.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and

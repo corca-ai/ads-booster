@@ -33,8 +33,11 @@ contract and re-plans from the receipt. [Scaling Managed Agents](https://www.ant
 
 ## Current slice
 
-Implement a provider-neutral, no-external-effect runtime package with an in-memory fake tool backend.
-It is deliberately usable before Cloudflare is exposed as a tool.
+The implemented provider-neutral runtime uses a serializable host-local store and fake backend seam;
+it remains deliberately usable before Cloudflare is exposed as a tool. The first vertical is the
+observe-only `feature_launch_experiment.v1` skill. It can persist/replay a strict decision, derive one
+registry-bound observation call, require a receipt-bound observation, and deterministically grade the
+trace and experiment proposal. It has no real external side effect.
 
 ### Entities
 
@@ -162,14 +165,16 @@ quality proxies.
 ## First implementation slice
 
 Implemented: `ads_booster.marketing.runtime` now supplies provider-neutral domain contracts, a
-host-local JSON session store with append-only CAS/atomic persistence, one pending dispatch,
-one-use external grant consumption, receipt binding, and a fake-backend test seam. Its durable
-driver persists the pending dispatch and an execution-start checkpoint before any backend call; a
-restart after that checkpoint only reconciles, never retries the effect. It has no Cloudflare import
-and no real external side effect.
+host-local JSON session store with append-only CAS/atomic persistence, canonical event payloads, one
+pending dispatch, one-use external grant consumption, receipt binding, and a fake-backend test seam.
+Its durable driver persists the pending dispatch and an execution-start checkpoint before any backend
+call; a restart after that checkpoint only reconciles, never retries the effect.
 
-Next: add the `Feature Launch Experiment Operator` above this harness: strict planner protocol,
-versioned skill registry, context projection, fake research/effect hands, observation validation,
-typed evaluator decisions, and held-out process/outcome fixtures. A committed decision must replay
-without calling the planner again. After those acceptance checks pass, perform a fresh design critique,
-then add a thin control-plane adapter in a new post-merge PR.
+Implemented: `feature_launch_operator` adds the first strict planner protocol, a versioned one-action
+skill registry, decision replay without another planner call, receipt/observation lineage validation,
+separate deterministic process/outcome graders, and held-out fixture coverage. It accepts only an
+observe action, so it has no Cloudflare import and no real external side effect.
+
+Next: expand from the one-shot observe skill to bounded re-planning for insufficient evidence, add
+trusted backend receipt verification and cross-session grant ownership, then run fresh design critique
+before adding a thin control-plane adapter in a new post-merge PR.

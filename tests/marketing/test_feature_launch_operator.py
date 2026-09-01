@@ -1,0 +1,438 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal, override
+
+from ads_booster.contracts.marketing_agent import (
+    ClaimStatus,
+    EvidenceKind,
+    EvidenceReference,
+    EvidenceResult,
+    FeatureClaim,
+    FeatureEvidencePacket,
+    FeatureGate,
+    FeatureLifecycle,
+    OutcomeDefinition,
+    OutcomeScope,
+    contract_sha256,
+)
+from ads_booster.marketing.feature_launch_operator import (
+    AvailableAction,
+    DecisionProposal,
+    FeatureLaunchDependencies,
+    FeatureLaunchEvaluation,
+    FeatureLaunchEvaluator,
+    FeatureLaunchExperimentOperator,
+    FeatureLaunchHand,
+    FeatureLaunchObservation,
+    FeatureLaunchPlanningContext,
+    FeatureLaunchRuntimeContext,
+    FeatureLaunchSkillRegistry,
+    FeatureLaunchTask,
+    MarketingGoal,
+)
+from ads_booster.marketing.runtime import (
+    AgentSession,
+    Budget,
+    EffectDisposition,
+    JsonSessionStore,
+    MarketingAgentRuntime,
+    RuntimeState,
+    ToolCall,
+    ToolCapability,
+    ToolReceipt,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+NOW = datetime(2026, 9, 1, tzinfo=UTC)
+REGISTRY_SNAPSHOT = "a" * 64
+SKILL_SHA256 = "b" * 64
+
+
+class ScriptedPlanner:
+    def __init__(self, proposal: DecisionProposal) -> None:
+        self.proposal: DecisionProposal = proposal
+        self.calls: list[FeatureLaunchPlanningContext] = []
+
+    def propose(self, context: FeatureLaunchPlanningContext) -> DecisionProposal:
+        self.calls.append(context)
+        return self.proposal
+
+
+class NoCallPlanner:
+    def __init__(self) -> None:
+        self.calls: int = 0
+
+    def propose(self, context: FeatureLaunchPlanningContext) -> DecisionProposal:
+        _ = context
+        self.calls += 1
+        message = "a committed decision must replay without planner invocation"
+        raise AssertionError(message)
+
+
+class FakeFeatureLaunchHand(FeatureLaunchHand):
+    def __init__(
+        self,
+        *,
+        packet_sha256: str,
+        proposal_sha256: str,
+        evidence_status: Literal["sufficient", "insufficient"] = "sufficient",
+        mismatched_lineage: bool = False,
+    ) -> None:
+        self.packet_sha256: str = packet_sha256
+        self.proposal_sha256: str = proposal_sha256
+        self.evidence_status: Literal["sufficient", "insufficient"] = evidence_status
+        self.mismatched_lineage: bool = mismatched_lineage
+        self.calls: list[ToolCall] = []
+        self.observation_calls: list[ToolReceipt] = []
+
+    @override
+    def execute(self, call: ToolCall) -> ToolReceipt:
+        self.calls.append(call)
+        return ToolReceipt(
+            call.call_id,
+            call.digest,
+            None,
+            EffectDisposition.SUCCEEDED,
+            1,
+            "c" * 64,
+        )
+
+    @override
+    def observation_for(self, receipt: ToolReceipt) -> FeatureLaunchObservation:
+        self.observation_calls.append(receipt)
+        call = self.calls[-1]
+        return FeatureLaunchObservation(
+            schema_version="trace.feature-launch-observation.v1",
+            observation_id="observation-1",
+            receipt_sha256=receipt.receipt_sha256,
+            call_sha256=receipt.call_sha256,
+            request_sha256=call.input_sha256,
+            feature_packet_sha256=("d" * 64 if self.mismatched_lineage else self.packet_sha256),
+            proposal_sha256=self.proposal_sha256,
+            source_ref="fake://held-out-market-signal",
+            source_sha256="e" * 64,
+            evidence_status=self.evidence_status,
+            counter_evidence_found=True,
+            observed_at=NOW,
+        )
+
+
+def _packet(*, feature_id: str = "trace.lockscreen.ai-concepts") -> FeatureEvidencePacket:
+    return FeatureEvidencePacket(
+        schema_version="trace.feature-evidence.v1",
+        packet_id=f"packet-{feature_id.replace('.', '-')}",
+        feature_id=feature_id,
+        title="AI lock-screen concepts",
+        lifecycle=FeatureLifecycle.INSTALLED_CONFIRMED,
+        repository="corca-ai/Trace_iOS",
+        mutable_ref="refs/heads/develop",
+        resolved_commit_sha="f" * 40,
+        tree_sha="e" * 40,
+        claims=(
+            FeatureClaim(
+                claim_id="claim-ready",
+                text=(
+                    "Users can schedule their favorite character into changing lock-screen scenes."
+                ),
+                status=ClaimStatus.INSTALLED_CONFIRMED,
+                evidence_ids=("installed-proof",),
+            ),
+            FeatureClaim(
+                claim_id="claim-blocked",
+                text="The feature will improve retention.",
+                status=ClaimStatus.SOURCE_SUPPORTED,
+                evidence_ids=("source-proof",),
+            ),
+        ),
+        evidence=(
+            EvidenceReference(
+                evidence_id="installed-proof",
+                kind=EvidenceKind.INSTALL_RECEIPT,
+                source_uri="trace://install/verified",
+                immutable_ref="install-1",
+                content_sha256="1" * 64,
+                result=EvidenceResult.PASSED,
+                collected_at=NOW,
+            ),
+            EvidenceReference(
+                evidence_id="source-proof",
+                kind=EvidenceKind.SOURCE_DIFF,
+                source_uri="https://github.com/corca-ai/Trace_iOS/commit/feature",
+                immutable_ref="feature",
+                content_sha256="2" * 64,
+                result=EvidenceResult.OBSERVED,
+                collected_at=NOW,
+            ),
+        ),
+        gate=FeatureGate(
+            publication_allowed=True,
+            allowed_claim_ids=("claim-ready",),
+            blocked_claim_ids=("claim-blocked",),
+        ),
+        observed_at=NOW,
+    )
+
+
+def _registry() -> FeatureLaunchSkillRegistry:
+    return FeatureLaunchSkillRegistry(
+        snapshot_sha256=REGISTRY_SNAPSHOT,
+        skill_sha256=SKILL_SHA256,
+        action=AvailableAction(
+            action_id="observe.feature_launch_experiment",
+            capability=ToolCapability("observe.feature_launch_experiment", "3" * 64, "observe", 1),
+            request_schema_sha256="4" * 64,
+        ),
+    )
+
+
+def _task(packet: FeatureEvidencePacket) -> FeatureLaunchTask:
+    return FeatureLaunchTask(
+        MarketingGoal(
+            schema_version="trace.marketing-goal.v1",
+            goal_id="goal-1",
+            feature_packet_id=packet.packet_id,
+            feature_packet_sha256=contract_sha256(packet),
+            outcome="feature_launch_experiment",
+            pinned_skill_registry_sha256=REGISTRY_SNAPSHOT,
+        ),
+        packet,
+    )
+
+
+def _proposal(task: FeatureLaunchTask, *, claim_id: str = "claim-ready") -> DecisionProposal:
+    return DecisionProposal(
+        schema_version="trace.feature-launch-decision.v1",
+        proposal_id="proposal-1",
+        goal_id=task.goal.goal_id,
+        skill_id="feature_launch_experiment.v1",
+        skill_sha256=SKILL_SHA256,
+        action_id="observe.feature_launch_experiment",
+        claim_ids=(claim_id,),
+        control_frame="A lock screen can be useful before it is expressive.",
+        challenger_frame="Your favorite character can change with your day, not sit still.",
+        counter_evidence_question="Do viewers understand scheduled change without a demo?",
+        falsifier="The challenger does not increase completed setup within the registered window.",
+        measurement=OutcomeDefinition(
+            name="setup_completed",
+            scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
+            window_hours=72,
+        ),
+    )
+
+
+def _context(
+    store: JsonSessionStore,
+    task: FeatureLaunchTask,
+    planner: ScriptedPlanner | NoCallPlanner,
+    hand: FakeFeatureLaunchHand,
+) -> FeatureLaunchRuntimeContext:
+    return FeatureLaunchRuntimeContext(
+        store,
+        task,
+        FeatureLaunchDependencies(planner, _registry(), hand, FeatureLaunchEvaluator()),
+        NOW,
+    )
+
+
+def _evaluation(session: AgentSession) -> FeatureLaunchEvaluation:
+    event = next(event for event in session.events if event.event_type == "feature_evaluated")
+    return FeatureLaunchEvaluation.model_validate(event.payload)
+
+
+def test_feature_launch_operator_completes_receipt_grounded_experiment(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+    store = JsonSessionStore(tmp_path)
+
+    completed = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("session-1", Budget(1, 1)), _context(store, task, planner, hand)
+    )
+
+    evaluation = _evaluation(completed)
+    assert completed.state is RuntimeState.COMPLETED
+    assert len(planner.calls) == 1
+    assert len(hand.calls) == 1
+    assert evaluation.process_passed
+    assert evaluation.outcome_passed
+    assert evaluation.state == "completed"
+    assert store.load("session-1") == completed
+
+
+def test_committed_decision_replays_after_restart_without_calling_planner(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    store = JsonSessionStore(tmp_path)
+    runtime = MarketingAgentRuntime()
+    session = runtime.append_persisted_event(
+        store,
+        AgentSession("session-1", Budget(1, 1)),
+        event_type="feature_goal_committed",
+        payload=task.goal.model_dump(mode="json"),
+        now=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_decision_committed",
+        payload=proposal.model_dump(mode="json"),
+        now=NOW,
+    )
+    reopened = JsonSessionStore(tmp_path).load("session-1")
+    assert reopened is not None
+    planner = NoCallPlanner()
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+
+    completed = FeatureLaunchExperimentOperator(runtime).run(
+        reopened, _context(store, task, planner, hand)
+    )
+
+    assert completed.state is RuntimeState.COMPLETED
+    assert planner.calls == 0
+    assert len(hand.calls) == 1
+
+
+def test_blocked_claim_is_stopped_before_the_hand_runs(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task, claim_id="claim-blocked")
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+
+    stopped = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("session-1", Budget(1, 1)),
+        _context(JsonSessionStore(tmp_path), task, planner, hand),
+    )
+
+    assert stopped.state is RuntimeState.INCONCLUSIVE
+    assert hand.calls == []
+    assert stopped.events[-2].event_type == "feature_stopped"
+
+
+def test_insufficient_observation_is_outcome_inconclusive_but_process_passes(
+    tmp_path: Path,
+) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet),
+        proposal_sha256=contract_sha256(proposal),
+        evidence_status="insufficient",
+    )
+
+    result = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("session-1", Budget(1, 1)),
+        _context(JsonSessionStore(tmp_path), task, planner, hand),
+    )
+
+    evaluation = _evaluation(result)
+    assert result.state is RuntimeState.INCONCLUSIVE
+    assert evaluation.process_passed
+    assert not evaluation.outcome_passed
+    assert "insufficient_evidence" in evaluation.reasons
+
+
+def test_restart_after_persisted_evaluation_recovers_the_terminal_state(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+    runtime = MarketingAgentRuntime()
+    operator = FeatureLaunchExperimentOperator(runtime)
+    original_store = JsonSessionStore(tmp_path / "original")
+    completed = operator.run(
+        AgentSession("session-1", Budget(1, 1)), _context(original_store, task, planner, hand)
+    )
+    pre_final = replace(
+        completed,
+        state=RuntimeState.EXECUTING,
+        events=completed.events[:-1],
+    )
+    recovery_store = JsonSessionStore(tmp_path / "recovery")
+    recovery_store.save(pre_final, expected_sequence=0)
+    reopened = recovery_store.load("session-1")
+    assert reopened is not None
+    no_call_planner = NoCallPlanner()
+    no_call_hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+
+    recovered = operator.run(
+        reopened, _context(recovery_store, task, no_call_planner, no_call_hand)
+    )
+
+    assert recovered.state is RuntimeState.COMPLETED
+    assert no_call_planner.calls == 0
+    assert no_call_hand.calls == []
+
+
+def test_non_observe_registry_capability_is_stopped_before_the_hand_runs(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+    unsafe_registry = replace(
+        _registry(),
+        action=AvailableAction(
+            action_id="observe.feature_launch_experiment",
+            capability=ToolCapability("local.render", "6" * 64, "local_artifact", 1),
+            request_schema_sha256="4" * 64,
+        ),
+    )
+    context = FeatureLaunchRuntimeContext(
+        JsonSessionStore(tmp_path),
+        task,
+        FeatureLaunchDependencies(planner, unsafe_registry, hand, FeatureLaunchEvaluator()),
+        NOW,
+    )
+
+    stopped = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("session-1", Budget(1, 1)), context
+    )
+
+    assert stopped.state is RuntimeState.INCONCLUSIVE
+    assert hand.calls == []
+
+
+def test_held_out_feature_packet_requires_observation_lineage_before_completion(
+    tmp_path: Path,
+) -> None:
+    packet = _packet(feature_id="trace.focus-mode.scenes")
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet),
+        proposal_sha256=contract_sha256(proposal),
+        mismatched_lineage=True,
+    )
+
+    result = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("session-1", Budget(1, 1)),
+        _context(JsonSessionStore(tmp_path), task, planner, hand),
+    )
+
+    assert result.state is RuntimeState.INCONCLUSIVE
+    assert len(hand.calls) == 1
+    assert all(event.event_type != "feature_evaluated" for event in result.events)

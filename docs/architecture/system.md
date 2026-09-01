@@ -166,8 +166,18 @@ redelivery. The harness reserves budget, consumes an exact one-use external appr
 accepts a receipt only when its call and grant digests bind to that pending call. Backend exceptions
 and rejected receipts become `awaiting_reconciliation`. This harness has no Cloudflare, Appium,
 Threads, or model-provider import and is not a hosted worker or an automatic-publication path.
-Dynamic planning, skill routing, and outcome evaluation remain deferred until this safe dispatch
-boundary is exercised through a fake backend and held-out marketing evaluation.
+Its public effect surface is the persisted admission/execution sequence; non-durable transition
+helpers are private unit-test primitives, so a future hand cannot skip the checkpoints.
+General multi-step planning, skill routing, and outcome evaluation remain deferred beyond the first
+fake-backend vertical below; no live tool can invoke them yet.
+
+The first exercise is `feature_launch_operator`: a provider-neutral, observe-only Feature Launch
+Experiment Operator. It persists a feature goal, strict planner decision, runtime-owned tool receipt,
+receipt-bound observation, deterministic process/outcome evaluation, and a terminal result as
+canonical session events. It exposes exactly one registry action,
+`observe.feature_launch_experiment`; the registry derives a descriptor-bound call from the feature
+packet, approved claim IDs, and request-schema digest. A restart replays a committed decision without
+calling the planner. This is an evaluation vertical, not a new live research or publication path.
 
 ## Threads publication and observation
 
