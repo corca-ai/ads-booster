@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 
 from pydantic import TypeAdapter, ValidationError
@@ -21,6 +22,11 @@ from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureContr
 from ads_booster.capture.codex_appium_job import (
     CodexAppiumJobContract,
     CodexAppiumJobIdentity,
+)
+from ads_booster.capture.codex_imagegen_ui import (
+    CodexImagegenIosUiLayer,
+    ImagegenIosUiArtifact,
+    ImagegenIosUiCaptureRequest,
 )
 from ads_booster.capture.readiness import DefaultCaptureReadiness
 from ads_booster.capture.simulator_photo import SimctlPhotoImporter
@@ -44,8 +50,6 @@ from ads_booster.search.image.providers import create_image_search_provider
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from ads_booster.transport.http import HttpClient
 
 _PIPELINE: Final = "hosted_workspace_capture_v1"
@@ -131,6 +135,10 @@ def build_hosted_capture_executor(
             readiness=DefaultCaptureReadiness(appium_server=appium_server),
         ),
         output_root=home / "generated",
+        ios_ui=CodexImagegenIosUiLayer(
+            executable=executable,
+            reference_image=_ios_ui_reference_path(),
+        ),
         appium_server=appium_server,
         timeout_seconds=timeout_seconds,
     )
@@ -160,6 +168,15 @@ class AppiumJobPort(Protocol):
         output: Path,
         control: CaptureControl,
     ) -> CaptureProvenance: ...
+
+
+class ImagegenIosUiPort(Protocol):
+    def capture(self, request: ImagegenIosUiCaptureRequest) -> ImagegenIosUiArtifact: ...
+
+
+def _ios_ui_reference_path() -> Path:
+    root = Path(__file__).resolve().parents[1]
+    return root / "assets" / "ios-lock-screen-date-time-reference.png"
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,10 +237,20 @@ class PreparedCodexAppiumJob:
 
 
 @dataclass(frozen=True, slots=True)
+class _CapturedPng:
+    data: bytes
+    digest: str
+    capture_source: str
+    artifact_role: str
+    source_trace_artifact_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class HostedWorkspaceCaptureExecutor:
     background_preparer: BackgroundPreparer
     appium: AppiumJobPort
     output_root: Path
+    ios_ui: ImagegenIosUiPort | None = None
     device_resolver: DeviceResolver = SimctlDeviceResolver()
     appium_server: str = _DEFAULT_APPIUM_SERVER
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
@@ -314,72 +341,18 @@ class HostedWorkspaceCaptureExecutor:
                 f"native_capture_{error.code.value}",
                 unknown_side_effect=True,
             ) from error
-        image_path = prepared.output.resolve()
-        root = self.output_root.resolve()
-        if (
-            image_path != prepared.output
-            or not image_path.is_relative_to(root)
-            or not image_path.is_file()
-        ):
-            raise MarketingExecutionError(
-                "native_capture_artifact_missing",
-                unknown_side_effect=True,
-            )
-        try:
-            image = image_path.read_bytes()
-            manifest_path = image_path.with_suffix(".manifest.json")
-            manifest = read_wallpaper_export_manifest(manifest_path)
-        except (OSError, CaptureAdapterError) as error:
-            raise MarketingExecutionError(
-                "native_capture_artifact_missing",
-                unknown_side_effect=True,
-            ) from error
-        if not image or len(image) > _MAX_IMAGE_BYTES:
-            raise MarketingExecutionError(
-                "native_capture_artifact_size_invalid",
-                unknown_side_effect=True,
-            )
-        digest = sha256(image).hexdigest()
-        contract = prepared.contract
-        if (
-            provenance.source != "native_appium"
-            or provenance.artifact_role != "trace_wallpaper"
-            or not provenance.native_export_binding_verified
-            or provenance.request_sha256 != contract.request_sha256
-            or provenance.native_export_nonce != contract.export_nonce
-            or provenance.bundle_id != contract.bundle_id
-            or provenance.device_udid != contract.device.udid
-        ):
-            raise MarketingExecutionError(
-                "native_capture_provenance_unverified",
-                unknown_side_effect=True,
-            )
-        if (
-            provenance.artifact_sha256 != digest
-            or provenance.byte_size != len(image)
-            or manifest.artifact_sha256 != digest
-            or manifest.request_sha256 != contract.request_sha256
-            or manifest.export_nonce != contract.export_nonce
-            or manifest.bundle_id != contract.bundle_id
-            or manifest.device_udid != contract.device.udid
-            or (manifest.width, manifest.height) != (provenance.width, provenance.height)
-        ):
-            raise MarketingExecutionError(
-                "native_capture_artifact_digest_mismatch",
-                unknown_side_effect=True,
-            )
+        trace_image = _read_trace_wallpaper(prepared, provenance, self.output_root)
+        if self.ios_ui is None:
+            return _capture_result(prepared.contract, trace_image)
         return _capture_result(
-            contract,
-            image=image,
-            image_digest=digest,
+            prepared.contract,
+            _capture_imagegen_ios_ui(prepared, trace_image, self.ios_ui),
         )
 
 
 def _capture_result(
     contract: CodexAppiumJobContract,
-    *,
-    image: bytes,
-    image_digest: str,
+    image: _CapturedPng,
 ) -> TaskResult:
     return TaskResult(
         status=TaskStatus.SUCCEEDED,
@@ -388,15 +361,171 @@ def _capture_result(
             "candidate_id": contract.identity.candidate_id,
             "candidate_revision": contract.identity.candidate_revision,
             "content_type": "image/png",
-            "image_sha256": image_digest,
-            "image_base64": base64.b64encode(image).decode("ascii"),
-            "capture_source": "native_appium",
-            "native_image_sha256": image_digest,
-            "image_postprocess_source": "none",
+            "image_sha256": image.digest,
+            "image_base64": base64.b64encode(image.data).decode("ascii"),
+            "capture_source": image.capture_source,
+            "native_image_sha256": image.source_trace_artifact_sha256 or image.digest,
+            "image_postprocess_source": (
+                image.capture_source if image.source_trace_artifact_sha256 is not None else "none"
+            ),
+            "artifact_role": image.artifact_role,
+            "source_trace_artifact_sha256": image.source_trace_artifact_sha256,
             "native_export_binding_verified": True,
+            "imagegen_ui_layer_verified": image.capture_source == "imagen_ios_ui",
             "feedback_application_sha256": contract.context.feedback_context_sha256,
         },
     )
+
+
+def _read_trace_wallpaper(
+    prepared: PreparedCodexAppiumJob,
+    provenance: CaptureProvenance,
+    output_root: Path,
+) -> _CapturedPng:
+    image_path = prepared.output.resolve()
+    root = output_root.resolve()
+    if (
+        image_path != prepared.output
+        or not image_path.is_relative_to(root)
+        or not image_path.is_file()
+    ):
+        raise MarketingExecutionError(
+            "native_capture_artifact_missing",
+            unknown_side_effect=True,
+        )
+    try:
+        image = image_path.read_bytes()
+        manifest = read_wallpaper_export_manifest(image_path.with_suffix(".manifest.json"))
+    except (OSError, CaptureAdapterError) as error:
+        raise MarketingExecutionError(
+            "native_capture_artifact_missing",
+            unknown_side_effect=True,
+        ) from error
+    if not image or len(image) > _MAX_IMAGE_BYTES:
+        raise MarketingExecutionError(
+            "native_capture_artifact_size_invalid",
+            unknown_side_effect=True,
+        )
+    digest = sha256(image).hexdigest()
+    contract = prepared.contract
+    if (
+        provenance.source != "native_appium"
+        or provenance.artifact_role != "trace_wallpaper"
+        or not provenance.native_export_binding_verified
+        or provenance.request_sha256 != contract.request_sha256
+        or provenance.native_export_nonce != contract.export_nonce
+        or provenance.bundle_id != contract.bundle_id
+        or provenance.device_udid != contract.device.udid
+    ):
+        raise MarketingExecutionError(
+            "native_capture_provenance_unverified",
+            unknown_side_effect=True,
+        )
+    if (
+        provenance.artifact_sha256 != digest
+        or provenance.byte_size != len(image)
+        or manifest.artifact_sha256 != digest
+        or manifest.request_sha256 != contract.request_sha256
+        or manifest.export_nonce != contract.export_nonce
+        or manifest.bundle_id != contract.bundle_id
+        or manifest.device_udid != contract.device.udid
+        or (manifest.width, manifest.height) != (provenance.width, provenance.height)
+    ):
+        raise MarketingExecutionError(
+            "native_capture_artifact_digest_mismatch",
+            unknown_side_effect=True,
+        )
+    return _CapturedPng(
+        data=image,
+        digest=digest,
+        capture_source="native_appium",
+        artifact_role="trace_wallpaper",
+    )
+
+
+def _capture_imagegen_ios_ui(
+    prepared: PreparedCodexAppiumJob,
+    trace_image: _CapturedPng,
+    ios_ui: ImagegenIosUiPort,
+) -> _CapturedPng:
+    final_path = prepared.output.with_name("imagen_ios_ui.png")
+    contract = prepared.contract
+    try:
+        derived = ios_ui.capture(
+            ImagegenIosUiCaptureRequest(
+                context=contract.context,
+                source_trace_wallpaper=prepared.output,
+                destination=final_path,
+                request_sha256=contract.request_sha256,
+                export_nonce=contract.export_nonce,
+                control=prepared.control,
+            )
+        )
+    except CaptureAdapterError as error:
+        raise MarketingExecutionError(
+            f"native_capture_{error.code.value}",
+            unknown_side_effect=True,
+        ) from error
+    final_image = _read_derived_image(final_path)
+    final_digest = sha256(final_image).hexdigest()
+    _validate_derived_artifact(
+        artifact=derived,
+        final_digest=final_digest,
+        final_size=len(final_image),
+        source_trace_digest=trace_image.digest,
+        contract=contract,
+    )
+    return _CapturedPng(
+        data=final_image,
+        digest=final_digest,
+        capture_source="imagen_ios_ui",
+        artifact_role="imagen_ios_ui",
+        source_trace_artifact_sha256=trace_image.digest,
+    )
+
+
+def _read_derived_image(path: Path) -> bytes:
+    try:
+        image = path.read_bytes()
+    except OSError as error:
+        raise MarketingExecutionError(
+            "native_capture_artifact_missing",
+            unknown_side_effect=True,
+        ) from error
+    if not image or len(image) > _MAX_IMAGE_BYTES:
+        raise MarketingExecutionError(
+            "native_capture_artifact_size_invalid",
+            unknown_side_effect=True,
+        )
+    return image
+
+
+def _validate_derived_artifact(
+    *,
+    artifact: ImagegenIosUiArtifact,
+    final_digest: str,
+    final_size: int,
+    source_trace_digest: str,
+    contract: CodexAppiumJobContract,
+) -> None:
+    manifest = artifact.manifest
+    layer_digest = sha256(artifact.ui_layer_path.read_bytes()).hexdigest()
+    if (
+        not artifact.ui_layer_path.is_file()
+        or manifest.request_sha256 != contract.request_sha256
+        or manifest.export_nonce != contract.export_nonce
+        or manifest.device_udid != contract.device.udid
+        or manifest.source_trace_artifact_sha256 != source_trace_digest
+        or manifest.imagegen_ui_layer_sha256 != layer_digest
+        or manifest.artifact_sha256 != final_digest
+        or manifest.width <= 0
+        or manifest.height <= 0
+        or final_size <= 0
+    ):
+        raise MarketingExecutionError(
+            "native_capture_provenance_unverified",
+            unknown_side_effect=True,
+        )
 
 
 def _simulator_candidates(

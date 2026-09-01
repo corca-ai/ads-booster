@@ -204,10 +204,10 @@ def build_executor(
     )
 
 
-def test_hosted_capture_contract_has_no_imagegen_postprocess_seam() -> None:
+def test_hosted_capture_contract_exposes_one_imagegen_ui_seam() -> None:
     field_names = {field.name for field in fields(HostedWorkspaceCaptureExecutor)}
 
-    assert "image_editor" not in field_names
+    assert "ios_ui" in field_names
 
 
 def test_hosted_capture_prepares_planless_job_before_execution(tmp_path: Path) -> None:
@@ -322,9 +322,7 @@ def _task_with_query(query: str | None) -> MarketingTask:
     image_inputs = dict(task.payload["image_inputs"])
     if query is not None:
         image_inputs["background_search_query"] = query
-    return task.model_copy(
-        update={"payload": {**task.payload, "image_inputs": image_inputs}}
-    )
+    return task.model_copy(update={"payload": {**task.payload, "image_inputs": image_inputs}})
 
 
 def test_hosted_capture_searches_the_authored_query_not_the_composed_intent() -> None:

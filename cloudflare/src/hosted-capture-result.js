@@ -10,9 +10,11 @@ export async function prepareHostedCaptureResult(result) {
     return { status, image: null, image_digest: null, stored_result: result };
   }
   const output = result?.output;
+  const isTraceWallpaper = output?.capture_source === "native_appium";
+  const isImagegenUi = output?.capture_source === "imagen_ios_ui";
   if (
     output?.content_type !== "image/png" ||
-    output.capture_source !== "native_appium" ||
+    (!isTraceWallpaper && !isImagegenUi) ||
     output.native_export_binding_verified !== true ||
     typeof output.image_base64 !== "string" ||
     typeof output.image_sha256 !== "string" ||
@@ -21,6 +23,22 @@ export async function prepareHostedCaptureResult(result) {
     throw new HostedCaptureResultError(
       400,
       "successful hosted capture requires a verified digest-backed PNG",
+    );
+  }
+  if (
+    isImagegenUi &&
+    (
+      output.artifact_role !== "imagen_ios_ui" ||
+      output.image_postprocess_source !== "imagen_ios_ui" ||
+      output.imagegen_ui_layer_verified !== true ||
+      typeof output.source_trace_artifact_sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(output.source_trace_artifact_sha256) ||
+      output.native_image_sha256 !== output.source_trace_artifact_sha256
+    )
+  ) {
+    throw new HostedCaptureResultError(
+      400,
+      "ImageGen iOS UI capture requires verified Trace source provenance",
     );
   }
   let image;

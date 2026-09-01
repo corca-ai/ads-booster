@@ -68,15 +68,23 @@ flowchart LR
    saved marker, clears any earlier App Group export, and acknowledges Save only after those
    boundaries. A second rejected Ready ends the turn without Save. Collection therefore cannot wait
    on or accept an export from an unbound process.
-8. When Save is accepted, Trace renders the same complete SwiftUI `wallpaperPreview` visible in the
-   lock-screen settings flow. The native PNG contains its configured background, Trace content,
-   date, clock, and lower lock-screen controls, without editor chrome or a Dynamic Island. The
-   worker independently requires its PNG and manifest SHA-256, request digest, nonce, bundle, UDID,
-   dimensions, native export binding, and `native_appium` provenance to agree. It returns those
-   pixels unchanged; no image model or fixed-band compositor participates. After collection or a
-   terminal capture failure, the worker asks the helper to delete only the recorded request-owned
-   calendar whose identifier, namespace, digest marker, and events all match. Cleanup has an
-   independent bounded budget; a cleanup failure remains attached to the primary capture failure.
+8. When Save is accepted, Trace renders the configured background and Trace content into its bound
+   `trace_wallpaper` PNG. The worker independently requires that intermediate PNG and manifest
+   SHA-256, request digest, nonce, bundle, UDID, dimensions, native export binding, and
+   `native_appium` provenance to agree. It then starts one separate official `codex exec` turn with
+   `image_generation` enabled. The turn receives a packaged default iPhone date/time reference plus
+   the localized date and time, and writes one transparent date-and-clock UI PNG. It must preserve
+   the reference's neutral color, typography, hierarchy, spacing, and placement; no persona colors,
+   background, phone frame, status bar, widget, notification, or editor chrome is accepted. The
+   worker rescales that layer to the Trace canvas, composites it over the Trace PNG, and records the
+   source PNG SHA-256, ImageGen prompt SHA-256, UI-layer SHA-256, final SHA-256, request digest,
+   nonce, and UDID in
+   `trace.imagen-ios-ui.v1`. The returned image is explicitly `imagen_ios_ui`: it is a
+   generated copy of the default iPhone UI, not an iOS system wallpaper render. After collection or a
+   terminal capture failure, the
+   worker asks the helper to delete only the recorded request-owned calendar whose identifier,
+   namespace, digest marker, and events all match. Cleanup has an independent bounded budget; a
+   cleanup failure remains attached to the primary capture failure.
 9. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1 and opens human image review.
 

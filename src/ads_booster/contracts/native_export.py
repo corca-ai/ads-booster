@@ -57,7 +57,21 @@ class WallpaperExportManifest(NativeExportContract):
     height: Annotated[int, Field(gt=0, le=8192)]
 
 
+class ImagegenIosUiManifest(NativeExportContract):
+    schema_version: Literal["trace.imagen-ios-ui.v1"]
+    request_sha256: Sha256Digest
+    export_nonce: Sha256Digest
+    device_udid: Annotated[str, Field(pattern=r"^[A-F0-9-]{36}$")]
+    source_trace_artifact_sha256: Sha256Digest
+    imagegen_prompt_sha256: Sha256Digest
+    imagegen_ui_layer_sha256: Sha256Digest
+    artifact_sha256: Sha256Digest
+    width: Annotated[int, Field(gt=0, le=8192)]
+    height: Annotated[int, Field(gt=0, le=8192)]
+
+
 __all__ = [
+    "ImagegenIosUiManifest",
     "NativeExportContract",
     "PreparedBackground",
     "TraceBackgroundSearchProvenance",
