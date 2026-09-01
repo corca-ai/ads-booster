@@ -28,6 +28,7 @@ class AppiumEditorVerifier(Protocol):
         appium_server: str,
         ready: CodexAppiumReadyState,
         expected_titles: tuple[str, ...],
+        expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool: ...
 
@@ -61,6 +62,7 @@ class DefaultAppiumEditorVerifier:
         appium_server: str,
         ready: CodexAppiumReadyState,
         expected_titles: tuple[str, ...],
+        expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
         visible_source = self._read_source(appium_server, ready.session_id, control)
@@ -74,7 +76,13 @@ class DefaultAppiumEditorVerifier:
         # it can see is really there, which is the claim the Save gate rests on.
         if not all(title in visible_source for title in ready.rendered_trace_item_titles):
             return False
-        return rendered_titles_are_credible(ready.rendered_trace_item_titles, expected_titles)
+        if not rendered_titles_are_credible(ready.rendered_trace_item_titles, expected_titles):
+            return False
+        # A to-do never appears in the weekly strip, which draws calendar events only. So one
+        # visible to-do is what proves the second panel drew at all - without this, a screen
+        # whose panels are both empty passes on the strip alone, and an empty panel is exactly
+        # what a cell with no calendar or reminder list selected looks like.
+        return not expected_todos or any(todo in visible_source for todo in expected_todos)
 
     def verify_process_binding(
         self,

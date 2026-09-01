@@ -1,8 +1,36 @@
 from __future__ import annotations
 
+from hashlib import sha256
+from typing import Final, Literal
 
-def codex_appium_prompt() -> str:
-    return """Complete this Trace wallpaper job autonomously.
+WallpaperTemplate = Literal["panels", "week_and_panels"]
+
+# The two screen shapes our own accounts have actually posted. Both fold what does not fit
+# into a "+N" badge, so the same week of rows builds either one; the strip only draws those
+# rows a second way. The reference posts that reached the most people were one of each,
+# which is why the batch alternates rather than settling on one.
+_TEMPLATES: Final[tuple[WallpaperTemplate, ...]] = ("panels", "week_and_panels")
+
+_WEEK_STRIP_STEP: Final = """- Above the two cells, add the 주간 캘린더 component so the week's
+  rows also draw as bars across the seven days. If it offers a
+  캘린더 / 미리알림 지정 screen, select the same calendar there.
+"""
+
+
+def wallpaper_template(candidate_id: str) -> WallpaperTemplate:
+    """Which screen shape this candidate builds.
+
+    Derived from the candidate rather than drawn at random, so a retry rebuilds the screen
+    the first attempt was making. A capture that fails and comes back as a different layout
+    is one nobody can compare against the run that failed.
+    """
+    digest = sha256(candidate_id.encode("utf-8")).digest()
+    return _TEMPLATES[digest[0] % len(_TEMPLATES)]
+
+
+def codex_appium_prompt(template: WallpaperTemplate = "panels") -> str:
+    week_strip = _WEEK_STRIP_STEP if template == "week_and_panels" else ""
+    return f"""Complete this Trace wallpaper job autonomously.
 
 The current directory contains codex-appium-job.json with the complete non-secret marketing context,
 verified background, device, locale, IANA time zone, Appium endpoint, launch binding, export names,
@@ -34,6 +62,7 @@ Build this exact layout. Do not design one.
   calendar_namespace.
 - Right cell: the 일정 목록 component. Display name "할 일". Checklist icon. Date/time display off.
   In 캘린더 / 미리알림 지정, select the reminder list holding the to-dos you created.
+{week_strip}
 A cell renders nothing until its calendar or reminder list is selected there, so an empty panel
 means that selection is missing. Make the selection rather than rebuilding the wallpaper: rebuilding
 an empty cell is the one loop that never ends.
@@ -60,8 +89,8 @@ copy, fabricate, or replace the App Group export files. Before tapping Save, ret
 wallpaper editor and confirm its lockScreenWallpaperSave control is present and both panels are
 drawing rows. Then atomically write a mode-0600 codex-appium-ready.json
 in the current directory with exactly this shape:
-{"schema":"trace.codex-appium-ready.v1","session_id":"...",
-"rendered_trace_item_titles":["..."]}. rendered_trace_item_titles is the list of trace item titles
+{{"schema":"trace.codex-appium-ready.v1","session_id":"...",
+"rendered_trace_item_titles":["..."]}}. rendered_trace_item_titles is the list of trace item titles
 actually visible on the preview right now — not the requested list. Report the titles as rendered,
 with no time prefix added, and report only what you can see: the worker reads the live screen and
 rejects a title that is not on it. Wait for worker-created
@@ -76,7 +105,7 @@ false, do not tap Save; close the Appium session and return status=failed.
 The completed outcome requires the requested wallpaper to be saved and both native export files to
 be observed. Immediately after tapping Save, atomically write a mode-0600
 codex-appium-saved.json in the current directory with exactly this shape:
-{"schema":"trace.codex-appium-saved.v1","session_id":"..."}. Then wait for the worker-created
+{{"schema":"trace.codex-appium-saved.v1","session_id":"..."}}. Then wait for the worker-created
 codex-appium-collected.json. Do not close the Appium session, navigate away, or otherwise alter
 Trace before that acknowledgement exists and its session_id matches yours. After acknowledgement,
 close the Appium session even when collection_succeeded is false. Return only the requested JSON

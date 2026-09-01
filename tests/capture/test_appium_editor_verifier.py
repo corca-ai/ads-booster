@@ -85,12 +85,14 @@ def test_default_editor_verifier_rejects_a_screen_showing_rows_nobody_requested(
         "http://127.0.0.1:4723",
         ready,
         ("Focus & plan", "Lunch"),
+        (),
         control,
     )
     missing_title = DefaultAppiumEditorVerifier().verify(
         "http://127.0.0.1:4723",
         ready,
         ("Focus & plan", "Dinner"),
+        (),
         control,
     )
 
@@ -132,6 +134,7 @@ def test_default_editor_verifier_rejects_requested_titles_outside_trace_wallpape
             "http://127.0.0.1:4723",
             ready,
             ("Focus block",),
+            (),
             CaptureControl.start(timeout_seconds=30),
         )
         is False
@@ -230,7 +233,8 @@ def test_default_editor_verifier_accepts_a_week_that_trace_folded_behind_a_badge
 ) -> None:
     # Given a week of twenty rows, of which Trace draws four and folds the rest into "+16"
     expected = tuple(f"Row {index}" for index in range(1, 21))
-    visible = ("Row 1", "Row 2", "Row 3", "Row 4")
+    todos = ("Pay rent", "Book dentist")
+    visible = ("Row 1", "Row 2", "Row 3", "Row 4", "Pay rent")
     source = "".join(f'<Text name=\\"{title}\\"/>' for title in visible)
     response = HttpResponse(
         200,
@@ -245,7 +249,7 @@ def test_default_editor_verifier_accepts_a_week_that_trace_folded_behind_a_badge
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
         session_id="appium/session-1",
-        rendered_trace_item_titles=visible,
+        rendered_trace_item_titles=visible[:4],
     )
 
     # When the worker checks the editor before Save
@@ -253,6 +257,7 @@ def test_default_editor_verifier_accepts_a_week_that_trace_folded_behind_a_badge
         "http://127.0.0.1:4723",
         ready,
         expected,
+        todos,
         CaptureControl.start(timeout_seconds=30),
     )
 
@@ -267,6 +272,7 @@ def test_default_editor_verifier_rejects_a_claim_the_live_screen_does_not_show(
 ) -> None:
     # Given Codex reports a row the editor is not actually showing
     expected = tuple(f"Row {index}" for index in range(1, 21))
+    todos = ()
     response = HttpResponse(
         200,
         b'{"value":"<App name=\\"lockScreenWallpaperSave\\">'
@@ -289,6 +295,7 @@ def test_default_editor_verifier_rejects_a_claim_the_live_screen_does_not_show(
         "http://127.0.0.1:4723",
         ready,
         expected,
+        todos,
         CaptureControl.start(timeout_seconds=30),
     )
 
@@ -301,6 +308,7 @@ def test_default_editor_verifier_rejects_a_panel_that_came_out_empty(
 ) -> None:
     # Given only one row rendered, which is what a cell with no calendar selected looks like
     expected = tuple(f"Row {index}" for index in range(1, 21))
+    todos = ()
     response = HttpResponse(
         200,
         b'{"value":"<App name=\\"lockScreenWallpaperSave\\"><Text name=\\"Row 1\\"/></App>"}',
@@ -322,6 +330,7 @@ def test_default_editor_verifier_rejects_a_panel_that_came_out_empty(
         "http://127.0.0.1:4723",
         ready,
         expected,
+        todos,
         CaptureControl.start(timeout_seconds=30),
     )
 

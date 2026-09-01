@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import ValidationError
 
-from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
+from ads_booster.capture.appium_codex_prompt import codex_appium_prompt, wallpaper_template
 from ads_booster.capture.appium_codex_validation import (
     CodexAppiumJobResult,
     expected_trace_item_titles,
@@ -160,6 +160,7 @@ class CodexAppiumJobAdapter:
                 return True
 
             result = self._run_codex(
+                contract,
                 job_root,
                 control,
                 verify_ready_editor,
@@ -182,6 +183,7 @@ class CodexAppiumJobAdapter:
 
     def _run_codex(
         self,
+        contract: CodexAppiumJobContract,
         job_root: Path,
         control: CaptureControl,
         on_ready: Callable[[CodexAppiumReadyState], bool],
@@ -189,7 +191,7 @@ class CodexAppiumJobAdapter:
     ) -> CodexAppiumJobResult:
         try:
             payload = self.codex.run_appium_job(
-                codex_appium_prompt(),
+                codex_appium_prompt(wallpaper_template(contract.identity.request_id)),
                 CodexAppiumJobResult.model_json_schema(),
                 workspace=job_root,
                 timeout_seconds=control.remaining_seconds(),
@@ -224,6 +226,7 @@ class CodexAppiumJobAdapter:
             contract.appium_server,
             ready,
             expected_titles,
+            contract.context.promotion_material.trace_todos,
             control,
         ):
             return False
