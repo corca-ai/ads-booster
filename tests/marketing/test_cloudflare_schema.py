@@ -155,6 +155,39 @@ def test_shadow_marketing_campaign_cannot_create_tool_actions() -> None:
         ).fetchone() == (0,)
 
 
+def test_adapter_capability_migration_seeds_trace_reference_installations() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection, through="0022_marketing_knowledge_snapshots.sql")
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace Korea', 'KR', 'ko', 'Asia/Seoul',
+                    '07:30', '19:30', 1, 1, 1)"""
+        )
+        _ = connection.executescript(
+            (MIGRATION_ROOT / "0023_marketing_adapter_capabilities.sql").read_text()
+        )
+
+        rows = connection.execute(
+            """SELECT capability_id, effect_class, owner_id, enabled, activation_state,
+                      length(descriptor_sha256), length(request_schema_sha256),
+                      length(receipt_schema_sha256)
+               FROM hosted_marketing_adapter_capabilities
+               WHERE account_id = 'trace_kr' ORDER BY capability_id"""
+        ).fetchall()
+
+        assert rows == [
+            ("capture.native_png", "local_artifact", "trace.native_capture", 1, "active", 64, 64, 64),
+            ("publish.threads", "external", "threads.publisher", 1, "registered_reference", 64, 64, 64),
+        ]
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(hosted_marketing_artifact_requests)")
+        }
+        assert "capability_binding_sha256" in columns
+
+
 def test_marketing_agent_events_have_single_ordered_revision_lineage() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection)

@@ -130,7 +130,7 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0018`–`0022` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0018`–`0023` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
 observations, evaluations, quarantined reference snapshots, learning candidates, and approval-bound
 principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
@@ -150,6 +150,13 @@ approval is required before a scoped principle is written. Generic recording, co
 and generated-media executors remain deferred, so no unsupported artifact capability is simulated.
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
+
+`0023` adds an account-scoped effect-adapter catalog and a context-receipt-scoped capability-binding
+ledger. Existing accounts receive active `capture.native_png` and reference-only
+`publish.threads` descriptors; the latter cannot open a new publishing path. The catalog stores the
+descriptor, schema digests, owner, effect class, enabled flag, and activation state so later request
+and manifest validation can bind execution to the exact creative context rather than a capability
+name alone. Core judgment remains outside this catalog.
 
 ## Threads publication and observation
 

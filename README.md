@@ -193,7 +193,7 @@ wrangler secret put TRACE_EVENT_INGEST_TOKEN
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
-`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, marketing-agent assisted actions, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql` before enabling Threads and migrations `0017`–`0022` before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, marketing-agent assisted actions, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql` before enabling Threads and migrations `0017`–`0023` before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
 
 ## Managed releases and compatibility
 

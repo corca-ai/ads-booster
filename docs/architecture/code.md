@@ -117,9 +117,14 @@ Their Cloudflare callbacks independently validate every receipt, claim, plan, as
 approval binding before writing a projection. `marketing-agent.js` owns assisted campaign gating,
 variant links, product-event intake, scheduled evaluation dispatch, and learning approval.
 
-Migrations `0018`–`0022` own the execution/observation lineage, assisted-shadow origin binding,
+Migrations `0018`–`0023` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
+
+`0023_marketing_adapter_capabilities.sql` owns account-scoped adapter registrations and
+context-receipt-scoped immutable capability bindings. It records descriptor/schema digests, owner,
+effect class, enabled state, and whether a capability is active or reference-only; it does not add a
+generic dispatcher or move capture/Threads effect ownership.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
