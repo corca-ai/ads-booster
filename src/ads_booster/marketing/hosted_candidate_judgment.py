@@ -98,6 +98,7 @@ class CandidateMaterializationRequest(CandidateModel):
     treatment: CreativeTreatment
     treatment_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     account: CandidateAccount
+    canonical_principles: Annotated[tuple[str, ...], Field(min_length=1, max_length=100)]
     knowledge_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     requested_by: Literal["hosted_workspace"]
 
@@ -111,6 +112,10 @@ class CandidateMaterializationRequest(CandidateModel):
             raise ValueError("media plan digest mismatch")
         if _json_sha256(self.treatment.model_dump(mode="json")) != self.treatment_sha256:
             raise ValueError("treatment digest mismatch")
+        if _json_sha256({"principles": list(self.canonical_principles)}) != (
+            self.knowledge_snapshot_sha256
+        ):
+            raise ValueError("knowledge snapshot digest does not match its principles")
         if (
             self.strategy_brief.campaign_id != self.campaign_id
             or self.media_plan.campaign_id != self.campaign_id
@@ -266,6 +271,7 @@ def _candidate_prompt(request: CandidateMaterializationRequest) -> str:
             "media_plan": request.media_plan.model_dump(mode="json"),
             "selected_treatment": request.treatment.model_dump(mode="json"),
             "account": request.account.model_dump(mode="json"),
+            "canonical_principles": list(request.canonical_principles),
         },
         ensure_ascii=False,
         sort_keys=True,

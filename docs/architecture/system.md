@@ -130,10 +130,12 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0018`–`0021` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0018`–`0022` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
 observations, evaluations, quarantined reference snapshots, learning candidates, and approval-bound
-principles. An assisted campaign must name a same-account shadow origin, carry an installed-evidence
+principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
+creative planning, and candidate materialization reuse that snapshot, so a later learning approval
+improves a future campaign without contaminating an active experiment. An assisted campaign must name a same-account shadow origin, carry an installed-evidence
 packet plus exact product-truth approval, and use the same broker for candidate materialization.
 Candidate materialization is a bounded Codex judgment: it returns one evidence-bound candidate and
 no capture, publish, or arbitrary tool action. Existing candidate/image review owns native capture;

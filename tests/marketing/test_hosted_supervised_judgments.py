@@ -194,6 +194,7 @@ def _candidate_task() -> MarketingTask:
         }
     )
     treatment_value = treatment.model_dump(mode="json")
+    canonical_principles = ["Keep one situation and one belief change per post."]
     return MarketingTask(
         task_id="candidate-task-1",
         run_id="candidate-run-1",
@@ -221,7 +222,8 @@ def _candidate_task() -> MarketingTask:
                     "language": "ko",
                     "timezone": "Asia/Seoul",
                 },
-                "knowledge_snapshot_sha256": "2" * 64,
+                "canonical_principles": canonical_principles,
+                "knowledge_snapshot_sha256": _digest({"principles": canonical_principles}),
                 "requested_by": "hosted_workspace",
             }
         ),

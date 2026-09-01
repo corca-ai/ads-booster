@@ -353,9 +353,10 @@ test("shadow campaign creates only an event and a judgment task", async () => {
   assert.equal(created.publication_allowed, false);
   assert.equal(DB.batches.length, 1);
   const statements = DB.batches[0];
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 5);
   const sql = statements.map((statement) => statement.sql).join("\n");
   assert.match(sql, /hosted_marketing_run_events/);
+  assert.match(sql, /hosted_marketing_knowledge_snapshots/);
   assert.match(sql, /marketing_judgment/);
   assert.doesNotMatch(sql, /hosted_workspace_candidates/);
   assert.doesNotMatch(sql, /hosted_marketing_tool_actions/);

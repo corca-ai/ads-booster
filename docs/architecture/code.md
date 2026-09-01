@@ -117,7 +117,7 @@ Their Cloudflare callbacks independently validate every receipt, claim, plan, as
 approval binding before writing a projection. `marketing-agent.js` owns assisted campaign gating,
 variant links, product-event intake, scheduled evaluation dispatch, and learning approval.
 
-Migrations `0018`–`0021` own the execution/observation lineage, assisted-shadow origin binding,
+Migrations `0018`–`0022` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 

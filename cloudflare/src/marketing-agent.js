@@ -430,6 +430,16 @@ export async function createShadowCampaign(env, account, input) {
       now,
     ),
     env.DB.prepare(
+      `INSERT INTO hosted_marketing_knowledge_snapshots
+        (campaign_id, schema_version, snapshot_json, snapshot_sha256, created_at)
+       VALUES (?, 'trace.marketing-knowledge.v1', ?, ?, ?)`,
+    ).bind(
+      campaignId,
+      canonicalJson({ principles: canonicalPrinciples }),
+      knowledgeSnapshotSha256,
+      now,
+    ),
+    env.DB.prepare(
       `INSERT INTO hosted_marketing_run_events
         (event_id, campaign_id, sequence, prior_revision, resulting_revision, event_type,
          event_json, event_sha256, idempotency_key, causation_id, correlation_id,
@@ -536,12 +546,14 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
     `SELECT campaign.campaign_id, campaign.account_id, campaign.feature_packet_id,
             campaign.feature_packet_sha256, campaign.mode, campaign.state,
             campaign.projection_revision, packet.packet_json, brief.brief_id,
-            brief.brief_json, brief.brief_sha256
+            brief.brief_json, brief.brief_sha256, knowledge.snapshot_json,
+            knowledge.snapshot_sha256
      FROM hosted_marketing_campaigns AS campaign
      JOIN hosted_marketing_feature_packets AS packet
        ON packet.packet_id = campaign.feature_packet_id
       AND packet.packet_sha256 = campaign.feature_packet_sha256
      JOIN hosted_marketing_strategy_briefs AS brief ON brief.campaign_id = campaign.campaign_id
+     JOIN hosted_marketing_knowledge_snapshots AS knowledge ON knowledge.campaign_id = campaign.campaign_id
      WHERE campaign.account_id = ? AND campaign.campaign_id = ? AND brief.brief_id = ?`,
   ).bind(account.account_id, campaignId, briefId).first();
   if (!row) throw new MarketingAgentHttpError(404, "승인할 strategy brief를 찾을 수 없습니다.");
@@ -616,7 +628,17 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
     const packet = JSON.parse(row.packet_json);
     const brief = JSON.parse(row.brief_json);
     taskId = crypto.randomUUID();
-    const knowledgeSnapshotSha256 = await canonicalSha256({ principles: SHADOW_PRINCIPLES });
+    const knowledgeSnapshot = requireObject(JSON.parse(row.snapshot_json), "campaign knowledge snapshot");
+    const canonicalPrinciples = requireArray(
+      knowledgeSnapshot.principles,
+      "campaign knowledge principles",
+      1,
+      100,
+    ).map((principle) => requiredString(principle, "campaign knowledge principle", 2000));
+    if (await canonicalSha256({ principles: canonicalPrinciples }) !== row.snapshot_sha256) {
+      throw new MarketingAgentHttpError(409, "campaign knowledge snapshot이 손상되었습니다.");
+    }
+    const knowledgeSnapshotSha256 = row.snapshot_sha256;
     const capabilitySnapshotSha256 = await canonicalSha256({
       capabilities: CREATIVE_PLANNING_CAPABILITIES,
     });
@@ -641,7 +663,7 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
           language: account.language,
           timezone: account.timezone,
         },
-        canonical_principles: [...SHADOW_PRINCIPLES],
+        canonical_principles: canonicalPrinciples,
         knowledge_snapshot_sha256: knowledgeSnapshotSha256,
         available_capabilities: [...CREATIVE_PLANNING_CAPABILITIES],
         capability_snapshot_sha256: capabilitySnapshotSha256,
@@ -903,6 +925,7 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
             packet.packet_json, packet.packet_sha256,
             brief.brief_json, brief.brief_sha256,
             plan.plan_json, plan.plan_sha256, plan.state AS plan_state,
+            knowledge.snapshot_json, knowledge.snapshot_sha256,
             experiment.experiment_id, experiment.registration_json,
             treatment.treatment_id, treatment.treatment_json, treatment.treatment_sha256,
             treatment.hypothesis_id,
@@ -920,6 +943,7 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
       AND truth.decision = 'approved'
      JOIN hosted_marketing_strategy_briefs AS brief ON brief.campaign_id = campaign.campaign_id
      JOIN hosted_marketing_media_plans AS plan ON plan.campaign_id = campaign.campaign_id
+     JOIN hosted_marketing_knowledge_snapshots AS knowledge ON knowledge.campaign_id = campaign.campaign_id
      JOIN hosted_marketing_experiments AS experiment ON experiment.campaign_id = campaign.campaign_id
      JOIN hosted_marketing_creative_treatments AS treatment
        ON treatment.plan_id = plan.plan_id AND treatment.experiment_id = experiment.experiment_id
@@ -974,7 +998,20 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
     "assignment_id",
   );
   const now = new Date().toISOString();
-  const knowledgeSnapshotSha256 = await canonicalSha256({ principles: SHADOW_PRINCIPLES });
+  const knowledgeSnapshot = requireObject(
+    JSON.parse(first.snapshot_json),
+    "campaign knowledge snapshot",
+  );
+  const canonicalPrinciples = requireArray(
+    knowledgeSnapshot.principles,
+    "campaign knowledge principles",
+    1,
+    100,
+  ).map((principle) => requiredString(principle, "campaign knowledge principle", 2000));
+  if (await canonicalSha256({ principles: canonicalPrinciples }) !== first.snapshot_sha256) {
+    throw new MarketingAgentHttpError(409, "campaign knowledge snapshot이 손상되었습니다.");
+  }
+  const knowledgeSnapshotSha256 = first.snapshot_sha256;
   const task = {
     schema_version: "1",
     task_id: taskId,
@@ -1002,6 +1039,7 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
         language: account.language,
         timezone: account.timezone,
       },
+      canonical_principles: canonicalPrinciples,
       knowledge_snapshot_sha256: knowledgeSnapshotSha256,
       requested_by: "hosted_workspace",
     },

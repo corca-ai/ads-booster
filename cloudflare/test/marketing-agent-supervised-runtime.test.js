@@ -156,6 +156,13 @@ function seedSupervisedCampaign(DB) {
     human_review_required: true,
     created_at: now,
   };
+  const knowledgeSnapshot = {
+    principles: [
+      "한 게시물은 한 사람의 한 상황과 한 가지 믿음 변화에 집중한다.",
+      "제품 주장을 먼저 잠그고 그 주장을 증명할 proof를 매체보다 먼저 선택한다.",
+    ],
+  };
+  const knowledgeSnapshotSha = digest(knowledgeSnapshot);
   DB.sqlite.exec(`
     INSERT INTO hosted_workspace_accounts
       (account_id, display_name, country, language, timezone, morning_time, evening_time,
@@ -200,6 +207,11 @@ function seedSupervisedCampaign(DB) {
     VALUES ('campaign-1', 'trace_kr', 'packet-installed-1', '${packetSha}', 'agent_v1',
             'assisted', 'origin-1', 'creative_planned', 4, 'outcome', '${now}', '${now}');
   `);
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_knowledge_snapshots
+      (campaign_id, schema_version, snapshot_json, snapshot_sha256, created_at)
+     VALUES ('campaign-1', 'trace.marketing-knowledge.v1', ?, ?, ?)`,
+  ).run(canonicalJson(knowledgeSnapshot), knowledgeSnapshotSha, now);
   DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_product_truth_approvals
       (approval_id, packet_id, packet_sha256, approved_claim_ids_json,
@@ -318,6 +330,12 @@ async function materializeOne(DB, projectionRevision) {
   );
   const task = claimTask(DB, requested.task_id);
   const payload = JSON.parse(task.task_json).payload;
+  const knowledge = DB.sqlite.prepare(
+    `SELECT snapshot_json, snapshot_sha256 FROM hosted_marketing_knowledge_snapshots
+     WHERE campaign_id = 'campaign-1'`,
+  ).get();
+  assert.deepEqual(payload.canonical_principles, JSON.parse(knowledge.snapshot_json).principles);
+  assert.equal(payload.knowledge_snapshot_sha256, knowledge.snapshot_sha256);
   const candidate = {
     schema_version: "trace.candidate-materialization.v1",
     topic: `topic ${requested.assignment_id}`,
@@ -741,6 +759,15 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
   const nextTask = DB.sqlite.prepare(
     "SELECT task_json FROM hosted_workspace_capture_tasks WHERE task_id = ?",
   ).get(nextCampaign.task_id);
+  const nextKnowledge = DB.sqlite.prepare(
+    `SELECT snapshot_json, snapshot_sha256 FROM hosted_marketing_knowledge_snapshots
+     WHERE campaign_id = 'campaign-next'`,
+  ).get();
+  assert.equal(nextKnowledge.snapshot_sha256, JSON.parse(nextTask.task_json).payload.knowledge_snapshot_sha256);
+  assert.deepEqual(
+    JSON.parse(nextKnowledge.snapshot_json).principles,
+    JSON.parse(nextTask.task_json).payload.canonical_principles,
+  );
   assert.ok(
     JSON.parse(nextTask.task_json).payload.canonical_principles.includes(
       learningCandidate.statement,

@@ -123,6 +123,9 @@ function strategyBrief(packet) {
 function approvalDb({ workers = true } = {}) {
   const packet = featurePacket();
   const brief = strategyBrief(packet);
+  const knowledgeSnapshot = {
+    principles: ["한 게시물은 한 사람의 한 상황과 한 가지 믿음 변화에 집중한다."],
+  };
   const batches = [];
   return {
     packet,
@@ -164,6 +167,8 @@ function approvalDb({ workers = true } = {}) {
                   brief_id: brief.brief_id,
                   brief_json: canonicalJson(brief),
                   brief_sha256: digest(brief),
+                  snapshot_json: canonicalJson(knowledgeSnapshot),
+                  snapshot_sha256: digest(knowledgeSnapshot),
                 };
               }
               throw new Error(`unexpected first SQL: ${sql}`);

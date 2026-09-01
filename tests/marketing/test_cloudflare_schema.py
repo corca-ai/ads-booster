@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -1000,3 +1001,62 @@ def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() ->
         } <= candidate_columns
         assert {"capture_task_id", "artifact_sha256"} <= feedback_columns
         assert "required_capability" in task_columns
+
+
+def test_knowledge_snapshot_migration_backfills_the_existing_strategy_task() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection, through="0021_marketing_artifact_assignment_lineage.sql")
+        principles = '["One post has one situation."]'
+        digest = "a" * 64
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30',
+                    1, 'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_feature_packets
+            (packet_id, feature_id, schema_version, lifecycle, repository, mutable_ref,
+             resolved_commit_sha, tree_sha, packet_json, packet_sha256, publication_allowed,
+             observed_at, created_at)
+            VALUES ('packet-1', 'feature-1', 'trace.feature-evidence.v1', 'source_candidate',
+                    'corca-ai/trace', 'develop', ?, ?, '{}', ?, 0, 'now', 'now')""",
+            ("b" * 40, "c" * 40, digest),
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_campaigns
+            (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
+             mode, state, projection_revision, business_outcome, created_at, updated_at)
+            VALUES ('campaign-1', 'trace_kr', 'packet-1', ?, 'agent_v1', 'shadow',
+                    'experiment_registered', 2, 'outcome', 'now', 'now')""",
+            (digest,),
+        )
+        task_payload = json.dumps(
+            {
+                "payload": {
+                    "campaign_id": "campaign-1",
+                    "judgment": "shadow_strategy",
+                    "canonical_principles": json.loads(principles),
+                    "knowledge_snapshot_sha256": digest,
+                }
+            },
+            separators=(",", ":"),
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_capture_tasks
+            (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+             task_json, state, dispatch_mode, kind, created_at, updated_at)
+            VALUES ('task-1', 'run-1', 'trace_kr', '', 1, 'strategy:campaign-1', ?, 'succeeded',
+                    'worker_broker', 'marketing_judgment', 'now', 'now')""",
+            (task_payload,),
+        )
+
+        _ = connection.executescript(
+            (MIGRATION_ROOT / "0022_marketing_knowledge_snapshots.sql").read_text()
+        )
+
+        assert connection.execute(
+            """SELECT snapshot_json, snapshot_sha256
+            FROM hosted_marketing_knowledge_snapshots WHERE campaign_id = 'campaign-1'"""
+        ).fetchone() == ('{"principles":["One post has one situation."]}', digest)

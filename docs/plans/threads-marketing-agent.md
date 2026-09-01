@@ -73,7 +73,10 @@ publication lineage, short-lived variant links, versioned product-event intake, 
 direct-response evaluation, learning candidates, and approval-bound principles. The deterministic
 evaluator uses complete eligible blocks, coverage, windows, and guardrails; it refuses causal
 claims without an eligible estimator and requires replicated independent campaigns before creating
-a learning candidate. Shadow or source-only campaigns cannot bind a candidate.
+a learning candidate. Each campaign freezes the approved knowledge snapshot it will consume in
+strategy, creative, and candidate judgments, so a later learning approval improves a future
+campaign without contaminating an active experiment. Shadow or source-only campaigns cannot bind a
+candidate.
 
 ## Fixed decisions
 
@@ -197,8 +200,9 @@ provisional and durable principles initially require independent lineages, repli
 approval.
 
 Ledger, conservative evaluator, replication gate, scheduled evaluation dispatch, quarantined
-reference research, and exact learning approval are implemented. Durable promotion remains a human
-decision; multi-account generalization and automatic promotion are deliberately absent.
+reference research, exact learning approval, and immutable campaign knowledge snapshots are
+implemented. Durable promotion remains a human decision; multi-account generalization and automatic
+promotion are deliberately absent.
 
 ### P6 — hardening and autonomy
 
