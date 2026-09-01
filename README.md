@@ -46,11 +46,16 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
    acknowledges Save. This binds collection to the final Save generation rather than an earlier
    lifecycle export from the same request.
 7. The worker independently verifies PNG size/SHA-256, request digest, nonce, bundle ID, Simulator
-   UDID, dimensions, and `native_appium` provenance from the native manifest. Trace renders the
-   same complete `wallpaperPreview` shown in its lock-screen settings screen, including the
-   configured Trace content and lock-screen UI, into that bound PNG. The worker returns this native
-   preview unchanged; it does not ask ImageGen to redraw iPhone UI or splice fixed image bands. It
-   then queues the final callback durably and retries callback delivery without rerunning the job.
+   UDID, dimensions, and `native_appium` provenance from the Trace manifest. That Trace PNG is an
+   intermediate `trace_wallpaper`. A second official Codex turn enables `image_generation`, receives
+   the packaged default iPhone date/time reference, and replaces only the localized date and time.
+   It must preserve the reference's neutral white color, typography, hierarchy, spacing, and top
+   placement. Backgrounds, phone frames, status bars, widgets, notifications, and editor chrome are
+   rejected. The worker rescales that layer to the Trace canvas, composites it over the verified
+   Trace PNG, and records source, prompt, UI-layer, and final digests in
+   `trace.imagen-ios-ui.v1`. The returned `imagen_ios_ui` image is a generated copy of default
+   iPhone UI, not proof that iOS applied a system wallpaper. The worker then queues the final callback
+   durably and retries callback delivery without rerunning the job.
 8. Cloudflare writes the accepted image to R2 and state to D1. Caption and image review remain
    mandatory. Final image approval reaches `submitted` and atomically records either a strictly-next
    morning/evening publication or a terminal OFF cancellation; manual-slot candidates are excluded.
