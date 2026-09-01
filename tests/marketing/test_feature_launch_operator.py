@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, override
 
+import pytest
+
 from ads_booster.contracts.marketing_agent import (
     ClaimStatus,
     EvidenceKind,
@@ -26,12 +28,14 @@ from ads_booster.marketing.feature_launch_operator import (
     FeatureLaunchExperimentOperator,
     FeatureLaunchHand,
     FeatureLaunchObservation,
+    FeatureLaunchOperatorError,
     FeatureLaunchPlanningContext,
     FeatureLaunchRuntimeContext,
     FeatureLaunchSkillRegistry,
     FeatureLaunchTask,
     MarketingGoal,
 )
+from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
     Budget,
@@ -80,11 +84,13 @@ class FakeFeatureLaunchHand(FeatureLaunchHand):
         packet_sha256: str,
         proposal_sha256: str,
         evidence_status: Literal["sufficient", "insufficient"] = "sufficient",
+        counter_evidence_found: bool = False,
         mismatched_lineage: bool = False,
     ) -> None:
         self.packet_sha256: str = packet_sha256
         self.proposal_sha256: str = proposal_sha256
         self.evidence_status: Literal["sufficient", "insufficient"] = evidence_status
+        self.counter_evidence_found: bool = counter_evidence_found
         self.mismatched_lineage: bool = mismatched_lineage
         self.calls: list[ToolCall] = []
         self.observation_calls: list[ToolReceipt] = []
@@ -116,7 +122,7 @@ class FakeFeatureLaunchHand(FeatureLaunchHand):
             source_ref="fake://held-out-market-signal",
             source_sha256="e" * 64,
             evidence_status=self.evidence_status,
-            counter_evidence_found=True,
+            counter_evidence_found=self.counter_evidence_found,
             observed_at=NOW,
         )
 
@@ -264,6 +270,8 @@ def test_feature_launch_operator_completes_receipt_grounded_experiment(tmp_path:
     assert evaluation.process_passed
     assert evaluation.outcome_passed
     assert evaluation.state == "completed"
+    assert planner.calls[0].product == FeaturePlanningProjection.from_packet(packet)
+    assert not hasattr(planner.calls[0].product, "claims")
     assert store.load("session-1") == completed
 
 
@@ -301,6 +309,163 @@ def test_committed_decision_replays_after_restart_without_calling_planner(tmp_pa
     assert completed.state is RuntimeState.COMPLETED
     assert planner.calls == 0
     assert len(hand.calls) == 1
+
+
+def test_forged_persisted_observation_is_stopped_before_completion(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    store = JsonSessionStore(tmp_path)
+    runtime = MarketingAgentRuntime()
+    session = runtime.append_persisted_event(
+        store,
+        AgentSession("session-1", Budget(1, 1)),
+        event_type="feature_goal_committed",
+        payload=task.goal.model_dump(mode="json"),
+        now=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_decision_committed",
+        payload=proposal.model_dump(mode="json"),
+        now=NOW,
+    )
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+    admission = _registry().admit(task, proposal)
+    session = runtime.request_persisted_tool(store, session, admission, now=NOW)
+    session = runtime.execute_persisted_tool(store, session, hand, now=NOW)
+    forged = FeatureLaunchObservation(
+        schema_version="trace.feature-launch-observation.v1",
+        observation_id="forged-observation",
+        receipt_sha256="c" * 64,
+        call_sha256=admission.call.digest,
+        request_sha256="7" * 64,
+        feature_packet_sha256=contract_sha256(packet),
+        proposal_sha256=contract_sha256(proposal),
+        source_ref="untrusted://forged-observation",
+        source_sha256="e" * 64,
+        evidence_status="sufficient",
+        counter_evidence_found=True,
+        observed_at=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_observation_recorded",
+        payload=forged.model_dump(mode="json"),
+        now=NOW,
+    )
+    planner = NoCallPlanner()
+
+    stopped = FeatureLaunchExperimentOperator(runtime).run(
+        session, _context(store, task, planner, hand)
+    )
+
+    assert stopped.state is RuntimeState.INCONCLUSIVE
+    assert planner.calls == 0
+    assert len(hand.calls) == 1
+
+
+def test_forged_persisted_evaluation_cannot_complete_the_feature_session(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    store = JsonSessionStore(tmp_path)
+    runtime = MarketingAgentRuntime()
+    session = runtime.append_persisted_event(
+        store,
+        AgentSession("session-1", Budget(1, 1)),
+        event_type="feature_goal_committed",
+        payload=task.goal.model_dump(mode="json"),
+        now=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_decision_committed",
+        payload=proposal.model_dump(mode="json"),
+        now=NOW,
+    )
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+    admission = _registry().admit(task, proposal)
+    session = runtime.request_persisted_tool(store, session, admission, now=NOW)
+    session = runtime.execute_persisted_tool(store, session, hand, now=NOW)
+    forged = FeatureLaunchEvaluation(
+        schema_version="trace.feature-launch-evaluation.v1",
+        evaluation_id="forged-evaluation",
+        goal_id=task.goal.goal_id,
+        proposal_sha256=contract_sha256(proposal),
+        observation_sha256="d" * 64,
+        process_passed=True,
+        outcome_passed=True,
+        state="completed",
+        reasons=("forged",),
+        evaluated_at=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_evaluated",
+        payload=forged.model_dump(mode="json"),
+        now=NOW,
+    )
+    planner = NoCallPlanner()
+
+    stopped = FeatureLaunchExperimentOperator(runtime).run(
+        session, _context(store, task, planner, hand)
+    )
+
+    assert stopped.state is RuntimeState.INCONCLUSIVE
+    assert planner.calls == 0
+    assert len(hand.calls) == 1
+
+
+def test_multiple_persisted_decisions_are_stopped_before_the_feature_hand_runs(
+    tmp_path: Path,
+) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    store = JsonSessionStore(tmp_path)
+    runtime = MarketingAgentRuntime()
+    session = runtime.append_persisted_event(
+        store,
+        AgentSession("session-1", Budget(1, 1)),
+        event_type="feature_goal_committed",
+        payload=task.goal.model_dump(mode="json"),
+        now=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_decision_committed",
+        payload=proposal.model_dump(mode="json"),
+        now=NOW,
+    )
+    session = runtime.append_persisted_event(
+        store,
+        session,
+        event_type="feature_decision_committed",
+        payload=proposal.model_dump(mode="json"),
+        now=NOW,
+    )
+    planner = NoCallPlanner()
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+
+    stopped = FeatureLaunchExperimentOperator(runtime).run(
+        session, _context(store, task, planner, hand)
+    )
+
+    assert stopped.state is RuntimeState.INCONCLUSIVE
+    assert planner.calls == 0
+    assert hand.calls == []
 
 
 def test_blocked_claim_is_stopped_before_the_hand_runs(tmp_path: Path) -> None:
@@ -347,6 +512,29 @@ def test_insufficient_observation_is_outcome_inconclusive_but_process_passes(
     assert "insufficient_evidence" in evaluation.reasons
 
 
+def test_counter_evidence_prevents_feature_experiment_completion(tmp_path: Path) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = ScriptedPlanner(proposal)
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet),
+        proposal_sha256=contract_sha256(proposal),
+        counter_evidence_found=True,
+    )
+
+    result = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+        AgentSession("session-1", Budget(1, 1)),
+        _context(JsonSessionStore(tmp_path), task, planner, hand),
+    )
+
+    evaluation = _evaluation(result)
+    assert result.state is RuntimeState.INCONCLUSIVE
+    assert evaluation.process_passed
+    assert not evaluation.outcome_passed
+    assert "counter_evidence_found" in evaluation.reasons
+
+
 def test_restart_after_persisted_evaluation_recovers_the_terminal_state(tmp_path: Path) -> None:
     packet = _packet()
     task = _task(packet)
@@ -382,6 +570,27 @@ def test_restart_after_persisted_evaluation_recovers_the_terminal_state(tmp_path
     assert recovered.state is RuntimeState.COMPLETED
     assert no_call_planner.calls == 0
     assert no_call_hand.calls == []
+
+
+def test_terminal_feature_session_without_a_goal_is_rejected_before_any_hand_call(
+    tmp_path: Path,
+) -> None:
+    packet = _packet()
+    task = _task(packet)
+    proposal = _proposal(task)
+    planner = NoCallPlanner()
+    hand = FakeFeatureLaunchHand(
+        packet_sha256=contract_sha256(packet), proposal_sha256=contract_sha256(proposal)
+    )
+
+    with pytest.raises(FeatureLaunchOperatorError, match="terminal_feature_goal_missing"):
+        _ = FeatureLaunchExperimentOperator(MarketingAgentRuntime()).run(
+            AgentSession("session-1", Budget(1, 1), state=RuntimeState.COMPLETED),
+            _context(JsonSessionStore(tmp_path), task, planner, hand),
+        )
+
+    assert planner.calls == 0
+    assert hand.calls == []
 
 
 def test_awaiting_reconciliation_feature_session_returns_without_reinvocation(

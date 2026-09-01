@@ -139,19 +139,26 @@ execution methods are public effect APIs; the non-durable transforms are private
 General planner, skill-registry, context-projection, and outcome-evaluation owners remain separate
 from effect adapters; the implemented fake-backend verticals are described below.
 
+`marketing/planning_projections.py` owns `FeaturePlanningProjection`, the shared data-only planner
+projection for the Feature Launch and Evidence Research verticals. It contains packet identity/digest,
+lifecycle, and claim IDs only; raw claim text, source references, evidence payloads, capability data,
+and instructions remain outside planner context.
+
 `marketing/feature_launch_operator.py` owns the first, narrow reasoning vertical over that harness.
 It defines `MarketingGoal`, a strict `DecisionProposal`, one versioned skill registry action, receipt-
 bound observation, and deterministic process/outcome graders. The planner can return a proposal but
 never a `ToolCall`; `FeatureLaunchSkillRegistry` derives the call from the pinned feature packet,
 approved claim set, action schema, and descriptor. Canonical workflow events carry validated payloads,
 so the operator can reconstruct a committed proposal after restart without reinvoking the planner.
-This module accepts only an observe effect class and has no Cloudflare or live-channel backend.
+It revalidates a persisted decision, observation, and evaluation against the registry, runtime receipt,
+and event-time prefix before finalizing; terminal sessions audit that trace without calling a hand. This
+module accepts only an observe effect class and has no Cloudflare or live-channel backend.
 
 `marketing/evidence_research_operator.py` owns a separate bounded research loop over the same
 runtime. Its registry maps the three distinct research scopes—product truth, customer intelligence,
 and market evidence—to canonical versioned observe-only actions; it derives each call from the pinned
 goal, feature packet, decision, and action schema. The planner can emit a typed decision but never a
-raw call. It receives `ResearchObservationSummary` plus `ResearchProductProjection`: both deliberately
+raw call. It receives `ResearchObservationSummary` plus `FeaturePlanningProjection`: both deliberately
 exclude raw sources, claim text, and instructions. The evaluator closes a scope only from a
 receipt-bound sufficient observation and revalidates each persisted decision/receipt/observation and
 historical evaluation against its trace prefix before another hand can run. The module owns replay of a

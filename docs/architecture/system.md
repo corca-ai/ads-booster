@@ -178,7 +178,11 @@ receipt-bound observation, deterministic process/outcome evaluation, and a termi
 canonical session events. It exposes exactly one registry action,
 `observe.feature_launch_experiment`; the registry derives a descriptor-bound call from the feature
 packet, approved claim IDs, and request-schema digest. A restart replays a committed decision without
-calling the planner. This is an evaluation vertical, not a new live research or publication path.
+calling the planner. Planner context receives only the shared data-only product projection, and replay
+revalidates persisted observation/evaluation lineage before completion; terminal sessions audit the
+same trace without a hand reinvocation. Sufficient evidence still becomes inconclusive if the
+observation finds counter-evidence against the proposed falsifier. This is an evaluation vertical, not
+a new live research or publication path.
 
 `evidence_research_operator` is the first bounded multi-step research vertical. It lets a strict
 planner choose exactly one unobserved, observe-only hand at a time from `product_truth`,

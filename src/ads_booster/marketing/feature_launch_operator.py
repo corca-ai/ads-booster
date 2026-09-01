@@ -8,7 +8,7 @@ observation. It deliberately cannot publish, spend, contact customers, or mutate
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Annotated, Literal, Protocol, Self
@@ -22,6 +22,7 @@ from ads_booster.contracts.marketing_agent import (
     contract_sha256,
 )
 from ads_booster.contracts.models import ContractModel, Sha256Digest
+from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
     EffectDisposition,
@@ -138,7 +139,7 @@ class FeatureLaunchTask:
 @dataclass(frozen=True, slots=True)
 class FeatureLaunchPlanningContext:
     goal: MarketingGoal
-    feature_packet: FeatureEvidencePacket
+    product: FeaturePlanningProjection
     available_actions: tuple[AvailableAction, ...]
 
 
@@ -294,6 +295,8 @@ class FeatureLaunchEvaluator:
             reasons.append("observation_proposal_mismatch")
         if observation.evidence_status != "sufficient":
             reasons.append("insufficient_evidence")
+        if observation.counter_evidence_found:
+            reasons.append("counter_evidence_found")
         if not execution.proposal.counter_evidence_question or not execution.proposal.falsifier:
             reasons.append("missing_counter_evidence_or_falsifier")
         if reasons:
@@ -331,12 +334,14 @@ class FeatureLaunchExperimentOperator:
         self._runtime: MarketingAgentRuntime = runtime
 
     def run(self, session: AgentSession, context: FeatureLaunchRuntimeContext) -> AgentSession:
+        if session.state is RuntimeState.AWAITING_RECONCILIATION:
+            return session
         if session.state in {
-            RuntimeState.AWAITING_RECONCILIATION,
             RuntimeState.STOPPED,
             RuntimeState.INCONCLUSIVE,
             RuntimeState.COMPLETED,
         }:
+            _validate_terminal_feature_session(session, context)
             return session
         prepared = self._prepare(session, context)
         if isinstance(prepared, AgentSession):
@@ -356,8 +361,8 @@ class FeatureLaunchExperimentOperator:
             RuntimeState.COMPLETED,
         }:
             return current
-        current, proposal = self._plan_or_replay(current, context)
         try:
+            current, proposal = self._plan_or_replay(current, context)
             admission = context.dependencies.registry.admit(context.task, proposal)
         except FeatureLaunchOperatorError as error:
             return self._stop(current, context, str(error))
@@ -382,13 +387,15 @@ class FeatureLaunchExperimentOperator:
     def _plan_or_replay(
         self, session: AgentSession, context: FeatureLaunchRuntimeContext
     ) -> tuple[AgentSession, DecisionProposal]:
-        committed = _latest_model(session, "feature_decision_committed", DecisionProposal)
-        if committed is not None:
-            return session, committed
+        committed = _models(session, "feature_decision_committed", DecisionProposal)
+        if len(committed) > 1:
+            raise FeatureLaunchOperatorError("feature_decision_count_exceeds_one")
+        if committed:
+            return session, committed[0]
         proposal = context.dependencies.planner.propose(
             FeatureLaunchPlanningContext(
                 context.task.goal,
-                context.task.feature_packet,
+                FeaturePlanningProjection.from_packet(context.task.feature_packet),
                 context.dependencies.registry.available_actions(),
             )
         )
@@ -428,16 +435,28 @@ class FeatureLaunchExperimentOperator:
         execution: FeatureLaunchExecution,
         context: FeatureLaunchRuntimeContext,
     ) -> AgentSession:
+        observed = self._record_or_replay_observation(session, execution, context)
+        if isinstance(observed, AgentSession):
+            return observed
+        current, observation = observed
+        return self._evaluate_or_replay(current, execution, observation, context)
+
+    def _record_or_replay_observation(
+        self,
+        session: AgentSession,
+        execution: FeatureLaunchExecution,
+        context: FeatureLaunchRuntimeContext,
+    ) -> tuple[AgentSession, FeatureLaunchObservation] | AgentSession:
         receipt = _latest_receipt(session)
         if receipt is None:
             return self._stop(session, context, "missing_runtime_receipt")
         if receipt.disposition is not EffectDisposition.SUCCEEDED:
             return self._stop(session, context, f"receipt_{receipt.disposition}")
-        observation = _latest_observation(session)
-        if observation is None:
+        observations = _models(session, "feature_observation_recorded", FeatureLaunchObservation)
+        if len(observations) > 1:
+            return self._stop(session, context, "feature_observation_count_exceeds_one")
+        if not observations:
             observation = context.dependencies.hand.observation_for(receipt)
-            if not _observation_matches(execution, receipt, observation):
-                return self._stop(session, context, "observation_lineage_mismatch")
             session = self._runtime.append_persisted_event(
                 context.store,
                 session,
@@ -445,8 +464,33 @@ class FeatureLaunchExperimentOperator:
                 payload=_json_payload(observation),
                 now=context.now,
             )
-        persisted_evaluation = _latest_evaluation(session)
-        if persisted_evaluation is not None:
+        else:
+            observation = observations[0]
+        if not _observation_matches(execution, receipt, observation):
+            return self._stop(session, context, "observation_lineage_mismatch")
+        return session, observation
+
+    def _evaluate_or_replay(
+        self,
+        session: AgentSession,
+        execution: FeatureLaunchExecution,
+        observation: FeatureLaunchObservation,
+        context: FeatureLaunchRuntimeContext,
+    ) -> AgentSession:
+        evaluations = _models(session, "feature_evaluated", FeatureLaunchEvaluation)
+        if len(evaluations) > 1:
+            return self._stop(session, context, "feature_evaluation_count_exceeds_one")
+        if evaluations:
+            persisted_evaluation = evaluations[0]
+            error = _evaluation_validation_error(
+                session,
+                execution,
+                observation,
+                persisted_evaluation,
+                context.dependencies.evaluator,
+            )
+            if error is not None:
+                return self._stop(session, context, error)
             return self._finalize_evaluation(session, persisted_evaluation, context)
         evaluated_execution = FeatureLaunchExecution(
             session, execution.task, execution.proposal, execution.admission
@@ -500,6 +544,122 @@ class FeatureLaunchExperimentOperator:
         )
 
 
+def _evaluation_validation_error(
+    session: AgentSession,
+    execution: FeatureLaunchExecution,
+    observation: FeatureLaunchObservation,
+    persisted: FeatureLaunchEvaluation,
+    evaluator: FeatureLaunchEvaluator,
+) -> str | None:
+    indexed = tuple(
+        (index, event)
+        for index, event in enumerate(session.events)
+        if event.event_type == "feature_evaluated"
+    )
+    if len(indexed) != 1:
+        return "feature_evaluation_count_exceeds_one"
+    event_index, event = indexed[0]
+    if persisted.evaluated_at != event.occurred_at:
+        return "feature_evaluation_timestamp_mismatch"
+    prefix_execution = replace(
+        execution, session=replace(session, events=session.events[:event_index])
+    )
+    expected = evaluator.evaluate(prefix_execution, observation, now=event.occurred_at)
+    if not _evaluation_matches(persisted, expected):
+        return "persisted_feature_evaluation_mismatch"
+    return None
+
+
+def _evaluation_matches(
+    persisted: FeatureLaunchEvaluation, expected: FeatureLaunchEvaluation
+) -> bool:
+    return (
+        persisted.evaluation_id == expected.evaluation_id
+        and persisted.goal_id == expected.goal_id
+        and persisted.proposal_sha256 == expected.proposal_sha256
+        and persisted.observation_sha256 == expected.observation_sha256
+        and persisted.process_passed == expected.process_passed
+        and persisted.outcome_passed == expected.outcome_passed
+        and persisted.state == expected.state
+        and persisted.reasons == expected.reasons
+        and persisted.evaluated_at == expected.evaluated_at
+    )
+
+
+def _persisted_feature_execution(
+    session: AgentSession, context: FeatureLaunchRuntimeContext
+) -> FeatureLaunchExecution:
+    proposals = _models(session, "feature_decision_committed", DecisionProposal)
+    if len(proposals) != 1:
+        raise FeatureLaunchOperatorError("terminal_feature_decision_count_invalid")
+    try:
+        admission = context.dependencies.registry.admit(context.task, proposals[0])
+    except FeatureLaunchOperatorError as error:
+        raise FeatureLaunchOperatorError("terminal_feature_decision_invalid") from error
+    return FeatureLaunchExecution(session, context.task, proposals[0], admission)
+
+
+def _validate_terminal_feature_session(
+    session: AgentSession, context: FeatureLaunchRuntimeContext
+) -> None:
+    _validate_terminal_feature_envelope(session, context)
+    if session.state is RuntimeState.COMPLETED:
+        _validate_terminal_feature_evaluation(session, context, expected_state="completed")
+        return
+    if session.state is RuntimeState.INCONCLUSIVE:
+        evaluations = _models(session, "feature_evaluated", FeatureLaunchEvaluation)
+        if not evaluations:
+            if not any(event.event_type == "feature_stopped" for event in session.events):
+                raise FeatureLaunchOperatorError("terminal_feature_inconclusive_trace_missing")
+            return
+        _validate_terminal_feature_evaluation(session, context, expected_state="inconclusive")
+        return
+    raise FeatureLaunchOperatorError("terminal_feature_state_invalid")
+
+
+def _validate_terminal_feature_envelope(
+    session: AgentSession, context: FeatureLaunchRuntimeContext
+) -> None:
+    goal = _latest_model(session, "feature_goal_committed", MarketingGoal)
+    if goal is None:
+        raise FeatureLaunchOperatorError("terminal_feature_goal_missing")
+    if goal != context.task.goal:
+        raise FeatureLaunchOperatorError("persisted_goal_mismatch")
+    if not session.events or session.events[-1].event_type != "session_finalized":
+        raise FeatureLaunchOperatorError("terminal_feature_finalization_missing")
+    if session.events[-1].payload.get("state") != session.state:
+        raise FeatureLaunchOperatorError("terminal_feature_state_mismatch")
+    if session.state is RuntimeState.STOPPED:
+        raise FeatureLaunchOperatorError("terminal_feature_stop_state_invalid")
+
+
+def _validate_terminal_feature_evaluation(
+    session: AgentSession,
+    context: FeatureLaunchRuntimeContext,
+    *,
+    expected_state: Literal["completed", "inconclusive"],
+) -> None:
+    evaluations = _models(session, "feature_evaluated", FeatureLaunchEvaluation)
+    observations = _models(session, "feature_observation_recorded", FeatureLaunchObservation)
+    if len(evaluations) != 1 or len(observations) != 1:
+        raise FeatureLaunchOperatorError("terminal_feature_trace_count_invalid")
+    execution = _persisted_feature_execution(session, context)
+    receipt = _latest_receipt(session)
+    if receipt is None or receipt.disposition is not EffectDisposition.SUCCEEDED:
+        raise FeatureLaunchOperatorError("terminal_feature_receipt_invalid")
+    if not _observation_matches(execution, receipt, observations[0]):
+        raise FeatureLaunchOperatorError("terminal_feature_observation_invalid")
+    error = _evaluation_validation_error(
+        session,
+        execution,
+        observations[0],
+        evaluations[0],
+        context.dependencies.evaluator,
+    )
+    if error is not None or evaluations[0].state != expected_state:
+        raise FeatureLaunchOperatorError(error or "terminal_feature_evaluation_invalid")
+
+
 def _latest_model[T: ContractModel](
     session: AgentSession, event_type: str, model: type[T]
 ) -> T | None:
@@ -509,19 +669,21 @@ def _latest_model[T: ContractModel](
     return None
 
 
+def _models[T: ContractModel](
+    session: AgentSession, event_type: str, model: type[T]
+) -> tuple[T, ...]:
+    return tuple(
+        model.model_validate(event.payload)
+        for event in session.events
+        if event.event_type == event_type
+    )
+
+
 def _latest_receipt(session: AgentSession) -> ToolReceipt | None:
     for event in reversed(session.events):
         if event.event_type in {f"tool_{item}" for item in EffectDisposition}:
             return tool_receipt_from_event(event)
     return None
-
-
-def _latest_observation(session: AgentSession) -> FeatureLaunchObservation | None:
-    return _latest_model(session, "feature_observation_recorded", FeatureLaunchObservation)
-
-
-def _latest_evaluation(session: AgentSession) -> FeatureLaunchEvaluation | None:
-    return _latest_model(session, "feature_evaluated", FeatureLaunchEvaluation)
 
 
 def _observation_matches(

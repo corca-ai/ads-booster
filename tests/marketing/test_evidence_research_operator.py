@@ -31,11 +31,11 @@ from ads_booster.marketing.evidence_research_operator import (
     ResearchDecision,
     ResearchObservation,
     ResearchPlanningContext,
-    ResearchProductProjection,
     ResearchScope,
     ResearchState,
     ResearchStepEvaluation,
 )
+from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
     Budget,
@@ -293,7 +293,7 @@ def test_research_orchestrator_selects_three_isolated_hands_and_replans(tmp_path
     assert [scope for scope, hand in hands.items() if hand.calls] == list(ResearchScope)
     assert [len(hand.calls) for hand in hands.values()] == [1, 1, 1]
     assert all(
-        context.product == ResearchProductProjection.from_packet(task.feature_packet)
+        context.product == FeaturePlanningProjection.from_packet(task.feature_packet)
         for context in planner.contexts
     )
     assert all(
@@ -311,7 +311,7 @@ def test_research_decision_replays_after_restart_without_planner_call(tmp_path: 
     decision = initial_planner.propose(
         ResearchPlanningContext(
             task.goal,
-            ResearchProductProjection.from_packet(task.feature_packet),
+            FeaturePlanningProjection.from_packet(task.feature_packet),
             _registry().actions,
             (),
         )
@@ -353,7 +353,7 @@ def test_receipt_restart_records_observation_without_reexecuting_hand(tmp_path: 
     decision = initial_planner.propose(
         ResearchPlanningContext(
             task.goal,
-            ResearchProductProjection.from_packet(task.feature_packet),
+            FeaturePlanningProjection.from_packet(task.feature_packet),
             _registry().actions,
             (),
         )
@@ -399,7 +399,7 @@ def test_forged_persisted_observation_cannot_complete_or_replan_research(tmp_pat
     decision = initial_planner.propose(
         ResearchPlanningContext(
             task.goal,
-            ResearchProductProjection.from_packet(task.feature_packet),
+            FeaturePlanningProjection.from_packet(task.feature_packet),
             _registry().actions,
             (),
         )
@@ -684,7 +684,7 @@ def test_awaiting_reconciliation_session_returns_without_another_planner_or_hand
     decision = initial_planner.propose(
         ResearchPlanningContext(
             task.goal,
-            ResearchProductProjection.from_packet(task.feature_packet),
+            FeaturePlanningProjection.from_packet(task.feature_packet),
             _registry().actions,
             (),
         )

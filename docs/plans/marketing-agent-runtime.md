@@ -37,7 +37,10 @@ The implemented provider-neutral runtime uses a serializable host-local store an
 it remains deliberately usable before Cloudflare is exposed as a tool. The first vertical is the
 observe-only `feature_launch_experiment.v1` skill. It can persist/replay a strict decision, derive one
 registry-bound observation call, require a receipt-bound observation, and deterministically grade the
-trace and experiment proposal. It has no real external side effect.
+trace and experiment proposal. Its planner receives a data-only product projection; persisted
+observation/evaluation and terminal traces are revalidated before completion. It has no real external
+side effect. A counter-evidence finding is an explicit inconclusive outcome, never a completed
+experiment proposal.
 
 The second vertical, `evidence_research.v1`, makes the research portion genuinely iterative without
 loosening authority: it can choose an unobserved `product_truth`, `customer_intelligence`, or

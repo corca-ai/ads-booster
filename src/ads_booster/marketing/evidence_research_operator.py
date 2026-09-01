@@ -19,10 +19,10 @@ from pydantic import Field, model_validator
 from ads_booster.contracts.marketing_agent import (
     AgentIdentifier,
     FeatureEvidencePacket,
-    FeatureLifecycle,
     contract_sha256,
 )
 from ads_booster.contracts.models import ContractModel, Sha256Digest
+from ads_booster.marketing.planning_projections import FeaturePlanningProjection
 from ads_booster.marketing.runtime import (
     AgentSession,
     EffectDisposition,
@@ -141,26 +141,6 @@ class ResearchObservationSummary(ContractModel):
     supported_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
 
 
-class ResearchProductProjection(ContractModel):
-    """Planner-safe product facts: identifiers and lifecycle only, never source-derived text."""
-
-    schema_version: Literal["trace.research-product-projection.v1"]
-    feature_packet_id: AgentIdentifier
-    feature_packet_sha256: Sha256Digest
-    lifecycle: FeatureLifecycle
-    claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)]
-
-    @classmethod
-    def from_packet(cls, packet: FeatureEvidencePacket) -> Self:
-        return cls(
-            schema_version="trace.research-product-projection.v1",
-            feature_packet_id=packet.packet_id,
-            feature_packet_sha256=contract_sha256(packet),
-            lifecycle=packet.lifecycle,
-            claim_ids=tuple(claim.claim_id for claim in packet.claims),
-        )
-
-
 class ResearchStepEvaluation(ContractModel):
     schema_version: Literal["trace.evidence-research-evaluation.v1"]
     evaluation_id: AgentIdentifier
@@ -205,7 +185,7 @@ class EvidenceResearchTask:
 @dataclass(frozen=True, slots=True)
 class ResearchPlanningContext:
     goal: EvidenceResearchGoal
-    product: ResearchProductProjection
+    product: FeaturePlanningProjection
     available_actions: tuple[ResearchAction, ...]
     observations: tuple[ResearchObservationSummary, ...]
 
@@ -476,7 +456,7 @@ class EvidenceResearchOperator:
             decision = context.dependencies.planner.propose(
                 ResearchPlanningContext(
                     context.task.goal,
-                    ResearchProductProjection.from_packet(context.task.feature_packet),
+                    FeaturePlanningProjection.from_packet(context.task.feature_packet),
                     available_actions,
                     tuple(_summary(item) for item in observations),
                 )
