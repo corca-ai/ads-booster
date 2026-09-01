@@ -10,6 +10,7 @@ from urllib.parse import quote
 import httpx2
 from pydantic import ValidationError
 
+from ads_booster.capture.appium_codex_validation import rendered_titles_are_credible
 from ads_booster.capture.appium_endpoint import validate_appium_server_url
 from ads_booster.capture.capture_safety import CaptureAdapterError
 from ads_booster.capture.simctl_command import CommandRunner, SubprocessCommandRunner
@@ -65,9 +66,15 @@ class DefaultAppiumEditorVerifier:
         visible_source = self._read_source(appium_server, ready.session_id, control)
         if visible_source is None:
             return False
-        return _WALLPAPER_EDITOR_IDENTIFIER in visible_source and all(
-            title in visible_source for title in expected_titles
-        )
+        if _WALLPAPER_EDITOR_IDENTIFIER not in visible_source:
+            return False
+        # Check the claim, not the request. Trace folds the rows that do not fit into a
+        # "+N" badge, so looking for all twenty requested rows in the source fails on a
+        # screen that is built correctly. What can be checked is that every row Codex says
+        # it can see is really there, which is the claim the Save gate rests on.
+        if not all(title in visible_source for title in ready.rendered_trace_item_titles):
+            return False
+        return rendered_titles_are_credible(ready.rendered_trace_item_titles, expected_titles)
 
     def verify_process_binding(
         self,

@@ -10,6 +10,7 @@ from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
 from ads_booster.capture.appium_codex_validation import (
     CodexAppiumJobResult,
     expected_trace_item_titles,
+    rendered_titles_are_credible,
     require_completed_result,
     require_saved_state,
     result_matches_ready,
@@ -217,7 +218,7 @@ class CodexAppiumJobAdapter:
         expected_titles: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
-        if ready.rendered_trace_item_titles != expected_titles:
+        if not rendered_titles_are_credible(ready.rendered_trace_item_titles, expected_titles):
             return False
         if not self.editor_verifier.verify(
             contract.appium_server,
