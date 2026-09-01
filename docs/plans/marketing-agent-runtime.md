@@ -161,7 +161,15 @@ quality proxies.
 
 ## First implementation slice
 
-Create `ads_booster.marketing.runtime` with domain contracts, in-memory session store, scripted
-planner protocol, skill registry, fake tool backend, and focused unit/eval fixtures. It must have no
-Cloudflare import and no real external side effect. After the acceptance checks pass, perform a fresh
-design critique, then add a thin control-plane adapter in a new post-merge PR.
+Implemented: `ads_booster.marketing.runtime` now supplies provider-neutral domain contracts, a
+host-local JSON session store with append-only CAS/atomic persistence, one pending dispatch,
+one-use external grant consumption, receipt binding, and a fake-backend test seam. Its durable
+driver persists the pending dispatch and an execution-start checkpoint before any backend call; a
+restart after that checkpoint only reconciles, never retries the effect. It has no Cloudflare import
+and no real external side effect.
+
+Next: add the `Feature Launch Experiment Operator` above this harness: strict planner protocol,
+versioned skill registry, context projection, fake research/effect hands, observation validation,
+typed evaluator decisions, and held-out process/outcome fixtures. A committed decision must replay
+without calling the planner again. After those acceptance checks pass, perform a fresh design critique,
+then add a thin control-plane adapter in a new post-merge PR.

@@ -126,6 +126,18 @@ context-receipt-scoped immutable capability bindings. It records descriptor/sche
 effect class, enabled state, and whether a capability is active or reference-only; it does not add a
 generic dispatcher or move capture/Threads effect ownership.
 
+`marketing/runtime.py` owns the provider-neutral, local session-and-dispatch harness. It has no
+Cloudflare, Appium, Threads, or model-provider import. `MarketingAgentRuntime` admits one
+descriptor-bound `ToolCall` at a time, reserves budget, requires and consumes an exact one-use
+grant for external effects, and validates the returned receipt against the pending call and approval
+digest. `request_persisted_tool` CASes the admission; `execute_persisted_tool` CASes an
+execution-start event before it calls a `ToolBackend`, and a restart-recovered execution can only be
+closed by `reconcile_interrupted_execution`. `JsonSessionStore` supplies host-local append-only CAS
+persistence, file locking, atomic replacement, and serialization integrity checking for replay tests;
+it is not a distributed lease or production control-plane store. Planner, skill registry, context
+projection, and outcome evaluation intentionally remain separate, unimplemented owners rather than
+being embedded in effect adapters.
+
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
 `threads/*` modules keep their present responsibilities and will be referenced through immutable
