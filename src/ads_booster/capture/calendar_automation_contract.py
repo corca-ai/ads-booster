@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ads_booster.capture.codex_appium_job import CodexAppiumJobContract
 
 _TIME_PREFIX: Final = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)\s+(.+)$")
+_MAX_CALENDAR_EVENTS: Final = 24
 _CALENDAR_REQUEST_INVALID: Final = "calendar_automation_request_invalid"
 _CALENDAR_REQUEST_INVALID_MESSAGE: Final = "calendar automation request fields disagree"
 _CALENDAR_RESULT_INVALID: Final = "calendar_automation_result_invalid"
@@ -51,7 +52,7 @@ class CalendarAutomationRequest(ContractModel):
     calendar_identifier: Annotated[str, Field(min_length=1, max_length=256)] | None = None
     # A week of rows, not a day of them. The wallpaper draws a seven-day strip, and a
     # request capped at a single day's worth would leave most of it blank.
-    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=24)
+    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=_MAX_CALENDAR_EVENTS)
 
     @model_validator(mode="after")
     def require_operation_fields(self) -> CalendarAutomationRequest:
@@ -81,7 +82,7 @@ class CalendarAutomationResult(ContractModel):
     calendar_namespace: Identifier
     status: Literal["completed", "failed"]
     calendar_identifier: Annotated[str, Field(min_length=1, max_length=256)] | None = None
-    event_count: int = Field(ge=0, le=8)
+    event_count: int = Field(ge=0, le=_MAX_CALENDAR_EVENTS)
     error_code: Annotated[str, Field(pattern=r"^[a-z0-9_]+$")] | None = None
 
     @model_validator(mode="after")
