@@ -157,7 +157,7 @@ def _proposal(
             "allowed_incidental_differences": ["necessary connective wording"],
             "activated_hypothesis_ids": ["control", "character-day"],
             "primary_outcome": {
-                "name": "attributed_setup_completion",
+                "name": "setup_completed",
                 "scope": "direct_response_attribution",
                 "window_hours": 72,
                 "causal_estimand": None,
@@ -167,7 +167,7 @@ def _proposal(
             "minimum_eligible_blocks": 2,
             "maximum_posts": 8,
             "maximum_duration_hours": 336,
-            "minimum_attribution_coverage": 0.8,
+            "minimum_attribution_coverage_basis_points": 8_000,
             "stop_rules": ["stop on a product-fidelity violation"],
             "inconclusive_when": ["minimum eligible blocks are not reached"],
         },

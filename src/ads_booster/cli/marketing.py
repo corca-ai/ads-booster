@@ -16,12 +16,16 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol
 import typer
 
 from ads_booster.marketing.errors import CloudflareQueueError
+from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
 from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
+from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
 from ads_booster.marketing.hosted_generation import (
     HostedWorkspaceGenerationExecutor,
     PlanlessHostedTaskExecutor,
 )
 from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
+from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
+from ads_booster.marketing.hosted_reference_research import HostedReferenceResearchExecutor
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.native_capture import build_hosted_capture_executor
 from ads_booster.marketing.worker_broker import (
@@ -64,6 +68,7 @@ from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
+    from ads_booster.marketing.hosted_generation import PlanlessPrepared
     from ads_booster.transport.http import HttpClient
     from ads_booster.transport.json_types import JsonObject
 
@@ -655,8 +660,21 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     codex=CodexCli(executable=executable),
                     output_root=agent_home / "generated",
                 ),
+                candidate_judgment=HostedCandidateJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                experiment_evaluation=HostedExperimentEvaluationExecutor(),
+                learning_judgment=HostedLearningJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                reference_research=HostedReferenceResearchExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
             )
-            worker = MarketingWorkerLoop(
+            worker: MarketingWorkerLoop[PlanlessPrepared] = MarketingWorkerLoop(
                 broker=broker,
                 inbox=MarketingInbox(root),
                 preparer=executor,

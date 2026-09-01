@@ -1,14 +1,14 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-01
 
 ## Composition
 
 `ads_booster.cli.marketing` exports the sole CLI, `trace-marketing`. `worker run` composes a
 `MarketingWorkerLoop` from D1 `WorkerBrokerClient`, SQLite `MarketingInbox`, and a planless hosted
 executor that routes immutable tasks to `HostedWorkspaceCaptureExecutor`, hosted caption
-generation, or `HostedMarketingJudgmentExecutor`.
+generation, or a discriminated marketing judgment executor.
 
 ```text
 cli/marketing
@@ -25,8 +25,13 @@ cli/marketing
            -> capture/appium_codex_validation paths and completion proof
            -> capture/appium_editor_verifier live UI and process-binding proof
         -> providers/codex_cli        official CLI subprocess
-     -> marketing/hosted_judgment     no-effect strategy prompt, schema, and receipt binding
-        -> providers/codex_cli        distinct official structured-judgment subprocess receipt
+     -> marketing/hosted_judgment     source- and reference-bound strategy proposal
+     -> marketing/hosted_creative_judgment
+     -> marketing/hosted_candidate_judgment
+     -> marketing/hosted_learning_judgment
+        -> providers/codex_cli        distinct official structured-judgment subprocess receipts
+     -> marketing/hosted_experiment_evaluation
+                                      deterministic, no-model outcome evaluation
 ```
 
 ## Responsibility boundaries
@@ -104,16 +109,17 @@ the schema-constrained strategy turn, claim/reference quarantine, and the bound 
 strategy state. The generic worker broker owns leasing and callback transport only.
 
 `marketing/hosted_creative_judgment.py` owns the proof-first MediaPlan proposal and creates no tool
-action. `hosted-creative-plan-callback.js` independently checks strategy-arm, claim, capability,
-digest, and publication bindings before storing plan/treatment/request records. The account-scoped
-marketing-agent routes own exact strategy and creative review records plus dormant assisted/live
-candidate assignments. `marketing/experiment_evaluation.py` owns complete-block, missingness,
-guardrail, non-causal attribution, and replication rules; it has no scheduler or database access.
+action. `marketing/hosted_candidate_judgment.py` materializes one approved, evidence-bound
+candidate; `marketing/hosted_reference_research.py` returns an immutable quarantined observation
+snapshot; and `marketing/hosted_learning_judgment.py` creates only a reversible learning candidate.
+`marketing/hosted_experiment_evaluation.py` is deterministic and has no model or external effect.
+Their Cloudflare callbacks independently validate every receipt, claim, plan, assignment, and
+approval binding before writing a projection. `marketing-agent.js` owns assisted campaign gating,
+variant links, product-event intake, scheduled evaluation dispatch, and learning approval.
 
-Migration `0018_marketing_agent_execution.sql` owns the new execution/observation lineage and adds
-nullable assignment snapshots to existing candidates and Threads publications. The existing
-candidate review, native capture, and `threads/*` modules remain the effect owners; marketing-agent
-code references them by immutable IDs rather than reimplementing them.
+Migrations `0018`–`0021` own the execution/observation lineage, assisted-shadow origin binding,
+quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
+native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from hashlib import sha256
 
 import pytest
 from pydantic import ValidationError
@@ -33,6 +35,21 @@ from ads_booster.contracts.marketing_agent import (
 
 DIGEST = "a" * 64
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
+
+
+def test_cross_runtime_canonical_integer_fixture_has_a_frozen_digest() -> None:
+    value = {
+        "schema_version": "trace.experiment-evaluation.v1",
+        "eligible_blocks": 2,
+        "attribution_coverage_basis_points": 8000,
+        "winner_hypothesis_id": None,
+        "guardrail_failures": [],
+    }
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+    assert sha256(canonical.encode()).hexdigest() == (
+        "573f8dbbe8c45a2fb1ae1f2b34b0d557b56a88070b344947af0d6e7a15f713d2"
+    )
 
 
 def _evidence() -> EvidenceReference:
@@ -104,7 +121,7 @@ def _experiment(*, outcome: OutcomeDefinition) -> ExperimentRegistration:
         minimum_eligible_blocks=2,
         maximum_posts=8,
         maximum_duration_hours=24 * 14,
-        minimum_attribution_coverage=0.8,
+        minimum_attribution_coverage_basis_points=8_000,
         stop_rules=("stop on a product-fidelity violation",),
         inconclusive_when=("minimum eligible blocks are not reached",),
     )
@@ -125,7 +142,7 @@ def _brief(*, hypotheses: tuple[MarketingHypothesis, ...]) -> StrategyBrief:
         hypotheses=hypotheses,
         experiment=_experiment(
             outcome=OutcomeDefinition(
-                name="attributed_setup_completion",
+                name="setup_completed",
                 scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
                 window_hours=72,
             ),
@@ -171,14 +188,14 @@ def test_strategy_requires_exactly_one_active_control() -> None:
 def test_direct_response_and_causal_outcomes_cannot_be_conflated() -> None:
     with pytest.raises(ValidationError, match="causal estimand"):
         _ = OutcomeDefinition(
-            name="setup_effect",
+            name="setup_completed",
             scope=OutcomeScope.ESTIMATED_TREATMENT_EFFECT,
             window_hours=72,
         )
 
     with pytest.raises(ValidationError, match="must not be presented as a causal estimate"):
         _ = OutcomeDefinition(
-            name="attributed_setup",
+            name="setup_completed",
             scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
             window_hours=72,
             causal_estimand="difference in setup completion probability",
@@ -288,7 +305,7 @@ def test_attribution_match_and_experiment_conclusion_fail_closed() -> None:
             state="inconclusive",
             outcome_scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
             eligible_blocks=1,
-            attribution_coverage=0.3,
+            attribution_coverage_basis_points=3_000,
             winner_hypothesis_id="challenger",
             interpretation="Too little eligible evidence.",
             lineage_ids=("post-1",),

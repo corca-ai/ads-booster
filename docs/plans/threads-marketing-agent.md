@@ -1,11 +1,8 @@
 # Threads Marketing Agent
 
-Status: Draft — P0, P1, and no-effect proof-first P2 planning are implemented. P3–P5 contracts,
-ledgers, conservative evaluation, and safety bindings exist, but product-event ingestion,
-installed-evidence campaign promotion, artifact execution, scheduled evaluation, and learning
-promotion runtime remain unimplemented.
+Status: Draft — P0–P5 supervised runtime is implemented and locally verified. The production Trace-app event producer, fresh-installed Trace end-to-end proof, generic media executors, and an authorized live Threads canary remain external rollout work rather than completed claims.
 
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-01
 
 ## Problem
 
@@ -71,9 +68,9 @@ bound recording, explanatory composition, design render, or copy-only planning c
 callback binds every treatment to its hypothesis claims and available capability snapshot, stores
 the MediaPlan and requests, and proves `tool_actions_created: 0`. Exact MediaPlan review is durable.
 
-P3–P5 foundation adds immutable artifact manifests, candidate/experiment assignments, existing
-Threads publication lineage, versioned product-event and direct-response attribution tables,
-experiment evaluations, learning candidates, and approval-bound principles. The deterministic
+P3–P5 adds immutable artifact manifests, candidate/experiment assignments, existing Threads
+publication lineage, short-lived variant links, versioned product-event intake, scheduled
+direct-response evaluation, learning candidates, and approval-bound principles. The deterministic
 evaluator uses complete eligible blocks, coverage, windows, and guardrails; it refuses causal
 claims without an eligible estimator and requires replicated independent campaigns before creating
 a learning candidate. Shadow or source-only campaigns cannot bind a candidate.
@@ -167,8 +164,9 @@ Add MediaPlan, typed artifact requests, provenance manifests, claim/evidence map
 composition of verified native PNGs, and the human review packet. Bound screen recording and design
 renderers are later capabilities, not alternate evidence rules.
 
-Implemented through MediaPlan proposal and exact review. Artifact providers and manifest writeback
-remain unimplemented.
+Implemented through MediaPlan proposal, exact review, assignment-bound artifact-manifest
+registration, and candidate materialization for the existing native capture path. Generic recording,
+composition, design-render, and generated-media providers remain deferred.
 
 ### P3 — attribution
 
@@ -176,8 +174,9 @@ Trace owns versioned first-open, feature-start, generation, scheduling, and setu
 ads-booster owns variant redirects, ingestion, deduplication, attribution windows, missingness, and
 coverage. Direct-response lineage remains distinct from an eligible causal estimate.
 
-Schema and evaluation contract implemented; link/event ingestion and app instrumentation remain
-unimplemented.
+Variant link issuance, event intake, deduplication, window closure, missingness, and scheduled
+evaluation are implemented. The Trace app's versioned event producer and a fresh-installed end-to-end
+receipt remain rollout prerequisites.
 
 ### P4 — existing Threads integration
 
@@ -185,8 +184,10 @@ Bind experiment arms and exact approval digests to the existing candidate/public
 default-OFF, publish-once, authoritative readback, readback-only retry, token isolation, and
 `unknown_side_effect` unchanged.
 
-Nullable assignment lineage and publication snapshot propagation are implemented without changing
-the existing publisher. Activation remains impossible from a shadow/source-only campaign.
+Assisted campaigns require a same-account shadow origin, installed evidence, exact product-truth
+approval, MediaPlan review, assignment-specific artifact manifests, and existing candidate review.
+The existing publisher is unchanged; activation remains impossible from a shadow/source-only
+campaign.
 
 ### P5 — experiment ledger and learning governor
 
@@ -195,8 +196,9 @@ windows, guardrails, and `inconclusive`. Automatic promotion stops at `observati
 provisional and durable principles initially require independent lineages, replication, and human
 approval.
 
-Ledger, conservative evaluator, replication gate, and exact learning-approval database trigger are
-implemented. Scheduled observation/evaluation and principle-promotion APIs remain unimplemented.
+Ledger, conservative evaluator, replication gate, scheduled evaluation dispatch, quarantined
+reference research, and exact learning approval are implemented. Durable promotion remains a human
+decision; multi-account generalization and automatic promotion are deliberately absent.
 
 ### P6 — hardening and autonomy
 

@@ -91,6 +91,8 @@ CREATE TABLE hosted_marketing_post_assignments (
         ON DELETE RESTRICT,
     candidate_id TEXT NOT NULL REFERENCES hosted_workspace_candidates(candidate_id)
         ON DELETE RESTRICT,
+    candidate_revision INTEGER NOT NULL CHECK (candidate_revision >= 1),
+    candidate_content_sha256 TEXT NOT NULL CHECK (length(candidate_content_sha256) = 64),
     eligible_block_id TEXT NOT NULL,
     assignment_json TEXT NOT NULL,
     assignment_sha256 TEXT NOT NULL UNIQUE CHECK (length(assignment_sha256) = 64),
@@ -117,6 +119,12 @@ BEGIN
         JOIN hosted_marketing_creative_treatments AS treatment
           ON treatment.treatment_id = assignment.treatment_id
         JOIN hosted_marketing_media_plans AS plan ON plan.plan_id = treatment.plan_id
+        JOIN hosted_marketing_feature_packets AS packet
+          ON packet.packet_id = campaign.feature_packet_id
+         AND packet.packet_sha256 = campaign.feature_packet_sha256
+        JOIN hosted_marketing_product_truth_approvals AS truth
+          ON truth.packet_id = packet.packet_id AND truth.packet_sha256 = packet.packet_sha256
+         AND truth.decision = 'approved'
         JOIN hosted_marketing_approval_grants AS grant
           ON grant.campaign_id = campaign.campaign_id
          AND grant.scope = 'creative' AND grant.target_kind = 'media_plan'
@@ -131,6 +139,7 @@ BEGIN
           AND assignment.assignment_sha256 = NEW.marketing_assignment_sha256
           AND campaign.account_id = NEW.account_id
           AND campaign.mode != 'shadow'
+          AND packet.publication_allowed = 1
           AND plan.state = 'approved'
           AND plan.publication_allowed = 1
     ) THEN RAISE(ABORT, 'marketing candidate assignment is invalid') END;
@@ -149,6 +158,12 @@ BEGIN
         JOIN hosted_marketing_creative_treatments AS treatment
           ON treatment.treatment_id = assignment.treatment_id
         JOIN hosted_marketing_media_plans AS plan ON plan.plan_id = treatment.plan_id
+        JOIN hosted_marketing_feature_packets AS packet
+          ON packet.packet_id = campaign.feature_packet_id
+         AND packet.packet_sha256 = campaign.feature_packet_sha256
+        JOIN hosted_marketing_product_truth_approvals AS truth
+          ON truth.packet_id = packet.packet_id AND truth.packet_sha256 = packet.packet_sha256
+         AND truth.decision = 'approved'
         JOIN hosted_marketing_approval_grants AS grant
           ON grant.campaign_id = campaign.campaign_id
          AND grant.scope = 'creative' AND grant.target_kind = 'media_plan'
@@ -163,9 +178,19 @@ BEGIN
           AND assignment.assignment_sha256 = NEW.marketing_assignment_sha256
           AND campaign.account_id = NEW.account_id
           AND campaign.mode != 'shadow'
+          AND packet.publication_allowed = 1
           AND plan.state = 'approved'
           AND plan.publication_allowed = 1
     ) THEN RAISE(ABORT, 'marketing candidate assignment is invalid') END;
+END;
+
+CREATE TRIGGER hosted_marketing_assigned_candidate_content_immutable
+BEFORE UPDATE OF caption, hypothesis, appium_prompt, image_inputs_json,
+    context_snapshot_json, persona_id
+ON hosted_workspace_candidates
+WHEN OLD.marketing_assignment_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'assigned marketing candidate content is immutable');
 END;
 
 ALTER TABLE hosted_threads_publications ADD COLUMN marketing_assignment_id TEXT;
@@ -174,12 +199,28 @@ CREATE TRIGGER hosted_marketing_publication_assignment_insert
 BEFORE INSERT ON hosted_threads_publications
 WHEN NEW.marketing_assignment_id IS NOT NULL
      AND NOT EXISTS (
-         SELECT 1 FROM hosted_marketing_post_assignments
-         WHERE assignment_id = NEW.marketing_assignment_id
-           AND candidate_id = NEW.candidate_id
+         SELECT 1 FROM hosted_marketing_post_assignments AS assignment
+         WHERE assignment.assignment_id = NEW.marketing_assignment_id
+           AND assignment.candidate_id = NEW.candidate_id
+           AND NOT EXISTS (
+               SELECT 1 FROM hosted_marketing_artifact_requests AS request
+               WHERE request.treatment_id = assignment.treatment_id
+                 AND NOT EXISTS (
+                     SELECT 1 FROM hosted_marketing_artifact_manifests AS manifest
+                     WHERE manifest.request_id = request.request_id
+                       AND manifest.treatment_id = assignment.treatment_id
+                 )
+           )
      )
 BEGIN
     SELECT RAISE(ABORT, 'Threads publication assignment is invalid');
+END;
+
+CREATE TRIGGER hosted_marketing_publication_assignment_update
+BEFORE UPDATE OF marketing_assignment_id ON hosted_threads_publications
+WHEN OLD.marketing_assignment_id IS NOT NEW.marketing_assignment_id
+BEGIN
+    SELECT RAISE(ABORT, 'Threads publication assignment is immutable');
 END;
 
 CREATE TABLE hosted_marketing_variant_links (
@@ -206,7 +247,7 @@ CREATE TABLE hosted_marketing_product_events (
         )
     ),
     install_id_sha256 TEXT NOT NULL CHECK (length(install_id_sha256) = 64),
-    variant_id TEXT REFERENCES hosted_marketing_variant_links(variant_id) ON DELETE SET NULL,
+    variant_id TEXT NOT NULL REFERENCES hosted_marketing_variant_links(variant_id) ON DELETE RESTRICT,
     occurred_at TEXT NOT NULL,
     observed_at TEXT NOT NULL,
     payload_json TEXT NOT NULL,

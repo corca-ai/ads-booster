@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-01
 
 ## Focused checks
 
@@ -11,7 +11,8 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | --- | --- |
 | marketing-agent feature/strategy contracts and P0 D1 foundation | `uv run pytest tests/marketing/test_marketing_agent_contracts.py tests/marketing/test_cloudflare_schema.py -q` |
 | shadow strategist, official Codex receipt, broker, and hosted callback | `uv run pytest tests/marketing/test_hosted_judgment.py tests/providers/test_codex_cli_generation.py tests/marketing/test_worker_loop.py tests/marketing/test_worker_broker.py -q`; `node --test cloudflare/test/hosted-marketing-agent.test.js cloudflare/test/mac-workers.test.js` |
-| proof-first creative plan, execution ledger, conservative evaluation | `uv run pytest tests/marketing/test_hosted_creative_judgment.py tests/marketing/test_experiment_evaluation.py tests/marketing/test_cloudflare_schema.py -q`; `node --test cloudflare/test/hosted-creative-plan.test.js cloudflare/test/hosted-threads-candidates.test.js` |
+| proof-first creative plan, execution ledger, conservative evaluation | `uv run pytest tests/marketing/test_hosted_creative_judgment.py tests/marketing/test_hosted_supervised_judgments.py tests/marketing/test_experiment_evaluation.py tests/marketing/test_cloudflare_schema.py -q`; `node --test cloudflare/test/hosted-creative-plan.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js` |
+| quarantined reference research and assisted marketing-agent runtime | `uv run pytest tests/marketing/test_hosted_reference_research.py tests/marketing/test_hosted_supervised_judgments.py -q`; `node --test cloudflare/test/marketing-agent-reference-runtime.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js` |
 | deterministic Calendar prepare/cleanup | `uv run pytest tests/capture/test_calendar_preparation.py tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/providers/test_codex_cli_handshake.py` |
 | v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/capture/test_appium_editor_verifier.py tests/providers/test_codex_cli_handshake.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
 | background search and native validation | `uv run pytest tests/search/test_web_image_search_providers.py tests/search/test_background_fetcher.py tests/marketing/test_background.py tests/marketing/test_native_capture.py` |

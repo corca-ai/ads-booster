@@ -23,6 +23,8 @@ class AssignmentObservation(ContractModel):
     assignment_id: AgentIdentifier
     eligible_block_id: AgentIdentifier
     hypothesis_id: AgentIdentifier
+    publication_id: AgentIdentifier | None = None
+    product_event_id: AgentIdentifier | None = None
     eligible: bool
     attribution_observed: bool
     converted: bool | None = None
@@ -32,6 +34,10 @@ class AssignmentObservation(ContractModel):
     def validate_attribution_observation(self) -> Self:
         if self.attribution_observed != (self.converted is not None):
             raise ValueError("observed attribution must state whether it converted")
+        if self.product_event_id is not None and self.converted is not True:
+            raise ValueError("a product event requires a converted observation")
+        if self.attribution_observed and self.publication_id is None:
+            raise ValueError("an observed attribution requires a publication")
         return self
 
 
@@ -63,12 +69,14 @@ def evaluate_experiment(request: ExperimentEvaluationRequest) -> ExperimentEvalu
         item for item in request.observations if item.eligible and item.hypothesis_id in active
     )
     guardrail_failures = tuple(
-        sorted({failure for item in eligible for failure in item.guardrail_failures})
+        sorted({failure for item in request.observations for failure in item.guardrail_failures})
     )
     complete_blocks = _complete_blocks(eligible, active)
     included = tuple(item for item in eligible if item.eligible_block_id in complete_blocks)
-    coverage = (
-        sum(item.attribution_observed for item in included) / len(included) if included else 0.0
+    coverage_basis_points = (
+        round(10_000 * sum(item.attribution_observed for item in included) / len(included))
+        if included
+        else 0
     )
     lineage_ids = tuple(item.assignment_id for item in included) or (request.evaluation_id,)
     state: Literal["evaluated", "inconclusive", "stopped"]
@@ -85,9 +93,18 @@ def evaluate_experiment(request: ExperimentEvaluationRequest) -> ExperimentEvalu
         state = "inconclusive"
         interpretation = "The minimum number of complete eligible blocks was not reached."
         winner = None
-    elif coverage < registration.minimum_attribution_coverage:
+    elif coverage_basis_points < registration.minimum_attribution_coverage_basis_points:
         state = "inconclusive"
         interpretation = "Attribution coverage is below the pre-registered minimum."
+        winner = None
+    elif any(
+        not any(
+            item.attribution_observed and item.hypothesis_id == hypothesis_id for item in included
+        )
+        for hypothesis_id in active
+    ):
+        state = "inconclusive"
+        interpretation = "At least one active hypothesis has no observed attribution."
         winner = None
     elif registration.primary_outcome.scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT:
         state = "inconclusive"
@@ -118,7 +135,7 @@ def evaluate_experiment(request: ExperimentEvaluationRequest) -> ExperimentEvalu
         state=state,
         outcome_scope=registration.primary_outcome.scope,
         eligible_blocks=len(complete_blocks),
-        attribution_coverage=coverage,
+        attribution_coverage_basis_points=coverage_basis_points,
         winner_hypothesis_id=winner,
         interpretation=interpretation,
         guardrail_failures=guardrail_failures,
@@ -134,9 +151,8 @@ def propose_learning_candidate(request: LearningProposalRequest) -> LearningCand
         raise ValueError("learning requires at least two experiment evaluations")
     if any(item.state != "evaluated" for item in evaluations):
         raise ValueError("learning requires evaluated rather than inconclusive evidence")
-    winners = {item.winner_hypothesis_id for item in evaluations}
-    if len(winners) != 1:
-        raise ValueError("learning requires replicated winner direction")
+    if any(item.winner_hypothesis_id is None for item in evaluations):
+        raise ValueError("learning requires a named descriptive winner in every evaluation")
     independent_campaigns = {item.campaign_id for item in evaluations}
     if len(independent_campaigns) != len(evaluations):
         raise ValueError("learning evaluations must come from independent campaigns")

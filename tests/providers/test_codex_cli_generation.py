@@ -121,6 +121,19 @@ def test_codex_cli_runs_marketing_judgment_with_a_distinct_invocation_receipt(
 
     assert result == {"schema_version": "trace.strategy-proposal.v1"}
     assert len(calls) == 1
+    command = calls[0]
+    assert command[command.index("--sandbox") + 1] == "read-only"
+    disabled = {command[index + 1] for index, value in enumerate(command) if value == "--disable"}
+    assert {
+        "apps",
+        "browser_use",
+        "computer_use",
+        "hooks",
+        "image_generation",
+        "multi_agent",
+        "shell_tool",
+        "unified_exec",
+    }.issubset(disabled)
     assert not (workspace / "codex-generation-invocation.json").exists()
     receipt = workspace / "codex-marketing-judgment-invocation.json"
     assert receipt.stat().st_mode & 0o777 == 0o600
@@ -128,3 +141,39 @@ def test_codex_cli_runs_marketing_judgment_with_a_distinct_invocation_receipt(
         "schema": "trace.codex-marketing-judgment-invocation.v1",
         "invocation_count": 1,
     }
+
+
+def test_codex_cli_research_enables_only_web_search_beside_the_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        _ = output_path.write_text('{"sources":[]}', encoding="utf-8")
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ads_booster.providers.codex_cli.subprocess.run", run)
+    workspace = tmp_path / "research"
+    workspace.mkdir()
+
+    result = CodexCli(tmp_path / "bin" / "codex").run_marketing_research_job(
+        "Research current formats",
+        {
+            "type": "object",
+            "properties": {"sources": {"type": "array", "items": {"type": "string"}}},
+            "required": ["sources"],
+            "additionalProperties": False,
+        },
+        workspace=workspace,
+        timeout_seconds=120,
+    )
+
+    assert result == {"sources": []}
+    command = calls[0]
+    assert command[:3] == [str(tmp_path / "bin" / "codex"), "--search", "exec"]
+    assert command[command.index("--sandbox") + 1] == "read-only"
+    disabled = {command[index + 1] for index, value in enumerate(command) if value == "--disable"}
+    assert {"shell_tool", "unified_exec", "apps", "browser_use", "computer_use"}.issubset(disabled)

@@ -2,6 +2,10 @@ import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
 import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
 import { receiveHostedCreativePlanCallback } from "./hosted-creative-plan-callback.js";
+import { receiveHostedCandidateMaterializationCallback } from "./hosted-candidate-materialization-callback.js";
+import { receiveHostedExperimentEvaluationCallback } from "./hosted-experiment-evaluation-callback.js";
+import { receiveHostedLearningSynthesisCallback } from "./hosted-learning-synthesis-callback.js";
+import { receiveHostedReferenceResearchCallback } from "./hosted-reference-research-callback.js";
 import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
 import { receiveHostedMarketingJudgmentCallback } from "./hosted-marketing-judgment-callback.js";
 import { HttpError } from "./http-error.js";
@@ -23,6 +27,7 @@ import { runHostedThreadsEngagement } from "./threads/engagement.js";
 import { dispatchHostedThreadsPublication } from "./threads/publication.js";
 import { runHostedThreadsPublications } from "./threads/scheduling.js";
 import { threadsConfigurationState } from "./threads/config.js";
+import { runDueMarketingEvaluations } from "./marketing-agent.js";
 
 import {
   accountName,
@@ -463,6 +468,7 @@ export default {
     ctx.waitUntil(Promise.all([
       startDueRuns(env),
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
+      runDueMarketingEvaluations(env),
       ...threadsTasks,
     ]));
   },
@@ -675,6 +681,18 @@ export async function receiveCallback(env, callback, worker = null) {
     if (judgment === "creative_plan") {
       return receiveHostedCreativePlanCallback(env, hostedTask, callback, worker);
     }
+    if (judgment === "candidate_materialization") {
+      return receiveHostedCandidateMaterializationCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "experiment_evaluation") {
+      return receiveHostedExperimentEvaluationCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "learning_synthesis") {
+      return receiveHostedLearningSynthesisCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "market_research") {
+      return receiveHostedReferenceResearchCallback(env, hostedTask, callback, worker);
+    }
     return receiveHostedMarketingJudgmentCallback(env, hostedTask, callback, worker);
   }
   if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback, worker);
@@ -818,6 +836,13 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
         await env.ARTIFACTS.delete(imageKey);
       }
     }
+    await recordMarketingCaptureManifests(
+      env,
+      task,
+      imageKey,
+      imageDigest,
+      now,
+    );
   } else {
     const failureCode = typeof callback.result?.failure_code === "string"
       ? callback.result.failure_code.slice(0, 200)
@@ -866,6 +891,79 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
     return { accepted: true, duplicate: true };
   }
   return { accepted: true, duplicate: false };
+}
+
+async function recordMarketingCaptureManifests(env, task, imageKey, imageDigest, now) {
+  const result = await env.DB.prepare(
+    `SELECT assignment.assignment_id, assignment.campaign_id, assignment.treatment_id,
+            request.request_id, request.capability_id, request.request_json,
+            request.request_sha256
+     FROM hosted_workspace_candidates AS candidate
+     JOIN hosted_marketing_post_assignments AS assignment
+       ON assignment.assignment_id = candidate.marketing_assignment_id
+     JOIN hosted_marketing_artifact_requests AS request
+       ON request.treatment_id = assignment.treatment_id
+      AND request.capability_id = 'capture.native_png'
+     WHERE candidate.account_id = ? AND candidate.candidate_id = ?
+       AND candidate.capture_task_id = ?`,
+  ).bind(task.account_id, task.candidate_id, task.task_id).all();
+  for (const row of result.results) {
+    const request = JSON.parse(row.request_json);
+    const manifestId = `capture-${(await sha256(`${task.task_id}:${row.request_id}`)).slice(0, 48)}`;
+    const manifest = {
+      schema_version: "trace.artifact-manifest.v1",
+      manifest_id: manifestId,
+      campaign_id: row.campaign_id,
+      assignment_id: row.assignment_id,
+      treatment_id: row.treatment_id,
+      request_id: row.request_id,
+      capability_id: row.capability_id,
+      artifact_uri: `r2:${imageKey}`,
+      artifact_sha256: imageDigest,
+      input_sha256: row.request_sha256,
+      execution_id: task.task_id,
+      claim_ids: request.claim_ids ?? [],
+      evidence_ids: [],
+      created_at: now,
+    };
+    const manifestJson = canonicalJson(manifest);
+    const manifestSha256 = await sha256(manifestJson);
+    const existing = await env.DB.prepare(
+      `SELECT manifest_sha256 FROM hosted_marketing_artifact_manifests WHERE manifest_id = ?`,
+    ).bind(manifestId).first();
+    if (existing && existing.manifest_sha256 !== manifestSha256) {
+      throw new HttpError(409, "capture artifact manifest changed after creation");
+    }
+    if (!existing) {
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO hosted_marketing_artifact_manifests
+            (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
+             manifest_json, manifest_sha256, artifact_uri, artifact_sha256,
+             input_sha256, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          manifestId,
+          row.campaign_id,
+          row.assignment_id,
+          row.treatment_id,
+          row.request_id,
+          manifest.schema_version,
+          manifestJson,
+          manifestSha256,
+          manifest.artifact_uri,
+          imageDigest,
+          row.request_sha256,
+          now,
+        ),
+        env.DB.prepare(
+          `UPDATE hosted_marketing_artifact_requests
+           SET state = 'succeeded', updated_at = ?
+           WHERE request_id = ? AND state IN ('approved', 'executing', 'succeeded')`,
+        ).bind(now, row.request_id),
+      ]);
+    }
+  }
 }
 
 async function receiveReviewEvent(env, input) {
@@ -1072,4 +1170,13 @@ async function sha256(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

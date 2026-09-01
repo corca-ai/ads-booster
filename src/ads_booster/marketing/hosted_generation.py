@@ -32,16 +32,36 @@ from ads_booster.candidate_generation import (
     default_domain_shuffle,
 )
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
+from ads_booster.marketing.hosted_candidate_judgment import (
+    HostedCandidateJudgmentExecutor,
+    PreparedCandidateJudgment,
+)
 from ads_booster.marketing.hosted_creative_judgment import (
     HostedCreativeJudgmentExecutor,
     PreparedCreativeJudgment,
+)
+from ads_booster.marketing.hosted_experiment_evaluation import (
+    HostedExperimentEvaluationExecutor,
+    PreparedExperimentEvaluation,
 )
 from ads_booster.marketing.hosted_judgment import (
     HostedMarketingJudgmentExecutor,
     PreparedMarketingJudgment,
 )
+from ads_booster.marketing.hosted_learning_judgment import (
+    HostedLearningJudgmentExecutor,
+    PreparedLearningJudgment,
+)
+from ads_booster.marketing.hosted_reference_research import (
+    HostedReferenceResearchExecutor,
+    PreparedReferenceResearch,
+)
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
+from ads_booster.marketing.native_capture import (
+    HostedWorkspaceCaptureExecutor,
+    PreparedCodexAppiumJob,
+)
 from ads_booster.transport.json_types import JsonObject
 from ads_booster.workspace import (
     CandidateAccountBrief,
@@ -58,10 +78,6 @@ if TYPE_CHECKING:
         CandidateDocument,
         DraftedCandidate,
         ReferencePool,
-    )
-    from ads_booster.marketing.native_capture import (
-        HostedWorkspaceCaptureExecutor,
-        PreparedCodexAppiumJob,
     )
     from ads_booster.transport.json_types import JsonValue
 
@@ -390,50 +406,109 @@ class HostedWorkspaceGenerationExecutor:
         )
 
 
+type PlanlessPrepared = (
+    PreparedCodexAppiumJob
+    | PreparedHostedGeneration
+    | PreparedMarketingJudgment
+    | PreparedCreativeJudgment
+    | PreparedCandidateJudgment
+    | PreparedExperimentEvaluation
+    | PreparedLearningJudgment
+    | PreparedReferenceResearch
+)
+
+
 @dataclass(frozen=True, slots=True)
 class PlanlessHostedTaskExecutor:
     capture: HostedWorkspaceCaptureExecutor
     generation: HostedWorkspaceGenerationExecutor
     judgment: HostedMarketingJudgmentExecutor
     creative_judgment: HostedCreativeJudgmentExecutor
+    candidate_judgment: HostedCandidateJudgmentExecutor
+    experiment_evaluation: HostedExperimentEvaluationExecutor
+    learning_judgment: HostedLearningJudgmentExecutor
+    reference_research: HostedReferenceResearchExecutor
 
     def prepare(
         self,
         task: MarketingTask,
-    ) -> (
-        PreparedCodexAppiumJob
-        | PreparedHostedGeneration
-        | PreparedMarketingJudgment
-        | PreparedCreativeJudgment
-    ):
+    ) -> PlanlessPrepared:
         match task.kind:
             case TaskKind.CAPTURE:
                 return self.capture.prepare(task)
             case TaskKind.GENERATE_CANDIDATES:
                 return self.generation.prepare(task)
             case TaskKind.MARKETING_JUDGMENT:
-                if task.payload.get("judgment") == "creative_plan":
-                    return self.creative_judgment.prepare(task)
-                return self.judgment.prepare(task)
+                return self._prepare_marketing_judgment(task)
             case _:
                 raise MarketingExecutionError("unsupported_hosted_task")
 
     def execute(
         self,
-        prepared: (
-            PreparedCodexAppiumJob
-            | PreparedHostedGeneration
-            | PreparedMarketingJudgment
-            | PreparedCreativeJudgment
-        ),
+        prepared: PlanlessPrepared,
     ) -> TaskResult:
         if isinstance(prepared, PreparedHostedGeneration):
             return self.generation.execute(prepared)
+        if isinstance(
+            prepared,
+            (
+                PreparedMarketingJudgment,
+                PreparedCreativeJudgment,
+                PreparedCandidateJudgment,
+                PreparedExperimentEvaluation,
+                PreparedLearningJudgment,
+                PreparedReferenceResearch,
+            ),
+        ):
+            return self._execute_marketing_judgment(prepared)
+        return self.capture.execute(prepared)
+
+    def _prepare_marketing_judgment(
+        self,
+        task: MarketingTask,
+    ) -> (
+        PreparedMarketingJudgment
+        | PreparedCreativeJudgment
+        | PreparedCandidateJudgment
+        | PreparedExperimentEvaluation
+        | PreparedLearningJudgment
+        | PreparedReferenceResearch
+    ):
+        judgment = task.payload.get("judgment")
+        if judgment == "market_research":
+            return self.reference_research.prepare(task)
+        if judgment == "creative_plan":
+            return self.creative_judgment.prepare(task)
+        if judgment == "candidate_materialization":
+            return self.candidate_judgment.prepare(task)
+        if judgment == "experiment_evaluation":
+            return self.experiment_evaluation.prepare(task)
+        if judgment == "learning_synthesis":
+            return self.learning_judgment.prepare(task)
+        return self.judgment.prepare(task)
+
+    def _execute_marketing_judgment(
+        self,
+        prepared: (
+            PreparedMarketingJudgment
+            | PreparedCreativeJudgment
+            | PreparedCandidateJudgment
+            | PreparedExperimentEvaluation
+            | PreparedLearningJudgment
+            | PreparedReferenceResearch
+        ),
+    ) -> TaskResult:
         if isinstance(prepared, PreparedMarketingJudgment):
             return self.judgment.execute(prepared)
         if isinstance(prepared, PreparedCreativeJudgment):
             return self.creative_judgment.execute(prepared)
-        return self.capture.execute(prepared)
+        if isinstance(prepared, PreparedCandidateJudgment):
+            return self.candidate_judgment.execute(prepared)
+        if isinstance(prepared, PreparedExperimentEvaluation):
+            return self.experiment_evaluation.execute(prepared)
+        if isinstance(prepared, PreparedReferenceResearch):
+            return self.reference_research.execute(prepared)
+        return self.learning_judgment.execute(prepared)
 
 
 def _generation_schema() -> JsonObject:

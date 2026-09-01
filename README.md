@@ -31,13 +31,23 @@ Exact strategy review at
 `POST /api/marketing-agent/campaigns/:id/strategy-approval` can request a second no-effect creative
 judgment. That judgment chooses proof and a medium per experiment arm, returning a reviewable
 MediaPlan without invoking Appium, recording, composition, Figma, candidate creation, or Threads.
-`POST /api/marketing-agent/campaigns/:id/media-approval` records exact plan review. The dormant
-`assignments` route accepts only an approved, publication-eligible assisted/live campaign; current
-source-only shadow campaigns therefore fail closed. Product-event ingestion, automatic artifact
-execution, campaign promotion, scheduled evaluation, and learning promotion are not current user
-operations. Strategy approval, MediaPlan approval, and assignment require the existing
-`CONTROL_PLANE_TOKEN`; the token stays in the operator's in-memory control surface and is never
-included in a task or campaign record.
+`POST /api/marketing-agent/campaigns/:id/media-approval` records exact plan review.
+
+An account-authorized `mode: "assisted"` campaign must name a same-account shadow origin, contain
+installed evidence with an approved claim set, and bind every action to the exact packet, plan,
+treatment, assignment, and approval digests. It can request one candidate materialization through
+the existing Mac broker; that turn still creates no capture or publish effect. The existing candidate
+and image-review path remains the sole owner of native capture and default-OFF Threads publication.
+
+Variant links resolve at `/api/marketing-agent/v/:token`; a versioned Trace event receiver stores
+deduplicated, privacy-safe first-open through setup-complete receipts. The hosted scheduler creates
+only conservative, pre-registered experiment evaluations after their observation windows close.
+Replicated evaluated lineages may create a learning candidate, and only an exact human decision can
+promote it to a scoped principle. Generic recording, composition, Figma, and generated-media
+artifact executors are not yet product operations. Strategy approval, MediaPlan approval, assisted
+campaign creation, candidate materialization, artifact registration, product-event ingestion,
+evaluation, and learning approval require the relevant control-plane authority; authority never
+enters a worker payload or durable campaign record.
 
 1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
    `generate_candidates` task, and a compatible Mac runs one structured official Codex CLI turn to
@@ -178,15 +188,12 @@ cd cloudflare
 wrangler secret put THREADS_APP_SECRET
 wrangler secret put THREADS_TOKEN_ENCRYPTION_KEY
 wrangler secret put THREADS_MEDIA_SIGNING_KEY
+wrangler secret put TRACE_EVENT_INGEST_TOKEN
 ```
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
-`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile
-mutation, reply content, and unknown-outcome resolution. Deploy D1 migration `0016_hosted_threads.sql`
-before enabling the feature, complete Meta App Review for the four documented scopes, connect a test
-profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and
-engagement canary. Source or fake-Graph success is not live Meta proof.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, marketing-agent assisted actions, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql` before enabling Threads and migrations `0017`–`0021` before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
 
 ## Managed releases and compatibility
 

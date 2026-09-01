@@ -25,7 +25,7 @@ def registration(
     *,
     scope: OutcomeScope = OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
     minimum_blocks: int = 2,
-    minimum_coverage: float = 0.8,
+    minimum_coverage_basis_points: int = 8_000,
 ) -> ExperimentRegistration:
     return ExperimentRegistration(
         experiment_id="experiment-1",
@@ -33,7 +33,7 @@ def registration(
         held_constant_components=("account", "posting slot"),
         activated_hypothesis_ids=("control", "challenger"),
         primary_outcome=OutcomeDefinition(
-            name="qualified_setup",
+            name="setup_completed",
             scope=scope,
             window_hours=72,
             causal_estimand=(
@@ -46,7 +46,7 @@ def registration(
         minimum_eligible_blocks=minimum_blocks,
         maximum_posts=12,
         maximum_duration_hours=336,
-        minimum_attribution_coverage=minimum_coverage,
+        minimum_attribution_coverage_basis_points=minimum_coverage_basis_points,
         stop_rules=("guardrail failure",),
         inconclusive_when=("insufficient blocks", "low attribution coverage"),
     )
@@ -67,6 +67,8 @@ def observation(
         eligible=eligible,
         attribution_observed=converted is not None,
         converted=converted,
+        publication_id=(f"publication-{block}-{hypothesis}" if converted is not None else None),
+        product_event_id=(f"event-{block}-{hypothesis}" if converted else None),
         guardrail_failures=guardrails,
     )
 
@@ -106,7 +108,7 @@ def test_complete_direct_response_blocks_name_a_descriptive_not_causal_winner() 
     assert result.winner_hypothesis_id == "challenger"
     assert "not a causal effect" in result.interpretation
     assert result.eligible_blocks == 2
-    assert result.attribution_coverage == 1
+    assert result.attribution_coverage_basis_points == 10_000
 
 
 @pytest.mark.parametrize(

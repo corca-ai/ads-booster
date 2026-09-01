@@ -229,11 +229,12 @@ def test_artifact_manifests_are_immutable_and_principles_need_exact_learning_app
         ).fetchone() == ("assignment-execution",)
         _ = connection.execute(
             """INSERT INTO hosted_marketing_artifact_manifests
-            (manifest_id, campaign_id, treatment_id, request_id, schema_version,
+            (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
              manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256,
              created_at)
-            VALUES ('manifest-1', 'campaign-execution', 'treatment-execution',
-                    'request-execution', 'trace.artifact-manifest.v1', '{}', ?,
+            VALUES ('manifest-1', 'campaign-execution', 'assignment-execution',
+                    'treatment-execution', 'request-execution',
+                    'trace.artifact-manifest.v1', '{}', ?,
                     'r2://artifact.png', ?, ?, 'now')""",
             ("1" * 64, "2" * 64, "3" * 64),
         )
@@ -299,13 +300,36 @@ def _insert_marketing_execution_fixture(
     mode: str,
 ) -> None:
     _insert_marketing_agent_account_and_packet(connection)
+    origin_campaign_id: str | None = None
+    if mode == "assisted":
+        origin_campaign_id = "campaign-shadow-origin"
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_campaigns
+            (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
+             mode, state, projection_revision, business_outcome, created_at, updated_at)
+            VALUES (?, 'trace_kr', 'packet-1', ?, 'agent_v1', 'shadow',
+                    'completed', 1, 'shadow outcome', 'now', 'now')""",
+            (origin_campaign_id, "a" * 64),
+        )
+        _ = connection.execute(
+            "UPDATE hosted_marketing_feature_packets SET publication_allowed = 1 "
+            "WHERE packet_id = 'packet-1'"
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_product_truth_approvals
+            (approval_id, packet_id, packet_sha256, approved_claim_ids_json,
+             decision, reviewer_id, reviewed_at)
+            VALUES ('truth-approval', 'packet-1', ?, '[]', 'approved', 'reviewer-1', 'now')""",
+            ("a" * 64,),
+        )
     _ = connection.execute(
         """INSERT INTO hosted_marketing_campaigns
         (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
-         mode, state, projection_revision, business_outcome, created_at, updated_at)
-        VALUES ('campaign-execution', 'trace_kr', 'packet-1', ?, 'agent_v1', ?,
+         mode, origin_campaign_id, state, projection_revision, business_outcome,
+         created_at, updated_at)
+        VALUES ('campaign-execution', 'trace_kr', 'packet-1', ?, 'agent_v1', ?, ?,
                 'creative_planned', 4, 'outcome', 'now', 'now')""",
-        ("a" * 64, mode),
+        ("a" * 64, mode, origin_campaign_id),
     )
     _ = connection.execute(
         """INSERT INTO hosted_marketing_context_receipts
@@ -385,11 +409,12 @@ def _insert_marketing_execution_fixture(
     _ = connection.execute(
         """INSERT INTO hosted_marketing_post_assignments
         (assignment_id, campaign_id, experiment_id, hypothesis_id, treatment_id,
-         candidate_id, eligible_block_id, assignment_json, assignment_sha256, assigned_at)
+         candidate_id, candidate_revision, candidate_content_sha256, eligible_block_id,
+         assignment_json, assignment_sha256, assigned_at)
         VALUES ('assignment-execution', 'campaign-execution', 'experiment-execution',
                 'hypothesis-execution', 'treatment-execution', 'candidate-execution',
-                'block-1', '{}', ?, 'now')""",
-        ("9" * 64,),
+                1, ?, 'block-1', '{}', ?, 'now')""",
+        ("8" * 64, "9" * 64),
     )
 
 

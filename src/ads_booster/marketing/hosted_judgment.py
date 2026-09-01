@@ -1,4 +1,4 @@
-"""Evidence-bound, no-tool marketing judgment for hosted shadow campaigns."""
+"""Evidence-bound, no-tool marketing judgment for hosted agent campaigns."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from ads_booster.contracts.marketing_agent import (
     StrategyBrief,
     contract_sha256,
 )
+from ads_booster.marketing.hosted_reference_research import ReferenceResearchSnapshot
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.providers.codex_cli import CodexCliError
@@ -57,11 +58,14 @@ class ShadowStrategyRequest(JudgmentModel):
     pipeline: Literal["hosted_marketing_judgment_v1"]
     judgment: Literal["shadow_strategy"]
     campaign_id: Annotated[str, Field(min_length=1, max_length=128)]
+    mode: Literal["shadow", "assisted"] = "shadow"
     feature_packet: FeatureEvidencePacket
     feature_packet_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     account: MarketingAccountSnapshot
     business_outcome: Annotated[str, Field(min_length=1, max_length=1000)]
     current_control: Annotated[str, Field(min_length=1, max_length=4000)]
+    reference_snapshot: ReferenceResearchSnapshot | None = None
+    reference_snapshot_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     canonical_principles: Annotated[tuple[str, ...], Field(min_length=1, max_length=32)]
     knowledge_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     available_capabilities: Annotated[tuple[str, ...], Field(max_length=32)] = ()
@@ -80,6 +84,14 @@ class ShadowStrategyRequest(JudgmentModel):
             self.capability_snapshot_sha256
         ):
             raise ValueError("capability snapshot digest does not match its advertised values")
+        if (self.reference_snapshot is None) != (self.reference_snapshot_sha256 is None):
+            raise ValueError("reference snapshot and digest must be supplied together")
+        if self.reference_snapshot is not None and (
+            self.reference_snapshot.campaign_id != self.campaign_id
+            or self.reference_snapshot.feature_packet_sha256 != self.feature_packet_sha256
+            or contract_sha256(self.reference_snapshot) != self.reference_snapshot_sha256
+        ):
+            raise ValueError("reference snapshot lineage does not match the strategy request")
         return self
 
 
@@ -135,6 +147,11 @@ class HostedMarketingJudgmentExecutor:
 
         schema = _proposal_schema()
         prompt = _strategy_prompt(request)
+        included_record_ids = tuple(claim.claim_id for claim in request.feature_packet.claims) + (
+            tuple(source.source_id for source in request.reference_snapshot.sources)
+            if request.reference_snapshot
+            else ()
+        )
         receipt = ContextReceipt(
             schema_version="trace.context-receipt.v1",
             receipt_id=task.task_id,
@@ -147,8 +164,8 @@ class HostedMarketingJudgmentExecutor:
             prompt_sha256=sha256(prompt.encode()).hexdigest(),
             output_schema_version=_PROPOSAL_SCHEMA_VERSION,
             output_schema_sha256=_json_sha256(schema),
-            included_record_ids=tuple(claim.claim_id for claim in request.feature_packet.claims),
-            omitted_modules=("external_references", "owned_experiment_learning"),
+            included_record_ids=included_record_ids,
+            omitted_modules=("owned_experiment_learning",),
             created_at=task.created_at,
         )
         workspace, admission = self._prepare_workspace(task)
@@ -181,7 +198,13 @@ class HostedMarketingJudgmentExecutor:
                 "marketing_judgment_business_outcome_changed",
                 unknown_side_effect=True,
             )
-        _validate_hypothesis_evidence(prepared.request.feature_packet, proposal.hypotheses)
+        _validate_hypothesis_evidence(
+            prepared.request.feature_packet,
+            proposal.hypotheses,
+            {source.source_id for source in prepared.request.reference_snapshot.sources}
+            if prepared.request.reference_snapshot
+            else set(),
+        )
         try:
             brief = StrategyBrief(
                 schema_version="trace.strategy-brief.v1",
@@ -215,7 +238,7 @@ class HostedMarketingJudgmentExecutor:
                 "context_receipt_sha256": prepared.context_receipt_sha256,
                 "strategy_brief": _JSON_OBJECT.validate_python(brief.model_dump(mode="json")),
                 "strategy_brief_sha256": contract_sha256(brief),
-                "publication_allowed": False,
+                "publication_allowed": (prepared.request.feature_packet.gate.publication_allowed),
             },
         )
 
@@ -259,23 +282,31 @@ def _strategy_prompt(request: ShadowStrategyRequest) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
+    references = (
+        request.reference_snapshot.model_dump_json(indent=2)
+        if request.reference_snapshot
+        else "외부 레퍼런스는 제공되지 않았다. reference_ids를 발명하지 않는다."
+    )
     return (
         "당신은 Trace의 Threads 마케팅 전략가다. 게시물 작성 도구가 아니라 제품 사실에서 "
-        "마케팅 가설과 검증 가능한 실험을 설계한다. 이 실행은 shadow이므로 어떤 도구도 "
-        "호출하거나 게시를 지시하지 않는다.\n\n"
+        "마케팅 가설과 검증 가능한 실험을 설계한다. 이 실행은 schema-constrained no-tool "
+        "판단이므로 어떤 도구도 호출하거나 게시를 지시하지 않는다.\n\n"
         "규칙:\n"
         "1. feature packet의 source-supported, build-bound, installed-confirmed claim만 사용한다.\n"
         "2. unsupported, contradicted, stale, retracted claim은 사용하지 않는다.\n"
-        "3. 외부 레퍼런스는 제공되지 않았다. reference_ids를 발명하지 않는다.\n"
+        "3. 격리된 시장 관찰은 포화도·반증·사용자 언어·포맷 설계에만 사용한다. "
+        "제품 claim의 근거로 사용하거나 기능 사실을 추가하지 않는다.\n"
         "4. 정확히 하나의 control과 1~3개의 challenger를 만든다.\n"
         "5. 각 가설은 사용한 claim_ids, 반증 조건, 필요한 proof, 대화 동기를 가진다.\n"
         "6. 실험은 한 manipulated component, held constants, guardrails, 최소 block, 최대 기간, "
         "중단 규칙과 inconclusive 조건을 사전 등록한다.\n"
         "7. direct-response attribution을 causal effect라고 표현하지 않는다.\n"
         f"8. business_outcome은 다음 문장을 그대로 사용한다: {request.business_outcome}\n\n"
+        f"캠페인 모드: {request.mode}\n"
         f"계정: {request.account.model_dump_json()}\n"
         f"현재 control 포맷: {request.current_control}\n"
         f"canonical principles: {principles}\n"
+        f"quarantined market observations: {references}\n"
         f"feature packet: {packet}\n"
     )
 
@@ -283,6 +314,7 @@ def _strategy_prompt(request: ShadowStrategyRequest) -> str:
 def _validate_hypothesis_evidence(
     packet: FeatureEvidencePacket,
     hypotheses: Sequence[MarketingHypothesis],
+    allowed_reference_ids: set[str],
 ) -> None:
     supported = {
         claim.claim_id for claim in packet.claims if claim.status in _STRATEGY_SUPPORTED_CLAIMS
@@ -293,7 +325,7 @@ def _validate_hypothesis_evidence(
                 "marketing_judgment_claim_unsupported",
                 unknown_side_effect=True,
             )
-        if hypothesis.reference_ids:
+        if not set(hypothesis.reference_ids).issubset(allowed_reference_ids):
             raise MarketingExecutionError(
                 "marketing_judgment_reference_quarantine_breached",
                 unknown_side_effect=True,

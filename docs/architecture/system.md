@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-01
 
 ## Runtime boundary
 
@@ -129,13 +129,24 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migration `0018_marketing_agent_execution.sql` adds the dormant execution and observation ledger:
-immutable artifact manifests, candidate/post assignments, variant links, versioned product events,
-direct-response attribution observations, evaluations, learning candidates, and approval-bound
-principles. Existing Threads publication rows merely snapshot a candidate's optional assignment ID;
-publisher, OAuth, publish-once, readback, and metrics behavior are unchanged. No route currently
-promotes a source campaign to assisted/live or ingests Trace product events, so these later effects
-remain unavailable rather than simulated.
+Migrations `0018`–`0021` add the execution and observation ledger: immutable artifact manifests,
+candidate/post assignments, variant links, versioned product events, direct-response attribution
+observations, evaluations, quarantined reference snapshots, learning candidates, and approval-bound
+principles. An assisted campaign must name a same-account shadow origin, carry an installed-evidence
+packet plus exact product-truth approval, and use the same broker for candidate materialization.
+Candidate materialization is a bounded Codex judgment: it returns one evidence-bound candidate and
+no capture, publish, or arbitrary tool action. Existing candidate/image review owns native capture;
+the existing `threads/*` owner remains responsible for every publication effect.
+
+The hosted route creates short-lived variant redirects and accepts versioned, deduplicated product
+events only under event-ingest authority. The scheduler queues an evaluation only after the
+pre-registered observation window or horizon closes; the deterministic evaluator distinguishes
+direct-response lineage from a causal estimate, incomplete coverage, and guardrail failure. A
+learning synthesis can create only a candidate from independent evaluated campaigns; an exact human
+approval is required before a scoped principle is written. Generic recording, composition, Figma,
+and generated-media executors remain deferred, so no unsupported artifact capability is simulated.
+Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
+publish-once, readback, and metrics behavior are unchanged.
 
 ## Threads publication and observation
 

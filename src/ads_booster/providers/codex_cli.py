@@ -51,6 +51,16 @@ _APPIUM_CONFIG: Final = (
     "permissions.trace-appium.network.allow_local_binding=false",
     'permissions.trace-appium.network.domains={"127.0.0.1"="allow",localhost="allow","::1"="allow"}',
 )
+_NO_TOOL_FEATURES: Final = (
+    "apps",
+    "browser_use",
+    "computer_use",
+    "hooks",
+    "image_generation",
+    "multi_agent",
+    "shell_tool",
+    "unified_exec",
+)
 
 
 def _strict_output_schema(schema: JsonObject) -> JsonObject:
@@ -144,6 +154,8 @@ class _StructuredTurn:
     workspace: Path
     timeout_seconds: float
     error_prefix: str
+    no_tools: bool = False
+    web_search: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +220,28 @@ class CodexCli:
                 workspace=workspace,
                 timeout_seconds=timeout_seconds,
                 error_prefix="codex_marketing_judgment",
+                no_tools=True,
+            )
+        )
+
+    def run_marketing_research_job(
+        self,
+        prompt: str,
+        schema: JsonObject,
+        *,
+        workspace: Path,
+        timeout_seconds: float,
+    ) -> JsonObject:
+        self._record_marketing_judgment_invocation(workspace)
+        return self._run_structured_job(
+            _StructuredTurn(
+                prompt=prompt,
+                schema=schema,
+                workspace=workspace,
+                timeout_seconds=timeout_seconds,
+                error_prefix="codex_marketing_research",
+                no_tools=True,
+                web_search=True,
             )
         )
 
@@ -330,7 +364,10 @@ class CodexCli:
         schema_path: Path,
         output_path: Path,
     ) -> list[str]:
-        command = [str(self.executable), "exec"]
+        command = [str(self.executable)]
+        if turn.web_search:
+            command.append("--search")
+        command.append("exec")
         command.extend(
             (
                 "--ephemeral",
@@ -347,6 +384,10 @@ class CodexCli:
         )
         if self.model is not None:
             command.extend(("--model", self.model))
+        if turn.no_tools:
+            command.extend(("--sandbox", "read-only"))
+            for feature in _NO_TOOL_FEATURES:
+                command.extend(("--disable", feature))
         command.append("-")
         return command
 

@@ -173,10 +173,19 @@ class FeatureEvidencePacket(ContractModel):
                 "unverified_publishable_claim",
                 "publication claims require installed-confirmed evidence",
             )
+        _validate_installed_evidence(self, allowed)
         if self.gate.publication_allowed and not allowed:
             _raise_contract_error(
                 "empty_publication_gate",
                 "publication cannot be allowed without at least one allowed claim",
+            )
+        if self.gate.publication_allowed and self.lifecycle not in {
+            FeatureLifecycle.INSTALLED_CONFIRMED,
+            FeatureLifecycle.RELEASED,
+        }:
+            _raise_contract_error(
+                "publication_lifecycle_not_installed",
+                "publication requires an installed-confirmed or released feature lifecycle",
             )
         if not self.gate.publication_allowed and allowed:
             _raise_contract_error(
@@ -199,7 +208,13 @@ class MarketingHypothesis(ContractModel):
 
 
 class OutcomeDefinition(ContractModel):
-    name: AgentIdentifier
+    name: Literal[
+        "first_open",
+        "feature_start",
+        "generation_completed",
+        "scheduling_completed",
+        "setup_completed",
+    ]
     scope: OutcomeScope
     window_hours: Annotated[int, Field(ge=1, le=24 * 30)]
     causal_estimand: Annotated[str | None, Field(max_length=2000)] = None
@@ -234,7 +249,7 @@ class ExperimentRegistration(ContractModel):
     minimum_eligible_blocks: Annotated[int, Field(ge=2, le=100)]
     maximum_posts: Annotated[int, Field(ge=2, le=1000)]
     maximum_duration_hours: Annotated[int, Field(ge=24, le=24 * 365)]
-    minimum_attribution_coverage: Annotated[float, Field(ge=0, le=1)]
+    minimum_attribution_coverage_basis_points: Annotated[int, Field(ge=0, le=10_000)]
     stop_rules: Annotated[tuple[str, ...], Field(min_length=1, max_length=16)]
     inconclusive_when: Annotated[tuple[str, ...], Field(min_length=1, max_length=16)]
 
@@ -381,12 +396,14 @@ class ArtifactManifest(ContractModel):
     schema_version: Literal["trace.artifact-manifest.v1"]
     manifest_id: AgentIdentifier
     campaign_id: AgentIdentifier
+    assignment_id: AgentIdentifier
     treatment_id: AgentIdentifier
     request_id: AgentIdentifier
     capability_id: AgentIdentifier
     artifact_uri: Annotated[str, Field(min_length=1, max_length=2000)]
     artifact_sha256: Sha256Digest
     input_sha256: Sha256Digest
+    execution_id: AgentIdentifier | None = None
     claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
     evidence_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=32)] = ()
     created_at: datetime
@@ -429,7 +446,7 @@ class ExperimentEvaluation(ContractModel):
     state: Literal["evaluated", "inconclusive", "stopped"]
     outcome_scope: OutcomeScope
     eligible_blocks: Annotated[int, Field(ge=0)]
-    attribution_coverage: Annotated[float, Field(ge=0, le=1)]
+    attribution_coverage_basis_points: Annotated[int, Field(ge=0, le=10_000)]
     winner_hypothesis_id: AgentIdentifier | None = None
     interpretation: Annotated[str, Field(min_length=1, max_length=4000)]
     guardrail_failures: Annotated[tuple[str, ...], Field(max_length=32)] = ()
@@ -477,6 +494,25 @@ def contract_sha256(contract: ContractModel) -> str:
         separators=(",", ":"),
     ).encode()
     return sha256(encoded).hexdigest()
+
+
+def _validate_installed_evidence(packet: FeatureEvidencePacket, allowed: set[str]) -> None:
+    evidence_by_id = {item.evidence_id: item for item in packet.evidence}
+    for claim in packet.claims:
+        if claim.claim_id not in allowed:
+            continue
+        installed_proof = any(
+            evidence_by_id[evidence_id].kind
+            in {EvidenceKind.INSTALL_RECEIPT, EvidenceKind.RUNTIME_OBSERVATION}
+            and evidence_by_id[evidence_id].result
+            in {EvidenceResult.PASSED, EvidenceResult.OBSERVED}
+            for evidence_id in claim.evidence_ids
+        )
+        if not installed_proof:
+            _raise_contract_error(
+                "missing_installed_proof",
+                "publication claims require a passing install or runtime observation",
+            )
 
 
 def _require_utc(value: datetime, *, field: str) -> None:

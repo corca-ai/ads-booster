@@ -76,6 +76,16 @@ function digest(value) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+test("canonical integer fixture matches the Python contract digest", () => {
+  assert.equal(digest({
+    schema_version: "trace.experiment-evaluation.v1",
+    eligible_blocks: 2,
+    attribution_coverage_basis_points: 8000,
+    winner_hypothesis_id: null,
+    guardrail_failures: [],
+  }), "573f8dbbe8c45a2fb1ae1f2b34b0d557b56a88070b344947af0d6e7a15f713d2");
+});
+
 function campaignInput(packet = featurePacket()) {
   return {
     campaign_id: "lockscreen-shadow-1",
@@ -104,6 +114,9 @@ function creationDb({ workers = true, packetDigest = null } = {}) {
                     }) }]
                     : [],
                 };
+              }
+              if (sql.includes("FROM hosted_marketing_principles")) {
+                return { results: [] };
               }
               throw new Error(`unexpected all SQL: ${sql}`);
             },
@@ -264,7 +277,7 @@ function judgmentFixture() {
     allowed_incidental_differences: [],
     activated_hypothesis_ids: ["control", "character-time"],
     primary_outcome: {
-      name: "qualified_reply_rate",
+      name: "setup_completed",
       scope: "direct_response_attribution",
       window_hours: 48,
       causal_estimand: null,
@@ -274,7 +287,7 @@ function judgmentFixture() {
     minimum_eligible_blocks: 4,
     maximum_posts: 8,
     maximum_duration_hours: 336,
-    minimum_attribution_coverage: 0.8,
+    minimum_attribution_coverage_basis_points: 8000,
     stop_rules: ["claim contradiction"],
     inconclusive_when: ["insufficient blocks"],
   };

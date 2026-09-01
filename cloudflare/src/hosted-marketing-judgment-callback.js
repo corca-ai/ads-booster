@@ -30,8 +30,12 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
             projection_revision, business_outcome
      FROM hosted_marketing_campaigns WHERE campaign_id = ? AND account_id = ?`,
   ).bind(task.run_id, task.account_id).first();
-  if (!campaign || campaign.mode !== "shadow" || campaign.state !== "strategy_requested") {
-    throw new HttpError(409, "shadow campaign is not awaiting a strategy judgment");
+  if (
+    !campaign
+    || !["shadow", "assisted"].includes(campaign.mode)
+    || campaign.state !== "strategy_requested"
+  ) {
+    throw new HttpError(409, "agent campaign is not awaiting a strategy judgment");
   }
   const now = new Date().toISOString();
   if (status !== "succeeded") {
@@ -53,10 +57,11 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     output.pipeline !== MARKETING_JUDGMENT_PIPELINE
     || output.judgment !== "shadow_strategy"
     || output.campaign_id !== campaign.campaign_id
-    || output.publication_allowed !== false
+    || output.publication_allowed !== (publishedPayload.feature_packet?.gate?.publication_allowed === true)
     || publishedPayload.pipeline !== MARKETING_JUDGMENT_PIPELINE
     || publishedPayload.judgment !== "shadow_strategy"
     || publishedPayload.campaign_id !== campaign.campaign_id
+    || (publishedPayload.mode ?? "shadow") !== campaign.mode
   ) {
     throw new HttpError(409, "marketing judgment output binding is invalid");
   }
@@ -93,7 +98,25 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
   const hypotheses = requireArray(brief.hypotheses, "strategy hypotheses", 2, 8);
   const controls = hypotheses.filter((hypothesis) => hypothesis?.role === "control");
   if (controls.length !== 1) throw new HttpError(409, "strategy requires exactly one control");
-  validateHypothesisEvidence(hypotheses, publishedPayload.feature_packet);
+  const referenceSnapshot = publishedPayload.reference_snapshot ?? null;
+  let referenceIds = new Set();
+  if (referenceSnapshot !== null) {
+    const snapshot = requireObject(referenceSnapshot, "published reference snapshot");
+    if (
+      await canonicalSha256(snapshot) !== publishedPayload.reference_snapshot_sha256
+      || snapshot.schema_version !== "trace.reference-research.v1"
+      || snapshot.campaign_id !== campaign.campaign_id
+      || snapshot.feature_packet_sha256 !== campaign.feature_packet_sha256
+      || snapshot.quarantine !== true
+    ) {
+      throw new HttpError(409, "strategy reference snapshot binding is invalid");
+    }
+    referenceIds = new Set(requireArray(snapshot.sources, "reference sources", 2, 16)
+      .map((source) => safeId(source?.source_id, "reference source_id")));
+  } else if (publishedPayload.reference_snapshot_sha256 != null) {
+    throw new HttpError(409, "strategy reference snapshot digest has no snapshot");
+  }
+  validateHypothesisEvidence(hypotheses, publishedPayload.feature_packet, referenceIds);
   const experiment = requireObject(brief.experiment, "strategy experiment");
   const experimentId = safeId(experiment.experiment_id, "experiment_id");
   const activated = requireArray(
@@ -239,13 +262,14 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
         (event_id, campaign_id, sequence, prior_revision, resulting_revision, event_type,
          event_json, event_sha256, idempotency_key, causation_id, correlation_id,
          event_time, observed_at, actor_type)
-       VALUES (?, ?, ?, ?, ?, 'shadow_strategy_completed', ?, ?, ?, ?, ?, ?, ?, 'codex')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codex')`,
     ).bind(
       crypto.randomUUID(),
       campaign.campaign_id,
       nextRevision,
       campaign.projection_revision,
       nextRevision,
+      campaign.mode === "shadow" ? "shadow_strategy_completed" : "strategy_completed",
       canonicalJson(eventDetail),
       await canonicalSha256(eventDetail),
       `campaign:${campaign.campaign_id}:strategy:${briefSha256}`,
@@ -377,7 +401,7 @@ function publishedJudgmentPayload(task) {
   }
 }
 
-function validateHypothesisEvidence(hypotheses, featurePacket) {
+function validateHypothesisEvidence(hypotheses, featurePacket, allowedReferenceIds) {
   const packet = requireObject(featurePacket, "published feature packet");
   const claims = requireArray(packet.claims, "published feature claims", 1, 64);
   const supportedClaimIds = new Set(claims
@@ -393,7 +417,10 @@ function validateHypothesisEvidence(hypotheses, featurePacket) {
     if (claimIds.some((claimId) => !supportedClaimIds.has(claimId))) {
       throw new HttpError(409, "strategy uses an unsupported feature claim");
     }
-    if (!Array.isArray(hypothesis?.reference_ids) || hypothesis.reference_ids.length !== 0) {
+    if (
+      !Array.isArray(hypothesis?.reference_ids)
+      || hypothesis.reference_ids.some((referenceId) => !allowedReferenceIds.has(referenceId))
+    ) {
       throw new HttpError(409, "shadow strategy breached the external reference quarantine");
     }
   }
@@ -401,6 +428,15 @@ function validateHypothesisEvidence(hypotheses, featurePacket) {
 
 function validateOutcomeDefinition(value) {
   const outcome = requireObject(value, "primary outcome");
+  if (![
+    "first_open",
+    "feature_start",
+    "generation_completed",
+    "scheduling_completed",
+    "setup_completed",
+  ].includes(outcome.name)) {
+    throw new HttpError(409, "primary outcome is not a versioned Trace product event");
+  }
   if (outcome.scope === "direct_response_attribution" && outcome.causal_estimand != null) {
     throw new HttpError(409, "direct-response attribution cannot claim a causal estimand");
   }

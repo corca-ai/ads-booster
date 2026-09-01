@@ -112,7 +112,7 @@ def _brief(packet: FeatureEvidencePacket) -> StrategyBrief:
             held_constant_components=("account", "posting slot"),
             activated_hypothesis_ids=("control", "challenger"),
             primary_outcome=OutcomeDefinition(
-                name="qualified_reply_rate",
+                name="setup_completed",
                 scope=OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION,
                 window_hours=48,
             ),
@@ -120,7 +120,7 @@ def _brief(packet: FeatureEvidencePacket) -> StrategyBrief:
             minimum_eligible_blocks=4,
             maximum_posts=8,
             maximum_duration_hours=336,
-            minimum_attribution_coverage=0.8,
+            minimum_attribution_coverage_basis_points=8_000,
             stop_rules=("product fidelity failure",),
             inconclusive_when=("insufficient blocks",),
         ),

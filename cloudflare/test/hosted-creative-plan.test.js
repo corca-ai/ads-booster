@@ -102,7 +102,7 @@ function strategyBrief(packet) {
       allowed_incidental_differences: [],
       activated_hypothesis_ids: ["control", "challenger"],
       primary_outcome: {
-        name: "qualified_reply_rate",
+        name: "setup_completed",
         scope: "direct_response_attribution",
         window_hours: 48,
         causal_estimand: null,
@@ -112,7 +112,7 @@ function strategyBrief(packet) {
       minimum_eligible_blocks: 4,
       maximum_posts: 8,
       maximum_duration_hours: 336,
-      minimum_attribution_coverage: 0.8,
+      minimum_attribution_coverage_basis_points: 8000,
       stop_rules: ["product fidelity failure"],
       inconclusive_when: ["insufficient blocks"],
     },
@@ -209,6 +209,12 @@ function decisionDb({ mode = "assisted", publicationAllowed = 1 } = {}) {
                     revision: 2,
                     status: "awaiting_review",
                     marketing_assignment_id: null,
+                    caption: "캐릭터가 시간에 맞춰 바뀌는 잠금화면",
+                    hypothesis: "시간 기반 캐릭터 증거가 설정 의도를 높인다.",
+                    appium_prompt: "Capture the native lock-screen schedule.",
+                    image_inputs_json: "[]",
+                    context_snapshot_json: null,
+                    persona_id: "persona-1",
                     existing_hypothesis_id: null,
                     existing_treatment_id: null,
                     existing_block_id: null,
@@ -513,7 +519,7 @@ test("exact media review is durable but still does not create an execution actio
   assert.equal(result.decision, "approved");
   assert.equal(result.publication_allowed, true);
   const statements = DB.batches[0];
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 5);
   const sql = statements.map((statement) => statement.sql).join("\n");
   assert.match(sql, /scope, target_kind/);
   assert.doesNotMatch(sql, /hosted_marketing_tool_actions/);
