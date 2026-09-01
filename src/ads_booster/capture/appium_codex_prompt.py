@@ -40,19 +40,15 @@ using the issued locale and time zone. Creating them all is required; showing th
 Trace folds the rows a panel cannot fit into a "+N" badge, and a screen that shows four rows and
 "+16" is the correct outcome for a week of twenty, not a failure to fix.
 
-Each trace_items entry is an object, not a string. Create it as a Trace event this way:
-- title is the event title, verbatim.
-- day is an offset in days from the captured reference_date. Zero is the day the wallpaper shows,
-  and six is the last day of the week the screen renders. Place the event on that date.
-- days is how many dates the event covers, starting at day. One is a single date. Anything larger
-  is a multi-day event ending on day + days - 1, which the screen draws as a bar across the strip.
-- time absent or null means an all-day event. Most rows on a full screen are all-day; do not invent
-  a time for them. When time is present, set the event to start at that clock time on its date.
-- color, when present, is the six-digit hex of one of Trace's fifteen event colours. Set it on the
-  event. Changing an event's colour is a paid feature, so if the signed-in account cannot set it,
-  leave the default and continue rather than failing the job.
-Also create every promotion_material.trace_todos entry as a Trace to-do with no date and no time.
-They belong in the to-do list, not the calendar, and the screen draws them in their own column.
+Do not create the trace_items rows. They already exist. The worker wrote every one of them into
+the request-owned iOS calendar named by calendar_namespace before this job started, and Trace draws
+what that calendar holds. Your job is to point a cell at that calendar, not to retype its contents:
+creating them again in the UI is the slowest thing this job could do and it duplicates rows that
+are already on the device.
+
+Do create every promotion_material.trace_todos entry as a Trace to-do with no date and no time.
+Those are the only rows you author. They are reminders rather than calendar events, so nothing
+upstream has made them, and the screen draws them in their own column.
 Use the Appium, XCUITest, Simulator, and Trace installations already present on this Mac.
 
 Build this exact layout. Do not design one.
