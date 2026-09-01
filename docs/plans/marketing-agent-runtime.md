@@ -185,12 +185,14 @@ single invocation factory persists a canonical non-secret request whose schema-b
 is carried by the descriptor-bound call. Backends receive that exact envelope rather than a
 digest-only call and retain ownership of connector-secret resolution. The store persists the pending
 call and invocation together, rejects a missing/mismatched legacy pending call, and rejects an
-execution checkpoint that disagrees with its immutable start event. One-use external grant
-consumption, receipt binding, and a fake-backend test seam remain in place. Its durable driver
-persists the pending dispatch and an execution-start checkpoint before any backend call; a restart
-after that checkpoint only reconciles, never retries the effect. The v2 serialization format names
-its canonical digest policy. A verified versionless terminal trace is read-only; a versionless
-pending/non-terminal session fails closed rather than being re-executed or automatically upgraded.
+execution checkpoint that disagrees with its immutable start event. Durable v3 traces begin with a
+hashed session header; replay derives the session ID, budget, authority, cost, idempotency, pending,
+execution, and terminal checkpoint from the event ledger and rejects invalid event integrity,
+reserved-event grammar, or final-event ordering. One-use external grant consumption, receipt binding,
+and a fake-backend test seam remain in place. Its durable driver persists the pending dispatch and an
+execution-start checkpoint before any backend call; a restart after that checkpoint only reconciles,
+never retries the effect. Verified pre-header v1/v2 terminal traces are read-only; pre-header pending
+or non-terminal sessions fail closed rather than being re-executed or automatically upgraded.
 
 Implemented: `feature_launch_operator` adds the first strict planner protocol, a versioned one-action
 skill registry, decision replay without another planner call, receipt/observation lineage validation,
@@ -215,7 +217,6 @@ a hosted orchestrator, adapter, or live-market evaluation claim.
 Next: run a named held-out multi-skill evaluation corpus rather than only fixture tests. Before any
 external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
 receipt proof, validated registry-manifest binding, a closed effect-class contract, and provider
-idempotency/readback/reconciliation. Derive authorization, budget, idempotency, and
-terminal/reconciliation checkpoint state from the append-only runtime ledger before it becomes
-external-effect authority. Then run fresh design critique before adding a thin
-control-plane adapter in a new post-merge PR.
+idempotency/readback/reconciliation. The local ledger derives its own checkpoint, but a hosted
+monotonic authority ledger/CAS lease must own the external effect. Then run fresh design critique
+before adding a thin control-plane adapter in a new post-merge PR.

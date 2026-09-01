@@ -20,7 +20,7 @@ from pydantic import TypeAdapter
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from pathlib import Path
     from typing import TextIO
 
@@ -44,8 +44,13 @@ class EffectDisposition(StrEnum):
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _BOUND_TOOL_INVOCATION_SCHEMA_VERSION = "trace.bound-tool-invocation.v1"
-_SESSION_SERIALIZATION_VERSION = "trace.marketing-session.v2"
+_SESSION_SERIALIZATION_VERSION = "trace.marketing-session.v3"
+_PREHEADER_SESSION_SERIALIZATION_VERSION = "trace.marketing-session.v2"
 _LEGACY_SESSION_SERIALIZATION_VERSION = "trace.marketing-session.v1"
+_SESSION_HEADER_SCHEMA_VERSION = "trace.marketing-session-header.v1"
+_TERMINAL_STATES = frozenset(
+    {RuntimeState.STOPPED, RuntimeState.INCONCLUSIVE, RuntimeState.COMPLETED}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +236,27 @@ class AgentSession:
     serialization_version: str = _SESSION_SERIALIZATION_VERSION
 
 
+@dataclass(frozen=True, slots=True)
+class _DerivedRuntimeCheckpoint:
+    """Runtime-owned state reconstructed from append-only runtime events only."""
+
+    session_id: str
+    budget: Budget
+    state: RuntimeState
+    spent_cost_units: int
+    reserved_cost_units: int
+    tool_calls: int
+    pending_invocation: BoundToolInvocation | None
+    pending_grant_sha256: str | None
+    execution_started: bool
+    dispatched_idempotency_keys: tuple[str, ...]
+    consumed_grant_sha256s: tuple[str, ...]
+
+    @property
+    def pending_call(self) -> ToolCall | None:
+        return None if self.pending_invocation is None else self.pending_invocation.call
+
+
 class ToolBackend(Protocol):
     def execute(self, invocation: BoundToolInvocation) -> ToolReceipt: ...
 
@@ -307,6 +333,7 @@ class JsonSessionStore:
         )
         if serialization_version not in {
             _LEGACY_SESSION_SERIALIZATION_VERSION,
+            _PREHEADER_SESSION_SERIALIZATION_VERSION,
             _SESSION_SERIALIZATION_VERSION,
         }:
             raise MarketingRuntimeError("session_serialization_version_invalid")
@@ -315,10 +342,7 @@ class JsonSessionStore:
         budget = _object(data, "budget")
         event_items = _array(data, "events")
         pending_value = data.get("pending_call")
-        if (
-            pending_value is not None
-            and serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION
-        ):
+        if pending_value is not None and serialization_version != _SESSION_SERIALIZATION_VERSION:
             raise MarketingRuntimeError("legacy_pending_session_unverifiable")
         pending_call = (
             None if pending_value is None else _tool_call_from_json(_as_object(pending_value))
@@ -355,12 +379,8 @@ class JsonSessionStore:
             ),
             serialization_version=serialization_version,
         )
-        if serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION:
-            if session.state not in {
-                RuntimeState.STOPPED,
-                RuntimeState.INCONCLUSIVE,
-                RuntimeState.COMPLETED,
-            }:
+        if serialization_version != _SESSION_SERIALIZATION_VERSION:
+            if session.state not in _TERMINAL_STATES:
                 raise MarketingRuntimeError("legacy_nonterminal_session_unverifiable")
             return session
         _validate_loaded_session_checkpoint(session)
@@ -636,8 +656,10 @@ class MarketingAgentRuntime:
         now: datetime,
     ) -> AgentSession:
         """Commit a workflow event without granting access to reserved tool event names."""
-        if event_type.startswith("tool_"):
+        if _is_runtime_reserved_event(event_type):
             raise MarketingRuntimeError("tool_events_are_runtime_reserved")
+        if session.state in _TERMINAL_STATES:
+            raise MarketingRuntimeError("session_event_after_terminal_state")
         self._require_current_session(store, session)
         updated = self._append(session, session.state, event_type, payload, now)
         self._persist_transition(store, session, updated)
@@ -657,6 +679,10 @@ class MarketingAgentRuntime:
             raise MarketingRuntimeError("session_final_state_invalid")
         if session.pending_call is not None:
             raise MarketingRuntimeError("session_finalization_has_pending_tool")
+        if session.state is RuntimeState.AWAITING_RECONCILIATION:
+            raise MarketingRuntimeError("session_finalization_requires_reconciliation")
+        if any(event.event_type == "session_finalized" for event in session.events):
+            raise MarketingRuntimeError("session_already_finalized")
         self._require_current_session(store, session)
         updated = self._append(
             session, state, "session_finalized", {"reason": reason, "state": state}, now
@@ -760,6 +786,20 @@ class MarketingAgentRuntime:
     ) -> AgentSession:
         if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
             raise MarketingRuntimeError("event_time_must_be_utc")
+        if event_type != "session_started" and not session.events:
+            session = MarketingAgentRuntime._append(
+                session,
+                RuntimeState.CREATED,
+                "session_started",
+                _session_header_payload(session),
+                now,
+            )
+        if event_type == "session_started" and session.events:
+            raise MarketingRuntimeError("session_header_already_started")
+        if event_type != "session_finalized" and any(
+            item.event_type == "session_finalized" for item in session.events
+        ):
+            raise MarketingRuntimeError("session_event_after_finalization")
         canonical_payload = _JSON_OBJECT.validate_python(payload)
         event = SessionEvent(
             len(session.events) + 1,
@@ -958,51 +998,357 @@ def _validate_loaded_session_checkpoint(session: AgentSession) -> None:
     if session.pending_call is None:
         if session.pending_invocation is not None or session.execution_started:
             raise MarketingRuntimeError("session_pending_invocation_checkpoint_mismatch")
-        return
-    if (
+    elif (
         session.pending_invocation is None
         or session.pending_invocation.call != session.pending_call
     ):
         raise MarketingRuntimeError("session_pending_invocation_checkpoint_mismatch")
-    dispatches = tuple(
-        (index, _tool_dispatch_from_event(event))
-        for index, event in enumerate(session.events)
-        if event.event_type == "tool_dispatched"
+    _validate_event_ledger_checkpoint(session)
+
+
+def _validate_event_ledger_checkpoint(session: AgentSession) -> None:
+    """Treat the serialized checkpoint as a cache, never as independent tool authority."""
+    derived = _replay_runtime_events(session.events)
+    _validate_checkpoint_matches(
+        (
+            (derived.session_id, session.session_id, "session_header_checkpoint_mismatch"),
+            (derived.budget, session.budget, "session_budget_checkpoint_mismatch"),
+            (derived.state, session.state, "session_state_checkpoint_mismatch"),
+            (
+                derived.spent_cost_units,
+                session.spent_cost_units,
+                "session_spent_budget_checkpoint_mismatch",
+            ),
+            (
+                derived.reserved_cost_units,
+                session.reserved_cost_units,
+                "session_pending_budget_checkpoint_mismatch",
+            ),
+            (derived.tool_calls, session.tool_calls, "session_tool_calls_checkpoint_mismatch"),
+            (
+                (derived.pending_call, derived.pending_invocation),
+                (session.pending_call, session.pending_invocation),
+                "session_pending_dispatch_checkpoint_mismatch",
+            ),
+            (
+                derived.pending_grant_sha256,
+                session.pending_grant_sha256,
+                "session_pending_grant_checkpoint_mismatch",
+            ),
+            (
+                derived.execution_started,
+                session.execution_started,
+                "session_execution_checkpoint_mismatch",
+            ),
+            (
+                derived.dispatched_idempotency_keys,
+                session.dispatched_idempotency_keys,
+                "session_idempotency_checkpoint_mismatch",
+            ),
+            (
+                derived.consumed_grant_sha256s,
+                session.consumed_grant_sha256s,
+                "session_grant_consumption_checkpoint_mismatch",
+            ),
+        )
     )
-    matching_dispatches = tuple(
-        (index, invocation, grant_sha256, reserved_cost_units)
-        for index, (invocation, grant_sha256, reserved_cost_units) in dispatches
-        if invocation == session.pending_invocation
+
+
+def _validate_checkpoint_matches(
+    checks: tuple[tuple[object, object, str], ...],
+) -> None:
+    for derived, checkpoint, error in checks:
+        if derived != checkpoint:
+            raise MarketingRuntimeError(error)
+
+
+def _replay_runtime_events(events: tuple[SessionEvent, ...]) -> _DerivedRuntimeCheckpoint:
+    """Pure, fail-closed reducer for every runtime-controlled checkpoint field."""
+    replay = _RuntimeReplay(
+        session_id=None,
+        budget=None,
+        state=RuntimeState.CREATED,
+        spent_cost_units=0,
+        reserved_cost_units=0,
+        tool_calls=0,
+        pending_invocation=None,
+        pending_grant_sha256=None,
+        execution_started=False,
+        dispatched_idempotency_keys=[],
+        consumed_grant_sha256s=[],
+        finalized=False,
+        last_occurred_at=None,
     )
-    if (
-        not dispatches
-        or len(matching_dispatches) != 1
-        or matching_dispatches[-1][0] != dispatches[-1][0]
+    for expected_sequence, event in enumerate(events, start=1):
+        if event.sequence != expected_sequence:
+            raise MarketingRuntimeError("session_event_sequence_mismatch")
+        _validate_runtime_event_integrity(replay, event)
+        _apply_runtime_event(replay, event)
+    return replay.checkpoint()
+
+
+@dataclass(slots=True)
+class _RuntimeReplay:
+    session_id: str | None
+    budget: Budget | None
+    state: RuntimeState
+    spent_cost_units: int
+    reserved_cost_units: int
+    tool_calls: int
+    pending_invocation: BoundToolInvocation | None
+    pending_grant_sha256: str | None
+    execution_started: bool
+    dispatched_idempotency_keys: list[str]
+    consumed_grant_sha256s: list[str]
+    finalized: bool
+    last_occurred_at: datetime | None
+
+    def checkpoint(self) -> _DerivedRuntimeCheckpoint:
+        if self.session_id is None or self.budget is None:
+            raise MarketingRuntimeError("session_event_header_missing")
+        return _DerivedRuntimeCheckpoint(
+            session_id=self.session_id,
+            budget=self.budget,
+            state=self.state,
+            spent_cost_units=self.spent_cost_units,
+            reserved_cost_units=self.reserved_cost_units,
+            tool_calls=self.tool_calls,
+            pending_invocation=self.pending_invocation,
+            pending_grant_sha256=self.pending_grant_sha256,
+            execution_started=self.execution_started,
+            dispatched_idempotency_keys=tuple(self.dispatched_idempotency_keys),
+            consumed_grant_sha256s=tuple(self.consumed_grant_sha256s),
+        )
+
+
+def _validate_runtime_event_integrity(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    if event.payload_sha256 != _json_digest(event.payload):
+        raise MarketingRuntimeError("session_event_payload_digest_mismatch")
+    if event.occurred_at.tzinfo is None or event.occurred_at.utcoffset() != UTC.utcoffset(
+        event.occurred_at
     ):
-        raise MarketingRuntimeError("session_pending_dispatch_checkpoint_mismatch")
-    dispatch_index, _, dispatch_grant_sha256, dispatch_reserved_cost_units = matching_dispatches[0]
-    if dispatch_grant_sha256 != session.pending_grant_sha256:
-        raise MarketingRuntimeError("session_pending_grant_checkpoint_mismatch")
-    if dispatch_reserved_cost_units != session.reserved_cost_units:
-        raise MarketingRuntimeError("session_pending_budget_checkpoint_mismatch")
-    start_indexes = tuple(
-        index
-        for index, event in enumerate(session.events)
-        if event.event_type == "tool_execution_started"
-        and event.payload.get("reference_sha256") == session.pending_call.digest
+        raise MarketingRuntimeError("session_event_time_must_be_utc")
+    if replay.last_occurred_at is not None and event.occurred_at < replay.last_occurred_at:
+        raise MarketingRuntimeError("session_event_time_non_monotonic")
+    replay.last_occurred_at = event.occurred_at
+
+
+def _apply_runtime_event(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    if event.event_type == "session_started":
+        _apply_session_started(replay, event)
+        return
+    if replay.budget is None:
+        raise MarketingRuntimeError("session_event_header_missing")
+    if replay.finalized:
+        raise MarketingRuntimeError("session_event_after_finalization")
+    handler = _runtime_event_handler(event.event_type)
+    if handler is not None:
+        handler(replay, event)
+    elif _is_runtime_reserved_event(event.event_type):
+        raise MarketingRuntimeError("session_event_transition_invalid")
+
+
+def _apply_session_started(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    if event.sequence != 1 or replay.session_id is not None:
+        raise MarketingRuntimeError("session_event_transition_invalid")
+    session_id, budget, header_sha256 = _session_header_from_event(event)
+    if header_sha256 != _session_header_sha256(session_id, budget):
+        raise MarketingRuntimeError("session_event_header_invalid")
+    replay.session_id = session_id
+    replay.budget = budget
+
+
+def _runtime_event_handler(
+    event_type: str,
+) -> Callable[[_RuntimeReplay, SessionEvent], None] | None:
+    return {
+        "tool_approval_required": _apply_approval_required,
+        "tool_dispatched": _apply_dispatch,
+        "tool_execution_started": _apply_execution_started,
+        "budget_tool_calls_exhausted": _apply_budget_stop,
+        "budget_cost_exhausted": _apply_budget_stop,
+        "session_finalized": _apply_finalization,
+        **{f"tool_{item}": _apply_receipt for item in EffectDisposition},
+        **dict.fromkeys(_RECONCILIATION_EVENTS, _apply_reconciliation_required),
+    }.get(event_type)
+
+
+_RECONCILIATION_EVENTS = frozenset(
+    {
+        "tool_backend_exception",
+        "tool_execution_interrupted",
+        "tool_invocation_missing",
+        "tool_invocation_rejected",
+        "tool_receipt_rejected",
+    }
+)
+
+
+def _apply_approval_required(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    _require_dispatchable(replay)
+    _ = _reference_from_event(event)
+    replay.state = RuntimeState.AWAITING_HUMAN
+
+
+def _apply_dispatch(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    _require_dispatchable(replay)
+    invocation, grant_sha256, reserved_cost = _tool_dispatch_from_event(event)
+    if replay.budget is None:
+        raise MarketingRuntimeError("session_event_header_missing")
+    if reserved_cost < 0 or replay.spent_cost_units + reserved_cost > replay.budget.max_cost_units:
+        raise MarketingRuntimeError("session_event_budget_invalid")
+    if invocation.call.idempotency_key in replay.dispatched_idempotency_keys:
+        raise MarketingRuntimeError("session_event_idempotency_duplicate")
+    _validate_replayed_grant(replay, invocation, grant_sha256)
+    replay.pending_invocation = invocation
+    replay.pending_grant_sha256 = grant_sha256
+    replay.reserved_cost_units = reserved_cost
+    replay.tool_calls += 1
+    replay.dispatched_idempotency_keys.append(invocation.call.idempotency_key)
+    if replay.tool_calls > replay.budget.max_tool_calls:
+        raise MarketingRuntimeError("session_event_budget_invalid")
+    replay.state = RuntimeState.EXECUTING
+
+
+def _apply_execution_started(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    if (
+        replay.pending_invocation is None
+        or replay.execution_started
+        or _reference_from_event(event) != replay.pending_invocation.call.digest
+    ):
+        raise MarketingRuntimeError("session_event_transition_invalid")
+    replay.execution_started = True
+    replay.state = RuntimeState.EXECUTING
+
+
+def _apply_receipt(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    receipt = tool_receipt_from_event(event)
+    if (
+        replay.pending_invocation is None
+        or not replay.execution_started
+        or receipt.call_id != replay.pending_invocation.call.call_id
+        or receipt.call_sha256 != replay.pending_invocation.call.digest
+        or receipt.approval_grant_sha256 != replay.pending_grant_sha256
+        or receipt.actual_cost_units < 0
+        or receipt.actual_cost_units > replay.reserved_cost_units
+        or event.event_type != f"tool_{receipt.disposition}"
+    ):
+        raise MarketingRuntimeError("session_event_receipt_invalid")
+    replay.spent_cost_units += receipt.actual_cost_units
+    replay.reserved_cost_units = 0
+    replay.pending_invocation = None
+    replay.pending_grant_sha256 = None
+    replay.execution_started = False
+    replay.state = (
+        RuntimeState.AWAITING_RECONCILIATION
+        if receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT
+        else RuntimeState.EXECUTING
     )
-    if len(start_indexes) > 1 or any(index <= dispatch_index for index in start_indexes):
-        raise MarketingRuntimeError("session_execution_checkpoint_mismatch")
-    if bool(start_indexes) != session.execution_started:
-        raise MarketingRuntimeError("session_execution_checkpoint_mismatch")
-    receipt_indexes = tuple(
-        index
-        for index, event in enumerate(session.events)
-        if event.event_type in {f"tool_{item}" for item in EffectDisposition}
-        and tool_receipt_from_event(event).call_sha256 == session.pending_call.digest
+
+
+def _apply_reconciliation_required(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    if replay.pending_invocation is None or not replay.execution_started:
+        raise MarketingRuntimeError("session_event_transition_invalid")
+    _ = _reference_from_event(event)
+    replay.state = RuntimeState.AWAITING_RECONCILIATION
+
+
+def _apply_budget_stop(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    _require_dispatchable(replay)
+    _ = _reference_from_event(event)
+    replay.state = RuntimeState.STOPPED
+
+
+def _apply_finalization(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    if (
+        replay.pending_invocation is not None
+        or replay.state is RuntimeState.AWAITING_RECONCILIATION
+    ):
+        raise MarketingRuntimeError("session_event_transition_invalid")
+    final_state = RuntimeState(_string(_as_object(event.payload), "state"))
+    if final_state not in _TERMINAL_STATES:
+        raise MarketingRuntimeError("session_event_transition_invalid")
+    if replay.state in _TERMINAL_STATES and final_state is not replay.state:
+        raise MarketingRuntimeError("session_event_transition_invalid")
+    replay.state = final_state
+    replay.finalized = True
+
+
+def _require_dispatchable(replay: _RuntimeReplay) -> None:
+    if replay.pending_invocation is not None or replay.state in {
+        RuntimeState.AWAITING_RECONCILIATION,
+        RuntimeState.STOPPED,
+        RuntimeState.INCONCLUSIVE,
+        RuntimeState.COMPLETED,
+    }:
+        raise MarketingRuntimeError("session_event_transition_invalid")
+
+
+def _validate_replayed_grant(
+    replay: _RuntimeReplay, invocation: BoundToolInvocation, grant_sha256: str | None
+) -> None:
+    if invocation.call.effect_class == "external" and grant_sha256 is None:
+        raise MarketingRuntimeError("session_event_approval_missing")
+    if invocation.call.effect_class != "external" and grant_sha256 is not None:
+        raise MarketingRuntimeError("session_event_approval_unexpected")
+    if grant_sha256 is not None:
+        if grant_sha256 in replay.consumed_grant_sha256s:
+            raise MarketingRuntimeError("session_event_grant_duplicate")
+        replay.consumed_grant_sha256s.append(grant_sha256)
+
+
+def _is_runtime_reserved_event(event_type: str) -> bool:
+    return event_type.startswith(("tool_", "budget_")) or event_type in {
+        "session_started",
+        "session_finalized",
+    }
+
+
+def _session_header_payload(session: AgentSession) -> JsonObject:
+    budget = session.budget
+    return _JSON_OBJECT.validate_python(
+        {
+            "schema_version": _SESSION_HEADER_SCHEMA_VERSION,
+            "session_id": session.session_id,
+            "budget": {
+                "max_tool_calls": budget.max_tool_calls,
+                "max_cost_units": budget.max_cost_units,
+            },
+            "header_sha256": _session_header_sha256(session.session_id, budget),
+        }
     )
-    if any(index > dispatch_index for index in receipt_indexes):
-        raise MarketingRuntimeError("session_pending_receipt_checkpoint_mismatch")
+
+
+def _session_header_from_event(event: SessionEvent) -> tuple[str, Budget, str]:
+    payload = _as_object(event.payload)
+    if _string(payload, "schema_version") != _SESSION_HEADER_SCHEMA_VERSION:
+        raise MarketingRuntimeError("session_event_header_invalid")
+    budget = _object(payload, "budget")
+    return (
+        _string(payload, "session_id"),
+        Budget(
+            _integer(budget, "max_tool_calls"),
+            _integer(budget, "max_cost_units"),
+        ),
+        _string(payload, "header_sha256"),
+    )
+
+
+def _session_header_sha256(session_id: str, budget: Budget) -> str:
+    return _json_digest(
+        {
+            "schema_version": _SESSION_HEADER_SCHEMA_VERSION,
+            "session_id": session_id,
+            "budget": {
+                "max_tool_calls": budget.max_tool_calls,
+                "max_cost_units": budget.max_cost_units,
+            },
+        }
+    )
+
+
+def _reference_from_event(event: SessionEvent) -> str:
+    return _string(_as_object(event.payload), "reference_sha256")
 
 
 def _tool_dispatch_from_event(event: SessionEvent) -> tuple[BoundToolInvocation, str | None, int]:

@@ -137,15 +137,16 @@ and consumes an exact one-use grant for external effects, and validates the retu
 the pending call and approval digest. `request_persisted_tool` CASes the call and invocation;
 `execute_persisted_tool` CASes an execution-start event before it calls a `ToolBackend`, and a
 restart-recovered execution can only be closed by `reconcile_interrupted_execution`. On reload,
-`JsonSessionStore` rejects a missing/mismatched pending invocation or an execution checkpoint that
-disagrees with the committed start event. It supplies host-local append-only CAS persistence, file
-locking, atomic replacement, and serialization integrity checking for replay tests; it is not a
-distributed lease or production control-plane store. Only the persisted admission and execution
-methods are public effect APIs; the non-durable transforms are private test primitives. General
-planner, skill-registry, context-projection, and outcome-evaluation owners remain separate from
-effect adapters; the implemented fake-backend verticals are described below. Session v2 records its
-canonicalization version. A versionless v1 terminal trace can be loaded read-only after historical
-digest verification; v1 pending/non-terminal sessions and all legacy saves fail closed.
+`JsonSessionStore` replays the closed runtime-event grammar from a hashed v3 `session_started`
+header. It rejects a missing/mismatched pending invocation, rewritten budget or authority checkpoint,
+invalid event digest/time, unknown reserved event, or an event after finalization. It supplies
+host-local append-only CAS persistence, file locking, atomic replacement, and serialization
+integrity checking for replay tests; it is not a distributed lease or production control-plane store.
+Only the persisted admission and execution methods are public effect APIs; the non-durable transforms
+are private test primitives. General planner, skill-registry, context-projection, and
+outcome-evaluation owners remain separate from effect adapters; the implemented fake-backend
+verticals are described below. Verified pre-header v1/v2 terminal traces are read-only; pre-header
+pending/non-terminal sessions and all legacy saves fail closed.
 
 `marketing/planning_projections.py` owns `FeaturePlanningProjection`, the shared data-only planner
 projection for the Feature Launch and Evidence Research verticals. It contains packet identity/digest,

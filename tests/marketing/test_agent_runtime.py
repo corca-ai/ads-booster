@@ -221,11 +221,12 @@ def test_session_store_rejects_rewritten_committed_history(tmp_path: Path) -> No
                 dispatched.events[0].payload_sha256,
                 NOW,
             ),
+            *dispatched.events[1:],
         ),
     )
 
     with pytest.raises(MarketingRuntimeError, match="event_history_mismatch"):
-        store.save(rewritten, expected_sequence=1)
+        store.save(rewritten, expected_sequence=len(dispatched.events))
 
 
 def test_invalid_bound_request_never_reaches_a_backend() -> None:
@@ -324,6 +325,193 @@ def test_store_rejects_pending_budget_that_differs_from_the_dispatch_event(tmp_p
         store.save(
             replace(dispatched, reserved_cost_units=0),
             expected_sequence=len(dispatched.events),
+        )
+
+
+def test_event_ledger_reconstructs_completed_authority_and_budget_checkpoint(
+    tmp_path: Path,
+) -> None:
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+    grant = _grant()
+    dispatched = runtime.request_persisted_tool(
+        store,
+        AgentSession("session-1", Budget(2, 10)),
+        _admission(grant),
+        now=NOW,
+    )
+    completed = runtime.execute_persisted_tool(
+        store,
+        dispatched,
+        RecordingBackend(_receipt(grant_sha256=grant.digest)),
+        now=NOW,
+    )
+    tampered_checkpoints = (
+        (replace(completed, state=RuntimeState.CREATED), "state_checkpoint_mismatch"),
+        (replace(completed, spent_cost_units=0), "spent_budget_checkpoint_mismatch"),
+        (replace(completed, tool_calls=0), "tool_calls_checkpoint_mismatch"),
+        (replace(completed, dispatched_idempotency_keys=()), "idempotency_checkpoint_mismatch"),
+        (replace(completed, consumed_grant_sha256s=()), "grant_consumption_checkpoint_mismatch"),
+    )
+
+    for tampered, error in tampered_checkpoints:
+        with pytest.raises(MarketingRuntimeError, match=error):
+            store.save(tampered, expected_sequence=len(completed.events))
+
+
+def test_event_ledger_header_freezes_the_session_budget(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+    dispatched = runtime.request_persisted_tool(
+        store,
+        AgentSession("session-1", Budget(2, 10)),
+        _admission(_grant()),
+        now=NOW,
+    )
+
+    assert dispatched.events[0].event_type == "session_started"
+    with pytest.raises(MarketingRuntimeError, match="budget_checkpoint_mismatch"):
+        store.save(
+            replace(dispatched, budget=Budget(20, 100)),
+            expected_sequence=len(dispatched.events),
+        )
+
+
+def test_event_ledger_rejects_invalid_runtime_event_and_payload_digest(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    dispatched = runtime._request_tool(
+        AgentSession("session-1", Budget(2, 10)), CAPABILITY, INVOCATION, now=NOW, grant=_grant()
+    )
+    invalid_runtime_event = runtime._append(
+        dispatched,
+        RuntimeState.EXECUTING,
+        "tool_unregistered_effect",
+        {},
+        NOW,
+    )
+    invalid_payload_digest = replace(
+        dispatched,
+        events=(replace(dispatched.events[0], payload_sha256="f" * 64), *dispatched.events[1:]),
+    )
+
+    with pytest.raises(MarketingRuntimeError, match="event_transition_invalid"):
+        JsonSessionStore(tmp_path / "runtime-event").save(
+            invalid_runtime_event,
+            expected_sequence=0,
+        )
+    with pytest.raises(MarketingRuntimeError, match="event_payload_digest_mismatch"):
+        JsonSessionStore(tmp_path / "payload-digest").save(
+            invalid_payload_digest,
+            expected_sequence=0,
+        )
+
+
+def test_event_ledger_rejects_any_event_after_finalization(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+    terminal = runtime.finalize_persisted_session(
+        store,
+        AgentSession("session-1", Budget(1, 1)),
+        state=RuntimeState.COMPLETED,
+        reason="evaluation complete",
+        now=NOW,
+    )
+    post_final_event = SessionEvent(
+        len(terminal.events) + 1,
+        "feature_after_finalization",
+        {},
+        sha256(b"{}").hexdigest(),
+        NOW,
+    )
+
+    with pytest.raises(MarketingRuntimeError, match="event_after_finalization"):
+        JsonSessionStore(tmp_path / "post-final").save(
+            replace(terminal, events=(*terminal.events, post_final_event)),
+            expected_sequence=0,
+        )
+    with pytest.raises(MarketingRuntimeError, match="session_already_finalized"):
+        _ = runtime.finalize_persisted_session(
+            store,
+            terminal,
+            state=RuntimeState.COMPLETED,
+            reason="duplicate",
+            now=NOW,
+        )
+
+
+def test_event_ledger_rejects_receipt_without_a_durable_execution_start(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+    grant = _grant()
+    dispatched = runtime.request_persisted_tool(
+        store,
+        AgentSession("session-1", Budget(2, 10)),
+        _admission(grant),
+        now=NOW,
+    )
+    receipt_without_start = runtime.record_receipt(
+        dispatched,
+        _receipt(grant_sha256=grant.digest),
+        now=NOW,
+    )
+
+    with pytest.raises(MarketingRuntimeError, match="event_receipt_invalid"):
+        store.save(receipt_without_start, expected_sequence=len(dispatched.events))
+
+
+def test_event_ledger_rejects_duplicate_execution_start_and_sequence_hole(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+    dispatched = runtime.request_persisted_tool(
+        store,
+        AgentSession("session-1", Budget(2, 10)),
+        _admission(_grant()),
+        now=NOW,
+    )
+    started = runtime.start_persisted_tool_execution(store, dispatched, now=NOW)
+    duplicate_start = runtime._append(
+        started,
+        RuntimeState.EXECUTING,
+        "tool_execution_started",
+        {"reference_sha256": CALL.digest},
+        NOW,
+    )
+
+    with pytest.raises(MarketingRuntimeError, match="event_transition_invalid"):
+        store.save(duplicate_start, expected_sequence=len(started.events))
+    with pytest.raises(MarketingRuntimeError, match="event_sequence_mismatch"):
+        JsonSessionStore(tmp_path / "sequence-hole").save(
+            replace(dispatched, events=(replace(dispatched.events[0], sequence=2),)),
+            expected_sequence=0,
+        )
+
+
+def test_reconciliation_cannot_be_finalized_without_a_resolution(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+    grant = _grant()
+    dispatched = runtime.request_persisted_tool(
+        store,
+        AgentSession("session-1", Budget(2, 10)),
+        _admission(grant),
+        now=NOW,
+    )
+    reconciled = runtime.execute_persisted_tool(
+        store,
+        dispatched,
+        RecordingBackend(
+            _receipt(EffectDisposition.UNKNOWN_SIDE_EFFECT, grant_sha256=grant.digest)
+        ),
+        now=NOW,
+    )
+
+    with pytest.raises(MarketingRuntimeError, match="finalization_requires_reconciliation"):
+        _ = runtime.finalize_persisted_session(
+            store,
+            reconciled,
+            state=RuntimeState.COMPLETED,
+            reason="must not bypass unknown effect",
+            now=NOW,
         )
 
 

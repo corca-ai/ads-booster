@@ -528,7 +528,8 @@ def test_held_out_research_to_launch_trace_requires_the_immutable_brief(tmp_path
     assert research_session.state is RuntimeState.COMPLETED
     assert launch_session.state is RuntimeState.COMPLETED
     assert research_session.session_id != launch_session.session_id
-    assert launch_session.events[0].event_type == "feature_launch_brief_committed"
+    assert launch_session.events[0].event_type == "session_started"
+    assert launch_session.events[1].event_type == "feature_launch_brief_committed"
     assert launch_planner.proposal is not None
     assert launch_planner.proposal.research_observation_ids == tuple(
         item.research_observation_id for item in brief.evidence

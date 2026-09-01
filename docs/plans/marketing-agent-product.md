@@ -35,9 +35,10 @@ general multi-channel marketing product.
 
 Implemented provider-neutral foundations:
 
-- append-only, restart-safe session trace; a capability/schema-bound `BoundToolInvocation` with
-  canonical non-secret request payload, receipt, budget, approval grant, idempotency, and
-  reconciliation contracts;
+- append-only, restart-safe v3 session trace with a hashed immutable session header and a
+  fail-closed runtime-event reducer; a capability/schema-bound `BoundToolInvocation` with canonical
+  non-secret request payload, receipt, budget, approval grant, idempotency, and reconciliation
+  contracts;
 - an observe-only evidence-research vertical across product truth, customer intelligence, and market
   evidence;
 - a separate Feature Launch experiment vertical whose planner cannot create a raw tool call;
@@ -152,8 +153,10 @@ planning or hand call. The runtime now also has a `BoundToolInvocation`: a schem
 canonical, non-secret request that is persisted with the pending call and received by the backend.
 One UTF-8 canonical JSON policy covers event, call, and request digests; reload rejects a missing or
 mismatched invocation and an execution checkpoint that contradicts its committed start event. The
-serialization format is versioned: a verified versionless terminal trace is read-only, while a
-versionless pending or non-terminal trace fails closed rather than being upgraded or re-executed.
+serialization format is v3: its first event freezes the session ID and budget, and reload
+re-derives every runtime authority/cache field from the closed event grammar. Verified pre-header
+v1/v2 terminal traces are read-only, while pre-header pending or non-terminal traces fail closed
+rather than being upgraded or re-executed.
 The next additions stay in this order:
 
 1. turn the representative cases into a named test-owned scorecard with separate environment and
@@ -171,9 +174,11 @@ silently grant that legacy behavior to a new external-effect path. The same pre-
 all of: live approval/revocation verification immediately before the effect, a versioned verifiable
 receipt proof bound to the invocation, a validated capability-registry manifest digest, a closed
 effect-class enum, and provider idempotency/readback/reconciliation rules. It must also derive the
-authorization, budget, idempotency, and terminal/reconciliation checkpoint from the runtime event
-ledger before treating that checkpoint as external-effect authority. A generic JSON-schema engine,
-secret-pattern scanner, or production connector is intentionally not part of this foundation.
+authorization, budget, idempotency, and terminal/reconciliation checkpoint from a hosted monotonic
+authority ledger before treating that checkpoint as external-effect authority. The local runtime now
+performs the equivalent reducer check for its own ledger, but it is not a distributed authority. A
+generic JSON-schema engine, secret-pattern scanner, or production connector is intentionally not part
+of this foundation.
 
 ### 1. Add governed marketing context and signals
 

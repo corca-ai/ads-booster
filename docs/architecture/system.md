@@ -165,17 +165,20 @@ non-secret request together with its schema-bound `ToolCall`. A backend receives
 not a digest-only call, and resolves any connector secret from its own capability identity.
 `request_persisted_tool` first CASes one pending call and its exact invocation;
 `execute_persisted_tool` then CASes an execution-start checkpoint before it can enter a backend. On
-load, the checkpoint must agree with the immutable start event, so a rewritten checkpoint cannot
-redeliver a claimed effect. A restart-recovered execution checkpoint can only enter reconciliation,
-never redelivery. The harness reserves budget, consumes an exact one-use external approval grant,
-and accepts a receipt only when its call and grant digests bind to that pending call. Backend
-exceptions and rejected receipts become `awaiting_reconciliation`. This harness has no Cloudflare,
-Appium, Threads, or model-provider import and is not a hosted worker or an automatic-publication
-path. Its public effect surface is the persisted admission/execution sequence; non-durable
-transition helpers are private unit-test primitives, so a future hand cannot skip the checkpoints.
-Current serialization is explicitly versioned. Versionless v1 terminal traces are verified using
-their historical digest policy and exposed read-only; v1 pending or non-terminal sessions fail
-closed rather than being rewritten or re-executed.
+load, every cache field is re-derived from the immutable `session_started` header and the closed
+runtime-event grammar: session ID, budget, state, spent/reserved cost, pending invocation/grant,
+execution claim, idempotency keys, and consumed grants must all agree. Event sequence, canonical
+payload digest, UTC/non-decreasing event time, runtime event type, and final-event ordering are
+also checked, so a rewritten checkpoint cannot redeliver a claimed effect or enlarge its budget. A
+restart-recovered execution checkpoint can only enter reconciliation, never redelivery. The harness
+reserves budget, consumes an exact one-use external approval grant, and accepts a receipt only when
+its call and grant digests bind to that pending call. Backend exceptions and rejected receipts become
+`awaiting_reconciliation`. This harness has no Cloudflare, Appium, Threads, or model-provider import
+and is not a hosted worker or an automatic-publication path. Its public effect surface is the
+persisted admission/execution sequence; non-durable transition helpers are private unit-test
+primitives, so a future hand cannot skip the checkpoints. Current serialization is explicitly
+versioned: v3 writes the ledger header, while verified pre-header v1/v2 terminal traces are read-only
+and pre-header pending or non-terminal sessions fail closed rather than being rewritten or re-executed.
 General live planning, skill routing, and outcome evaluation remain deferred; no live tool can
 invoke them yet. The local fake-backend verticals below only establish replay, receipt, and bounded
 evaluation contracts.
