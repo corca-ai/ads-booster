@@ -2,7 +2,8 @@
 
 Status: Draft — establishes the product and architecture contract before multi-tenant platform
 implementation. Trace is the first reference tenant and evidence-producing integration, not the
-definition of the product.
+definition of the product. This PR preserves the existing Cloudflare automation; agent-runtime
+integration is a post-merge slice, not a rewrite of that automation.
 
 Last reviewed: 2026-09-01
 
@@ -16,6 +17,69 @@ replaceable execution adapters.
 The durable customer capability is: **turn a product change and customer signals into a bounded,
 evidence-backed marketing experiment, execute approved work through connected tools, and improve the
 next experiment from measured outcomes.**
+
+## Product correction: agent runtime over control plane
+
+`Appium`, persona, video, Figma, CRM, and channel publication are tools, not product modes. The
+product is a marketing agent that dynamically chooses the useful research and execution tools for a
+goal, learns from their receipts and outcomes, and asks a human only at meaningful authority
+boundaries.
+
+```text
+Marketing Agent Runtime
+  goal -> orient -> plan -> choose skills/tools -> observe -> evaluate -> revise or stop
+                 |                                   |
+                 +-------- human checkpoint ---------+
+
+Marketing Control Plane
+  evidence / authority / idempotency / approval / receipt / outcome / audit
+
+Information & effect tools
+  product source, customer calls, web research, analytics, Appium, creative, CRM, channels
+```
+
+This follows the useful distinction in [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents):
+fixed validation and irreversible-effect gates stay deterministic workflows; the runtime uses an
+agent loop only when the next research question, creative route, or tool cannot be predicted in
+code. It re-plans from actual tool receipts, never assumed success.
+
+Cloudflare/D1 is therefore neither the planner nor a product mode. It is a trusted control-plane
+tool backend: it checks scope and approval, invokes the existing effect owner when authorized, and
+returns typed receipts. The existing Trace capture and Threads automation remain such owners.
+
+### Runtime contracts and memory
+
+| Contract | Required content |
+| --- | --- |
+| `MarketingGoal` | outcome, product context, budget, autonomy level, stop condition |
+| `DecisionTrace` | observation, alternatives, chosen action, expected evidence, cost |
+| `ToolCapability` | purpose, authority, inputs, effect class, receipt schema, failure modes |
+| `Observation` | source, scope, digest, freshness, uncertainty, consent where relevant |
+| `Experiment` | hypothesis, control, outcome, window, guardrails |
+| `LearningCandidate` | evidence coverage, applicability, counter-evidence, human approval |
+
+Memory is deliberately separated: immutable product truth; consent-scoped customer intelligence;
+cited, freshness-bounded market observations; campaign-scoped working context; and
+evaluation-approved playbook skills. A viral reference, raw transcript, or single successful post
+cannot silently become long-term strategy.
+
+Skills are versioned procedures for a coherent toolset, with entry criteria, expected evidence,
+cost/stop bounds, and evaluation fixtures. This borrows the valuable separation of skills and tools
+from runtimes such as [OpenClaw](https://github.com/openclaw/openclaw/blob/main/docs/concepts/agent.md),
+without inheriting a general-purpose personal-assistant product shape.
+
+### Product wedge and sequencing
+
+The first sellable wedge is a weekly evidence-backed growth operator for small software teams: connect
+one product source and one outcome source, inspect a prioritized campaign queue and decision traces,
+and approve only the few actions that cross a real-world boundary. The moat hypothesis is the governed
+product-evidence → customer-signal → experiment → outcome → reusable-playbook graph, not raw video
+volume.
+
+Do not further reorganize Cloudflare in this PR. After merge, build a provider-neutral agent runtime
+with a fake control-plane tool backend and test its decision trace, skill choice, budgets, stopping,
+and evaluation. Only then expose Cloudflare's existing operations as typed control-plane tools. This
+keeps the working automation release-verifiable while the high-level agent evolves independently.
 
 Trace exercises the full loop with native capture and Threads. A future customer may use a web app,
 its own analytics, a CRM, a creative tool, or another channel without changing the agent core.
@@ -147,10 +211,10 @@ can prove product truth and outcomes—not an interchangeable prompt library.
 - Evaluation distinguishes descriptive attribution, causal estimates, qualitative research, and
   creative review; they cannot share a single winner field.
 
-## Current implementation slice
+## Deferred control-plane implementation slice
 
-Implement a small, backwards-compatible **effect-adapter capability catalog** before adding another
-tool:
+The already-started, backwards-compatible **effect-adapter capability catalog** is a post-merge
+control-plane slice, not the next agent-runtime slice:
 
 1. Define account-scoped capability registrations with `capability_id`, immutable descriptor digest,
    effect class, request/receipt schema digests, owner, enabled state, and activation state.
@@ -205,11 +269,12 @@ than a new branch inside `marketing-agent.js`.
 | Product intelligence is not raw prompt memory | unit | unapproved signal/transcript records cannot enter a campaign knowledge snapshot |
 | Operator can diagnose a stalled loop | integration | seeded missing prerequisites return stable, ordered blocker objects from the read-only transition diagnostic |
 
-## First implementation slice
+## Next implementation slice
 
-Ready for `impl`: account-scoped effect-adapter catalog + context-receipt-scoped immutable capability
-binding + ArtifactRequest/manifest validation + read-only transition diagnostic. The canonical
-companion for current Trace behavior remains
+First build the provider-neutral agent runtime: goal/decision trace, bounded skill selection, typed
+tool receipts, stop/budget policy, and evaluation fixtures against a fake control-plane backend. Only
+then implement the deferred account-scoped catalog binding and diagnostics against Cloudflare. The
+canonical companion for current Trace behavior remains
 [`threads-marketing-agent.md`](./threads-marketing-agent.md).
 
 ## Pre-implementation critique — 2026-09-01
