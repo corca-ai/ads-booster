@@ -97,6 +97,35 @@ class ReferenceResearchSnapshot(ResearchModel):
     collected_at: Annotated[str, Field(min_length=1, max_length=80)]
 
 
+class ReferenceSourceReceipt(ResearchModel):
+    schema_version: Literal["trace.reference-source-receipt.v1"]
+    receipt_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
+    source_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
+    requested_url: Annotated[str, Field(pattern=r"^https://", max_length=2000)]
+    final_url: Annotated[str, Field(pattern=r"^https://", max_length=2000)]
+    http_status: Annotated[int, Field(ge=200, le=299)]
+    content_type: Literal["application/json", "application/pdf", "text/html", "text/plain"]
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    byte_length: Annotated[int, Field(ge=1, le=1024 * 1024)]
+    fetched_at: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class ReferenceVerificationBundle(ResearchModel):
+    schema_version: Literal["trace.reference-verification.v1"]
+    snapshot_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
+    snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    receipts: Annotated[tuple[ReferenceSourceReceipt, ...], Field(min_length=2, max_length=16)]
+    verified_at: Annotated[str, Field(min_length=1, max_length=80)]
+
+    @model_validator(mode="after")
+    def validate_receipts(self) -> ReferenceVerificationBundle:
+        source_ids = tuple(receipt.source_id for receipt in self.receipts)
+        receipt_ids = tuple(receipt.receipt_id for receipt in self.receipts)
+        if len(set(source_ids)) != len(source_ids) or len(set(receipt_ids)) != len(receipt_ids):
+            raise ValueError("reference verification receipts must be unique")
+        return self
+
+
 class ResearchAccountSnapshot(ResearchModel):
     account_id: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
     country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]

@@ -45,6 +45,8 @@ class MacWorkerDoctorReport:
                 "hosted_workspace_capture_v1": True,
                 "feedback_context_v1": True,
                 "marketing_judgment_v1": True,
+                "candidate_materialization_v2": True,
+                "outcome_reassessment_v1": True,
                 # Which job kinds this worker can actually execute, so the control plane does
                 # not lease a caption batch to a Mac whose Python predates it. A comma-joined
                 # string rather than a list because the control plane flattens every non-scalar

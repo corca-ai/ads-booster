@@ -2503,13 +2503,13 @@ textarea:focus-visible {
 }
 
 @media (min-width: 60rem) {
-  .generation-workbench { grid-template-columns: minmax(0, 1.3fr) minmax(18rem, 0.7fr); }
+  .generation-workbench { grid-template-columns: minmax(0, 1fr); }
 
   .worker-manager__layout { grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr); }
 
   .entry-block {
     border-block-start: 0;
-    border-inline-start: var(--border-width) solid var(--color-border);
+    border-inline-start: 0;
   }
 
   .workspace-main { padding: var(--space-6); }
@@ -2589,7 +2589,7 @@ textarea:focus-visible {
   gap: var(--space-4);
   padding: var(--space-5);
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-md);
 }
 
@@ -2637,17 +2637,21 @@ textarea:focus-visible {
 }
 
 .account-card__name {
-  font-size: var(--text-lg);
+  font-size: var(--font-heading);
 }
 
 .account-card__concept {
   color: var(--color-text);
+  text-wrap: balance;
 }
 
 .account-card__meta {
   color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--font-small);
+  word-break: keep-all;
 }
+
+.account-home > .form-help { text-wrap: balance; }
 
 .account-workspace__bar {
   display: flex;
@@ -2682,25 +2686,19 @@ textarea:focus-visible {
 
 .stage-tabs { justify-self: start; }
 
-/* AI 계정 제안: 폼 위에 놓인 카드 몇 장. 고르면 아래 폼이 채워지므로 카드 자체는 가볍게. */
 .proposal-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  align-items: stretch;
   gap: var(--space-3);
+  inline-size: min(100%, 30rem);
   margin-bottom: var(--space-3);
-}
-
-.proposal-bar .form-help {
-  flex: 1 1 16rem;
-  margin: 0;
 }
 
 .proposal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
-  margin-bottom: var(--space-4);
+  margin-bottom: 0;
 }
 
 .proposal-card {
@@ -2709,12 +2707,13 @@ textarea:focus-visible {
   gap: var(--space-2);
   padding: var(--space-3);
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
+  border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-md);
 }
 
 .proposal-card__reason {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--font-small);
+  word-break: keep-all;
 }

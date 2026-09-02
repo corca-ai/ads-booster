@@ -5,6 +5,10 @@ import {
   deriveExperimentEvaluation,
   InvalidExperimentEvaluationRequest,
 } from "./experiment-evaluation.js";
+import {
+  buildOutcomeReassessmentTask,
+  supportedClaimIdsFromPacket,
+} from "./marketing-outcome-reassessment.js";
 
 export async function receiveHostedExperimentEvaluationCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -32,9 +36,16 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
   const campaign = await env.DB.prepare(
     `SELECT campaign.campaign_id, campaign.account_id, campaign.state,
             campaign.projection_revision, experiment.experiment_id,
-            experiment.registration_sha256
+            experiment.registration_sha256,
+            brief.brief_json, brief.brief_sha256,
+            packet.packet_json
      FROM hosted_marketing_campaigns AS campaign
      JOIN hosted_marketing_experiments AS experiment ON experiment.campaign_id = campaign.campaign_id
+     JOIN hosted_marketing_strategy_briefs AS brief
+       ON brief.brief_id = experiment.strategy_brief_id
+     JOIN hosted_marketing_feature_packets AS packet
+       ON packet.packet_id = campaign.feature_packet_id
+      AND packet.packet_sha256 = campaign.feature_packet_sha256
      WHERE campaign.campaign_id = ? AND campaign.account_id = ?
        AND experiment.experiment_id = ?`,
   ).bind(
@@ -95,6 +106,34 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
   ) {
     throw new HttpError(409, "experiment evaluation output binding is invalid");
   }
+  let priorStrategy;
+  let featurePacket;
+  try {
+    priorStrategy = requireObject(JSON.parse(campaign.brief_json), "strategy brief");
+    featurePacket = requireObject(JSON.parse(campaign.packet_json), "feature packet");
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(409, "reassessment source records are invalid");
+  }
+  if (await canonicalSha256(priorStrategy) !== campaign.brief_sha256) {
+    throw new HttpError(409, "reassessment strategy lineage is invalid");
+  }
+  let reassessmentTask = null;
+  if (priorStrategy.decision_dossier != null) {
+    try {
+      reassessmentTask = buildOutcomeReassessmentTask({
+        accountId: campaign.account_id,
+        campaignId: campaign.campaign_id,
+        priorStrategy,
+        priorStrategySha256: campaign.brief_sha256,
+        evaluation,
+        evaluationSha256,
+        supportedClaimIds: supportedClaimIdsFromPacket(featurePacket),
+      });
+    } catch {
+      throw new HttpError(409, "outcome reassessment request is invalid");
+    }
+  }
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
       env.DB,
@@ -150,6 +189,7 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     evaluation_id: evaluation.evaluation_id,
     evaluation_sha256: evaluationSha256,
     state: evaluation.state,
+    reassessment_queued: reassessmentTask !== null,
   };
   statements.push(
     env.DB.prepare(
@@ -202,8 +242,33 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
       now,
       now,
     ),
-    completionStatement(env, task, callback, worker, "succeeded", storedResultJson, now),
   );
+  if (reassessmentTask !== null) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO hosted_workspace_capture_tasks
+        (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+         task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
+       VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
+               'outcome_reassessment_v1', ?, ?)`,
+    ).bind(
+      reassessmentTask.task_id,
+      reassessmentTask.run_id,
+      campaign.account_id,
+      reassessmentTask.idempotency_key,
+      JSON.stringify(reassessmentTask),
+      reassessmentTask.created_at,
+      now,
+    ));
+  }
+  statements.push(completionStatement(
+    env,
+    task,
+    callback,
+    worker,
+    "succeeded",
+    storedResultJson,
+    now,
+  ));
   const results = await env.DB.batch(statements);
   if (results.some((result) => result?.meta?.changes !== 1)) {
     throw new HttpError(409, "experiment evaluation batch lost its state race");
@@ -214,6 +279,8 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     campaign_id: campaign.campaign_id,
     evaluation_id: evaluation.evaluation_id,
     state: evaluation.state,
+    reassessment_id: reassessmentTask?.payload.reassessment_id ?? null,
+    reassessment_task_id: reassessmentTask?.task_id ?? null,
   };
 }
 

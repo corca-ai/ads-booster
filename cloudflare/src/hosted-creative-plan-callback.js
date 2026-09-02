@@ -277,6 +277,10 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
 }
 
 function validateTreatments(plan, strategy, capabilityBindingsById) {
+  const proofKindByCapability = new Map([
+    ["capture.native_png", "installed_native_capture"],
+    ["copy.text", "copy_only"],
+  ]);
   const treatments = requireArray(plan.treatments, "creative treatments", 2, 8);
   const active = new Set(requireArray(
     strategy.experiment?.activated_hypothesis_ids,
@@ -299,9 +303,21 @@ function validateTreatments(plan, strategy, capabilityBindingsById) {
       throw new HttpError(409, "creative treatment escaped its strategy claims");
     }
     const requests = requireArray(treatment.artifact_requests, "artifact requests", 1, 8);
+    const captureRequests = requests.filter(
+      (request) => request?.capability_id === "capture.native_png",
+    );
+    if (captureRequests.length !== 1) {
+      throw new HttpError(
+        409,
+        "workspace candidate treatment requires exactly one native capture request",
+      );
+    }
     for (const request of requests) {
       if (!capabilityBindingsById.has(request?.capability_id)) {
         throw new HttpError(409, "creative treatment requested an unavailable capability");
+      }
+      if (proofKindByCapability.get(request.capability_id) !== request.proof_kind) {
+        throw new HttpError(409, "creative treatment capability and proof kind do not match");
       }
       const requestClaims = requireArray(request.claim_ids ?? [], "artifact claim_ids", 0, 16);
       if (requestClaims.some((claimId) => !treatmentClaims.includes(claimId))) {

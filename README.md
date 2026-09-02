@@ -42,9 +42,33 @@ and image-review path remains the sole owner of native capture and default-OFF T
 Variant links resolve at `/api/marketing-agent/v/:token`; a versioned Trace event receiver stores
 deduplicated, privacy-safe first-open through setup-complete receipts. The hosted scheduler creates
 only conservative, pre-registered experiment evaluations after their observation windows close.
+Direct-response rates stay descriptive. The causal-estimation contract additionally requires a
+server-owned randomized block plan, immutable allocation receipt, a complete immutable Threads
+exposure-slot schedule, exact publication/schedule readback within the fixed tolerance, and an exact
+two-sided randomization test. Missing, late, canceled, or mismatched exposure remains inconclusive.
+Live `new_launch` strategy judgments also carry a reviewable Decision Dossier: selected ICP or
+explicit research need, evidence-bound positioning, every frozen evidence disposition, and one
+bounded next action. Customer-signal freshness and confidence are re-derived; product and
+quarantined-market freshness remain `unknown`, not a live latest-event feed. Before quarantined
+market observations reach strategy, Cloudflare fetches every declared public HTTPS source itself,
+requires at least two distinct source and final hosts, and freezes byte-level SHA-256 receipts in
+D1. The strategy callback rebinds those receipts to D1; this proves source availability and exact
+bytes at collection time, not that the model's summary is faithful, current, or credible. After an
+experiment from a dossier-bearing live strategy is evaluated, its callback freezes the evaluation
+and prior strategy into exactly one
+`outcome_reassessment` turn. That no-effect turn distinguishes an ordinary result, a control win or
+stopped performance path, and an observed publication unknown-side-effect; it produces a bound
+hypothesis-by-hypothesis reassessment for inspection but cannot publish, spend, retry, or alter the
+active campaign. The separate decision-quality evaluator still covers synthetic market-event
+scenarios offline. General market-event intake and general tool-effect reconciliation are not live.
 Replicated evaluated lineages may create a learning candidate, and only an exact human decision can
 promote it to a scoped principle. Generic recording, composition, Figma, and generated-media
-artifact executors are not yet product operations. Strategy approval, MediaPlan approval, assisted
+artifact executors are not yet product operations. New marketing candidates use the same structured
+weekly schedule and todo image-input contract as the main generator; legacy `HH:MM` rows remain
+read-compatible but are not a valid new marketing materialization. A new materialization fails before
+reservation unless a `candidate_materialization_v2` worker is online, and its callback must return
+the schema promised by that task capability; only already in-flight capability-less tasks retain v1
+callback compatibility. Strategy approval, MediaPlan approval, assisted
 campaign creation, candidate materialization, artifact registration, product-event ingestion,
 evaluation, and learning approval require the relevant control-plane authority; authority never
 enters a worker payload or durable campaign record.
@@ -206,7 +230,7 @@ wrangler secret put TRACE_EVENT_INGEST_TOKEN
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
-`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, marketing-agent assisted actions, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql` before enabling Threads and migrations `0017`–`0023` before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, marketing-agent assisted actions, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql` before enabling Threads and every pending migration from `0017` onward before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
 
 ## Managed releases and compatibility
 

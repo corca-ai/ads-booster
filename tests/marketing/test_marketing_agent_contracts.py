@@ -16,6 +16,7 @@ from ads_booster.contracts.marketing_agent import (
     EvidenceKind,
     EvidenceReference,
     EvidenceResult,
+    ExperimentAllocationMethod,
     ExperimentEvaluation,
     ExperimentRegistration,
     FeatureClaim,
@@ -38,7 +39,7 @@ NOW = datetime(2026, 8, 31, tzinfo=UTC)
 
 
 def test_cross_runtime_canonical_integer_fixture_has_a_frozen_digest() -> None:
-    value = {
+    value: dict[str, object] = {
         "schema_version": "trace.experiment-evaluation.v1",
         "eligible_blocks": 2,
         "attribution_coverage_basis_points": 8000,
@@ -109,17 +110,36 @@ def _hypothesis(hypothesis_id: str, role: PortfolioRole) -> MarketingHypothesis:
     )
 
 
-def _experiment(*, outcome: OutcomeDefinition) -> ExperimentRegistration:
+def _experiment(
+    *,
+    outcome: OutcomeDefinition,
+    allocation_method: ExperimentAllocationMethod = (
+        ExperimentAllocationMethod.BALANCED_COMPLETE_BLOCKS
+    ),
+    causal_treatment_hypothesis_id: str | None = None,
+    maximum_posts: int | None = None,
+) -> ExperimentRegistration:
     return ExperimentRegistration(
         experiment_id="experiment-1",
         manipulated_component="value frame",
         held_constant_components=("account", "posting slot", "call to action"),
         activated_hypothesis_ids=("control", "challenger"),
         primary_outcome=outcome,
+        allocation_method=allocation_method,
+        causal_treatment_hypothesis_id=causal_treatment_hypothesis_id,
         diagnostic_metrics=("views", "replies"),
         guardrails=("unsupported claim", "broken deep link"),
         minimum_eligible_blocks=2,
-        maximum_posts=8,
+        maximum_posts=(
+            maximum_posts
+            if maximum_posts is not None
+            else (
+                4
+                if allocation_method
+                is ExperimentAllocationMethod.SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1
+                else 8
+            )
+        ),
         maximum_duration_hours=24 * 14,
         minimum_attribution_coverage_basis_points=8_000,
         stop_rules=("stop on a product-fidelity violation",),
@@ -202,6 +222,36 @@ def test_direct_response_and_causal_outcomes_cannot_be_conflated() -> None:
         )
 
 
+def test_causal_estimation_requires_a_registered_server_allocation_and_treatment() -> None:
+    outcome = OutcomeDefinition(
+        name="setup_completed",
+        scope=OutcomeScope.ESTIMATED_TREATMENT_EFFECT,
+        window_hours=72,
+        causal_estimand="difference in setup completion probability",
+    )
+    with pytest.raises(ValidationError, match="server-randomized complete blocks"):
+        _ = _experiment(outcome=outcome)
+
+    registered = _experiment(
+        outcome=outcome,
+        allocation_method=ExperimentAllocationMethod.SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1,
+        causal_treatment_hypothesis_id="challenger",
+    )
+
+    assert (
+        registered.allocation_method
+        is ExperimentAllocationMethod.SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1
+    )
+
+    with pytest.raises(ValidationError, match="fixed complete block"):
+        _ = _experiment(
+            outcome=outcome,
+            allocation_method=ExperimentAllocationMethod.SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1,
+            causal_treatment_hypothesis_id="challenger",
+            maximum_posts=8,
+        )
+
+
 def test_contract_digest_is_independent_of_input_key_order() -> None:
     packet = _packet(
         claim_status=ClaimStatus.SOURCE_SUPPORTED,
@@ -264,20 +314,26 @@ def test_media_plan_requires_one_treatment_per_distinct_hypothesis_and_human_rev
 
 
 def test_artifact_request_cannot_escape_treatment_claims() -> None:
+    base = _treatment("control")
     with pytest.raises(ValidationError, match="artifact requests may use only claims"):
         _ = CreativeTreatment(
-            **{
-                **_treatment("control").model_dump(),
-                "artifact_requests": (
-                    ArtifactRequest(
-                        request_id="artifact-escape",
-                        capability_id="capture.native_png",
-                        proof_kind=ProofKind.INSTALLED_NATIVE_CAPTURE,
-                        claim_ids=("claim-unbound",),
-                        instructions="Capture the installed product.",
-                    ),
+            treatment_id=base.treatment_id,
+            hypothesis_id=base.hypothesis_id,
+            format=base.format,
+            hook=base.hook,
+            caption_direction=base.caption_direction,
+            manipulated_component_value=base.manipulated_component_value,
+            proof_narrative=base.proof_narrative,
+            claim_ids=base.claim_ids,
+            artifact_requests=(
+                ArtifactRequest(
+                    request_id="artifact-escape",
+                    capability_id="capture.native_png",
+                    proof_kind=ProofKind.INSTALLED_NATIVE_CAPTURE,
+                    claim_ids=("claim-unbound",),
+                    instructions="Capture the installed product.",
                 ),
-            }
+            ),
         )
 
 

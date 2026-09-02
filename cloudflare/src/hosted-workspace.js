@@ -5,6 +5,14 @@ import {
   publicWorkerTaskEvents,
 } from "./mac-workers.js";
 import {
+  ALLOWED_BACKGROUND_SUBJECTS,
+  ALLOWED_EVENT_COLORS,
+  CandidateImageInputsError,
+  describeScheduleEntry,
+  MAX_TRACE_ITEMS,
+  normalizeCandidateImageInputs,
+} from "./candidate-image-inputs.js";
+import {
   assertCurrentCapabilityBinding,
   MarketingCapabilityError,
 } from "./marketing-adapter-capabilities.js";
@@ -24,6 +32,8 @@ export const FEEDBACK_CONTEXT_CAPABILITY = "feedback_context_v1";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const DEFAULT_GENERATION_COUNT = 4;
+const CAUSAL_EXPOSURE_LEAD_MILLISECONDS = 48 * 60 * 60 * 1000;
+const CAUSAL_EXPOSURE_TOLERANCE_SECONDS = 30 * 60;
 const MAX_GENERATED_CANDIDATES = 8;
 const MAX_GENERATION_TASKS = 20;
 const MAX_CANDIDATES = 200;
@@ -121,17 +131,6 @@ const FEEDBACK_RULE_TARGETS = Object.freeze({
   caption: Object.freeze(["candidate_generation"]),
   image: Object.freeze(["native_capture"]),
 });
-const ALLOWED_BACKGROUND_SUBJECTS = new Set([
-  "scenery",
-  "character_kitty",
-  "character_other",
-  "family_photo",
-  "person",
-  "pet",
-  "minimal",
-  "sports_team",
-  "none",
-]);
 
 export async function handleHostedWorkspace(request, env, contextRegistry, starterProfiles = []) {
   const url = new URL(request.url);
@@ -308,6 +307,14 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
       await assertAccountCountry(scopedEnv, draft.country);
       const personaId = await requirePersonaScope(scopedEnv, requestedPersonaId);
       return json(await insertCandidate(scopedEnv, draft, "manual", profile, personaId), 201);
+    }
+    if (request.method === "DELETE" && url.pathname === "/api/candidates") {
+      const deletion = await deleteCandidates(
+        scopedEnv,
+        await requirePersonaScope(scopedEnv, requestedPersonaId),
+      );
+      if (deletion.artifact_cleanup_failures > 0) return json(deletion, 207);
+      return new Response(null, { status: 204 });
     }
     if (request.method === "GET" && url.pathname === "/api/candidates/generation-tasks") {
       return json(
@@ -551,13 +558,35 @@ export function candidateResponseSchema(country = "KR", referenceIds = []) {
               type: "object",
               additionalProperties: false,
               properties: {
-                trace_items: { type: "array", minItems: 5, maxItems: 24, items: { type: "object" } },
+                trace_items: {
+                  type: "array",
+                  minItems: 18,
+                  maxItems: 22,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: "string", minLength: 1, maxLength: 40 },
+                      day: { type: "integer", minimum: 0, maximum: 6 },
+                      days: { type: "integer", minimum: 1, maximum: 7 },
+                      time: { anyOf: [{ type: "string" }, { type: "null" }] },
+                      color: { type: "string", enum: [...ALLOWED_EVENT_COLORS] },
+                    },
+                    required: ["title", "day", "days", "time", "color"],
+                  },
+                },
+                trace_todos: {
+                  type: "array",
+                  minItems: 8,
+                  maxItems: 12,
+                  items: { type: "string", minLength: 1, maxLength: 60 },
+                },
                 device_time: { type: "string" },
                 background_subject: { type: "string", enum: [...ALLOWED_BACKGROUND_SUBJECTS] },
                 background_mood: { type: "string" },
                 language: { type: "string", enum: [language] },
               },
-              required: ["trace_items", "device_time", "background_subject", "background_mood", "language"],
+              required: ["trace_items", "trace_todos", "device_time", "background_subject", "background_mood", "language"],
             },
           },
           required: ["topic", "country", "caption", "hypothesis", "posting_slot", "refs_used", "principles_applied", "appium_prompt", "image_inputs"],
@@ -1913,7 +1942,9 @@ export function generationPrompt(
 posting_slot=morning 후보 2개, posting_slot=evening 후보 2개를 정확히 만드세요.
 오전 슬롯 기준 시각은 ${morningTime}, 저녁 슬롯 기준 시각은 ${eveningTime}${account?.timezone ? ` (${account.timezone})` : ""}입니다.
 사실 문서 밖의 수치나 기능은 주장하지 마세요. appium_prompt와 image_inputs를 비우지 마세요.
-trace_items는 실제 하루처럼 읽히는 'HH:MM 제목' 일정 5~7개를 정확히 만드세요.
+trace_items는 day/days/time/color를 모두 가진 주간 일정 객체 18~22개로 만드세요.
+요일을 분산하고, time은 3~5개에만 넣으며, days가 2 이상인 기간 일정은 3~4개로 만드세요.
+trace_todos는 날짜·시각 없는 할 일 8~12개로 만드세요.
 topic, caption, trace_items 전체 일정은 네 후보에서 각각 서로 달라야 하며 복사하지 마세요.
 
 [Trace 기본 context]
@@ -2065,11 +2096,30 @@ async function setCandidateThreadsProfile(env, candidateId, profileId, revision)
   if (!canSetCandidateThreadsProfile(current.status)) {
     throw new WorkspaceHttpError(409, "최종 이미지 승인 전 후보만 Threads 프로필을 변경할 수 있습니다.");
   }
+  const causalPlan = await env.DB.prepare(
+      `SELECT plan.profile_id, plan.threads_user_id_snapshot
+       FROM hosted_workspace_candidates AS candidate
+       JOIN hosted_marketing_post_assignments AS assignment
+         ON assignment.assignment_id = candidate.marketing_assignment_id
+       JOIN hosted_marketing_experiments AS experiment
+         ON experiment.experiment_id = assignment.experiment_id
+        AND experiment.allocation_method = 'server_randomized_complete_blocks_v1'
+       JOIN hosted_marketing_experiment_exposure_plans AS plan
+         ON plan.experiment_id = experiment.experiment_id
+       WHERE candidate.account_id = ? AND candidate.candidate_id = ?`,
+    ).bind(accountId(env), candidateId).first();
+  if (causalPlan && profileId !== causalPlan.profile_id) {
+    throw new WorkspaceHttpError(409, "인과 실험 후보의 Threads 프로필은 사전 고정되어 있습니다.");
+  }
   const profile = await env.DB.prepare(
-    `SELECT profile_id FROM hosted_threads_profiles
+    `SELECT profile_id, threads_user_id FROM hosted_threads_profiles
      WHERE account_id = ? AND profile_id = ? AND state = 'active'`,
   ).bind(accountId(env), profileId).first();
   if (!profile) throw new WorkspaceHttpError(409, "선택할 수 있는 활성 Threads 프로필이 아닙니다.");
+  if (causalPlan && profile.threads_user_id !== causalPlan.threads_user_id_snapshot) {
+    throw new WorkspaceHttpError(409, "인과 실험의 Threads 계정 식별자가 사전 고정값과 다릅니다.");
+  }
+  if (current.threads_profile_id === profileId) return current;
   const updated = await env.DB.prepare(
     `UPDATE hosted_workspace_candidates
      SET threads_profile_id = ?, revision = revision + 1, updated_at = ?
@@ -2221,15 +2271,36 @@ async function deleteCandidate(env, candidateId, revision) {
   await deleteCandidateArtifact(env, current.image_path);
 }
 
+async function deleteCandidates(env, personaId = null) {
+  const scope = personaId ? " AND persona_id = ?" : "";
+  const parameters = personaId ? [accountId(env), personaId] : [accountId(env)];
+  const deleted = await env.DB.prepare(
+    `DELETE FROM hosted_workspace_candidates
+     WHERE account_id = ?${scope}
+     RETURNING image_key`,
+  )
+    .bind(...parameters)
+    .all();
+  const cleanup = await Promise.all(
+    deleted.results.map((candidate) => deleteCandidateArtifact(env, candidate.image_key)),
+  );
+  return {
+    deleted: deleted.results.length,
+    artifact_cleanup_failures: cleanup.filter(Boolean).length,
+  };
+}
+
 async function deleteCandidateArtifact(env, key) {
-  if (!key) return;
+  if (!key) return false;
   try {
     await env.ARTIFACTS.delete(key);
+    return false;
   } catch (error) {
     console.error("hosted workspace candidate artifact cleanup failed", {
       key,
       message: error instanceof Error ? error.message : "unknown error",
     });
+    return true;
   }
 }
 
@@ -2507,16 +2578,16 @@ async function reviewCandidateImage(env, candidateId, body) {
       candidateId,
       revision,
     );
-  const publicationStatement = accepted
-    ? await threadsPublicationDecisionStatement(env, current, revision)
-    : null;
-  const statements = publicationStatement
-    ? [publicationStatement, feedbackStatement, transitionStatement]
-    : [feedbackStatement, transitionStatement];
+  const publicationStatements = accepted
+    ? await threadsPublicationDecisionStatements(env, current, revision)
+    : [];
+  const statements = [...publicationStatements, feedbackStatement, transitionStatement];
   const results = await env.DB.batch(statements);
-  const publicationRecorded = publicationStatement ? results[0] : null;
-  const recorded = results[publicationStatement ? 1 : 0];
-  const transitioned = results[publicationStatement ? 2 : 1];
+  const publicationRecorded = publicationStatements.length
+    ? results[publicationStatements.length - 1]
+    : null;
+  const recorded = results[publicationStatements.length];
+  const transitioned = results[publicationStatements.length + 1];
   if (publicationRecorded && publicationRecorded.meta.changes !== 1) {
     throw new WorkspaceHttpError(409, "Threads 발행 결정이 다른 요청에서 먼저 변경되었습니다.");
   }
@@ -2525,8 +2596,8 @@ async function reviewCandidateImage(env, candidateId, body) {
   return requireCandidate(env, candidateId);
 }
 
-async function threadsPublicationDecisionStatement(env, candidate, revision) {
-  if (candidate.posting_slot === "manual") return null;
+async function threadsPublicationDecisionStatements(env, candidate, revision) {
+  if (candidate.posting_slot === "manual") return [];
   if (
     !candidate.threads_profile?.profile_id
     || candidate.threads_profile.state !== "active"
@@ -2537,13 +2608,31 @@ async function threadsPublicationDecisionStatement(env, candidate, revision) {
     throw new WorkspaceHttpError(409, "활성 Threads 프로필과 승인할 이미지가 필요합니다.");
   }
   const account = await requireHostedAccount(env);
-  const slotTime = candidate.posting_slot === "morning"
-    ? account.morning_time
-    : account.evening_time;
   const reviewedAt = new Date();
-  const scheduledAt = nextDailyGenerationAt(account.timezone, slotTime, reviewedAt);
   const now = reviewedAt.toISOString();
-  return env.DB.prepare(
+  const exposure = await causalExposureDecision(
+    env,
+    candidate,
+    account,
+    reviewedAt,
+    now,
+  );
+  const postingSlot = exposure?.slot.posting_slot ?? candidate.posting_slot;
+  const slotTime = postingSlot === "morning" ? account.morning_time : account.evening_time;
+  const timezoneSnapshot = exposure?.slot.timezone_snapshot ?? account.timezone;
+  const wallClockSnapshot = exposure?.slot.wall_clock_snapshot ?? JSON.stringify({
+    timezone: account.timezone,
+    time: postingSlot === "morning" ? account.morning_time : account.evening_time,
+  });
+  const profileId = exposure?.slot.profile_id_snapshot ?? candidate.threads_profile.profile_id;
+  const threadsUserId = exposure?.slot.threads_user_id_snapshot
+    ?? candidate.threads_profile.threads_user_id;
+  const username = exposure?.slot.username_snapshot ?? candidate.threads_profile.username;
+  const scheduledAt = exposure
+    ? new Date(exposure.slot.scheduled_at)
+    : nextDailyGenerationAt(account.timezone, slotTime, reviewedAt);
+  const slotMissed = scheduledAt.getTime() <= reviewedAt.getTime();
+  const publicationStatement = env.DB.prepare(
     `INSERT INTO hosted_threads_publications
       (publication_id, account_id, candidate_id, candidate_revision, profile_id,
        threads_user_id_snapshot, username_snapshot, state, caption_snapshot,
@@ -2551,13 +2640,16 @@ async function threadsPublicationDecisionStatement(env, candidate, revision) {
        posting_slot_snapshot, wall_clock_snapshot, scheduled_at, canceled_at,
        failure_code, marketing_assignment_id, created_at, updated_at)
      SELECT ?, account.account_id, candidate.candidate_id, ?, profile.profile_id,
-            profile.threads_user_id, profile.username,
-            CASE WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
+            ?, ?,
+            CASE WHEN ? = 1 THEN 'canceled'
+                 WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
                  THEN 'scheduled' ELSE 'canceled' END,
-            ?, ?, ?, account.timezone, ?, ?, ?,
-            CASE WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
+            ?, ?, ?, ?, ?, ?, ?,
+            CASE WHEN ? = 1 THEN ?
+                 WHEN account.threads_auto_publish_enabled = 1 AND profile.state = 'active'
                  THEN NULL ELSE ? END,
-            CASE WHEN account.threads_auto_publish_enabled = 0 THEN 'auto_publish_disabled'
+            CASE WHEN ? = 1 THEN 'exposure_slot_missed'
+                 WHEN account.threads_auto_publish_enabled = 0 THEN 'auto_publish_disabled'
                  WHEN profile.state != 'active' THEN 'profile_unavailable' ELSE NULL END,
             candidate.marketing_assignment_id, ?, ?
      FROM hosted_workspace_accounts AS account
@@ -2567,23 +2659,240 @@ async function threadsPublicationDecisionStatement(env, candidate, revision) {
       AND profile.profile_id = candidate.threads_profile_id
      WHERE account.account_id = ? AND account.enabled = 1
        AND candidate.candidate_id = ? AND candidate.revision = ?
-       AND candidate.status = 'image_awaiting_review'`,
+       AND candidate.status = 'image_awaiting_review'
+       AND profile.profile_id = ? AND profile.threads_user_id = ?`,
   ).bind(
     crypto.randomUUID(),
     revision,
+    threadsUserId,
+    username,
+    slotMissed ? 1 : 0,
     candidate.caption,
     candidate.image_path,
     candidate.image_sha256,
-    candidate.posting_slot,
-    JSON.stringify({ timezone: account.timezone, time: slotTime }),
+    timezoneSnapshot,
+    postingSlot,
+    wallClockSnapshot,
     scheduledAt.toISOString(),
+    slotMissed ? 1 : 0,
+    slotMissed ? now : null,
     now,
+    slotMissed ? 1 : 0,
     now,
     now,
     accountId(env),
     candidate.candidate_id,
     revision,
+    profileId,
+    threadsUserId,
   );
+  return [...(exposure?.statements ?? []), publicationStatement];
+}
+
+async function causalExposureDecision(env, candidate, account, reviewedAt, now) {
+  const lineage = await env.DB.prepare(
+    `SELECT assignment.assignment_id, assignment.experiment_id,
+            assignment.eligible_block_id, assignment.hypothesis_id,
+            assignment.allocation_rank,
+            experiment.allocation_method, experiment.registration_json,
+            experiment.randomization_seed_sha256,
+            plan.plan_json AS exposure_plan_json,
+            plan.plan_sha256 AS exposure_plan_sha256,
+            plan.profile_id AS exposure_profile_id,
+            plan.threads_user_id_snapshot AS exposure_threads_user_id,
+            plan.username_snapshot AS exposure_username,
+            plan.timezone_snapshot AS exposure_timezone,
+            plan.morning_time_snapshot AS exposure_morning_time,
+            plan.evening_time_snapshot AS exposure_evening_time,
+            campaign.campaign_id, campaign.created_at AS campaign_created_at
+     FROM hosted_workspace_candidates AS candidate
+     JOIN hosted_marketing_post_assignments AS assignment
+       ON assignment.assignment_id = candidate.marketing_assignment_id
+      AND assignment.candidate_id = candidate.candidate_id
+     JOIN hosted_marketing_experiments AS experiment
+       ON experiment.experiment_id = assignment.experiment_id
+     LEFT JOIN hosted_marketing_experiment_exposure_plans AS plan
+       ON plan.experiment_id = experiment.experiment_id
+     JOIN hosted_marketing_campaigns AS campaign
+       ON campaign.campaign_id = assignment.campaign_id
+     WHERE candidate.account_id = ? AND candidate.candidate_id = ?`,
+  ).bind(accountId(env), candidate.candidate_id).first();
+  if (!lineage || lineage.allocation_method !== "server_randomized_complete_blocks_v1") {
+    return null;
+  }
+  let exposurePlan;
+  try {
+    exposurePlan = JSON.parse(lineage.exposure_plan_json);
+  } catch {
+    throw new WorkspaceHttpError(409, "인과 실험 exposure plan이 손상되었습니다.");
+  }
+  if (
+    exposurePlan?.schema_version !== "trace.experiment-exposure-plan.v1"
+    || exposurePlan.experiment_id !== lineage.experiment_id
+    || exposurePlan.account_id !== accountId(env)
+    || await canonicalSha256(exposurePlan) !== lineage.exposure_plan_sha256
+    || candidate.threads_profile?.profile_id !== exposurePlan.profile_id
+    || candidate.threads_profile?.threads_user_id !== exposurePlan.threads_user_id_snapshot
+    || candidate.threads_profile?.state !== "active"
+  ) {
+    throw new WorkspaceHttpError(409, "인과 실험 exposure plan과 현재 게시 프로필이 다릅니다.");
+  }
+  const registration = JSON.parse(lineage.registration_json);
+  const expectedCount = Number(registration.maximum_posts);
+  const existing = await env.DB.prepare(
+    `SELECT assignment_id, eligible_block_id, hypothesis_id, allocation_rank,
+            posting_slot, exposure_plan_sha256, profile_id_snapshot,
+            threads_user_id_snapshot, username_snapshot, timezone_snapshot,
+            wall_clock_snapshot, scheduled_at,
+            tolerance_seconds, commitment_json, commitment_sha256
+     FROM hosted_marketing_exposure_slots
+     WHERE experiment_id = ? ORDER BY scheduled_at`,
+  ).bind(lineage.experiment_id).all();
+  let slots = existing.results;
+  let statements = [];
+  if (!slots.length) {
+    const assignments = await env.DB.prepare(
+      `SELECT assignment_id, eligible_block_id, hypothesis_id, allocation_rank
+       FROM hosted_marketing_post_assignments
+       WHERE experiment_id = ?
+       ORDER BY eligible_block_id, allocation_rank`,
+    ).bind(lineage.experiment_id).all();
+    if (
+      !Number.isInteger(expectedCount)
+      || assignments.results.length !== expectedCount
+      || expectedCount !== Number(registration.minimum_eligible_blocks) * 2
+    ) {
+      throw new WorkspaceHttpError(
+        409,
+        "인과 실험의 모든 고정 표본 후보를 만든 뒤 이미지 승인을 시작해야 합니다.",
+      );
+    }
+    slots = await buildExposureSlots(
+      assignments.results,
+      lineage,
+      registration,
+      exposurePlan,
+      reviewedAt,
+    );
+    statements = slots.map((slot) => env.DB.prepare(
+      `INSERT INTO hosted_marketing_exposure_slots
+        (slot_id, campaign_id, experiment_id, assignment_id, eligible_block_id,
+         hypothesis_id, allocation_rank, posting_slot, timezone_snapshot,
+         exposure_plan_sha256, profile_id_snapshot, threads_user_id_snapshot,
+         username_snapshot, wall_clock_snapshot, scheduled_at, tolerance_seconds,
+         commitment_json, commitment_sha256, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      slot.slot_id,
+      lineage.campaign_id,
+      lineage.experiment_id,
+      slot.assignment_id,
+      slot.eligible_block_id,
+      slot.hypothesis_id,
+      slot.allocation_rank,
+      slot.posting_slot,
+      slot.timezone_snapshot,
+      slot.exposure_plan_sha256,
+      slot.profile_id_snapshot,
+      slot.threads_user_id_snapshot,
+      slot.username_snapshot,
+      slot.wall_clock_snapshot,
+      slot.scheduled_at,
+      slot.tolerance_seconds,
+      slot.commitment_json,
+      slot.commitment_sha256,
+      now,
+    ));
+  }
+  if (slots.length !== expectedCount) {
+    throw new WorkspaceHttpError(409, "인과 실험 exposure slot 원장이 완전하지 않습니다.");
+  }
+  const slot = slots.find((item) => item.assignment_id === lineage.assignment_id);
+  if (!slot || slot.posting_slot !== candidate.posting_slot) {
+    throw new WorkspaceHttpError(409, "후보가 사전 고정된 exposure slot과 일치하지 않습니다.");
+  }
+  return { slot, statements };
+}
+
+async function buildExposureSlots(assignments, lineage, registration, exposurePlan, reviewedAt) {
+  const byBlock = new Map();
+  for (const assignment of assignments) {
+    const block = byBlock.get(assignment.eligible_block_id) ?? [];
+    block.push(assignment);
+    byBlock.set(assignment.eligible_block_id, block);
+  }
+  const blockIds = [...byBlock.keys()].sort((left, right) => (
+    left.localeCompare(right, undefined, { numeric: true })
+  ));
+  if (blockIds.some((blockId) => {
+    const block = byBlock.get(blockId);
+    return block.length !== 2
+      || block.map((item) => Number(item.allocation_rank)).sort().join(",") !== "1,2";
+  })) {
+    throw new WorkspaceHttpError(409, "인과 실험 allocation block이 완전하지 않습니다.");
+  }
+  let cursor = new Date(reviewedAt.getTime() + CAUSAL_EXPOSURE_LEAD_MILLISECONDS);
+  const maximumAt = Date.parse(lineage.campaign_created_at)
+    + Number(registration.maximum_duration_hours) * 60 * 60 * 1000;
+  const slots = [];
+  for (const blockId of blockIds) {
+    const morningAt = nextDailyGenerationAt(
+      exposurePlan.timezone_snapshot,
+      exposurePlan.morning_time_snapshot,
+      cursor,
+    );
+    const eveningAt = nextDailyGenerationAt(
+      exposurePlan.timezone_snapshot,
+      exposurePlan.evening_time_snapshot,
+      morningAt,
+    );
+    const morningDate = zonedParts(morningAt, exposurePlan.timezone_snapshot);
+    const eveningDate = zonedParts(eveningAt, exposurePlan.timezone_snapshot);
+    if (
+      morningDate.year !== eveningDate.year
+      || morningDate.month !== eveningDate.month
+      || morningDate.day !== eveningDate.day
+      || eveningAt.getTime() > maximumAt
+    ) {
+      throw new WorkspaceHttpError(409, "계정 게시 시간과 실험 기간으로 exposure plan을 만들 수 없습니다.");
+    }
+    for (const assignment of byBlock.get(blockId)) {
+      const allocationRank = Number(assignment.allocation_rank);
+      const postingSlot = allocationRank === 1 ? "morning" : "evening";
+      const slotTime = postingSlot === "morning"
+        ? exposurePlan.morning_time_snapshot
+        : exposurePlan.evening_time_snapshot;
+      const scheduledAt = allocationRank === 1 ? morningAt : eveningAt;
+      const commitment = {
+        schema_version: "trace.exposure-slot.v1",
+        experiment_id: lineage.experiment_id,
+        assignment_id: assignment.assignment_id,
+        eligible_block_id: blockId,
+        hypothesis_id: assignment.hypothesis_id,
+        allocation_rank: allocationRank,
+        randomization_seed_sha256: lineage.randomization_seed_sha256,
+        posting_slot: postingSlot,
+        exposure_plan_sha256: lineage.exposure_plan_sha256,
+        profile_id_snapshot: exposurePlan.profile_id,
+        threads_user_id_snapshot: exposurePlan.threads_user_id_snapshot,
+        username_snapshot: exposurePlan.username_snapshot,
+        timezone_snapshot: exposurePlan.timezone_snapshot,
+        wall_clock_snapshot: { timezone: exposurePlan.timezone_snapshot, time: slotTime },
+        scheduled_at: scheduledAt.toISOString(),
+        tolerance_seconds: CAUSAL_EXPOSURE_TOLERANCE_SECONDS,
+      };
+      const commitmentSha256 = await canonicalSha256(commitment);
+      slots.push({
+        ...commitment,
+        slot_id: `exposure-${commitmentSha256.slice(0, 48)}`,
+        wall_clock_snapshot: JSON.stringify(commitment.wall_clock_snapshot),
+        commitment_json: canonicalJson(commitment),
+        commitment_sha256: commitmentSha256,
+      });
+    }
+    cursor = new Date(eveningAt.getTime() + 60_000);
+  }
+  return slots;
 }
 
 async function readCandidateImage(env, candidateId) {
@@ -2964,40 +3273,14 @@ function generationProvenanceFromRow(row) {
 }
 
 function normalizeImageInputs(input) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new WorkspaceHttpError(400, "image_inputs가 필요합니다.");
+  try {
+    return normalizeCandidateImageInputs(input);
+  } catch (error) {
+    if (error instanceof CandidateImageInputsError) {
+      throw new WorkspaceHttpError(400, error.message);
+    }
+    throw error;
   }
-  const traceItems = scheduleList(input.trace_items);
-  if (traceItems.length < 1) throw new WorkspaceHttpError(400, "일정은 한 개 이상 필요합니다.");
-  const traceTodos = stringList(input.trace_todos ?? [], MAX_TRACE_TODOS, 60);
-  const deviceTime = requiredString(input.device_time, "device_time", 5);
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(deviceTime)) {
-    throw new WorkspaceHttpError(400, "device_time은 HH:MM 형식이어야 합니다.");
-  }
-  const backgroundSubject = requiredString(input.background_subject, "background_subject", 40);
-  if (!ALLOWED_BACKGROUND_SUBJECTS.has(backgroundSubject)) {
-    throw new WorkspaceHttpError(400, "지원하지 않는 background_subject입니다.");
-  }
-  const inputs = {
-    trace_items: traceItems,
-    trace_todos: traceTodos,
-    device_time: deviceTime,
-    background_subject: backgroundSubject,
-    background_mood: requiredString(input.background_mood, "background_mood", 40),
-    language: requiredString(input.language ?? "ko", "language", 2),
-  };
-  // The phrase the generating model wrote to find this person's wallpaper. The image stage
-  // runs it as the search query, and dropping it here would silently fall the capture back
-  // to the mechanical query built from subject and mood.
-  const searchQuery = optionalString(input.background_search_query, 200);
-  if (searchQuery) inputs.background_search_query = searchQuery;
-  return inputs;
-}
-
-function describeScheduleEntry(entry) {
-  const when = entry.days > 1 ? `D+${entry.day}~D+${entry.day + entry.days - 1}` : `D+${entry.day}`;
-  const clock = entry.time ? ` ${entry.time}` : " 종일";
-  return `${when}${clock} ${entry.title}`;
 }
 
 function appiumPromptFrom(inputs) {
@@ -3031,71 +3314,6 @@ function optionalString(value, maxLength) {
     throw new WorkspaceHttpError(400, `입력이 ${maxLength}자를 초과했습니다.`);
   }
   return normalized;
-}
-
-const MAX_TRACE_ITEMS = 24;
-const MAX_TRACE_TODOS = 20;
-const WEEK_DAYS = 7;
-
-/**
- * One week of lock-screen rows. A row used to be an "HH:MM 제목" string, which can only
- * describe the captured day; it is now an object carrying the day it sits on, how many days
- * it spans, and its colour. Strings are still read as a row on day zero so a draft written
- * against the old contract is not thrown away at the delivery boundary.
- */
-function scheduleList(value) {
-  if (!Array.isArray(value) || value.length > MAX_TRACE_ITEMS) {
-    throw new WorkspaceHttpError(400, `일정은 최대 ${MAX_TRACE_ITEMS}개까지 입력할 수 있습니다.`);
-  }
-  return value.map((item) => {
-    if (typeof item === "string") {
-      const match = /^((?:[01]\d|2[0-3]):[0-5]\d)\s+(\S.*)$/u.exec(item);
-      const title = match ? match[2] : item.trim();
-      if (!title) throw new WorkspaceHttpError(400, "일정 제목이 비어 있습니다.");
-      return {
-        title: title.slice(0, 40),
-        day: 0,
-        days: 1,
-        time: match ? match[1] : null,
-        color: null,
-        structured: false,
-      };
-    }
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new WorkspaceHttpError(400, "일정 항목의 형식이 올바르지 않습니다.");
-    }
-    const title = requiredString(item.title, "일정 제목", 40);
-    const day = boundedInteger(item.day ?? 0, 0, WEEK_DAYS - 1, "일정 day");
-    const days = boundedInteger(item.days ?? 1, 1, WEEK_DAYS, "일정 days");
-    if (day + days > WEEK_DAYS) {
-      throw new WorkspaceHttpError(400, "일정이 이번 주를 넘어갑니다.");
-    }
-    const time = optionalString(item.time, 5);
-    if (time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) {
-      throw new WorkspaceHttpError(400, "일정 시각은 HH:MM 형식이어야 합니다.");
-    }
-    const color = optionalString(item.color, 6);
-    if (color && !/^[0-9A-F]{6}$/u.test(color)) {
-      throw new WorkspaceHttpError(400, "일정 색상은 6자리 16진수여야 합니다.");
-    }
-    // Normalizing an already-normalized row must not promote a legacy string into a
-    // structured one; this path runs twice on the same draft.
-    return {
-      title,
-      day,
-      days,
-      time: time || null,
-      color: color || null,
-      structured: item.structured !== false,
-    };
-  });
-}
-
-function boundedInteger(value, minimum, maximum, label) {
-  if (!Number.isInteger(value) || value < minimum || value > maximum) {
-    throw new WorkspaceHttpError(400, `${label}은(는) ${minimum}~${maximum} 사이의 정수여야 합니다.`);
-  }
-  return value;
 }
 
 function stringList(value, maxItems, maxLength) {

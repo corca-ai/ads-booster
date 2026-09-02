@@ -346,8 +346,11 @@ def test_hosted_capture_falls_back_to_the_composed_intent_when_no_query_was_auth
     # When the hosted bundle is assembled
     bundle = _bundle_for(task)
 
-    # Then the composed intent still drives the search, so older candidates keep working
-    assert bundle.promotion_material.background_intent == "scenery: 이른 아침 캠퍼스"
+    # Then the mood still drives the search, so older candidates keep working - but the
+    # vocabulary token is dropped first. "scenery" is an English identifier no image index
+    # has ever labelled a photo with, and leaving it on the front pulled the whole query
+    # toward source code and datasets.
+    assert bundle.promotion_material.background_intent == "이른 아침 캠퍼스"
 
 
 @pytest.mark.parametrize("query", ["", "   ", "가" * 201])
@@ -358,5 +361,19 @@ def test_hosted_capture_ignores_an_unusable_authored_query(query: str) -> None:
     # When the hosted bundle is assembled
     bundle = _bundle_for(task)
 
-    # Then it is not searched and the composed intent takes over
-    assert bundle.promotion_material.background_intent == "scenery: 이른 아침 캠퍼스"
+    # Then it is not searched and the composed intent takes over, token dropped
+    assert bundle.promotion_material.background_intent == "이른 아침 캠퍼스"
+
+
+def test_hosted_capture_keeps_an_intent_a_writer_wrote_by_hand() -> None:
+    # Given an intent whose prefix is not one of the subject tokens, which is what a human
+    # writer's free text looks like
+    task = _task_with_query(None)
+    payload = {**task.payload, "background_intent": "제주 바다: 노을 지는 협재"}
+
+    # When the hosted bundle is assembled
+    bundle = _bundle_for(task.model_copy(update={"payload": payload}))
+
+    # Then nothing is stripped. Only the composed "<subject>: <mood>" shape is unwound, so a
+    # writer who happens to use a colon keeps every word they wrote.
+    assert bundle.promotion_material.background_intent == "제주 바다: 노을 지는 협재"

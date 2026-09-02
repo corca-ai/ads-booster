@@ -103,24 +103,18 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
   const controls = hypotheses.filter((hypothesis) => hypothesis?.role === "control");
   if (controls.length !== 1) throw new HttpError(409, "strategy requires exactly one control");
   const referenceSnapshot = publishedPayload.reference_snapshot ?? null;
-  let referenceIds = new Set();
-  if (referenceSnapshot !== null) {
-    const snapshot = requireObject(referenceSnapshot, "published reference snapshot");
-    if (
-      await canonicalSha256(snapshot) !== publishedPayload.reference_snapshot_sha256
-      || snapshot.schema_version !== "trace.reference-research.v1"
-      || snapshot.campaign_id !== campaign.campaign_id
-      || snapshot.feature_packet_sha256 !== campaign.feature_packet_sha256
-      || snapshot.quarantine !== true
-    ) {
-      throw new HttpError(409, "strategy reference snapshot binding is invalid");
-    }
-    referenceIds = new Set(requireArray(snapshot.sources, "reference sources", 2, 16)
-      .map((source) => safeId(source?.source_id, "reference source_id")));
-  } else if (publishedPayload.reference_snapshot_sha256 != null) {
-    throw new HttpError(409, "strategy reference snapshot digest has no snapshot");
-  }
+  const referenceIds = await validateStoredReferenceVerification(
+    env.DB,
+    campaign,
+    publishedPayload,
+  );
   validateHypothesisEvidence(hypotheses, publishedPayload.feature_packet, referenceIds);
+  validateDecisionDossier(
+    brief.decision_dossier,
+    publishedPayload.feature_packet,
+    marketingContext,
+    referenceSnapshot,
+  );
   const experiment = requireObject(brief.experiment, "strategy experiment");
   const experimentId = safeId(experiment.experiment_id, "experiment_id");
   const activated = requireArray(
@@ -141,6 +135,16 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     throw new HttpError(409, "experiment must activate one unique control portfolio");
   }
   validateOutcomeDefinition(experiment.primary_outcome);
+  const allocationMethod = validateExperimentAllocation(experiment, activated, controlId);
+  const randomizationSeed = allocationMethod === "server_randomized_complete_blocks_v1"
+    ? randomHex(32)
+    : null;
+  const randomizationSeedSha256 = randomizationSeed
+    ? await sha256Text(randomizationSeed)
+    : null;
+  const exposurePlan = allocationMethod === "server_randomized_complete_blocks_v1"
+    ? await buildExperimentExposurePlan(env.DB, campaign, experimentId, now)
+    : null;
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
       env.DB,
@@ -161,6 +165,9 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     strategy_brief_id: brief.brief_id,
     strategy_brief_sha256: briefSha256,
     experiment_id: experimentId,
+    allocation_method: allocationMethod,
+    randomization_seed_sha256: randomizationSeedSha256,
+    exposure_plan_sha256: exposurePlan?.plan_sha256 ?? null,
   };
   const statements = [
     env.DB.prepare(
@@ -199,19 +206,45 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     env.DB.prepare(
       `INSERT INTO hosted_marketing_experiments
         (experiment_id, campaign_id, strategy_brief_id, state, primary_outcome_scope,
+         allocation_method, randomization_seed, randomization_seed_sha256,
          registration_json, registration_sha256, created_at, updated_at)
-       VALUES (?, ?, ?, 'registered', ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'registered', ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       experimentId,
       campaign.campaign_id,
       brief.brief_id,
       experiment.primary_outcome?.scope,
+      allocationMethod,
+      randomizationSeed,
+      randomizationSeedSha256,
       canonicalJson(experiment),
       await canonicalSha256(experiment),
       now,
       now,
     ),
   ];
+  if (exposurePlan) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO hosted_marketing_experiment_exposure_plans
+        (experiment_id, account_id, profile_id, threads_user_id_snapshot,
+         username_snapshot, timezone_snapshot, morning_time_snapshot,
+         evening_time_snapshot, account_revision, plan_json, plan_sha256, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      experimentId,
+      campaign.account_id,
+      exposurePlan.profile_id,
+      exposurePlan.threads_user_id_snapshot,
+      exposurePlan.username_snapshot,
+      exposurePlan.timezone_snapshot,
+      exposurePlan.morning_time_snapshot,
+      exposurePlan.evening_time_snapshot,
+      exposurePlan.account_revision,
+      exposurePlan.plan_json,
+      exposurePlan.plan_sha256,
+      now,
+    ));
+  }
   for (const hypothesis of hypotheses) {
     const hypothesisId = safeId(hypothesis.hypothesis_id, "hypothesis_id");
     statements.push(
@@ -342,6 +375,122 @@ async function currentMarketingContextProjection(database, campaign, now) {
     customer_signals: customerSignals,
     expires_at: snapshot.expires_at,
   };
+}
+
+async function validateStoredReferenceVerification(database, campaign, payload) {
+  const snapshot = payload.reference_snapshot ?? null;
+  const snapshotSha256 = payload.reference_snapshot_sha256 ?? null;
+  const verification = payload.reference_verification ?? null;
+  const verificationSha256 = payload.reference_verification_sha256 ?? null;
+  if (snapshot === null) {
+    if (snapshotSha256 !== null || verification !== null || verificationSha256 !== null) {
+      throw new HttpError(409, "strategy reference binding is incomplete");
+    }
+    return new Set();
+  }
+  const frozenSnapshot = requireObject(snapshot, "published reference snapshot");
+  if (
+    await canonicalSha256(frozenSnapshot) !== snapshotSha256
+    || frozenSnapshot.schema_version !== "trace.reference-research.v1"
+    || frozenSnapshot.campaign_id !== campaign.campaign_id
+    || frozenSnapshot.feature_packet_sha256 !== campaign.feature_packet_sha256
+    || frozenSnapshot.quarantine !== true
+  ) {
+    throw new HttpError(409, "strategy reference snapshot binding is invalid");
+  }
+  const frozenVerification = requireObject(verification, "published reference verification");
+  if (
+    await canonicalSha256(frozenVerification) !== verificationSha256
+    || frozenVerification.schema_version !== "trace.reference-verification.v1"
+    || frozenVerification.snapshot_id !== frozenSnapshot.snapshot_id
+    || frozenVerification.snapshot_sha256 !== snapshotSha256
+  ) {
+    throw new HttpError(409, "strategy reference verification binding is invalid");
+  }
+  const sources = requireArray(frozenSnapshot.sources, "reference sources", 2, 16);
+  const sourceUrls = new Map(sources.map((source) => [
+    safeId(source?.source_id, "reference source_id"),
+    normalizedHttpsUrl(source?.url, "reference source URL"),
+  ]));
+  if (sourceUrls.size !== sources.length) {
+    throw new HttpError(409, "strategy reference source IDs are not unique");
+  }
+  const receipts = requireArray(frozenVerification.receipts, "reference receipts", 2, 16);
+  const receiptIds = new Set();
+  const receiptsBySource = new Map();
+  for (const receipt of receipts) {
+    const sourceId = safeId(receipt?.source_id, "reference receipt source_id");
+    const receiptId = safeId(receipt?.receipt_id, "reference receipt_id");
+    if (
+      receipt?.schema_version !== "trace.reference-source-receipt.v1"
+      || receiptIds.has(receiptId)
+      || receiptsBySource.has(sourceId)
+      || sourceUrls.get(sourceId) !== normalizedHttpsUrl(
+        receipt?.requested_url,
+        "reference receipt requested URL",
+      )
+      || !Number.isInteger(receipt?.http_status)
+      || receipt.http_status < 200
+      || receipt.http_status > 299
+      || !["application/json", "application/pdf", "text/html", "text/plain"]
+        .includes(receipt?.content_type)
+      || typeof receipt?.content_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(receipt.content_sha256)
+      || !Number.isInteger(receipt?.byte_length)
+      || receipt.byte_length < 1
+      || receipt.byte_length > 1024 * 1024
+    ) {
+      throw new HttpError(409, "strategy reference receipt is invalid");
+    }
+    normalizedHttpsUrl(receipt.final_url, "reference receipt final URL");
+    requiredString(receipt.fetched_at, "reference receipt fetched_at", 80);
+    receiptIds.add(receiptId);
+    receiptsBySource.set(sourceId, receipt);
+  }
+  if (
+    receiptsBySource.size !== sourceUrls.size
+    || [...sourceUrls].some(([sourceId]) => !receiptsBySource.has(sourceId))
+  ) {
+    throw new HttpError(409, "strategy reference receipts do not cover frozen sources");
+  }
+  const snapshotRow = await database.prepare(
+    `SELECT verification_bundle_json, verification_bundle_sha256
+     FROM hosted_marketing_reference_snapshots
+     WHERE snapshot_id = ? AND campaign_id = ? AND snapshot_sha256 = ?`,
+  ).bind(frozenSnapshot.snapshot_id, campaign.campaign_id, snapshotSha256).first();
+  if (
+    !snapshotRow
+    || snapshotRow.verification_bundle_sha256 !== verificationSha256
+    || snapshotRow.verification_bundle_json !== canonicalJson(frozenVerification)
+  ) {
+    throw new HttpError(409, "strategy reference verification is not stored provenance");
+  }
+  const storedRows = (await database.prepare(
+    `SELECT source_id, receipt_json, receipt_sha256
+     FROM hosted_marketing_reference_source_receipts
+     WHERE snapshot_id = ? ORDER BY source_id`,
+  ).bind(frozenSnapshot.snapshot_id).all()).results ?? [];
+  if (storedRows.length !== receiptsBySource.size) {
+    throw new HttpError(409, "strategy reference receipt provenance is incomplete");
+  }
+  for (const row of storedRows) {
+    let storedReceipt;
+    try {
+      storedReceipt = requireObject(JSON.parse(row.receipt_json), "stored reference receipt");
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(409, "stored reference receipt is invalid");
+    }
+    const expected = receiptsBySource.get(row.source_id);
+    if (
+      expected == null
+      || canonicalJson(expected) !== canonicalJson(storedReceipt)
+      || await canonicalSha256(storedReceipt) !== row.receipt_sha256
+    ) {
+      throw new HttpError(409, "strategy reference receipt provenance changed");
+    }
+  }
+  return new Set(sourceUrls.keys());
 }
 
 async function finishFailedJudgment(
@@ -502,11 +651,262 @@ function validateOutcomeDefinition(value) {
   }
 }
 
+function validateExperimentAllocation(experiment, activated, controlId) {
+  const outcome = requireObject(experiment.primary_outcome, "primary outcome");
+  const method = experiment.allocation_method ?? "balanced_complete_blocks";
+  const causalTreatment = experiment.causal_treatment_hypothesis_id ?? null;
+  if (outcome.scope === "estimated_treatment_effect") {
+    if (method !== "server_randomized_complete_blocks_v1") {
+      throw new HttpError(409, "estimated treatment effect requires server randomized blocks");
+    }
+    if (activated.length !== 2) {
+      throw new HttpError(409, "estimated treatment effect requires exactly two hypotheses");
+    }
+    if (
+      !Number.isInteger(experiment.maximum_posts)
+      || experiment.maximum_posts !== experiment.minimum_eligible_blocks * activated.length
+    ) {
+      throw new HttpError(
+        409,
+        "estimated treatment effect requires one fixed complete block per post pair",
+      );
+    }
+    if (
+      typeof causalTreatment !== "string"
+      || !activated.includes(causalTreatment)
+      || causalTreatment === controlId
+    ) {
+      throw new HttpError(409, "estimated treatment effect requires one active non-control treatment");
+    }
+    return method;
+  }
+  if (method !== "balanced_complete_blocks" || causalTreatment !== null) {
+    throw new HttpError(409, "direct-response attribution cannot register a causal estimator");
+  }
+  return method;
+}
+
+async function buildExperimentExposurePlan(database, campaign, experimentId, createdAt) {
+  const row = await database.prepare(
+    `SELECT account.account_id, account.timezone, account.morning_time, account.evening_time,
+            account.revision AS account_revision, profile.profile_id,
+            profile.threads_user_id, profile.username, profile.state AS profile_state
+     FROM hosted_workspace_accounts AS account
+     LEFT JOIN hosted_threads_profiles AS profile
+       ON profile.account_id = account.account_id
+      AND profile.profile_id = account.default_threads_profile_id
+     WHERE account.account_id = ? AND account.enabled = 1`,
+  ).bind(campaign.account_id).first();
+  if (
+    !row
+    || row.profile_state !== "active"
+    || !row.profile_id
+    || !row.threads_user_id
+    || !row.username
+  ) {
+    throw new HttpError(
+      409,
+      "causal experiment requires one active default Threads profile before registration",
+    );
+  }
+  const plan = {
+    schema_version: "trace.experiment-exposure-plan.v1",
+    experiment_id: experimentId,
+    account_id: campaign.account_id,
+    account_revision: Number(row.account_revision),
+    profile_id: row.profile_id,
+    threads_user_id_snapshot: row.threads_user_id,
+    username_snapshot: row.username,
+    timezone_snapshot: requiredString(row.timezone, "account timezone", 80),
+    morning_time_snapshot: requiredString(row.morning_time, "account morning time", 5),
+    evening_time_snapshot: requiredString(row.evening_time, "account evening time", 5),
+    created_at: createdAt,
+  };
+  return {
+    ...plan,
+    plan_json: canonicalJson(plan),
+    plan_sha256: await canonicalSha256(plan),
+  };
+}
+
+function validateDecisionDossier(value, packet, marketingContext, referenceSnapshot) {
+  const dossier = requireObject(value, "decision dossier");
+  if (
+    dossier.schema_version !== "trace.marketing-decision-dossier.v1"
+    || dossier.situation !== "new_launch"
+  ) {
+    throw new HttpError(409, "strategy decision dossier situation is invalid");
+  }
+  const positioning = requireObject(dossier.positioning, "decision positioning");
+  requiredString(positioning.category, "positioning category", 500);
+  requiredString(positioning.current_alternative, "positioning current alternative", 1000);
+  requiredString(positioning.differentiated_mechanism, "positioning mechanism", 1500);
+  requiredString(dossier.reason, "decision reason", 1500);
+  const supportedClaims = new Set(requireArray(packet?.claims, "feature claims", 1, 64)
+    .filter((claim) => ["source_supported", "build_bound", "installed_confirmed"]
+      .includes(claim?.status))
+    .map((claim) => safeId(claim?.claim_id, "feature claim_id")));
+  const proofClaims = requireArray(positioning.proof_claim_ids, "positioning proof claims", 1, 16);
+  if (proofClaims.some((claimId) => !supportedClaims.has(claimId))) {
+    throw new HttpError(409, "strategy positioning uses an unsupported claim");
+  }
+  const allowedIcps = new Set((marketingContext?.customer_signals ?? [])
+    .map((signal) => safeId(signal?.audience_segment_id, "audience segment_id")));
+  const selectedIcp = safeId(dossier.selected_icp_id, "selected_icp_id");
+  if (selectedIcp !== "research_needed" && !allowedIcps.has(selectedIcp)) {
+    throw new HttpError(409, "strategy selected an unsupported ICP");
+  }
+  const requiredEvidence = new Set(requireArray(packet?.evidence, "feature evidence", 0, 128)
+    .map((item) => safeId(item?.evidence_id, "feature evidence_id")));
+  for (const signal of marketingContext?.customer_signals ?? []) {
+    requiredEvidence.add(safeId(signal?.signal_id, "customer signal_id"));
+  }
+  for (const observation of referenceSnapshot?.observations ?? []) {
+    requiredEvidence.add(safeId(observation?.observation_id, "market observation_id"));
+  }
+  const dispositions = requireArray(
+    dossier.evidence_dispositions,
+    "evidence dispositions",
+    1,
+    256,
+  );
+  const dispositionIds = dispositions.map((item) => safeId(item?.evidence_id, "evidence_id"));
+  if (
+    new Set(dispositionIds).size !== dispositionIds.length
+    || dispositionIds.length !== requiredEvidence.size
+    || dispositionIds.some((id) => !requiredEvidence.has(id))
+    || dispositions.some((item) => (
+      !["supports", "contradicts", "insufficient"].includes(item?.disposition)
+      || !["fresh", "stale", "unknown"].includes(item?.freshness)
+      || !["use_as_constraint", "test", "exclude"].includes(item?.use)
+      || !Number.isInteger(item?.confidence_basis_points)
+      || item.confidence_basis_points < 0
+      || item.confidence_basis_points > 10_000
+      || typeof item?.reason !== "string"
+      || !item.reason.trim()
+      || item.reason.length > 1000
+      || (item?.freshness === "stale" && item?.use !== "exclude")
+    ))
+  ) {
+    throw new HttpError(409, "strategy evidence dispositions are incomplete or unsafe");
+  }
+  const selectionBasis = requireArray(
+    dossier.selection_basis_ids ?? [],
+    "selection basis IDs",
+    0,
+    32,
+  );
+  if (
+    new Set(selectionBasis).size !== selectionBasis.length
+    || selectionBasis.some((id) => !requiredEvidence.has(id))
+  ) {
+    throw new HttpError(409, "strategy ICP basis is unbound");
+  }
+  const dispositionsById = new Map(dispositions.map((item) => [item.evidence_id, item]));
+  for (const evidence of packet?.evidence ?? []) {
+    const disposition = dispositionsById.get(evidence.evidence_id);
+    if (disposition?.freshness !== "unknown") {
+      throw new HttpError(409, "strategy evidence freshness is not independently verified");
+    }
+    if (
+      ["fail", "absent", "inconclusive"].includes(evidence.result)
+      && disposition?.disposition === "supports"
+    ) {
+      throw new HttpError(409, "strategy rewrote a feature evidence result");
+    }
+    if (evidence.result === "inconclusive" && disposition?.disposition !== "insufficient") {
+      throw new HttpError(409, "strategy rewrote a feature evidence result");
+    }
+  }
+  for (const signal of marketingContext?.customer_signals ?? []) {
+    const disposition = dispositionsById.get(signal.signal_id);
+    if (
+      disposition?.freshness !== "fresh"
+      || disposition.confidence_basis_points !== signal.confidence_basis_points
+    ) {
+      throw new HttpError(409, "strategy customer signal was rewritten");
+    }
+  }
+  for (const observation of referenceSnapshot?.observations ?? []) {
+    const disposition = dispositionsById.get(observation.observation_id);
+    if (disposition?.freshness !== "unknown") {
+      throw new HttpError(409, "strategy market evidence freshness is not independently verified");
+    }
+    if (
+      observation.classification === "counterevidence"
+      && (disposition?.disposition !== "contradicts"
+        || !["use_as_constraint", "test"].includes(disposition?.use))
+    ) {
+      throw new HttpError(409, "strategy hid frozen market counterevidence");
+    }
+  }
+  if (selectedIcp !== "research_needed") {
+    const selectedSignalIds = new Set((marketingContext?.customer_signals ?? [])
+      .filter((signal) => signal?.audience_segment_id === selectedIcp)
+      .map((signal) => safeId(signal?.signal_id, "customer signal_id")));
+    if (!selectionBasis.some((id) => {
+      const disposition = dispositionsById.get(id);
+      return selectedSignalIds.has(id)
+        && disposition?.disposition === "supports"
+        && ["use_as_constraint", "test"].includes(disposition?.use);
+    })) {
+      throw new HttpError(409, "strategy ICP basis is unbound");
+    }
+  }
+  const requiredProofIds = requireArray(
+    dossier.required_proof_ids ?? [],
+    "required proof IDs",
+    0,
+    32,
+  );
+  const allowedProofIds = new Set([...supportedClaims, ...requiredEvidence]);
+  if (
+    new Set(requiredProofIds).size !== requiredProofIds.length
+    || requiredProofIds.some((id) => !allowedProofIds.has(id))
+  ) {
+    throw new HttpError(409, "strategy required proof is unbound");
+  }
+  const nextStep = dossier.recommended_next_step;
+  if (!["research", "design_experiment", "hold_for_review"].includes(nextStep)) {
+    throw new HttpError(409, "strategy next step is unsafe for a new launch");
+  }
+  if (selectedIcp === "research_needed" && !["research", "hold_for_review"].includes(nextStep)) {
+    throw new HttpError(409, "strategy cannot experiment before resolving its ICP");
+  }
+}
+
+function randomHex(byteLength) {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function safeId(value, name) {
   if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
     throw new HttpError(400, `${name} is invalid`);
   }
   return value;
+}
+
+function requiredString(value, name, maximum) {
+  if (typeof value !== "string" || !value.trim() || value.length > maximum) {
+    throw new HttpError(400, `${name} is invalid`);
+  }
+  return value;
+}
+
+function normalizedHttpsUrl(value, name) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new HttpError(400, `${name} is invalid`);
+  }
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new HttpError(400, `${name} is invalid`);
+  }
+  url.hash = "";
+  return url.href;
 }
 
 function canonicalJson(value) {
@@ -520,5 +920,10 @@ function canonicalJson(value) {
 
 async function canonicalSha256(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJson(value)));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Text(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -138,7 +138,7 @@ def _task() -> MarketingTask:
     packet = _packet()
     brief = _brief(packet)
     principles = ["proof before media"]
-    capability_bindings = []
+    capability_bindings: list[JsonObject] = []
     for capability_id, owner_id in (
         ("capture.native_png", "trace.native_capture"),
         ("copy.text", "trace.marketing_copy"),
@@ -152,7 +152,7 @@ def _task() -> MarketingTask:
             "owner_id": owner_id,
         }
         capability_bindings.append({**binding, "binding_sha256": _digest(binding)})
-    capabilities = [binding["capability_id"] for binding in capability_bindings]
+    capabilities = [cast("str", binding["capability_id"]) for binding in capability_bindings]
     return MarketingTask(
         schema_version="1",
         task_id="creative-task-1",
@@ -160,27 +160,30 @@ def _task() -> MarketingTask:
         account_id="trace_kr",
         kind=TaskKind.MARKETING_JUDGMENT,
         idempotency_key="creative:campaign-1:2",
-        payload={
-            "pipeline": "hosted_marketing_judgment_v1",
-            "judgment": "creative_plan",
-            "campaign_id": "campaign-1",
-            "feature_packet": packet.model_dump(mode="json"),
-            "feature_packet_sha256": contract_sha256(packet),
-            "strategy_brief": brief.model_dump(mode="json"),
-            "strategy_brief_sha256": contract_sha256(brief),
-            "account": {
-                "account_id": "trace_kr",
-                "country": "KR",
-                "language": "ko",
-                "timezone": "Asia/Seoul",
+        payload=cast(
+            "JsonObject",
+            {
+                "pipeline": "hosted_marketing_judgment_v1",
+                "judgment": "creative_plan",
+                "campaign_id": "campaign-1",
+                "feature_packet": packet.model_dump(mode="json"),
+                "feature_packet_sha256": contract_sha256(packet),
+                "strategy_brief": brief.model_dump(mode="json"),
+                "strategy_brief_sha256": contract_sha256(brief),
+                "account": {
+                    "account_id": "trace_kr",
+                    "country": "KR",
+                    "language": "ko",
+                    "timezone": "Asia/Seoul",
+                },
+                "canonical_principles": principles,
+                "knowledge_snapshot_sha256": _digest({"principles": principles}),
+                "available_capabilities": capabilities,
+                "capability_bindings": capability_bindings,
+                "capability_snapshot_sha256": _digest({"capability_bindings": capability_bindings}),
+                "requested_by": "hosted_workspace",
             },
-            "canonical_principles": principles,
-            "knowledge_snapshot_sha256": _digest({"principles": principles}),
-            "available_capabilities": capabilities,
-            "capability_bindings": capability_bindings,
-            "capability_snapshot_sha256": _digest({"capability_bindings": capability_bindings}),
-            "requested_by": "hosted_workspace",
-        },
+        ),
         created_at=NOW,
     )
 
@@ -189,32 +192,51 @@ def _proposal(
     *,
     capability: str = "copy.text",
     claim_id: str = "claim-concept",
+    include_capture: bool = True,
 ) -> JsonObject:
     def treatment(hypothesis_id: str) -> JsonObject:
-        return {
-            "treatment_id": f"treatment-{hypothesis_id}",
-            "hypothesis_id": hypothesis_id,
-            "format": "explanatory_carousel",
-            "hook": f"hook {hypothesis_id}",
-            "caption_direction": "Explain one product belief.",
-            "manipulated_component_value": hypothesis_id,
-            "proof_narrative": "Label the sequence as a concept backed by source evidence.",
+        copy_request: JsonObject = {
+            "request_id": f"request-{hypothesis_id}",
+            "capability_id": capability,
+            "proof_kind": "copy_only",
             "claim_ids": [claim_id],
-            "artifact_requests": [
-                {
-                    "request_id": f"request-{hypothesis_id}",
-                    "capability_id": capability,
-                    "proof_kind": "copy_only",
-                    "claim_ids": [claim_id],
-                    "instructions": "Compose a source-labeled explanation.",
-                }
-            ],
+            "instructions": "Compose a source-labeled explanation.",
         }
+        capture_request: JsonObject = {
+            "request_id": f"capture-{hypothesis_id}",
+            "capability_id": "capture.native_png",
+            "proof_kind": "installed_native_capture",
+            "claim_ids": [claim_id],
+            "instructions": "Capture the approved Trace lock-screen treatment.",
+        }
+        return cast(
+            "JsonObject",
+            {
+                "treatment_id": f"treatment-{hypothesis_id}",
+                "hypothesis_id": hypothesis_id,
+                "format": "explanatory_carousel",
+                "hook": f"hook {hypothesis_id}",
+                "caption_direction": "Explain one product belief.",
+                "manipulated_component_value": hypothesis_id,
+                "proof_narrative": "Label the sequence as a concept backed by source evidence.",
+                "claim_ids": [claim_id],
+                "artifact_requests": (
+                    [copy_request, capture_request] if include_capture else [copy_request]
+                ),
+            },
+        )
 
-    return {
-        "schema_version": "trace.creative-plan-proposal.v1",
-        "treatments": [treatment("control"), treatment("challenger")],
-    }
+    return cast(
+        "JsonObject",
+        {
+            "schema_version": "trace.creative-plan-proposal.v1",
+            "treatments": [treatment("control"), treatment("challenger")],
+        },
+    )
+
+
+def _copy_only_proposal() -> JsonObject:
+    return _proposal(include_capture=False)
 
 
 @dataclass
@@ -244,8 +266,12 @@ def test_creative_judgment_selects_proof_without_creating_tool_actions(tmp_path:
     assert result.output["judgment"] == "creative_plan"
     assert result.output["publication_allowed"] is False
     assert result.output["tool_actions_created"] == 0
-    assert result.output["media_plan"]["human_review_required"] is True
-    assert len(result.output["media_plan"]["treatments"]) == 2
+    media_plan = result.output["media_plan"]
+    assert isinstance(media_plan, dict)
+    assert media_plan["human_review_required"] is True
+    treatments = media_plan["treatments"]
+    assert isinstance(treatments, list)
+    assert len(treatments) == 2
     assert len(codex.calls) == 1
     assert "도구 호출" in codex.calls[0][0]
 
@@ -268,6 +294,21 @@ def test_creative_judgment_rejects_capability_and_claim_escape(
     )
 
     with pytest.raises(MarketingExecutionError, match=failure) as caught:
+        _ = executor.execute(executor.prepare(_task()))
+
+    assert caught.value.unknown_side_effect is True
+
+
+def test_creative_judgment_rejects_copy_only_workspace_treatments(tmp_path: Path) -> None:
+    executor = HostedCreativeJudgmentExecutor(
+        codex=FakeCodex(_copy_only_proposal()),
+        output_root=tmp_path,
+    )
+
+    with pytest.raises(
+        MarketingExecutionError,
+        match="creative_judgment_result_invalid",
+    ) as caught:
         _ = executor.execute(executor.prepare(_task()))
 
     assert caught.value.unknown_side_effect is True

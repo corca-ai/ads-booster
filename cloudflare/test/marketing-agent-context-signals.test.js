@@ -33,6 +33,13 @@ function digest(value) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+async function verifiedSourceFetcher(url) {
+  return new Response(`verified source body: ${url}`, {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  });
+}
+
 function seed(db) {
   db.sqlite.exec(`
     INSERT INTO hosted_workspace_accounts
@@ -351,6 +358,7 @@ test("frozen customer context survives quarantined market research before strate
       },
     },
     { worker_id: "worker-1" },
+    verifiedSourceFetcher,
   );
   const strategyTask = DB.sqlite.prepare(
     "SELECT task_json FROM hosted_workspace_capture_tasks WHERE task_id = ?",

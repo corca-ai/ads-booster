@@ -8,7 +8,10 @@ import { receiveHostedExperimentEvaluationCallback } from
   "../src/hosted-experiment-evaluation-callback.js";
 import { receiveHostedLearningSynthesisCallback } from
   "../src/hosted-learning-synthesis-callback.js";
+import { receiveHostedOutcomeReassessmentCallback } from
+  "../src/hosted-outcome-reassessment-callback.js";
 import { deriveExperimentEvaluation } from "../src/experiment-evaluation.js";
+import { handleHostedWorkspace } from "../src/hosted-workspace.js";
 import {
   createShadowCampaign,
   createVariantLink,
@@ -46,7 +49,26 @@ function digest(value) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
-function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
+function weeklyImageInputs() {
+  const colors = ["2D936C", "00B4D8", "F9C74F", "F26419", "DA4C93"];
+  return {
+    trace_items: Array.from({ length: 18 }, (_, index) => ({
+      title: `일정 ${index + 1}`,
+      day: index % 7,
+      days: index < 4 ? 2 : 1,
+      time: index < 4 ? `${String(7 + index).padStart(2, "0")}:00` : null,
+      color: colors[index % colors.length],
+    })),
+    trace_todos: Array.from({ length: 8 }, (_, index) => `할 일 ${index + 1}`),
+    device_time: "09:41",
+    background_subject: "character_other",
+    background_mood: "warm",
+    background_search_query: null,
+    language: "ko",
+  };
+}
+
+function seedSupervisedCampaign(DB, { reviewContext = false, causal = false } = {}) {
   const now = new Date().toISOString();
   const packet = normalizeFeaturePacket({
     schema_version: "trace.feature-evidence.v1",
@@ -91,10 +113,14 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     activated_hypothesis_ids: ["control", "challenger"],
     primary_outcome: {
       name: "setup_completed",
-      scope: "direct_response_attribution",
+      scope: causal ? "estimated_treatment_effect" : "direct_response_attribution",
       window_hours: 72,
-      causal_estimand: null,
+      causal_estimand: causal ? "difference in setup completion probability" : null,
     },
+    allocation_method: causal
+      ? "server_randomized_complete_blocks_v1"
+      : "balanced_complete_blocks",
+    causal_treatment_hypothesis_id: causal ? "challenger" : null,
     diagnostic_metrics: ["views"],
     guardrails: ["product fidelity"],
     minimum_eligible_blocks: 2,
@@ -126,28 +152,58 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     business_outcome: "Increase completed lock-screen setups.",
     audience_situation: "An iPhone user wants a character to accompany the day.",
     belief_to_change: "A lock screen can evolve through the day.",
+    decision_dossier: {
+      schema_version: "trace.marketing-decision-dossier.v1",
+      situation: "new_launch",
+      selected_icp_id: "research_needed",
+      selection_basis_ids: [],
+      positioning: {
+        category: "dynamic lock-screen companion",
+        current_alternative: "a static lock-screen image",
+        differentiated_mechanism: "one character changes through scheduled scenes",
+        proof_claim_ids: ["claim-installed"],
+      },
+      evidence_dispositions: [{
+        evidence_id: "runtime-1",
+        disposition: "supports",
+        confidence_basis_points: 10000,
+        freshness: "unknown",
+        use: "test",
+        reason: "The runtime observation verifies the mechanism, not an ICP.",
+      }],
+      recommended_next_step: "research",
+      reason: "A customer-backed audience is still required.",
+      required_proof_ids: ["claim-installed"],
+    },
     hypotheses,
     experiment: registration,
     created_at: now,
   };
   const treatments = hypotheses.map((hypothesis) => {
-    const request = {
-      request_id: `request-${hypothesis.hypothesis_id}`,
+    const copyRequest = {
+      request_id: `copy-${hypothesis.hypothesis_id}`,
       capability_id: "copy.text",
       proof_kind: "copy_only",
       claim_ids: ["claim-installed"],
       instructions: "Materialize approved copy.",
     };
+    const captureRequest = {
+      request_id: `capture-${hypothesis.hypothesis_id}`,
+      capability_id: "capture.native_png",
+      proof_kind: "installed_native_capture",
+      claim_ids: ["claim-installed"],
+      instructions: "Capture the approved Trace lock-screen treatment.",
+    };
     return {
       treatment_id: `treatment-${hypothesis.hypothesis_id}`,
       hypothesis_id: hypothesis.hypothesis_id,
-      format: "text_only",
+      format: "native_sequence",
       hook: `hook ${hypothesis.hypothesis_id}`,
       caption_direction: "Show a day sequence.",
       manipulated_component_value: hypothesis.hypothesis_id,
       proof_narrative: "Use only the installed claim.",
       claim_ids: ["claim-installed"],
-      artifact_requests: [request],
+      artifact_requests: [copyRequest, captureRequest],
     };
   });
   const plan = {
@@ -179,12 +235,29 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
       (worker_id, display_name, pool, state, capabilities_json, doctor_json,
        created_at, updated_at)
     VALUES ('worker-1', 'Mac', 'appium', 'active',
-            '{"task_kinds":"marketing_judgment"}', '{}', 'now', 'now');
+            '{"task_kinds":"capture,marketing_judgment","feedback_context_v1":true,"candidate_materialization_v2":true}',
+            '{}', 'now', 'now');
   `);
+  if (causal) {
+    DB.sqlite.exec(`
+      INSERT INTO hosted_threads_profiles
+        (profile_id, account_id, threads_user_id, username, scopes_json,
+         token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+      VALUES ('profile-1', 'trace_kr', 'threads-1', 'trace', '["threads_basic"]',
+              X'01', X'02', 'v1', 'active', 'now', 'now');
+      UPDATE hosted_workspace_accounts
+      SET default_threads_profile_id = 'profile-1';
+    `);
+  }
   const copyCatalog = DB.sqlite.prepare(
     `SELECT descriptor_sha256, effect_class, request_schema_sha256, receipt_schema_sha256, owner_id
      FROM hosted_marketing_adapter_capabilities
      WHERE account_id = 'trace_kr' AND capability_id = 'copy.text'`,
+  ).get();
+  const captureCatalog = DB.sqlite.prepare(
+    `SELECT descriptor_sha256, effect_class, request_schema_sha256, receipt_schema_sha256, owner_id
+     FROM hosted_marketing_adapter_capabilities
+     WHERE account_id = 'trace_kr' AND capability_id = 'capture.native_png'`,
   ).get();
   const copyBinding = {
     capability_id: "copy.text",
@@ -195,6 +268,15 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     owner_id: copyCatalog.owner_id,
   };
   const copyBindingSha256 = digest(copyBinding);
+  const captureBinding = {
+    capability_id: "capture.native_png",
+    descriptor_sha256: captureCatalog.descriptor_sha256,
+    effect_class: captureCatalog.effect_class,
+    request_schema_sha256: captureCatalog.request_schema_sha256,
+    receipt_schema_sha256: captureCatalog.receipt_schema_sha256,
+    owner_id: captureCatalog.owner_id,
+  };
+  const captureBindingSha256 = digest(captureBinding);
   if (reviewContext) {
     DB.sqlite.prepare(
       `INSERT INTO hosted_marketing_context_snapshots
@@ -265,7 +347,12 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     "1".repeat(64),
     packetSha,
     "2".repeat(64),
-    digest({ capability_bindings: [{ ...copyBinding, binding_sha256: copyBindingSha256 }] }),
+    digest({
+      capability_bindings: [
+        { ...captureBinding, binding_sha256: captureBindingSha256 },
+        { ...copyBinding, binding_sha256: copyBindingSha256 },
+      ],
+    }),
     "4".repeat(64),
     "5".repeat(64),
     now,
@@ -285,6 +372,20 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     now,
   );
   DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_capability_bindings
+      (context_receipt_id, capability_id, binding_sha256, descriptor_sha256, effect_class,
+       request_schema_sha256, receipt_schema_sha256, owner_id, created_at)
+     VALUES ('receipt-1', 'capture.native_png', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    captureBindingSha256,
+    captureBinding.descriptor_sha256,
+    captureBinding.effect_class,
+    captureBinding.request_schema_sha256,
+    captureBinding.receipt_schema_sha256,
+    captureBinding.owner_id,
+    now,
+  );
+  DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_strategy_briefs
       (brief_id, campaign_id, context_receipt_id, schema_version, brief_json,
        brief_sha256, created_at)
@@ -293,10 +394,42 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
   DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_experiments
       (experiment_id, campaign_id, strategy_brief_id, state, primary_outcome_scope,
+       allocation_method, randomization_seed, randomization_seed_sha256,
        registration_json, registration_sha256, created_at, updated_at)
-     VALUES ('experiment-1', 'campaign-1', 'brief-1', 'registered',
-             'direct_response_attribution', ?, ?, ?, ?)`,
-  ).run(canonicalJson(registration), digest(registration), now, now);
+     VALUES ('experiment-1', 'campaign-1', 'brief-1', 'registered', ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    registration.primary_outcome.scope,
+    registration.allocation_method,
+    causal ? "a".repeat(64) : null,
+    causal ? createHash("sha256").update("a".repeat(64)).digest("hex") : null,
+    canonicalJson(registration),
+    digest(registration),
+    now,
+    now,
+  );
+  if (causal) {
+    const exposurePlan = {
+      schema_version: "trace.experiment-exposure-plan.v1",
+      experiment_id: "experiment-1",
+      account_id: ACCOUNT.account_id,
+      account_revision: 1,
+      profile_id: "profile-1",
+      threads_user_id_snapshot: "threads-1",
+      username_snapshot: "trace",
+      timezone_snapshot: "Asia/Seoul",
+      morning_time_snapshot: "07:30",
+      evening_time_snapshot: "19:30",
+      created_at: now,
+    };
+    DB.sqlite.prepare(
+      `INSERT INTO hosted_marketing_experiment_exposure_plans
+        (experiment_id, account_id, profile_id, threads_user_id_snapshot,
+         username_snapshot, timezone_snapshot, morning_time_snapshot,
+         evening_time_snapshot, account_revision, plan_json, plan_sha256, created_at)
+       VALUES ('experiment-1', 'trace_kr', 'profile-1', 'threads-1', 'trace',
+               'Asia/Seoul', '07:30', '19:30', 1, ?, ?, ?)`,
+    ).run(canonicalJson(exposurePlan), digest(exposurePlan), now);
+  }
   for (const hypothesis of hypotheses) {
     DB.sqlite.prepare(
       `INSERT INTO hosted_marketing_hypotheses
@@ -343,7 +476,7 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
       `INSERT INTO hosted_marketing_creative_treatments
         (treatment_id, plan_id, campaign_id, experiment_id, hypothesis_id,
          format, treatment_json, treatment_sha256, created_at)
-       VALUES (?, 'plan-1', 'campaign-1', 'experiment-1', ?, 'text_only', ?, ?, ?)`,
+       VALUES (?, 'plan-1', 'campaign-1', 'experiment-1', ?, 'native_sequence', ?, ?, ?)`,
     ).run(
       treatment.treatment_id,
       treatment.hypothesis_id,
@@ -351,21 +484,27 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
       digest(treatment),
       now,
     );
-    const request = treatment.artifact_requests[0];
-    DB.sqlite.prepare(
-      `INSERT INTO hosted_marketing_artifact_requests
-        (request_id, campaign_id, treatment_id, capability_id, proof_kind,
-         request_json, request_sha256, capability_binding_sha256, state, created_at, updated_at)
-       VALUES (?, 'campaign-1', ?, 'copy.text', 'copy_only', ?, ?, ?, 'approved', ?, ?)`,
-    ).run(
-      request.request_id,
-      treatment.treatment_id,
-      canonicalJson(request),
-      digest(request),
-      copyBindingSha256,
-      now,
-      now,
-    );
+    for (const request of treatment.artifact_requests) {
+      const bindingSha256 = request.capability_id === "copy.text"
+        ? copyBindingSha256
+        : captureBindingSha256;
+      DB.sqlite.prepare(
+        `INSERT INTO hosted_marketing_artifact_requests
+          (request_id, campaign_id, treatment_id, capability_id, proof_kind,
+           request_json, request_sha256, capability_binding_sha256, state, created_at, updated_at)
+         VALUES (?, 'campaign-1', ?, ?, ?, ?, ?, ?, 'approved', ?, ?)`,
+      ).run(
+        request.request_id,
+        treatment.treatment_id,
+        request.capability_id,
+        request.proof_kind,
+        canonicalJson(request),
+        digest(request),
+        bindingSha256,
+        now,
+        now,
+      );
+    }
   }
   return { packet, registration, copyBindingSha256 };
 }
@@ -381,14 +520,27 @@ function claimTask(DB, taskId) {
   ).get(taskId);
 }
 
-async function materializeOne(DB, projectionRevision) {
+async function materializeOne(
+  DB,
+  projectionRevision,
+  { legacyTask = false, legacyOutput = false } = {},
+) {
   const requested = await requestCandidateMaterialization(
     { DB },
     ACCOUNT,
     "campaign-1",
     { projection_revision: projectionRevision },
   );
+  if (legacyTask) {
+    DB.sqlite.prepare(
+      "UPDATE hosted_workspace_capture_tasks SET required_capability = NULL WHERE task_id = ?",
+    ).run(requested.task_id);
+  }
   const task = claimTask(DB, requested.task_id);
+  assert.equal(
+    task.required_capability,
+    legacyTask ? null : "candidate_materialization_v2",
+  );
   const payload = JSON.parse(task.task_json).payload;
   const knowledge = DB.sqlite.prepare(
     `SELECT snapshot_json, snapshot_sha256 FROM hosted_marketing_knowledge_snapshots
@@ -396,28 +548,33 @@ async function materializeOne(DB, projectionRevision) {
   ).get();
   assert.deepEqual(payload.canonical_principles, JSON.parse(knowledge.snapshot_json).principles);
   assert.equal(payload.knowledge_snapshot_sha256, knowledge.snapshot_sha256);
+  const candidateSchemaVersion = legacyOutput
+    ? "trace.candidate-materialization.v1"
+    : "trace.candidate-materialization.v2";
   const candidate = {
-    schema_version: "trace.candidate-materialization.v1",
+    schema_version: candidateSchemaVersion,
     topic: `topic ${requested.assignment_id}`,
     country: "KR",
     caption: `caption ${requested.hypothesis_id}`,
     hypothesis: `hypothesis ${requested.hypothesis_id}`,
-    posting_slot: "morning",
+    posting_slot: payload.allocation?.posting_slot ?? "morning",
     appium_prompt: "Capture the installed schedule.",
-    image_inputs: {
-      trace_items: [
-        "07:00 Wake up",
-        "09:00 Work",
-        "12:00 Lunch",
-        "18:00 Commute",
-        "22:00 Sleep",
-      ],
-      device_time: "09:41",
-      background_subject: "character_other",
-      background_mood: "warm",
-      background_search_query: null,
-      language: "ko",
-    },
+    image_inputs: legacyOutput
+      ? {
+          trace_items: [
+            "08:00 기상",
+            "09:00 집중 업무",
+            "12:00 점심",
+            "15:00 산책",
+            "19:00 저녁",
+          ],
+          device_time: "09:41",
+          background_subject: "character_other",
+          background_mood: "warm",
+          background_search_query: null,
+          language: "ko",
+        }
+      : weeklyImageInputs(),
     claim_ids: ["claim-installed"],
   };
   const receipt = {
@@ -428,9 +585,11 @@ async function materializeOne(DB, projectionRevision) {
     feature_packet_sha256: payload.feature_packet_sha256,
     knowledge_snapshot_sha256: payload.knowledge_snapshot_sha256,
     capability_snapshot_sha256: digest({ capabilities: [] }),
-    prompt_version: "trace.evidence-bound-candidate.v1",
+    prompt_version: legacyOutput
+      ? "trace.evidence-bound-candidate.v1"
+      : "trace.evidence-bound-candidate.v2",
     prompt_sha256: "6".repeat(64),
-    output_schema_version: "trace.candidate-materialization.v1",
+    output_schema_version: candidateSchemaVersion,
     output_schema_sha256: "7".repeat(64),
     included_record_ids: [payload.strategy_brief.brief_id, payload.media_plan.plan_id],
     omitted_modules: ["external_references", "unapproved_learning"],
@@ -468,6 +627,532 @@ async function materializeOne(DB, projectionRevision) {
   return { ...requested, ...accepted };
 }
 
+function seedCaptureManifests(DB) {
+  const rows = DB.sqlite.prepare(
+    `SELECT assignment.assignment_id, assignment.campaign_id, assignment.treatment_id,
+            request.request_id, request.capability_id, request.request_sha256,
+            request.capability_binding_sha256
+     FROM hosted_marketing_post_assignments AS assignment
+     JOIN hosted_marketing_artifact_requests AS request
+       ON request.treatment_id = assignment.treatment_id
+      AND request.capability_id = 'capture.native_png'
+     LEFT JOIN hosted_marketing_artifact_manifests AS manifest
+       ON manifest.assignment_id = assignment.assignment_id
+      AND manifest.request_id = request.request_id
+     WHERE manifest.manifest_id IS NULL`,
+  ).all();
+  for (const row of rows) {
+    const artifactSha256 = digest({
+      assignment_id: row.assignment_id,
+      request_id: row.request_id,
+    });
+    const manifest = {
+      schema_version: "trace.artifact-manifest.v1",
+      manifest_id: `capture-${row.assignment_id}`,
+      campaign_id: row.campaign_id,
+      assignment_id: row.assignment_id,
+      treatment_id: row.treatment_id,
+      request_id: row.request_id,
+      capability_id: row.capability_id,
+      capability_binding_sha256: row.capability_binding_sha256,
+      artifact_uri: `r2:test/${row.assignment_id}.png`,
+      artifact_sha256: artifactSha256,
+      input_sha256: row.request_sha256,
+      execution_id: `capture-task-${row.assignment_id}`,
+      claim_ids: ["claim-installed"],
+      evidence_ids: [],
+      created_at: "2026-09-02T00:00:00Z",
+    };
+    DB.sqlite.prepare(
+      `INSERT INTO hosted_marketing_artifact_manifests
+        (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
+         manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256,
+         capability_binding_sha256, created_at)
+       VALUES (?, ?, ?, ?, ?, 'trace.artifact-manifest.v1', ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      manifest.manifest_id,
+      row.campaign_id,
+      row.assignment_id,
+      row.treatment_id,
+      row.request_id,
+      canonicalJson(manifest),
+      digest(manifest),
+      manifest.artifact_uri,
+      artifactSha256,
+      row.request_sha256,
+      row.capability_binding_sha256,
+      manifest.created_at,
+    );
+  }
+}
+
+test("candidate materialization fails closed before reserving work without a v2 worker", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB);
+  DB.sqlite.prepare(
+    `UPDATE mac_workers
+     SET capabilities_json = '{"task_kinds":"capture,marketing_judgment"}'
+     WHERE worker_id = 'worker-1'`,
+  ).run();
+  const taskCount = DB.sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks",
+  ).get().count;
+  const reservationCount = DB.sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_materialization_reservations",
+  ).get().count;
+
+  await assert.rejects(
+    requestCandidateMaterialization(
+      { DB },
+      ACCOUNT,
+      "campaign-1",
+      { projection_revision: 4 },
+    ),
+    (error) => error?.status === 503,
+  );
+  assert.equal(
+    DB.sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks").get().count,
+    taskCount,
+  );
+  assert.equal(
+    DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_materialization_reservations",
+    ).get().count,
+    reservationCount,
+  );
+});
+
+test("an in-flight legacy candidate task can finish with its frozen v1 contract", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB);
+
+  const materialized = await materializeOne(
+    DB,
+    4,
+    { legacyTask: true, legacyOutput: true },
+  );
+  const candidate = DB.sqlite.prepare(
+    "SELECT image_inputs_json FROM hosted_workspace_candidates WHERE candidate_id = ?",
+  ).get(materialized.candidate_id);
+  assert.equal(typeof JSON.parse(candidate.image_inputs_json).trace_items[0], "string");
+  const reservation = DB.sqlite.prepare(
+    `SELECT state FROM hosted_marketing_materialization_reservations
+     WHERE assignment_id = ?`,
+  ).get(materialized.assignment_id);
+  assert.equal(reservation.state, "completed");
+});
+
+test("a v2 candidate task rejects a v1 worker result without mutating campaign state", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB);
+
+  await assert.rejects(
+    materializeOne(DB, 4, { legacyOutput: true }),
+    (error) => error?.status === 409,
+  );
+  const task = DB.sqlite.prepare(
+    `SELECT state, callback_id, required_capability
+     FROM hosted_workspace_capture_tasks ORDER BY created_at DESC LIMIT 1`,
+  ).get();
+  assert.deepEqual({ ...task }, {
+    state: "queued",
+    callback_id: null,
+    required_capability: "candidate_materialization_v2",
+  });
+  assert.equal(
+    DB.sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_workspace_candidates").get().count,
+    0,
+  );
+  assert.equal(
+    DB.sqlite.prepare(
+      "SELECT state FROM hosted_marketing_materialization_reservations LIMIT 1",
+    ).get().state,
+    "queued",
+  );
+});
+
+test("causal experiments materialize only the server-randomized allocation receipt", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB, { causal: true });
+
+  await materializeOne(DB, 4);
+  await materializeOne(DB, 5);
+
+  const assignments = DB.sqlite.prepare(
+    `SELECT assignment_id, assignment_json, allocation_rank
+     FROM hosted_marketing_post_assignments
+     WHERE experiment_id = 'experiment-1'
+     ORDER BY allocation_rank`,
+  ).all();
+  assert.deepEqual(assignments.map((assignment) => assignment.allocation_rank), [1, 2]);
+  const experiment = DB.sqlite.prepare(
+    `SELECT allocation_method, randomization_seed_sha256
+     FROM hosted_marketing_experiments WHERE experiment_id = 'experiment-1'`,
+  ).get();
+  for (const assignment of assignments) {
+    const allocation = JSON.parse(assignment.assignment_json).allocation;
+    assert.deepEqual(allocation, {
+      method: "server_randomized_complete_blocks_v1",
+      randomization_seed_sha256: experiment.randomization_seed_sha256,
+      rank: assignment.allocation_rank,
+      posting_slot: assignment.allocation_rank === 1 ? "morning" : "evening",
+    });
+  }
+
+  const tampered = JSON.parse(assignments[0].assignment_json);
+  const tamperedRank = assignments[0].allocation_rank === 1 ? 2 : 1;
+  tampered.allocation.rank = tamperedRank;
+  DB.sqlite.prepare(
+    `UPDATE hosted_marketing_post_assignments
+     SET allocation_rank = ?, assignment_json = ? WHERE assignment_id = ?`,
+  ).run(tamperedRank, canonicalJson(tampered), assignments[0].assignment_id);
+  await assert.rejects(
+    requestExperimentEvaluation({ DB }, ACCOUNT, "campaign-1", { projection_revision: 6 }),
+    (error) => error.status === 409,
+  );
+});
+
+test("causal image approval commits the complete exposure schedule before publication", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB, { causal: true });
+  for (let revision = 4; revision < 8; revision += 1) {
+    await materializeOne(DB, revision);
+  }
+  seedCaptureManifests(DB);
+  DB.sqlite.exec(`
+    UPDATE hosted_workspace_accounts
+    SET threads_auto_publish_enabled = 1, timezone = 'America/New_York',
+        morning_time = '06:00', evening_time = '18:00', revision = revision + 1;
+    UPDATE hosted_workspace_candidates
+    SET status = 'image_awaiting_review', image_key = 'image-key',
+        image_sha256 = '${"8".repeat(64)}';
+  `);
+  const candidate = DB.sqlite.prepare(
+    `SELECT candidate_id, revision FROM hosted_workspace_candidates
+     WHERE marketing_assignment_id IS NOT NULL ORDER BY candidate_id LIMIT 1`,
+  ).get();
+  const response = await handleHostedWorkspace(
+    new Request(`https://workspace.example/api/candidates/${candidate.candidate_id}/review-image`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accepted: true,
+        expected_revision: candidate.revision,
+        rating: 5,
+        tags: [],
+      }),
+    }),
+    {
+      DB,
+      HOSTED_WORKSPACE_ACCOUNT_ID: "trace_kr",
+      ARTIFACTS: { delete: async () => {} },
+    },
+    "context",
+  );
+  assert.equal(response.status, 200, await response.text());
+  const slots = DB.sqlite.prepare(
+    `SELECT slot.assignment_id, slot.allocation_rank, slot.posting_slot,
+            slot.scheduled_at, slot.commitment_json, slot.commitment_sha256
+     FROM hosted_marketing_exposure_slots AS slot ORDER BY slot.scheduled_at`,
+  ).all();
+  assert.equal(slots.length, 4);
+  assert.deepEqual(
+    slots.map((slot) => slot.posting_slot),
+    ["morning", "evening", "morning", "evening"],
+  );
+  for (const slot of slots) {
+    assert.equal(digest(JSON.parse(slot.commitment_json)), slot.commitment_sha256);
+  }
+  const publication = DB.sqlite.prepare(
+    `SELECT publication.scheduled_at, publication.posting_slot_snapshot,
+            publication.timezone_snapshot, publication.wall_clock_snapshot,
+            slot.scheduled_at AS committed_at, slot.posting_slot AS committed_slot
+     FROM hosted_threads_publications AS publication
+     JOIN hosted_marketing_exposure_slots AS slot
+       ON slot.assignment_id = publication.marketing_assignment_id`,
+  ).get();
+  assert.equal(publication.scheduled_at, publication.committed_at);
+  assert.equal(publication.posting_slot_snapshot, publication.committed_slot);
+  assert.equal(publication.timezone_snapshot, "Asia/Seoul");
+  assert.equal(JSON.parse(publication.wall_clock_snapshot).timezone, "Asia/Seoul");
+});
+
+test("causal candidate rejects a profile switch after allocation", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB, { causal: true });
+  const materialized = await materializeOne(DB, 4);
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_threads_profiles
+      (profile_id, account_id, threads_user_id, username, scopes_json,
+       token_ciphertext, token_nonce, token_key_version, state, created_at, updated_at)
+     VALUES ('profile-2', 'trace_kr', 'threads-2', 'trace_alt', '["threads_basic"]',
+             X'03', X'04', 'v1', 'active', 'now', 'now')`,
+  ).run();
+  const candidate = DB.sqlite.prepare(
+    `SELECT candidate_id, revision, threads_profile_id FROM hosted_workspace_candidates
+     WHERE candidate_id = ?`,
+  ).get(materialized.candidate_id);
+  assert.equal(candidate.threads_profile_id, "profile-1");
+  const response = await handleHostedWorkspace(
+    new Request(
+      `https://workspace.example/api/candidates/${candidate.candidate_id}/threads-profile`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer control-token",
+        },
+        body: JSON.stringify({
+          threads_profile_id: "profile-2",
+          expected_revision: candidate.revision,
+        }),
+      },
+    ),
+    {
+      DB,
+      HOSTED_WORKSPACE_ACCOUNT_ID: "trace_kr",
+      CONTROL_PLANE_TOKEN: "control-token",
+    },
+    "context",
+  );
+  const responseBody = await response.text();
+  assert.equal(response.status, 409, responseBody);
+  const after = DB.sqlite.prepare(
+    "SELECT threads_profile_id FROM hosted_workspace_candidates WHERE candidate_id = ?",
+  ).get(candidate.candidate_id);
+  assert.equal(after.threads_profile_id, "profile-1");
+});
+
+test("materialized workspace treatment reaches the approved native capture queue", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB, { causal: true });
+  const materialized = await materializeOne(DB, 4);
+  let candidate = DB.sqlite.prepare(
+    "SELECT candidate_id, revision, status FROM hosted_workspace_candidates WHERE candidate_id = ?",
+  ).get(materialized.candidate_id);
+  const reviewed = await handleHostedWorkspace(
+    new Request(`https://workspace.example/api/candidates/${candidate.candidate_id}/review`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accepted: true,
+        expected_revision: candidate.revision,
+        rating: 5,
+        tags: [],
+      }),
+    }),
+    { DB, HOSTED_WORKSPACE_ACCOUNT_ID: "trace_kr" },
+    "context",
+  );
+  assert.equal(reviewed.status, 200, await reviewed.text());
+  candidate = DB.sqlite.prepare(
+    "SELECT candidate_id, revision, status FROM hosted_workspace_candidates WHERE candidate_id = ?",
+  ).get(materialized.candidate_id);
+  assert.equal(candidate.status, "caption_approved");
+
+  const queued = await handleHostedWorkspace(
+    new Request(
+      `https://workspace.example/api/candidates/${candidate.candidate_id}/generate-image`,
+      { method: "POST" },
+    ),
+    { DB, HOSTED_WORKSPACE_ACCOUNT_ID: "trace_kr" },
+    "context",
+  );
+  assert.equal(queued.status, 201, await queued.text());
+  const captureTask = DB.sqlite.prepare(
+    `SELECT kind, state, created_at FROM hosted_workspace_capture_tasks
+     WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+  ).get(candidate.candidate_id);
+  assert.deepEqual({ kind: captureTask.kind, state: captureTask.state }, {
+    kind: "capture",
+    state: "queued",
+  });
+  const request = DB.sqlite.prepare(
+    `SELECT state FROM hosted_marketing_artifact_requests
+     WHERE treatment_id = (SELECT marketing_treatment_id FROM hosted_workspace_candidates
+                            WHERE candidate_id = ?)
+       AND capability_id = 'capture.native_png'`,
+  ).get(candidate.candidate_id);
+  assert.equal(request.state, "approved");
+});
+
+test("causal evaluation opens only for publications matching immutable exposure commitments", async () => {
+  const DB = new D1Adapter();
+  const { registration } = seedSupervisedCampaign(DB, { causal: true });
+  for (let revision = 4; revision < 8; revision += 1) {
+    await materializeOne(DB, revision);
+  }
+  seedCaptureManifests(DB);
+  const exposurePlan = DB.sqlite.prepare(
+    `SELECT plan_json, plan_sha256 FROM hosted_marketing_experiment_exposure_plans
+     WHERE experiment_id = 'experiment-1'`,
+  ).get();
+  const experiment = DB.sqlite.prepare(
+    `SELECT randomization_seed_sha256 FROM hosted_marketing_experiments
+     WHERE experiment_id = 'experiment-1'`,
+  ).get();
+  const assignments = DB.sqlite.prepare(
+    `SELECT assignment_id, candidate_id, eligible_block_id, hypothesis_id, allocation_rank
+     FROM hosted_marketing_post_assignments ORDER BY eligible_block_id, allocation_rank`,
+  ).all();
+  const baseTime = Date.now() - 120 * 60 * 60 * 1000;
+  for (const [index, assignment] of assignments.entries()) {
+    const postingSlot = assignment.allocation_rank === 1 ? "morning" : "evening";
+    const scheduledAt = new Date(baseTime + index * 60 * 60 * 1000).toISOString();
+    const wallClock = { timezone: "Asia/Seoul", time: postingSlot === "morning" ? "07:30" : "19:30" };
+    const commitment = {
+      schema_version: "trace.exposure-slot.v1",
+      experiment_id: "experiment-1",
+      assignment_id: assignment.assignment_id,
+      eligible_block_id: assignment.eligible_block_id,
+      hypothesis_id: assignment.hypothesis_id,
+      allocation_rank: assignment.allocation_rank,
+      randomization_seed_sha256: experiment.randomization_seed_sha256,
+      posting_slot: postingSlot,
+      exposure_plan_sha256: exposurePlan.plan_sha256,
+      profile_id_snapshot: "profile-1",
+      threads_user_id_snapshot: "threads-1",
+      username_snapshot: "trace",
+      timezone_snapshot: "Asia/Seoul",
+      wall_clock_snapshot: wallClock,
+      scheduled_at: scheduledAt,
+      tolerance_seconds: 1800,
+    };
+    DB.sqlite.prepare(
+      `INSERT INTO hosted_marketing_exposure_slots
+        (slot_id, campaign_id, experiment_id, assignment_id, eligible_block_id,
+         hypothesis_id, allocation_rank, posting_slot, timezone_snapshot,
+         exposure_plan_sha256, profile_id_snapshot, threads_user_id_snapshot,
+         username_snapshot, wall_clock_snapshot, scheduled_at, tolerance_seconds,
+         commitment_json, commitment_sha256, created_at)
+       VALUES (?, 'campaign-1', 'experiment-1', ?, ?, ?, ?, ?, 'Asia/Seoul',
+               ?, 'profile-1', 'threads-1', 'trace', ?, ?, 1800, ?, ?, ?)`,
+    ).run(
+      `slot-${index}`,
+      assignment.assignment_id,
+      assignment.eligible_block_id,
+      assignment.hypothesis_id,
+      assignment.allocation_rank,
+      postingSlot,
+      exposurePlan.plan_sha256,
+      JSON.stringify(wallClock),
+      scheduledAt,
+      canonicalJson(commitment),
+      digest(commitment),
+      scheduledAt,
+    );
+    const link = await createVariantLink(
+      { DB },
+      ACCOUNT,
+      "campaign-1",
+      assignment.assignment_id,
+      {
+        destination_uri: "https://trace.example/setup",
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    );
+    DB.sqlite.prepare(
+      `INSERT INTO hosted_threads_publications
+        (publication_id, account_id, candidate_id, candidate_revision, profile_id,
+         threads_user_id_snapshot, username_snapshot, state, caption_snapshot,
+         image_key_snapshot, image_sha256_snapshot,
+         timezone_snapshot, posting_slot_snapshot, wall_clock_snapshot, scheduled_at,
+         threads_post_id, permalink, published_at, created_at, updated_at,
+         marketing_assignment_id)
+       VALUES (?, 'trace_kr', ?, 2, 'profile-1', 'threads-1', 'trace',
+               'published', 'caption', 'image-key', ?,
+               'Asia/Seoul', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `publication-${index}`,
+      assignment.candidate_id,
+      "8".repeat(64),
+      postingSlot,
+      JSON.stringify(wallClock),
+      scheduledAt,
+      `post-${index}`,
+      `https://threads.net/post-${index}`,
+      scheduledAt,
+      scheduledAt,
+      scheduledAt,
+      assignment.assignment_id,
+    );
+    if (assignment.hypothesis_id === "challenger") {
+      await ingestProductEvent(
+        { DB, TRACE_EVENT_HASH_SALT: "test-salt" },
+        {
+          event_id: `causal-event-${index}`,
+          event_version: "trace.product-event.v1",
+          event_type: "setup_completed",
+          variant_token: link.token,
+          install_id: `causal-install-${index}`,
+          occurred_at: new Date(Date.parse(scheduledAt) + 60 * 60 * 1000).toISOString(),
+          payload: {},
+        },
+      );
+    }
+  }
+  const requested = await requestExperimentEvaluation(
+    { DB },
+    ACCOUNT,
+    "campaign-1",
+    { projection_revision: 8 },
+  );
+  const task = claimTask(DB, requested.task_id);
+  const request = JSON.parse(task.task_json).payload.request;
+  assert.equal(request.causal_exposure_verified, true);
+  const evaluation = deriveExperimentEvaluation(request);
+  assert.equal(evaluation.outcome_scope, "estimated_treatment_effect");
+  assert.equal(evaluation.eligible_blocks, 2);
+  assert.equal(evaluation.causal_estimate.treatment_minus_control_basis_points, 10000);
+  assert.equal(evaluation.state, "inconclusive");
+  assert.equal(evaluation.experiment_id, registration.experiment_id);
+
+  DB.sqlite.prepare(
+    "DELETE FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).run(requested.task_id);
+  const identityPublication = DB.sqlite.prepare(
+    "SELECT publication_id FROM hosted_threads_publications ORDER BY publication_id LIMIT 1",
+  ).get();
+  DB.sqlite.prepare(
+    "UPDATE hosted_threads_publications SET threads_user_id_snapshot = 'threads-other' WHERE publication_id = ?",
+  ).run(identityPublication.publication_id);
+  const identityMismatch = await requestExperimentEvaluation(
+    { DB },
+    ACCOUNT,
+    "campaign-1",
+    { projection_revision: 8 },
+  );
+  const identityTask = claimTask(DB, identityMismatch.task_id);
+  assert.equal(JSON.parse(identityTask.task_json).payload.request.causal_exposure_verified, false);
+  DB.sqlite.prepare(
+    "DELETE FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).run(identityMismatch.task_id);
+  DB.sqlite.prepare(
+    "UPDATE hosted_threads_publications SET threads_user_id_snapshot = 'threads-1' WHERE publication_id = ?",
+  ).run(identityPublication.publication_id);
+  const deviated = DB.sqlite.prepare(
+    `SELECT publication_id, scheduled_at FROM hosted_threads_publications
+     ORDER BY publication_id LIMIT 1`,
+  ).get();
+  DB.sqlite.prepare(
+    `UPDATE hosted_threads_publications SET published_at = ? WHERE publication_id = ?`,
+  ).run(
+    new Date(Date.parse(deviated.scheduled_at) + 31 * 60 * 1000).toISOString(),
+    deviated.publication_id,
+  );
+  const retried = await requestExperimentEvaluation(
+    { DB },
+    ACCOUNT,
+    "campaign-1",
+    { projection_revision: 8 },
+  );
+  const retriedTask = claimTask(DB, retried.task_id);
+  assert.equal(
+    JSON.parse(retriedTask.task_json).payload.request.causal_exposure_verified,
+    false,
+  );
+});
+
 test("assisted loop materializes balanced blocks and evaluates attributed outcomes", async () => {
   const DB = new D1Adapter();
   const { packet, registration } = seedSupervisedCampaign(DB);
@@ -490,9 +1175,10 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     DB.sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_marketing_post_assignments").get().count,
     4,
   );
+  seedCaptureManifests(DB);
   assert.equal(
     DB.sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_marketing_artifact_manifests").get().count,
-    4,
+    8,
   );
 
   DB.sqlite.prepare(
@@ -570,6 +1256,7 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     state: "evaluated",
     outcome_scope: "direct_response_attribution",
     winner_hypothesis_id: "challenger",
+    causal_estimate: null,
     eligible_blocks: 2,
     attribution_coverage_basis_points: 10000,
     guardrail_failures: [],
@@ -666,6 +1353,91 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     ).get().state,
     "evaluated",
   );
+  const queuedReassessment = DB.sqlite.prepare(
+    `SELECT * FROM hosted_workspace_capture_tasks
+     WHERE json_extract(task_json, '$.payload.judgment') = 'outcome_reassessment'
+       AND json_extract(task_json, '$.payload.campaign_id') = 'campaign-1'`,
+  ).get();
+  assert.ok(queuedReassessment);
+  const reassessmentTask = claimTask(DB, queuedReassessment.task_id);
+  const reassessmentPayload = JSON.parse(reassessmentTask.task_json).payload;
+  assert.equal(reassessmentPayload.situation, "experiment_result");
+  assert.equal(reassessmentPayload.evaluation_sha256, digest(evaluation));
+  const reassessment = {
+    schema_version: "trace.marketing-reassessment.v1",
+    reassessment_id: reassessmentPayload.reassessment_id,
+    campaign_id: "campaign-1",
+    trigger_evaluation_id: evaluation.evaluation_id,
+    trigger_evaluation_sha256: digest(evaluation),
+    situation: "experiment_result",
+    decision_dossier: {
+      schema_version: "trace.marketing-decision-dossier.v1",
+      situation: "experiment_result",
+      selected_icp_id: "research_needed",
+      selection_basis_ids: [],
+      positioning: reassessmentPayload.prior_strategy.decision_dossier.positioning,
+      evidence_dispositions: [
+        reassessmentPayload.prior_strategy.decision_dossier.evidence_dispositions[0],
+        {
+          evidence_id: evaluation.evaluation_id,
+          disposition: "supports",
+          confidence_basis_points: 10000,
+          freshness: "fresh",
+          use: "use_as_constraint",
+          reason: "The server-derived evaluation is the newest outcome signal.",
+        },
+      ],
+      recommended_next_step: "research",
+      reason: "The result changes the content hypothesis but still does not identify an ICP.",
+      required_proof_ids: ["claim-installed", evaluation.evaluation_id],
+    },
+    hypothesis_reassessments: [
+      {
+        hypothesis_id: "control",
+        disposition: "retain",
+        rationale: "Keep the stable baseline for the next registered comparison.",
+        next_test: "Repeat the control without changing the proof.",
+      },
+      {
+        hypothesis_id: "challenger",
+        disposition: "revise",
+        rationale: "The attributed result warrants a narrower replication.",
+        next_test: "Change only the opening value frame.",
+      },
+    ],
+    unanswered_questions: ["Will this direction replicate in another complete block?"],
+    created_at: evaluation.evaluated_at,
+  };
+  const reassessmentCallback = {
+    callback_id: `${reassessmentTask.task_id}:completed`,
+    task_id: reassessmentTask.task_id,
+    run_id: reassessmentTask.run_id,
+    account_id: reassessmentTask.account_id,
+    kind: "marketing_judgment",
+    result: {
+      status: "succeeded",
+      output: {
+        pipeline: "hosted_marketing_judgment_v1",
+        judgment: "outcome_reassessment",
+        reassessment,
+        reassessment_sha256: digest(reassessment),
+        tool_actions_created: 0,
+      },
+    },
+  };
+  const reassessmentAccepted = await receiveHostedOutcomeReassessmentCallback(
+    { DB },
+    reassessmentTask,
+    reassessmentCallback,
+    { worker_id: "worker-1" },
+  );
+  assert.equal(reassessmentAccepted.state, "proposed");
+  const storedReassessment = DB.sqlite.prepare(
+    `SELECT situation, state FROM hosted_marketing_outcome_reassessments
+     WHERE campaign_id = 'campaign-1'`,
+  ).get();
+  assert.equal(storedReassessment.situation, "experiment_result");
+  assert.equal(storedReassessment.state, "proposed");
 
   const secondEvaluatedAt = new Date().toISOString();
   const secondHypothesis = {
@@ -1135,7 +1907,7 @@ test("review queue exposes one exact, read-only decision packet without customer
       (manifest_id, campaign_id, treatment_id, request_id, schema_version, manifest_json,
        manifest_sha256, artifact_uri, artifact_sha256, input_sha256, capability_binding_sha256,
        created_at)
-     VALUES ('manifest-review-1', 'campaign-1', 'treatment-control', 'request-control',
+     VALUES ('manifest-review-1', 'campaign-1', 'treatment-control', 'copy-control',
              'trace.artifact-manifest.v1', ?, ?, ?, ?, ?, ?, '2026-09-02T00:00:00Z')`,
   ).run(
     canonicalJson(manifest),
@@ -1189,7 +1961,7 @@ test("review queue exposes one exact, read-only decision packet without customer
   assert.deepEqual(creativePacket.creative.artifact_manifests[0], {
     manifest_id: "manifest-review-1",
     treatment_id: "treatment-control",
-    request_id: "request-control",
+      request_id: "copy-control",
     sha256: digest(manifest),
     artifact_sha256: "1".repeat(64),
     input_sha256: "2".repeat(64),

@@ -35,6 +35,10 @@ _PROPOSAL_SCHEMA_VERSION: Final = "trace.creative-plan-proposal.v1"
 _WORKSPACE_DIRECTORY: Final = "codex-creative-judgment"
 _DEFAULT_TIMEOUT_SECONDS: Final = 240.0
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+_CAPABILITY_PROOF_KIND: Final = {
+    "capture.native_png": "installed_native_capture",
+    "copy.text": "copy_only",
+}
 
 
 class CreativeJudgmentModel(BaseModel):
@@ -281,6 +285,18 @@ def _validate_treatment(
     available = set(request.available_capability_ids)
     if any(item.capability_id not in available for item in treatment.artifact_requests):
         raise ValueError("creative treatment requested an unavailable capability")
+    if any(
+        _CAPABILITY_PROOF_KIND.get(item.capability_id) != item.proof_kind.value
+        for item in treatment.artifact_requests
+    ):
+        raise ValueError("creative treatment capability and proof kind do not match")
+    capture_requests = [
+        item for item in treatment.artifact_requests if item.capability_id == "capture.native_png"
+    ]
+    if len(capture_requests) != 1:
+        raise ValueError(
+            "workspace candidate treatments require exactly one native capture request"
+        )
 
 
 def _creative_prompt(request: CreativePlanningRequest) -> str:
@@ -313,9 +329,12 @@ def _creative_prompt(request: CreativePlanningRequest) -> str:
         "4. native sequence, bound screen recording, explanatory carousel, designed static, "
         "text-only 중 belief change를 가장 잘 증명하는 형식을 고른다.\n"
         "5. artifact request는 제공된 capability ID만 사용한다.\n"
-        "6. control과 challenger 사이에서 사전등록된 manipulated component 외에는 최대한 "
+        "6. 이 계획의 모든 treatment는 workspace 이미지 후보로 materialize되므로 "
+        "capture.native_png request를 정확히 하나 포함한다. copy.text만으로 끝나는 "
+        "treatment를 만들지 않는다.\n"
+        "7. control과 challenger 사이에서 사전등록된 manipulated component 외에는 최대한 "
         "동일하게 유지한다.\n"
-        "7. 모든 결과는 사람 검수 전제이며 publication_allowed를 임의로 바꾸지 않는다.\n\n"
+        "8. 모든 결과는 사람 검수 전제이며 publication_allowed를 임의로 바꾸지 않는다.\n\n"
         f"사용 가능한 capability: {capabilities}\n"
         f"strategy brief: {strategy}\n"
         f"feature packet: {packet}\n"

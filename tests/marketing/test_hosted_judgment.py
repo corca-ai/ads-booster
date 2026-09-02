@@ -29,6 +29,13 @@ from ads_booster.contracts.marketing_context import (
     MarketingContextSnapshot,
 )
 from ads_booster.marketing.hosted_judgment import PIPELINE, HostedMarketingJudgmentExecutor
+from ads_booster.marketing.hosted_reference_research import (
+    MarketObservation,
+    ReferenceResearchSnapshot,
+    ReferenceSource,
+    ReferenceSourceReceipt,
+    ReferenceVerificationBundle,
+)
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskStatus
 
@@ -159,6 +166,76 @@ def _marketing_context() -> MarketingContextPlanningProjection:
     )
 
 
+def _reference_context() -> tuple[ReferenceResearchSnapshot, ReferenceVerificationBundle]:
+    sources = (
+        ReferenceSource(
+            source_id="source-one",
+            url="https://example.com/one",
+            title="One",
+            source_type="article",
+            summary="Generic hooks are common.",
+            accessed_at="2026-08-31T00:00:00Z",
+        ),
+        ReferenceSource(
+            source_id="source-two",
+            url="https://example.org/two",
+            title="Two",
+            source_type="threads_post",
+            summary="Day sequences invite replies.",
+            accessed_at="2026-08-31T00:00:00Z",
+        ),
+    )
+    snapshot = ReferenceResearchSnapshot(
+        schema_version="trace.reference-research.v1",
+        snapshot_id="snapshot-bound-1",
+        campaign_id="campaign-1",
+        feature_packet_sha256=contract_sha256(_packet()),
+        sources=sources,
+        observations=(
+            MarketObservation(
+                observation_id="observation-one",
+                classification="saturation",
+                statement="The current control is saturated.",
+                source_ids=("source-one",),
+                confidence_basis="Observed repetition.",
+            ),
+            MarketObservation(
+                observation_id="observation-two",
+                classification="format_mechanic",
+                statement="A day sequence can invite replies.",
+                source_ids=("source-two",),
+                confidence_basis="Observed audience language.",
+            ),
+        ),
+        blind_spots=("No private conversion data.",),
+        quarantine=True,
+        collected_at="2026-08-31T00:00:00Z",
+    )
+    snapshot_sha256 = contract_sha256(snapshot)
+    verification = ReferenceVerificationBundle(
+        schema_version="trace.reference-verification.v1",
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_sha256=snapshot_sha256,
+        receipts=tuple(
+            ReferenceSourceReceipt(
+                schema_version="trace.reference-source-receipt.v1",
+                receipt_id=f"source-receipt-{index}",
+                source_id=source.source_id,
+                requested_url=source.url,
+                final_url=source.url,
+                http_status=200,
+                content_type="text/html",
+                content_sha256=str(index) * 64,
+                byte_length=100 + index,
+                fetched_at="2026-08-31T00:00:00Z",
+            )
+            for index, source in enumerate(sources, start=1)
+        ),
+        verified_at="2026-08-31T00:00:00Z",
+    )
+    return snapshot, verification
+
+
 def _task(payload: JsonObject | None = None) -> MarketingTask:
     return MarketingTask(
         task_id="task-1",
@@ -183,6 +260,33 @@ def _proposal(
             "belief_to_change": (
                 "A lock screen can be a changing story instead of one static image."
             ),
+            "decision_dossier": {
+                "schema_version": "trace.marketing-decision-dossier.v1",
+                "situation": "new_launch",
+                "selected_icp_id": "research_needed",
+                "selection_basis_ids": ["evidence-source"],
+                "positioning": {
+                    "category": "dynamic lock-screen companion",
+                    "current_alternative": "one static lock-screen image",
+                    "differentiated_mechanism": (
+                        "scheduled scenes keep one character present through the day"
+                    ),
+                    "proof_claim_ids": ["claim-scenes"],
+                },
+                "evidence_dispositions": [
+                    {
+                        "evidence_id": "evidence-source",
+                        "disposition": "supports",
+                        "confidence_basis_points": 7000,
+                        "freshness": "unknown",
+                        "use": "test",
+                        "reason": "Source evidence supports the mechanism but not a validated ICP.",
+                    }
+                ],
+                "recommended_next_step": "research",
+                "reason": "Identify a validated audience segment before assisted execution.",
+                "required_proof_ids": ["evidence-source"],
+            },
             "hypotheses": [
                 {
                     "hypothesis_id": "control",
@@ -288,6 +392,41 @@ def test_shadow_judgment_binds_only_approved_context_projection_to_its_receipt(
     assert "signal-character-routine" in prepared.context_receipt.included_record_ids
 
 
+def test_shadow_judgment_binds_server_fetched_reference_receipts(tmp_path: Path) -> None:
+    payload = _payload()
+    snapshot, verification = _reference_context()
+    payload["reference_snapshot"] = snapshot.model_dump(mode="json")
+    payload["reference_snapshot_sha256"] = contract_sha256(snapshot)
+    payload["reference_verification"] = verification.model_dump(mode="json")
+    payload["reference_verification_sha256"] = contract_sha256(verification)
+    executor = HostedMarketingJudgmentExecutor(codex=StubCodex(_proposal()), output_root=tmp_path)
+
+    prepared = executor.prepare(_task(payload))
+
+    assert "source-receipt-1" in prepared.context_receipt.included_record_ids
+    assert "source-receipt-2" in prepared.context_receipt.included_record_ids
+    assert "server-fetched source receipts" in prepared.prompt
+    assert verification.receipts[0].content_sha256 in prepared.prompt
+
+
+def test_shadow_judgment_rejects_a_rewritten_reference_receipt(tmp_path: Path) -> None:
+    payload = _payload()
+    snapshot, verification = _reference_context()
+    payload["reference_snapshot"] = snapshot.model_dump(mode="json")
+    payload["reference_snapshot_sha256"] = contract_sha256(snapshot)
+    payload["reference_verification"] = verification.model_dump(mode="json")
+    payload["reference_verification_sha256"] = contract_sha256(verification)
+    rewritten = cast("dict[str, object]", payload["reference_verification"])
+    receipts = cast("list[dict[str, object]]", rewritten["receipts"])
+    receipts[0]["content_sha256"] = "9" * 64
+    executor = HostedMarketingJudgmentExecutor(codex=StubCodex(_proposal()), output_root=tmp_path)
+
+    with pytest.raises(MarketingExecutionError) as captured:
+        _ = executor.prepare(_task(payload))
+
+    assert captured.value.failure_code == "marketing_judgment_payload_invalid"
+
+
 def test_shadow_judgment_does_not_send_expired_customer_context_to_codex(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     context = _marketing_context()
@@ -336,6 +475,40 @@ def test_shadow_judgment_enforces_reference_quarantine(tmp_path: Path) -> None:
         _ = executor.execute(prepared)
 
     assert captured.value.failure_code == "marketing_judgment_reference_quarantine_breached"
+
+
+def test_shadow_judgment_rejects_an_unbound_required_proof(tmp_path: Path) -> None:
+    proposal = _proposal()
+    dossier = cast("dict[str, object]", proposal["decision_dossier"])
+    dossier["required_proof_ids"] = ["invented-proof"]
+    executor = HostedMarketingJudgmentExecutor(codex=StubCodex(proposal), output_root=tmp_path)
+    prepared = executor.prepare(_task())
+
+    with pytest.raises(MarketingExecutionError) as captured:
+        _ = executor.execute(prepared)
+
+    assert captured.value.failure_code == "marketing_judgment_required_proof_unbound"
+
+
+def test_shadow_judgment_rejects_rewritten_inconclusive_feature_evidence(
+    tmp_path: Path,
+) -> None:
+    packet = _packet()
+    inconclusive = packet.evidence[0].model_copy(update={"result": EvidenceResult.INCONCLUSIVE})
+    packet = packet.model_copy(update={"evidence": (inconclusive,)})
+    payload = _payload()
+    payload["feature_packet"] = packet.model_dump(mode="json")
+    payload["feature_packet_sha256"] = contract_sha256(packet)
+    executor = HostedMarketingJudgmentExecutor(
+        codex=StubCodex(_proposal()),
+        output_root=tmp_path,
+    )
+    prepared = executor.prepare(_task(payload))
+
+    with pytest.raises(MarketingExecutionError) as captured:
+        _ = executor.execute(prepared)
+
+    assert captured.value.failure_code == "marketing_judgment_evidence_result_rewritten"
 
 
 def test_shadow_judgment_rejects_a_changed_feature_packet_before_admission(

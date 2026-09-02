@@ -1043,6 +1043,10 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
             plan.plan_json, plan.plan_sha256, plan.state AS plan_state,
             knowledge.snapshot_json, knowledge.snapshot_sha256,
             experiment.experiment_id, experiment.registration_json,
+            experiment.allocation_method, experiment.randomization_seed,
+            experiment.randomization_seed_sha256,
+            exposure_plan.plan_json AS exposure_plan_json,
+            exposure_plan.plan_sha256 AS exposure_plan_sha256,
             treatment.treatment_id, treatment.treatment_json, treatment.treatment_sha256,
             treatment.hypothesis_id,
             (SELECT COUNT(*) FROM hosted_marketing_materialization_reservations AS reservation
@@ -1061,6 +1065,8 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
      JOIN hosted_marketing_media_plans AS plan ON plan.campaign_id = campaign.campaign_id
      JOIN hosted_marketing_knowledge_snapshots AS knowledge ON knowledge.campaign_id = campaign.campaign_id
      JOIN hosted_marketing_experiments AS experiment ON experiment.campaign_id = campaign.campaign_id
+     LEFT JOIN hosted_marketing_experiment_exposure_plans AS exposure_plan
+       ON exposure_plan.experiment_id = experiment.experiment_id
      JOIN hosted_marketing_creative_treatments AS treatment
        ON treatment.plan_id = plan.plan_id AND treatment.experiment_id = experiment.experiment_id
      JOIN hosted_marketing_experiment_arms AS arm
@@ -1081,6 +1087,10 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
   }
   const first = rows.results[0];
   const registration = JSON.parse(first.registration_json);
+  const allocationMethod = first.allocation_method ?? "balanced_complete_blocks";
+  const exposurePlan = allocationMethod === "server_randomized_complete_blocks_v1"
+    ? await validatedExposurePlan(first, account.account_id)
+    : null;
   const assignmentCount = Number(first.assignment_count);
   const armCount = Number(first.arm_count);
   const startedAt = Date.parse(first.created_at);
@@ -1097,17 +1107,43 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
   ) {
     throw new MarketingAgentHttpError(409, "materialization allocation gate가 닫혀 있습니다.");
   }
+  if (!(await hasWorkerForTaskKind(
+    env.DB,
+    "marketing_judgment",
+    "candidate_materialization_v2",
+  ))) {
+    throw new MarketingAgentHttpError(
+      503,
+      "연결된 Mac 워커가 주간 후보 생성을 지원하지 않습니다. 워커를 업데이트해 주세요.",
+    );
+  }
   const blockNumber = Math.floor(assignmentCount / armCount) + 1;
   const blockId = `${first.experiment_id}.block-${blockNumber}`;
   const existing = await env.DB.prepare(
-    `SELECT hypothesis_id FROM hosted_marketing_materialization_reservations
-     WHERE experiment_id = ? AND eligible_block_id = ? AND state IN ('queued', 'completed')`,
+    `SELECT hypothesis_id, state FROM hosted_marketing_materialization_reservations
+     WHERE experiment_id = ? AND eligible_block_id = ?`,
   ).bind(first.experiment_id, blockId).all();
+  if (existing.results.some((row) => row.state === "failed")) {
+    throw new MarketingAgentHttpError(
+      409,
+      "eligible block materialization이 실패했습니다. 새 arm으로 우회하지 않고 experiment를 inconclusive로 처리하세요.",
+    );
+  }
   const assigned = new Set(existing.results.map((row) => row.hypothesis_id));
-  const selected = rows.results.find((row) => !assigned.has(row.hypothesis_id));
+  const allocationRows = await allocationOrderForBlock(
+    rows.results,
+    first.experiment_id,
+    blockId,
+    allocationMethod,
+    first.randomization_seed,
+  );
+  const selected = allocationRows.find((row) => !assigned.has(row.hypothesis_id));
   if (!selected) {
     throw new MarketingAgentHttpError(409, "eligible block allocation이 이미 완료됐습니다.");
   }
+  const allocationRank = allocationMethod === "server_randomized_complete_blocks_v1"
+    ? allocationRows.findIndex((row) => row.hypothesis_id === selected.hypothesis_id) + 1
+    : 0;
   const taskId = crypto.randomUUID();
   const assignmentId = safeId(
     input?.assignment_id ?? `assignment-${taskId}`,
@@ -1141,6 +1177,15 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
       campaign_id: campaignId,
       assignment_id: assignmentId,
       eligible_block_id: blockId,
+      allocation: {
+        method: allocationMethod,
+        randomization_seed_sha256: first.randomization_seed_sha256 ?? null,
+        rank: allocationRank,
+        posting_slot: allocationMethod === "server_randomized_complete_blocks_v1"
+          ? (allocationRank === 1 ? "morning" : "evening")
+          : null,
+      },
+      exposure_plan_sha256: exposurePlan?.plan_sha256 ?? null,
       feature_packet: JSON.parse(selected.packet_json),
       feature_packet_sha256: selected.packet_sha256,
       strategy_brief: JSON.parse(selected.brief_json),
@@ -1172,7 +1217,7 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
         (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
          task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
        VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-               NULL, ?, ?)`,
+               'candidate_materialization_v2', ?, ?)`,
     ).bind(
       taskId,
       task.run_id,
@@ -1185,8 +1230,8 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
     env.DB.prepare(
       `INSERT INTO hosted_marketing_materialization_reservations
         (assignment_id, campaign_id, experiment_id, hypothesis_id, treatment_id,
-         eligible_block_id, task_id, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+         eligible_block_id, allocation_rank, task_id, state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     ).bind(
       assignmentId,
       campaignId,
@@ -1194,6 +1239,7 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
       selected.hypothesis_id,
       selected.treatment_id,
       blockId,
+      allocationRank,
       taskId,
       now,
       now,
@@ -1206,8 +1252,234 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
     eligible_block_id: blockId,
     hypothesis_id: selected.hypothesis_id,
     treatment_id: selected.treatment_id,
+    allocation_rank: allocationRank,
+    exposure_plan_sha256: exposurePlan?.plan_sha256 ?? null,
     state: "queued",
   };
+}
+
+async function validatedExposurePlan(row, accountId) {
+  if (!row.exposure_plan_json || !row.exposure_plan_sha256) {
+    throw new MarketingAgentHttpError(409, "causal experiment exposure plan이 없습니다.");
+  }
+  let plan;
+  try {
+    plan = requireObject(JSON.parse(row.exposure_plan_json), "causal exposure plan");
+  } catch {
+    throw new MarketingAgentHttpError(409, "causal experiment exposure plan이 손상되었습니다.");
+  }
+  if (
+    plan.schema_version !== "trace.experiment-exposure-plan.v1"
+    || plan.experiment_id !== row.experiment_id
+    || plan.account_id !== accountId
+    || await canonicalSha256(plan) !== row.exposure_plan_sha256
+  ) {
+    throw new MarketingAgentHttpError(409, "causal experiment exposure plan이 일치하지 않습니다.");
+  }
+  return { ...plan, plan_sha256: row.exposure_plan_sha256 };
+}
+
+async function allocationOrderForBlock(
+  rows,
+  experimentId,
+  blockId,
+  allocationMethod,
+  randomizationSeed,
+) {
+  if (allocationMethod === "balanced_complete_blocks") return rows;
+  if (allocationMethod !== "server_randomized_complete_blocks_v1") {
+    throw new MarketingAgentHttpError(409, "experiment allocation method가 유효하지 않습니다.");
+  }
+  if (typeof randomizationSeed !== "string" || !/^[a-f0-9]{64}$/.test(randomizationSeed)) {
+    throw new MarketingAgentHttpError(409, "experiment randomization plan이 손상되었습니다.");
+  }
+  const rowsByHypothesis = new Map(rows.map((row) => [row.hypothesis_id, row]));
+  return (await randomizedHypothesisOrder(
+    [...rowsByHypothesis.keys()],
+    experimentId,
+    blockId,
+    randomizationSeed,
+  )).map((hypothesisId) => rowsByHypothesis.get(hypothesisId));
+}
+
+function validateEvaluationAssignmentAllocation(assignment, experiment, allocationMethod) {
+  if (allocationMethod !== "server_randomized_complete_blocks_v1") return;
+  let recorded;
+  try {
+    recorded = requireObject(JSON.parse(assignment.assignment_json), "assignment allocation").allocation;
+  } catch {
+    throw new MarketingAgentHttpError(409, "causal assignment allocation receipt가 손상되었습니다.");
+  }
+  if (
+    !recorded
+    || recorded.method !== allocationMethod
+    || recorded.randomization_seed_sha256 !== experiment.randomization_seed_sha256
+    || recorded.rank !== Number(assignment.allocation_rank)
+    || !Number.isInteger(recorded.rank)
+    || recorded.rank < 1
+  ) {
+    throw new MarketingAgentHttpError(409, "causal assignment allocation receipt가 일치하지 않습니다.");
+  }
+}
+
+async function validateCausalAllocationBlocks(
+  assignments,
+  registration,
+  experiment,
+  allocationMethod,
+) {
+  if (allocationMethod !== "server_randomized_complete_blocks_v1") return;
+  const expectedArmCount = registration.activated_hypothesis_ids?.length;
+  if (
+    !Number.isInteger(expectedArmCount)
+    || expectedArmCount !== 2
+    || typeof experiment.randomization_seed !== "string"
+    || !/^[a-f0-9]{64}$/.test(experiment.randomization_seed)
+  ) {
+    throw new MarketingAgentHttpError(409, "causal experiment arm registration이 손상되었습니다.");
+  }
+  const assignmentsByBlock = new Map();
+  for (const assignment of assignments) {
+    const blockAssignments = assignmentsByBlock.get(assignment.eligible_block_id) ?? [];
+    blockAssignments.push(assignment);
+    assignmentsByBlock.set(assignment.eligible_block_id, blockAssignments);
+  }
+  for (const [blockId, blockAssignments] of assignmentsByBlock) {
+    const rankedHypotheses = await randomizedHypothesisOrder(
+      registration.activated_hypothesis_ids,
+      experiment.experiment_id,
+      blockId,
+      experiment.randomization_seed,
+    );
+    const expectedRanks = new Map(
+      rankedHypotheses.map((hypothesisId, index) => [hypothesisId, index + 1]),
+    );
+    const ranks = blockAssignments.map((assignment) => Number(assignment.allocation_rank));
+    if (
+      blockAssignments.length > expectedArmCount
+      || ranks.some((rank) => !Number.isInteger(rank) || rank < 1 || rank > expectedArmCount)
+      || new Set(ranks).size !== ranks.length
+      || blockAssignments.some((assignment) => (
+        expectedRanks.get(assignment.hypothesis_id) !== Number(assignment.allocation_rank)
+      ))
+    ) {
+      throw new MarketingAgentHttpError(409, "causal block allocation ranks are invalid");
+    }
+  }
+}
+
+async function causalExposureSlotsVerified(
+  assignments,
+  registration,
+  experiment,
+  allocationMethod,
+) {
+  if (allocationMethod !== "server_randomized_complete_blocks_v1") return false;
+  const expectedCount = Number(registration.maximum_posts);
+  if (!Number.isInteger(expectedCount) || assignments.length !== expectedCount) return false;
+  let exposurePlan;
+  try {
+    exposurePlan = requireObject(JSON.parse(experiment.exposure_plan_json), "exposure plan");
+  } catch {
+    return false;
+  }
+  if (
+    exposurePlan.schema_version !== "trace.experiment-exposure-plan.v1"
+    || exposurePlan.experiment_id !== experiment.experiment_id
+    || await canonicalSha256(exposurePlan) !== experiment.exposure_plan_sha256
+  ) return false;
+  const slotIds = new Set();
+  for (const assignment of assignments) {
+    if (
+      !assignment.exposure_slot_id
+      || !assignment.exposure_commitment_json
+      || !assignment.exposure_commitment_sha256
+    ) {
+      return false;
+    }
+    let commitment;
+    let wallClock;
+    try {
+      commitment = requireObject(
+        JSON.parse(assignment.exposure_commitment_json),
+        "exposure commitment",
+      );
+      wallClock = requireObject(
+        JSON.parse(assignment.exposure_wall_clock_snapshot),
+        "exposure wall clock",
+      );
+    } catch {
+      throw new MarketingAgentHttpError(409, "causal exposure commitment가 손상되었습니다.");
+    }
+    const expected = {
+      schema_version: "trace.exposure-slot.v1",
+      experiment_id: experiment.experiment_id,
+      assignment_id: assignment.assignment_id,
+      eligible_block_id: assignment.eligible_block_id,
+      hypothesis_id: assignment.hypothesis_id,
+      allocation_rank: Number(assignment.allocation_rank),
+      randomization_seed_sha256: experiment.randomization_seed_sha256,
+      posting_slot: assignment.exposure_posting_slot,
+      exposure_plan_sha256: experiment.exposure_plan_sha256,
+      profile_id_snapshot: exposurePlan.profile_id,
+      threads_user_id_snapshot: exposurePlan.threads_user_id_snapshot,
+      username_snapshot: exposurePlan.username_snapshot,
+      timezone_snapshot: assignment.exposure_timezone_snapshot,
+      wall_clock_snapshot: wallClock,
+      scheduled_at: assignment.exposure_scheduled_at,
+      tolerance_seconds: Number(assignment.exposure_tolerance_seconds),
+    };
+    if (
+      canonicalJson(commitment) !== canonicalJson(expected)
+      || await canonicalSha256(expected) !== assignment.exposure_commitment_sha256
+      || slotIds.has(assignment.exposure_slot_id)
+    ) {
+      throw new MarketingAgentHttpError(409, "causal exposure commitment가 일치하지 않습니다.");
+    }
+    slotIds.add(assignment.exposure_slot_id);
+    const scheduledAt = Date.parse(assignment.exposure_scheduled_at);
+    const publishedAt = assignment.published_at ? Date.parse(assignment.published_at) : NaN;
+    const toleranceMs = Number(assignment.exposure_tolerance_seconds) * 1000;
+    if (
+      assignment.publication_state !== "published"
+      || assignment.publication_scheduled_at !== assignment.exposure_scheduled_at
+      || assignment.publication_posting_slot !== assignment.exposure_posting_slot
+      || assignment.exposure_plan_sha256 !== experiment.exposure_plan_sha256
+      || assignment.exposure_profile_id !== exposurePlan.profile_id
+      || assignment.exposure_threads_user_id !== exposurePlan.threads_user_id_snapshot
+      || assignment.exposure_username !== exposurePlan.username_snapshot
+      || assignment.publication_profile_id !== exposurePlan.profile_id
+      || assignment.publication_threads_user_id !== exposurePlan.threads_user_id_snapshot
+      || assignment.publication_timezone !== assignment.exposure_timezone_snapshot
+      || assignment.publication_wall_clock !== assignment.exposure_wall_clock_snapshot
+      || !Number.isFinite(scheduledAt)
+      || !Number.isFinite(publishedAt)
+      || !Number.isFinite(toleranceMs)
+      || Math.abs(publishedAt - scheduledAt) > toleranceMs
+    ) {
+      return false;
+    }
+  }
+  return slotIds.size === expectedCount;
+}
+
+async function randomizedHypothesisOrder(hypothesisIds, experimentId, blockId, randomizationSeed) {
+  const scored = await Promise.all(hypothesisIds.map(async (hypothesisId) => ({
+    hypothesisId,
+    score: await canonicalSha256({
+      schema_version: "trace.experiment-randomization.v1",
+      randomization_seed: randomizationSeed,
+      experiment_id: experimentId,
+      eligible_block_id: blockId,
+      hypothesis_id: hypothesisId,
+    }),
+  })));
+  return scored
+    .sort((left, right) => (
+      left.score.localeCompare(right.score)
+      || left.hypothesisId.localeCompare(right.hypothesisId)
+    ))
+    .map((item) => item.hypothesisId);
 }
 
 export async function createVariantLink(env, account, campaignId, assignmentId, input) {
@@ -1370,9 +1642,15 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
     `SELECT campaign.state AS campaign_state, campaign.projection_revision,
             campaign.created_at AS campaign_created_at,
             experiment.experiment_id, experiment.state AS experiment_state,
-            experiment.registration_json, experiment.registration_sha256
+            experiment.registration_json, experiment.registration_sha256,
+            experiment.allocation_method, experiment.randomization_seed,
+            experiment.randomization_seed_sha256,
+            exposure_plan.plan_json AS exposure_plan_json,
+            exposure_plan.plan_sha256 AS exposure_plan_sha256
      FROM hosted_marketing_campaigns AS campaign
      JOIN hosted_marketing_experiments AS experiment ON experiment.campaign_id = campaign.campaign_id
+     LEFT JOIN hosted_marketing_experiment_exposure_plans AS exposure_plan
+       ON exposure_plan.experiment_id = experiment.experiment_id
      WHERE campaign.account_id = ? AND campaign.campaign_id = ?`,
   ).bind(account.account_id, campaignId).first();
   if (!experiment) throw new MarketingAgentHttpError(404, "평가할 experiment를 찾을 수 없습니다.");
@@ -1411,16 +1689,46 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
     };
   }
   const registration = JSON.parse(experiment.registration_json);
+  const allocationMethod = experiment.allocation_method ?? "balanced_complete_blocks";
+  if (
+    registration.primary_outcome?.scope === "estimated_treatment_effect"
+    && (typeof experiment.randomization_seed_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(experiment.randomization_seed_sha256))
+  ) {
+    throw new MarketingAgentHttpError(409, "causal experiment randomization plan이 손상되었습니다.");
+  }
   const assignments = await env.DB.prepare(
-    `SELECT assignment.assignment_id, assignment.eligible_block_id,
+    `SELECT assignment.assignment_id, assignment.eligible_block_id, assignment.allocation_rank,
+            assignment.assignment_json,
             assignment.hypothesis_id, publication.publication_id,
             publication.state AS publication_state, publication.published_at,
+            publication.scheduled_at AS publication_scheduled_at,
+            publication.posting_slot_snapshot AS publication_posting_slot,
+            publication.profile_id AS publication_profile_id,
+            publication.threads_user_id_snapshot AS publication_threads_user_id,
+            publication.timezone_snapshot AS publication_timezone,
+            publication.wall_clock_snapshot AS publication_wall_clock,
+            exposure.slot_id AS exposure_slot_id,
+            exposure.posting_slot AS exposure_posting_slot,
+            exposure.exposure_plan_sha256,
+            exposure.profile_id_snapshot AS exposure_profile_id,
+            exposure.threads_user_id_snapshot AS exposure_threads_user_id,
+            exposure.username_snapshot AS exposure_username,
+            exposure.timezone_snapshot AS exposure_timezone_snapshot,
+            exposure.wall_clock_snapshot AS exposure_wall_clock_snapshot,
+            exposure.scheduled_at AS exposure_scheduled_at,
+            exposure.tolerance_seconds AS exposure_tolerance_seconds,
+            exposure.commitment_json AS exposure_commitment_json,
+            exposure.commitment_sha256 AS exposure_commitment_sha256,
             variant.variant_id
      FROM hosted_marketing_post_assignments AS assignment
      LEFT JOIN hosted_threads_publications AS publication
        ON publication.marketing_assignment_id = assignment.assignment_id
      LEFT JOIN hosted_marketing_variant_links AS variant
        ON variant.assignment_id = assignment.assignment_id
+     LEFT JOIN hosted_marketing_exposure_slots AS exposure
+       ON exposure.assignment_id = assignment.assignment_id
+      AND exposure.experiment_id = assignment.experiment_id
      WHERE assignment.campaign_id = ? AND assignment.experiment_id = ?
      ORDER BY assignment.eligible_block_id, assignment.hypothesis_id`,
   ).bind(campaignId, experiment.experiment_id).all();
@@ -1435,6 +1743,7 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
   const maximumAt = Date.parse(experiment.campaign_created_at)
     + Number(registration.maximum_duration_hours) * 60 * 60 * 1000;
   const observations = assignments.results.map((assignment) => {
+    validateEvaluationAssignmentAllocation(assignment, experiment, allocationMethod);
     const publishedAt = assignment.published_at ? Date.parse(assignment.published_at) : null;
     const windowClosed = publishedAt != null && now.getTime() >= publishedAt + windowMs;
     const productEvent = assignment.variant_id && publishedAt != null
@@ -1462,6 +1771,13 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
         : [],
     };
   });
+  await validateCausalAllocationBlocks(assignments.results, registration, experiment, allocationMethod);
+  const causalExposureVerified = await causalExposureSlotsVerified(
+    assignments.results,
+    registration,
+    experiment,
+    allocationMethod,
+  );
   const minimumAssignments = Number(registration.minimum_eligible_blocks)
     * registration.activated_hypothesis_ids.length;
   const allWindowsClosed = observations.length >= minimumAssignments
@@ -1489,6 +1805,8 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
         campaign_id: campaignId,
         registration,
         observations,
+        randomization_seed_sha256: experiment.randomization_seed_sha256 ?? null,
+        causal_exposure_verified: causalExposureVerified,
         windows_complete: windowsComplete,
         evaluated_at: evaluatedAt,
       },
@@ -1801,7 +2119,8 @@ export async function bindCandidateAssignment(env, account, campaignId, input) {
   const projectionRevision = positiveInteger(input?.projection_revision, "projection_revision");
   const row = await env.DB.prepare(
     `SELECT campaign.mode, campaign.state, campaign.projection_revision,
-            experiment.experiment_id, plan.plan_id, plan.plan_sha256, plan.state AS plan_state,
+            experiment.experiment_id, experiment.allocation_method,
+            plan.plan_id, plan.plan_sha256, plan.state AS plan_state,
             plan.publication_allowed, treatment.hypothesis_id AS treatment_hypothesis_id,
             candidate.revision, candidate.status, candidate.marketing_assignment_id,
             candidate.caption, candidate.hypothesis, candidate.appium_prompt,
@@ -1847,6 +2166,7 @@ export async function bindCandidateAssignment(env, account, campaignId, input) {
   }
   if (
     row.mode === "shadow"
+    || row.allocation_method === "server_randomized_complete_blocks_v1"
     || !["assisted", "live"].includes(row.mode)
     || !["creative_planned", "awaiting_review"].includes(row.state)
     || row.plan_state !== "approved"
@@ -2536,6 +2856,12 @@ async function campaignStatus(env, accountId, campaignId) {
             creative_task.task_id AS creative_task_id,
             creative_task.state AS creative_task_state,
             creative_task.result_json AS creative_task_result_json,
+            reassessment_task.task_id AS reassessment_task_id,
+            reassessment_task.state AS reassessment_task_state,
+            reassessment_task.result_json AS reassessment_task_result_json,
+            reassessment.reassessment_id, reassessment.situation AS reassessment_situation,
+            reassessment.reassessment_sha256, reassessment.reassessment_json,
+            reassessment.state AS reassessment_state,
             brief.brief_id, brief.brief_json, brief.brief_sha256,
             plan.plan_id, plan.plan_json, plan.plan_sha256, plan.state AS plan_state
      FROM hosted_marketing_campaigns AS campaign
@@ -2558,6 +2884,13 @@ async function campaignStatus(env, accountId, campaignId) {
       AND creative_task.kind = 'marketing_judgment'
       AND json_extract(creative_task.task_json, '$.payload.campaign_id') = campaign.campaign_id
       AND json_extract(creative_task.task_json, '$.payload.judgment') = 'creative_plan'
+     LEFT JOIN hosted_workspace_capture_tasks AS reassessment_task
+       ON reassessment_task.account_id = campaign.account_id
+      AND reassessment_task.kind = 'marketing_judgment'
+      AND json_extract(reassessment_task.task_json, '$.payload.campaign_id') = campaign.campaign_id
+      AND json_extract(reassessment_task.task_json, '$.payload.judgment') = 'outcome_reassessment'
+     LEFT JOIN hosted_marketing_outcome_reassessments AS reassessment
+       ON reassessment.campaign_id = campaign.campaign_id
      LEFT JOIN hosted_marketing_strategy_briefs AS brief
        ON brief.campaign_id = campaign.campaign_id
      LEFT JOIN hosted_marketing_media_plans AS plan
@@ -2596,6 +2929,20 @@ async function campaignStatus(env, accountId, campaignId) {
       task_id: row.creative_task_id,
       state: row.creative_task_state,
       result: row.creative_task_result_json ? JSON.parse(row.creative_task_result_json) : null,
+    } : null,
+    outcome_reassessment_task: row.reassessment_task_id ? {
+      task_id: row.reassessment_task_id,
+      state: row.reassessment_task_state,
+      result: row.reassessment_task_result_json
+        ? JSON.parse(row.reassessment_task_result_json)
+        : null,
+    } : null,
+    outcome_reassessment: row.reassessment_id ? {
+      reassessment_id: row.reassessment_id,
+      situation: row.reassessment_situation,
+      sha256: row.reassessment_sha256,
+      state: row.reassessment_state,
+      value: JSON.parse(row.reassessment_json),
     } : null,
     strategy_brief: row.brief_id ? {
       brief_id: row.brief_id,

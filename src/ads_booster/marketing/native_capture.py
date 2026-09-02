@@ -48,6 +48,7 @@ from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.search.image.background import ImageSearchBackgroundFetcher
 from ads_booster.search.image.providers import create_image_search_provider
 from ads_booster.transport.json_types import JsonObject, JsonValue
+from ads_booster.workspace.models import CandidateBackgroundSubject
 
 if TYPE_CHECKING:
     from ads_booster.transport.http import HttpClient
@@ -79,6 +80,11 @@ _MAX_TRACE_ITEMS: Final = 24
 # Matches the generation contract's ceiling for the field, so a query that generation
 # accepted is never dropped here for being too long.
 _SEARCH_QUERY_MAX: Final = 200
+# The vocabulary `background_intent` is composed from, so the fallback can strip the token
+# back off before it reaches an image index.
+_BACKGROUND_SUBJECT_TOKENS: Final = frozenset(
+    subject.value for subject in CandidateBackgroundSubject
+)
 _MAX_TRACE_TODOS: Final = 20
 _MAX_REFERENCE_IDS: Final = 16
 _MAX_TRACE_ITEM_LENGTH: Final = 80
@@ -715,11 +721,26 @@ def _background_query(payload: JsonObject, image_inputs: JsonObject) -> str:
     photography and shopping listings for the mood phrase, with the persona's actual
     interest nowhere in the results. Prefer the authored query and keep the composed
     intent as the fallback for candidates generated before the field existed.
+
+    The composed intent leads with the vocabulary token, so the fallback used to search
+    "sports_team: 밤 경기 외야석 너머 환한 전광판" - an English identifier no image index has
+    ever labelled a photo with, which drags the whole query toward source code and datasets.
+    The token is dropped here rather than at composition, because `background_intent` is the
+    field a human writer may fill in freely and the composed pair is what the rest of the
+    job reads.
     """
     query = image_inputs.get("background_search_query")
     if isinstance(query, str) and query.strip() and len(query.strip()) <= _SEARCH_QUERY_MAX:
         return query.strip()
-    return _required_text(payload, "background_intent", 500)
+    return _without_subject_token(_required_text(payload, "background_intent", 500))
+
+
+def _without_subject_token(intent: str) -> str:
+    """Drop a leading `"<subject>: "` from a mechanically composed background intent."""
+    token, separator, remainder = intent.partition(": ")
+    if separator and token in _BACKGROUND_SUBJECT_TOKENS and remainder.strip():
+        return remainder.strip()
+    return intent
 
 
 def _required_text(payload: JsonObject, key: str, max_length: int) -> str:

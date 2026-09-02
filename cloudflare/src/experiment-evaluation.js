@@ -1,5 +1,8 @@
 const DIRECT_RESPONSE_ATTRIBUTION = "direct_response_attribution";
 const ESTIMATED_TREATMENT_EFFECT = "estimated_treatment_effect";
+const BALANCED_COMPLETE_BLOCKS = "balanced_complete_blocks";
+const SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1 = "server_randomized_complete_blocks_v1";
+const CAUSAL_DECISION_THRESHOLD_BASIS_POINTS = 500;
 
 /**
  * Re-derive an experiment result from the immutable request dispatched to the
@@ -33,6 +36,25 @@ export function deriveExperimentEvaluation(value) {
     "primary outcome scope",
     [DIRECT_RESPONSE_ATTRIBUTION, ESTIMATED_TREATMENT_EFFECT],
   );
+  const allocationMethod = registration.allocation_method ?? BALANCED_COMPLETE_BLOCKS;
+  const causalTreatmentHypothesisId = registration.causal_treatment_hypothesis_id ?? null;
+  const randomizationSeedSha256 = request.randomization_seed_sha256 ?? null;
+  const causalExposureVerified = request.causal_exposure_verified === true;
+  if (
+    request.causal_exposure_verified != null
+    && typeof request.causal_exposure_verified !== "boolean"
+  ) {
+    throw new InvalidExperimentEvaluationRequest("causal exposure verification is invalid");
+  }
+  validateRegisteredEstimator({
+    outcomeScope,
+    allocationMethod,
+    causalTreatmentHypothesisId,
+    randomizationSeedSha256,
+    activeHypotheses,
+    minimumEligibleBlocks,
+    maximumPosts: registration.maximum_posts,
+  });
   const normalized = observations.map((observation) => normalizeObservation(observation, active));
   const assignmentIds = normalized.map((observation) => observation.assignment_id);
   if (new Set(assignmentIds).size !== assignmentIds.length) {
@@ -56,6 +78,7 @@ export function deriveExperimentEvaluation(value) {
   let state;
   let winnerHypothesisId = null;
   let interpretation;
+  let causalEstimate = null;
   if (guardrailFailures.length) {
     state = "stopped";
     interpretation = "Guardrail failure stopped the experiment; no winner is named.";
@@ -73,9 +96,43 @@ export function deriveExperimentEvaluation(value) {
   )))) {
     state = "inconclusive";
     interpretation = "At least one active hypothesis has no observed attribution.";
-  } else if (outcomeScope === ESTIMATED_TREATMENT_EFFECT) {
+  } else if (
+    outcomeScope === ESTIMATED_TREATMENT_EFFECT
+    && completeBlockIds.size !== minimumEligibleBlocks
+  ) {
     state = "inconclusive";
-    interpretation = "No eligible causal estimator is configured for this experiment.";
+    interpretation = "The pre-registered causal sample size was not completed exactly.";
+  } else if (
+    outcomeScope === ESTIMATED_TREATMENT_EFFECT
+    && !causalExposureVerified
+  ) {
+    state = "inconclusive";
+    interpretation = "Server-committed exposure slots have not been verified; no causal estimate is named.";
+  } else if (outcomeScope === ESTIMATED_TREATMENT_EFFECT) {
+    causalEstimate = randomizedBlockEffectEstimate(
+      included,
+      causalTreatmentHypothesisId,
+      active,
+      randomizationSeedSha256,
+    );
+    const effect = causalEstimate.treatment_minus_control_basis_points;
+    if (
+      effect !== 0
+      && causalEstimate.two_sided_p_value_basis_points
+        <= causalEstimate.decision_threshold_basis_points
+    ) {
+      state = "evaluated";
+      winnerHypothesisId = effect > 0
+        ? causalEstimate.treatment_hypothesis_id
+        : causalEstimate.control_hypothesis_id;
+      interpretation = `${winnerHypothesisId} won the pre-registered randomized complete-block comparison `
+        + `with a ${effect} basis-point treatment-minus-control effect and an exact two-sided `
+        + "randomization test at or below the registered threshold.";
+    } else {
+      state = "inconclusive";
+      interpretation = "The pre-registered randomized complete-block estimate did not clear "
+        + "the exact two-sided decision threshold; no causal winner is named.";
+    }
   } else {
     const rates = descriptiveConversionRates(included, active);
     const topRate = Math.max(...rates.values());
@@ -103,6 +160,7 @@ export function deriveExperimentEvaluation(value) {
     eligible_blocks: completeBlockIds.size,
     attribution_coverage_basis_points: coverageBasisPoints,
     winner_hypothesis_id: winnerHypothesisId,
+    causal_estimate: causalEstimate,
     interpretation,
     guardrail_failures: guardrailFailures,
     lineage_ids: lineageIds,
@@ -183,6 +241,143 @@ function descriptiveConversionRates(observations, active) {
     hypothesisId,
     conversions.get(hypothesisId) / totals.get(hypothesisId),
   ]));
+}
+
+function validateRegisteredEstimator({
+  outcomeScope,
+  allocationMethod,
+  causalTreatmentHypothesisId,
+  randomizationSeedSha256,
+  activeHypotheses,
+  minimumEligibleBlocks,
+  maximumPosts,
+}) {
+  if (outcomeScope === ESTIMATED_TREATMENT_EFFECT) {
+    if (allocationMethod !== SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1) {
+      throw new InvalidExperimentEvaluationRequest(
+        "estimated treatment effects require server-randomized complete blocks",
+      );
+    }
+    if (activeHypotheses.length !== 2) {
+      throw new InvalidExperimentEvaluationRequest(
+        "randomized block estimator requires exactly two active hypotheses",
+      );
+    }
+    if (
+      !Number.isInteger(maximumPosts)
+      || maximumPosts !== minimumEligibleBlocks * activeHypotheses.length
+    ) {
+      throw new InvalidExperimentEvaluationRequest(
+        "estimated treatment effects require one fixed complete block per post pair",
+      );
+    }
+    if (
+      typeof causalTreatmentHypothesisId !== "string"
+      || !activeHypotheses.includes(causalTreatmentHypothesisId)
+    ) {
+      throw new InvalidExperimentEvaluationRequest(
+        "estimated treatment effects require one active treatment hypothesis",
+      );
+    }
+    if (typeof randomizationSeedSha256 !== "string" || !/^[a-f0-9]{64}$/.test(randomizationSeedSha256)) {
+      throw new InvalidExperimentEvaluationRequest(
+        "causal evaluation requires randomization seed lineage",
+      );
+    }
+    return;
+  }
+  if (
+    allocationMethod !== BALANCED_COMPLETE_BLOCKS
+    || causalTreatmentHypothesisId !== null
+    || randomizationSeedSha256 !== null
+  ) {
+    throw new InvalidExperimentEvaluationRequest(
+      "direct-response attribution cannot register a causal estimator",
+    );
+  }
+}
+
+function randomizedBlockEffectEstimate(
+  observations,
+  treatmentHypothesisId,
+  active,
+  randomizationSeedSha256,
+) {
+  const controlHypothesisId = [...active].find((hypothesisId) => (
+    hypothesisId !== treatmentHypothesisId
+  ));
+  if (!controlHypothesisId || active.size !== 2) {
+    throw new InvalidExperimentEvaluationRequest(
+      "randomized block estimator requires distinct control and treatment hypotheses",
+    );
+  }
+  const outcomesByBlock = new Map();
+  for (const observation of observations) {
+    if (!observation.attribution_observed || observation.converted == null) {
+      throw new InvalidExperimentEvaluationRequest(
+        "every causal block needs observed attribution",
+      );
+    }
+    const outcomes = outcomesByBlock.get(observation.eligible_block_id) ?? new Map();
+    outcomes.set(observation.hypothesis_id, observation.converted);
+    outcomesByBlock.set(observation.eligible_block_id, outcomes);
+  }
+  const differences = [...outcomesByBlock.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, outcomes]) => {
+      if (outcomes.size !== active.size || [...active].some((id) => !outcomes.has(id))) {
+        throw new InvalidExperimentEvaluationRequest(
+          "randomized block estimator requires complete two-arm blocks",
+        );
+      }
+      return Number(outcomes.get(treatmentHypothesisId)) - Number(outcomes.get(controlHypothesisId));
+    });
+  const signedSum = differences.reduce((sum, difference) => sum + difference, 0);
+  const nonzeroPairs = differences.filter((difference) => difference !== 0).length;
+  return {
+    schema_version: "trace.causal-effect-estimate.v1",
+    estimator: "randomized_complete_blocks_risk_difference.v1",
+    control_hypothesis_id: controlHypothesisId,
+    treatment_hypothesis_id: treatmentHypothesisId,
+    randomization_seed_sha256: randomizationSeedSha256,
+    treatment_minus_control_basis_points: roundHalfEven(10_000 * signedSum / differences.length),
+    two_sided_p_value_basis_points: exactTwoSidedSignFlipPValueBasisPoints(
+      signedSum,
+      nonzeroPairs,
+    ),
+    decision_threshold_basis_points: CAUSAL_DECISION_THRESHOLD_BASIS_POINTS,
+  };
+}
+
+function exactTwoSidedSignFlipPValueBasisPoints(signedSum, nonzeroPairs) {
+  if (nonzeroPairs === 0) return 10_000;
+  let asOrMoreExtreme = 0n;
+  for (let positiveSigns = 0; positiveSigns <= nonzeroPairs; positiveSigns += 1) {
+    if (Math.abs(2 * positiveSigns - nonzeroPairs) >= Math.abs(signedSum)) {
+      asOrMoreExtreme += binomialCoefficient(nonzeroPairs, positiveSigns);
+    }
+  }
+  return roundRationalHalfEven(
+    asOrMoreExtreme * 10_000n,
+    1n << BigInt(nonzeroPairs),
+  );
+}
+
+function binomialCoefficient(total, selected) {
+  const k = Math.min(selected, total - selected);
+  let result = 1n;
+  for (let index = 1; index <= k; index += 1) {
+    result = (result * BigInt(total - k + index)) / BigInt(index);
+  }
+  return result;
+}
+
+function roundRationalHalfEven(numerator, denominator) {
+  const lower = numerator / denominator;
+  const remainder = numerator % denominator;
+  if (remainder * 2n < denominator) return Number(lower);
+  if (remainder * 2n > denominator) return Number(lower + 1n);
+  return Number(lower % 2n === 0n ? lower : lower + 1n);
 }
 
 function roundHalfEven(value) {

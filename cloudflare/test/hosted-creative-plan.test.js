@@ -369,13 +369,22 @@ function treatment(hypothesisId) {
     manipulated_component_value: hypothesisId,
     proof_narrative: "Label the sequence as a source-backed concept.",
     claim_ids: ["claim-concept"],
-    artifact_requests: [{
-      request_id: `request-${hypothesisId}`,
-      capability_id: "copy.text",
-      proof_kind: "copy_only",
-      claim_ids: ["claim-concept"],
-      instructions: "Compose a source-labeled explanation.",
-    }],
+    artifact_requests: [
+      {
+        request_id: `request-${hypothesisId}`,
+        capability_id: "copy.text",
+        proof_kind: "copy_only",
+        claim_ids: ["claim-concept"],
+        instructions: "Compose a source-labeled explanation.",
+      },
+      {
+        request_id: `capture-${hypothesisId}`,
+        capability_id: "capture.native_png",
+        proof_kind: "installed_native_capture",
+        claim_ids: ["claim-concept"],
+        instructions: "Capture the approved Trace lock-screen treatment.",
+      },
+    ],
   };
 }
 
@@ -530,7 +539,7 @@ test("creative callback persists plan and proof requests without executing them"
   assert.equal(DB.capabilityBindings.length, 2);
   assert.equal(DB.plans.length, 1);
   assert.equal(DB.treatments.length, 2);
-  assert.equal(DB.requests.length, 2);
+  assert.equal(DB.requests.length, 4);
   assert.equal(DB.events.length, 1);
   assert.equal(DB.campaign.state, "creative_planned");
 
@@ -558,6 +567,34 @@ test("creative callback rejects capability escape before canonical writes", asyn
       },
     ),
     /unavailable capability/,
+  );
+  assert.equal(DB.plans.length, 0);
+  assert.equal(fixture.task.callback_id, null);
+});
+
+test("creative callback rejects copy-only workspace treatments before canonical writes", async () => {
+  const fixture = creativeFixture();
+  for (const item of fixture.plan.treatments) {
+    item.artifact_requests = item.artifact_requests.filter(
+      (request) => request.capability_id === "copy.text",
+    );
+  }
+  fixture.result.output.media_plan_sha256 = digest(fixture.plan);
+  const DB = new CreativeCallbackDb(fixture.campaign, fixture.task);
+  await assert.rejects(
+    receiveHostedCreativePlanCallback(
+      { DB },
+      fixture.task,
+      {
+        callback_id: `${fixture.task.task_id}:completed`,
+        task_id: fixture.task.task_id,
+        run_id: fixture.task.run_id,
+        account_id: fixture.task.account_id,
+        kind: "marketing_judgment",
+        result: fixture.result,
+      },
+    ),
+    /native capture request/,
   );
   assert.equal(DB.plans.length, 0);
   assert.equal(fixture.task.callback_id, null);

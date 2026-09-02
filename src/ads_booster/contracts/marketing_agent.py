@@ -86,6 +86,17 @@ class OutcomeScope(StrEnum):
 
 
 @unique
+class ExperimentAllocationMethod(StrEnum):
+    """How an experiment assigns its already-approved treatments to blocks."""
+
+    BALANCED_COMPLETE_BLOCKS = "balanced_complete_blocks"
+    SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1 = "server_randomized_complete_blocks_v1"
+
+
+_CAUSAL_ARM_COUNT = 2
+
+
+@unique
 class CreativeFormat(StrEnum):
     NATIVE_SEQUENCE = "native_sequence"
     SCREEN_RECORDING = "screen_recording"
@@ -247,6 +258,10 @@ class ExperimentRegistration(ContractModel):
         Field(min_length=2, max_length=8),
     ]
     primary_outcome: OutcomeDefinition
+    allocation_method: ExperimentAllocationMethod = (
+        ExperimentAllocationMethod.BALANCED_COMPLETE_BLOCKS
+    )
+    causal_treatment_hypothesis_id: AgentIdentifier | None = None
     diagnostic_metrics: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
     guardrails: Annotated[tuple[str, ...], Field(min_length=1, max_length=32)]
     minimum_eligible_blocks: Annotated[int, Field(ge=2, le=100)]
@@ -255,6 +270,177 @@ class ExperimentRegistration(ContractModel):
     minimum_attribution_coverage_basis_points: Annotated[int, Field(ge=0, le=10_000)]
     stop_rules: Annotated[tuple[str, ...], Field(min_length=1, max_length=16)]
     inconclusive_when: Annotated[tuple[str, ...], Field(min_length=1, max_length=16)]
+
+    @model_validator(mode="after")
+    def require_registered_effect_estimator(self) -> Self:
+        is_causal = self.primary_outcome.scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT
+        if is_causal:
+            if (
+                self.allocation_method
+                is not ExperimentAllocationMethod.SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1
+            ):
+                _raise_contract_error(
+                    "missing_randomized_allocation",
+                    "estimated treatment effects require server-randomized complete blocks",
+                )
+            if len(self.activated_hypothesis_ids) != _CAUSAL_ARM_COUNT:
+                _raise_contract_error(
+                    "invalid_causal_arm_count",
+                    "the registered effect estimator compares exactly two hypotheses",
+                )
+            if self.maximum_posts != self.minimum_eligible_blocks * _CAUSAL_ARM_COUNT:
+                _raise_contract_error(
+                    "invalid_causal_sample_size",
+                    "estimated treatment effects require one fixed complete block per post pair",
+                )
+            if self.causal_treatment_hypothesis_id not in self.activated_hypothesis_ids:
+                _raise_contract_error(
+                    "invalid_causal_treatment",
+                    "estimated treatment effects require one active treatment hypothesis",
+                )
+        elif (
+            self.allocation_method is not ExperimentAllocationMethod.BALANCED_COMPLETE_BLOCKS
+            or self.causal_treatment_hypothesis_id is not None
+        ):
+            _raise_contract_error(
+                "unexpected_causal_estimator",
+                "direct-response attribution cannot register a causal estimator",
+            )
+        return self
+
+
+class PositioningDecision(ContractModel):
+    category: Annotated[str, Field(min_length=1, max_length=500)]
+    current_alternative: Annotated[str, Field(min_length=1, max_length=1000)]
+    differentiated_mechanism: Annotated[str, Field(min_length=1, max_length=1500)]
+    proof_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=16)]
+
+
+class EvidenceDisposition(ContractModel):
+    evidence_id: AgentIdentifier
+    disposition: Literal["supports", "contradicts", "insufficient"]
+    confidence_basis_points: Annotated[int, Field(ge=0, le=10_000)]
+    freshness: Literal["fresh", "stale", "unknown"]
+    use: Literal["use_as_constraint", "test", "exclude"]
+    reason: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class DecisionDossier(ContractModel):
+    schema_version: Literal["trace.marketing-decision-dossier.v1"]
+    situation: Literal[
+        "new_launch",
+        "experiment_result",
+        "performance_regression",
+        "market_event",
+        "tool_failure",
+    ]
+    selected_icp_id: AgentIdentifier | Literal["research_needed"]
+    selection_basis_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=32)] = ()
+    positioning: PositioningDecision
+    evidence_dispositions: Annotated[
+        tuple[EvidenceDisposition, ...],
+        Field(min_length=1, max_length=256),
+    ]
+    recommended_next_step: Literal[
+        "research",
+        "design_experiment",
+        "hold_for_review",
+        "reconcile_effect",
+    ]
+    reason: Annotated[str, Field(min_length=1, max_length=1500)]
+    required_proof_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=32)] = ()
+
+    @model_validator(mode="after")
+    def validate_decision_semantics(self) -> Self:
+        disposition_ids = tuple(item.evidence_id for item in self.evidence_dispositions)
+        if len(set(disposition_ids)) != len(disposition_ids):
+            _raise_contract_error(
+                "duplicate_evidence_disposition",
+                "decision dossier evidence dispositions must be unique",
+            )
+        if len(set(self.selection_basis_ids)) != len(self.selection_basis_ids):
+            _raise_contract_error(
+                "duplicate_selection_basis",
+                "decision dossier selection basis IDs must be unique",
+            )
+        if len(set(self.required_proof_ids)) != len(self.required_proof_ids):
+            _raise_contract_error(
+                "duplicate_required_proof",
+                "decision dossier required proof IDs must be unique",
+            )
+        if self.situation == "tool_failure":
+            if self.recommended_next_step != "reconcile_effect":
+                _raise_contract_error(
+                    "unsafe_tool_failure_action",
+                    "tool failures with unresolved effects require reconciliation",
+                )
+        elif self.recommended_next_step == "reconcile_effect":
+            _raise_contract_error(
+                "unexpected_effect_reconciliation",
+                "effect reconciliation is reserved for tool failure situations",
+            )
+        if self.selected_icp_id == "research_needed" and self.recommended_next_step not in {
+            "research",
+            "hold_for_review",
+        }:
+            _raise_contract_error(
+                "unsupported_icp_action",
+                "an unresolved ICP cannot proceed directly to an experiment",
+            )
+        if any(
+            item.freshness == "stale" and item.use != "exclude"
+            for item in self.evidence_dispositions
+        ):
+            _raise_contract_error(
+                "stale_evidence_used",
+                "stale evidence must be excluded from the decision",
+            )
+        return self
+
+
+class HypothesisReassessment(ContractModel):
+    """One evidence-bound update to a hypothesis after observing an experiment."""
+
+    hypothesis_id: AgentIdentifier
+    disposition: Literal["retain", "revise", "retire"]
+    rationale: Annotated[str, Field(min_length=1, max_length=1500)]
+    next_test: Annotated[str | None, Field(max_length=1500)] = None
+
+
+class MarketingReassessment(ContractModel):
+    """A no-effect marketing decision produced from an immutable live evaluation."""
+
+    schema_version: Literal["trace.marketing-reassessment.v1"]
+    reassessment_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    trigger_evaluation_id: AgentIdentifier
+    trigger_evaluation_sha256: Sha256Digest
+    situation: Literal[
+        "experiment_result",
+        "performance_regression",
+        "tool_failure",
+    ]
+    decision_dossier: DecisionDossier
+    hypothesis_reassessments: Annotated[
+        tuple[HypothesisReassessment, ...],
+        Field(min_length=2, max_length=8),
+    ]
+    unanswered_questions: Annotated[tuple[str, ...], Field(max_length=16)] = ()
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_reassessment(self) -> Self:
+        _require_utc(self.created_at, field="created_at")
+        if self.decision_dossier.situation != self.situation:
+            _raise_contract_error(
+                "reassessment_situation_mismatch",
+                "the reassessment and its decision dossier must describe the same situation",
+            )
+        _ = _require_unique(
+            (item.hypothesis_id for item in self.hypothesis_reassessments),
+            field="reassessment_hypothesis_id",
+        )
+        return self
 
 
 class StrategyBrief(ContractModel):
@@ -268,6 +454,7 @@ class StrategyBrief(ContractModel):
     business_outcome: Annotated[str, Field(min_length=1, max_length=1000)]
     audience_situation: Annotated[str, Field(min_length=1, max_length=2000)]
     belief_to_change: Annotated[str, Field(min_length=1, max_length=1000)]
+    decision_dossier: DecisionDossier | None = None
     hypotheses: Annotated[tuple[MarketingHypothesis, ...], Field(min_length=2, max_length=8)]
     experiment: ExperimentRegistration
     created_at: datetime
@@ -302,6 +489,14 @@ class StrategyBrief(ContractModel):
             _raise_contract_error(
                 "inactive_control",
                 "every experiment must activate the portfolio control",
+            )
+        if (
+            self.experiment.primary_outcome.scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT
+            and self.experiment.causal_treatment_hypothesis_id == controls[0].hypothesis_id
+        ):
+            _raise_contract_error(
+                "control_as_causal_treatment",
+                "the portfolio control cannot be the causal treatment hypothesis",
             )
         return self
 
@@ -442,6 +637,28 @@ class AttributionObservation(ContractModel):
         return self
 
 
+class CausalEffectEstimate(ContractModel):
+    """A pre-registered, randomized-block contrast rather than an attributed rate."""
+
+    schema_version: Literal["trace.causal-effect-estimate.v1"]
+    estimator: Literal["randomized_complete_blocks_risk_difference.v1"]
+    control_hypothesis_id: AgentIdentifier
+    treatment_hypothesis_id: AgentIdentifier
+    randomization_seed_sha256: Sha256Digest
+    treatment_minus_control_basis_points: Annotated[int, Field(ge=-10_000, le=10_000)]
+    two_sided_p_value_basis_points: Annotated[int, Field(ge=0, le=10_000)]
+    decision_threshold_basis_points: Literal[500]
+
+    @model_validator(mode="after")
+    def require_distinct_arms(self) -> Self:
+        if self.control_hypothesis_id == self.treatment_hypothesis_id:
+            _raise_contract_error(
+                "causal_estimate_same_arm",
+                "a causal estimate needs distinct control and treatment hypotheses",
+            )
+        return self
+
+
 class ExperimentEvaluation(ContractModel):
     schema_version: Literal["trace.experiment-evaluation.v1"]
     evaluation_id: AgentIdentifier
@@ -452,6 +669,7 @@ class ExperimentEvaluation(ContractModel):
     eligible_blocks: Annotated[int, Field(ge=0)]
     attribution_coverage_basis_points: Annotated[int, Field(ge=0, le=10_000)]
     winner_hypothesis_id: AgentIdentifier | None = None
+    causal_estimate: CausalEffectEstimate | None = None
     interpretation: Annotated[str, Field(min_length=1, max_length=4000)]
     guardrail_failures: Annotated[tuple[str, ...], Field(max_length=32)] = ()
     lineage_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=64)]
@@ -465,6 +683,14 @@ class ExperimentEvaluation(ContractModel):
             _raise_contract_error(
                 "winner_without_evaluation",
                 "inconclusive or stopped experiments cannot name a winner",
+            )
+        if (
+            self.outcome_scope is OutcomeScope.DIRECT_RESPONSE_ATTRIBUTION
+            and self.causal_estimate is not None
+        ):
+            _raise_contract_error(
+                "causal_estimate_for_direct_outcome",
+                "direct-response attribution cannot contain a causal estimate",
             )
         return self
 

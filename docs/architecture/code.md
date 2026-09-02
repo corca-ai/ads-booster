@@ -111,18 +111,46 @@ the schema-constrained strategy turn, claim/reference quarantine, approved-conte
 and the bound result. Cloudflare
 `marketing-agent.js` owns campaign ingestion and task creation;
 `hosted-marketing-judgment-callback.js` independently validates and atomically persists successful
-strategy state. The generic worker broker owns leasing and callback transport only.
+strategy state. The generic worker broker owns leasing and callback transport only; its
+`required_capability` predicate reads the complete advertised capability map, so subtype versions
+remain data rather than broker-specific branches.
 
 `marketing/hosted_creative_judgment.py` owns the proof-first MediaPlan proposal and creates no tool
 action. It validates frozen capability descriptor bindings and derives the prompt's capability IDs
 from them; it never constructs a binding. `marketing/hosted_candidate_judgment.py` materializes one approved, evidence-bound
-candidate; `marketing/hosted_reference_research.py` returns an immutable quarantined observation
-snapshot; and `marketing/hosted_learning_judgment.py` creates only a reversible learning candidate.
+candidate and reuses `workspace.CandidateImageInputs` rather than defining a marketing-only image
+shape. `cloudflare/src/candidate-image-inputs.js` is the matching control-plane normalizer shared by
+ordinary candidate delivery and marketing materialization. New marketing materialization requires
+the canonical structured weekly schedule and todo column; legacy string rows remain readable only
+at the ordinary delivery boundary or an in-flight v1 callback. The generic worker capability gate
+fails before reservation when no compatible worker is online, keeps
+`candidate_materialization_v2` tasks away from older workers, and binds the callback schema back to
+the leased task capability. `marketing/hosted_reference_research.py` returns an immutable quarantined observation
+snapshot and validates the server-issued receipt contract carried into strategy;
+`cloudflare/src/reference-source-verification.js` alone fetches declared public sources and derives
+byte-level receipts, while both hosted callbacks bind those receipts into and back out of D1; and
+`marketing/hosted_learning_judgment.py` creates only a reversible learning candidate.
 `marketing/hosted_experiment_evaluation.py` is deterministic and has no model or external effect.
 `experiment-evaluation.js` is its pure control-plane re-deriver: it accepts only the frozen request
-and reproduces its conclusion, coverage, lineage, and guardrail result. The experiment-evaluation
+and reproduces its conclusion, coverage, lineage, and guardrail result. `ExperimentRegistration`
+owns the distinction between descriptive balanced blocks and the two-arm
+`server_randomized_complete_blocks_v1` estimator; `CausalEffectEstimate` owns the paired risk
+difference, server seed digest, and exact two-sided decision evidence. `marketing-agent.js` owns
+server seed generation, deterministic rank allocation and re-verification, and the rejection of
+manual assignment for that estimator. The strategy callback freezes the account schedule and exact
+Threads identity in an immutable experiment exposure plan before materialization. `hosted-workspace.js`
+expands that plan into the immutable complete exposure schedule at the existing image-approval
+boundary, while `marketing-agent.js` independently re-derives plan and slot hashes and compares
+profile, user, schedule, and publication readback before it sets causal exposure verification.
+Neither owner publishes; the existing Threads owner retains the external effect.
+The experiment-evaluation
 callback canonical-compares the worker output to that derived value and persists the derived value
-only after the frozen registration digest also matches D1. Their Cloudflare callbacks independently
+only after the frozen registration digest also matches D1. In the same batch it uses
+`cloudflare/src/marketing-outcome-reassessment.js` to derive a situation and queue one immutable
+no-effect follow-up. `marketing/hosted_reassessment_judgment.py` owns the schema-constrained Codex
+reassessment, while `cloudflare/src/hosted-outcome-reassessment-callback.js` independently rebinds
+the stored evaluation, strategy, evidence metadata, claims, and hypothesis set before writing its
+append-only ledger row. Neither owner changes strategy or executes the recommendation. Their Cloudflare callbacks independently
 validate every receipt, claim, plan, assignment, and approval binding before writing a projection.
 Learning synthesis receives a server-derived `MarketingLearningApplicability`; its model may explain
 scope in prose but cannot broaden the selector. The callback binds that selector into the candidate,
@@ -132,6 +160,16 @@ selector member before the bounded lookup, then applies a defensive exact canoni
 new campaign's knowledge snapshot receives a principle. Legacy principles without the selector are
 read but never auto-applied. `marketing-agent.js` also owns assisted campaign gating, variant links,
 product-event intake, scheduled evaluation dispatch, and learning approval.
+
+`marketing/decision_quality.py` owns a pure offline synthetic-scenario Decision Dossier grader. It
+compares a typed dossier with a frozen scenario for ICP support, positioning claims, complete
+evidence disposition, explicit counterevidence, freshness, and bounded next action. It is neither a
+provider runner nor production authority. `marketing/hosted_judgment.py` produces and validates only
+the live `new_launch` dossier; `marketing/hosted_reassessment_judgment.py` consumes only an immutable
+live experiment evaluation and prior brief for `experiment_result`, `performance_regression`, or the
+evaluation's publication `tool_failure`. Their Cloudflare callbacks independently revalidate frozen
+input before storage. Neither path runs the offline evaluator, and live market-event reasoning is
+still absent. The grader, dossier, and reassessment have no tool or publication authority.
 
 `cloudflare/src/marketing-review.js` owns only read models over that immutable/append-only ledger.
 It selects pending strategy, media-plan, or learning-candidate decisions from their exact state and
@@ -143,8 +181,8 @@ models deliberately retain only IDs, content/input/binding digests, and safe cap
 URI, raw manifest payload, and adapter descriptor stay behind their effect owner rather than becoming
 an incidental review-token transport.
 
-Migrations `0018`–`0025` own the execution/observation lineage, assisted-shadow origin binding,
-quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
+Migrations `0018`–`0029` own the execution/observation/reassessment lineage, assisted-shadow origin binding,
+quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 
 `0024_marketing_context_signals.sql` owns account-scoped, immutable `CustomerSignal` payloads,
@@ -165,7 +203,9 @@ and `0025_marketing_copy_capability.sql` own account-scoped registrations and re
 bindings. `0025` provisions active `copy.text`, rejects blank/mismatched request or manifest bindings,
 and prevents binding updates. Neither adds a generic dispatcher or moves capture/Threads effect
 ownership: `hosted-workspace.js` gates capture queueing, `index.js` verifies binding/provenance before
-R2, and existing effect owners execute.
+R2, and existing effect owners execute. `hosted-capture-manifests.js` owns the deterministic
+task-time capture manifest, approved/succeeded retry admission, provenance validation, and immutable
+manifest recording; it has no capture or publication effect of its own.
 
 `marketing/runtime.py` owns the provider-neutral, local session-and-dispatch harness. It has no
 Cloudflare, Appium, Threads, or model-provider import. `ToolCapability` owns both descriptor and

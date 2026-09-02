@@ -4,10 +4,20 @@ import {
   MARKETING_JUDGMENT_PIPELINE,
   resolveMarketingContextProjection,
 } from "./marketing-agent.js";
+import {
+  ReferenceVerificationError,
+  verifyReferenceSources,
+} from "./reference-source-verification.js";
 
 const MAX_TASK_BYTES = 64 * 1024;
 
-export async function receiveHostedReferenceResearchCallback(env, task, callback, worker = null) {
+export async function receiveHostedReferenceResearchCallback(
+  env,
+  task,
+  callback,
+  worker = null,
+  sourceFetcher = globalThis.fetch,
+) {
   assertHostedCallbackTransport(task, worker);
   if (
     task.account_id !== callback.account_id
@@ -65,10 +75,26 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
     || snapshot.campaign_id !== campaign.campaign_id
     || snapshot.feature_packet_sha256 !== campaign.feature_packet_sha256
     || snapshot.quarantine !== true
+    || output.tool_actions_created !== 0
   ) {
     throw new HttpError(409, "reference research output binding is invalid");
   }
   validateSnapshot(snapshot);
+  let verificationBundle;
+  try {
+    verificationBundle = await verifyReferenceSources(
+      snapshot,
+      snapshotSha256,
+      sourceFetcher,
+      now,
+    );
+  } catch (error) {
+    if (error instanceof ReferenceVerificationError) {
+      throw new HttpError(409, error.message);
+    }
+    throw error;
+  }
+  const verificationBundleSha256 = await canonicalSha256(verificationBundle);
   const marketingContext = await resolveMarketingContextProjection(
     env.DB,
     campaign.account_id,
@@ -98,6 +124,8 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
       marketing_context: marketingContext,
       reference_snapshot: snapshot,
       reference_snapshot_sha256: snapshotSha256,
+      reference_verification: verificationBundle,
+      reference_verification_sha256: verificationBundleSha256,
       canonical_principles: payload.canonical_principles,
       knowledge_snapshot_sha256: payload.knowledge_snapshot_sha256,
       available_capabilities: payload.available_capabilities,
@@ -129,13 +157,15 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
     reference_snapshot_id: snapshot.snapshot_id,
     reference_snapshot_sha256: snapshotSha256,
     source_count: snapshot.sources.length,
+    verified_source_count: verificationBundle.receipts.length,
+    reference_verification_sha256: verificationBundleSha256,
   };
-  const results = await env.DB.batch([
+  const statements = [
     env.DB.prepare(
       `INSERT INTO hosted_marketing_reference_snapshots
         (snapshot_id, campaign_id, schema_version, snapshot_json, snapshot_sha256,
-         source_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         source_count, verification_bundle_json, verification_bundle_sha256, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       safeId(snapshot.snapshot_id, "snapshot_id"),
       campaign.campaign_id,
@@ -143,8 +173,33 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
       canonicalJson(snapshot),
       snapshotSha256,
       snapshot.sources.length,
+      canonicalJson(verificationBundle),
+      verificationBundleSha256,
       snapshot.collected_at,
     ),
+  ];
+  for (const receipt of verificationBundle.receipts) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO hosted_marketing_reference_source_receipts
+        (receipt_id, snapshot_id, source_id, schema_version, requested_url, final_url,
+         content_type, content_sha256, byte_length, receipt_json, receipt_sha256, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      safeId(receipt.receipt_id, "receipt_id"),
+      safeId(snapshot.snapshot_id, "snapshot_id"),
+      safeId(receipt.source_id, "source_id"),
+      receipt.schema_version,
+      receipt.requested_url,
+      receipt.final_url,
+      receipt.content_type,
+      receipt.content_sha256,
+      receipt.byte_length,
+      canonicalJson(receipt),
+      await canonicalSha256(receipt),
+      receipt.fetched_at,
+    ));
+  }
+  statements.push(
     env.DB.prepare(
       `INSERT INTO hosted_workspace_capture_tasks
         (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
@@ -192,8 +247,15 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
       now,
     ),
     completionStatement(env, task, callback, worker, "succeeded", storedResultJson, now),
-  ]);
-  if (results[2]?.meta?.changes !== 1 || results[4]?.meta?.changes !== 1) {
+  );
+  const campaignUpdateIndex = 2 + verificationBundle.receipts.length;
+  const completionIndex = statements.length - 1;
+  const results = await env.DB.batch(statements);
+  if (
+    results.some((result) => result?.meta?.changes !== 1)
+    || results[campaignUpdateIndex]?.meta?.changes !== 1
+    || results[completionIndex]?.meta?.changes !== 1
+  ) {
     throw new HttpError(409, "reference research completion lost its state race");
   }
   return {

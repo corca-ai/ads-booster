@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from ads_booster.contracts.marketing_agent import (
+    ExperimentAllocationMethod,
     ExperimentEvaluation,
     ExperimentRegistration,
     OutcomeDefinition,
@@ -27,6 +28,9 @@ def registration(
     minimum_blocks: int = 2,
     minimum_coverage_basis_points: int = 8_000,
 ) -> ExperimentRegistration:
+    maximum_posts = 12
+    if scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT:
+        maximum_posts = minimum_blocks * 2
     return ExperimentRegistration(
         experiment_id="experiment-1",
         manipulated_component="value frame",
@@ -42,9 +46,17 @@ def registration(
                 else None
             ),
         ),
+        allocation_method=(
+            ExperimentAllocationMethod.SERVER_RANDOMIZED_COMPLETE_BLOCKS_V1
+            if scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT
+            else ExperimentAllocationMethod.BALANCED_COMPLETE_BLOCKS
+        ),
+        causal_treatment_hypothesis_id=(
+            "challenger" if scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT else None
+        ),
         guardrails=("product fidelity",),
         minimum_eligible_blocks=minimum_blocks,
-        maximum_posts=12,
+        maximum_posts=maximum_posts,
         maximum_duration_hours=336,
         minimum_attribution_coverage_basis_points=minimum_coverage_basis_points,
         stop_rules=("guardrail failure",),
@@ -82,19 +94,39 @@ def complete_observations() -> tuple[AssignmentObservation, ...]:
     )
 
 
+def causal_observations(blocks: int = 6) -> tuple[AssignmentObservation, ...]:
+    return tuple(
+        observation(block, hypothesis, converted=(hypothesis == "challenger"))
+        for block in range(1, blocks + 1)
+        for hypothesis in ("control", "challenger")
+    )
+
+
 def evaluate(
     observations: tuple[AssignmentObservation, ...],
     *,
     campaign_id: str = "campaign-1",
     experiment: ExperimentRegistration | None = None,
     windows_complete: bool = True,
+    causal_exposure_verified: bool | None = None,
 ) -> ExperimentEvaluation:
+    registered = experiment or registration()
     return evaluate_experiment(
         ExperimentEvaluationRequest(
             evaluation_id=f"evaluation-{campaign_id}",
             campaign_id=campaign_id,
-            registration=experiment or registration(),
+            registration=registered,
             observations=observations,
+            randomization_seed_sha256=(
+                "d" * 64
+                if registered.primary_outcome.scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT
+                else None
+            ),
+            causal_exposure_verified=(
+                registered.primary_outcome.scope is OutcomeScope.ESTIMATED_TREATMENT_EFFECT
+                if causal_exposure_verified is None
+                else causal_exposure_verified
+            ),
             windows_complete=windows_complete,
             evaluated_at=NOW,
         )
@@ -158,14 +190,47 @@ def test_guardrail_failure_stops_before_winner_selection() -> None:
     assert result.guardrail_failures == ("unsupported product claim",)
 
 
-def test_causal_scope_remains_inconclusive_without_an_eligible_estimator() -> None:
+def test_server_randomized_blocks_can_name_a_causal_winner_after_exact_test() -> None:
+    result = evaluate(
+        causal_observations(),
+        experiment=registration(
+            scope=OutcomeScope.ESTIMATED_TREATMENT_EFFECT,
+            minimum_blocks=6,
+        ),
+    )
+
+    assert result.state == "evaluated"
+    assert result.winner_hypothesis_id == "challenger"
+    assert result.causal_estimate is not None
+    assert result.causal_estimate.treatment_minus_control_basis_points == 10_000
+    assert result.causal_estimate.two_sided_p_value_basis_points == 312
+
+
+def test_randomized_effect_with_insufficient_exact_evidence_remains_inconclusive() -> None:
     result = evaluate(
         complete_observations(),
         experiment=registration(scope=OutcomeScope.ESTIMATED_TREATMENT_EFFECT),
     )
 
     assert result.state == "inconclusive"
-    assert "causal estimator" in result.interpretation
+    assert result.winner_hypothesis_id is None
+    assert result.causal_estimate is not None
+    assert result.causal_estimate.two_sided_p_value_basis_points == 5_000
+
+
+def test_causal_evaluation_fails_closed_without_server_verified_exposure_slots() -> None:
+    result = evaluate(
+        causal_observations(),
+        experiment=registration(
+            scope=OutcomeScope.ESTIMATED_TREATMENT_EFFECT,
+            minimum_blocks=6,
+        ),
+        causal_exposure_verified=False,
+    )
+
+    assert result.state == "inconclusive"
+    assert result.causal_estimate is None
+    assert "exposure slots" in result.interpretation
 
 
 def test_learning_candidate_requires_replication_across_independent_campaigns() -> None:

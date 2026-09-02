@@ -5,14 +5,16 @@ import { receiveHostedCreativePlanCallback } from "./hosted-creative-plan-callba
 import { receiveHostedCandidateMaterializationCallback } from "./hosted-candidate-materialization-callback.js";
 import { receiveHostedExperimentEvaluationCallback } from "./hosted-experiment-evaluation-callback.js";
 import { receiveHostedLearningSynthesisCallback } from "./hosted-learning-synthesis-callback.js";
+import { receiveHostedOutcomeReassessmentCallback } from "./hosted-outcome-reassessment-callback.js";
 import { receiveHostedReferenceResearchCallback } from "./hosted-reference-research-callback.js";
 import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
 import { receiveHostedMarketingJudgmentCallback } from "./hosted-marketing-judgment-callback.js";
 import { HttpError } from "./http-error.js";
+import { MarketingCapabilityError } from "./marketing-adapter-capabilities.js";
 import {
-  assertCurrentCapabilityBinding,
-  MarketingCapabilityError,
-} from "./marketing-adapter-capabilities.js";
+  prepareMarketingCaptureManifests,
+  recordMarketingCaptureManifests,
+} from "./hosted-capture-manifests.js";
 import {
   MAX_HOSTED_CAPTURE_CALLBACK_BYTES,
   prepareHostedCaptureResult,
@@ -667,7 +669,8 @@ export async function receiveCallback(env, callback, worker = null) {
   const hostedTask = await env.DB.prepare(
     `SELECT task_id, run_id, account_id, candidate_id, candidate_revision,
             state, callback_id, result_json, dispatch_mode, worker_id, lease_id,
-            execution_started_at, callback_reservation_id, kind, persona_id, task_json
+            execution_started_at, callback_reservation_id, kind, persona_id, task_json,
+            required_capability, created_at
      FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
   )
     .bind(callback.task_id)
@@ -693,6 +696,9 @@ export async function receiveCallback(env, callback, worker = null) {
     }
     if (judgment === "learning_synthesis") {
       return receiveHostedLearningSynthesisCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "outcome_reassessment") {
+      return receiveHostedOutcomeReassessmentCallback(env, hostedTask, callback, worker);
     }
     if (judgment === "market_research") {
       return receiveHostedReferenceResearchCallback(env, hostedTask, callback, worker);
@@ -800,7 +806,6 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
         imageKey,
         imageDigest,
         storedResult.output,
-        now,
       );
     } catch (error) {
       if (error instanceof MarketingCapabilityError) {
@@ -910,130 +915,6 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
     return { accepted: true, duplicate: true };
   }
   return { accepted: true, duplicate: false };
-}
-
-async function prepareMarketingCaptureManifests(env, task, imageKey, imageDigest, output, now) {
-  const result = await env.DB.prepare(
-    `SELECT assignment.assignment_id, assignment.campaign_id, assignment.treatment_id,
-            request.request_id, request.capability_id, request.request_json,
-            request.request_sha256, request.capability_binding_sha256
-     FROM hosted_workspace_candidates AS candidate
-     JOIN hosted_marketing_post_assignments AS assignment
-       ON assignment.assignment_id = candidate.marketing_assignment_id
-     JOIN hosted_marketing_artifact_requests AS request
-       ON request.treatment_id = assignment.treatment_id
-      AND request.capability_id = 'capture.native_png'
-     WHERE candidate.account_id = ? AND candidate.candidate_id = ?
-       AND candidate.capture_task_id = ?`,
-  ).bind(task.account_id, task.candidate_id, task.task_id).all();
-  const provenance = captureArtifactProvenance(output, imageDigest);
-  const manifests = [];
-  for (const row of result.results) {
-    await assertCurrentCapabilityBinding(
-      env.DB,
-      task.account_id,
-      row.capability_id,
-      row.capability_binding_sha256,
-    );
-    const request = JSON.parse(row.request_json);
-    const manifestId = `capture-${(await sha256(`${task.task_id}:${row.request_id}`)).slice(0, 48)}`;
-    const manifest = {
-      schema_version: "trace.artifact-manifest.v1",
-      manifest_id: manifestId,
-      campaign_id: row.campaign_id,
-      assignment_id: row.assignment_id,
-      treatment_id: row.treatment_id,
-      request_id: row.request_id,
-      capability_id: row.capability_id,
-      capability_binding_sha256: row.capability_binding_sha256,
-      artifact_uri: `r2:${imageKey}`,
-      artifact_sha256: imageDigest,
-      input_sha256: row.request_sha256,
-      execution_id: task.task_id,
-      claim_ids: request.claim_ids ?? [],
-      evidence_ids: [],
-      capture_provenance: provenance,
-      created_at: now,
-    };
-    manifests.push(manifest);
-  }
-  return manifests;
-}
-
-async function recordMarketingCaptureManifests(env, manifests) {
-  for (const manifest of manifests) {
-    const manifestJson = canonicalJson(manifest);
-    const manifestSha256 = await sha256(manifestJson);
-    const existing = await env.DB.prepare(
-      `SELECT manifest_sha256 FROM hosted_marketing_artifact_manifests WHERE manifest_id = ?`,
-    ).bind(manifest.manifest_id).first();
-    if (existing && existing.manifest_sha256 !== manifestSha256) {
-      throw new HttpError(409, "capture artifact manifest changed after creation");
-    }
-    if (!existing) {
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT INTO hosted_marketing_artifact_manifests
-            (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
-             manifest_json, manifest_sha256, artifact_uri, artifact_sha256,
-             input_sha256, capability_binding_sha256, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          manifest.manifest_id,
-          manifest.campaign_id,
-          manifest.assignment_id,
-          manifest.treatment_id,
-          manifest.request_id,
-          manifest.schema_version,
-          manifestJson,
-          manifestSha256,
-          manifest.artifact_uri,
-          manifest.artifact_sha256,
-          manifest.input_sha256,
-          manifest.capability_binding_sha256,
-          manifest.created_at,
-        ),
-        env.DB.prepare(
-          `UPDATE hosted_marketing_artifact_requests
-           SET state = 'succeeded', updated_at = ?
-           WHERE request_id = ? AND state IN ('approved', 'executing', 'succeeded')`,
-        ).bind(manifest.created_at, manifest.request_id),
-      ]);
-    }
-  }
-}
-
-function captureArtifactProvenance(output, imageDigest) {
-  if (
-    output.capture_source === "native_appium"
-    && output.artifact_role === "trace_wallpaper"
-    && output.image_postprocess_source === "none"
-    && output.native_image_sha256 === imageDigest
-  ) {
-    return {
-      schema_version: "trace.capture-artifact-provenance.v1",
-      capture_source: "native_appium",
-      artifact_role: "trace_wallpaper",
-      source_trace_artifact_sha256: imageDigest,
-    };
-  }
-  if (
-    output.capture_source === "imagen_ios_ui"
-    && output.artifact_role === "imagen_ios_ui"
-    && output.image_postprocess_source === "imagen_ios_ui"
-    && output.imagegen_ui_layer_verified === true
-    && typeof output.source_trace_artifact_sha256 === "string"
-    && /^[a-f0-9]{64}$/.test(output.source_trace_artifact_sha256)
-    && output.native_image_sha256 === output.source_trace_artifact_sha256
-  ) {
-    return {
-      schema_version: "trace.capture-artifact-provenance.v1",
-      capture_source: "imagen_ios_ui",
-      artifact_role: "imagen_ios_ui",
-      source_trace_artifact_sha256: output.source_trace_artifact_sha256,
-    };
-  }
-  throw new HttpError(409, "hosted capture provenance is invalid for marketing artifact");
 }
 
 async function receiveReviewEvent(env, input) {

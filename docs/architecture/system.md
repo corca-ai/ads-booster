@@ -124,7 +124,9 @@ event, capture task, reviewed artifact digest, tags, and private note. The note 
 data: it is never promoted or copied into another candidate's task.
 
 Workers advertise `feedback_context_v1`; D1 does not lease new feedback-aware work to older
-workers. A successful callback must return the selected envelope digest as
+workers. The broker evaluates any task's versioned `required_capability` against the worker's full
+advertised capability map; `outcome_reassessment_v1` uses the same rolling-upgrade gate rather than
+assuming that every marketing-judgment worker understands every subtype. A successful callback must return the selected envelope digest as
 `feedback_application_sha256`, otherwise Cloudflare refuses it. This receipt proves that the
 worker consumed the selected context boundary, not that the model semantically obeyed it. Human
 review remains the semantic and visual gate. Candidate/image schemas, native PNG/manifest
@@ -147,6 +149,35 @@ Cloudflare independently verifies the task/output scope, digests, supported clai
 quarantine, control activation, and attribution semantics before atomically storing the receipt,
 brief, registered experiment, projection update, and ordered event.
 
+Quarantined reference research has an additional server-owned provenance boundary. The research
+worker proposes public HTTPS URLs and observations but cannot issue a trusted source receipt.
+Cloudflare follows only bounded, revalidated public-HTTPS redirects, accepts a bounded textual,
+JSON, or PDF response, requires two distinct requested and final hosts, and hashes the fetched bytes.
+`0029` stores the verification bundle and one immutable receipt per source. The subsequent strategy
+task carries both snapshot and receipts, and its callback re-reads both from D1 before accepting a
+brief. These receipts prove fetched-byte lineage only; observation truth, summary faithfulness,
+source credibility, and semantic freshness remain quarantined and `unknown`.
+
+Every live `new_launch` strategy proposal also contains
+`trace.marketing-decision-dossier.v1`. It makes the selected ICP (or explicit `research_needed`),
+positioning proof claims, complete dispositions for frozen product, customer, and market evidence,
+and one bounded next step inspectable in the same human review packet. Customer-signal freshness and
+confidence are re-derived from the frozen context. Product and quarantined-market freshness remain
+`unknown` until a separate trusted freshness owner exists. The hosted callback rejects unsupported
+ICPs or proof claims, hidden counterevidence, rewritten source results, and unsafe new-launch next
+steps. After a hosted experiment callback independently derives and stores a dossier-bearing
+strategy's result, the same atomic batch queues exactly one `outcome_reassessment` task. A
+pre-dossier stored strategy is still evaluated but does not gain a synthetic dossier during rollout.
+The reassessment's frozen input contains the prior
+strategy brief, derived evaluation, their digests, and the still-supported claim IDs. A deterministic
+router labels the observed state as `experiment_result`, `performance_regression`, or `tool_failure`;
+the Codex turn decides the hypothesis-by-hypothesis response rather than selecting its own situation.
+The callback re-reads the evaluation and strategy from D1, rejects changed evidence metadata,
+invented ICPs or claims, and incomplete hypothesis coverage, then stores a separate append-only
+`trace.marketing-reassessment.v1` proposal. It never supersedes the active strategy or creates a tool
+action. Market events and tool failures outside the evaluated publication path still have no live
+situation source. Dossiers and reassessments are no-effect records, not publication or budget authority.
+
 Source evidence cannot open the publication gate, and a database trigger prevents every shadow
 campaign from creating tool actions. This path creates no candidate, capture, publication, metric,
 or learning effect. Installed-product evidence and later stages remain governed by
@@ -161,21 +192,42 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0018`–`0025` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0018`–`0029` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
-observations, evaluations, quarantined reference snapshots, learning candidates, and approval-bound
+observations, evaluations, outcome reassessments, quarantined reference snapshots and source-byte receipts, learning candidates, and approval-bound
 principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
 creative planning, and candidate materialization reuse that snapshot, so a later learning approval
 improves a future campaign without contaminating an active experiment. An assisted campaign must name a same-account shadow origin, carry an installed-evidence
 packet plus exact product-truth approval, and use the same broker for candidate materialization.
 Candidate materialization is a bounded Codex judgment: it returns one evidence-bound candidate and
-no capture, publish, or arbitrary tool action. Existing candidate/image review owns native capture;
+no capture, publish, or arbitrary tool action. Its image input uses the same structured weekly
+schedule and todo contract as the main candidate generator; the Cloudflare delivery and marketing
+callbacks share one normalizer, so a marketing path cannot silently fall back to a day-zero string
+schedule. New tasks require `candidate_materialization_v2`; an older worker cannot lease them, while
+the request fails before writing a task or reservation when no compatible worker is online. Callback
+validation rechecks the task capability, so only an already-leased capability-less task can finish
+with its frozen v1 result during rollout. Existing candidate/image review owns native capture;
 the existing `threads/*` owner remains responsible for every publication effect.
 
 The hosted route creates short-lived variant redirects and accepts versioned, deduplicated product
 events only under event-ingest authority. The scheduler queues an evaluation only after the
-pre-registered observation window or horizon closes; the deterministic evaluator distinguishes
-direct-response lineage from a causal estimate, incomplete coverage, and guardrail failure. Its
+pre-registered observation window or horizon closes. Direct-response rates remain explicitly
+descriptive. The causal-estimation contract is restricted to a two-arm, fixed-sample registration
+that chooses the server-randomized complete-block method: Cloudflare creates and immutably records
+the allocation seed, materialization records the selected rank and seed digest, manual candidate
+assignment cannot bypass that plan, and evaluation recomputes ranks from the server-held seed.
+At experiment registration, Cloudflare freezes the account schedule revision and exact Threads
+profile/user identity in an immutable exposure-plan receipt, before any allocation rank is exposed.
+The paired treatment-minus-control estimator and exact two-sided randomization test become eligible
+only after the existing image-review path atomically expands that receipt into the complete
+fixed-sample exposure-slot schedule. The ledger binds every assignment, randomized rank,
+morning/evening slot, frozen profile/user, account timezone, wall-clock policy, scheduled instant,
+seed digest, and tolerance before the first publication decision.
+The existing Threads publication row must match that commitment exactly, and actual publication must
+fall within the fixed tolerance. Missing, late, canceled, mismatched, or unknown exposure remains
+inconclusive rather than being dropped from the sample. Human image approval, the account auto-publish
+toggle, publisher barrier, and readback remain the only publication path. Incomplete coverage,
+malformed allocation lineage, or guardrail failure also remains fail-closed. Its
 callback independently re-derives the full result from the immutable task request, verifies the
 frozen registration digest, and stores only that derived result; a worker-provided state, winner, or
 coverage cannot promote false learning. A learning synthesis can create only a candidate from

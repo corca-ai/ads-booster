@@ -1,4 +1,8 @@
 import { HttpError } from "./http-error.js";
+import {
+  CandidateImageInputsError,
+  normalizeCandidateImageInputs,
+} from "./candidate-image-inputs.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
 import {
   assertCurrentCapabilityBinding,
@@ -36,15 +40,22 @@ export async function receiveHostedCandidateMaterializationCallback(
   const reservation = await env.DB.prepare(
     `SELECT reservation.assignment_id, reservation.campaign_id, reservation.experiment_id,
             reservation.hypothesis_id, reservation.treatment_id,
-            reservation.eligible_block_id, reservation.state,
+            reservation.eligible_block_id, reservation.allocation_rank, reservation.state,
             campaign.account_id, campaign.mode, campaign.state AS campaign_state,
             campaign.projection_revision,
+            experiment.allocation_method, experiment.randomization_seed_sha256,
+            exposure_plan.plan_json AS exposure_plan_json,
+            exposure_plan.plan_sha256 AS exposure_plan_sha256,
             packet.packet_json, packet.packet_sha256,
             brief.brief_sha256, plan.plan_sha256, plan.state AS plan_state,
             treatment.treatment_json, treatment.treatment_sha256
      FROM hosted_marketing_materialization_reservations AS reservation
      JOIN hosted_marketing_campaigns AS campaign
        ON campaign.campaign_id = reservation.campaign_id
+     JOIN hosted_marketing_experiments AS experiment
+       ON experiment.experiment_id = reservation.experiment_id
+     LEFT JOIN hosted_marketing_experiment_exposure_plans AS exposure_plan
+       ON exposure_plan.experiment_id = experiment.experiment_id
      JOIN hosted_marketing_feature_packets AS packet
        ON packet.packet_id = campaign.feature_packet_id
       AND packet.packet_sha256 = campaign.feature_packet_sha256
@@ -64,6 +75,18 @@ export async function receiveHostedCandidateMaterializationCallback(
            AND grant.decision = 'approved'
        )`,
   ).bind(task.task_id, task.account_id).first();
+  const expectedAllocation = reservation ? {
+    method: reservation.allocation_method ?? "balanced_complete_blocks",
+    randomization_seed_sha256: reservation.randomization_seed_sha256 ?? null,
+    rank: Number(reservation.allocation_rank),
+    posting_slot: reservation.allocation_method === "server_randomized_complete_blocks_v1"
+      ? (Number(reservation.allocation_rank) === 1 ? "morning" : "evening")
+      : null,
+  } : null;
+  const exposurePlan = reservation?.allocation_method === "server_randomized_complete_blocks_v1"
+    ? await validatedExposurePlan(reservation, task.account_id)
+    : null;
+  const payloadAllocation = payload.allocation ?? expectedAllocation;
   if (
     !reservation
     || reservation.state !== "queued"
@@ -73,10 +96,12 @@ export async function receiveHostedCandidateMaterializationCallback(
     || payload.campaign_id !== reservation.campaign_id
     || payload.assignment_id !== reservation.assignment_id
     || payload.eligible_block_id !== reservation.eligible_block_id
+    || !sameAllocation(payloadAllocation, expectedAllocation)
     || payload.feature_packet_sha256 !== reservation.packet_sha256
     || payload.strategy_brief_sha256 !== reservation.brief_sha256
     || payload.media_plan_sha256 !== reservation.plan_sha256
     || payload.treatment_sha256 !== reservation.treatment_sha256
+    || payload.exposure_plan_sha256 !== (exposurePlan?.plan_sha256 ?? null)
   ) {
     throw new HttpError(409, "candidate materialization reservation is stale or invalid");
   }
@@ -106,7 +131,7 @@ export async function receiveHostedCandidateMaterializationCallback(
     return { accepted: true, duplicate: false, state: "failed" };
   }
   const output = requireObject(callback.result?.output, "candidate materialization output");
-  const candidate = normalizeCandidate(output.candidate);
+  const candidate = normalizeCandidate(output.candidate, task.required_capability);
   const receipt = requireObject(output.context_receipt, "candidate context receipt");
   const candidateSha256 = await canonicalSha256(candidate);
   const receiptSha256 = await canonicalSha256(receipt);
@@ -126,6 +151,8 @@ export async function receiveHostedCandidateMaterializationCallback(
     || receipt.feature_packet_sha256 !== reservation.packet_sha256
     || candidate.country !== payload.account?.country
     || candidate.image_inputs.language !== payload.account?.language
+    || (expectedAllocation.posting_slot !== null
+      && candidate.posting_slot !== expectedAllocation.posting_slot)
     || !sameSet(candidate.claim_ids, treatment.claim_ids)
   ) {
     throw new HttpError(409, "candidate materialization output binding is invalid");
@@ -150,6 +177,8 @@ export async function receiveHostedCandidateMaterializationCallback(
     candidate_revision: 1,
     candidate_content_sha256: candidateContentSha256,
     eligible_block_id: reservation.eligible_block_id,
+    allocation: expectedAllocation,
+    exposure_plan_sha256: exposurePlan?.plan_sha256 ?? null,
     media_plan_sha256: reservation.plan_sha256,
     assigned_at: now,
   };
@@ -195,7 +224,7 @@ export async function receiveHostedCandidateMaterializationCallback(
          feedback_rules_json, persona_id, generation_provenance_json,
          threads_profile_id, status, revision, created_at, updated_at)
        VALUES (?, ?, 'auto', ?, ?, ?, ?, '[]', '[]', ?, ?, ?, NULL, NULL, ?, ?,
-               'trace.evidence-bound-candidate.v1', ?, 'codex_cli', '[]', NULL, ?, NULL,
+               ?, ?, 'codex_cli', '[]', NULL, ?, ?,
                'awaiting_review', 1, ?, ?)`,
     ).bind(
       candidateId,
@@ -209,6 +238,9 @@ export async function receiveHostedCandidateMaterializationCallback(
       "기계 검수 통과 · approved treatment/claim/locale binding",
       candidate.posting_slot,
       task.task_id,
+      candidate.schema_version === "trace.candidate-materialization.v2"
+        ? "trace.evidence-bound-candidate.v2"
+        : "trace.evidence-bound-candidate.v1",
       receipt.prompt_sha256,
       canonicalJson({
         schema_version: "trace.marketing-candidate-provenance.v1",
@@ -216,6 +248,7 @@ export async function receiveHostedCandidateMaterializationCallback(
         treatment_id: reservation.treatment_id,
         candidate_sha256: candidateSha256,
       }),
+      exposurePlan?.profile_id ?? null,
       Date.now() / 1000,
       Date.now() / 1000,
     ),
@@ -242,8 +275,8 @@ export async function receiveHostedCandidateMaterializationCallback(
       `INSERT INTO hosted_marketing_post_assignments
         (assignment_id, campaign_id, experiment_id, hypothesis_id, treatment_id,
          candidate_id, candidate_revision, candidate_content_sha256, eligible_block_id,
-         assignment_json, assignment_sha256, assigned_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+         allocation_rank, assignment_json, assignment_sha256, assigned_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       reservation.assignment_id,
       reservation.campaign_id,
@@ -253,6 +286,7 @@ export async function receiveHostedCandidateMaterializationCallback(
       candidateId,
       candidateContentSha256,
       reservation.eligible_block_id,
+      expectedAllocation.rank,
       canonicalJson(assignment),
       assignmentSha256,
       now,
@@ -296,7 +330,7 @@ export async function receiveHostedCandidateMaterializationCallback(
       execution_id: task.task_id,
       claim_ids: requestValue.claim_ids ?? [],
       evidence_ids: [],
-      created_at: now,
+      created_at: task.created_at,
     };
     statements.push(
       env.DB.prepare(
@@ -318,7 +352,7 @@ export async function receiveHostedCandidateMaterializationCallback(
         manifest.artifact_sha256,
         manifest.input_sha256,
         manifest.capability_binding_sha256,
-        now,
+        manifest.created_at,
       ),
       env.DB.prepare(
         `UPDATE hosted_marketing_artifact_requests
@@ -394,6 +428,28 @@ export async function receiveHostedCandidateMaterializationCallback(
   };
 }
 
+async function validatedExposurePlan(reservation, accountId) {
+  if (!reservation.exposure_plan_json || !reservation.exposure_plan_sha256) {
+    throw new HttpError(409, "causal candidate has no frozen exposure plan");
+  }
+  let plan;
+  try {
+    plan = requireObject(JSON.parse(reservation.exposure_plan_json), "causal exposure plan");
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(409, "causal exposure plan is invalid");
+  }
+  if (
+    plan.schema_version !== "trace.experiment-exposure-plan.v1"
+    || plan.experiment_id !== reservation.experiment_id
+    || plan.account_id !== accountId
+    || await canonicalSha256(plan) !== reservation.exposure_plan_sha256
+  ) {
+    throw new HttpError(409, "causal exposure plan binding is invalid");
+  }
+  return { ...plan, plan_sha256: reservation.exposure_plan_sha256 };
+}
+
 function completionStatement(env, task, callback, worker, status, resultJson, now) {
   return worker
     ? env.DB.prepare(
@@ -427,15 +483,73 @@ function publishedPayload(task) {
   }
 }
 
-function normalizeCandidate(value) {
+function normalizeCandidate(value, requiredCapability = null) {
   const candidate = requireObject(value, "materialized candidate");
+  if (!["trace.candidate-materialization.v1", "trace.candidate-materialization.v2"]
+    .includes(candidate.schema_version)) {
+    throw new HttpError(400, "candidate schema is invalid");
+  }
+  if (
+    requiredCapability === "candidate_materialization_v2"
+    && candidate.schema_version !== "trace.candidate-materialization.v2"
+  ) {
+    throw new HttpError(409, "candidate schema does not satisfy the leased task capability");
+  }
+  if (candidate.schema_version === "trace.candidate-materialization.v1") {
+    return normalizeLegacyCandidate(candidate);
+  }
+  let image;
+  try {
+    image = normalizeCandidateImageInputs(candidate.image_inputs, {
+      minimumTraceItems: 18,
+      maximumTraceItems: 22,
+      minimumTraceTodos: 8,
+      maximumTraceTodos: 12,
+      acceptLegacy: false,
+      includeStructuredMarker: false,
+      includeNullSearchQuery: true,
+    });
+  } catch (error) {
+    if (error instanceof CandidateImageInputsError) {
+      throw new HttpError(400, error.message);
+    }
+    throw error;
+  }
+  const timed = image.trace_items.filter((item) => item.time !== null).length;
+  const spanning = image.trace_items.filter((item) => item.days > 1).length;
+  if (
+    image.trace_items.every((item) => item.day === 0)
+    || image.trace_items.some((item) => item.color === null)
+    || timed < 3
+    || timed > 5
+    || spanning < 3
+    || spanning > 4
+  ) {
+    throw new HttpError(400, "candidate weekly image inputs are incomplete");
+  }
+  if (!["morning", "evening", "manual"].includes(candidate.posting_slot)) {
+    throw new HttpError(400, "candidate posting slot is invalid");
+  }
+  return {
+    schema_version: candidate.schema_version,
+    topic: requiredString(candidate.topic, "candidate topic", 200),
+    country: requiredString(candidate.country, "candidate country", 2),
+    caption: requiredString(candidate.caption, "candidate caption", 10_000),
+    hypothesis: requiredString(candidate.hypothesis, "candidate hypothesis", 2_000),
+    posting_slot: candidate.posting_slot,
+    appium_prompt: typeof candidate.appium_prompt === "string" ? candidate.appium_prompt : "",
+    image_inputs: image,
+    claim_ids: requireArray(candidate.claim_ids, "candidate claim_ids", 1, 16),
+  };
+}
+
+function normalizeLegacyCandidate(candidate) {
   const image = requireObject(candidate.image_inputs, "candidate image inputs");
   const traceItems = requireArray(image.trace_items, "candidate trace items", 5, 8);
-  if (traceItems.some((item) => typeof item !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d\s+.+$/.test(item))) {
-    throw new HttpError(400, "candidate trace items are invalid");
-  }
-  if (!["trace.candidate-materialization.v1"].includes(candidate.schema_version)) {
-    throw new HttpError(400, "candidate schema is invalid");
+  if (traceItems.some((item) => (
+    typeof item !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d\s+.+$/.test(item)
+  ))) {
+    throw new HttpError(400, "legacy candidate trace items are invalid");
   }
   if (!["morning", "evening", "manual"].includes(candidate.posting_slot)) {
     throw new HttpError(400, "candidate posting slot is invalid");
@@ -490,6 +604,14 @@ function sameSet(left, right) {
     && right.length === new Set(right).size
     && left.length === right.length
     && left.every((item) => right.includes(item));
+}
+
+function sameAllocation(left, right) {
+  return Boolean(left && right)
+    && left.method === right.method
+    && left.randomization_seed_sha256 === right.randomization_seed_sha256
+    && left.rank === right.rank
+    && left.posting_slot === right.posting_slot;
 }
 
 function canonicalJson(value) {

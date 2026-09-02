@@ -20,6 +20,13 @@ function digest(value) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+async function verifiedSourceFetcher(url) {
+  return new Response(`verified source body: ${url}`, {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  });
+}
+
 function packet() {
   return {
     schema_version: "trace.feature-evidence.v1",
@@ -165,6 +172,7 @@ test("market research stays quarantined and deterministically dispatches strateg
     task,
     callback,
     { worker_id: "worker-1" },
+    verifiedSourceFetcher,
   );
 
   assert.equal(accepted.state, "strategy_requested");
@@ -178,6 +186,17 @@ test("market research stays quarantined and deterministically dispatches strateg
   const strategyPayload = JSON.parse(strategyTask.task_json).payload;
   assert.equal(strategyPayload.reference_snapshot_sha256, digest(snapshot));
   assert.equal(strategyPayload.reference_snapshot.quarantine, true);
+  assert.equal(strategyPayload.reference_verification.receipts.length, 2);
+  assert.equal(
+    strategyPayload.reference_verification_sha256,
+    digest(strategyPayload.reference_verification),
+  );
+  assert.equal(
+    DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_reference_source_receipts",
+    ).get().count,
+    2,
+  );
   assert.equal(strategyPayload.feature_packet.claims.length, 1);
   assert.equal(
     DB.sqlite.prepare(

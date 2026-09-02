@@ -4,8 +4,9 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+import pytest
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.marketing_agent import (
@@ -23,14 +24,17 @@ from ads_booster.marketing.experiment_evaluation import (
 from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
 from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
 from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
+from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskStatus
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+_JSON_OBJECT_LIST: TypeAdapter[list[JsonObject]] = TypeAdapter(list[JsonObject])
+_STRING_LIST: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 
 def _digest(value: object) -> str:
@@ -208,6 +212,12 @@ def _candidate_task() -> MarketingTask:
                 "campaign_id": "campaign-1",
                 "assignment_id": "assignment-1",
                 "eligible_block_id": "experiment-1.block-1",
+                "allocation": {
+                    "method": "balanced_complete_blocks",
+                    "randomization_seed_sha256": None,
+                    "rank": 0,
+                    "posting_slot": None,
+                },
                 "feature_packet": packet.model_dump(mode="json"),
                 "feature_packet_sha256": contract_sha256(packet),
                 "strategy_brief": strategy.model_dump(mode="json"),
@@ -249,17 +259,123 @@ class StubJudgment:
         return self.result
 
 
+def _weekly_image_inputs() -> JsonObject:
+    colors = ("2D936C", "00B4D8", "F9C74F", "F26419", "DA4C93")
+    return _JSON_OBJECT.validate_python(
+        {
+            "trace_items": [
+                {
+                    "title": f"일정 {index + 1}",
+                    "day": index % 7,
+                    "days": 2 if index < 4 else 1,
+                    "time": f"{7 + index:02d}:00" if index < 4 else None,
+                    "color": colors[index % len(colors)],
+                }
+                for index in range(18)
+            ],
+            "trace_todos": [f"할 일 {index + 1}" for index in range(8)],
+            "device_time": "09:41",
+            "background_subject": "character_other",
+            "background_mood": "warm",
+            "background_search_query": None,
+            "language": "ko",
+        }
+    )
+
+
 def test_candidate_materializer_returns_one_bound_candidate_and_no_action(tmp_path: Path) -> None:
     proposal = _JSON_OBJECT.validate_python(
         {
-            "schema_version": "trace.candidate-materialization.v1",
+            "schema_version": "trace.candidate-materialization.v2",
             "topic": "A character's day",
             "country": "KR",
             "caption": "내 최애가 아침부터 밤까지 잠금화면에서 하루를 보낸다면?",
             "hypothesis": "Character continuity may improve attributed setup completion.",
             "posting_slot": "morning",
             "appium_prompt": "Capture the installed schedule.",
+            "image_inputs": _weekly_image_inputs(),
+            "claim_ids": ["claim-installed"],
+        }
+    )
+    executor = HostedCandidateJudgmentExecutor(
+        codex=StubJudgment(proposal),
+        output_root=tmp_path,
+    )
+
+    prepared = executor.prepare(_candidate_task())
+    definitions = _JSON_OBJECT.validate_python(prepared.schema["$defs"])
+    image_schema = _JSON_OBJECT.validate_python(definitions["CandidateImageInputs"])
+    image_properties = _JSON_OBJECT.validate_python(image_schema["properties"])
+    trace_items = _JSON_OBJECT.validate_python(image_properties["trace_items"])
+    trace_todos = _JSON_OBJECT.validate_python(image_properties["trace_todos"])
+    assert (trace_items["minItems"], trace_items["maxItems"]) == (18, 22)
+    assert (trace_todos["minItems"], trace_todos["maxItems"]) == (8, 12)
+    assert "background_intent" not in image_properties
+    entry_schema = _JSON_OBJECT.validate_python(definitions["CandidateScheduleEntry"])
+    assert entry_schema["required"] == ["title", "day", "days", "time", "color"]
+
+    result = executor.execute(prepared)
+
+    assert result.status is TaskStatus.SUCCEEDED
+    assert result.output["tool_actions_created"] == 0
+    assert result.output["candidate"] == proposal
+    assert result.output["candidate_sha256"] == _digest(proposal)
+
+
+def test_candidate_materializer_hashes_the_trimmed_callback_wire_value(tmp_path: Path) -> None:
+    image_inputs = _JSON_OBJECT.validate_python(_weekly_image_inputs())
+    trace_items = _JSON_OBJECT_LIST.validate_python(image_inputs["trace_items"])
+    trace_items[0]["title"] = "  일정 1  "
+    trace_todos = _STRING_LIST.validate_python(image_inputs["trace_todos"])
+    trace_todos[0] = "  할 일 1  "
+    image_inputs["trace_items"] = cast("JsonValue", trace_items)
+    image_inputs["trace_todos"] = cast("JsonValue", trace_todos)
+    image_inputs["background_mood"] = "  warm  "
+    image_inputs["background_search_query"] = "  cozy room  "
+    proposal = {
+        "schema_version": "trace.candidate-materialization.v2",
+        "topic": "  A character's day  ",
+        "country": "KR",
+        "caption": "  잠금화면에서 함께 보내는 하루  ",
+        "hypothesis": "  Continuity may improve setup completion.  ",
+        "posting_slot": "morning",
+        "appium_prompt": "Capture the installed schedule.",
+        "image_inputs": image_inputs,
+        "claim_ids": ["claim-installed"],
+    }
+    executor = HostedCandidateJudgmentExecutor(
+        codex=StubJudgment(_JSON_OBJECT.validate_python(proposal)),
+        output_root=tmp_path,
+    )
+
+    result = executor.execute(executor.prepare(_candidate_task()))
+
+    candidate = _JSON_OBJECT.validate_python(result.output["candidate"])
+    normalized_image = _JSON_OBJECT.validate_python(candidate["image_inputs"])
+    normalized_items = _JSON_OBJECT_LIST.validate_python(normalized_image["trace_items"])
+    normalized_todos = _STRING_LIST.validate_python(normalized_image["trace_todos"])
+    assert candidate["topic"] == "A character's day"
+    assert candidate["caption"] == "잠금화면에서 함께 보내는 하루"
+    assert candidate["hypothesis"] == "Continuity may improve setup completion."
+    assert normalized_items[0]["title"] == "일정 1"
+    assert normalized_todos[0] == "할 일 1"
+    assert normalized_image["background_mood"] == "warm"
+    assert normalized_image["background_search_query"] == "cozy room"
+    assert result.output["candidate_sha256"] == _digest(candidate)
+
+
+def test_candidate_materializer_rejects_the_legacy_day_zero_schedule(tmp_path: Path) -> None:
+    proposal = _JSON_OBJECT.validate_python(
+        {
+            "schema_version": "trace.candidate-materialization.v2",
+            "topic": "A character's day",
+            "country": "KR",
+            "caption": "내 최애가 하루를 함께 보낸다면?",
+            "hypothesis": "A weekly scene may improve setup completion.",
+            "posting_slot": "morning",
+            "appium_prompt": "Capture the installed schedule.",
             "image_inputs": {
+                **_weekly_image_inputs(),
                 "trace_items": [
                     "07:00 Wake up",
                     "09:00 Work",
@@ -267,11 +383,6 @@ def test_candidate_materializer_returns_one_bound_candidate_and_no_action(tmp_pa
                     "18:00 Commute",
                     "22:00 Sleep",
                 ],
-                "device_time": "09:41",
-                "background_subject": "character_other",
-                "background_mood": "warm",
-                "background_search_query": None,
-                "language": "ko",
             },
             "claim_ids": ["claim-installed"],
         }
@@ -281,12 +392,10 @@ def test_candidate_materializer_returns_one_bound_candidate_and_no_action(tmp_pa
         output_root=tmp_path,
     )
 
-    result = executor.execute(executor.prepare(_candidate_task()))
+    with pytest.raises(MarketingExecutionError) as captured:
+        _ = executor.execute(executor.prepare(_candidate_task()))
 
-    assert result.status is TaskStatus.SUCCEEDED
-    assert result.output["tool_actions_created"] == 0
-    assert result.output["candidate"] == proposal
-    assert result.output["candidate_sha256"] == _digest(proposal)
+    assert captured.value.failure_code == "candidate_judgment_result_invalid"
 
 
 def _evaluation(campaign_id: str, experiment_id: str, winner: str) -> ExperimentEvaluation:

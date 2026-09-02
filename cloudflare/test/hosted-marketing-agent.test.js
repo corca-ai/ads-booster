@@ -147,6 +147,7 @@ class CallbackDb {
     this.experiments = [];
     this.hypotheses = [];
     this.arms = [];
+    this.exposurePlans = [];
     this.events = [];
   }
 
@@ -159,8 +160,20 @@ class CallbackDb {
           ...statement,
           async first() {
             if (sql.includes("FROM hosted_marketing_context_snapshots")) return database.contextRow ?? null;
+            if (sql.includes("FROM hosted_marketing_reference_snapshots")) {
+              return database.referenceSnapshotRow ?? null;
+            }
+            if (sql.includes("FROM hosted_workspace_accounts AS account")) {
+              return database.accountRow ?? null;
+            }
             if (sql.includes("FROM hosted_marketing_campaigns")) return database.campaign;
             throw new Error(`unexpected first SQL: ${sql}`);
+          },
+          async all() {
+            if (sql.includes("FROM hosted_marketing_reference_source_receipts")) {
+              return { results: database.referenceReceiptRows ?? [] };
+            }
+            throw new Error(`unexpected all SQL: ${sql}`);
           },
           async run() {
             return database.execute(statement);
@@ -185,6 +198,8 @@ class CallbackDb {
       this.hypotheses.push(values);
     } else if (sql.includes("INSERT INTO hosted_marketing_experiment_arms")) {
       this.arms.push(values);
+    } else if (sql.includes("INSERT INTO hosted_marketing_experiment_exposure_plans")) {
+      this.exposurePlans.push(values);
     } else if (sql.includes("UPDATE hosted_marketing_campaigns")) {
       this.campaign.state = sql.includes("'failed'") ? "failed" : "experiment_registered";
       this.campaign.projection_revision = values[0];
@@ -242,6 +257,18 @@ function contextBoundJudgmentFixture() {
   payload.payload.marketing_context = projection;
   fixture.task.task_json = JSON.stringify(payload);
   fixture.receipt.marketing_context = projection;
+  fixture.brief.decision_dossier.selected_icp_id = signal.audience_segment_id;
+  fixture.brief.decision_dossier.selection_basis_ids.push(signal.signal_id);
+  fixture.brief.decision_dossier.evidence_dispositions.push({
+    evidence_id: signal.signal_id,
+    disposition: "supports",
+    confidence_basis_points: signal.confidence_basis_points,
+    freshness: "fresh",
+    use: "test",
+    reason: "The approved signal supports testing this audience segment.",
+  });
+  fixture.brief.decision_dossier.recommended_next_step = "design_experiment";
+  fixture.brief.decision_dossier.reason = "The approved segment is specific enough for a bounded test.";
   fixture.brief.context_receipt_sha256 = digest(fixture.receipt);
   fixture.result.output.context_receipt_sha256 = digest(fixture.receipt);
   fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
@@ -359,6 +386,29 @@ function judgmentFixture() {
     business_outcome: campaign.business_outcome,
     audience_situation: "좋아하는 캐릭터로 폰을 꾸미지만 정적 배경에 익숙한 아이폰 사용자",
     belief_to_change: "잠금화면은 장식이 아니라 하루에 반응하는 캐릭터 공간일 수 있다",
+    decision_dossier: {
+      schema_version: "trace.marketing-decision-dossier.v1",
+      situation: "new_launch",
+      selected_icp_id: "research_needed",
+      selection_basis_ids: ["diff-1"],
+      positioning: {
+        category: "dynamic lock-screen companion",
+        current_alternative: "one static lock-screen image",
+        differentiated_mechanism: "scheduled scenes keep one character present through the day",
+        proof_claim_ids: ["claim-concept"],
+      },
+      evidence_dispositions: [{
+        evidence_id: "diff-1",
+        disposition: "supports",
+        confidence_basis_points: 7000,
+        freshness: "unknown",
+        use: "test",
+        reason: "Source evidence supports the mechanism but not a validated ICP.",
+      }],
+      recommended_next_step: "research",
+      reason: "Validate a concrete audience segment before assisted execution.",
+      required_proof_ids: ["diff-1"],
+    },
     hypotheses,
     experiment,
     created_at: createdAt,
@@ -377,6 +427,111 @@ function judgmentFixture() {
     },
   };
   return { packet, task, campaign, receipt, brief, result };
+}
+
+function referenceBoundJudgmentFixture() {
+  const fixture = judgmentFixture();
+  const snapshot = {
+    schema_version: "trace.reference-research.v1",
+    snapshot_id: "snapshot-bound-1",
+    campaign_id: fixture.campaign.campaign_id,
+    feature_packet_sha256: fixture.campaign.feature_packet_sha256,
+    sources: [
+      {
+        source_id: "source-one",
+        url: "https://example.com/one",
+        title: "One",
+        source_type: "article",
+        summary: "Generic hooks are common.",
+        published_at: null,
+        accessed_at: "2026-08-31T00:00:00Z",
+      },
+      {
+        source_id: "source-two",
+        url: "https://example.org/two",
+        title: "Two",
+        source_type: "threads_post",
+        summary: "Day sequences invite replies.",
+        published_at: null,
+        accessed_at: "2026-08-31T00:00:00Z",
+      },
+    ],
+    observations: [
+      {
+        observation_id: "observation-one",
+        classification: "saturation",
+        statement: "The current control is saturated.",
+        source_ids: ["source-one"],
+        confidence_basis: "Observed repetition.",
+      },
+      {
+        observation_id: "observation-two",
+        classification: "counterevidence",
+        statement: "A sequence can be too complicated without visual proof.",
+        source_ids: ["source-two"],
+        confidence_basis: "Observed comprehension objections.",
+      },
+    ],
+    blind_spots: ["No private conversion data."],
+    quarantine: true,
+    collected_at: "2026-08-31T00:00:00Z",
+  };
+  const snapshotSha256 = digest(snapshot);
+  const receipts = snapshot.sources.map((source, index) => ({
+    schema_version: "trace.reference-source-receipt.v1",
+    receipt_id: `source-receipt-${index + 1}`,
+    source_id: source.source_id,
+    requested_url: source.url,
+    final_url: source.url,
+    http_status: 200,
+    content_type: "text/html",
+    content_sha256: String(index + 1).repeat(64),
+    byte_length: 100 + index,
+    fetched_at: "2026-08-31T00:00:00Z",
+  }));
+  const verification = {
+    schema_version: "trace.reference-verification.v1",
+    snapshot_id: snapshot.snapshot_id,
+    snapshot_sha256: snapshotSha256,
+    receipts,
+    verified_at: "2026-08-31T00:00:00Z",
+  };
+  const verificationSha256 = digest(verification);
+  const published = JSON.parse(fixture.task.task_json);
+  Object.assign(published.payload, {
+    reference_snapshot: snapshot,
+    reference_snapshot_sha256: snapshotSha256,
+    reference_verification: verification,
+    reference_verification_sha256: verificationSha256,
+  });
+  fixture.task.task_json = JSON.stringify(published);
+  for (const observation of snapshot.observations) {
+    fixture.brief.decision_dossier.evidence_dispositions.push({
+      evidence_id: observation.observation_id,
+      disposition: observation.classification === "counterevidence" ? "contradicts" : "insufficient",
+      confidence_basis_points: 5000,
+      freshness: "unknown",
+      use: observation.classification === "counterevidence" ? "use_as_constraint" : "test",
+      reason: "Quarantined market observation is retained without claiming verified freshness.",
+    });
+  }
+  fixture.brief.context_receipt_sha256 = digest(fixture.receipt);
+  fixture.result.output.context_receipt_sha256 = digest(fixture.receipt);
+  fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
+  return {
+    ...fixture,
+    snapshot,
+    verification,
+    referenceSnapshotRow: {
+      verification_bundle_json: canonicalJson(verification),
+      verification_bundle_sha256: verificationSha256,
+    },
+    referenceReceiptRows: receipts.map((receipt) => ({
+      source_id: receipt.source_id,
+      receipt_json: canonicalJson(receipt),
+      receipt_sha256: digest(receipt),
+    })),
+  };
 }
 
 test("feature packet normalization preserves only canonical shadow evidence", () => {
@@ -476,6 +631,50 @@ test("judgment callback stores a bound brief and registered experiment exactly o
   assert.equal(DB.briefs.length, 1);
 });
 
+test("causal strategy registration freezes one account and Threads exposure plan", async () => {
+  const fixture = judgmentFixture();
+  fixture.brief.experiment.primary_outcome = {
+    name: "setup_completed",
+    scope: "estimated_treatment_effect",
+    window_hours: 48,
+    causal_estimand: "difference in setup completion probability",
+  };
+  fixture.brief.experiment.allocation_method = "server_randomized_complete_blocks_v1";
+  fixture.brief.experiment.causal_treatment_hypothesis_id = "character-time";
+  fixture.brief.experiment.minimum_eligible_blocks = 2;
+  fixture.brief.experiment.maximum_posts = 4;
+  fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
+  const DB = new CallbackDb(fixture.campaign, fixture.task);
+  DB.accountRow = {
+    account_id: fixture.campaign.account_id,
+    timezone: "Asia/Seoul",
+    morning_time: "07:30",
+    evening_time: "19:30",
+    account_revision: 7,
+    profile_id: "profile-1",
+    threads_user_id: "threads-1",
+    username: "trace",
+    profile_state: "active",
+  };
+  await receiveHostedMarketingJudgmentCallback({ DB }, fixture.task, {
+    callback_id: `${fixture.task.task_id}:completed`,
+    task_id: fixture.task.task_id,
+    run_id: fixture.task.run_id,
+    account_id: fixture.task.account_id,
+    kind: "marketing_judgment",
+    result: fixture.result,
+  });
+  assert.equal(DB.exposurePlans.length, 1);
+  const plan = JSON.parse(DB.exposurePlans[0][9]);
+  assert.equal(plan.account_revision, 7);
+  assert.equal(plan.profile_id, "profile-1");
+  assert.equal(plan.threads_user_id_snapshot, "threads-1");
+  assert.equal(plan.timezone_snapshot, "Asia/Seoul");
+  assert.equal(DB.events.length, 1);
+  const event = JSON.parse(DB.events[0][6]);
+  assert.equal(event.exposure_plan_sha256, DB.exposurePlans[0][10]);
+});
+
 test("judgment callback rejects unsupported claims before writing canonical state", async () => {
   const fixture = judgmentFixture();
   fixture.brief.hypotheses[1].claim_ids = ["claim-runtime"];
@@ -498,6 +697,64 @@ test("judgment callback rejects unsupported claims before writing canonical stat
   );
   assert.equal(DB.receipts.length, 0);
   assert.equal(fixture.task.callback_id, null);
+});
+
+test("judgment callback rejects a strategy that hides required evidence disposition", async () => {
+  const fixture = judgmentFixture();
+  fixture.brief.decision_dossier.evidence_dispositions = [];
+  fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
+  const DB = new CallbackDb(fixture.campaign, fixture.task);
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback({ DB }, fixture.task, {
+      callback_id: `${fixture.task.task_id}:completed`,
+      task_id: fixture.task.task_id,
+      run_id: fixture.task.run_id,
+      account_id: fixture.task.account_id,
+      kind: "marketing_judgment",
+      result: fixture.result,
+    }),
+    /evidence dispositions/,
+  );
+  assert.equal(DB.briefs.length, 0);
+  assert.equal(fixture.task.callback_id, null);
+});
+
+test("judgment callback rejects unbound proof IDs before canonical writes", async () => {
+  const fixture = judgmentFixture();
+  fixture.brief.decision_dossier.required_proof_ids = ["invented-proof"];
+  fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
+  const DB = new CallbackDb(fixture.campaign, fixture.task);
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback({ DB }, fixture.task, {
+      callback_id: `${fixture.task.task_id}:completed`,
+      task_id: fixture.task.task_id,
+      run_id: fixture.task.run_id,
+      account_id: fixture.task.account_id,
+      kind: "marketing_judgment",
+      result: fixture.result,
+    }),
+    /required proof is unbound/,
+  );
+  assert.equal(DB.briefs.length, 0);
+});
+
+test("judgment callback mirrors the dossier reason length contract", async () => {
+  const fixture = judgmentFixture();
+  fixture.brief.decision_dossier.evidence_dispositions[0].reason = "x".repeat(1001);
+  fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
+  const DB = new CallbackDb(fixture.campaign, fixture.task);
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback({ DB }, fixture.task, {
+      callback_id: `${fixture.task.task_id}:completed`,
+      task_id: fixture.task.task_id,
+      run_id: fixture.task.run_id,
+      account_id: fixture.task.account_id,
+      kind: "marketing_judgment",
+      result: fixture.result,
+    }),
+    /evidence dispositions are incomplete or unsafe/,
+  );
+  assert.equal(DB.briefs.length, 0);
 });
 
 test("judgment callback rebinds the frozen customer context and rejects a rewritten projection", async () => {
@@ -538,4 +795,43 @@ test("judgment callback rebinds the frozen customer context and rejects a rewrit
     /strategy scope is invalid/,
   );
   assert.equal(forgedDb.receipts.length, 0);
+});
+
+test("judgment callback rebinds source receipts to immutable server provenance", async () => {
+  const fixture = referenceBoundJudgmentFixture();
+  const DB = new CallbackDb(fixture.campaign, fixture.task);
+  DB.referenceSnapshotRow = fixture.referenceSnapshotRow;
+  DB.referenceReceiptRows = fixture.referenceReceiptRows;
+  const callback = {
+    callback_id: `${fixture.task.task_id}:completed`,
+    task_id: fixture.task.task_id,
+    run_id: fixture.task.run_id,
+    account_id: fixture.task.account_id,
+    kind: "marketing_judgment",
+    result: fixture.result,
+  };
+  await receiveHostedMarketingJudgmentCallback({ DB }, fixture.task, callback);
+  assert.equal(DB.briefs.length, 1);
+
+  const forged = referenceBoundJudgmentFixture();
+  const forgedTask = JSON.parse(forged.task.task_json);
+  forgedTask.payload.reference_verification.receipts[0].content_sha256 = "9".repeat(64);
+  forgedTask.payload.reference_verification_sha256 = digest(
+    forgedTask.payload.reference_verification,
+  );
+  forged.task.task_json = JSON.stringify(forgedTask);
+  const forgedDb = new CallbackDb(forged.campaign, forged.task);
+  forgedDb.referenceSnapshotRow = forged.referenceSnapshotRow;
+  forgedDb.referenceReceiptRows = forged.referenceReceiptRows;
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback({ DB: forgedDb }, forged.task, {
+      ...callback,
+      task_id: forged.task.task_id,
+      run_id: forged.task.run_id,
+      account_id: forged.task.account_id,
+      result: forged.result,
+    }),
+    /not stored provenance/,
+  );
+  assert.equal(forgedDb.briefs.length, 0);
 });

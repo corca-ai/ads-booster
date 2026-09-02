@@ -27,7 +27,18 @@ export async function marketingReviewPacket(env, accountId, campaignId) {
     throw new MarketingReviewHttpError(409, "현재 검수할 정확한 marketing decision이 없습니다.");
   }
   const review = pending[0];
-  const [receipts, briefs, experiments, plans, treatments, requests, manifests, evaluations, learnings] =
+  const [
+    receipts,
+    briefs,
+    experiments,
+    plans,
+    treatments,
+    requests,
+    manifests,
+    evaluations,
+    reassessments,
+    learnings,
+  ] =
     await Promise.all([
       loadContextReceipts(env.DB, campaignId),
       loadStrategyBriefs(env.DB, campaignId),
@@ -37,6 +48,7 @@ export async function marketingReviewPacket(env, accountId, campaignId) {
       loadArtifactRequests(env.DB, campaignId),
       loadArtifactManifests(env.DB, campaignId),
       loadEvaluations(env.DB, campaignId),
+      loadOutcomeReassessments(env.DB, campaignId),
       loadLearningCandidates(env.DB, campaignId),
     ]);
   const selected = selectedClaimIds(review, briefs, plans);
@@ -75,6 +87,7 @@ export async function marketingReviewPacket(env, accountId, campaignId) {
     },
     outcomes: {
       evaluations,
+      reassessments,
     },
     learning: {
       candidates: learnings,
@@ -434,6 +447,24 @@ async function loadEvaluations(database, campaignId) {
     sha256: row.evaluation_sha256,
     value: storedJson(row.evaluation_json, "experiment evaluation"),
     evaluated_at: row.evaluated_at,
+  }));
+}
+
+async function loadOutcomeReassessments(database, campaignId) {
+  const rows = await database.prepare(
+    `SELECT reassessment_id, evaluation_id, situation, reassessment_sha256,
+            reassessment_json, state, created_at
+     FROM hosted_marketing_outcome_reassessments WHERE campaign_id = ?
+     ORDER BY created_at ASC, reassessment_id ASC`,
+  ).bind(campaignId).all();
+  return rows.results.map((row) => ({
+    reassessment_id: row.reassessment_id,
+    evaluation_id: row.evaluation_id,
+    situation: row.situation,
+    sha256: row.reassessment_sha256,
+    state: row.state,
+    value: storedJson(row.reassessment_json, "outcome reassessment"),
+    created_at: row.created_at,
   }));
 }
 

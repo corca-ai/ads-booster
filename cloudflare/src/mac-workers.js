@@ -223,7 +223,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
   const advertised = await claimableWorkerCapabilities(db, worker.worker_id);
   const kinds = advertised.kinds;
   if (kinds.length === 0) return [];
-  const supportedCapability = advertised.feedbackContext ? "feedback_context_v1" : "__none__";
+  const advertisedCapabilitiesJson = JSON.stringify(advertised.capabilities);
   const kindPlaceholders = kinds.map(() => "?").join(", ");
   const current = await db.prepare(
     `SELECT task_id, task_json, lease_id, attempt_count
@@ -232,9 +232,10 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
        AND callback_id IS NULL AND callback_reservation_id IS NULL
        AND execution_started_at IS NULL AND lease_expires_at > ?
        AND kind IN (${kindPlaceholders})
-       AND (required_capability IS NULL OR required_capability = ?)
+       AND (required_capability IS NULL
+            OR json_extract(?, '$.' || required_capability) = 1)
      ORDER BY created_at LIMIT 1`,
-  ).bind(worker.worker_id, now.toISOString(), ...kinds, supportedCapability).first();
+  ).bind(worker.worker_id, now.toISOString(), ...kinds, advertisedCapabilitiesJson).first();
   if (current) return [leaseResponse(current)];
 
   const reservation = `claim:${crypto.randomUUID()}`;
@@ -251,9 +252,10 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND callback_reservation_id IS NULL AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND kind IN (${kindPlaceholders})
-         AND (required_capability IS NULL OR required_capability = ?)
+         AND (required_capability IS NULL
+              OR json_extract(?, '$.' || required_capability) = 1)
        ORDER BY created_at LIMIT 1`,
-    ).bind(now.toISOString(), ...kinds, supportedCapability).first();
+    ).bind(now.toISOString(), ...kinds, advertisedCapabilitiesJson).first();
     if (!task) {
       await clearWorkerReservation(db, worker.worker_id, reservation, now);
       return [];
@@ -270,7 +272,8 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND kind IN (${kindPlaceholders})
-         AND (required_capability IS NULL OR required_capability = ?)
+         AND (required_capability IS NULL
+              OR json_extract(?, '$.' || required_capability) = 1)
          AND EXISTS (SELECT 1 FROM mac_workers
                      WHERE worker_id = ? AND state = 'active' AND current_task_id = ?)`,
     ).bind(
@@ -282,7 +285,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
       task.task_id,
       now.toISOString(),
       ...kinds,
-      supportedCapability,
+      advertisedCapabilitiesJson,
       worker.worker_id,
       reservation,
     ).run();
@@ -320,11 +323,11 @@ async function claimableWorkerCapabilities(db, workerId) {
   const row = await db.prepare(
     "SELECT capabilities_json FROM mac_workers WHERE worker_id = ?",
   ).bind(workerId).first();
-  if (!row) return { kinds: [], feedbackContext: false };
+  if (!row) return { kinds: [], capabilities: {} };
   const capabilities = parseObject(row.capabilities_json);
   return {
     kinds: workerTaskKinds(capabilities),
-    feedbackContext: capabilities.feedback_context_v1 === true,
+    capabilities,
   };
 }
 
