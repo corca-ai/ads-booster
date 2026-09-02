@@ -231,7 +231,7 @@ class _FeatureHand(FeatureLaunchHand):
     def observation_for(self, receipt: ToolReceipt) -> FeatureLaunchObservation:
         proposal = self.planner.proposal
         assert proposal is not None
-        return FeatureLaunchObservation(
+        observation = FeatureLaunchObservation(
             schema_version="trace.feature-launch-observation.v1",
             observation_id="launch-observation-1",
             receipt_sha256=receipt.receipt_sha256,
@@ -247,6 +247,7 @@ class _FeatureHand(FeatureLaunchHand):
             counter_evidence_found=self.counter_evidence_found,
             observed_at=NOW,
         )
+        return self.receipt_authority.record_feature_observation(observation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +260,7 @@ class FixtureReceiptAuthority:
 
     def __init__(self) -> None:
         self._issued: dict[str, ToolReceipt] = {}
+        self._feature_observations: dict[str, FeatureLaunchObservation] = {}
 
     def issue(self, *, kind: str, invocation: BoundToolInvocation) -> ToolReceipt:
         call = invocation.call
@@ -284,6 +286,22 @@ class FixtureReceiptAuthority:
                 continue
             receipt = tool_receipt_from_event(event)
             if self._issued.get(receipt.call_sha256) != receipt:
+                raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
+
+    def record_feature_observation(
+        self, observation: FeatureLaunchObservation
+    ) -> FeatureLaunchObservation:
+        recorded = self._feature_observations.setdefault(observation.receipt_sha256, observation)
+        if recorded != observation:
+            raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
+        return recorded
+
+    def validate_feature_observations(self, session: AgentSession) -> None:
+        for event in session.events:
+            if event.event_type != "feature_observation_recorded":
+                continue
+            observation = FeatureLaunchObservation.model_validate(event.payload)
+            if self._feature_observations.get(observation.receipt_sha256) != observation:
                 raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
 
 
@@ -354,6 +372,7 @@ class TestOnlyMarketingOsTraceVerifier:
         session: AgentSession,
     ) -> None:
         self.receipt_authority.validate(session)
+        self.receipt_authority.validate_feature_observations(session)
         research_context = self._research_context(case)
         self._store_research(research_context.store, research)
         goals = tuple(

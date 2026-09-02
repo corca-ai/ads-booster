@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
+from ads_booster.contracts.marketing_agent import contract_sha256
+from ads_booster.contracts.models import ContractModel
+from ads_booster.marketing.feature_launch_operator import (
+    FeatureLaunchEvaluation,
+    FeatureLaunchObservation,
+)
 from ads_booster.marketing.marketing_os_scorecard import (
     MarketingOsEvalCase,
     MarketingOsEvalExpectation,
@@ -276,6 +282,77 @@ def test_scorecard_rejects_a_rehashed_forged_research_receipt(tmp_path: Path) ->
     assert not forged.passed
 
 
+def test_scorecard_rejects_a_rehashed_forged_launch_observation_and_evaluation(
+    tmp_path: Path,
+) -> None:
+    cases = _load_cases()
+    environment = _environment()
+
+    class ForgedObservationRunner:
+        def run(self, case: MarketingOsEvalInput) -> MarketingOsEvalObservation:
+            observation = TestOnlyMarketingOsRunner(
+                tmp_path / "forged-launch-observation", environment
+            ).run(case)
+            if case.case_id != "trace.marketing-os.v2.case-003":
+                return observation
+            assert observation.launch_trace is not None
+            original_observation = _trace_model(
+                observation.launch_trace.events,
+                "feature_observation_recorded",
+                FeatureLaunchObservation,
+            )
+            forged_observation = original_observation.model_copy(
+                update={"counter_evidence_found": False}
+            )
+            original_evaluation = _trace_model(
+                observation.launch_trace.events,
+                "feature_evaluated",
+                FeatureLaunchEvaluation,
+            )
+            forged_evaluation = original_evaluation.model_copy(
+                update={
+                    "observation_sha256": contract_sha256(forged_observation),
+                    "outcome_passed": True,
+                    "state": "completed",
+                    "reasons": (
+                        "receipt_grounded_process",
+                        "claim_contained_measurable_experiment",
+                    ),
+                }
+            )
+            events = tuple(
+                _with_contract_payload(event, forged_observation)
+                if event.event_type == "feature_observation_recorded"
+                else _with_contract_payload(event, forged_evaluation)
+                if event.event_type == "feature_evaluated"
+                else _with_json_payload(
+                    event,
+                    {"reason": "completed", "state": "completed"},
+                )
+                if event.event_type == "session_finalized"
+                else event
+                for event in observation.launch_trace.events
+            )
+            return observation.model_copy(
+                update={
+                    "launch_trace": observation.launch_trace.model_copy(update={"events": events})
+                }
+            )
+
+    report = _scorecard(tmp_path, environment).evaluate(
+        cases, ForgedObservationRunner(), _metadata()
+    )
+    forged = report.results[2]
+
+    assert forged.assessment.launch_state == "completed"
+    assert forged.assessment.launch_vertical_trace_valid is False
+    assert forged.assessment.launch_process_passed is False
+    assert forged.assessment.launch_outcome_passed is False
+    assert "launch_vertical_trace_invalid" in forged.process_reasons
+    assert "launch_terminal_state_mismatch" in forged.environment_reasons
+    assert not forged.passed
+
+
 def _with_forged_proposal_digest(event: MarketingOsTraceEvent) -> MarketingOsTraceEvent:
     payload_value = cast("object", json.loads(event.payload_json))
     assert isinstance(payload_value, dict)
@@ -295,6 +372,25 @@ def _with_forged_receipt_digest(event: MarketingOsTraceEvent) -> MarketingOsTrac
     assert isinstance(payload_value, dict)
     payload = cast("JsonObject", payload_value)
     payload["receipt_sha256"] = "0" * 64
+    return _with_json_payload(event, payload)
+
+
+def _trace_model[T: ContractModel](
+    events: tuple[MarketingOsTraceEvent, ...], event_type: str, model: type[T]
+) -> T:
+    matching = tuple(event for event in events if event.event_type == event_type)
+    assert len(matching) == 1
+    return model.model_validate(json.loads(matching[0].payload_json))
+
+
+def _with_contract_payload(
+    event: MarketingOsTraceEvent,
+    contract: FeatureLaunchObservation | FeatureLaunchEvaluation,
+) -> MarketingOsTraceEvent:
+    return _with_json_payload(event, contract.model_dump(mode="json"))
+
+
+def _with_json_payload(event: MarketingOsTraceEvent, payload: JsonObject) -> MarketingOsTraceEvent:
     payload_json = canonical_json_object(payload)
     return event.model_copy(
         update={
