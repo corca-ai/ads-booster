@@ -124,7 +124,7 @@ class CodexAppiumReadyState(BaseModel):
     schema_version: Literal["trace.codex-appium-ready.v1"] = Field(alias="schema")
     session_id: str = Field(min_length=1, max_length=200)
     rendered_trace_item_titles: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...] = (
-        Field(max_length=8)
+        Field(max_length=24)
     )
 
 

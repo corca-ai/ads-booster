@@ -123,7 +123,7 @@ def test_codex_cli_acknowledges_failed_collection_before_process_cleanup(
     assert acknowledgement["collection_succeeded"] is False
 
 
-def test_codex_cli_verifies_live_editor_before_save_and_collection(
+def test_codex_cli_acknowledges_ten_visible_titles_before_save_and_collection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,10 +131,11 @@ def test_codex_cli_verifies_live_editor_before_save_and_collection(
     workspace = tmp_path / "job"
     workspace.mkdir()
     events: list[str] = []
+    visible_titles = [f"Visible title {index}" for index in range(10)]
 
     def run(command: list[str], **_kwargs: JsonValue) -> subprocess.CompletedProcess[str]:
         events.append("ready")
-        _write_ready_marker(workspace, rendered_trace_item_titles=["Focus block"])
+        _write_ready_marker(workspace, rendered_trace_item_titles=visible_titles)
         verified = workspace / "codex-appium-ready-verified.json"
         deadline = time.monotonic() + 1
         while not verified.exists() and time.monotonic() < deadline:
@@ -156,7 +157,7 @@ def test_codex_cli_verifies_live_editor_before_save_and_collection(
     monkeypatch.setattr("ads_booster.providers.codex_cli.subprocess.run", run)
 
     def verify_ready(ready: CodexAppiumReadyState) -> bool:
-        assert ready.rendered_trace_item_titles == ("Focus block",)
+        assert ready.rendered_trace_item_titles == tuple(visible_titles)
         events.append("verified")
         return True
 
