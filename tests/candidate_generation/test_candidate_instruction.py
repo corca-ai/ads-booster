@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -484,3 +485,59 @@ def test_parse_binds_a_candidate_to_the_domain_its_call_was_assigned() -> None:
         )
     assert "persona_domain은 배정된 순서대로 [parenting]" in failure.value.detail
     assert "[sports_fan] 를 받았습니다" in failure.value.detail
+
+
+_BACKGROUND_FIELDS = ("background_subject", "background_mood", "background_search_query")
+
+
+def _named_blocks(instruction: str) -> dict[str, str]:
+    """The instruction split at its own [제목] headings."""
+    headings = re.finditer(r"^\[([^\]]+)\]", instruction, re.MULTILINE)
+    marks = [(m.start(), m.group(1)) for m in headings]
+    marks.append((len(instruction), "END"))
+    return {
+        name: instruction[start : marks[index + 1][0]]
+        for index, (start, name) in enumerate(marks[:-1])
+    }
+
+
+def test_each_background_field_is_ruled_from_one_block_only(tmp_path: Path) -> None:
+    # Given the instruction a real batch is sent
+    instruction = build_instruction(_bundle(tmp_path), assignments=_for(3))
+    blocks = _named_blocks(instruction)
+
+    # When each background field is traced to the blocks that rule it
+    ruling = {
+        field: [name for name, body in blocks.items() if f"image_inputs.{field}" in body]
+        for field in _BACKGROUND_FIELDS
+    }
+
+    # Then no field is ruled from two places. Split across blocks, the rules drift apart and
+    # nothing reconciles them: 배경_분위기 was told to be a concrete scene while the search
+    # query two lines later was told never to be one, neither mentioned the other, and every
+    # stored query turned out to be the mood reworded.
+    for field, names in ruling.items():
+        instructing = [name for name in names if name != "출력 형식"]
+        assert len(instructing) <= 1, f"{field} 를 {instructing} 가 함께 지시합니다"
+
+
+def test_the_search_query_is_asked_for_before_the_mood(tmp_path: Path) -> None:
+    # Given the instruction and the output shape it describes
+    instruction = build_instruction(_bundle(tmp_path), assignments=_for(3))
+
+    # When the two adjacent background fields are located in the output example
+    query_at = instruction.index('"background_search_query"')
+    mood_at = instruction.index('"background_mood"')
+
+    # Then the name is asked for first. Asked the other way round, the model wrote the scene
+    # and then reworded it into the query rather than naming the wallpaper.
+    assert query_at < mood_at
+
+
+def test_the_search_query_rule_forbids_rewording_the_mood(tmp_path: Path) -> None:
+    # Given the instruction a real batch is sent
+    instruction = build_instruction(_bundle(tmp_path), assignments=_for(3))
+
+    # Then the one thing the model actually did is named, not just described in general.
+    # "Do not write a sentence" was already there and did not hold.
+    assert "background_mood 를 바꿔 쓰지 마세요" in instruction

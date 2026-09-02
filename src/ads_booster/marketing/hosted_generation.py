@@ -177,8 +177,13 @@ class GeneratedImageInputs(GenerationModel):
         "sports_team",
         "none",
     ]
-    background_mood: Annotated[str, Field(min_length=1, max_length=40)]
+    # The query comes before the mood on purpose. Written the other way round, the model
+    # produced the mood first and then reworded it into the query - three stored rows in a
+    # row did exactly that, down to "해질녘 캠핑장, 아이 둘의 뒷모습" becoming "해질녘
+    # 캠핑장 아이 둘 뒷모습 가족사진 배경화면". Naming the wallpaper first gives the mood
+    # something to describe, instead of giving the query something to paraphrase.
     background_search_query: Annotated[str | None, Field(max_length=200)] = None
+    background_mood: Annotated[str, Field(min_length=1, max_length=40)]
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
 
 
