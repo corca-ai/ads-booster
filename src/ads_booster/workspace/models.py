@@ -37,6 +37,17 @@ class CandidateBackgroundSubject(StrEnum):
     NONE = "none"
 
 
+# What generation may choose from. `family_photo` stays in the vocabulary above so records
+# already holding it keep reading, but it is not offered: nobody can search for a stranger's
+# family, so the query always came back as a scene sentence ("노을 아래 놀이터로 달려가는
+# 두 아이의 가족사진"), and the KR corpus tags it zero times across forty-one records.
+OFFERED_BACKGROUND_SUBJECTS: Final = tuple(
+    subject
+    for subject in CandidateBackgroundSubject
+    if subject is not CandidateBackgroundSubject.FAMILY_PHOTO
+)
+
+
 @unique
 class CandidatePersonaDomain(StrEnum):
     """The fixed vocabulary of persona domains one generated candidate can belong to.

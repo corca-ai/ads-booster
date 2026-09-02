@@ -7,6 +7,7 @@ lock-screen image is made of, and what one batch recorded about itself while it 
 """
 
 from ads_booster.workspace.models import (
+    OFFERED_BACKGROUND_SUBJECTS,
     PERSONA_DOMAIN_LABELS,
     CandidateAccountBrief,
     CandidateBackgroundIntent,
@@ -36,6 +37,7 @@ from ads_booster.workspace.models import (
 )
 
 __all__ = [
+    "OFFERED_BACKGROUND_SUBJECTS",
     "PERSONA_DOMAIN_LABELS",
     "CandidateAccountBrief",
     "CandidateBackgroundIntent",

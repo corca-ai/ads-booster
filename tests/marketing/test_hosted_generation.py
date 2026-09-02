@@ -599,7 +599,7 @@ def test_the_search_query_may_be_written_as_null_but_never_left_out() -> None:
         "device_time": "21:16",
         "background_subject": "sports_team",
         "background_search_query": None,
-        "background_mood": "밤 경기 외야석 너머 환한 전광판",
+        "background_mood": "환한 전광판",
         "language": "ko",
     }
 
@@ -621,9 +621,9 @@ def _query(written: str | None, language: str = "ko") -> str | None:
             "trace_items": [row] * 5,
             "trace_todos": [],
             "device_time": "07:42",
-            "background_subject": "family_photo",
+            "background_subject": "scenery",
             "background_search_query": written,
-            "background_mood": "해 질 무렵 그네 옆을 뛰어가는 남매",
+            "background_mood": "차분한 청록",
             "language": language,
         }
     ).background_search_query
@@ -657,3 +657,38 @@ def test_an_unwritten_query_is_not_turned_into_a_bare_wallpaper_search() -> None
     # Then null stays null. "배경화면" alone names no wallpaper, and the capture is better
     # served by the composed intent fallback than by a search for the word itself.
     assert _query(None) is None
+
+
+def test_a_family_photo_is_no_longer_offered_to_generation() -> None:
+    # Given the vocabulary a Codex turn may choose a background subject from
+    offered = _JSON_OBJECT.validate_python(_image_inputs_schema()["properties"])
+
+    # Then family_photo is not in it. Nobody can search for a stranger's family, so the
+    # query for that subject always came back as a scene ("노을 아래 놀이터로 달려가는 두
+    # 아이의 가족사진"), and the KR corpus tags it zero times across forty-one records.
+    subject = _JSON_OBJECT.validate_python(offered["background_subject"])
+    assert "family_photo" not in _STRING_LIST.validate_python(subject["enum"])
+    # And the subjects that name something a person actually likes are still there.
+    assert {"character_kitty", "sports_team", "scenery", "minimal"} <= set(
+        _STRING_LIST.validate_python(subject["enum"])
+    )
+
+
+def test_the_mood_is_too_small_to_hold_a_scene() -> None:
+    # Given a mood written as the scene the field used to invite
+    row: JsonObject = {"title": "출근", "day": 0, "days": 1, "time": None, "color": None}
+    written: dict[str, object] = {
+        "trace_items": [row] * 5,
+        "trace_todos": [],
+        "device_time": "07:42",
+        "background_subject": "scenery",
+        "background_search_query": "제주 바다 배경화면",
+        "background_mood": "해 질 무렵 그네 옆을 뛰어가는 남매",
+        "language": "ko",
+    }
+
+    # Then it is cut back to a colour and a tone rather than losing the turn. The query kept
+    # coming back as this field reworded, so the field is no longer big enough to reword.
+    parsed = GeneratedImageInputs.model_validate(written)
+    assert len(parsed.background_mood) <= 12
+    assert parsed.background_search_query == "제주 바다 배경화면"

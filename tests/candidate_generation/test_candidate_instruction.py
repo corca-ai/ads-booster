@@ -112,8 +112,8 @@ def test_instruction_carries_every_document_and_the_hard_rules(tmp_path: Path) -
     assert "character_kitty" in instruction
     assert "sports_team" in instruction
     assert "18~22개를 만드세요" in instruction
-    assert "모호어 대신 실제로 보이는 것을" in instruction
-    assert "실제로 잠금화면에 설정해뒀을 법한 배경" in instruction
+    assert "그 배경의 **색과 톤 한마디**" in instruction
+    assert "실제로 잠금화면에 설정해뒀을\n     법한 배경" in instruction
 
 
 def test_instruction_states_the_schedule_format_the_lock_screen_can_render(
@@ -238,10 +238,7 @@ def _assert_craft_block(instruction: str) -> None:
     assert "기아전 직관" in instruction
     assert '"회의", "운동", "공부", "약속" 같은 범용 항목은 금지입니다.' in instruction
     assert "그 사람의 생활 리듬과 맞아야 합니다" in instruction
-    assert (
-        "실존 인물명·캐릭터명·팀명을 쓰는 자리는 image_inputs.background_search_query 하나뿐입니다."
-        in instruction
-    )
+    assert "고유명사를\n     쓰는 자리는 여기 하나뿐입니다." in instruction
     assert "background_mood와 topic에는 넣지 마세요" in instruction
     assert "캡션의 화자는 그 사람 본인입니다" in instruction
 
@@ -258,11 +255,9 @@ def test_instruction_sanctions_real_names_only_in_the_background_search_query(
 
     # Then the rule block asks for a wallpaper, not an occupation scene, and allows proper
     # nouns there
-    assert '"그 사람이 자기 폰 배경화면으로 저장해뒀을 사진"을 찾는 검색어' in instruction
-    assert (
-        "이 필드에 한해 실존 인물명·캐릭터명·팀명·아이돌 그룹명을 그대로 써도 됩니다."
-        in instruction
-    )
+    assert '**"이름 + 배경화면"**' in instruction
+    assert "이름은 계정 블록의 관심사에서 고르세요" in instruction
+    assert "이 필드에 한해 실존 인물명·캐릭터명·팀명·작품명을 그대로 써도 됩니다." in instruction
     # And every example ends in the word, because the search runs the string verbatim:
     # bare "김도영" returns news photography the resolution gate then throws away whole.
     assert '"김도영 배경화면"' in instruction
@@ -555,10 +550,18 @@ def test_the_search_query_is_asked_for_before_the_mood(tmp_path: Path) -> None:
     assert query_at < mood_at
 
 
-def test_the_search_query_rule_forbids_rewording_the_mood(tmp_path: Path) -> None:
+def test_the_mood_is_too_small_to_hold_a_scene_for_the_query_to_copy(tmp_path: Path) -> None:
     # Given the instruction a real batch is sent
     instruction = build_instruction(_bundle(tmp_path), assignments=_for(3))
 
-    # Then the one thing the model actually did is named, not just described in general.
-    # "Do not write a sentence" was already there and did not hold.
-    assert "background_mood 를 바꿔 쓰지 마세요" in instruction
+    # Then the mood is asked for as a colour and a tone rather than as a scene. Telling the
+    # model not to reword the mood was already tried and did not hold; forty characters is
+    # room for a whole scene, and whatever sits in that field is what the query copies. A
+    # field that cannot hold a scene is one no scene can be copied out of.
+    assert "그 배경의 **색과 톤 한마디**" in instruction
+    assert "12자 안에서" in instruction
+    assert "장면을 쓰는 자리가 아닙니다" in instruction
+    # And the query is asked for as a name drawn from what this person likes, which is what
+    # makes it short without making it generic.
+    assert "**장면을 쓰지 마세요.**" in instruction
+    assert "이름은 계정 블록의 관심사에서 고르세요" in instruction
