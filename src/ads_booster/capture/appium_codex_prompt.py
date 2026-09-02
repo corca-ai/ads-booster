@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from datetime import date
 
 WallpaperTemplate = Literal["panels", "week_and_panels"]
 
@@ -11,21 +14,49 @@ WallpaperTemplate = Literal["panels", "week_and_panels"]
 # which is why the batch alternates rather than settling on one.
 _TEMPLATES: Final[tuple[WallpaperTemplate, ...]] = ("panels", "week_and_panels")
 
+_WEEK_DAYS: Final = 7
+# Fewer days than this left in the week and the strip has nowhere to spread a week of rows:
+# it would draw one crowded column, and the panels beside it would list a person with twenty
+# things on a single day. That capture builds the layout without a strip instead.
+_MINIMUM_STRIP_DAYS: Final = 4
+
 _WEEK_STRIP_STEP: Final = """- Above the two cells, add the 주간 캘린더 component so the week's
   rows also draw as bars across the seven days. If it offers a
   캘린더 / 미리알림 지정 screen, select the same calendar there.
 """
 
 
-def wallpaper_template(candidate_id: str) -> WallpaperTemplate:
+def days_left_in_week(reference: date) -> int:
+    """Days from the captured day through the Saturday the 주간 캘린더 strip ends on.
+
+    The strip draws one calendar week, Sunday through Saturday, so a row placed past that
+    Saturday lands on a week the strip never shows. `date.weekday()` counts from Monday and
+    the strip starts on Sunday, hence the shift.
+    """
+    return _WEEK_DAYS - (reference.weekday() + 1) % _WEEK_DAYS
+
+
+def wallpaper_template(candidate_id: str, reference: date) -> WallpaperTemplate:
     """Which screen shape this candidate builds.
 
     Derived from the candidate rather than drawn at random, so a retry rebuilds the screen
     the first attempt was making. A capture that fails and comes back as a different layout
-    is one nobody can compare against the run that failed.
+    is one nobody can compare against the run that failed. The reference day is the one
+    fixed on the job contract, so it is stable across a retry too.
     """
+    if days_left_in_week(reference) < _MINIMUM_STRIP_DAYS:
+        return "panels"
     digest = sha256(candidate_id.encode("utf-8")).digest()
     return _TEMPLATES[digest[0] % len(_TEMPLATES)]
+
+
+def drawable_days(reference: date, template: WallpaperTemplate) -> int:
+    """How many days ahead of the captured day a row can be placed and still be drawn.
+
+    Only the strip is bounded by the calendar week. The 일정 목록 panels list what the
+    calendar holds rather than a fixed week, so the layout without a strip keeps all seven.
+    """
+    return days_left_in_week(reference) if template == "week_and_panels" else _WEEK_DAYS
 
 
 def codex_appium_prompt(template: WallpaperTemplate = "panels") -> str:
@@ -106,3 +137,12 @@ codex-appium-collected.json. Do not close the Appium session, navigate away, or 
 Trace before that acknowledgement exists and its session_id matches yours. After acknowledgement,
 close the Appium session even when collection_succeeded is false. Return only the requested JSON
 and report status=completed only when all observable conditions hold."""
+
+
+__all__ = [
+    "WallpaperTemplate",
+    "codex_appium_prompt",
+    "days_left_in_week",
+    "drawable_days",
+    "wallpaper_template",
+]
