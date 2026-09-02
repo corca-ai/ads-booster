@@ -11,6 +11,12 @@ import pytest
 
 from ads_booster.contracts.marketing_agent import contract_sha256
 from ads_booster.contracts.models import ContractModel
+from ads_booster.marketing.evidence_research_operator import (
+    ResearchObservation,
+    ResearchScope,
+    ResearchState,
+    ResearchStepEvaluation,
+)
 from ads_booster.marketing.feature_launch_operator import (
     FeatureLaunchEvaluation,
     FeatureLaunchObservation,
@@ -353,6 +359,88 @@ def test_scorecard_rejects_a_rehashed_forged_launch_observation_and_evaluation(
     assert not forged.passed
 
 
+def test_scorecard_rejects_a_rehashed_forged_research_observation_and_evaluations(
+    tmp_path: Path,
+) -> None:
+    cases = _load_cases()
+    environment = _environment()
+
+    class ForgedObservationRunner:
+        def run(self, case: MarketingOsEvalInput) -> MarketingOsEvalObservation:
+            observation = TestOnlyMarketingOsRunner(
+                tmp_path / "forged-research-observation", environment
+            ).run(case)
+            if case.case_id != "trace.marketing-os.v2.case-002":
+                return observation
+            research_observations = _trace_models(
+                observation.research_trace.events,
+                "research_observation_recorded",
+                ResearchObservation,
+            )
+            customer_observation = next(
+                item
+                for item in research_observations
+                if item.scope is ResearchScope.CUSTOMER_INTELLIGENCE
+            )
+            forged_observation = customer_observation.model_copy(
+                update={"evidence_status": "sufficient"}
+            )
+            evaluations = _trace_models(
+                observation.research_trace.events,
+                "research_step_evaluated",
+                ResearchStepEvaluation,
+            )
+            forged_evaluations = {
+                item.evaluation_id: item.model_copy(
+                    update={
+                        "state": ResearchState.CONTINUE,
+                        "missing_scopes": (ResearchScope.MARKET_EVIDENCE,),
+                        "reasons": ("missing_scope:market_evidence",),
+                    }
+                )
+                if item.completed_iterations == 2
+                else item.model_copy(
+                    update={
+                        "outcome_ready": True,
+                        "state": ResearchState.COMPLETED,
+                        "missing_scopes": (),
+                        "reasons": ("receipt_grounded_evidence_complete",),
+                    }
+                )
+                if item.completed_iterations == 3
+                else item
+                for item in evaluations
+            }
+            events = tuple(
+                _with_forged_research_completion_event(
+                    event,
+                    forged_observation,
+                    forged_evaluations,
+                )
+                for event in observation.research_trace.events
+            )
+            return observation.model_copy(
+                update={
+                    "research_trace": observation.research_trace.model_copy(
+                        update={"events": events}
+                    )
+                }
+            )
+
+    report = _scorecard(tmp_path, environment).evaluate(
+        cases, ForgedObservationRunner(), _metadata()
+    )
+    forged = report.results[1]
+
+    assert forged.assessment.research_state == "completed"
+    assert forged.assessment.research_vertical_trace_valid is False
+    assert forged.assessment.research_process_passed is False
+    assert forged.assessment.research_outcome_ready is False
+    assert "research_vertical_trace_invalid" in forged.process_reasons
+    assert "research_terminal_state_mismatch" in forged.environment_reasons
+    assert not forged.passed
+
+
 def _with_forged_proposal_digest(event: MarketingOsTraceEvent) -> MarketingOsTraceEvent:
     payload_value = cast("object", json.loads(event.payload_json))
     assert isinstance(payload_value, dict)
@@ -385,9 +473,36 @@ def _trace_model[T: ContractModel](
 
 def _with_contract_payload(
     event: MarketingOsTraceEvent,
-    contract: FeatureLaunchObservation | FeatureLaunchEvaluation,
+    contract: ContractModel,
 ) -> MarketingOsTraceEvent:
     return _with_json_payload(event, contract.model_dump(mode="json"))
+
+
+def _trace_models[T: ContractModel](
+    events: tuple[MarketingOsTraceEvent, ...], event_type: str, model: type[T]
+) -> tuple[T, ...]:
+    return tuple(
+        model.model_validate(json.loads(event.payload_json))
+        for event in events
+        if event.event_type == event_type
+    )
+
+
+def _with_forged_research_completion_event(
+    event: MarketingOsTraceEvent,
+    observation: ResearchObservation,
+    evaluations: dict[str, ResearchStepEvaluation],
+) -> MarketingOsTraceEvent:
+    if event.event_type == "research_observation_recorded":
+        original = ResearchObservation.model_validate(json.loads(event.payload_json))
+        if original.observation_id == observation.observation_id:
+            return _with_contract_payload(event, observation)
+    if event.event_type == "research_step_evaluated":
+        original_evaluation = ResearchStepEvaluation.model_validate(json.loads(event.payload_json))
+        return _with_contract_payload(event, evaluations[original_evaluation.evaluation_id])
+    if event.event_type == "session_finalized":
+        return _with_json_payload(event, {"reason": "completed", "state": "completed"})
+    return event
 
 
 def _with_json_payload(event: MarketingOsTraceEvent, payload: JsonObject) -> MarketingOsTraceEvent:

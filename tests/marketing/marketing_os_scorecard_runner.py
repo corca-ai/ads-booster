@@ -152,7 +152,7 @@ class _ResearchHand(EvidenceResearchHand):
     @override
     def observation_for(self, receipt: ToolReceipt) -> ResearchObservation:
         decision = self.planner.decisions[self.scope]
-        return ResearchObservation(
+        observation = ResearchObservation(
             schema_version="trace.evidence-research-observation.v1",
             observation_id=f"observation-{self.scope}",
             scope=self.scope,
@@ -167,6 +167,7 @@ class _ResearchHand(EvidenceResearchHand):
             evidence_status=self.status,
             observed_at=NOW,
         )
+        return self.receipt_authority.record_research_observation(observation)
 
 
 class _FeaturePlanner:
@@ -260,6 +261,7 @@ class FixtureReceiptAuthority:
 
     def __init__(self) -> None:
         self._issued: dict[str, ToolReceipt] = {}
+        self._research_observations: dict[str, ResearchObservation] = {}
         self._feature_observations: dict[str, FeatureLaunchObservation] = {}
 
     def issue(self, *, kind: str, invocation: BoundToolInvocation) -> ToolReceipt:
@@ -286,6 +288,20 @@ class FixtureReceiptAuthority:
                 continue
             receipt = tool_receipt_from_event(event)
             if self._issued.get(receipt.call_sha256) != receipt:
+                raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
+
+    def record_research_observation(self, observation: ResearchObservation) -> ResearchObservation:
+        recorded = self._research_observations.setdefault(observation.receipt_sha256, observation)
+        if recorded != observation:
+            raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
+        return recorded
+
+    def validate_research_observations(self, session: AgentSession) -> None:
+        for event in session.events:
+            if event.event_type != "research_observation_recorded":
+                continue
+            observation = ResearchObservation.model_validate(event.payload)
+            if self._research_observations.get(observation.receipt_sha256) != observation:
                 raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
 
     def record_feature_observation(
@@ -344,6 +360,7 @@ class TestOnlyMarketingOsTraceVerifier:
 
     def validate_research(self, case: MarketingOsEvalInput, session: AgentSession) -> None:
         self.receipt_authority.validate(session)
+        self.receipt_authority.validate_research_observations(session)
         context = self._research_context(case)
         _ = EvidenceResearchOperator(MarketingAgentRuntime()).run(session, context)
 

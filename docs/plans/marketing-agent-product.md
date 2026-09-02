@@ -158,19 +158,19 @@ counter-evidence, blocked claims, and evidence-brief mismatch. A fluent final an
 corpus alone.
 
 The grader pins a vertical verifier that re-runs Research and Feature Launch contracts. A separate
-test-owned authority issues fixture receipts and records the full Feature Launch observation before its
-trace append; the verifier compares both records against the returned trace. Failure is an invalid trial
-rather than an expected `process_passed: false` result, and also prevents a research or launch outcome
-from passing. A canonicalized fabricated trace therefore cannot pass by imitating a safe blocked-claim
-stop, a matching forged receipt/observation pair, or a forged counter-evidence result plus re-derived
-evaluation. This is a test-only proof boundary, not a claim that remote adapter receipts are trusted
-yet.
+test-owned authority issues fixture receipts and records each full Research or Feature Launch
+observation before its trace append; the verifier compares both records against the returned trace.
+Failure is an invalid trial rather than an expected `process_passed: false` result, and also prevents a
+research or launch outcome from passing. A canonicalized fabricated trace therefore cannot pass by
+imitating a safe blocked-claim stop, a matching forged receipt/observation pair, a forged
+counter-evidence result plus re-derived evaluation, or an insufficient Research observation changed to
+sufficient with re-derived step evaluations and completed finalization. This is a test-only proof
+boundary, not a claim that remote adapter receipts are trusted yet.
 
-Next, extend the regression baseline with authority-backed Research observation semantics; that wider
-cross-session brief handoff must remain bounded. Duplicate dispatch and restart after execution-start
-remain owned by runtime-ledger tests, while stale/revoked approval requires an external-effect adapter.
-Use a private corpus loader plus real provider/model repeated trials for model validation. Do not call
-the source-visible baseline a model-quality or market-effectiveness result.
+Next, add a private corpus loader plus real provider/model repeated trials before treating this as
+model-quality validation. Duplicate dispatch and restart after execution-start remain owned by
+runtime-ledger tests, while stale/revoked approval requires an external-effect adapter. Do not call the
+source-visible baseline a model-quality or market-effectiveness result.
 
 Exit: a cross-session run is reproducible from fixtures; each failure has a typed reason; an independent
 review can distinguish a regression in a skill, tool, evaluator, or runtime.
