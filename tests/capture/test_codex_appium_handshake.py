@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ads_booster.capture.appium_codex import CodexAppiumJobAdapter
-from ads_booster.capture.appium_codex_prompt import codex_appium_prompt, wallpaper_template
+from ads_booster.capture.appium_codex_prompt import (
+    codex_appium_prompt,
+    days_left_in_week,
+    wallpaper_template,
+)
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
@@ -604,18 +609,42 @@ def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
 
 
 def test_wallpaper_template_is_stable_for_a_candidate_and_covers_both_shapes() -> None:
-    # Given a batch of candidates
+    # Given a batch of candidates captured on a Sunday, when the whole week is still ahead
     ids = tuple(f"11111111-2222-3333-4444-{index:012d}" for index in range(40))
+    sunday = date(2026, 8, 30)
 
     # When each one's screen shape is chosen
-    chosen = [wallpaper_template(candidate) for candidate in ids]
+    chosen = [wallpaper_template(candidate, sunday) for candidate in ids]
 
     # Then a candidate always builds the same shape. A capture that fails and comes back as
     # a different layout cannot be compared against the run that failed.
-    assert chosen == [wallpaper_template(candidate) for candidate in ids]
+    assert chosen == [wallpaper_template(candidate, sunday) for candidate in ids]
     # And both shapes appear, because the two reference posts that reached the most people
     # were one of each: a screen with the week strip and a screen without it.
     assert set(chosen) == {"panels", "week_and_panels"}
+
+
+def test_wallpaper_template_when_the_week_is_nearly_over_then_drops_the_strip() -> None:
+    # Given the same batch captured on each day of one week
+    ids = tuple(f"11111111-2222-3333-4444-{index:012d}" for index in range(40))
+    week = tuple(date(2026, 8, 30) + timedelta(days=offset) for offset in range(7))
+
+    # When each day's shapes are chosen
+    shapes = {day: {wallpaper_template(candidate, day) for candidate in ids} for day in week}
+
+    # Then the strip is only built while the week has room left to spread a week of rows
+    # across. Late in the week it would draw one crowded column, so those captures take the
+    # panels instead — a shape that lists the calendar rather than a fixed seven days.
+    assert [days_left_in_week(day) for day in week] == [7, 6, 5, 4, 3, 2, 1]
+    assert [sorted(shapes[day]) for day in week] == [
+        ["panels", "week_and_panels"],
+        ["panels", "week_and_panels"],
+        ["panels", "week_and_panels"],
+        ["panels", "week_and_panels"],
+        ["panels"],
+        ["panels"],
+        ["panels"],
+    ]
 
 
 def test_codex_appium_prompt_adds_the_week_strip_only_for_that_shape() -> None:

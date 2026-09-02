@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from ads_booster.capture.appium_codex_prompt import drawable_days
 from ads_booster.capture.calendar_preparation import (
     CalendarAutomationOperation,
     CalendarAutomationRequest,
@@ -337,3 +338,91 @@ def test_cleanup_when_preparation_is_request_owned_then_removes_only_that_calend
             events=build_calendar_events(contract),
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [
+        (datetime(2026, 8, 30, tzinfo=UTC), 7),
+        (datetime(2026, 8, 31, tzinfo=UTC), 6),
+        (datetime(2026, 9, 1, tzinfo=UTC), 5),
+        (datetime(2026, 9, 2, tzinfo=UTC), 4),
+        (datetime(2026, 9, 3, tzinfo=UTC), 3),
+        (datetime(2026, 9, 4, tzinfo=UTC), 2),
+        (datetime(2026, 9, 5, tzinfo=UTC), 1),
+    ],
+)
+def test_drawable_days_when_the_strip_is_shown_then_stops_at_that_saturday(
+    reference: datetime,
+    expected: int,
+) -> None:
+    # Given a capture day somewhere in a week the 주간 캘린더 strip will draw
+    day = reference.date()
+
+    # When the layout that carries the strip asks how far ahead a row still draws
+    span = drawable_days(day, "week_and_panels")
+
+    # Then the answer runs to that Saturday, because the strip never shows the week after it
+    assert span == expected
+    assert drawable_days(day, "panels") == 7
+
+
+def test_build_calendar_events_when_the_strip_is_shown_then_folds_the_week_into_it() -> None:
+    # Given a Wednesday capture whose layout carries the strip, and rows spread over the week
+    contract = v2_contract(
+        V2JobInputs(
+            request_id="request-1",
+            reference_date=datetime(2026, 9, 2, tzinfo=UTC),
+            trace_items=(
+                {"title": "오늘", "day": 0, "days": 1, "time": None},
+                {"title": "모레", "day": 2, "days": 1, "time": None},
+                {"title": "다음주", "day": 5, "days": 1, "time": None},
+                {"title": "해외출장", "day": 1, "days": 4, "time": None},
+            ),
+        )
+    )
+    local_zone = ZoneInfo(contract.time_zone)
+    wednesday = datetime(2026, 9, 2, tzinfo=local_zone)
+
+    # When worker preparation converts those rows into EventKit event inputs
+    events = build_calendar_events(contract)
+
+    # Then the row past that Saturday folds back onto it, and the bar is trimmed not dropped
+    assert tuple((event.starts_at_epoch, event.ends_at_epoch) for event in events) == (
+        (
+            int(wednesday.timestamp()),
+            int(datetime(2026, 9, 3, tzinfo=local_zone).timestamp()),
+        ),
+        (
+            int(datetime(2026, 9, 4, tzinfo=local_zone).timestamp()),
+            int(datetime(2026, 9, 5, tzinfo=local_zone).timestamp()),
+        ),
+        (
+            int(datetime(2026, 9, 5, tzinfo=local_zone).timestamp()),
+            int(datetime(2026, 9, 6, tzinfo=local_zone).timestamp()),
+        ),
+        (
+            int(datetime(2026, 9, 3, tzinfo=local_zone).timestamp()),
+            int(datetime(2026, 9, 6, tzinfo=local_zone).timestamp()),
+        ),
+    )
+    # And nothing is moved before the capture day, so the panels lose no rows to the fold
+    assert min(event.starts_at_epoch for event in events) >= int(wednesday.timestamp())
+
+
+def test_build_calendar_events_when_no_strip_is_shown_then_keeps_the_whole_week() -> None:
+    # Given the same Wednesday capture on the layout that has no 주간 캘린더 strip
+    contract = v2_contract(
+        V2JobInputs(
+            request_id="request-3",
+            calendar_namespace="trace-request-3",
+            reference_date=datetime(2026, 9, 2, tzinfo=UTC),
+            trace_items=({"title": "다음주", "day": 5, "days": 2, "time": None},),
+        )
+    )
+    local_zone = ZoneInfo(contract.time_zone)
+
+    # Then the row stays five days out: the 일정 목록 panels list the calendar, not a week
+    events = build_calendar_events(contract)
+    assert events[0].starts_at_epoch == int(datetime(2026, 9, 7, tzinfo=local_zone).timestamp())
+    assert events[0].ends_at_epoch == int(datetime(2026, 9, 9, tzinfo=local_zone).timestamp())
