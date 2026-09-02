@@ -8,11 +8,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 import pytest
+from pydantic import ValidationError
 
 from ads_booster.candidate_generation import DEFAULT_MAX_BATCH
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
 from ads_booster.marketing.hosted_generation import (
     PIPELINE,
+    GeneratedImageInputs,
     HostedWorkspaceGenerationExecutor,
 )
 from ads_booster.marketing.inbox import MarketingExecutionError
@@ -531,3 +533,65 @@ def test_malformed_codex_result_is_unknown_after_execution_admission(tmp_path: P
     assert raised.value.failure_code == "hosted_generation_result_invalid"
     assert raised.value.unknown_side_effect
     assert len(codex.calls) == 2
+
+
+_SCHEDULE_ROWS = tuple(
+    {"title": f"항목{index}", "day": index, "days": 1, "time": None, "color": None}
+    for index in range(5)
+)
+
+
+def _image_inputs(query: str | None) -> dict[str, object]:
+    return {
+        "trace_items": list(_SCHEDULE_ROWS),
+        "trace_todos": [],
+        "device_time": "07:20",
+        "background_subject": "scenery",
+        "background_mood": "늦은 밤 책상 위 스탠드 불빛",
+        "background_search_query": query,
+        "language": "ko",
+    }
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "쿠로미 배경화면",
+        "KIA 타이거즈 배경화면",
+        "설악산 운해 배경화면",
+        "김도영 직캠",
+        # The object particles 을/를/의 are the same syllables Korean writes inside ordinary
+        # nouns, so a rule that matched them threw this one away for the 을 in 노을.
+        "제주 바다 노을 배경화면",
+        "속초 밤바다 배경화면",
+        "해질녘 캠핑장 아이 둘 뒷모습 가족사진 배경화면",
+        None,
+    ],
+)
+def test_generated_background_query_accepts_a_name(query: str | None) -> None:
+    # Given a background query written as a name rather than a sentence
+    # When the generated candidate is validated
+    inputs = GeneratedImageInputs.model_validate(_image_inputs(query))
+
+    # Then it reaches the image stage unchanged
+    assert inputs.background_search_query == query
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "노을 진 놀이터에서 나란히 뛰는 아이들 뒷모습 가족사진",
+        "주황빛 놀이터에서 책가방을 메고 뛰는 아이들 뒷모습",
+    ],
+)
+def test_generated_background_query_rejects_a_described_scene(query: str) -> None:
+    # Given the query the model actually writes when nothing checks it
+    # When the generated candidate is validated
+    with pytest.raises(ValidationError) as failure:
+        _ = GeneratedImageInputs.model_validate(_image_inputs(query))
+
+    # Then generation is told which field is wrong, and retries with that in hand. Image
+    # search matches words rather than reading the sentence, so a described scene returns
+    # watermarked clip art and stock models instead of what this persona would have saved.
+    assert "background_search_query" in str(failure.value)
+    assert "고유명사" in str(failure.value)

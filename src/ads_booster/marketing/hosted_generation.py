@@ -18,7 +18,15 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from ads_booster.candidate_generation import (
     DEFAULT_MAX_BATCH,
@@ -64,6 +72,19 @@ if TYPE_CHECKING:
         PreparedCodexAppiumJob,
     )
 
+# What separates a described scene from a name, in the one language these queries are
+# written in: a locative particle, or a verb inflected to modify the noun after it. A name
+# carries neither.
+#
+# Narrower than it first looks, and deliberately so. An earlier version also matched the
+# object particles 을/를/의, which cost it "제주 바다 노을 배경화면" - Korean writes those
+# same syllables inside ordinary nouns (노을, 서울, 이슬), so they cannot be told from a
+# particle without parsing. What is left never appears inside a word, and it still catches
+# both scenes this rule was written for.
+_DESCRIBED_SCENE: Final = re.compile(
+    r"에서|에게|"
+    r"[가-힣]{2}(?:하는|되는|있는|없는|가는|오는|드는|뛰는|나는|보는|앉은|선|걷는)"
+)
 PIPELINE: Final = "hosted_workspace_generation_v1"
 _DEFAULT_TIMEOUT_SECONDS: Final = 180.0
 _WORKSPACE_DIRECTORY: Final = "codex-generation"
@@ -180,6 +201,37 @@ class GeneratedImageInputs(GenerationModel):
     background_mood: Annotated[str, Field(min_length=1, max_length=40)]
     background_search_query: Annotated[str | None, Field(max_length=200)] = None
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
+
+    @field_validator("background_search_query")
+    @classmethod
+    def reject_a_described_scene(cls, value: str | None) -> str | None:
+        """Keep the background query a name rather than a sentence.
+
+        The instruction asks for "proper noun + 배경화면" and explains why, and the model
+        writes a scene anyway: "노을 진 놀이터에서 나란히 뛰는 아이들 뒷모습". Measured
+        against live search, a name returns what the persona would actually save - the team
+        emblem, the character, the mountain - while a described scene returns watermarked
+        clip art and stock models, because image search matches words rather than reading
+        the sentence.
+
+        A name cannot be told from a common noun mechanically, but a sentence can: Korean
+        marks one with particles and inflected endings, and none of the queries that worked
+        carried either. Failing here rather than searching the sentence puts the rule in the
+        contract, where the model is told which field is wrong and gets to fix it - the
+        rules this generation follows are the ones something checks.
+        """
+        if value is None:
+            return None
+        described = _DESCRIBED_SCENE.search(value)
+        if described is not None:
+            message = (
+                f"background_search_query는 문장이 아니라 이름이어야 합니다. "
+                f"'{described.group()}' 같은 조사나 활용형을 빼고 "
+                f'"고유명사 + 배경화면" 형태로 다시 쓰세요. '
+                f'예: "쿠로미 배경화면", "KIA 타이거즈 배경화면".'
+            )
+            raise ValueError(message)
+        return value
 
 
 class GeneratedCandidate(GenerationModel):
