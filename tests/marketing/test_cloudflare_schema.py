@@ -156,6 +156,39 @@ def test_dynamic_mac_workers_have_revocable_identities_and_single_task_leases() 
         assert task == ("worker_broker", "worker-1", "lease-1", "start", "accepted", 1)
 
 
+def test_worker_task_events_are_deduplicated_and_structured() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        columns = {
+            row[1]
+            for row in cast(
+                "list[tuple[object, str, object, object, object, object]]",
+                connection.execute("PRAGMA table_info(mac_worker_task_events)").fetchall(),
+            )
+        }
+        assert columns == {
+            "event_id",
+            "task_id",
+            "account_id",
+            "worker_id",
+            "worker_name",
+            "task_kind",
+            "event_type",
+            "failure_code",
+            "created_at",
+        }
+        insert = """INSERT INTO mac_worker_task_events
+            (event_id, task_id, account_id, worker_id, worker_name, task_kind, event_type,
+             failure_code, created_at)
+            VALUES ('event-1', 'task-1', 'trace_kr', 'worker-1', 'Studio Mac', 'capture',
+                    'execution_failed', 'native_capture_failed', '2026-09-02T00:00:00Z')"""
+        _ = connection.execute(insert)
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(insert.replace("'event-1'", "'event-2'"))
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(insert.replace("'capture'", "'publish'"))
+
+
 def test_hosted_feedback_keeps_reviewed_revision_and_generation_provenance() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection)
@@ -615,15 +648,27 @@ def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() ->
             _ = connection.executescript(migration.read_text())
 
         candidate_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(hosted_workspace_candidates)")
+            row[1]
+            for row in cast(
+                "list[tuple[object, str, object, object, object, object]]",
+                connection.execute("PRAGMA table_info(hosted_workspace_candidates)").fetchall(),
+            )
         }
         feedback_columns = {
             row[1]
-            for row in connection.execute("PRAGMA table_info(hosted_workspace_feedback_events)")
+            for row in cast(
+                "list[tuple[object, str, object, object, object, object]]",
+                connection.execute(
+                    "PRAGMA table_info(hosted_workspace_feedback_events)"
+                ).fetchall(),
+            )
         }
         task_columns = {
             row[1]
-            for row in connection.execute("PRAGMA table_info(hosted_workspace_capture_tasks)")
+            for row in cast(
+                "list[tuple[object, str, object, object, object, object]]",
+                connection.execute("PRAGMA table_info(hosted_workspace_capture_tasks)").fetchall(),
+            )
         }
 
         assert {

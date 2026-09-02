@@ -1395,6 +1395,119 @@ test("built public workspace has no login form and keeps candidate controls", as
   );
 });
 
+function workerEventsEnvironment(events) {
+  const rows = events.map((event) => ({ ...event }));
+  const account = {
+    account_id: "trace_demo_kr",
+    display_name: "Trace Korea",
+    country: "KR",
+    language: "ko",
+    timezone: "Asia/Seoul",
+    morning_time: "07:30",
+    evening_time: "19:30",
+    generation_enabled: 1,
+    next_generation_at: null,
+    enabled: 1,
+    revision: 1,
+  };
+  return {
+    env: {
+      PUBLIC_WORKSPACE_ACCOUNT_ID: account.account_id,
+      DB: {
+        prepare(sql) {
+          return {
+            bind(...values) {
+              return {
+                async first() {
+                  if (sql.includes("FROM hosted_workspace_accounts")) return account;
+                  throw new Error(`unexpected worker event first SQL: ${sql}`);
+                },
+                async all() {
+                  if (!sql.includes("FROM mac_worker_task_events")) {
+                    throw new Error(`unexpected worker event all SQL: ${sql}`);
+                  }
+                  const [accountId, retainedAfter, limit] = values;
+                  return {
+                    results: rows
+                      .filter((event) => event.account_id === accountId && event.created_at >= retainedAfter)
+                      .sort((left, right) =>
+                        right.created_at.localeCompare(left.created_at)
+                        || right.event_id.localeCompare(left.event_id),
+                      )
+                      .slice(0, limit),
+                  };
+                },
+                async run() {
+                  if (sql.includes("INSERT OR IGNORE INTO hosted_workspace_accounts")) {
+                    return { meta: { changes: 0 } };
+                  }
+                  if (sql.includes("DELETE FROM mac_worker_task_events")) {
+                    const [retainedAfter] = values;
+                    for (let index = rows.length - 1; index >= 0; index -= 1) {
+                      if (rows[index].created_at < retainedAfter) rows.splice(index, 1);
+                    }
+                    return { meta: { changes: 0 } };
+                  }
+                  throw new Error(`unexpected worker event run SQL: ${sql}`);
+                },
+              };
+            },
+          };
+        },
+      },
+    },
+    rows,
+  };
+}
+
+test("workspace worker events are account-scoped, newest-first, bounded, and redacted", async () => {
+  const state = workerEventsEnvironment([
+    {
+      event_id: "event-1", task_id: "task-1", account_id: "trace_demo_kr", worker_id: "secret-1",
+      worker_name: "Studio Mac", task_kind: "capture", event_type: "execution_started",
+      failure_code: null, created_at: "2099-09-02T00:00:00.000Z", task_json: "private",
+    },
+    {
+      event_id: "event-2", task_id: "task-2", account_id: "trace_demo_kr", worker_id: "secret-1",
+      worker_name: "Studio Mac", task_kind: "capture", event_type: "execution_failed",
+      failure_code: "native_capture_failed", created_at: "2099-09-02T00:01:00.000Z", prompt: "private",
+    },
+    {
+      event_id: "event-other", task_id: "task-other", account_id: "trace_jp", worker_id: "secret-2",
+      worker_name: "Tokyo Mac", task_kind: "generate_candidates", event_type: "preparation_started",
+      failure_code: null, created_at: "2099-09-02T00:02:00.000Z",
+    },
+    {
+      event_id: "event-expired", task_id: "task-expired", account_id: "trace_demo_kr", worker_id: "secret-1",
+      worker_name: "Studio Mac", task_kind: "capture", event_type: "preparation_started",
+      failure_code: null, created_at: "2000-01-01T00:00:00.000Z",
+    },
+  ]);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/worker-events?limit=2"),
+    state.env,
+    "context",
+  );
+  const { events: listed } = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(listed.map((event) => event.event_id), ["event-2", "event-1"]);
+  assert.deepEqual(Object.keys(listed[0]).sort(), [
+    "created_at", "event_id", "event_type", "failure_code", "task_id", "task_kind", "worker_name",
+  ]);
+  assert.equal(JSON.stringify(listed).includes("secret-1"), false);
+  assert.equal(JSON.stringify(listed).includes("private"), false);
+  assert.equal(state.rows.some((event) => event.event_id === "event-expired"), false);
+
+  const invalidLimit = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/worker-events?limit=101"),
+    state.env,
+    "context",
+  );
+  assert.equal(invalidLimit.status, 400);
+});
+
 // The persona layer is the only hosted surface that both reads and writes rows across
 // several statements, so its tests need a store rather than a canned answer. This is a
 // deliberately small D1 stand-in: it recognizes the four statements the persona functions
