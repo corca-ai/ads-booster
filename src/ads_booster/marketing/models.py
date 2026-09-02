@@ -34,6 +34,15 @@ def task_unknown_side_effect_code(kind: TaskKind) -> str:
 
 
 @unique
+class WorkerTaskEventType(StrEnum):
+    PREPARATION_STARTED = "preparation_started"
+    PREPARATION_FAILED = "preparation_failed"
+    EXECUTION_SUCCEEDED = "execution_succeeded"
+    EXECUTION_FAILED = "execution_failed"
+    EXECUTION_UNKNOWN = "execution_unknown"
+
+
+@unique
 class ApprovalPhase(StrEnum):
     CANDIDATES = "candidates"
     PUBLICATION = "publication"

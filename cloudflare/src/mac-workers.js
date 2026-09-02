@@ -6,6 +6,10 @@ const ACCEPTED_LEASE_SECONDS = 900;
 const MAX_EXECUTION_LEASE_SECONDS = 3_600;
 const MAX_WORKER_PAYLOAD_BYTES = 16 * 1024;
 const MAX_WORKER_CALLBACK_BYTES = 24 * 1024 * 1024;
+const MAX_WORKER_EVENT_BYTES = 2 * 1024;
+const MAX_WORKER_EVENT_FAILURE_CODE_LENGTH = 120;
+const WORKER_EVENT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+export const MAX_PUBLIC_WORKER_EVENT_LIMIT = 100;
 const WORKER_STATES = new Set(["active", "draining"]);
 // The job kinds a task row can carry. A worker only leases a task whose kind it advertises.
 export const WORKER_TASK_KINDS = Object.freeze([
@@ -17,6 +21,14 @@ export const WORKER_TASK_KINDS = Object.freeze([
 // existed is one of those, and capture is the only job its Python knows how to run.
 const LEGACY_WORKER_TASK_KINDS = Object.freeze(["capture"]);
 const MAX_ADVERTISED_TASK_KINDS = 8;
+const WORKER_EMITTABLE_TASK_EVENTS = new Set([
+  "preparation_started",
+  "preparation_failed",
+  "execution_succeeded",
+  "execution_failed",
+  "execution_unknown",
+]);
+const SERVER_OWNED_TASK_EVENTS = new Set(["execution_started", "callback_applied"]);
 
 export async function handleMacWorkerRequest(request, env, receiveTaskCallback) {
   const url = new URL(request.url);
@@ -58,10 +70,20 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       const body = await readJson(request);
       return Response.json(await markWorkerTaskExecuting(env.DB, worker, body.task_id));
     }
+    if (request.method === "POST" && url.pathname === "/v1/workers/task-events") {
+      const worker = await requireWorker(request, env.DB);
+      return Response.json(
+        await recordWorkerTaskEvent(env.DB, worker, await readJson(request, MAX_WORKER_EVENT_BYTES)),
+        { status: 202 },
+      );
+    }
     if (request.method === "POST" && url.pathname === "/v1/workers/task-callbacks") {
       const worker = await requireWorker(request, env.DB);
       const callback = await readJson(request, MAX_WORKER_CALLBACK_BYTES);
       const result = await receiveTaskCallback(callback, { worker_id: worker.worker_id });
+      await tryRecordServerTaskEvent(
+        env.DB, worker, callback.task_id, "callback_applied", null, new Date(),
+      );
       await env.DB.batch([
         env.DB.prepare(
           `UPDATE mac_workers SET current_task_id = NULL, updated_at = ?
@@ -526,7 +548,10 @@ export async function markWorkerTaskExecuting(db, worker, taskId, clock = new Da
        AND execution_started_at IS NULL
        AND lease_accepted_at IS NOT NULL AND lease_expires_at > ?`,
   ).bind(now, now, taskId, worker.worker_id, now).run();
-  if (updated.meta.changes === 1) return { accepted: true, duplicate: false };
+  if (updated.meta.changes === 1) {
+    await tryRecordServerTaskEvent(db, worker, taskId, "execution_started", null, clock);
+    return { accepted: true, duplicate: false };
+  }
   const existing = await db.prepare(
     `SELECT worker_id, execution_started_at FROM hosted_workspace_capture_tasks
      WHERE task_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
@@ -536,6 +561,110 @@ export async function markWorkerTaskExecuting(db, worker, taskId, clock = new Da
     return { accepted: true, duplicate: true };
   }
   throw new WorkerHttpError(409, "task is not ready for native execution");
+}
+
+export async function recordWorkerTaskEvent(db, worker, input, clock = new Date()) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkerHttpError(400, "worker task event must be an object");
+  }
+  const allowed = new Set(["task_id", "event_type", "failure_code"]);
+  if (Object.keys(input).some((key) => !allowed.has(key))) {
+    throw new WorkerHttpError(400, "worker task event has unsupported fields");
+  }
+  const taskId = requiredName(input.task_id, "task_id", 128);
+  const eventType = requiredName(input.event_type, "event_type", 64);
+  if (!WORKER_EMITTABLE_TASK_EVENTS.has(eventType)) {
+    throw new WorkerHttpError(400, "event_type is not worker-emittable");
+  }
+  const failureCode = optionalFailureCode(input.failure_code);
+  if (failureCode && !eventType.endsWith("_failed") && eventType !== "execution_unknown") {
+    throw new WorkerHttpError(400, "failure_code is only valid for a terminal failure event");
+  }
+  return recordTaskEvent(db, worker, taskId, eventType, failureCode, clock);
+}
+
+export async function publicWorkerTaskEvents(db, accountId, limit, clock = new Date()) {
+  const boundedLimit = Number(limit);
+  if (!Number.isInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > MAX_PUBLIC_WORKER_EVENT_LIMIT) {
+    throw new WorkerHttpError(400, `limit must be an integer between 1 and ${MAX_PUBLIC_WORKER_EVENT_LIMIT}`);
+  }
+  const retainedAfter = retainedWorkerEventAfter(clock);
+  await db.prepare(
+    "DELETE FROM mac_worker_task_events WHERE created_at < ?",
+  ).bind(retainedAfter).run();
+  const result = await db.prepare(
+    `SELECT event_id, task_id, worker_name, task_kind, event_type, failure_code, created_at
+     FROM mac_worker_task_events
+     WHERE account_id = ? AND created_at >= ?
+     ORDER BY created_at DESC, event_id DESC LIMIT ?`,
+  ).bind(accountId, retainedAfter, boundedLimit).all();
+  return result.results.map(publicWorkerTaskEvent);
+}
+
+async function recordServerTaskEvent(db, worker, taskId, eventType, failureCode, clock) {
+  if (!SERVER_OWNED_TASK_EVENTS.has(eventType)) {
+    throw new WorkerHttpError(500, "invalid server-owned worker task event");
+  }
+  return recordTaskEvent(db, worker, taskId, eventType, failureCode, clock);
+}
+
+async function tryRecordServerTaskEvent(db, worker, taskId, eventType, failureCode, clock) {
+  try {
+    await recordServerTaskEvent(db, worker, taskId, eventType, failureCode, clock);
+  } catch {
+    console.warn("server-owned worker task event record failed");
+  }
+}
+
+async function recordTaskEvent(db, worker, taskId, eventType, failureCode, clock) {
+  const task = await db.prepare(
+    `SELECT task_id, account_id, worker_id, kind
+     FROM hosted_workspace_capture_tasks
+     WHERE task_id = ? AND worker_id = ? AND dispatch_mode = 'worker_broker'`,
+  ).bind(taskId, worker.worker_id).first();
+  if (!task) throw new WorkerHttpError(409, "task is not owned by this worker");
+  const now = clock.toISOString();
+  await db.prepare(
+    "DELETE FROM mac_worker_task_events WHERE created_at < ?",
+  ).bind(retainedWorkerEventAfter(clock)).run();
+  await db.prepare(
+    `INSERT OR IGNORE INTO mac_worker_task_events
+      (event_id, task_id, account_id, worker_id, worker_name, task_kind, event_type,
+       failure_code, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    crypto.randomUUID(),
+    task.task_id,
+    task.account_id,
+    worker.worker_id,
+    worker.display_name,
+    task.kind,
+    eventType,
+    failureCode,
+    now,
+  ).run();
+  const stored = await db.prepare(
+    `SELECT event_id, task_id, worker_name, task_kind, event_type, failure_code, created_at
+     FROM mac_worker_task_events WHERE task_id = ? AND event_type = ?`,
+  ).bind(task.task_id, eventType).first();
+  if (!stored) throw new WorkerHttpError(500, "worker task event was not recorded");
+  return publicWorkerTaskEvent(stored);
+}
+
+function retainedWorkerEventAfter(clock) {
+  return new Date(clock.getTime() - WORKER_EVENT_RETENTION_MS).toISOString();
+}
+
+function publicWorkerTaskEvent(row) {
+  return {
+    event_id: row.event_id,
+    task_id: row.task_id,
+    worker_name: row.worker_name,
+    task_kind: row.task_kind,
+    event_type: row.event_type,
+    failure_code: row.failure_code ?? null,
+    created_at: row.created_at,
+  };
 }
 
 export async function reserveWorkerTaskCallback(
@@ -738,6 +867,18 @@ function requiredName(value, field, maxLength) {
 function optionalName(value, field, maxLength) {
   if (value === undefined || value === null || value === "") return null;
   return requiredName(value, field, maxLength);
+}
+
+function optionalFailureCode(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (
+    typeof value !== "string" ||
+    !/^[a-z0-9][a-z0-9_]{0,119}$/.test(value) ||
+    value.length > MAX_WORKER_EVENT_FAILURE_CODE_LENGTH
+  ) {
+    throw new WorkerHttpError(400, "failure_code must be a bounded machine identifier");
+  }
+  return value;
 }
 
 function newerReleaseTarget(target, current) {

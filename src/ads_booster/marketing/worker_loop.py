@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final, Protocol
 
 from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.inbox import (
@@ -17,8 +18,25 @@ from ads_booster.marketing.models import (
     TaskCallback,
     TaskResult,
     TaskStatus,
+    WorkerTaskEventType,
     task_unknown_side_effect_code,
 )
+from ads_booster.marketing.worker_events import QueuedWorkerEventReporter
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+_EVENT_TYPE_BY_STATUS: Final[Mapping[TaskStatus, WorkerTaskEventType]] = MappingProxyType(
+    {
+        TaskStatus.SUCCEEDED: WorkerTaskEventType.EXECUTION_SUCCEEDED,
+        TaskStatus.FAILED: WorkerTaskEventType.EXECUTION_FAILED,
+        TaskStatus.UNKNOWN_SIDE_EFFECT: WorkerTaskEventType.EXECUTION_UNKNOWN,
+    }
+)
+
+
+def _event_for_status(status: TaskStatus) -> WorkerTaskEventType:
+    return _EVENT_TYPE_BY_STATUS[status]
 
 
 class PreparedTask(Protocol):
@@ -46,7 +64,25 @@ class WorkerBroker(Protocol):
 
     def mark_execution_started(self, task_id: str) -> None: ...
 
+    def report_event(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None: ...
+
     def deliver(self, callback: TaskCallback) -> None: ...
+
+
+class WorkerEventReporter(Protocol):
+    def report(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None: ...
+
+    def close(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +91,16 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
     inbox: MarketingInbox
     preparer: TaskPreparer[TPrepared]
     executor: TaskExecutor[TPrepared]
+    event_reporter: WorkerEventReporter | None = None
+    _events: WorkerEventReporter = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Install a bounded reporter unless a deterministic test reporter was supplied."""
+        reporter = self.event_reporter or QueuedWorkerEventReporter(self.broker)
+        object.__setattr__(self, "_events", reporter)
+
+    def close(self) -> None:
+        self._events.close()
 
     def recover(self) -> int:
         recovered = self.inbox.recover_interrupted()
@@ -94,24 +140,39 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
                 )
 
     def _run(self, task: MarketingTask) -> None:
+        self._report_event(task, WorkerTaskEventType.PREPARATION_STARTED)
         try:
             prepared = self.preparer.prepare(task)
         except MarketingExecutionError as error:
-            _ = self.inbox.complete(task, self._known_failure(error))
+            result = self._known_failure(error)
+            self._report_event(
+                task,
+                WorkerTaskEventType.PREPARATION_FAILED,
+                result.failure_code,
+            )
+            _ = self.inbox.complete(task, result)
             return
         except Exception:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
             # The pre-admission boundary fail-closes an unexpected preparer crash as local failure.
-            _ = self.inbox.complete(
-                task,
-                TaskResult(status=TaskStatus.FAILED, failure_code="unexpected_worker_error"),
+            result = TaskResult(
+                status=TaskStatus.FAILED,
+                failure_code="unexpected_worker_error",
             )
+            self._report_event(
+                task,
+                WorkerTaskEventType.PREPARATION_FAILED,
+                result.failure_code,
+            )
+            _ = self.inbox.complete(task, result)
             return
 
         self.inbox.begin_execution(task.task_id, prepared.execution_admission)
         try:
             self.broker.mark_execution_started(task.task_id)
         except CloudflareQueueError:
-            _ = self.inbox.complete(task, self._unknown_side_effect(task))
+            result = self._unknown_side_effect(task)
+            self._report_result(task, result)
+            _ = self.inbox.complete(task, result)
             return
 
         try:
@@ -121,7 +182,19 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         except Exception:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
             # The post-admission boundary never replays a possibly spent Codex or native action.
             result = self._unknown_side_effect(task)
+        self._report_result(task, result)
         _ = self.inbox.complete(task, result)
+
+    def _report_result(self, task: MarketingTask, result: TaskResult) -> None:
+        self._report_event(task, _event_for_status(result.status), result.failure_code)
+
+    def _report_event(
+        self,
+        task: MarketingTask,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None:
+        self._events.report(task.task_id, event_type, failure_code)
 
     def _flush_callbacks(self) -> int:
         delivered = 0

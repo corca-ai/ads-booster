@@ -1,4 +1,9 @@
-import { hasRegisteredBrokerWorker, hasWorkerForTaskKind } from "./mac-workers.js";
+import {
+  hasRegisteredBrokerWorker,
+  hasWorkerForTaskKind,
+  MAX_PUBLIC_WORKER_EVENT_LIMIT,
+  publicWorkerTaskEvents,
+} from "./mac-workers.js";
 import {
   assertCurrentCapabilityBinding,
   MarketingCapabilityError,
@@ -184,6 +189,15 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
 
     await ensureDefaultHostedAccount(env);
     const hostedAccount = await requireHostedAccount(scopedEnv);
+    if (request.method === "GET" && url.pathname === "/api/worker-events") {
+      return json({
+        events: await publicWorkerTaskEvents(
+          scopedEnv.DB,
+          accountId(scopedEnv),
+          publicWorkerEventListLimit(url.searchParams.get("limit")),
+        ),
+      });
+    }
     const marketingAgentResponse = await handleHostedMarketingAgent(
       request,
       scopedEnv,
@@ -2435,7 +2449,8 @@ async function assertMarketingCaptureCapability(env, candidateId) {
      JOIN hosted_marketing_artifact_requests AS request
        ON request.treatment_id = assignment.treatment_id
       AND request.capability_id = 'capture.native_png'
-     WHERE assignment.assignment_id = ? AND assignment.campaign_id IS NOT NULL`,
+     WHERE assignment.assignment_id = ? AND assignment.campaign_id IS NOT NULL
+       AND request.state = 'approved'`,
   ).bind(candidate.marketing_assignment_id).all();
   if (!requests.results.length) {
     throw new MarketingCapabilityError("marketing candidate has no approved native capture request");
@@ -3126,6 +3141,18 @@ function booleanField(value, field) {
 function positiveInteger(value, fallback) {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function publicWorkerEventListLimit(value) {
+  if (value === null) return 50;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PUBLIC_WORKER_EVENT_LIMIT) {
+    throw new WorkspaceHttpError(
+      400,
+      `limit must be an integer between 1 and ${MAX_PUBLIC_WORKER_EVENT_LIMIT}`,
+    );
+  }
+  return limit;
 }
 
 function accountId(env) {

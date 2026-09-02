@@ -83,6 +83,9 @@ class HttpxClient:
         _exc_value: BaseException | None,
         _traceback: TracebackType | None,
     ) -> None:
+        self.close()
+
+    def close(self) -> None:
         self._client.close()
 
     def get(

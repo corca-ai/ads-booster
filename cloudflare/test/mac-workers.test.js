@@ -9,6 +9,7 @@ import {
   heartbeatWorker,
   markWorkerTaskExecuting,
   publicWorkerStatus,
+  recordWorkerTaskEvent,
   reserveWorkerTaskCallback,
   revokeWorker,
   workerOperationalStatus,
@@ -18,6 +19,7 @@ import {
 function task(overrides = {}) {
   return {
     task_id: "task-1",
+    account_id: "trace_demo_kr",
     task_json: JSON.stringify({
       schema_version: "1",
       task_id: "task-1",
@@ -67,6 +69,7 @@ class ClaimDb {
   constructor(workers, tasks) {
     this.workers = new Map(workers.map((row) => [row.worker_id, { ...row }]));
     this.tasks = new Map(tasks.map((row) => [row.task_id, { ...row }]));
+    this.events = [];
   }
 
   prepare(sql) {
@@ -97,6 +100,18 @@ class ClaimStatement {
     }
     if (this.sql.includes("SELECT current_task_id FROM mac_workers")) {
       return this.db.workers.get(this.values[0]) ?? null;
+    }
+    if (this.sql.includes("FROM hosted_workspace_capture_tasks") &&
+        this.sql.includes("task_id = ? AND worker_id = ? AND dispatch_mode")) {
+      const [taskId, workerId] = this.values;
+      const row = this.db.tasks.get(taskId);
+      return row?.worker_id === workerId ? row : null;
+    }
+    if (this.sql.includes("FROM mac_worker_task_events") && this.sql.includes("task_id = ?")) {
+      const [taskId, eventType] = this.values;
+      return this.db.events.find((event) =>
+        event.task_id === taskId && event.event_type === eventType,
+      ) ?? null;
     }
     if (this.sql.includes("WHERE worker_id = ?") && this.sql.includes("lease_expires_at > ?")) {
       const [workerId, now] = this.values;
@@ -152,6 +167,31 @@ class ClaimStatement {
   }
 
   async run() {
+    if (this.sql.includes("DELETE FROM mac_worker_task_events")) {
+      const [before] = this.values;
+      this.db.events = this.db.events.filter((event) => event.created_at >= before);
+      return { meta: { changes: 0 } };
+    }
+    if (this.sql.includes("INSERT OR IGNORE INTO mac_worker_task_events")) {
+      if (this.db.failEventStorage) throw new Error("injected event storage failure");
+      const [eventId, taskId, accountId, workerId, workerName, taskKind, eventType,
+        failureCode, createdAt] = this.values;
+      if (this.db.events.some((event) => event.task_id === taskId && event.event_type === eventType)) {
+        return { meta: { changes: 0 } };
+      }
+      this.db.events.push({
+        event_id: eventId,
+        task_id: taskId,
+        account_id: accountId,
+        worker_id: workerId,
+        worker_name: workerName,
+        task_kind: taskKind,
+        event_type: eventType,
+        failure_code: failureCode,
+        created_at: createdAt,
+      });
+      return { meta: { changes: 1 } };
+    }
     if (this.sql.includes("SET execution_started_at = ?")) {
       const [startedAt, updatedAt, taskId, workerId, now] = this.values;
       const row = this.db.tasks.get(taskId);
@@ -432,11 +472,13 @@ class CallbackCompletionDb {
   constructor() {
     this.worker = worker("worker-1", { current_task_id: "task-1" });
     this.task = task({
+      account_id: "trace_demo_kr",
       worker_id: "worker-1",
       lease_id: "lease-1",
       lease_expires_at: "2026-08-26T00:15:00.000Z",
       lease_started_at: "2026-08-26T00:00:00.000Z",
     });
+    this.events = [];
   }
 
   prepare(sql) {
@@ -446,9 +488,44 @@ class CallbackCompletionDb {
       bind(...values) { this.values = values; return this; },
       async first() {
         if (sql.includes("FROM mac_workers WHERE token_sha256")) return db.worker;
+        if (sql.includes("FROM hosted_workspace_capture_tasks") && sql.includes("worker_id = ?")) {
+          const [taskId, workerId] = this.values;
+          return db.task.task_id === taskId && db.task.worker_id === workerId ? db.task : null;
+        }
+        if (sql.includes("FROM mac_worker_task_events") && sql.includes("task_id = ?")) {
+          const [taskId, eventType] = this.values;
+          return db.events.find((event) =>
+            event.task_id === taskId && event.event_type === eventType,
+          ) ?? null;
+        }
         throw new Error(`unexpected callback completion first SQL: ${sql}`);
       },
       async run() {
+        if (sql.includes("DELETE FROM mac_worker_task_events")) {
+          const [before] = this.values;
+          db.events = db.events.filter((event) => event.created_at >= before);
+          return { meta: { changes: 0 } };
+        }
+        if (sql.includes("INSERT OR IGNORE INTO mac_worker_task_events")) {
+          if (db.failEventStorage) throw new Error("injected event storage failure");
+          const [eventId, taskId, accountId, workerId, workerName, taskKind, eventType,
+            failureCode, createdAt] = this.values;
+          if (db.events.some((event) => event.task_id === taskId && event.event_type === eventType)) {
+            return { meta: { changes: 0 } };
+          }
+          db.events.push({
+            event_id: eventId,
+            task_id: taskId,
+            account_id: accountId,
+            worker_id: workerId,
+            worker_name: workerName,
+            task_kind: taskKind,
+            event_type: eventType,
+            failure_code: failureCode,
+            created_at: createdAt,
+          });
+          return { meta: { changes: 1 } };
+        }
         if (sql.includes("UPDATE mac_workers SET current_task_id = NULL")) {
           const [_updatedAt, workerId, taskId] = this.values;
           if (db.worker.worker_id !== workerId || db.worker.current_task_id !== taskId) {
@@ -569,6 +646,47 @@ test("an accepted callback releases the worker assignment and renewable lease", 
   assert.equal(db.worker.current_task_id, null);
   assert.equal(db.task.lease_expires_at, null);
   assert.equal(db.task.lease_started_at, null);
+  assert.equal(db.events[0].event_type, "callback_applied");
+});
+
+test("server-owned event storage failure cannot block a barrier or callback completion", async () => {
+  const owner = worker("worker-1", { current_task_id: "task-1" });
+  const barrierDb = new ClaimDb([owner], [task({
+    worker_id: "worker-1",
+    lease_id: "lease-1",
+    lease_expires_at: "2099-08-26T00:15:00.000Z",
+    lease_accepted_at: "2026-08-26T00:00:30.000Z",
+  })]);
+  barrierDb.failEventStorage = true;
+  const callbackDb = new CallbackCompletionDb();
+  callbackDb.failEventStorage = true;
+  const callback = {
+    callback_id: "task-1:completed",
+    task_id: "task-1",
+    run_id: "run-1",
+    account_id: "trace_demo_kr",
+    kind: "capture",
+    result: { status: "failed", failure_code: "codex_plan_failed" },
+  };
+
+  const barrier = await markWorkerTaskExecuting(
+    barrierDb, owner, "task-1", new Date("2026-08-26T00:05:00.000Z"),
+  );
+  const callbackResponse = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers/task-callbacks", {
+      method: "POST",
+      headers: { authorization: "Bearer worker-secret", "content-type": "application/json" },
+      body: JSON.stringify(callback),
+    }),
+    { DB: callbackDb },
+    async () => ({ accepted: true, duplicate: false }),
+  );
+
+  assert.deepEqual(barrier, { accepted: true, duplicate: false });
+  assert.ok(barrierDb.tasks.get("task-1").execution_started_at);
+  assert.equal(callbackResponse.status, 202);
+  assert.equal(callbackDb.worker.current_task_id, null);
+  assert.equal(callbackDb.task.lease_expires_at, null);
 });
 
 test("a callback reservation wins before revocation can release the task", async () => {
@@ -661,6 +779,129 @@ test("a draining identity keeps new hosted captures on the broker transport", as
   };
 
   assert.equal(await hasRegisteredBrokerWorker(db), true);
+});
+
+class WorkerEventDb {
+  constructor() {
+    this.workers = new Map([["worker-1", worker("worker-1", { display_name: "Studio Mac" })]]);
+    this.tasks = new Map([["task-1", task({ account_id: "trace_demo_kr", worker_id: "worker-1" })], [
+      "task-2", task({ task_id: "task-2", account_id: "trace_demo_kr", worker_id: "worker-2" }),
+    ]]);
+    this.events = [];
+  }
+
+  prepare(sql) {
+    const db = this;
+    return {
+      values: [],
+      bind(...values) { this.values = values; return this; },
+      async first() {
+        if (sql.includes("FROM mac_workers WHERE token_sha256")) {
+          return db.workers.get("worker-1");
+        }
+        if (sql.includes("FROM hosted_workspace_capture_tasks") && sql.includes("worker_id = ?")) {
+          const [taskId, workerId] = this.values;
+          const row = db.tasks.get(taskId);
+          return row?.worker_id === workerId ? row : null;
+        }
+        if (sql.includes("FROM mac_worker_task_events") && sql.includes("task_id = ?")) {
+          const [taskId, eventType] = this.values;
+          return db.events.find((event) =>
+            event.task_id === taskId && event.event_type === eventType,
+          ) ?? null;
+        }
+        throw new Error(`unexpected event first SQL: ${sql}`);
+      },
+      async run() {
+        if (sql.includes("DELETE FROM mac_worker_task_events")) {
+          const [before] = this.values;
+          db.events = db.events.filter((event) => event.created_at >= before);
+          return { meta: { changes: 0 } };
+        }
+        if (sql.includes("INSERT OR IGNORE INTO mac_worker_task_events")) {
+          const [eventId, taskId, accountId, workerId, workerName, taskKind, eventType,
+            failureCode, createdAt] = this.values;
+          if (db.events.some((event) => event.task_id === taskId && event.event_type === eventType)) {
+            return { meta: { changes: 0 } };
+          }
+          db.events.push({
+            event_id: eventId,
+            task_id: taskId,
+            account_id: accountId,
+            worker_id: workerId,
+            worker_name: workerName,
+            task_kind: taskKind,
+            event_type: eventType,
+            failure_code: failureCode,
+            created_at: createdAt,
+          });
+          return { meta: { changes: 1 } };
+        }
+        throw new Error(`unexpected event run SQL: ${sql}`);
+      },
+    };
+  }
+}
+
+test("worker task events are authenticated, owned, bounded, and idempotent", async () => {
+  const db = new WorkerEventDb();
+  const eventRequest = (body, authorization = "Bearer worker-secret") => new Request(
+    "https://workspace.example/v1/workers/task-events",
+    {
+      method: "POST",
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const receive = () => { throw new Error("unexpected callback"); };
+
+  const unauthorized = await handleMacWorkerRequest(
+    eventRequest({ task_id: "task-1", event_type: "preparation_started" }, ""),
+    { DB: db }, receive,
+  );
+  const unsafe = await handleMacWorkerRequest(eventRequest({
+    task_id: "task-1",
+    event_type: "preparation_started",
+    message: "never persist a worker log line",
+  }), { DB: db }, receive);
+  const foreign = await handleMacWorkerRequest(eventRequest({
+    task_id: "task-2", event_type: "preparation_started",
+  }), { DB: db }, receive);
+  const accepted = await handleMacWorkerRequest(eventRequest({
+    task_id: "task-1", event_type: "preparation_failed", failure_code: "calendar_access_denied",
+  }), { DB: db }, receive);
+  const duplicate = await handleMacWorkerRequest(eventRequest({
+    task_id: "task-1", event_type: "preparation_failed", failure_code: "calendar_access_denied",
+  }), { DB: db }, receive);
+
+  assert.equal(unauthorized.status, 401);
+  assert.equal(unsafe.status, 400);
+  assert.equal(foreign.status, 409);
+  assert.equal(accepted.status, 202);
+  assert.equal(duplicate.status, 202);
+  const event = await accepted.json();
+  assert.deepEqual(Object.keys(event).sort(), [
+    "created_at", "event_id", "event_type", "failure_code", "task_id", "task_kind", "worker_name",
+  ]);
+  assert.equal(event.worker_name, "Studio Mac");
+  assert.equal(event.task_kind, "capture");
+  assert.equal(event.failure_code, "calendar_access_denied");
+  assert.equal((await duplicate.json()).event_id, event.event_id);
+  assert.equal(db.events.length, 1);
+  assert.equal(JSON.stringify(db.events).includes("never persist a worker log line"), false);
+
+  await assert.rejects(
+    recordWorkerTaskEvent(db, worker("worker-1"), {
+      task_id: "task-1", event_type: "execution_succeeded", failure_code: "not-allowed",
+    }),
+    /failure_code/u,
+  );
+  await assert.rejects(
+    recordWorkerTaskEvent(db, worker("worker-1"), {
+      task_id: "task-1", event_type: "execution_failed", failure_code: "native failure /private/log",
+    }),
+    /machine identifier/u,
+  );
 });
 
 test("public worker status exposes aliases and availability without machine details", async () => {
@@ -940,6 +1181,7 @@ test("an execution barrier prevents automatic reassignment after Appium starts",
   assert.deepEqual(duplicate, { accepted: true, duplicate: true });
   assert.equal(db.tasks.get("task-1").execution_started_at, startedAt.toISOString());
   assert.equal(db.tasks.get("task-1").lease_expires_at, null);
+  assert.equal(db.events[0].event_type, "execution_started");
   assert.deepEqual(leases, []);
   assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
   assert.equal(db.tasks.get("task-1").attempt_count, 1);

@@ -61,7 +61,8 @@ enters a worker payload or durable campaign record.
    candidate fields, PNG/manifest output, R2 storage, and review-state transitions keep their
    existing contracts.
 3. D1 leases it to a ready, enrolled Mac. The worker writes the task to its SQLite inbox before it
-   acknowledges the lease.
+   acknowledges the lease. The workspace's collapsed `실행 기록` timeline then shows safe,
+   account-scoped lifecycle events such as preparation, execution, and callback application.
 4. Before capture side effects, the worker resolves an iPhone Simulator, validates locale/time zone, fetches
    the allowlisted background, records provenance and SHA-256, creates a private request directory,
    and checks Appium readiness.
@@ -109,6 +110,13 @@ The workspace's 생성 근거 panel shows whether feedback was selected and whet
 the matching consumption receipt. This is transport provenance, not a claim that the generated
 content followed every instruction. A token-authorized control-plane request can disable a promoted
 rule while retaining its underlying review evidence.
+
+`실행 기록` is intentionally not raw stdout/stderr. It retains recent fixed event names, worker
+display name, task kind/ID, timestamps, and sanitized failure codes for fourteen days. Prompts,
+provider output, callback bodies, tokens, enrollment codes, exception messages, and local paths stay
+on the Mac and are never exposed through this workspace endpoint. Event delivery is best-effort and
+uses a bounded local queue, so a saturated or unavailable control plane may drop diagnostics but
+cannot block or retry the underlying job; D1 task state and callbacks remain authoritative.
 
 ## Bootstrap a verified Mac worker release
 

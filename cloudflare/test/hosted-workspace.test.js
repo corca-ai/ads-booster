@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -19,6 +20,7 @@ import {
   validateGeneratedCandidateBatch,
   WORKSPACE_GENERATION_PROMPT_VERSION,
 } from "../src/hosted-workspace.js";
+import { canonicalJson } from "../src/marketing-adapter-capabilities.js";
 import {
   WORKSPACE_CONTEXT,
   WORKSPACE_CONTEXT_PROFILES,
@@ -102,6 +104,50 @@ function candidateRow(overrides = {}) {
     updated_at: 1,
     ...overrides,
   };
+}
+
+function marketingCaptureCapability({ requestState = "approved", bindingSha256 = null } = {}) {
+  const descriptor = {
+    schema_version: "trace.adapter-capability.v1",
+    capability_id: "capture.native_png",
+    effect_class: "local_artifact",
+    owner_id: "trace.native_capture",
+    request_schema_sha256: "a".repeat(64),
+    receipt_schema_sha256: "b".repeat(64),
+    activation_state: "active",
+  };
+  const descriptorSha256 = sha256(descriptor);
+  const binding = {
+    capability_id: descriptor.capability_id,
+    descriptor_sha256: descriptorSha256,
+    effect_class: descriptor.effect_class,
+    request_schema_sha256: descriptor.request_schema_sha256,
+    receipt_schema_sha256: descriptor.receipt_schema_sha256,
+    owner_id: descriptor.owner_id,
+  };
+  const resolvedBindingSha256 = sha256(binding);
+  return {
+    request: {
+      capability_id: descriptor.capability_id,
+      capability_binding_sha256: bindingSha256 ?? resolvedBindingSha256,
+      state: requestState,
+    },
+    catalog: {
+      capability_id: descriptor.capability_id,
+      descriptor_json: canonicalJson(descriptor),
+      descriptor_sha256: descriptorSha256,
+      effect_class: descriptor.effect_class,
+      request_schema_sha256: descriptor.request_schema_sha256,
+      receipt_schema_sha256: descriptor.receipt_schema_sha256,
+      owner_id: descriptor.owner_id,
+      enabled: 1,
+      activation_state: "active",
+    },
+  };
+}
+
+function sha256(value) {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
 function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false, options = {}) {
@@ -343,8 +389,15 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
               if (sql.includes("FROM hosted_workspace_feedback_rule_overrides")) {
                 return { results: options.feedbackOverrides ?? [] };
               }
+              if (sql.includes("hosted_marketing_adapter_capabilities")) {
+                return { results: options.marketingCatalogRows ?? [] };
+              }
               if (sql.includes("FROM hosted_marketing_post_assignments")) {
-                return { results: options.marketingCaptureRequests ?? [] };
+                assert.match(sql, /request\.state = 'approved'/);
+                return {
+                  results: (options.marketingCaptureRequests ?? [])
+                    .filter((request) => request.state === "approved"),
+                };
               }
               throw new Error(`unexpected all SQL: ${sql}`);
             },
@@ -1260,6 +1313,99 @@ test("a marketing candidate needs an approved bound native-capture request befor
   assert.equal(state.queuedTasks.length, 0);
 });
 
+test("a planned native-capture request cannot queue a marketing candidate", async () => {
+  const capability = marketingCaptureCapability({ requestState: "planned" });
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true, {
+    marketingCaptureRequests: [capability.request],
+    marketingCatalogRows: [capability.catalog],
+  });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /native capture request/u);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.captureTasks.length, 0);
+});
+
+test("a current approved native-capture binding queues exactly one marketing capture", async () => {
+  const capability = marketingCaptureCapability();
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true, {
+    marketingCaptureRequests: [capability.request],
+    marketingCatalogRows: [capability.catalog],
+  });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(state.row().capture_state, "queued");
+  assert.equal(state.captureTasks.length, 1);
+  assert.equal(state.queuedTasks.length, 0);
+});
+
+test("a stale native-capture binding cannot queue a marketing candidate", async () => {
+  const capability = marketingCaptureCapability({ bindingSha256: "f".repeat(64) });
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true, {
+    marketingCaptureRequests: [capability.request],
+    marketingCatalogRows: [capability.catalog],
+  });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /binding is no longer active/u);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.captureTasks.length, 0);
+});
+
 test("image generation rolls back the broker task when candidate queueing fails", async () => {
   const state = candidateEnvironment(candidateRow({
     status: "caption_approved",
@@ -1427,6 +1573,119 @@ test("built public workspace has no login form and keeps candidate controls", as
     styles,
     /@media \(prefers-reduced-transparency: reduce\)[\s\S]*?background:\s*var\(--color-canvas\)/,
   );
+});
+
+function workerEventsEnvironment(events) {
+  const rows = events.map((event) => ({ ...event }));
+  const account = {
+    account_id: "trace_demo_kr",
+    display_name: "Trace Korea",
+    country: "KR",
+    language: "ko",
+    timezone: "Asia/Seoul",
+    morning_time: "07:30",
+    evening_time: "19:30",
+    generation_enabled: 1,
+    next_generation_at: null,
+    enabled: 1,
+    revision: 1,
+  };
+  return {
+    env: {
+      PUBLIC_WORKSPACE_ACCOUNT_ID: account.account_id,
+      DB: {
+        prepare(sql) {
+          return {
+            bind(...values) {
+              return {
+                async first() {
+                  if (sql.includes("FROM hosted_workspace_accounts")) return account;
+                  throw new Error(`unexpected worker event first SQL: ${sql}`);
+                },
+                async all() {
+                  if (!sql.includes("FROM mac_worker_task_events")) {
+                    throw new Error(`unexpected worker event all SQL: ${sql}`);
+                  }
+                  const [accountId, retainedAfter, limit] = values;
+                  return {
+                    results: rows
+                      .filter((event) => event.account_id === accountId && event.created_at >= retainedAfter)
+                      .sort((left, right) =>
+                        right.created_at.localeCompare(left.created_at)
+                        || right.event_id.localeCompare(left.event_id),
+                      )
+                      .slice(0, limit),
+                  };
+                },
+                async run() {
+                  if (sql.includes("INSERT OR IGNORE INTO hosted_workspace_accounts")) {
+                    return { meta: { changes: 0 } };
+                  }
+                  if (sql.includes("DELETE FROM mac_worker_task_events")) {
+                    const [retainedAfter] = values;
+                    for (let index = rows.length - 1; index >= 0; index -= 1) {
+                      if (rows[index].created_at < retainedAfter) rows.splice(index, 1);
+                    }
+                    return { meta: { changes: 0 } };
+                  }
+                  throw new Error(`unexpected worker event run SQL: ${sql}`);
+                },
+              };
+            },
+          };
+        },
+      },
+    },
+    rows,
+  };
+}
+
+test("workspace worker events are account-scoped, newest-first, bounded, and redacted", async () => {
+  const state = workerEventsEnvironment([
+    {
+      event_id: "event-1", task_id: "task-1", account_id: "trace_demo_kr", worker_id: "secret-1",
+      worker_name: "Studio Mac", task_kind: "capture", event_type: "execution_started",
+      failure_code: null, created_at: "2099-09-02T00:00:00.000Z", task_json: "private",
+    },
+    {
+      event_id: "event-2", task_id: "task-2", account_id: "trace_demo_kr", worker_id: "secret-1",
+      worker_name: "Studio Mac", task_kind: "capture", event_type: "execution_failed",
+      failure_code: "native_capture_failed", created_at: "2099-09-02T00:01:00.000Z", prompt: "private",
+    },
+    {
+      event_id: "event-other", task_id: "task-other", account_id: "trace_jp", worker_id: "secret-2",
+      worker_name: "Tokyo Mac", task_kind: "generate_candidates", event_type: "preparation_started",
+      failure_code: null, created_at: "2099-09-02T00:02:00.000Z",
+    },
+    {
+      event_id: "event-expired", task_id: "task-expired", account_id: "trace_demo_kr", worker_id: "secret-1",
+      worker_name: "Studio Mac", task_kind: "capture", event_type: "preparation_started",
+      failure_code: null, created_at: "2000-01-01T00:00:00.000Z",
+    },
+  ]);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/worker-events?limit=2"),
+    state.env,
+    "context",
+  );
+  const { events: listed } = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(listed.map((event) => event.event_id), ["event-2", "event-1"]);
+  assert.deepEqual(Object.keys(listed[0]).sort(), [
+    "created_at", "event_id", "event_type", "failure_code", "task_id", "task_kind", "worker_name",
+  ]);
+  assert.equal(JSON.stringify(listed).includes("secret-1"), false);
+  assert.equal(JSON.stringify(listed).includes("private"), false);
+  assert.equal(state.rows.some((event) => event.event_id === "event-expired"), false);
+
+  const invalidLimit = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/worker-events?limit=101"),
+    state.env,
+    "context",
+  );
+  assert.equal(invalidLimit.status, 400);
 });
 
 // The persona layer is the only hosted surface that both reads and writes rows across

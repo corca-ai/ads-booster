@@ -16,14 +16,18 @@ flowchart LR
   Candidate[Hosted candidate] --> Lease[D1 lease]
   Lease --> Inbox[SQLite inbox]
   Inbox --> Prepare[Context background readiness]
+  Prepare --> EventLog[Sanitized task events]
   Prepare --> Admit[Local admission]
   Admit --> Barrier[D1 execution barrier]
+  Barrier --> EventLog
   Barrier --> Calendar[EventKit seed and verify]
   Calendar --> Codex[One codex exec]
   Codex --> Export[Trace PNG and manifest]
   Export --> Validate[Independent validation and Calendar cleanup]
   Validate --> Callback[Durable callback]
+  Callback --> EventLog
   Callback --> Store[R2 and D1]
+  EventLog --> WorkspaceLog[Workspace execution timeline]
   Store --> Review[Human review]
   Review --> Decision[Threads schedule or OFF cancellation]
   Decision --> Publish[Cloudflare publish barrier and readback]
@@ -37,6 +41,9 @@ flowchart LR
    result through the same durable callback path; it has no Agent loop or plan object.
 2. The workspace creates a `hosted_workspace_capture_v1` task from an approved candidate.
 3. A ready Mac claims the D1 lease and inserts the task in its local inbox before remote ack.
+   Cloudflare and the worker append bounded, idempotent lifecycle events for that task. Each event
+   contains only task/worker identity, task kind, a fixed event type, timestamp, and optional
+   machine-readable failure code.
 4. Safe capture preparation resolves a Simulator, validates country locale/time zone, searches
    allowlisted stock domains for tall wallpaper photos, deterministically selects the usable
    portrait closest to the lock-screen aspect ratio, binds its provenance and digest, creates a
@@ -86,7 +93,22 @@ flowchart LR
    namespace, digest marker, and events all match. Cleanup has an independent bounded budget; a
    cleanup failure remains attached to the primary capture failure.
 9. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
-   stores accepted output in R2/D1 and opens human image review.
+   stores accepted output in R2/D1, appends `callback_applied`, and opens human image review.
+
+## Workspace execution diagnostics
+
+The public workspace reads recent worker task events only inside the selected account scope. The
+timeline is a debug projection, not an execution authority: D1 lease, local admission, execution
+barrier, callback reservation, callback result, and review state remain canonical. The worker emits
+preparation and execution outcome events through a bounded local daemon queue. A saturated or
+unavailable monitoring endpoint can drop diagnostics but cannot block or repeat a task. Cloudflare
+records its own barrier and callback transitions.
+
+Events use a closed vocabulary and a unique task/type key, expire after fourteen days, and are
+returned with a bounded newest-first limit. They never contain a worker token, control-plane token,
+enrollment code, prompt, provider output, callback body, local path, or arbitrary exception message.
+The local mode-0600 launchd stdout/stderr files remain the machine-level fallback for details outside
+that safe contract.
 
 ## Hosted feedback loop
 
@@ -309,6 +331,9 @@ A post-barrier crash or exception is
 `unknown_side_effect`; the worker never repeats potentially completed Trace work. Restart recovery
 requeues interrupted safe work and leaves post-barrier ambiguity visible. Callback retries are
 delivery-only.
+Monitoring-event delivery is also best-effort and never advances task state. Missing events during a
+control-plane outage do not change the inbox/outbox recovery contract; a worker exits without waiting
+for a blocked diagnostic delivery thread.
 
 `trace-marketing worker run` is the foreground worker. The managed labels are
 `com.corca.trace-marketing-worker` and `com.corca.trace-marketing-updater`; they run in the same
