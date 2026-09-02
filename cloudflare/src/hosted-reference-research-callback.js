@@ -5,6 +5,11 @@ import {
   resolveMarketingContextProjection,
 } from "./marketing-agent.js";
 import {
+  hasOnlineMarketingWorker,
+  marketingJudgmentCapability,
+  marketingJudgmentCapabilityMatches,
+} from "./marketing-worker-capabilities.js";
+import {
   ReferenceVerificationError,
   verifyReferenceSources,
 } from "./reference-source-verification.js";
@@ -26,9 +31,15 @@ export async function receiveHostedReferenceResearchCallback(
   ) {
     throw new HttpError(409, "callback scope does not match reference research task");
   }
+  if (!marketingJudgmentCapabilityMatches(task, "market_research")) {
+    throw new HttpError(409, "research callback capability does not match its task");
+  }
   const status = callback.result?.status;
   if (!["succeeded", "failed", "unknown_side_effect"].includes(status)) {
     throw new HttpError(400, "invalid reference research result status");
+  }
+  if (status === "succeeded" && !(await hasOnlineMarketingWorker(env.DB, "shadow_strategy"))) {
+    throw new HttpError(503, "no online worker can run the research follow-up strategy");
   }
   const storedResultJson = JSON.stringify(callback.result);
   if (task.callback_id) {
@@ -205,13 +216,14 @@ export async function receiveHostedReferenceResearchCallback(
         (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
          task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
        VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-               NULL, ?, ?)`,
+               ?, ?, ?)`,
     ).bind(
       strategyTaskId,
       strategyTask.run_id,
       campaign.account_id,
       strategyTask.idempotency_key,
       taskJson,
+      marketingJudgmentCapability("shadow_strategy"),
       now,
       now,
     ),

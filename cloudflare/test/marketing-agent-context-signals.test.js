@@ -50,9 +50,10 @@ function seed(db) {
       ('other_kr', 'Other KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 1, 1);
     INSERT INTO mac_workers
       (worker_id, display_name, pool, state, capabilities_json, doctor_json,
-       created_at, updated_at)
+       last_seen_at, created_at, updated_at)
     VALUES ('worker-1', 'Mac', 'appium', 'active',
-            '{"task_kinds":"marketing_judgment"}', '{}', 'now', 'now');
+            '{"task_kinds":"marketing_judgment","marketing_reasoning_ready":true,"market_research_v1":true,"shadow_strategy_v1":true}',
+            '{}', 'now', 'now', 'now');
   `);
 }
 
@@ -216,6 +217,11 @@ test("customer context reads and context-bound campaign dispatch require control
   for (const request of [
     new Request("https://workspace.example/api/marketing-agent/customer-signals"),
     new Request("https://workspace.example/api/marketing-agent/context-snapshots/context-1"),
+    new Request("https://workspace.example/api/marketing-agent/campaigns", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "shadow" }),
+    }),
     new Request("https://workspace.example/api/marketing-agent/campaigns", {
       method: "POST",
       headers: { "content-type": "application/json" },

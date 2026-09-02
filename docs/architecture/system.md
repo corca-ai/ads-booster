@@ -153,7 +153,7 @@ Quarantined reference research has an additional server-owned provenance boundar
 worker proposes public HTTPS URLs and observations but cannot issue a trusted source receipt.
 Cloudflare follows only bounded, revalidated public-HTTPS redirects, accepts a bounded textual,
 JSON, or PDF response, requires two distinct requested and final hosts, and hashes the fetched bytes.
-`0029` stores the verification bundle and one immutable receipt per source. The subsequent strategy
+`0030` stores the verification bundle and one immutable receipt per source. The subsequent strategy
 task carries both snapshot and receipts, and its callback re-reads both from D1 before accepting a
 brief. These receipts prove fetched-byte lineage only; observation truth, summary faithfulness,
 source credibility, and semantic freshness remain quarantined and `unknown`.
@@ -192,7 +192,7 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0018`–`0029` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0019`–`0030` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
 observations, evaluations, outcome reassessments, quarantined reference snapshots and source-byte receipts, learning candidates, and approval-bound
 principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
@@ -208,6 +208,14 @@ the request fails before writing a task or reservation when no compatible worker
 validation rechecks the task capability, so only an already-leased capability-less task can finish
 with its frozen v1 result during rollout. Existing candidate/image review owns native capture;
 the existing `threads/*` owner remains responsible for every publication effect.
+
+Campaign creation is a control-plane operation in both shadow and assisted mode. Before any queue
+mutation, the runtime requires authority and verifies an active, recently seen worker advertising
+the exact versioned reasoning capability. A worker heartbeat reports capture readiness separately
+from Codex reasoning readiness. When Appium is degraded, the broker may lease only a compatible
+`marketing_judgment`; capture and ordinary candidate generation remain blocked exactly as before.
+`0031_marketing_worker_task_events.sql` preserves existing events and adds that task kind to the
+closed timeline schema.
 
 The hosted route creates short-lived variant redirects and accepts versioned, deduplicated product
 events only under event-ingest authority. The scheduler queues an evaluation only after the
@@ -258,7 +266,7 @@ when an actual asset needs inspection.
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
 
-`0024` adds the first governed customer-intelligence path. A caller may import only a manual,
+`0025` adds the first governed customer-intelligence path. A caller may import only a manual,
 normalized `CustomerSignal`; dedicated raw-text and connector-record fields are rejected, while the
 human reviewer remains responsible for the normalization itself. The task treats the resulting
 summary as bounded context, never as an instruction. The signal begins pending, an authorized human
@@ -276,7 +284,7 @@ physical deletion of all immutable audit copies is a later privacy-control-plane
 account-scoped reference lane, not a CRM/transcript connector, RAG memory system, role model, or
 automatic channel action.
 
-`0023` and `0025` add an account-scoped effect-adapter catalog and a context-receipt-scoped
+`0024` and `0026` add an account-scoped effect-adapter catalog and a context-receipt-scoped
 capability-binding ledger. Existing accounts receive active `capture.native_png`, active
 `copy.text`, and reference-only `publish.threads` descriptors; the latter cannot open a new
 publishing path. A resolver validates the canonical descriptor against its typed catalog fields and

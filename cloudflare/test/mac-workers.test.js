@@ -57,7 +57,7 @@ function worker(workerId, overrides = {}) {
     display_name: workerId,
     pool: "appium",
     state: "active",
-    capabilities_json: '{"task_kinds":"capture,generate_candidates,marketing_judgment","feedback_context_v1":true,"marketing_judgment_v1":true,"candidate_materialization_v2":true,"outcome_reassessment_v1":true}',
+    capabilities_json: '{"task_kinds":"capture,generate_candidates,marketing_judgment","feedback_context_v1":true,"marketing_judgment_v1":true,"marketing_reasoning_ready":true,"shadow_strategy_v1":true,"market_research_v1":true,"creative_plan_v1":true,"candidate_materialization_v2":true,"experiment_evaluation_v1":true,"learning_synthesis_v1":true,"outcome_reassessment_v1":true}',
     doctor_json: '{"ready":true}',
     last_seen_at: "2026-08-26T00:00:00.000Z",
     current_task_id: null,
@@ -74,6 +74,10 @@ class ClaimDb {
 
   prepare(sql) {
     return new ClaimStatement(this, sql);
+  }
+
+  async batch(statements) {
+    return Promise.all(statements.map((statement) => statement.run()));
   }
 }
 
@@ -167,6 +171,22 @@ class ClaimStatement {
   }
 
   async run() {
+    if (this.sql.includes("UPDATE mac_workers SET capabilities_json")) {
+      const [capabilitiesJson, doctorJson, version, lastSeenAt, updatedAt, workerId] = this.values;
+      const row = this.db.workers.get(workerId);
+      if (!row || row.state === "revoked") return { meta: { changes: 0 } };
+      Object.assign(row, {
+        capabilities_json: capabilitiesJson,
+        doctor_json: doctorJson,
+        version,
+        last_seen_at: lastSeenAt,
+        updated_at: updatedAt,
+      });
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("UPDATE hosted_workspace_capture_tasks SET lease_expires_at = ?")) {
+      return { meta: { changes: 0 } };
+    }
     if (this.sql.includes("DELETE FROM mac_worker_task_events")) {
       const [before] = this.values;
       this.db.events = this.db.events.filter((event) => event.created_at >= before);
@@ -1344,6 +1364,74 @@ test("one worker identity cannot concurrently claim two tasks", async () => {
 
   assert.equal(first.length + second.length, 1);
   assert.equal([...db.tasks.values()].filter((row) => row.worker_id === "worker-1").length, 1);
+});
+
+test("reasoning-only admission leases marketing work without touching older capture work", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const reasoningWorker = worker("worker-1");
+  const captureTask = task();
+  const judgmentTask = task({
+    task_id: "task-marketing",
+    kind: "marketing_judgment",
+    required_capability: "shadow_strategy_v1",
+    task_json: task().task_json.replaceAll("task-1", "task-marketing"),
+    created_at: "2026-08-26T00:00:01.000Z",
+  });
+  const db = new ClaimDb([reasoningWorker], [captureTask, judgmentTask]);
+
+  const leases = await claimWorkerTasks(
+    db,
+    reasoningWorker,
+    now,
+    ["marketing_judgment"],
+  );
+
+  assert.deepEqual(leases.map((lease) => lease.message_id), ["task-marketing"]);
+  assert.equal(db.tasks.get("task-1").worker_id, null);
+});
+
+test("the degraded-worker HTTP claim route can lease only marketing reasoning", async () => {
+  const reasoningWorker = worker("worker-1");
+  const captureTask = task({ created_at: "2026-08-26T00:00:00.000Z" });
+  const generationTask = task({
+    task_id: "task-generation",
+    kind: "generate_candidates",
+    task_json: task().task_json.replaceAll("task-1", "task-generation"),
+    created_at: "2026-08-26T00:00:01.000Z",
+  });
+  const judgmentTask = task({
+    task_id: "task-marketing",
+    kind: "marketing_judgment",
+    required_capability: "shadow_strategy_v1",
+    task_json: task().task_json.replaceAll("task-1", "task-marketing"),
+    created_at: "2026-08-26T00:00:02.000Z",
+  });
+  const db = new ClaimDb([reasoningWorker], [captureTask, generationTask, judgmentTask]);
+  const capabilities = JSON.parse(reasoningWorker.capabilities_json);
+
+  const response = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers/tasks/claim", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer worker-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        version: "0.4.20",
+        capabilities,
+        doctor: { ready: false, summary: "missing: appium" },
+      }),
+    }),
+    { DB: db },
+    () => { throw new Error("unexpected callback"); },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).leases.map((lease) => lease.message_id), [
+    "task-marketing",
+  ]);
+  assert.equal(db.tasks.get("task-1").worker_id, null);
+  assert.equal(db.tasks.get("task-generation").worker_id, null);
 });
 
 test("one-time enrollment stores only hashes and cannot be replayed", async () => {

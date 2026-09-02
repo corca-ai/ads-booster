@@ -19,14 +19,12 @@ from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
 from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
 from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
-from ads_booster.marketing.hosted_generation import (
-    HostedWorkspaceGenerationExecutor,
-    PlanlessHostedTaskExecutor,
-)
+from ads_booster.marketing.hosted_generation import HostedWorkspaceGenerationExecutor
 from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
 from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
 from ads_booster.marketing.hosted_reassessment_judgment import HostedOutcomeReassessmentExecutor
 from ads_booster.marketing.hosted_reference_research import HostedReferenceResearchExecutor
+from ads_booster.marketing.hosted_task_router import PlanlessHostedTaskExecutor
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.native_capture import build_hosted_capture_executor
 from ads_booster.marketing.worker_broker import (
@@ -71,7 +69,7 @@ from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
-    from ads_booster.marketing.hosted_generation import PlanlessPrepared
+    from ads_booster.marketing.hosted_task_router import PlanlessPrepared
     from ads_booster.transport.http import HttpClient
     from ads_booster.transport.json_types import JsonObject
 

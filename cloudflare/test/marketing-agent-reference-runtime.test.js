@@ -74,9 +74,14 @@ function seed(db) {
   db.sqlite.prepare(
     `INSERT INTO mac_workers
       (worker_id, display_name, pool, state, capabilities_json, doctor_json,
-       created_at, updated_at)
-     VALUES ('worker-1', 'Mac', 'appium', 'active', ?, '{}', 'now', 'now')`,
-  ).run(JSON.stringify({ task_kinds: "marketing_judgment" }));
+       last_seen_at, created_at, updated_at)
+     VALUES ('worker-1', 'Mac', 'appium', 'active', ?, '{}', 'now', 'now', 'now')`,
+  ).run(JSON.stringify({
+    task_kinds: "marketing_judgment",
+    marketing_reasoning_ready: true,
+    market_research_v1: true,
+    shadow_strategy_v1: true,
+  }));
 }
 
 test("market research stays quarantined and deterministically dispatches strategy", async () => {
@@ -103,6 +108,7 @@ test("market research stays quarantined and deterministically dispatches strateg
   const task = DB.sqlite.prepare(
     "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
   ).get(created.task_id);
+  assert.equal(task.required_capability, "market_research_v1");
   const snapshot = {
     schema_version: "trace.reference-research.v1",
     snapshot_id: "snapshot-1",
@@ -181,8 +187,9 @@ test("market research stays quarantined and deterministically dispatches strateg
   ).get(created.campaign_id);
   assert.equal(JSON.parse(stored.snapshot_json).quarantine, true);
   const strategyTask = DB.sqlite.prepare(
-    "SELECT task_json FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+    "SELECT task_json, required_capability FROM hosted_workspace_capture_tasks WHERE task_id = ?",
   ).get(accepted.strategy_task_id);
+  assert.equal(strategyTask.required_capability, "shadow_strategy_v1");
   const strategyPayload = JSON.parse(strategyTask.task_json).payload;
   assert.equal(strategyPayload.reference_snapshot_sha256, digest(snapshot));
   assert.equal(strategyPayload.reference_snapshot.quarantine, true);

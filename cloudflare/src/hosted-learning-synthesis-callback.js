@@ -4,6 +4,7 @@ import {
   MARKETING_JUDGMENT_PIPELINE,
   rederiveLearningApplicability,
 } from "./marketing-agent.js";
+import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 export async function receiveHostedLearningSynthesisCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -14,6 +15,9 @@ export async function receiveHostedLearningSynthesisCallback(env, task, callback
     || callback.callback_id !== `${callback.task_id}:completed`
   ) {
     throw new HttpError(409, "learning synthesis callback scope is invalid");
+  }
+  if (!marketingJudgmentCapabilityMatches(task, "learning_synthesis")) {
+    throw new HttpError(409, "learning callback capability does not match its task");
   }
   const status = callback.result?.status;
   if (!["succeeded", "failed", "unknown_side_effect"].includes(status)) {

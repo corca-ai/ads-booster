@@ -105,15 +105,20 @@ strategy portfolios, registered outcomes, and frozen context receipts.
 `ads_booster.contracts.marketing_context` separately owns the allowlisted customer-signal and
 campaign-context shapes: its full signal retains provenance and consent, while its planning
 projection deliberately excludes both. D1 migration
-`0017_marketing_agent_foundation.sql` owns the new `agent_v1` persistence epoch and its shadow
+`0018_marketing_agent_foundation.sql` owns the new `agent_v1` persistence epoch and its shadow
 no-tool-action guard. `marketing/hosted_judgment.py` owns validation, private workspace admission,
 the schema-constrained strategy turn, claim/reference quarantine, approved-context prompt boundary,
 and the bound result. Cloudflare
-`marketing-agent.js` owns campaign ingestion and task creation;
+`marketing-agent.js` owns campaign ingestion and task creation; every campaign creation requires
+control-plane authority before its request body can reach the shared broker;
 `hosted-marketing-judgment-callback.js` independently validates and atomically persists successful
-strategy state. The generic worker broker owns leasing and callback transport only; its
-`required_capability` predicate reads the complete advertised capability map, so subtype versions
-remain data rather than broker-specific branches.
+strategy state. The generic worker broker owns leasing and callback transport only. Marketing's
+`marketing-worker-capabilities.js` owns the subtype-to-version registry and the active/recent/exact
+capability preflight. Its task rows freeze that capability, and callbacks reject a different
+non-legacy binding. The broker may admit only `marketing_judgment` while Appium is degraded but
+Codex reasoning is ready; capture and candidate-generation readiness are unchanged.
+`marketing/hosted_task_router.py` is the worker composition root mapping subtypes to leaf executors.
+`hosted_generation.py`, native capture, and each judgment module remain tool owners.
 
 `marketing/hosted_creative_judgment.py` owns the proof-first MediaPlan proposal and creates no tool
 action. It validates frozen capability descriptor bindings and derives the prompt's capability IDs
@@ -122,8 +127,8 @@ candidate and reuses `workspace.CandidateImageInputs` rather than defining a mar
 shape. `cloudflare/src/candidate-image-inputs.js` is the matching control-plane normalizer shared by
 ordinary candidate delivery and marketing materialization. New marketing materialization requires
 the canonical structured weekly schedule and todo column; legacy string rows remain readable only
-at the ordinary delivery boundary or an in-flight v1 callback. The generic worker capability gate
-fails before reservation when no compatible worker is online, keeps
+at the ordinary delivery boundary or an in-flight v1 callback. The marketing worker capability gate
+fails before reservation when no active, recently seen, reasoning-ready compatible worker is online, keeps
 `candidate_materialization_v2` tasks away from older workers, and binds the callback schema back to
 the leased task capability. `marketing/hosted_reference_research.py` returns an immutable quarantined observation
 snapshot and validates the server-issued receipt contract carried into strategy;
@@ -181,26 +186,31 @@ models deliberately retain only IDs, content/input/binding digests, and safe cap
 URI, raw manifest payload, and adapter descriptor stay behind their effect owner rather than becoming
 an incidental review-token transport.
 
-Migrations `0018`–`0029` own the execution/observation/reassessment lineage, assisted-shadow origin binding,
+Migrations `0019`–`0030` own the execution/observation/reassessment lineage, assisted-shadow origin binding,
 quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 
-`0024_marketing_context_signals.sql` owns account-scoped, immutable `CustomerSignal` payloads,
+`0031_marketing_worker_task_events.sql` preserves the existing capture/generation execution
+timeline while extending its closed task-kind contract to marketing judgments. Migration prefixes
+are unique, so fresh installation and an upgrade from main's `0017_worker_task_events.sql` apply the
+same order.
+
+`0025_marketing_context_signals.sql` owns account-scoped, immutable `CustomerSignal` payloads,
 their one-time human review decision, and immutable `MarketingContextSnapshot` records. The hosted
 route accepts only a manually normalized signal in this first version and rejects dedicated raw-text
 or connector-record fields; the human reviewer is still responsible for the normalization itself.
 `marketing-agent.js` builds the snapshot only from approved, consented, fresh signals whose retention
 and freshness both cover the snapshot expiry, then projects only the allowlisted summary to a
-campaign task. Context reads and a context-bound shadow campaign require control-plane authority. A
+campaign task. Context reads and every shadow or assisted campaign creation require control-plane authority. A
 campaign binds the snapshot ID and digest immutably; its callback re-derives the same projection from
 D1 before accepting the receipt. The optional `marketing_context` member of
 `trace.context-receipt.v1` is therefore an additive receipt binding, not a replacement for the source
 signal ledger.
 
 `marketing-adapter-capabilities.js` owns canonical catalog validation, server-derived binding
-digests, frozen-task comparison, and current-action admission. `0023_marketing_adapter_capabilities.sql`
-and `0025_marketing_copy_capability.sql` own account-scoped registrations and receipt-scoped immutable
-bindings. `0025` provisions active `copy.text`, rejects blank/mismatched request or manifest bindings,
+digests, frozen-task comparison, and current-action admission. `0024_marketing_adapter_capabilities.sql`
+and `0026_marketing_copy_capability.sql` own account-scoped registrations and receipt-scoped immutable
+bindings. `0026` provisions active `copy.text`, rejects blank/mismatched request or manifest bindings,
 and prevents binding updates. Neither adds a generic dispatcher or moves capture/Threads effect
 ownership: `hosted-workspace.js` gates capture queueing, `index.js` verifies binding/provenance before
 R2, and existing effect owners execute. `hosted-capture-manifests.js` owns the deterministic

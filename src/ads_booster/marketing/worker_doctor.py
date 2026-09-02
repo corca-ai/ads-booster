@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.marketing.models import TaskKind
+from ads_booster.marketing.worker_capabilities import MARKETING_JUDGMENT_CAPABILITIES
 from ads_booster.providers.codex_cli import resolve_codex_executable
 from ads_booster.transport.json_types import JsonObject
 
@@ -38,6 +39,13 @@ class MacWorkerDoctorReport:
     version: str
 
     def heartbeat(self) -> JsonObject:
+        reasoning_ready = bool(
+            self.checks.get("codex_cli") and self.checks.get("codex_authenticated")
+        )
+        judgment_capabilities = dict.fromkeys(MARKETING_JUDGMENT_CAPABILITIES.values(), True)
+        judgment_capabilities[MARKETING_JUDGMENT_CAPABILITIES["market_research"]] = bool(
+            self.checks.get("codex_web_search")
+        )
         return {
             "version": self.version,
             "capabilities": {
@@ -45,8 +53,9 @@ class MacWorkerDoctorReport:
                 "hosted_workspace_capture_v1": True,
                 "feedback_context_v1": True,
                 "marketing_judgment_v1": True,
-                "candidate_materialization_v2": True,
-                "outcome_reassessment_v1": True,
+                "capture_ready": self.ready,
+                "marketing_reasoning_ready": reasoning_ready,
+                **judgment_capabilities,
                 # Which job kinds this worker can actually execute, so the control plane does
                 # not lease a caption batch to a Mac whose Python predates it. A comma-joined
                 # string rather than a list because the control plane flattens every non-scalar
@@ -69,6 +78,9 @@ def inspect_mac_worker(
     codex_authenticated = (
         codex_available and codex is not None and _run((str(codex), "login", "status")) is not None
     )
+    codex_web_search = (
+        codex_available and codex is not None and "--search" in (_run((str(codex), "--help")) or "")
+    )
     xcrun = shutil.which("xcrun")
     appium = shutil.which("appium")
     simulator_available = False
@@ -87,8 +99,12 @@ def inspect_mac_worker(
         "trace_debug_build": trace_installed,
         "codex_cli": codex_available,
         "codex_authenticated": codex_authenticated,
+        "codex_web_search": codex_web_search,
     }
-    missing = [name for name, passed in checks.items() if not passed]
+    # Web search is a requirement of one reasoning tool, not of the pre-existing Appium worker.
+    # Keep the production capture readiness contract exactly as it was before this capability was
+    # introduced; the heartbeat advertises research support independently below.
+    missing = [name for name, passed in checks.items() if name != "codex_web_search" and not passed]
     ready = not missing
     summary = "ready" if ready else f"missing: {', '.join(missing)}"
     return MacWorkerDoctorReport(

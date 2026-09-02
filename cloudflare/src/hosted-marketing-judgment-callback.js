@@ -1,6 +1,7 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 export async function receiveHostedMarketingJudgmentCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -10,6 +11,9 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     || callback.kind !== "marketing_judgment"
   ) {
     throw new HttpError(409, "callback scope does not match hosted marketing judgment task");
+  }
+  if (!marketingJudgmentCapabilityMatches(task, "shadow_strategy")) {
+    throw new HttpError(409, "strategy callback capability does not match its task");
   }
   if (callback.callback_id !== `${callback.task_id}:completed`) {
     throw new HttpError(409, "callback_id does not match hosted marketing judgment task");

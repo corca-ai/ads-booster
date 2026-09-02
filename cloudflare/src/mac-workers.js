@@ -58,8 +58,15 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       const worker = await requireWorker(request, env.DB);
       const body = await readJson(request);
       await heartbeatWorker(env.DB, worker, body);
-      if (body.doctor?.ready !== true) return Response.json({ leases: [] });
-      return Response.json({ leases: await claimWorkerTasks(env.DB, worker, new Date()) });
+      if (body.doctor?.ready === true) {
+        return Response.json({ leases: await claimWorkerTasks(env.DB, worker, new Date()) });
+      }
+      if (body.capabilities?.marketing_reasoning_ready === true) {
+        return Response.json({
+          leases: await claimWorkerTasks(env.DB, worker, new Date(), ["marketing_judgment"]),
+        });
+      }
+      return Response.json({ leases: [] });
     }
     if (request.method === "POST" && url.pathname === "/v1/workers/tasks/ack") {
       const worker = await requireWorker(request, env.DB);
@@ -215,13 +222,15 @@ export function workerOperationalStatus(row, now = new Date()) {
   return row.current_task_id ? "busy" : "ready";
 }
 
-export async function claimWorkerTasks(db, worker, now = new Date()) {
+export async function claimWorkerTasks(db, worker, now = new Date(), allowedKinds = null) {
   if (worker.state !== "active") return [];
   await clearStaleWorkerAssignment(db, worker.worker_id, now);
   // What this Mac says it can run, read back from the row the heartbeat just wrote rather
   // than from the token lookup, so a worker that updated itself is trusted on this poll.
   const advertised = await claimableWorkerCapabilities(db, worker.worker_id);
-  const kinds = advertised.kinds;
+  const kinds = allowedKinds === null
+    ? advertised.kinds
+    : advertised.kinds.filter((kind) => allowedKinds.includes(kind));
   if (kinds.length === 0) return [];
   const advertisedCapabilitiesJson = JSON.stringify(advertised.capabilities);
   const kindPlaceholders = kinds.map(() => "?").join(", ");

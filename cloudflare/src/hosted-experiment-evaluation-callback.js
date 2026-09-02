@@ -2,6 +2,11 @@ import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
 import {
+  hasOnlineMarketingWorker,
+  marketingJudgmentCapability,
+  marketingJudgmentCapabilityMatches,
+} from "./marketing-worker-capabilities.js";
+import {
   deriveExperimentEvaluation,
   InvalidExperimentEvaluationRequest,
 } from "./experiment-evaluation.js";
@@ -19,6 +24,9 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     || callback.callback_id !== `${callback.task_id}:completed`
   ) {
     throw new HttpError(409, "experiment evaluation callback scope is invalid");
+  }
+  if (!marketingJudgmentCapabilityMatches(task, "experiment_evaluation")) {
+    throw new HttpError(409, "evaluation callback capability does not match its task");
   }
   const status = callback.result?.status;
   if (!["succeeded", "failed", "unknown_side_effect"].includes(status)) {
@@ -133,6 +141,12 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     } catch {
       throw new HttpError(409, "outcome reassessment request is invalid");
     }
+  }
+  if (
+    reassessmentTask !== null
+    && !(await hasOnlineMarketingWorker(env.DB, "outcome_reassessment"))
+  ) {
+    throw new HttpError(503, "no online worker can run the outcome reassessment");
   }
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
@@ -249,13 +263,14 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
         (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
          task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
        VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-               'outcome_reassessment_v1', ?, ?)`,
+               ?, ?, ?)`,
     ).bind(
       reassessmentTask.task_id,
       reassessmentTask.run_id,
       campaign.account_id,
       reassessmentTask.idempotency_key,
       JSON.stringify(reassessmentTask),
+      marketingJudgmentCapability("outcome_reassessment"),
       reassessmentTask.created_at,
       now,
     ));

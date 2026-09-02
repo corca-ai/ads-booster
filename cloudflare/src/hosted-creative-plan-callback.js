@@ -6,6 +6,7 @@ import {
   MarketingCapabilityError,
 } from "./marketing-adapter-capabilities.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 export async function receiveHostedCreativePlanCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -15,6 +16,9 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
     || callback.kind !== "marketing_judgment"
   ) {
     throw new HttpError(409, "callback scope does not match hosted creative judgment task");
+  }
+  if (!marketingJudgmentCapabilityMatches(task, "creative_plan")) {
+    throw new HttpError(409, "creative callback capability does not match its task");
   }
   if (callback.callback_id !== `${callback.task_id}:completed`) {
     throw new HttpError(409, "callback_id does not match hosted creative judgment task");

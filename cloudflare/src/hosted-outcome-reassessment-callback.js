@@ -4,6 +4,7 @@ import {
   InvalidOutcomeReassessment,
   validateOutcomeReassessment,
 } from "./marketing-outcome-reassessment.js";
+import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 const PIPELINE = "hosted_marketing_judgment_v1";
 
@@ -16,6 +17,9 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
     || callback.callback_id !== `${callback.task_id}:completed`
   ) {
     throw new HttpError(409, "outcome reassessment callback scope is invalid");
+  }
+  if (!marketingJudgmentCapabilityMatches(task, "outcome_reassessment")) {
+    throw new HttpError(409, "reassessment callback capability does not match its task");
   }
   const status = callback.result?.status;
   if (!["succeeded", "failed", "unknown_side_effect"].includes(status)) {

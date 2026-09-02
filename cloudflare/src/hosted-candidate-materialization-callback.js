@@ -9,6 +9,7 @@ import {
   MarketingCapabilityError,
 } from "./marketing-adapter-capabilities.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 export async function receiveHostedCandidateMaterializationCallback(
   env,
@@ -24,6 +25,9 @@ export async function receiveHostedCandidateMaterializationCallback(
     || callback.callback_id !== `${callback.task_id}:completed`
   ) {
     throw new HttpError(409, "candidate materialization callback scope is invalid");
+  }
+  if (!marketingJudgmentCapabilityMatches(task, "candidate_materialization")) {
+    throw new HttpError(409, "candidate callback capability does not match its task");
   }
   const status = callback.result?.status;
   if (!["succeeded", "failed", "unknown_side_effect"].includes(status)) {

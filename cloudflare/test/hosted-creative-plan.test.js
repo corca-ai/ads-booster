@@ -185,7 +185,9 @@ function approvalDb({ workers = true } = {}) {
                   results: workers
                     ? [{ capabilities_json: JSON.stringify({
                       task_kinds: "capture,generate_candidates,marketing_judgment",
-                    }) }]
+                      marketing_reasoning_ready: true,
+                      creative_plan_v1: true,
+                    }), doctor_json: "{}" }]
                   : [],
                 };
               }
@@ -492,6 +494,9 @@ test("exact strategy approval queues one proof-first judgment and no tool action
   const sql = statements.map((statement) => statement.sql).join("\n");
   assert.match(sql, /hosted_marketing_approval_grants/);
   assert.match(sql, /marketing_judgment/);
+  const creativeTask = statements.find((statement) =>
+    statement.sql.includes("INSERT INTO hosted_workspace_capture_tasks"));
+  assert.equal(creativeTask.values.at(-3), "creative_plan_v1");
   assert.doesNotMatch(sql, /hosted_marketing_tool_actions/);
   assert.doesNotMatch(sql, /hosted_workspace_candidates/);
 });

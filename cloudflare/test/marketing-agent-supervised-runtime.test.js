@@ -233,10 +233,10 @@ function seedSupervisedCampaign(DB, { reviewContext = false, causal = false } = 
     VALUES ('trace_kr', 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 1, 1);
     INSERT INTO mac_workers
       (worker_id, display_name, pool, state, capabilities_json, doctor_json,
-       created_at, updated_at)
+       last_seen_at, created_at, updated_at)
     VALUES ('worker-1', 'Mac', 'appium', 'active',
-            '{"task_kinds":"capture,marketing_judgment","feedback_context_v1":true,"candidate_materialization_v2":true}',
-            '{}', 'now', 'now');
+            '{"task_kinds":"capture,marketing_judgment","feedback_context_v1":true,"marketing_reasoning_ready":true,"shadow_strategy_v1":true,"market_research_v1":true,"candidate_materialization_v2":true,"experiment_evaluation_v1":true,"learning_synthesis_v1":true,"outcome_reassessment_v1":true}',
+            '{}', 'now', 'now', 'now');
   `);
   if (causal) {
     DB.sqlite.exec(`
@@ -523,7 +523,7 @@ function claimTask(DB, taskId) {
 async function materializeOne(
   DB,
   projectionRevision,
-  { legacyTask = false, legacyOutput = false } = {},
+  { legacyTask = false, legacyOutput = false, taskCapabilityOverride = undefined } = {},
 ) {
   const requested = await requestCandidateMaterialization(
     { DB },
@@ -535,11 +535,15 @@ async function materializeOne(
     DB.sqlite.prepare(
       "UPDATE hosted_workspace_capture_tasks SET required_capability = NULL WHERE task_id = ?",
     ).run(requested.task_id);
+  } else if (taskCapabilityOverride !== undefined) {
+    DB.sqlite.prepare(
+      "UPDATE hosted_workspace_capture_tasks SET required_capability = ? WHERE task_id = ?",
+    ).run(taskCapabilityOverride, requested.task_id);
   }
   const task = claimTask(DB, requested.task_id);
   assert.equal(
     task.required_capability,
-    legacyTask ? null : "candidate_materialization_v2",
+    legacyTask ? null : (taskCapabilityOverride ?? "candidate_materialization_v2"),
   );
   const payload = JSON.parse(task.task_json).payload;
   const knowledge = DB.sqlite.prepare(
@@ -768,6 +772,21 @@ test("a v2 candidate task rejects a v1 worker result without mutating campaign s
       "SELECT state FROM hosted_marketing_materialization_reservations LIMIT 1",
     ).get().state,
     "queued",
+  );
+});
+
+test("candidate callback rejects another reasoning tool's frozen capability", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB);
+
+  await assert.rejects(
+    materializeOne(DB, 4, { taskCapabilityOverride: "creative_plan_v1" }),
+    (error) => error?.status === 409,
+  );
+
+  assert.equal(
+    DB.sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_workspace_candidates").get().count,
+    0,
   );
 });
 
@@ -1098,6 +1117,7 @@ test("causal evaluation opens only for publications matching immutable exposure 
     { projection_revision: 8 },
   );
   const task = claimTask(DB, requested.task_id);
+  assert.equal(task.required_capability, "experiment_evaluation_v1");
   const request = JSON.parse(task.task_json).payload.request;
   assert.equal(request.causal_exposure_verified, true);
   const evaluation = deriveExperimentEvaluation(request);
@@ -1360,6 +1380,7 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
   ).get();
   assert.ok(queuedReassessment);
   const reassessmentTask = claimTask(DB, queuedReassessment.task_id);
+  assert.equal(reassessmentTask.required_capability, "outcome_reassessment_v1");
   const reassessmentPayload = JSON.parse(reassessmentTask.task_json).payload;
   assert.equal(reassessmentPayload.situation, "experiment_result");
   assert.equal(reassessmentPayload.evaluation_sha256, digest(evaluation));
@@ -1598,6 +1619,7 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     },
   );
   const learningTask = claimTask(DB, learningRequest.task_id);
+  assert.equal(learningTask.required_capability, "learning_synthesis_v1");
   const learningPayload = JSON.parse(learningTask.task_json).payload;
   const learningCandidate = {
     schema_version: "trace.learning-candidate.v1",

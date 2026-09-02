@@ -111,7 +111,10 @@ function creationDb({ workers = true, packetDigest = null } = {}) {
                   results: workers
                     ? [{ capabilities_json: JSON.stringify({
                       task_kinds: "capture,generate_candidates,marketing_judgment",
-                    }) }]
+                      marketing_reasoning_ready: true,
+                      market_research_v1: true,
+                      shadow_strategy_v1: true,
+                    }), doctor_json: "{}" }]
                     : [],
                 };
               }
@@ -570,6 +573,9 @@ test("shadow campaign creates only an event and a judgment task", async () => {
   assert.match(sql, /hosted_marketing_run_events/);
   assert.match(sql, /hosted_marketing_knowledge_snapshots/);
   assert.match(sql, /marketing_judgment/);
+  const judgmentTask = statements.find((statement) =>
+    statement.sql.includes("INSERT INTO hosted_workspace_capture_tasks"));
+  assert.equal(judgmentTask.values.at(-3), "market_research_v1");
   assert.doesNotMatch(sql, /hosted_workspace_candidates/);
   assert.doesNotMatch(sql, /hosted_marketing_tool_actions/);
   assert.doesNotMatch(sql, /threads_publications/);

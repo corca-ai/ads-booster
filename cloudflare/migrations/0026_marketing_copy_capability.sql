@@ -16,7 +16,7 @@ FROM hosted_workspace_accounts
 WHERE 1
 ON CONFLICT(account_id, capability_id) DO NOTHING;
 
--- Migration 0023 already provisions capture and registered publication references for a new
+-- Migration 0024 already provisions capture and registered publication references for a new
 -- account.  This independent trigger makes the new local copy adapter available to accounts
 -- created after this migration without reopening historical descriptor rows.
 CREATE TRIGGER hosted_workspace_account_marketing_copy_capability

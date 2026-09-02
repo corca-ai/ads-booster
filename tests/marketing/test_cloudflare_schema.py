@@ -21,6 +21,13 @@ def apply_migrations(connection: sqlite3.Connection, *, through: str | None = No
         _ = connection.executescript(migration.read_text())
 
 
+def test_migration_numeric_prefixes_are_unique() -> None:
+    migrations = sorted(MIGRATION_ROOT.glob("*.sql"))
+    prefixes = [migration.name.split("_", maxsplit=1)[0] for migration in migrations]
+
+    assert len(prefixes) == len(set(prefixes))
+
+
 def test_existing_hosted_rows_survive_the_legacy_migration_chain() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection, through="0014_worker_caption_generation.sql")
@@ -87,7 +94,7 @@ def test_marketing_agent_foundation_preserves_existing_hosted_rows() -> None:
         )
 
         _ = connection.executescript(
-            (MIGRATION_ROOT / "0017_marketing_agent_foundation.sql").read_text()
+            (MIGRATION_ROOT / "0018_marketing_agent_foundation.sql").read_text()
         )
 
         candidate = connection.execute(
@@ -127,6 +134,36 @@ def test_marketing_agent_foundation_preserves_existing_hosted_rows() -> None:
         )
 
 
+def test_marketing_worker_event_upgrade_preserves_existing_events_and_accepts_judgments() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection, through="0030_marketing_reference_source_receipts.sql")
+        _ = connection.execute(
+            """INSERT INTO mac_worker_task_events
+            (event_id, task_id, account_id, worker_id, worker_name, task_kind, event_type,
+             failure_code, created_at)
+            VALUES ('event-capture', 'task-capture', 'trace_kr', 'worker-1', 'Studio Mac',
+                    'capture', 'execution_started', NULL, 'before')"""
+        )
+
+        _ = connection.executescript(
+            (MIGRATION_ROOT / "0031_marketing_worker_task_events.sql").read_text()
+        )
+        _ = connection.execute(
+            """INSERT INTO mac_worker_task_events
+            (event_id, task_id, account_id, worker_id, worker_name, task_kind, event_type,
+             failure_code, created_at)
+            VALUES ('event-judgment', 'task-judgment', 'trace_kr', 'worker-1', 'Studio Mac',
+                    'marketing_judgment', 'execution_started', NULL, 'after')"""
+        )
+
+        assert connection.execute(
+            "SELECT event_id, task_kind FROM mac_worker_task_events ORDER BY event_id"
+        ).fetchall() == [
+            ("event-capture", "capture"),
+            ("event-judgment", "marketing_judgment"),
+        ]
+
+
 def test_shadow_marketing_campaign_cannot_create_tool_actions() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection)
@@ -157,7 +194,7 @@ def test_shadow_marketing_campaign_cannot_create_tool_actions() -> None:
 
 def test_adapter_capability_migration_seeds_trace_reference_installations() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
-        apply_migrations(connection, through="0022_marketing_knowledge_snapshots.sql")
+        apply_migrations(connection, through="0023_marketing_knowledge_snapshots.sql")
         _ = connection.execute(
             """INSERT INTO hosted_workspace_accounts
             (account_id, display_name, country, language, timezone, morning_time,
@@ -166,7 +203,7 @@ def test_adapter_capability_migration_seeds_trace_reference_installations() -> N
                     '07:30', '19:30', 1, 1, 1)"""
         )
         _ = connection.executescript(
-            (MIGRATION_ROOT / "0023_marketing_adapter_capabilities.sql").read_text()
+            (MIGRATION_ROOT / "0024_marketing_adapter_capabilities.sql").read_text()
         )
 
         rows = connection.execute(
@@ -1167,7 +1204,7 @@ def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() ->
 
 def test_knowledge_snapshot_migration_backfills_the_existing_strategy_task() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
-        apply_migrations(connection, through="0021_marketing_artifact_assignment_lineage.sql")
+        apply_migrations(connection, through="0022_marketing_artifact_assignment_lineage.sql")
         principles = '["One post has one situation."]'
         digest = "a" * 64
         _ = connection.execute(
@@ -1215,7 +1252,7 @@ def test_knowledge_snapshot_migration_backfills_the_existing_strategy_task() -> 
         )
 
         _ = connection.executescript(
-            (MIGRATION_ROOT / "0022_marketing_knowledge_snapshots.sql").read_text()
+            (MIGRATION_ROOT / "0023_marketing_knowledge_snapshots.sql").read_text()
         )
 
         assert connection.execute(

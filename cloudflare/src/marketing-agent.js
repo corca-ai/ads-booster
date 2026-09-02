@@ -1,4 +1,7 @@
-import { hasWorkerForTaskKind } from "./mac-workers.js";
+import {
+  hasOnlineMarketingWorker,
+  marketingJudgmentCapability,
+} from "./marketing-worker-capabilities.js";
 import {
   assertCurrentCapabilityBinding,
   MarketingCapabilityError,
@@ -107,13 +110,8 @@ export async function handleHostedMarketingAgent(request, env, account) {
       ));
     }
     if (request.method === "POST" && url.pathname === "/api/marketing-agent/campaigns") {
+      requireMarketingAuthority(request, env);
       const input = await readJson(request);
-      if (
-        (input?.mode ?? "shadow") !== "shadow"
-        || input?.marketing_context_snapshot_id != null
-      ) {
-        requireMarketingAuthority(request, env);
-      }
       return agentJson(await createShadowCampaign(env, account, input), 202);
     }
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/campaigns") {
@@ -267,12 +265,6 @@ export async function handleHostedMarketingAgent(request, env, account) {
 }
 
 export async function createShadowCampaign(env, account, input) {
-  if (!(await hasWorkerForTaskKind(env.DB, "marketing_judgment"))) {
-    throw new MarketingAgentHttpError(
-      503,
-      "연결된 Mac 워커가 마케팅 전략 판단을 지원하지 않습니다. 워커를 업데이트해 주세요.",
-    );
-  }
   const campaignId = safeId(input?.campaign_id, "campaign_id");
   const businessOutcome = requiredString(input?.business_outcome, "business_outcome", 1000);
   const currentControl = requiredString(input?.current_control, "current_control", 4000);
@@ -286,6 +278,14 @@ export async function createShadowCampaign(env, account, input) {
   const mode = input?.mode ?? "shadow";
   if (!["shadow", "assisted"].includes(mode)) {
     throw new MarketingAgentHttpError(400, "mode는 shadow 또는 assisted여야 합니다.");
+  }
+  const initialJudgment = researchEnabled ? "market_research" : "shadow_strategy";
+  const initialCapability = marketingJudgmentCapability(initialJudgment);
+  if (!(await hasOnlineMarketingWorker(env.DB, initialJudgment))) {
+    throw new MarketingAgentHttpError(
+      503,
+      "연결된 Mac 워커가 요청한 마케팅 판단 도구를 지원하지 않습니다. 워커를 업데이트해 주세요.",
+    );
   }
   if (mode === "shadow" && packet.gate.publication_allowed !== false) {
     throw new MarketingAgentHttpError(400, "shadow campaign의 publication gate는 닫혀 있어야 합니다.");
@@ -542,8 +542,17 @@ export async function createShadowCampaign(env, account, input) {
         (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
          task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
        VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-               NULL, ?, ?)`,
-    ).bind(taskId, task.run_id, account.account_id, task.idempotency_key, taskJson, now, now),
+               ?, ?, ?)`,
+    ).bind(
+      taskId,
+      task.run_id,
+      account.account_id,
+      task.idempotency_key,
+      taskJson,
+      initialCapability,
+      now,
+      now,
+    ),
     ...(truthReview ? [
       env.DB.prepare(
         `INSERT INTO hosted_marketing_product_truth_approvals
@@ -700,7 +709,8 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
   ];
   let taskId = null;
   if (decision === "approved") {
-    if (!(await hasWorkerForTaskKind(env.DB, "marketing_judgment"))) {
+    const creativeCapability = marketingJudgmentCapability("creative_plan");
+    if (!(await hasOnlineMarketingWorker(env.DB, "creative_plan"))) {
       throw new MarketingAgentHttpError(
         503,
         "연결된 Mac 워커가 creative judgment를 지원하지 않습니다.",
@@ -776,13 +786,14 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
           (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
            task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
          VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-                 NULL, ?, ?)`,
+                 ?, ?, ?)`,
       ).bind(
         taskId,
         task.run_id,
         account.account_id,
         task.idempotency_key,
         taskJson,
+        creativeCapability,
         now,
         now,
       ),
@@ -1107,11 +1118,7 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
   ) {
     throw new MarketingAgentHttpError(409, "materialization allocation gate가 닫혀 있습니다.");
   }
-  if (!(await hasWorkerForTaskKind(
-    env.DB,
-    "marketing_judgment",
-    "candidate_materialization_v2",
-  ))) {
+  if (!(await hasOnlineMarketingWorker(env.DB, "candidate_materialization"))) {
     throw new MarketingAgentHttpError(
       503,
       "연결된 Mac 워커가 주간 후보 생성을 지원하지 않습니다. 워커를 업데이트해 주세요.",
@@ -1217,13 +1224,14 @@ export async function requestCandidateMaterialization(env, account, campaignId, 
         (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
          task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
        VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-               'candidate_materialization_v2', ?, ?)`,
+               ?, ?, ?)`,
     ).bind(
       taskId,
       task.run_id,
       account.account_id,
       task.idempotency_key,
       taskJson,
+      marketingJudgmentCapability("candidate_materialization"),
       now,
       now,
     ),
@@ -1786,6 +1794,13 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
   if (!windowsComplete) {
     throw new MarketingAgentHttpError(409, "사전등록된 observation window가 아직 끝나지 않았습니다.");
   }
+  const evaluationCapability = marketingJudgmentCapability("experiment_evaluation");
+  if (!(await hasOnlineMarketingWorker(env.DB, "experiment_evaluation"))) {
+    throw new MarketingAgentHttpError(
+      503,
+      "연결된 Mac 워커가 실험 평가 도구를 지원하지 않습니다. 워커를 업데이트해 주세요.",
+    );
+  }
   const taskId = crypto.randomUUID();
   const evaluationId = `${experiment.experiment_id}.final`;
   const evaluatedAt = now.toISOString();
@@ -1820,13 +1835,14 @@ export async function requestExperimentEvaluation(env, account, campaignId, inpu
       (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
        task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
      VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-             NULL, ?, ?)`,
+             ?, ?, ?)`,
   ).bind(
     taskId,
     task.run_id,
     account.account_id,
     task.idempotency_key,
     JSON.stringify(task),
+    evaluationCapability,
     evaluatedAt,
     evaluatedAt,
   ).run();
@@ -1930,6 +1946,13 @@ export async function requestLearningSynthesis(env, account, input) {
   if (existing) {
     return { learning_id: learningId, state: "candidate", duplicate: true };
   }
+  const learningCapability = marketingJudgmentCapability("learning_synthesis");
+  if (!(await hasOnlineMarketingWorker(env.DB, "learning_synthesis"))) {
+    throw new MarketingAgentHttpError(
+      503,
+      "연결된 Mac 워커가 학습 합성 도구를 지원하지 않습니다. 워커를 업데이트해 주세요.",
+    );
+  }
   const taskId = crypto.randomUUID();
   const now = new Date().toISOString();
   const targetCampaignId = ordered.at(-1).campaign_id;
@@ -1962,13 +1985,14 @@ export async function requestLearningSynthesis(env, account, input) {
       (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
        task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
      VALUES (?, ?, ?, '', 1, ?, ?, 'queued', 'worker_broker', 'marketing_judgment',
-             NULL, ?, ?)`,
+             ?, ?, ?)`,
   ).bind(
     taskId,
     task.run_id,
     account.account_id,
     task.idempotency_key,
     JSON.stringify(task),
+    learningCapability,
     now,
     now,
   ).run();
