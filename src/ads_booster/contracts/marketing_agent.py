@@ -454,6 +454,109 @@ class MarketingReassessment(ContractModel):
         return self
 
 
+class NextExperimentCandidateContent(ContractModel):
+    """Marketing content only; it intentionally has no execution authority."""
+
+    parent_hypothesis_ids: Annotated[
+        tuple[AgentIdentifier, ...],
+        Field(min_length=1, max_length=8),
+    ]
+    claim_ids: Annotated[
+        tuple[AgentIdentifier, ...],
+        Field(min_length=1, max_length=16),
+    ]
+    audience_situation: Annotated[str, Field(min_length=1, max_length=2000)]
+    belief_to_change: Annotated[str, Field(min_length=1, max_length=1000)]
+    hypothesis: Annotated[str, Field(min_length=1, max_length=2000)]
+    rationale: Annotated[str, Field(min_length=1, max_length=2000)]
+    manipulated_component: Annotated[str, Field(min_length=1, max_length=500)]
+    treatment_concept: Annotated[str, Field(min_length=1, max_length=2000)]
+    expected_signal: Annotated[str, Field(min_length=1, max_length=1000)]
+    falsifier: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class NextExperimentEvidenceInterpretation(ContractModel):
+    """A model interpretation that may only point at a host-supplied evidence identity."""
+
+    evidence_id: AgentIdentifier
+    interpretation: Annotated[str, Field(min_length=1, max_length=2000)]
+
+
+class NextExperimentDraft(ContractModel):
+    """Host-owned, no-effect envelope around model-proposed marketing content."""
+
+    schema_version: Literal["trace.next-experiment-draft.v1"]
+    draft_id: AgentIdentifier
+    campaign_id: AgentIdentifier
+    account_id: AgentIdentifier
+    trigger_evaluation_id: AgentIdentifier
+    trigger_evaluation_sha256: Sha256Digest
+    trigger_reassessment_id: AgentIdentifier
+    trigger_reassessment_sha256: Sha256Digest
+    prior_strategy_sha256: Sha256Digest
+    control_hypothesis_id: AgentIdentifier
+    primary_outcome: OutcomeDefinition
+    held_constant_components: Annotated[
+        tuple[str, ...],
+        Field(min_length=1, max_length=32),
+    ]
+    source_hypothesis_ids: Annotated[
+        tuple[AgentIdentifier, ...],
+        Field(min_length=1, max_length=8),
+    ]
+    supporting_claim_ids: Annotated[
+        tuple[AgentIdentifier, ...],
+        Field(min_length=1, max_length=64),
+    ]
+    evidence: Annotated[
+        tuple[NextExperimentEvidenceInterpretation, ...],
+        Field(min_length=1, max_length=256),
+    ]
+    counterevidence: Annotated[
+        tuple[NextExperimentEvidenceInterpretation, ...],
+        Field(max_length=256),
+    ] = ()
+    assumptions: Annotated[tuple[str, ...], Field(min_length=1, max_length=16)]
+    unresolved_questions: Annotated[tuple[str, ...], Field(max_length=16)] = ()
+    candidate: NextExperimentCandidateContent
+    effect_class: Literal["none"]
+    state: Literal["draft"]
+    human_review_required: Literal[True]
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_draft(self) -> Self:
+        _require_utc(self.created_at, field="created_at")
+        _ = _require_unique(self.source_hypothesis_ids, field="source_hypothesis_id")
+        _ = _require_unique(self.supporting_claim_ids, field="supporting_claim_id")
+        _ = _require_unique(
+            self.candidate.parent_hypothesis_ids,
+            field="next_experiment_parent_hypothesis_id",
+        )
+        _ = _require_unique(self.candidate.claim_ids, field="next_experiment_claim_id")
+        _ = _require_unique(
+            (item.evidence_id for item in self.evidence),
+            field="next_experiment_evidence_id",
+        )
+        _ = _require_unique(
+            (item.evidence_id for item in self.counterevidence),
+            field="next_experiment_counterevidence_id",
+        )
+        return self
+
+
+class NextExperimentAdmission(ContractModel):
+    """Host decision that a no-effect draft is ready for deliberate human review."""
+
+    schema_version: Literal["trace.next-experiment-admission.v1"]
+    state: Literal["ready_for_review"]
+    evidence_sha256: Sha256Digest
+    reassessment_sha256: Sha256Digest
+    source_strategy_sha256: Sha256Digest
+    human_review_required: Literal[True]
+    effect_class: Literal["none"]
+
+
 class StrategyBrief(ContractModel):
     schema_version: Literal["trace.strategy-brief.v1"]
     brief_id: AgentIdentifier

@@ -280,11 +280,13 @@ than a new branch inside `marketing-agent.js`.
 ## Next implementation slice
 
 The provider-neutral runtime, scorecard baseline, account-scoped capability catalog, narrow
-customer-context reference lane, and first protected review surface now exist. The review queue and
-packet cover only current no-effect strategy, creative, and learning decisions; extend them to actual
-effect owners only with their cost, blast-radius, rollback, policy, receipt, and readback contracts.
-In parallel, use a private diverse corpus and repeated pinned provider/model trials before making a
-model-quality claim. Connector ingestion and a multi-product role model remain later policy work. The
+customer-context reference lane, and protected review surface now exist. An evaluated campaign can
+now persist and later run an outcome-informed, no-effect next-experiment judgment without blocking on
+worker availability. The next bounded slice is activation: convert only an approved exact draft into
+one successor shadow campaign after rechecking freshness, capability availability, budget policy, and
+source lineage; keep every existing effect owner unchanged. In parallel, use a private diverse corpus
+and repeated pinned provider/model paired trials before making a model-quality claim. Connector
+ingestion and a multi-product role model remain later policy work. The
 canonical companion for current Trace behavior remains
 [`threads-marketing-agent.md`](./threads-marketing-agent.md).
 

@@ -5,6 +5,7 @@ import { receiveHostedCreativePlanCallback } from "./hosted-creative-plan-callba
 import { receiveHostedCandidateMaterializationCallback } from "./hosted-candidate-materialization-callback.js";
 import { receiveHostedExperimentEvaluationCallback } from "./hosted-experiment-evaluation-callback.js";
 import { receiveHostedLearningSynthesisCallback } from "./hosted-learning-synthesis-callback.js";
+import { receiveHostedNextExperimentCallback } from "./hosted-next-experiment-callback.js";
 import { receiveHostedOutcomeReassessmentCallback } from "./hosted-outcome-reassessment-callback.js";
 import { receiveHostedReferenceResearchCallback } from "./hosted-reference-research-callback.js";
 import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
@@ -34,6 +35,7 @@ import { dispatchHostedThreadsPublication } from "./threads/publication.js";
 import { runHostedThreadsPublications } from "./threads/scheduling.js";
 import { threadsConfigurationState } from "./threads/config.js";
 import { runDueMarketingEvaluations } from "./marketing-agent.js";
+import { runDueNextExperimentRequests } from "./marketing-next-experiment.js";
 
 import {
   accountName,
@@ -475,6 +477,7 @@ export default {
       startDueRuns(env),
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
       runDueMarketingEvaluations(env),
+      runDueNextExperimentRequests(env),
       ...threadsTasks,
     ]));
   },
@@ -699,6 +702,9 @@ export async function receiveCallback(env, callback, worker = null) {
     }
     if (judgment === "outcome_reassessment") {
       return receiveHostedOutcomeReassessmentCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "next_experiment") {
+      return receiveHostedNextExperimentCallback(env, hostedTask, callback, worker);
     }
     if (judgment === "market_research") {
       return receiveHostedReferenceResearchCallback(env, hostedTask, callback, worker);

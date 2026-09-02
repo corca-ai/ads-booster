@@ -111,7 +111,15 @@ and prior strategy into exactly one
 `outcome_reassessment` turn. That no-effect turn distinguishes an ordinary result, a control win or
 stopped performance path, and an observed publication unknown-side-effect; it produces a bound
 hypothesis-by-hypothesis reassessment for inspection but cannot publish, spend, retry, or alter the
-active campaign. The separate decision-quality evaluator still covers synthetic market-event
+active campaign. When that reassessment supports another bounded experiment, Cloudflare persists a
+`next_experiment` request even while every compatible Mac worker is offline. A later structured
+Codex turn must interpret every frozen evidence ID and every contradictory or insufficient item;
+it may propose only a challenger concept, may cite only claims owned by its selected parent
+hypotheses, and cannot select a held constant as the manipulated component. The host copies the
+control, primary outcome, held constants, lineage, admission, and IDs. The protected exact review
+packet presents host-verified evaluation/disposition facts separately from untrusted model
+interpretations. Approving it records reviewer acceptance but creates no
+successor, candidate, capture, publication, spend, or tool action. The separate decision-quality evaluator still covers synthetic market-event
 scenarios offline. General market-event intake and general tool-effect reconciliation are not live.
 Replicated evaluated lineages may create a learning candidate, and only an exact human decision can
 promote it to a scoped principle. Generic recording, composition, Figma, and generated-media
@@ -282,7 +290,7 @@ wrangler secret put TRACE_EVENT_INGEST_TOKEN
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
-`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, every marketing-agent campaign creation or assisted action, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql`, main's `0017_worker_task_events.sql`, and marketing-agent migrations `0018`–`0032` in order before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, every marketing-agent campaign creation or assisted action, exact next-experiment review, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql`, main's `0017_worker_task_events.sql`, and marketing-agent migrations `0018`–`0033` in order before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
 
 ## Managed releases and compatibility
 

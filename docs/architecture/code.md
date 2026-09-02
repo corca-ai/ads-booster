@@ -171,6 +171,19 @@ reassessment, while `cloudflare/src/hosted-outcome-reassessment-callback.js` ind
 the stored evaluation, strategy, evidence metadata, claims, and hypothesis set before writing its
 append-only ledger row. Neither owner changes strategy or executes the recommendation. Their Cloudflare callbacks independently
 validate every receipt, claim, plan, assignment, and approval binding before writing a projection.
+`marketing/hosted_next_experiment_judgment.py` is the next no-effect reasoning leaf. It owns the
+strict model schema for evidence interpretations, counterevidence, assumptions, questions, and
+challenger content; it treats source strings as untrusted data, binds candidate claims to selected
+parent hypotheses, and prevents held-constant mutation. The model cannot emit state, tool, budget,
+schedule, or new identity authority.
+`cloudflare/src/marketing-next-experiment.js` owns the immutable request/outbox, compatible-worker
+dispatch, cross-runtime validation, and host-copied experimental controls.
+`cloudflare/src/hosted-next-experiment-callback.js` independently re-derives source lineage before
+storing a draft/admission in migration `0033_marketing_next_experiments.sql`.
+`cloudflare/src/marketing-next-experiment-review.js` owns the protected exact review packet, presents
+host-verified evaluation/disposition facts separately from model interpretation, and records the
+final no-effect approval receipt. None of these modules imports or replaces candidate, native-capture, or
+Threads effect owners.
 Learning synthesis receives a server-derived `MarketingLearningApplicability`; its model may explain
 scope in prose but cannot broaden the selector. The callback binds that selector into the candidate,
 re-derives it from D1's evaluation/campaign/packet/account lineage, and rejects drift before a write.
@@ -191,7 +204,7 @@ input before storage. Neither path runs the offline evaluator, and live market-e
 still absent. The grader, dossier, and reassessment have no tool or publication authority.
 
 `cloudflare/src/marketing-review.js` owns only read models over that immutable/append-only ledger.
-It selects pending strategy, media-plan, or learning-candidate decisions from their exact state and
+It selects pending strategy, media-plan, next-experiment-draft, or learning-candidate decisions from their exact state and
 unreviewed target digest, and builds the versioned queue and review packet. Its action template is a
 projection of the existing approval endpoint—not a new mutation API or authority source. The module
 does not query customer-signal or context-snapshot payload tables, and `marketing-agent.js` guards
@@ -200,7 +213,7 @@ models deliberately retain only IDs, content/input/binding digests, and safe cap
 URI, raw manifest payload, and adapter descriptor stay behind their effect owner rather than becoming
 an incidental review-token transport.
 
-Migrations `0019`–`0030` own the execution/observation/reassessment lineage, assisted-shadow origin binding,
+Migrations `0019`–`0033` own the execution/observation/reassessment/next-experiment lineage, assisted-shadow origin binding,
 quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 

@@ -673,6 +673,7 @@ def test_the_worker_advertises_the_job_kinds_it_can_actually_run() -> None:
     assert capabilities["experiment_evaluation_v1"] is True
     assert capabilities["learning_synthesis_v1"] is True
     assert capabilities["outcome_reassessment_v1"] is True
+    assert capabilities["next_experiment_v1"] is True
     assert capabilities["candidate_materialization_v2"] is True
     assert all(isinstance(value, str | bool) for value in capabilities.values())
 

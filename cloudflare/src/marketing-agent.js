@@ -8,6 +8,10 @@ import {
   resolveCreativeCapabilityBindings,
 } from "./marketing-adapter-capabilities.js";
 import { listMarketingReviewQueue, marketingReviewPacket } from "./marketing-review.js";
+import {
+  decideNextExperimentDraft,
+  nextExperimentReviewPacket,
+} from "./marketing-next-experiment-review.js";
 
 export const MARKETING_JUDGMENT_PIPELINE = "hosted_marketing_judgment_v1";
 const MAX_CAMPAIGNS = 100;
@@ -124,6 +128,29 @@ export async function handleHostedMarketingAgent(request, env, account) {
     if (request.method === "POST" && url.pathname === "/api/marketing-agent/learning-syntheses") {
       requireMarketingAuthority(request, env);
       return agentJson(await requestLearningSynthesis(env, account, await readJson(request)), 202);
+    }
+    const nextExperimentReviewRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/next-experiment-drafts\/([^/]+)\/review-packet$/,
+    );
+    if (request.method === "GET" && nextExperimentReviewRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await nextExperimentReviewPacket(
+        env.DB,
+        account.account_id,
+        decodedRouteId(nextExperimentReviewRoute[1]),
+      ));
+    }
+    const nextExperimentApprovalRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/next-experiment-drafts\/([^/]+)\/approval$/,
+    );
+    if (request.method === "POST" && nextExperimentApprovalRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await decideNextExperimentDraft(
+        env.DB,
+        account.account_id,
+        decodedRouteId(nextExperimentApprovalRoute[1]),
+        await readJson(request),
+      ));
     }
     const learningApprovalRoute = url.pathname.match(
       /^\/api\/marketing-agent\/learning-candidates\/([^/]+)\/approval$/,

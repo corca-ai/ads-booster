@@ -4,6 +4,11 @@ import {
   InvalidOutcomeReassessment,
   validateOutcomeReassessment,
 } from "./marketing-outcome-reassessment.js";
+import {
+  buildNextExperimentRequest,
+  InvalidNextExperiment,
+  nextExperimentRequestInsertStatement,
+} from "./marketing-next-experiment.js";
 import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 const PIPELINE = "hosted_marketing_judgment_v1";
@@ -35,13 +40,36 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
   const payload = publishedPayload(task);
   const source = await env.DB.prepare(
     `SELECT campaign.campaign_id, campaign.account_id, campaign.state,
+            campaign.feature_packet_id, campaign.marketing_context_snapshot_id,
+            campaign.marketing_context_snapshot_sha256, campaign.agent_run_id,
+            campaign.research_session_id, campaign.research_input_sha256,
+            campaign.research_trace_sha256, campaign.research_continuation_sha256,
             evaluation.evaluation_id, evaluation.evaluation_json, evaluation.evaluation_sha256,
-            brief.brief_id, brief.brief_json, brief.brief_sha256
+            brief.brief_id, brief.brief_json, brief.brief_sha256,
+            experiment.registration_json, experiment.registration_sha256,
+            packet.packet_json, packet.packet_sha256,
+            knowledge.snapshot_json AS knowledge_json,
+            knowledge.snapshot_sha256 AS knowledge_sha256,
+            context.snapshot_json AS context_json,
+            context.snapshot_sha256 AS context_sha256
      FROM hosted_marketing_campaigns AS campaign
      JOIN hosted_marketing_experiment_evaluations AS evaluation
        ON evaluation.campaign_id = campaign.campaign_id
      JOIN hosted_marketing_strategy_briefs AS brief
        ON brief.campaign_id = campaign.campaign_id
+     JOIN hosted_marketing_experiments AS experiment
+       ON experiment.campaign_id = campaign.campaign_id
+      AND experiment.strategy_brief_id = brief.brief_id
+      AND experiment.experiment_id = evaluation.experiment_id
+     JOIN hosted_marketing_feature_packets AS packet
+       ON packet.packet_id = campaign.feature_packet_id
+      AND packet.packet_sha256 = campaign.feature_packet_sha256
+     JOIN hosted_marketing_knowledge_snapshots AS knowledge
+       ON knowledge.campaign_id = campaign.campaign_id
+     LEFT JOIN hosted_marketing_context_snapshots AS context
+       ON context.snapshot_id = campaign.marketing_context_snapshot_id
+      AND context.account_id = campaign.account_id
+      AND context.snapshot_sha256 = campaign.marketing_context_snapshot_sha256
      WHERE campaign.campaign_id = ? AND campaign.account_id = ?
        AND evaluation.evaluation_id = ?`,
   ).bind(
@@ -49,7 +77,7 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
     task.account_id,
     payload.evaluation?.evaluation_id,
   ).first();
-  if (!source || source.state !== "evaluated") {
+  if (!source || !["evaluated", "learning_candidate"].includes(source.state)) {
     throw new HttpError(409, "outcome reassessment source is stale");
   }
   const now = new Date().toISOString();
@@ -81,9 +109,25 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
   const reassessmentSha256 = await canonicalSha256(reassessment);
   let storedEvaluation;
   let storedStrategy;
+  let featurePacket;
+  let experimentRegistration;
+  let knowledgeSnapshot;
+  let marketingContext;
   try {
     storedEvaluation = requireObject(JSON.parse(source.evaluation_json), "stored evaluation");
     storedStrategy = requireObject(JSON.parse(source.brief_json), "stored strategy");
+    featurePacket = requireObject(JSON.parse(source.packet_json), "stored feature packet");
+    experimentRegistration = requireObject(
+      JSON.parse(source.registration_json),
+      "stored experiment registration",
+    );
+    knowledgeSnapshot = requireObject(
+      JSON.parse(source.knowledge_json),
+      "stored knowledge snapshot",
+    );
+    marketingContext = source.context_json == null
+      ? null
+      : requireObject(JSON.parse(source.context_json), "stored marketing context");
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw new HttpError(409, "outcome reassessment source records are invalid");
@@ -108,6 +152,30 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
     }
     throw error;
   }
+  let nextExperimentRecord = null;
+  try {
+    nextExperimentRecord = await buildNextExperimentRequest({
+      accountId: source.account_id,
+      campaign: source,
+      featurePacket,
+      featurePacketSha256: source.packet_sha256,
+      priorStrategy: storedStrategy,
+      priorStrategySha256: source.brief_sha256,
+      experimentRegistration,
+      registrationSha256: source.registration_sha256,
+      evaluation: storedEvaluation,
+      evaluationSha256: source.evaluation_sha256,
+      reassessment,
+      reassessmentSha256,
+      knowledgeSnapshot,
+      knowledgeSnapshotSha256: source.knowledge_sha256,
+      marketingContext,
+      marketingContextSnapshotSha256: source.context_sha256 ?? null,
+    });
+  } catch (error) {
+    if (error instanceof InvalidNextExperiment) throw new HttpError(409, error.message);
+    throw error;
+  }
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
       env.DB,
@@ -118,7 +186,7 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
     );
     if (reservation.duplicate) return { accepted: true, duplicate: true };
   }
-  const results = await env.DB.batch([
+  const statements = [
     env.DB.prepare(
       `INSERT INTO hosted_marketing_outcome_reassessments
         (reassessment_id, campaign_id, evaluation_id, strategy_brief_id, schema_version,
@@ -134,8 +202,12 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
       reassessmentSha256,
       reassessment.created_at,
     ),
-    completionStatement(env, task, callback, worker, "succeeded", resultJson, now),
-  ]);
+  ];
+  if (nextExperimentRecord) {
+    statements.push(nextExperimentRequestInsertStatement(env.DB, nextExperimentRecord));
+  }
+  statements.push(completionStatement(env, task, callback, worker, "succeeded", resultJson, now));
+  const results = await env.DB.batch(statements);
   if (results.some((result) => result?.meta?.changes !== 1)) {
     throw new HttpError(409, "outcome reassessment batch lost its state race");
   }
@@ -146,6 +218,7 @@ export async function receiveHostedOutcomeReassessmentCallback(env, task, callba
     reassessment_id: reassessment.reassessment_id,
     situation: reassessment.situation,
     state: "proposed",
+    next_experiment_request_id: nextExperimentRecord?.request.request_id ?? null,
   };
 }
 

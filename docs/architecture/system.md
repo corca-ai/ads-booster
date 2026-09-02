@@ -236,6 +236,22 @@ invented ICPs or claims, and incomplete hypothesis coverage, then stores a separ
 action. Market events and tool failures outside the evaluated publication path still have no live
 situation source. Dossiers and reassessments are no-effect records, not publication or budget authority.
 
+If the reassessment's evidence-bound decision admits another experiment, the same callback appends a
+`trace.next-experiment-request.v1` outbox record in the reassessment transaction. It does not require
+an online worker. The scheduler later queues `next_experiment_v1` only when a compatible broker
+worker is available. The model must cover every reassessment evidence ID and every contradictory or
+insufficient evidence ID, and can emit only candidate content plus assumptions and unresolved
+questions. Python derives the no-effect draft and review admission; Cloudflare re-reads and re-hashes
+the packet, strategy, registration, evaluation, reassessment, knowledge, optional marketing context,
+and local research lineage before storing them. The host copies the prior control, primary outcome,
+and held constants, rejects a proposal that mutates a held constant using the same fixed
+NFKC/case-fold/trim contract in Python and Cloudflare, and restricts claims to the
+selected parent hypotheses. Source strings enter the model prompt through an explicit untrusted,
+non-authoritative boundary. Full reasoning is exposed only by the control-plane-authorized exact
+draft review packet, which keeps host-verified evaluation and evidence dispositions separate from
+model-proposed interpretations. Draft approval is a final no-effect review receipt and intentionally does not create a
+successor campaign or call candidate, Appium, Threads, publication, or spend owners.
+
 Source evidence cannot open the publication gate, and a database trigger prevents every shadow
 campaign from creating tool actions. This path creates no candidate, capture, publication, metric,
 or learning effect. Installed-product evidence and later stages remain governed by
@@ -250,9 +266,9 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0019`–`0030` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0019`–`0033` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
-observations, evaluations, outcome reassessments, quarantined reference snapshots and source-byte receipts, learning candidates, and approval-bound
+observations, evaluations, outcome reassessments, next-experiment outbox/drafts, quarantined reference snapshots and source-byte receipts, learning candidates, and approval-bound
 principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
 creative planning, and candidate materialization reuse that snapshot, so a later learning approval
 improves a future campaign without contaminating an active experiment. An assisted campaign must name a same-account shadow origin, carry an installed-evidence
@@ -307,8 +323,9 @@ Figma, and generated-media executors remain deferred, so no unsupported artifact
 simulated.
 
 The control plane also exposes a bounded, read-only `trace.marketing-review-queue.v1` for pending
-strategy, creative, and learning decisions, plus one
-`trace.marketing-review-packet.v1` per campaign. Both reads require control-plane authority and
+strategy, creative, next-experiment, and learning decisions, plus one
+`trace.marketing-review-packet.v1` per campaign and one exact
+`trace.next-experiment-review-packet.v1` per draft. All reads require control-plane authority and
 derive their target ID, SHA-256, campaign state, and current projection revision from D1. The packet
 contains feature evidence, receipt digests, current strategy/creative/outcome/learning records, and
 the exact existing POST body that can approve or reject that target. It makes no write, task,

@@ -11,6 +11,7 @@ export const MARKETING_JUDGMENT_CAPABILITIES = Object.freeze({
   experiment_evaluation: "experiment_evaluation_v1",
   learning_synthesis: "learning_synthesis_v1",
   outcome_reassessment: "outcome_reassessment_v1",
+  next_experiment: "next_experiment_v1",
 });
 
 export function marketingJudgmentCapability(judgment) {

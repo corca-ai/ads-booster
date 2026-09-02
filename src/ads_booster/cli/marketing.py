@@ -35,6 +35,9 @@ from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentE
 from ads_booster.marketing.hosted_generation import HostedWorkspaceGenerationExecutor
 from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
 from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
+from ads_booster.marketing.hosted_next_experiment_judgment import (
+    HostedNextExperimentJudgmentExecutor,
+)
 from ads_booster.marketing.hosted_reassessment_judgment import HostedOutcomeReassessmentExecutor
 from ads_booster.marketing.hosted_reference_research import HostedReferenceResearchExecutor
 from ads_booster.marketing.hosted_task_router import PlanlessHostedTaskExecutor
@@ -813,6 +816,10 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     output_root=agent_home / "generated",
                 ),
                 outcome_reassessment=HostedOutcomeReassessmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                next_experiment=HostedNextExperimentJudgmentExecutor(
                     codex=CodexCli(executable=executable),
                     output_root=agent_home / "generated",
                 ),

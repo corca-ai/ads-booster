@@ -1,3 +1,5 @@
+import { pendingNextExperimentReviews } from "./marketing-next-experiment-review.js";
+
 const MAX_REVIEW_ITEMS = 100;
 
 export class MarketingReviewHttpError extends Error {
@@ -8,10 +10,20 @@ export class MarketingReviewHttpError extends Error {
 }
 
 export async function listMarketingReviewQueue(env, accountId) {
-  const reviews = await pendingReviews(env.DB, accountId);
+  const [reviews, nextExperiments] = await Promise.all([
+    pendingReviews(env.DB, accountId),
+    pendingNextExperimentReviews(env.DB, accountId),
+  ]);
   return {
     schema_version: "trace.marketing-review-queue.v1",
-    items: reviews.map((review) => reviewQueueItem(review)),
+    items: [...reviews.map((review) => reviewQueueItem(review)), ...nextExperiments]
+      .sort((left, right) => {
+        const byCreatedAt = left.created_at.localeCompare(right.created_at);
+        if (byCreatedAt !== 0) return byCreatedAt;
+        const byCampaign = left.campaign.campaign_id.localeCompare(right.campaign.campaign_id);
+        return byCampaign !== 0 ? byCampaign : left.target.id.localeCompare(right.target.id);
+      })
+      .slice(0, MAX_REVIEW_ITEMS),
   };
 }
 

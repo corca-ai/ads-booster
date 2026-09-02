@@ -1092,6 +1092,23 @@ test("an older marketing worker cannot lease an outcome reassessment subtype", a
   assert.equal(reassessment.worker_id, null);
 });
 
+test("an older marketing worker cannot lease a next-experiment subtype", async () => {
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"marketing_judgment","outcome_reassessment_v1":true}',
+  });
+  const nextExperiment = task({
+    kind: "marketing_judgment",
+    required_capability: "next_experiment_v1",
+  });
+  const db = new ClaimDb([oldWorker], [nextExperiment]);
+
+  assert.deepEqual(
+    await claimWorkerTasks(db, oldWorker, new Date("2026-08-26T00:00:00.000Z")),
+    [],
+  );
+  assert.equal(nextExperiment.worker_id, null);
+});
+
 test("an older marketing worker cannot lease structured candidate materialization", async () => {
   const oldWorker = worker("worker-old", {
     capabilities_json: '{"task_kinds":"marketing_judgment","marketing_judgment_v1":true}',

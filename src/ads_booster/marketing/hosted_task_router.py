@@ -29,6 +29,10 @@ from ads_booster.marketing.hosted_learning_judgment import (
     HostedLearningJudgmentExecutor,
     PreparedLearningJudgment,
 )
+from ads_booster.marketing.hosted_next_experiment_judgment import (
+    HostedNextExperimentJudgmentExecutor,
+    PreparedNextExperimentJudgment,
+)
 from ads_booster.marketing.hosted_reassessment_judgment import (
     HostedOutcomeReassessmentExecutor,
     PreparedOutcomeReassessment,
@@ -53,6 +57,7 @@ type MarketingJudgmentPrepared = (
     | PreparedLearningJudgment
     | PreparedReferenceResearch
     | PreparedOutcomeReassessment
+    | PreparedNextExperimentJudgment
 )
 type PlanlessPrepared = (
     PreparedCodexAppiumJob | PreparedHostedGeneration | MarketingJudgmentPrepared
@@ -67,6 +72,7 @@ _ROUTED_JUDGMENTS: Final = frozenset(
         "experiment_evaluation",
         "learning_synthesis",
         "outcome_reassessment",
+        "next_experiment",
     }
 )
 if MARKETING_JUDGMENT_CAPABILITIES.keys() != _ROUTED_JUDGMENTS:
@@ -86,6 +92,7 @@ class PlanlessHostedTaskExecutor:
     learning_judgment: HostedLearningJudgmentExecutor
     reference_research: HostedReferenceResearchExecutor
     outcome_reassessment: HostedOutcomeReassessmentExecutor
+    next_experiment: HostedNextExperimentJudgmentExecutor
 
     def prepare(self, task: MarketingTask) -> PlanlessPrepared:
         match task.kind:
@@ -111,6 +118,7 @@ class PlanlessHostedTaskExecutor:
                 PreparedLearningJudgment,
                 PreparedReferenceResearch,
                 PreparedOutcomeReassessment,
+                PreparedNextExperimentJudgment,
             ),
         ):
             return self._execute_marketing_judgment(prepared)
@@ -132,6 +140,8 @@ class PlanlessHostedTaskExecutor:
             prepared = self.learning_judgment.prepare(task)
         elif judgment == "outcome_reassessment":
             prepared = self.outcome_reassessment.prepare(task)
+        elif judgment == "next_experiment":
+            prepared = self.next_experiment.prepare(task)
         else:
             raise MarketingExecutionError("unsupported_marketing_judgment")
         return prepared
@@ -149,6 +159,8 @@ class PlanlessHostedTaskExecutor:
             result = self.reference_research.execute(prepared)
         elif isinstance(prepared, PreparedOutcomeReassessment):
             result = self.outcome_reassessment.execute(prepared)
+        elif isinstance(prepared, PreparedNextExperimentJudgment):
+            result = self.next_experiment.execute(prepared)
         else:
             result = self.learning_judgment.execute(prepared)
         return result
