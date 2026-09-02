@@ -1369,9 +1369,9 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.match(markup, /data-workspace-live aria-busy="false"/);
   assert.match(markup, /오늘 후보 4개 생성/);
   assert.match(markup, /data-account-select/);
-  assert.match(markup, /오전 2개·저녁 2개 후보 자동 생성/);
-  assert.match(markup, /다음 생성에 반영되는 신호/);
-  assert.match(markup, /data-context-select/);
+  assert.doesNotMatch(markup, /오전 2개·저녁 2개 후보 자동 생성/);
+  assert.doesNotMatch(markup, /다음 생성에 반영되는 신호/);
+  assert.doesNotMatch(markup, /data-context-select/);
   assert.match(markup, /href="#workspace-content">워크스페이스로 건너뛰기/);
   assert.match(markup, /Cloudflare D1 lease → Mac Appium → R2/);
   assert.match(markup, /data-worker-title/);
@@ -1384,7 +1384,7 @@ test("built public workspace has no login form and keeps candidate controls", as
   assert.doesNotMatch(markup, /id="worker-control-token"[^>]*value=/);
   assert.match(markup, /부팅 가능한 Simulator를 동적으로 찾습니다/);
   assert.doesNotMatch(markup, /Cloudflare 검수용 SVG 미리보기/);
-  assert.match(markup, /data-candidate-submit/);
+  assert.doesNotMatch(markup, /data-candidate-submit/);
   assert.match(markup, /data-image-preview/);
   assert.match(markup, /id="image-preview-dialog"/);
   assert.match(markup, /data-image-preview-close/);
@@ -1525,6 +1525,15 @@ function personaEnvironment(rows = [], candidateRows = []) {
           bind(...args) {
             return {
               async all() {
+                if (match(sql, "DELETE FROM hosted_workspace_candidates")) {
+                  const [accountIdValue, personaId] = args;
+                  const deleted = candidates.filter(
+                    (row) => row.account_id === accountIdValue
+                      && (!sql.includes("persona_id = ?") || row.persona_id === personaId),
+                  );
+                  for (const row of deleted) candidates.splice(candidates.indexOf(row), 1);
+                  return { results: deleted.map((row) => ({ image_key: row.image_key })) };
+                }
                 if (match(sql, "SELECT * FROM hosted_workspace_candidates")) {
                   const scoped = sql.includes("AND persona_id = ?")
                     ? candidates.filter(
@@ -1969,6 +1978,47 @@ test("deleting a candidate from inside a persona no longer looks it up as an acc
   );
 
   assert.equal(response.status, 204, await response.text());
+  assert.equal(state.candidates.length, 0);
+});
+
+test("deleting all candidates removes only the active account and its artifacts", async () => {
+  const state = personaEnvironment();
+  const persona = await (await personaRequest(
+    state.env, "/api/personas", "POST", personaBody(),
+  )).json();
+  state.candidates.push(
+    { ...personaCandidate("candidate-1", persona.account_id, "첫 후보"), image_key: "images/one.png" },
+    { ...personaCandidate("candidate-2", persona.account_id, "둘째 후보"), image_key: "images/two.png" },
+    personaCandidate("candidate-other", "other-account", "다른 계정 후보"),
+  );
+  const deletedArtifacts = [];
+  state.env.ARTIFACTS = { async delete(key) { deletedArtifacts.push(key); } };
+
+  const response = await personaCandidateRequest(
+    state.env, "/api/candidates", "DELETE", null, persona.account_id,
+  );
+
+  assert.equal(response.status, 204, await response.text());
+  assert.deepEqual(state.candidates.map((candidate) => candidate.candidate_id), ["candidate-other"]);
+  assert.deepEqual(deletedArtifacts, ["images/one.png", "images/two.png"]);
+});
+
+test("deleting all candidates reports artifacts that need reconciliation", async () => {
+  const state = personaEnvironment();
+  const persona = await (await personaRequest(
+    state.env, "/api/personas", "POST", personaBody(),
+  )).json();
+  state.candidates.push(
+    { ...personaCandidate("candidate-1", persona.account_id, "첫 후보"), image_key: "images/one.png" },
+  );
+  state.env.ARTIFACTS = { async delete() { throw new Error("R2 unavailable"); } };
+
+  const response = await personaCandidateRequest(
+    state.env, "/api/candidates", "DELETE", null, persona.account_id,
+  );
+
+  assert.equal(response.status, 207);
+  assert.deepEqual(await response.json(), { deleted: 1, artifact_cleanup_failures: 1 });
   assert.equal(state.candidates.length, 0);
 });
 
