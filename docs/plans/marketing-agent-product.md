@@ -167,7 +167,15 @@ counter-evidence result plus re-derived evaluation, or an insufficient Research 
 sufficient with re-derived step evaluations and completed finalization. This is a test-only proof
 boundary, not a claim that remote adapter receipts are trusted yet.
 
-Next, add a private corpus loader plus real provider/model repeated trials before treating this as
+A private-grader loader now accepts only a trusted mounted corpus root with fixed runner-input and
+grader-expectation files. It rejects traversal, malformed envelopes, duplicate IDs, and partial pairing,
+then returns the existing ordered case contract whose semantic digest keeps runner reports comparable.
+It does not load the tool environment, provide a fallback corpus, or make an in-process runner unable
+to inspect grader memory; privacy still requires separate process/mount isolation. The current report
+does not hash the grader tool environment, so that must be a separately versioned comparison contract
+before it is used for cross-environment claims.
+
+Next, run a private diverse corpus with repeated pinned provider/model trials before treating this as
 model-quality validation. Duplicate dispatch and restart after execution-start remain owned by
 runtime-ledger tests, while stale/revoked approval requires an external-effect adapter. Do not call the
 source-visible baseline a model-quality or market-effectiveness result.

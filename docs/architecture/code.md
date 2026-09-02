@@ -241,6 +241,14 @@ The report pins the corpus digest and runner/model/prompt/registry metadata. Thi
 corpus proves local vertical behavior only; it is neither private held-out model evidence, hosted
 authority, nor a live marketing result.
 
+`marketing/marketing_os_scorecard_corpus.py` owns the narrow private-grader corpus loader. A trusted
+grader process supplies one mounted corpus directory; the loader resolves only its fixed
+`runner_inputs.json` and `grader_expectations.json` children, validates strict envelopes and matching
+case-ID sets, and preserves the input-file order before it returns the existing case contract. It does
+not load tool environments, select a case, run a provider, or provide fallback/public fixture data. It
+does not make an in-process runner confidential: private expectations require a separate grader
+process and mount, and a future comparable grader-environment digest is a separate report contract.
+
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
 `threads/*` modules keep their present responsibilities and will be referenced through immutable
