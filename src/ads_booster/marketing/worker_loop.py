@@ -17,7 +17,18 @@ from ads_booster.marketing.models import (
     TaskCallback,
     TaskResult,
     TaskStatus,
+    WorkerTaskEventType,
 )
+
+
+def _event_for_status(status: TaskStatus) -> WorkerTaskEventType:
+    match status:
+        case TaskStatus.SUCCEEDED:
+            return WorkerTaskEventType.EXECUTION_SUCCEEDED
+        case TaskStatus.FAILED:
+            return WorkerTaskEventType.EXECUTION_FAILED
+        case TaskStatus.UNKNOWN_SIDE_EFFECT:
+            return WorkerTaskEventType.EXECUTION_UNKNOWN
 
 
 class PreparedTask(Protocol):
@@ -44,6 +55,13 @@ class WorkerBroker(Protocol):
     ) -> None: ...
 
     def mark_execution_started(self, task_id: str) -> None: ...
+
+    def report_event(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None: ...
 
     def deliver(self, callback: TaskCallback) -> None: ...
 
@@ -93,24 +111,39 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
                 )
 
     def _run(self, task: MarketingTask) -> None:
+        self._report_event(task, WorkerTaskEventType.PREPARATION_STARTED)
         try:
             prepared = self.preparer.prepare(task)
         except MarketingExecutionError as error:
-            _ = self.inbox.complete(task, self._known_failure(error))
+            result = self._known_failure(error)
+            self._report_event(
+                task,
+                WorkerTaskEventType.PREPARATION_FAILED,
+                result.failure_code,
+            )
+            _ = self.inbox.complete(task, result)
             return
         except Exception:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
             # The pre-admission boundary fail-closes an unexpected preparer crash as local failure.
-            _ = self.inbox.complete(
-                task,
-                TaskResult(status=TaskStatus.FAILED, failure_code="unexpected_worker_error"),
+            result = TaskResult(
+                status=TaskStatus.FAILED,
+                failure_code="unexpected_worker_error",
             )
+            self._report_event(
+                task,
+                WorkerTaskEventType.PREPARATION_FAILED,
+                result.failure_code,
+            )
+            _ = self.inbox.complete(task, result)
             return
 
         self.inbox.begin_execution(task.task_id, prepared.execution_admission)
         try:
             self.broker.mark_execution_started(task.task_id)
         except CloudflareQueueError:
-            _ = self.inbox.complete(task, self._unknown_side_effect())
+            result = self._unknown_side_effect()
+            self._report_result(task, result)
+            _ = self.inbox.complete(task, result)
             return
 
         try:
@@ -120,7 +153,20 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         except Exception:  # noqa: BLE001, RUF100  # noqa: BROAD_EXCEPT_OK
             # The post-admission boundary never retries unknown native side effects after a crash.
             result = self._unknown_side_effect()
+        self._report_result(task, result)
         _ = self.inbox.complete(task, result)
+
+    def _report_result(self, task: MarketingTask, result: TaskResult) -> None:
+        self._report_event(task, _event_for_status(result.status), result.failure_code)
+
+    def _report_event(
+        self,
+        task: MarketingTask,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None:
+        with suppress(CloudflareQueueError):
+            self.broker.report_event(task.task_id, event_type, failure_code)
 
     def _flush_callbacks(self) -> int:
         delivered = 0

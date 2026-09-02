@@ -24,6 +24,7 @@ from ads_booster.marketing.models import (
     TaskKind,
     TaskResult,
     TaskStatus,
+    WorkerTaskEventType,
 )
 from ads_booster.marketing.worker_loop import MarketingWorkerLoop
 
@@ -58,6 +59,7 @@ class FakeBroker:
     callbacks: list[TaskCallback] = field(default_factory=list)
     callback_failures: int = 0
     barrier_failures: int = 0
+    event_failures: int = 0
 
     def pull(self) -> tuple[QueueLease, ...]:
         leases, self.leases = self.leases, ()
@@ -83,6 +85,19 @@ class FakeBroker:
         if self.barrier_failures:
             self.barrier_failures -= 1
             message = "barrier unavailable"
+            raise CloudflareQueueError(message)
+
+    def report_event(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None:
+        assert task_id == _task().task_id
+        self.events.append(f"event:{event_type.value}{f':{failure_code}' if failure_code else ''}")
+        if self.event_failures:
+            self.event_failures -= 1
+            message = "event unavailable"
             raise CloudflareQueueError(message)
 
     def deliver(self, callback: TaskCallback) -> None:
@@ -175,7 +190,15 @@ def test_worker_loop_orders_durable_ingest_ack_prepare_barrier_execute_and_callb
     assert worker.tick()
 
     assert executor.calls == 1
-    assert broker.events == ["ack:lease-1", "prepare", "barrier", "execute", "callback"]
+    assert broker.events == [
+        "ack:lease-1",
+        "event:preparation_started",
+        "prepare",
+        "barrier",
+        "execute",
+        "event:execution_succeeded",
+        "callback",
+    ]
     assert [callback.result.status for callback in broker.callbacks] == [TaskStatus.SUCCEEDED]
     assert worker.inbox.quiescence().ready
 
@@ -211,9 +234,25 @@ def test_preparation_failure_completes_before_barrier_and_executor(tmp_path: Pat
     assert worker.tick()
 
     assert executor.calls == 0
-    assert broker.events == ["ack:lease-1", "prepare", "callback"]
+    assert broker.events == [
+        "ack:lease-1",
+        "event:preparation_started",
+        "prepare",
+        "event:preparation_failed:native_capture_trace_items_invalid",
+        "callback",
+    ]
     assert broker.callbacks[0].result.status is TaskStatus.FAILED
     assert broker.callbacks[0].result.failure_code == "native_capture_trace_items_invalid"
+
+
+def test_monitoring_event_failure_never_blocks_worker_execution(tmp_path: Path) -> None:
+    worker, broker, executor = _loop(tmp_path)
+    broker.event_failures = 2
+
+    assert worker.tick()
+
+    assert executor.calls == 1
+    assert broker.callbacks[0].result.status is TaskStatus.SUCCEEDED
 
 
 def test_local_admission_is_immutable_before_barrier(tmp_path: Path) -> None:

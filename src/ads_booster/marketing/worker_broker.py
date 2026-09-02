@@ -7,7 +7,13 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from ads_booster.marketing.errors import CloudflareQueueError
-from ads_booster.marketing.models import MarketingTask, QueueLease, ReviewApproval, TaskCallback
+from ads_booster.marketing.models import (
+    MarketingTask,
+    QueueLease,
+    ReviewApproval,
+    TaskCallback,
+    WorkerTaskEventType,
+)
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
@@ -159,6 +165,26 @@ class WorkerBrokerClient:
             self._headers(),
         )
         _ = _response_payload(response, operation="worker execution barrier")
+
+    def report_event(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None:
+        payload: JsonObject = {
+            "task_id": task_id,
+            "event_type": event_type.value,
+        }
+        if failure_code is not None:
+            payload["failure_code"] = failure_code
+        response = _post_json(
+            self.http,
+            self._url("/v1/workers/task-events"),
+            payload,
+            self._headers(),
+        )
+        _ = _response_payload(response, operation="worker task event")
 
     def deliver(self, callback: TaskCallback) -> None:
         response = _post_json(
