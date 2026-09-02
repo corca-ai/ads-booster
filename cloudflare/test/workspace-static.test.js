@@ -96,3 +96,14 @@ test("publication UI distinguishes every durable state and has no unknown publis
   assert.doesNotMatch(source, /publish 재시도|게시 재시도/iu);
   assert.match(source, /조회.*좋아요.*답글.*리포스트.*인용.*공유/su);
 });
+
+test("the caption approval card shows the background search query", async () => {
+  const source = await built("static/workspace-live.js");
+  const card = source.slice(source.indexOf("const approvalNode ="));
+  const caption = card.slice(0, card.indexOf("const approvalField"));
+
+  // The query is written during generation and decides which wallpaper the search returns,
+  // so a reviewer has to see it while approving the caption. Shown only on the image card,
+  // a bad query costs a capture before anyone can reject it.
+  assert.match(caption, /text\.append\(topicLabel, topic, caption, backgroundQueryNode\(record\)\)/u);
+});
