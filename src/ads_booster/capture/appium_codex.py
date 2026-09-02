@@ -3,13 +3,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
-from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
+from ads_booster.capture.appium_codex_prompt import (
+    WallpaperTemplate,
+    codex_appium_prompt,
+    wallpaper_template,
+)
 from ads_booster.capture.appium_codex_validation import (
     CodexAppiumJobResult,
     expected_trace_item_titles,
+    rendered_titles_are_credible,
     require_completed_result,
     require_saved_state,
     result_matches_ready,
@@ -76,6 +82,16 @@ class AppGroupWallpaperCollector(Protocol):
     def clear(self, udid: str, control: CaptureControl) -> int: ...
 
     def collect(self, request: WallpaperCollectionRequest) -> CaptureProvenance: ...
+
+
+def _wallpaper_template(contract: CodexAppiumJobContract) -> WallpaperTemplate:
+    """The layout this job builds, resolved against the job's own local reference day.
+
+    The calendar builder resolves it the same way, so the rows the worker writes and the
+    layout Codex is told to build always agree on how wide a week the screen can draw.
+    """
+    local_reference = contract.context.reference_date.astimezone(ZoneInfo(contract.time_zone))
+    return wallpaper_template(contract.identity.request_id, local_reference.date())
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +175,7 @@ class CodexAppiumJobAdapter:
                 return True
 
             result = self._run_codex(
+                contract,
                 job_root,
                 control,
                 verify_ready_editor,
@@ -181,6 +198,7 @@ class CodexAppiumJobAdapter:
 
     def _run_codex(
         self,
+        contract: CodexAppiumJobContract,
         job_root: Path,
         control: CaptureControl,
         on_ready: Callable[[CodexAppiumReadyState], bool],
@@ -188,7 +206,7 @@ class CodexAppiumJobAdapter:
     ) -> CodexAppiumJobResult:
         try:
             payload = self.codex.run_appium_job(
-                codex_appium_prompt(),
+                codex_appium_prompt(_wallpaper_template(contract)),
                 CodexAppiumJobResult.model_json_schema(),
                 workspace=job_root,
                 timeout_seconds=control.remaining_seconds(),
@@ -217,12 +235,13 @@ class CodexAppiumJobAdapter:
         expected_titles: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
-        if ready.rendered_trace_item_titles != expected_titles:
+        if not rendered_titles_are_credible(ready.rendered_trace_item_titles, expected_titles):
             return False
         if not self.editor_verifier.verify(
             contract.appium_server,
             ready,
             expected_titles,
+            contract.context.promotion_material.trace_todos,
             control,
         ):
             return False

@@ -208,6 +208,10 @@ def default_updater_plist_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{_UPDATER_LABEL}.plist"
 
 
+def kickstart_managed_updater() -> subprocess.CompletedProcess[str]:
+    return _kickstart(f"gui/{os.getuid()}/{_UPDATER_LABEL}")
+
+
 def _launchd_environment(
     home: Path,
     codex_executable: Path,
@@ -290,6 +294,15 @@ def _stop(target: str) -> subprocess.CompletedProcess[str]:
 def _status(target: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603
         (_LAUNCHCTL, "print", target),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _kickstart(target: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603
+        (_LAUNCHCTL, "kickstart", target),
         check=False,
         capture_output=True,
         text=True,

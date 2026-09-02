@@ -802,7 +802,10 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
         account_id: task.account_id,
         candidate_id: task.candidate_id,
         task_id: task.task_id,
-        source: "native_appium",
+        source: storedResult.output.capture_source,
+        artifact_role: storedResult.output.artifact_role,
+        source_trace_artifact_sha256:
+          storedResult.output.source_trace_artifact_sha256 ?? imageDigest,
       },
     });
     const applied = await env.DB.prepare(

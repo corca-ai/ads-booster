@@ -10,12 +10,14 @@ from zoneinfo import ZoneInfo
 from pydantic import ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
+from ads_booster.capture.appium_codex_prompt import drawable_days, wallpaper_template
 from ads_booster.contracts.models import ContractModel, Identifier, Sha256Digest
 
 if TYPE_CHECKING:
     from ads_booster.capture.codex_appium_job import CodexAppiumJobContract
 
 _TIME_PREFIX: Final = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)\s+(.+)$")
+_MAX_CALENDAR_EVENTS: Final = 24
 _CALENDAR_REQUEST_INVALID: Final = "calendar_automation_request_invalid"
 _CALENDAR_REQUEST_INVALID_MESSAGE: Final = "calendar automation request fields disagree"
 _CALENDAR_RESULT_INVALID: Final = "calendar_automation_result_invalid"
@@ -51,7 +53,7 @@ class CalendarAutomationRequest(ContractModel):
     calendar_identifier: Annotated[str, Field(min_length=1, max_length=256)] | None = None
     # A week of rows, not a day of them. The wallpaper draws a seven-day strip, and a
     # request capped at a single day's worth would leave most of it blank.
-    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=24)
+    events: tuple[CalendarAutomationEvent, ...] = Field(max_length=_MAX_CALENDAR_EVENTS)
 
     @model_validator(mode="after")
     def require_operation_fields(self) -> CalendarAutomationRequest:
@@ -81,7 +83,7 @@ class CalendarAutomationResult(ContractModel):
     calendar_namespace: Identifier
     status: Literal["completed", "failed"]
     calendar_identifier: Annotated[str, Field(min_length=1, max_length=256)] | None = None
-    event_count: int = Field(ge=0, le=8)
+    event_count: int = Field(ge=0, le=_MAX_CALENDAR_EVENTS)
     error_code: Annotated[str, Field(pattern=r"^[a-z0-9_]+$")] | None = None
 
     @model_validator(mode="after")
@@ -108,16 +110,23 @@ def build_calendar_events(
     trace_items = contract.context.promotion_material.trace_items or ()
     zone = ZoneInfo(contract.time_zone)
     local_reference = contract.context.reference_date.astimezone(zone)
+    reference_day = local_reference.date()
+    # Folding only ever moves a row earlier, and never before the captured day, so no panel
+    # ends up holding fewer rows than it would have without it. A day that collects more
+    # than it can show draws the "+N" badge, which is the outcome the job already expects.
+    template = wallpaper_template(contract.identity.request_id, reference_day)
+    span = drawable_days(reference_day, template)
     events: list[CalendarAutomationEvent] = []
     for item in trace_items:
         # The row carries the day it sits on rather than only a clock, so a week's worth of
         # events lands across the strip instead of piling onto the captured day.
-        day = local_reference.date() + timedelta(days=item.day)
+        offset = min(item.day, span - 1)
+        day = reference_day + timedelta(days=offset)
         if item.time is None:
             start = datetime.combine(day, time(), tzinfo=zone)
             # An all-day event ends at the start of the day after its last one, which is how
             # a multi-day row draws as a single bar rather than as repeated one-day rows.
-            end = start + timedelta(days=item.days)
+            end = start + timedelta(days=min(item.days, span - offset))
             is_all_day = True
         else:
             hour, _, minute = item.time.partition(":")

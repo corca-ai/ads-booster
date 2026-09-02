@@ -20,6 +20,13 @@ if TYPE_CHECKING:
     )
 
 _TIME_PREFIX: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d\s+(.+)$")
+# How many requested rows the screen has to actually show before a wallpaper counts as
+# built. It is not the number requested: Trace folds what does not fit into a "+N" badge,
+# so a week of twenty rows renders four and a badge, and demanding all twenty is a
+# condition no screen can meet. What still has to hold is that the rows on screen are the
+# rows we asked for, which the checks below cover; this is the floor that separates a
+# folded list from an empty panel.
+MINIMUM_RENDERED_TRACE_ITEMS: Final = 3
 
 
 class CodexAppiumJobResult(ContractModel):
@@ -77,6 +84,24 @@ def expected_trace_item_titles(
     """
     trace_items = contract.context.promotion_material.trace_items or ()
     return tuple(item.title for item in trace_items)
+
+
+def rendered_titles_are_credible(
+    rendered: tuple[str, ...],
+    expected: tuple[str, ...],
+) -> bool:
+    """Whether the rows Codex reports on screen could be the rows we asked for.
+
+    Two claims are checked rather than one. Every reported row must be one we requested,
+    which is what stops a screen built from somebody else's data passing; and enough rows
+    must be reported to tell a folded list from a panel that came out empty because its
+    calendar was never selected.
+    """
+    # Never ask for more rows than were requested: a three-row request renders three.
+    required = min(MINIMUM_RENDERED_TRACE_ITEMS, len(expected))
+    if len(rendered) < required:
+        return False
+    return set(rendered) <= set(expected)
 
 
 def result_matches_ready(

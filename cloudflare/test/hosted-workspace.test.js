@@ -1253,7 +1253,7 @@ test("image generation rolls back the broker task when candidate queueing fails"
   assert.equal(state.captureTasks.length, 0);
 });
 
-test("an enrolled Mac receives revision-scoped capture context and learned design rules", async () => {
+test("an enrolled Mac receives revision context without control-plane schedule metadata", async () => {
   const state = candidateEnvironment(candidateRow({
     status: "caption_approved",
     image_key: null,
@@ -1275,6 +1275,17 @@ test("an enrolled Mac receives revision-scoped capture context and learned desig
     last_review_rating: 2,
     last_review_tags_json: JSON.stringify(["앱 화면·데이터 오류"]),
     feedback_rules_json: "[]",
+    image_inputs_json: JSON.stringify({
+      ...candidate().image_inputs,
+      trace_items: Array.from({ length: 5 }, (_, index) => ({
+        title: `주간 일정 ${index + 1}`,
+        day: index,
+        days: 1,
+        time: null,
+        color: null,
+        structured: true,
+      })),
+    }),
   }), true, {
     feedbackRows: [1, 2, 3].map((index) => ({
       candidate_id: `reviewed-${index}`,
@@ -1315,6 +1326,14 @@ test("an enrolled Mac receives revision-scoped capture context and learned desig
   assert.equal(task.payload.workspace_id, "cloudflare:trace_demo_kr");
   assert.equal(task.payload.candidate_revision, 4);
   assert.equal(task.payload.image_inputs.device_time, "07:20");
+  assert.deepEqual(task.payload.image_inputs.trace_items,
+    Array.from({ length: 5 }, (_, index) => ({
+      title: `주간 일정 ${index + 1}`,
+      day: index,
+      days: 1,
+      time: null,
+      color: null,
+    })));
   assert.equal(task.payload.caption, "기존 캡션");
   assert.equal(task.payload.hypothesis, "기존 가설");
   assert.deepEqual(task.payload.reference_ids, ["kr-study-day", "kr-020"]);

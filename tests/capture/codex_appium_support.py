@@ -135,9 +135,10 @@ class AcceptingEditorVerifier:
         appium_server: str,
         ready: CodexAppiumReadyState,
         expected_titles: tuple[str, ...],
+        expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
-        del appium_server
+        del appium_server, expected_todos
         control.checkpoint()
         return ready.rendered_trace_item_titles == expected_titles
 
@@ -213,7 +214,11 @@ class V2JobInputs:
     background_sha256: str = "a" * 64
     export_nonce: str = "b" * 64
     calendar_namespace: str = "trace-request-1"
-    trace_items: tuple[str, ...] = ("Focus block",)
+    # A row is a `"HH:MM 제목"` string or the object form the generator now writes.
+    trace_items: tuple[str | JsonObject, ...] = ("Focus block",)
+    # The wallpaper layout is derived from this, so it also decides how wide a week draws.
+    request_id: str = "request-1"
+    reference_date: datetime = datetime(2026, 8, 28, tzinfo=UTC)
 
 
 _DEFAULT_V2_JOB_INPUTS = V2JobInputs()
@@ -230,7 +235,7 @@ def v2_contract(
     )
     context = MarketingContextBundle(
         schema_version="trace.marketing-context.v1",
-        request_id="request-1",
+        request_id=inputs.request_id,
         campaign_id="campaign-1",
         persona=PersonaProfile(
             persona_id="persona-1",
@@ -245,7 +250,7 @@ def v2_contract(
                 TraceScheduleItem.model_validate(item) for item in inputs.trace_items
             ),
         ),
-        reference_date=datetime(2026, 8, 28, tzinfo=UTC),
+        reference_date=inputs.reference_date,
         device=device,
     )
     return CodexAppiumJobContract(
@@ -253,7 +258,7 @@ def v2_contract(
         identity=CodexAppiumJobIdentity(
             task_id=inputs.task_id,
             run_id="run-1",
-            request_id="request-1",
+            request_id=inputs.request_id,
             idempotency_key="hosted:task-1:request-1",
             candidate_id="candidate-1",
             candidate_revision=3,

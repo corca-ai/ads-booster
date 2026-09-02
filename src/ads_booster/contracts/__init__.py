@@ -51,6 +51,7 @@ from ads_booster.contracts.models import (
     TraceScheduleItem,
 )
 from ads_booster.contracts.native_export import (
+    ImagegenIosUiManifest,
     PreparedBackground,
     TraceBackgroundSearchProvenance,
     WallpaperExportManifest,
@@ -85,6 +86,7 @@ __all__ = [
     "FeatureLifecycle",
     "FeedbackContext",
     "GenerationReferenceImage",
+    "ImagegenIosUiManifest",
     "LearningCandidate",
     "MarketingContextBundle",
     "MarketingContextPlanningProjection",

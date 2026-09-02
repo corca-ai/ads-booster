@@ -204,10 +204,10 @@ def build_executor(
     )
 
 
-def test_hosted_capture_contract_has_no_imagegen_postprocess_seam() -> None:
+def test_hosted_capture_contract_exposes_one_imagegen_ui_seam() -> None:
     field_names = {field.name for field in fields(HostedWorkspaceCaptureExecutor)}
 
-    assert "image_editor" not in field_names
+    assert "ios_ui" in field_names
 
 
 def test_hosted_capture_prepares_planless_job_before_execution(tmp_path: Path) -> None:

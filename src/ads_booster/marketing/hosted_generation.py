@@ -141,6 +141,9 @@ class HostedGenerationRequest(GenerationModel):
 
 
 _LEGACY_CLOCK: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+# The lock screen shows one week, so a row sits on one of seven days and a bar spans at
+# most the rest of them.
+_WEEK_DAYS: Final = 7
 
 
 class GeneratedScheduleEntry(GenerationModel):
@@ -179,6 +182,21 @@ class GeneratedScheduleEntry(GenerationModel):
             "color": None,
         }
 
+    @model_validator(mode="after")
+    def fit_the_span_inside_the_week(self) -> GeneratedScheduleEntry:
+        """Shorten a bar that runs off the end of the week instead of losing the turn.
+
+        `day + days > 7` is rejected downstream by both `TraceScheduleItem` and
+        `CandidateScheduleEntry`, and this model validates a whole Codex turn at once — so
+        one over-long bar written here would throw away up to eight captions the turn
+        already paid for. The instruction states the bound, and a model that misses it is
+        off by a day or two on one row, which is a row to trim rather than a batch to drop.
+        """
+        overflow = self.day + self.days - _WEEK_DAYS
+        if overflow <= 0:
+            return self
+        return self.model_copy(update={"days": self.days - overflow})
+
 
 class GeneratedImageInputs(GenerationModel):
     trace_items: tuple[GeneratedScheduleEntry, ...] = Field(
@@ -201,8 +219,13 @@ class GeneratedImageInputs(GenerationModel):
         "sports_team",
         "none",
     ]
-    background_mood: Annotated[str, Field(min_length=1, max_length=40)]
+    # The query comes before the mood on purpose. Written the other way round, the model
+    # produced the mood first and then reworded it into the query - three stored rows in a
+    # row did exactly that, down to "해질녘 캠핑장, 아이 둘의 뒷모습" becoming "해질녘
+    # 캠핑장 아이 둘 뒷모습 가족사진 배경화면". Naming the wallpaper first gives the mood
+    # something to describe, instead of giving the query something to paraphrase.
     background_search_query: Annotated[str | None, Field(max_length=200)] = None
+    background_mood: Annotated[str, Field(min_length=1, max_length=40)]
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
 
 

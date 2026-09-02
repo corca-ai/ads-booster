@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from ads_booster.capture.appium_codex import CodexAppiumJobAdapter
-from ads_booster.capture.appium_codex_prompt import codex_appium_prompt
+from ads_booster.capture.appium_codex_prompt import (
+    codex_appium_prompt,
+    days_left_in_week,
+    wallpaper_template,
+)
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
@@ -53,6 +58,7 @@ class RecordingEditorVerifier:
         appium_server: str,
         ready: CodexAppiumReadyState,
         expected_titles: tuple[str, ...],
+        expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
         del appium_server, ready
@@ -600,3 +606,81 @@ def test_codex_appium_job_rejects_completion_that_differs_from_saved_marker(
         "collect",
         "calendar_cleanup",
     ]
+
+
+def test_wallpaper_template_is_stable_for_a_candidate_and_covers_both_shapes() -> None:
+    # Given a batch of candidates captured on a Sunday, when the whole week is still ahead
+    ids = tuple(f"11111111-2222-3333-4444-{index:012d}" for index in range(40))
+    sunday = date(2026, 8, 30)
+
+    # When each one's screen shape is chosen
+    chosen = [wallpaper_template(candidate, sunday) for candidate in ids]
+
+    # Then a candidate always builds the same shape. A capture that fails and comes back as
+    # a different layout cannot be compared against the run that failed.
+    assert chosen == [wallpaper_template(candidate, sunday) for candidate in ids]
+    # And both shapes appear, because the two reference posts that reached the most people
+    # were one of each: a screen with the week strip and a screen without it.
+    assert set(chosen) == {"panels", "week_and_panels"}
+
+
+def test_wallpaper_template_when_the_week_is_nearly_over_then_drops_the_strip() -> None:
+    # Given the same batch captured on each day of one week
+    ids = tuple(f"11111111-2222-3333-4444-{index:012d}" for index in range(40))
+    week = tuple(date(2026, 8, 30) + timedelta(days=offset) for offset in range(7))
+
+    # When each day's shapes are chosen
+    shapes = {day: {wallpaper_template(candidate, day) for candidate in ids} for day in week}
+
+    # Then the strip is only built while the week has room left to spread a week of rows
+    # across. Late in the week it would draw one crowded column, so those captures take the
+    # panels instead — a shape that lists the calendar rather than a fixed seven days.
+    assert [days_left_in_week(day) for day in week] == [7, 6, 5, 4, 3, 2, 1]
+    assert [sorted(shapes[day]) for day in week] == [
+        ["panels", "week_and_panels"],
+        ["panels", "week_and_panels"],
+        ["panels", "week_and_panels"],
+        ["panels", "week_and_panels"],
+        ["panels"],
+        ["panels"],
+        ["panels"],
+    ]
+
+
+def test_codex_appium_prompt_adds_the_week_strip_only_for_that_shape() -> None:
+    # When the prompt is built for each shape
+    panels = codex_appium_prompt("panels")
+    week = codex_appium_prompt("week_and_panels")
+
+    # Then only one of them asks for the strip component, and both still fix the two cells
+    # so Codex has no layout left to search for
+    assert "주간 캘린더" not in panels
+    assert "주간 캘린더" in week
+    for prompt in (panels, week):
+        assert "2x1" in prompt
+        assert "일정 목록" in prompt
+        assert "캘린더 / 미리알림 지정" in prompt
+
+
+def test_codex_appium_prompt_no_longer_demands_every_row_on_screen() -> None:
+    # When the prompt is built
+    prompt = codex_appium_prompt("panels")
+
+    # Then it separates creating the rows from showing them. Demanding every requested row
+    # be visible is a condition Trace cannot meet once a week overflows into a "+N" badge,
+    # and it is what left a capture rebuilding the same wallpaper until it timed out.
+    assert "Creating them all is required; showing them all is not." in prompt
+    assert "visibly contain" not in prompt
+
+
+def test_codex_appium_prompt_does_not_ask_codex_to_retype_the_calendar() -> None:
+    # When the prompt is built
+    prompt = codex_appium_prompt("panels")
+
+    # Then it does not ask for the schedule rows to be created. The worker already wrote
+    # them into the request-owned iOS calendar and Trace draws what that calendar holds, so
+    # authoring them again in the UI is duplicated work on the slowest surface in the job.
+    assert "Do not create the trace_items rows" in prompt
+    assert "Each trace_items entry is an object" not in prompt
+    # And the to-dos are still authored here, because nothing upstream creates reminders.
+    assert "Do create every promotion_material.trace_todos entry" in prompt

@@ -11,13 +11,16 @@ import pytest
 
 from ads_booster.candidate_generation import DEFAULT_MAX_BATCH
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
+from ads_booster.contracts.models import TraceScheduleItem
 from ads_booster.marketing.hosted_generation import (
     PIPELINE,
+    GeneratedScheduleEntry,
     HostedWorkspaceGenerationExecutor,
 )
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskStatus
 from ads_booster.workspace import CandidatePersonaDomain
+from ads_booster.workspace.models import CandidateScheduleEntry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -531,3 +534,28 @@ def test_malformed_codex_result_is_unknown_after_execution_admission(tmp_path: P
     assert raised.value.failure_code == "hosted_generation_result_invalid"
     assert raised.value.unknown_side_effect
     assert len(codex.calls) == 2
+
+
+def test_schedule_entry_when_a_bar_runs_past_the_week_then_trims_it_instead_of_failing() -> None:
+    # Given a row whose span runs off the end of the week the lock screen shows
+    entry = GeneratedScheduleEntry.model_validate(
+        {"title": "해외출장", "day": 5, "days": 4, "time": None, "color": None}
+    )
+
+    # When the generation layer reads it
+    # Then the bar is shortened to the days that are left, which is what both the job
+    # contract and the workspace record accept — a whole Codex turn is not worth one row
+    assert (entry.day, entry.days) == (5, 2)
+    assert TraceScheduleItem.model_validate(entry.model_dump()).days == 2
+    assert CandidateScheduleEntry.model_validate(entry.model_dump()).days == 2
+
+
+def test_schedule_entry_when_the_bar_fits_then_leaves_it_alone() -> None:
+    # Given a row that already sits inside the week
+    entry = GeneratedScheduleEntry.model_validate(
+        {"title": "해외출장", "day": 2, "days": 3, "time": None, "color": None}
+    )
+
+    # When the generation layer reads it
+    # Then nothing is trimmed
+    assert (entry.day, entry.days) == (2, 3)

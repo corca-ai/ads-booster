@@ -42,7 +42,8 @@ cli/marketing
 | `inbox.py` | ingress, claim, admission, terminal result, callback retry | Cloudflare/Codex |
 | `worker_loop.py` | prepare-barrier-execute ordering and ambiguity handling | Trace UI method |
 | `background.py` | `background_intent`, allowlisted candidate ranking, digest, provenance | native export |
-| `native_capture.py` | hosted payload/context, request paths, native preview PNG validation | UI selectors, image editing |
+| `native_capture.py` | hosted payload/context, Trace PNG validation, ImageGen output provenance | UI selectors, image editing |
+| `codex_imagegen_ui.py` | one official Codex ImageGen turn against the packaged iPhone UI reference, transparent UI-layer normalization, final UI manifest | external model auth, Trace export |
 | `contracts/feedback.py` | strict `trace.feedback-context.v1` shape and canonical digest | rule promotion, review storage |
 | `codex_appium_job.py` | v2 context/device/digest/nonce/time/calendar contract | process execution |
 | `calendar_automation_contract.py` | typed prepare/cleanup request, result, and event time projection | EventKit execution, layout |

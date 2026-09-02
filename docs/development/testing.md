@@ -28,8 +28,10 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | Threads workspace/status/security | `npm --prefix cloudflare run build && node --test cloudflare/test/workspace-static.test.js cloudflare/test/hosted-threads-ui-api.test.js cloudflare/test/threads-security.test.js` |
 | hosted feedback selection, worker receipt, and schema | `uv run pytest tests/marketing/test_hosted_generation.py tests/marketing/test_native_capture.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `node --test test/hosted-workspace.test.js test/hosted-generation.test.js test/mac-workers.test.js test/hosted-capture-result.test.js` |
 | native Trace lock-screen preview passthrough | `uv run pytest tests/marketing/test_native_capture.py tests/capture/test_codex_appium_handshake.py` |
+| Codex ImageGen iOS UI layer | `uv run pytest tests/capture/test_codex_imagegen_ui.py tests/capture/test_ios_lock_screen_layer.py tests/capture/test_imagegen_ios_ui_contract.py tests/marketing/test_imagegen_ios_ui_capture.py`; from `cloudflare/`: `node --test test/hosted-capture-result.test.js` |
 | inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
 | update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
+| immediate stable-release update signal | `uv run pytest tests/marketing/test_worker_broker.py tests/cli/test_release_builder.py`; from `cloudflare/`: `node --test test/mac-workers.test.js` |
 | CLI surface | `uv run pytest tests/cli/test_cli_compatibility.py`; `uv run trace-marketing --help`; `uv run trace-marketing worker --help` |
 
 For changed Python paths, run the matching scoped Ruff, formatter, BasedPyright, and
@@ -50,6 +52,12 @@ Use the managed executable, not `uv run`:
 For a real job record task ID, callback receipt, PNG path/SHA-256, native manifest, and resulting
 `image_awaiting_review` state. `doctor` proves prerequisites only. A manifest proves bindings
 only. Human review alone passes visual correctness.
+
+For an ImageGen iOS UI image, also record the intermediate Trace PNG SHA-256, prompt SHA-256,
+UI-layer SHA-256, `trace.imagen-ios-ui.v1` manifest, and final PNG SHA-256. Confirm that the
+generated layer is transparent, has only date/time UI, and keeps the packaged default iPhone
+reference's neutral color, typography, hierarchy, spacing, and placement. This proves a generated
+copy of iPhone UI, not that iOS applied a system wallpaper.
 
 A regression test for a post-barrier defect must assert `unknown_side_effect` and no automatic
 native re-execution. Never place credentials, raw Codex output, or private user data in evidence.
