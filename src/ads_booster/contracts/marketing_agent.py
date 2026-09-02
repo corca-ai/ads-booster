@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING, Annotated, Literal, LiteralString, Never, Self
 from pydantic import Field, model_validator
 from pydantic_core import PydanticCustomError
 
+from ads_booster.contracts.marketing_context import (  # noqa: TC001
+    MarketingContextPlanningProjection,
+)
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 
 if TYPE_CHECKING:
@@ -317,6 +320,7 @@ class ContextReceipt(ContractModel):
     output_schema_sha256: Sha256Digest
     included_record_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=256)] = ()
     omitted_modules: Annotated[tuple[AgentIdentifier, ...], Field(max_length=64)] = ()
+    marketing_context: MarketingContextPlanningProjection | None = None
     created_at: datetime
 
     @model_validator(mode="after")

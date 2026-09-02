@@ -27,7 +27,8 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
   const publishedPayload = publishedJudgmentPayload(task);
   const campaign = await env.DB.prepare(
     `SELECT campaign_id, account_id, feature_packet_id, feature_packet_sha256, mode, state,
-            projection_revision, business_outcome
+            projection_revision, business_outcome, marketing_context_snapshot_id,
+            marketing_context_snapshot_sha256
      FROM hosted_marketing_campaigns WHERE campaign_id = ? AND account_id = ?`,
   ).bind(task.run_id, task.account_id).first();
   if (
@@ -69,6 +70,7 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
   const brief = requireObject(output.strategy_brief, "strategy brief");
   const receiptSha256 = await canonicalSha256(receipt);
   const briefSha256 = await canonicalSha256(brief);
+  const marketingContext = await currentMarketingContextProjection(env.DB, campaign, now);
   if (
     receiptSha256 !== output.context_receipt_sha256
     || briefSha256 !== output.strategy_brief_sha256
@@ -91,6 +93,8 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     || brief.business_outcome !== publishedPayload.business_outcome
     || receipt.knowledge_snapshot_sha256 !== publishedPayload.knowledge_snapshot_sha256
     || receipt.capability_snapshot_sha256 !== publishedPayload.capability_snapshot_sha256
+    || canonicalJson(receipt.marketing_context ?? null) !== canonicalJson(marketingContext)
+    || canonicalJson(publishedPayload.marketing_context ?? null) !== canonicalJson(marketingContext)
     || receipt.created_at !== brief.created_at
   ) {
     throw new HttpError(409, "marketing judgment strategy scope is invalid");
@@ -293,6 +297,50 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     state: "experiment_registered",
     strategy_brief_id: brief.brief_id,
     experiment_id: experimentId,
+  };
+}
+
+async function currentMarketingContextProjection(database, campaign, now) {
+  const snapshotId = campaign.marketing_context_snapshot_id;
+  const snapshotSha256 = campaign.marketing_context_snapshot_sha256;
+  if (snapshotId == null && snapshotSha256 == null) return null;
+  if (snapshotId == null || snapshotSha256 == null) {
+    throw new HttpError(409, "campaign marketing context binding is incomplete");
+  }
+  const row = await database.prepare(
+    `SELECT snapshot_json, snapshot_sha256, expires_at
+     FROM hosted_marketing_context_snapshots
+     WHERE snapshot_id = ? AND account_id = ? AND snapshot_sha256 = ?`,
+  ).bind(snapshotId, campaign.account_id, snapshotSha256).first();
+  if (!row || Date.parse(row.expires_at) <= Date.parse(now)) {
+    throw new HttpError(409, "campaign marketing context binding is expired or invalid");
+  }
+  let snapshot;
+  try {
+    snapshot = requireObject(JSON.parse(row.snapshot_json), "campaign marketing context snapshot");
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(409, "campaign marketing context snapshot is invalid");
+  }
+  if (
+    snapshot.schema_version !== "trace.marketing-context.v1"
+    || snapshot.snapshot_id !== snapshotId
+    || snapshot.account_id !== campaign.account_id
+    || await canonicalSha256(snapshot) !== snapshotSha256
+  ) {
+    throw new HttpError(409, "campaign marketing context snapshot binding is invalid");
+  }
+  const customerSignals = requireArray(snapshot.customer_signals, "context customer signals", 1, 24);
+  return {
+    schema_version: "trace.marketing-context-projection.v1",
+    snapshot_id: snapshot.snapshot_id,
+    snapshot_sha256: snapshotSha256,
+    account_id: snapshot.account_id,
+    brand_guardrails: requireArray(snapshot.brand_guardrails, "context brand guardrails", 1, 16),
+    audience_context: requireArray(snapshot.audience_context, "context audience", 1, 16),
+    channel_policy_ids: requireArray(snapshot.channel_policy_ids ?? [], "context channel policies", 0, 16),
+    customer_signals: customerSignals,
+    expires_at: snapshot.expires_at,
   };
 }
 

@@ -151,6 +151,24 @@ and generated-media executors remain deferred, so no unsupported artifact capabi
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
 
+`0024` adds the first governed customer-intelligence path. A caller may import only a manual,
+normalized `CustomerSignal`; dedicated raw-text and connector-record fields are rejected, while the
+human reviewer remains responsible for the normalization itself. The task treats the resulting
+summary as bounded context, never as an instruction. The signal begins pending, an authorized human
+makes one final approve/reject decision, and a human creates an immutable account-scoped
+`MarketingContextSnapshot` from approved signals. Its retention and freshness must cover the
+snapshot's full lifetime. Context reads and a context-bound campaign require control-plane authority.
+A campaign may bind one still-current snapshot by ID and digest; the broker receives only its safe
+planning projection (brand guardrails, audience context, policy IDs, and normalized signal
+summaries/caveats). The Mac refuses an expired projection before it opens the provider, and the
+research-to-strategy handoff re-derives the projection from D1. It does not receive source references,
+source digests, or consent metadata. The strategy receipt stores the same projection, and the hosted
+callback rebinds it from D1 before it writes a brief. A later signal, approval, or snapshot cannot
+rewrite an already queued campaign. `retention_until` is currently a use and API-visibility deadline;
+physical deletion of all immutable audit copies is a later privacy-control-plane contract. This is an
+account-scoped reference lane, not a CRM/transcript connector, RAG memory system, role model, or
+automatic channel action.
+
 `0023` adds an account-scoped effect-adapter catalog and a context-receipt-scoped capability-binding
 ledger. Existing accounts receive active `capture.native_png` and reference-only
 `publish.threads` descriptors; the latter cannot open a new publishing path. The catalog stores the

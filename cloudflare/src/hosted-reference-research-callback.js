@@ -1,6 +1,9 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
-import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import {
+  MARKETING_JUDGMENT_PIPELINE,
+  resolveMarketingContextProjection,
+} from "./marketing-agent.js";
 
 const MAX_TASK_BYTES = 64 * 1024;
 
@@ -27,7 +30,8 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
   const payload = publishedPayload(task);
   const campaign = await env.DB.prepare(
     `SELECT campaign_id, account_id, feature_packet_id, feature_packet_sha256,
-            mode, state, projection_revision
+            mode, state, projection_revision, marketing_context_snapshot_id,
+            marketing_context_snapshot_sha256
      FROM hosted_marketing_campaigns WHERE campaign_id = ? AND account_id = ?`,
   ).bind(payload.campaign_id, task.account_id).first();
   if (!campaign || campaign.state !== "strategy_requested") {
@@ -65,6 +69,14 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
     throw new HttpError(409, "reference research output binding is invalid");
   }
   validateSnapshot(snapshot);
+  const marketingContext = await resolveMarketingContextProjection(
+    env.DB,
+    campaign.account_id,
+    campaign.marketing_context_snapshot_id,
+  );
+  if (canonicalJson(payload.marketing_context ?? null) !== canonicalJson(marketingContext)) {
+    throw new HttpError(409, "reference research marketing context binding is invalid");
+  }
   const strategyTaskId = crypto.randomUUID();
   const strategyTask = {
     schema_version: "1",
@@ -83,6 +95,7 @@ export async function receiveHostedReferenceResearchCallback(env, task, callback
       account: payload.account,
       business_outcome: payload.business_outcome,
       current_control: payload.current_control,
+      marketing_context: marketingContext,
       reference_snapshot: snapshot,
       reference_snapshot_sha256: snapshotSha256,
       canonical_principles: payload.canonical_principles,

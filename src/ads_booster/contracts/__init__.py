@@ -32,6 +32,15 @@ from ads_booster.contracts.marketing_agent import (
     StrategyBrief,
     contract_sha256,
 )
+from ads_booster.contracts.marketing_context import (
+    CustomerSignal,
+    CustomerSignalConsentStatus,
+    CustomerSignalKind,
+    CustomerSignalPlanningProjection,
+    CustomerSignalSourceKind,
+    MarketingContextPlanningProjection,
+    MarketingContextSnapshot,
+)
 from ads_booster.contracts.models import (
     CaptureProvenance,
     ContractModel,
@@ -56,6 +65,11 @@ __all__ = [
     "ContractModel",
     "CreativeFormat",
     "CreativeTreatment",
+    "CustomerSignal",
+    "CustomerSignalConsentStatus",
+    "CustomerSignalKind",
+    "CustomerSignalPlanningProjection",
+    "CustomerSignalSourceKind",
     "DeviceKind",
     "DeviceTarget",
     "ErrorCode",
@@ -72,6 +86,8 @@ __all__ = [
     "GenerationReferenceImage",
     "LearningCandidate",
     "MarketingContextBundle",
+    "MarketingContextPlanningProjection",
+    "MarketingContextSnapshot",
     "MarketingHypothesis",
     "MediaPlan",
     "OutcomeDefinition",

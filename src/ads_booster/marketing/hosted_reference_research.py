@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol
 
 from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
 from ads_booster.contracts.marketing_agent import FeatureEvidencePacket, contract_sha256
+from ads_booster.contracts.marketing_context import MarketingContextPlanningProjection
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
@@ -111,6 +113,7 @@ class ReferenceResearchRequest(ResearchModel):
     account: ResearchAccountSnapshot
     business_outcome: Annotated[str, Field(min_length=1, max_length=1000)]
     current_control: Annotated[str, Field(min_length=1, max_length=4000)]
+    marketing_context: MarketingContextPlanningProjection | None = None
     mode: Literal["shadow", "assisted"]
     canonical_principles: Annotated[tuple[str, ...], Field(min_length=1, max_length=100)]
     knowledge_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -131,6 +134,11 @@ class ReferenceResearchRequest(ResearchModel):
             self.capability_snapshot_sha256
         ):
             raise ValueError("research-carried capability snapshot is invalid")
+        if (
+            self.marketing_context is not None
+            and self.marketing_context.account_id != self.account.account_id
+        ):
+            raise ValueError("research-carried marketing context is out of account scope")
         return self
 
 
@@ -170,6 +178,11 @@ class HostedReferenceResearchExecutor:
             raise MarketingExecutionError("reference_research_payload_invalid") from error
         if request.account.account_id != task.account_id:
             raise MarketingExecutionError("reference_research_scope_mismatch")
+        if (
+            request.marketing_context is not None
+            and request.marketing_context.expires_at <= datetime.now(UTC)
+        ):
+            raise MarketingExecutionError("marketing_context_expired")
         schema = _JSON_OBJECT.validate_python(ReferenceResearchProposal.model_json_schema())
         prompt = _research_prompt(request)
         digest = sha256(task.model_dump_json().encode()).hexdigest()
@@ -237,6 +250,11 @@ class HostedReferenceResearchExecutor:
 
 def _research_prompt(request: ReferenceResearchRequest) -> str:
     packet = request.feature_packet.model_dump_json(indent=2)
+    marketing_context = (
+        request.marketing_context.model_dump_json(indent=2)
+        if request.marketing_context
+        else "승인된 customer context는 제공되지 않았다. 고객 신호를 발명하지 않는다."
+    )
     return (
         "당신은 Trace Threads 마케팅 에이전트의 시장 리서처다. 웹 검색으로 현재 공개 자료를 "
         "조사하고 JSON schema에 맞는 결과만 반환한다.\n\n"
@@ -247,6 +265,7 @@ def _research_prompt(request: ReferenceResearchRequest) -> str:
         f"국가/언어: {request.account.country}/{request.account.language}\n"
         f"비즈니스 결과: {request.business_outcome}\n"
         f"현재 control: {request.current_control}\n\n"
+        f"승인된 customer context: {marketing_context}\n\n"
         f"고정된 feature packet:\n{packet}\n\n"
         "최소 2개 독립 출처를 사용하고, 각 observation은 source_ids로 근거를 연결한다. "
         "불확실성과 검색 사각지대를 blind_spots에 적는다."

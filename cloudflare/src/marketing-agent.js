@@ -69,9 +69,49 @@ export async function handleHostedMarketingAgent(request, env, account) {
       requireEventIngestAuthority(request, env);
       return agentJson(await ingestProductEvent(env, await readJson(request)), 202);
     }
+    if (request.method === "POST" && url.pathname === "/api/marketing-agent/customer-signals") {
+      requireMarketingAuthority(request, env);
+      return agentJson(await importCustomerSignal(env, account, await readJson(request)), 201);
+    }
+    if (request.method === "GET" && url.pathname === "/api/marketing-agent/customer-signals") {
+      requireMarketingAuthority(request, env);
+      return agentJson({ signals: await listCustomerSignals(env, account.account_id) });
+    }
+    const signalApprovalRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/customer-signals\/([^/]+)\/approval$/,
+    );
+    if (request.method === "POST" && signalApprovalRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await decideCustomerSignal(
+        env,
+        account,
+        decodedRouteId(signalApprovalRoute[1]),
+        await readJson(request),
+      ));
+    }
+    if (request.method === "POST" && url.pathname === "/api/marketing-agent/context-snapshots") {
+      requireMarketingAuthority(request, env);
+      return agentJson(await createMarketingContextSnapshot(env, account, await readJson(request)), 201);
+    }
+    const contextSnapshotRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/context-snapshots\/([^/]+)$/,
+    );
+    if (request.method === "GET" && contextSnapshotRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await marketingContextSnapshotStatus(
+        env,
+        account.account_id,
+        decodedRouteId(contextSnapshotRoute[1]),
+      ));
+    }
     if (request.method === "POST" && url.pathname === "/api/marketing-agent/campaigns") {
       const input = await readJson(request);
-      if ((input?.mode ?? "shadow") !== "shadow") requireMarketingAuthority(request, env);
+      if (
+        (input?.mode ?? "shadow") !== "shadow"
+        || input?.marketing_context_snapshot_id != null
+      ) {
+        requireMarketingAuthority(request, env);
+      }
       return agentJson(await createShadowCampaign(env, account, input), 202);
     }
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/campaigns") {
@@ -220,6 +260,11 @@ export async function createShadowCampaign(env, account, input) {
   const businessOutcome = requiredString(input?.business_outcome, "business_outcome", 1000);
   const currentControl = requiredString(input?.current_control, "current_control", 4000);
   const packet = normalizeFeaturePacket(input?.feature_packet);
+  const marketingContext = await resolveMarketingContextProjection(
+    env.DB,
+    account.account_id,
+    input?.marketing_context_snapshot_id,
+  );
   const researchEnabled = input?.research_enabled !== false;
   const mode = input?.mode ?? "shadow";
   if (!["shadow", "assisted"].includes(mode)) {
@@ -246,7 +291,8 @@ export async function createShadowCampaign(env, account, input) {
   const capabilitySnapshotSha256 = await canonicalSha256({ capabilities: SHADOW_CAPABILITIES });
   const existing = await env.DB.prepare(
     `SELECT campaign.campaign_id, campaign.feature_packet_sha256, campaign.business_outcome,
-            campaign.mode, campaign.origin_campaign_id, campaign.state, task.task_json
+            campaign.mode, campaign.origin_campaign_id, campaign.marketing_context_snapshot_id,
+            campaign.marketing_context_snapshot_sha256, campaign.state, task.task_json
      FROM hosted_marketing_campaigns AS campaign
      LEFT JOIN hosted_workspace_capture_tasks AS task
        ON task.account_id = campaign.account_id AND task.kind = 'marketing_judgment'
@@ -274,6 +320,8 @@ export async function createShadowCampaign(env, account, input) {
       || existing.business_outcome !== businessOutcome
       || existing.mode !== mode
       || existing.origin_campaign_id !== originCampaignId
+      || existing.marketing_context_snapshot_id !== (marketingContext?.snapshot_id ?? null)
+      || existing.marketing_context_snapshot_sha256 !== (marketingContext?.snapshot_sha256 ?? null)
       || existingControl !== currentControl
       || existingJudgment !== (researchEnabled ? "market_research" : "shadow_strategy")
     ) {
@@ -330,6 +378,7 @@ export async function createShadowCampaign(env, account, input) {
       },
       business_outcome: businessOutcome,
       current_control: currentControl,
+      marketing_context: marketingContext,
       mode,
       canonical_principles: canonicalPrinciples,
       knowledge_snapshot_sha256: knowledgeSnapshotSha256,
@@ -362,6 +411,7 @@ export async function createShadowCampaign(env, account, input) {
       },
       business_outcome: businessOutcome,
       current_control: currentControl,
+      marketing_context: marketingContext,
       canonical_principles: canonicalPrinciples,
       knowledge_snapshot_sha256: knowledgeSnapshotSha256,
       available_capabilities: [...SHADOW_CAPABILITIES],
@@ -379,6 +429,8 @@ export async function createShadowCampaign(env, account, input) {
     business_outcome: businessOutcome,
     task_id: taskId,
     origin_campaign_id: originCampaignId,
+    marketing_context_snapshot_id: marketingContext?.snapshot_id ?? null,
+    marketing_context_snapshot_sha256: marketingContext?.snapshot_sha256 ?? null,
     research_enabled: researchEnabled,
   };
   const taskJson = JSON.stringify(task);
@@ -415,9 +467,10 @@ export async function createShadowCampaign(env, account, input) {
     env.DB.prepare(
       `INSERT INTO hosted_marketing_campaigns
         (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
-         mode, origin_campaign_id, state, projection_revision, business_outcome, created_at,
-         updated_at)
-       VALUES (?, ?, ?, ?, 'agent_v1', ?, ?, 'strategy_requested', 1, ?, ?, ?)`,
+         mode, origin_campaign_id, marketing_context_snapshot_id,
+         marketing_context_snapshot_sha256, state, projection_revision, business_outcome,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'agent_v1', ?, ?, ?, ?, 'strategy_requested', 1, ?, ?, ?)`,
     ).bind(
       campaignId,
       account.account_id,
@@ -425,6 +478,8 @@ export async function createShadowCampaign(env, account, input) {
       packetSha256,
       mode,
       originCampaignId,
+      marketingContext?.snapshot_id ?? null,
+      marketingContext?.snapshot_sha256 ?? null,
       businessOutcome,
       now,
       now,
@@ -499,6 +554,8 @@ export async function createShadowCampaign(env, account, input) {
     task_id: taskId,
     mode,
     origin_campaign_id: originCampaignId,
+    marketing_context_snapshot_id: marketingContext?.snapshot_id ?? null,
+    marketing_context_snapshot_sha256: marketingContext?.snapshot_sha256 ?? null,
     state: "strategy_requested",
     stage: researchEnabled ? "market_research" : "strategy",
     feature_packet_id: packet.packet_id,
@@ -1841,11 +1898,402 @@ export async function bindCandidateAssignment(env, account, campaignId, input) {
 async function listCampaigns(env, accountId) {
   const result = await env.DB.prepare(
     `SELECT campaign_id, feature_packet_id, feature_packet_sha256, mode, origin_campaign_id, state,
-            projection_revision, business_outcome, created_at, updated_at
+            projection_revision, business_outcome, marketing_context_snapshot_id,
+            marketing_context_snapshot_sha256, created_at, updated_at
      FROM hosted_marketing_campaigns WHERE account_id = ?
      ORDER BY created_at DESC LIMIT ?`,
   ).bind(accountId, MAX_CAMPAIGNS).all();
   return result.results;
+}
+
+export async function importCustomerSignal(env, account, input) {
+  const signal = normalizeCustomerSignal(input, account.account_id);
+  const signalSha256 = await canonicalSha256(signal);
+  const existing = await env.DB.prepare(
+    `SELECT signal_sha256, review_state FROM hosted_marketing_customer_signals
+     WHERE account_id = ? AND signal_id = ?`,
+  ).bind(account.account_id, signal.signal_id).first();
+  if (existing) {
+    if (existing.signal_sha256 !== signalSha256) {
+      throw new MarketingAgentHttpError(409, "signal_id가 다른 customer signal에 이미 사용됐습니다.");
+    }
+    return {
+      signal_id: signal.signal_id,
+      signal_sha256: signalSha256,
+      review_state: existing.review_state,
+      duplicate: true,
+    };
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO hosted_marketing_customer_signals
+      (signal_id, account_id, schema_version, source_kind, source_ref, source_sha256,
+       audience_segment_id, signal_kind, consent_status, confidence_basis_points,
+       observed_at, fresh_until, retention_until, review_state, reviewer_id, reviewed_at,
+       signal_json, signal_sha256, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)`,
+  ).bind(
+    signal.signal_id,
+    account.account_id,
+    signal.schema_version,
+    signal.source_kind,
+    signal.source_ref,
+    signal.source_sha256,
+    signal.audience_segment_id,
+    signal.kind,
+    signal.consent_status,
+    signal.confidence_basis_points,
+    signal.observed_at,
+    signal.fresh_until,
+    signal.retention_until,
+    canonicalJson(signal),
+    signalSha256,
+    now,
+  ).run();
+  return {
+    signal_id: signal.signal_id,
+    signal_sha256: signalSha256,
+    review_state: "pending",
+    duplicate: false,
+  };
+}
+
+export async function decideCustomerSignal(env, account, signalId, input) {
+  assertExactKeys(input, ["decision", "reviewer_id"], "customer signal approval");
+  const decision = input?.decision;
+  if (!['approved', 'rejected'].includes(decision)) {
+    throw new MarketingAgentHttpError(400, "customer signal decision은 approved 또는 rejected여야 합니다.");
+  }
+  const reviewerId = safeId(input?.reviewer_id, "reviewer_id");
+  const existing = await env.DB.prepare(
+    `SELECT signal_sha256, review_state, reviewer_id FROM hosted_marketing_customer_signals
+     WHERE account_id = ? AND signal_id = ?`,
+  ).bind(account.account_id, signalId).first();
+  if (!existing) throw new MarketingAgentHttpError(404, "customer signal을 찾을 수 없습니다.");
+  if (existing.review_state !== "pending") {
+    if (existing.review_state === decision && existing.reviewer_id === reviewerId) {
+      return {
+        signal_id: signalId,
+        signal_sha256: existing.signal_sha256,
+        review_state: existing.review_state,
+        duplicate: true,
+      };
+    }
+    throw new MarketingAgentHttpError(409, "customer signal의 검수 결정은 이미 고정되었습니다.");
+  }
+  const reviewedAt = new Date().toISOString();
+  const result = await env.DB.prepare(
+    `UPDATE hosted_marketing_customer_signals
+     SET review_state = ?, reviewer_id = ?, reviewed_at = ?
+     WHERE account_id = ? AND signal_id = ? AND review_state = 'pending'`,
+  ).bind(decision, reviewerId, reviewedAt, account.account_id, signalId).run();
+  if (result.meta.changes !== 1) {
+    throw new MarketingAgentHttpError(409, "customer signal 검수가 최신 상태와 충돌했습니다.");
+  }
+  return {
+    signal_id: signalId,
+    signal_sha256: existing.signal_sha256,
+    review_state: decision,
+    reviewer_id: reviewerId,
+    reviewed_at: reviewedAt,
+    duplicate: false,
+  };
+}
+
+export async function createMarketingContextSnapshot(env, account, input) {
+  assertExactKeys(input, [
+    "snapshot_id",
+    "brand_guardrails",
+    "audience_context",
+    "channel_policy_ids",
+    "signal_ids",
+    "reviewer_id",
+    "expires_at",
+  ], "marketing context snapshot");
+  const snapshotId = safeId(input?.snapshot_id, "snapshot_id");
+  const signalIds = requireArray(input?.signal_ids, "signal_ids", 1, 24)
+    .map((signalId) => safeId(signalId, "signal_id"));
+  if (new Set(signalIds).size !== signalIds.length) {
+    throw new MarketingAgentHttpError(400, "marketing context의 signal_id는 중복될 수 없습니다.");
+  }
+  const brandGuardrails = normalizedStringList(input?.brand_guardrails, "brand_guardrails", 1, 16, 1200);
+  const audienceContext = normalizedStringList(input?.audience_context, "audience_context", 1, 16, 1200);
+  const channelPolicyIds = requireArray(input?.channel_policy_ids ?? [], "channel_policy_ids", 0, 16)
+    .map((policyId) => safeId(policyId, "channel_policy_id"));
+  if (new Set(channelPolicyIds).size !== channelPolicyIds.length) {
+    throw new MarketingAgentHttpError(400, "channel_policy_id는 중복될 수 없습니다.");
+  }
+  const reviewerId = safeId(input?.reviewer_id, "reviewer_id");
+  const expiresAt = isoTimestamp(input?.expires_at, "expires_at");
+  const existing = await env.DB.prepare(
+    `SELECT snapshot_json, snapshot_sha256 FROM hosted_marketing_context_snapshots
+     WHERE account_id = ? AND snapshot_id = ?`,
+  ).bind(account.account_id, snapshotId).first();
+  if (existing) {
+    const storedSnapshot = await parseMarketingContextSnapshot(
+      existing,
+      account.account_id,
+      snapshotId,
+    );
+    const requestedIntent = marketingContextIntent({
+      brand_guardrails: brandGuardrails,
+      audience_context: audienceContext,
+      channel_policy_ids: channelPolicyIds,
+      signal_ids: signalIds,
+      reviewer_id: reviewerId,
+      expires_at: expiresAt,
+    });
+    const storedIntent = marketingContextIntent({
+      brand_guardrails: storedSnapshot.brand_guardrails,
+      audience_context: storedSnapshot.audience_context,
+      channel_policy_ids: storedSnapshot.channel_policy_ids,
+      signal_ids: requireArray(storedSnapshot.customer_signals, "stored context signals", 1, 24)
+        .map((signal) => safeId(requireObject(signal, "stored context signal").signal_id, "signal_id")),
+      reviewer_id: storedSnapshot.approved_by,
+      expires_at: storedSnapshot.expires_at,
+    });
+    if (canonicalJson(requestedIntent) !== canonicalJson(storedIntent)) {
+      throw new MarketingAgentHttpError(409, "snapshot_id가 다른 marketing context에 이미 사용됐습니다.");
+    }
+    return {
+      snapshot_id: snapshotId,
+      snapshot_sha256: existing.snapshot_sha256,
+      projection: marketingContextPlanningProjection(storedSnapshot, existing.snapshot_sha256),
+      duplicate: true,
+    };
+  }
+  const now = new Date().toISOString();
+  if (Date.parse(expiresAt) <= Date.parse(now)) {
+    throw new MarketingAgentHttpError(400, "marketing context는 미래에 만료되어야 합니다.");
+  }
+  const signals = [];
+  for (const signalId of signalIds) {
+    const row = await env.DB.prepare(
+      `SELECT signal_json, signal_sha256, review_state, consent_status, fresh_until, retention_until
+       FROM hosted_marketing_customer_signals WHERE account_id = ? AND signal_id = ?`,
+    ).bind(account.account_id, signalId).first();
+    if (
+      !row
+      || row.review_state !== "approved"
+      || row.consent_status !== "confirmed"
+      || Date.parse(row.fresh_until) < Date.parse(expiresAt)
+      || Date.parse(row.retention_until) < Date.parse(expiresAt)
+    ) {
+      throw new MarketingAgentHttpError(409, "승인·동의·보존 기간이 유효한 customer signal만 context에 넣을 수 있습니다.");
+    }
+    let signal;
+    try {
+      signal = requireObject(JSON.parse(row.signal_json), "stored customer signal");
+    } catch (error) {
+      if (error instanceof MarketingAgentHttpError) throw error;
+      throw new MarketingAgentHttpError(409, "stored customer signal이 손상되었습니다.");
+    }
+    if (await canonicalSha256(signal) !== row.signal_sha256) {
+      throw new MarketingAgentHttpError(409, "stored customer signal digest가 일치하지 않습니다.");
+    }
+    signals.push(customerSignalPlanningProjection(signal, row.signal_sha256));
+  }
+  const snapshot = {
+    schema_version: "trace.marketing-context.v1",
+    snapshot_id: snapshotId,
+    account_id: account.account_id,
+    brand_guardrails: brandGuardrails,
+    audience_context: audienceContext,
+    channel_policy_ids: channelPolicyIds,
+    customer_signals: signals,
+    approved_by: reviewerId,
+    approved_at: now,
+    expires_at: expiresAt,
+  };
+  const snapshotSha256 = await canonicalSha256(snapshot);
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO hosted_marketing_context_snapshots
+        (snapshot_id, account_id, schema_version, snapshot_json, snapshot_sha256,
+         approved_by, approved_at, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      snapshotId,
+      account.account_id,
+      snapshot.schema_version,
+      canonicalJson(snapshot),
+      snapshotSha256,
+      reviewerId,
+      now,
+      expiresAt,
+      now,
+    ),
+    ...signals.map((signal) => env.DB.prepare(
+      `INSERT INTO hosted_marketing_context_snapshot_signals
+        (snapshot_id, signal_id, signal_sha256) VALUES (?, ?, ?)`,
+    ).bind(snapshotId, signal.signal_id, signal.signal_sha256)),
+  ]);
+  return {
+    snapshot_id: snapshotId,
+    snapshot_sha256: snapshotSha256,
+    projection: marketingContextPlanningProjection(snapshot, snapshotSha256),
+    duplicate: false,
+  };
+}
+
+async function listCustomerSignals(env, accountId) {
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(
+    `SELECT signal_id, signal_sha256, review_state, audience_segment_id, signal_kind,
+            confidence_basis_points, observed_at, fresh_until, retention_until, reviewed_at
+     FROM hosted_marketing_customer_signals WHERE account_id = ? AND retention_until > ?
+     ORDER BY observed_at DESC LIMIT 100`,
+  ).bind(accountId, now).all();
+  return result.results;
+}
+
+async function marketingContextSnapshotStatus(env, accountId, snapshotId) {
+  const row = await env.DB.prepare(
+    `SELECT snapshot_json, snapshot_sha256, approved_by, approved_at, expires_at
+     FROM hosted_marketing_context_snapshots WHERE account_id = ? AND snapshot_id = ?`,
+  ).bind(accountId, snapshotId).first();
+  if (!row) throw new MarketingAgentHttpError(404, "marketing context snapshot을 찾을 수 없습니다.");
+  if (Date.parse(row.expires_at) <= Date.now()) {
+    throw new MarketingAgentHttpError(410, "marketing context snapshot이 만료되었습니다.");
+  }
+  const snapshot = await parseMarketingContextSnapshot(row, accountId, snapshotId);
+  return {
+    snapshot_id: snapshot.snapshot_id,
+    snapshot_sha256: row.snapshot_sha256,
+    approved_by: row.approved_by,
+    approved_at: row.approved_at,
+    expires_at: row.expires_at,
+    expired: Date.parse(row.expires_at) < Date.now(),
+    projection: marketingContextPlanningProjection(snapshot, row.snapshot_sha256),
+  };
+}
+
+export async function resolveMarketingContextProjection(database, accountId, snapshotId) {
+  if (snapshotId == null) return null;
+  const safeSnapshotId = safeId(snapshotId, "marketing_context_snapshot_id");
+  const row = await database.prepare(
+    `SELECT snapshot_json, snapshot_sha256, expires_at
+     FROM hosted_marketing_context_snapshots WHERE account_id = ? AND snapshot_id = ?`,
+  ).bind(accountId, safeSnapshotId).first();
+  if (!row || Date.parse(row.expires_at) <= Date.now()) {
+    throw new MarketingAgentHttpError(409, "유효한 marketing context snapshot을 찾을 수 없습니다.");
+  }
+  const snapshot = await parseMarketingContextSnapshot(row, accountId, safeSnapshotId);
+  return marketingContextPlanningProjection(snapshot, row.snapshot_sha256);
+}
+
+async function parseMarketingContextSnapshot(row, accountId, snapshotId) {
+  let snapshot;
+  try {
+    snapshot = requireObject(JSON.parse(row.snapshot_json), "marketing context snapshot");
+  } catch (error) {
+    if (error instanceof MarketingAgentHttpError) throw error;
+    throw new MarketingAgentHttpError(409, "marketing context snapshot이 손상되었습니다.");
+  }
+  if (
+    snapshot.schema_version !== "trace.marketing-context.v1"
+    || snapshot.snapshot_id !== snapshotId
+    || snapshot.account_id !== accountId
+    || await canonicalSha256(snapshot) !== row.snapshot_sha256
+  ) {
+    throw new MarketingAgentHttpError(409, "marketing context snapshot binding이 유효하지 않습니다.");
+  }
+  return snapshot;
+}
+
+function marketingContextIntent(value) {
+  return {
+    brand_guardrails: value.brand_guardrails,
+    audience_context: value.audience_context,
+    channel_policy_ids: value.channel_policy_ids,
+    signal_ids: value.signal_ids,
+    reviewer_id: value.reviewer_id,
+    expires_at: value.expires_at,
+  };
+}
+
+function normalizeCustomerSignal(value, accountId) {
+  assertExactKeys(value, [
+    "schema_version",
+    "signal_id",
+    "source_kind",
+    "source_ref",
+    "source_sha256",
+    "audience_segment_id",
+    "kind",
+    "summary",
+    "caveats",
+    "confidence_basis_points",
+    "consent_status",
+    "observed_at",
+    "fresh_until",
+    "retention_until",
+  ], "customer signal");
+  if (value?.schema_version !== "trace.customer-signal.v1") {
+    throw new MarketingAgentHttpError(400, "customer signal schema가 올바르지 않습니다.");
+  }
+  if (value.source_kind !== "manual_normalized") {
+    throw new MarketingAgentHttpError(400, "v1 customer signal은 manual_normalized source만 허용합니다.");
+  }
+  if (!["need", "objection", "desired_outcome", "audience_language", "behavior"].includes(value.kind)) {
+    throw new MarketingAgentHttpError(400, "customer signal kind가 올바르지 않습니다.");
+  }
+  if (value.consent_status !== "confirmed") {
+    throw new MarketingAgentHttpError(400, "customer signal에는 confirmed consent가 필요합니다.");
+  }
+  const observedAt = isoTimestamp(value.observed_at, "observed_at");
+  const freshUntil = isoTimestamp(value.fresh_until, "fresh_until");
+  const retentionUntil = isoTimestamp(value.retention_until, "retention_until");
+  if (!(Date.parse(observedAt) <= Date.parse(freshUntil) && Date.parse(freshUntil) <= Date.parse(retentionUntil))) {
+    throw new MarketingAgentHttpError(400, "customer signal의 freshness/retention 시간이 올바르지 않습니다.");
+  }
+  const caveats = normalizedStringList(value.caveats ?? [], "caveats", 0, 8, 1200);
+  return {
+    schema_version: "trace.customer-signal.v1",
+    signal_id: safeId(value.signal_id, "signal_id"),
+    account_id: accountId,
+    source_kind: "manual_normalized",
+    source_ref: requiredString(value.source_ref, "source_ref", 500),
+    source_sha256: sha256Digest(value.source_sha256, "source_sha256"),
+    audience_segment_id: safeId(value.audience_segment_id, "audience_segment_id"),
+    kind: value.kind,
+    summary: requiredString(value.summary, "summary", 1200),
+    caveats,
+    confidence_basis_points: basisPoints(value.confidence_basis_points, "confidence_basis_points"),
+    consent_status: "confirmed",
+    observed_at: observedAt,
+    fresh_until: freshUntil,
+    retention_until: retentionUntil,
+  };
+}
+
+function customerSignalPlanningProjection(signal, signalSha256) {
+  return {
+    schema_version: "trace.customer-signal-projection.v1",
+    signal_id: signal.signal_id,
+    signal_sha256: signalSha256,
+    audience_segment_id: signal.audience_segment_id,
+    kind: signal.kind,
+    summary: signal.summary,
+    caveats: signal.caveats,
+    confidence_basis_points: signal.confidence_basis_points,
+    observed_at: signal.observed_at,
+    fresh_until: signal.fresh_until,
+  };
+}
+
+function marketingContextPlanningProjection(snapshot, snapshotSha256) {
+  return {
+    schema_version: "trace.marketing-context-projection.v1",
+    snapshot_id: snapshot.snapshot_id,
+    snapshot_sha256: snapshotSha256,
+    account_id: snapshot.account_id,
+    brand_guardrails: snapshot.brand_guardrails,
+    audience_context: snapshot.audience_context,
+    channel_policy_ids: snapshot.channel_policy_ids,
+    customer_signals: snapshot.customer_signals,
+    expires_at: snapshot.expires_at,
+  };
 }
 
 async function loadCanonicalPrinciples(db, accountId) {
@@ -1878,7 +2326,8 @@ async function campaignStatus(env, accountId, campaignId) {
     `SELECT campaign.campaign_id, campaign.feature_packet_id, campaign.feature_packet_sha256,
             campaign.mode, campaign.state, campaign.projection_revision,
             campaign.origin_campaign_id,
-            campaign.business_outcome, campaign.created_at, campaign.updated_at,
+            campaign.business_outcome, campaign.marketing_context_snapshot_id,
+            campaign.marketing_context_snapshot_sha256, campaign.created_at, campaign.updated_at,
             packet.publication_allowed,
             research_task.task_id AS research_task_id,
             research_task.state AS research_task_state,
@@ -1927,6 +2376,10 @@ async function campaignStatus(env, accountId, campaignId) {
     state: row.state,
     projection_revision: row.projection_revision,
     business_outcome: row.business_outcome,
+    marketing_context_snapshot: row.marketing_context_snapshot_id ? {
+      snapshot_id: row.marketing_context_snapshot_id,
+      sha256: row.marketing_context_snapshot_sha256,
+    } : null,
     research_task: row.research_task_id ? {
       task_id: row.research_task_id,
       state: row.research_task_state,
@@ -2158,6 +2611,14 @@ function requireObject(value, field) {
   return value;
 }
 
+function assertExactKeys(value, allowed, field) {
+  const object = requireObject(value, field);
+  const unexpected = Object.keys(object).filter((key) => !allowed.includes(key));
+  if (unexpected.length) {
+    throw new MarketingAgentHttpError(400, `${field}에 허용되지 않은 field가 있습니다.`);
+  }
+}
+
 function requireArray(value, field, minimum, maximum) {
   if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
     throw new MarketingAgentHttpError(400, `${field} 개수가 올바르지 않습니다.`);
@@ -2170,6 +2631,22 @@ function requiredString(value, field, maximum) {
     throw new MarketingAgentHttpError(400, `${field} 값이 올바르지 않습니다.`);
   }
   return value.trim();
+}
+
+function normalizedStringList(value, field, minimum, maximum, itemMaximum) {
+  const items = requireArray(value, field, minimum, maximum)
+    .map((item) => requiredString(item, field, itemMaximum));
+  if (new Set(items).size !== items.length) {
+    throw new MarketingAgentHttpError(400, `${field}는 중복될 수 없습니다.`);
+  }
+  return items;
+}
+
+function basisPoints(value, field) {
+  if (!Number.isInteger(value) || value < 0 || value > 10_000) {
+    throw new MarketingAgentHttpError(400, `${field}는 0부터 10000 사이의 정수여야 합니다.`);
+  }
+  return value;
 }
 
 function positiveInteger(value, field) {

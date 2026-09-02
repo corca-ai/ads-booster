@@ -100,10 +100,14 @@ adapter; the sibling marketing-agent route delegates no-effect judgment tasks to
 ## Marketing-agent contracts
 
 `ads_booster.contracts.marketing_agent` owns the Python source contract for feature evidence,
-strategy portfolios, registered outcomes, and frozen context receipts. D1 migration
+strategy portfolios, registered outcomes, and frozen context receipts.
+`ads_booster.contracts.marketing_context` separately owns the allowlisted customer-signal and
+campaign-context shapes: its full signal retains provenance and consent, while its planning
+projection deliberately excludes both. D1 migration
 `0017_marketing_agent_foundation.sql` owns the new `agent_v1` persistence epoch and its shadow
 no-tool-action guard. `marketing/hosted_judgment.py` owns validation, private workspace admission,
-the schema-constrained strategy turn, claim/reference quarantine, and the bound result. Cloudflare
+the schema-constrained strategy turn, claim/reference quarantine, approved-context prompt boundary,
+and the bound result. Cloudflare
 `marketing-agent.js` owns campaign ingestion and task creation;
 `hosted-marketing-judgment-callback.js` independently validates and atomically persists successful
 strategy state. The generic worker broker owns leasing and callback transport only.
@@ -120,6 +124,18 @@ variant links, product-event intake, scheduled evaluation dispatch, and learning
 Migrations `0018`–`0023` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
+
+`0024_marketing_context_signals.sql` owns account-scoped, immutable `CustomerSignal` payloads,
+their one-time human review decision, and immutable `MarketingContextSnapshot` records. The hosted
+route accepts only a manually normalized signal in this first version and rejects dedicated raw-text
+or connector-record fields; the human reviewer is still responsible for the normalization itself.
+`marketing-agent.js` builds the snapshot only from approved, consented, fresh signals whose retention
+and freshness both cover the snapshot expiry, then projects only the allowlisted summary to a
+campaign task. Context reads and a context-bound shadow campaign require control-plane authority. A
+campaign binds the snapshot ID and digest immutably; its callback re-derives the same projection from
+D1 before accepting the receipt. The optional `marketing_context` member of
+`trace.context-receipt.v1` is therefore an additive receipt binding, not a replacement for the source
+signal ledger.
 
 `0023_marketing_adapter_capabilities.sql` owns account-scoped adapter registrations and
 context-receipt-scoped immutable capability bindings. It records descriptor/schema digests, owner,

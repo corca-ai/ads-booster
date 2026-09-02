@@ -3,7 +3,7 @@
 Status: Draft — product direction and staged implementation contract. It does not authorize a new
 publisher, CRM mutation, spend, customer outreach, or SaaS rollout.
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 ## Product thesis
 
@@ -47,14 +47,17 @@ Implemented provider-neutral foundations:
   counter-evidence;
 - a hosted Trace campaign ledger with product evidence, strategy, experiment, approval, attribution,
   and conservative learning ownership. Existing Cloudflare, Threads, and Appium owners remain intact.
+- an account-scoped customer-intelligence reference lane: manual normalized signals, one final human
+  review decision, immutable context snapshots, safe task/receipt projection, and callback rebinding.
+  It is deliberately not a transcript or CRM connector.
 
 Not implemented or claimed:
 
 - a real provider/model evaluation corpus, trusted remote adapter receipts, execution-time
   approval revalidation, provider idempotency/reconciliation, cross-session external approval
   authority, or a hosted runtime adapter;
-- shared tenant marketing context, customer-signal ingestion, approval inbox, collaboration surfaces,
-  billing, or public SaaS onboarding;
+- a customer-interview/CRM connector, shared multi-product tenant context, approval inbox,
+  collaboration surfaces, billing, or public SaaS onboarding;
 - automatic post publication, ad spend, cold outreach, generic CRM mutation, or autonomous budget
   control.
 
@@ -121,9 +124,12 @@ The following are separate entities, not optional fields on a god campaign objec
 | `LearningCandidate` / `MarketingPrinciple` | scoped possible learning and approved reusable principle | candidate requires counter-evidence and human promotion |
 | `SkillCard` | task contract, permitted actions, input/output/evidence rules, budget and evaluator owner | a skill documents procedure; it cannot grant capability |
 
-`MarketingContextSnapshot`, `CustomerSignal`, `ApprovalRequest`, and `SkillCard` are planned product
-contracts. Existing feature packets, context receipts, campaign ledger, artifact, approval, outcome,
-and learning contracts remain their current owners until a bounded adapter consumes them.
+`MarketingContextSnapshot` and `CustomerSignal` have a narrow implemented reference lane: an
+account-scoped manual normalization becomes pending, receives one human decision, then may be selected
+into an immutable snapshot. The campaign and its receipt carry only the allowlisted planner projection;
+the source provenance and consent record remain in the signal ledger. Connector ingestion, a
+multi-product tenant context, and an approval-inbox UX remain planned. Existing feature packets,
+artifact, approval, outcome, and learning contracts retain their current owners.
 
 ## Staged roadmap
 
@@ -173,8 +179,10 @@ The next additions stay in this order:
 
 1. extend the named test-owned scorecard with more adversarial traces, then add a private corpus
    loader and model/provider trials before treating it as model-quality validation;
-2. introduce `MarketingContextSnapshot` and `CustomerSignal` as read-only, tenant-scoped sources;
-3. then expose a minimal approval packet and campaign queue over the existing ledger.
+2. turn the implemented account-scoped context/signal reference lane into a reviewer-visible approval
+   packet and campaign queue without widening its raw-data boundary;
+3. then introduce consented connector ingestion and a multi-product tenant context only after their
+   retention, access-control, and deletion contracts exist.
 
 Deliberately not doing in this slice: a generic multi-agent graph, tool-specific logic in the
 strategist, raw interview or web text in planner context, a new publisher, or an autonomous budget.
@@ -192,15 +200,23 @@ performs the equivalent reducer check for its own ledger, but it is not a distri
 generic JSON-schema engine, secret-pattern scanner, or production connector is intentionally not part
 of this foundation.
 
-### 1. Add governed marketing context and signals
+### 1. Governed marketing context and signals — reference lane implemented
 
-Introduce `MarketingContextSnapshot` and `CustomerSignal` as provider-neutral contracts and one
-observe-only customer-intelligence adapter. Customer interviews, CRM records, product events, and
-market research remain isolated observations with consent, freshness, retention, and confidence. The
-planner receives a compact allowlisted projection, never raw transcripts or instructions.
+The first vertical is complete: `CustomerSignal` and `MarketingContextSnapshot` are provider-neutral
+contracts backed by an account-scoped D1 ledger. A manual normalized signal is immutable, pending
+until one authorized review decision, and may enter a snapshot only when approval, consent, freshness,
+and retention cover the full snapshot lifetime. The API rejects dedicated raw-text fields, but the
+reviewer—not semantic text detection—remains responsible for normalization. The planner receives a
+compact allowlisted projection without source references, source digests, or consent metadata, and
+treats it as context rather than instructions. Context reads and a context-bound campaign require
+control-plane authority; an expired projection is rejected before the Mac opens the model. Campaign
+creation freezes the snapshot ID/digest and the research handoff plus judgment callback rebind that
+projection before accepting a strategy receipt.
 
-Exit: a campaign can use a frozen approved context and signal summary without cross-tenant leakage or
-unverified claim expansion.
+This is not a customer-interview, CRM, or retrieval connector. Those sources remain isolated until
+their consent, retention, deletion, and access contracts are specified. `retention_until` currently
+means a use/visibility deadline rather than physical deletion of immutable audit copies; that privacy
+deletion contract remains explicitly deferred.
 
 ### 2. Close the reviewable campaign loop
 

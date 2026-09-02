@@ -158,6 +158,7 @@ class CallbackDb {
         return {
           ...statement,
           async first() {
+            if (sql.includes("FROM hosted_marketing_context_snapshots")) return database.contextRow ?? null;
             if (sql.includes("FROM hosted_marketing_campaigns")) return database.campaign;
             throw new Error(`unexpected first SQL: ${sql}`);
           },
@@ -196,6 +197,62 @@ class CallbackDb {
     }
     return { meta: { changes: 1 } };
   }
+}
+
+function contextBoundJudgmentFixture() {
+  const fixture = judgmentFixture();
+  const signal = {
+    schema_version: "trace.customer-signal-projection.v1",
+    signal_id: "signal-character-routine",
+    signal_sha256: "9".repeat(64),
+    audience_segment_id: "ios-character-fans",
+    kind: "desired_outcome",
+    summary: "A familiar character can make daily planning feel personal.",
+    caveats: ["Small qualitative sample."],
+    confidence_basis_points: 6500,
+    observed_at: "2026-08-31T00:00:00Z",
+    fresh_until: "2026-12-31T00:00:00Z",
+  };
+  const snapshot = {
+    schema_version: "trace.marketing-context.v1",
+    snapshot_id: "context-trace-kr-1",
+    account_id: fixture.campaign.account_id,
+    brand_guardrails: ["Lead with verified product proof."],
+    audience_context: ["iPhone users who personalize a lock screen"],
+    channel_policy_ids: ["threads-organic"],
+    customer_signals: [signal],
+    approved_by: "reviewer-1",
+    approved_at: "2026-08-31T00:00:00Z",
+    expires_at: "2026-12-31T00:00:00Z",
+  };
+  const projection = {
+    schema_version: "trace.marketing-context-projection.v1",
+    snapshot_id: snapshot.snapshot_id,
+    snapshot_sha256: digest(snapshot),
+    account_id: snapshot.account_id,
+    brand_guardrails: snapshot.brand_guardrails,
+    audience_context: snapshot.audience_context,
+    channel_policy_ids: snapshot.channel_policy_ids,
+    customer_signals: snapshot.customer_signals,
+    expires_at: snapshot.expires_at,
+  };
+  fixture.campaign.marketing_context_snapshot_id = snapshot.snapshot_id;
+  fixture.campaign.marketing_context_snapshot_sha256 = projection.snapshot_sha256;
+  const payload = JSON.parse(fixture.task.task_json);
+  payload.payload.marketing_context = projection;
+  fixture.task.task_json = JSON.stringify(payload);
+  fixture.receipt.marketing_context = projection;
+  fixture.brief.context_receipt_sha256 = digest(fixture.receipt);
+  fixture.result.output.context_receipt_sha256 = digest(fixture.receipt);
+  fixture.result.output.strategy_brief_sha256 = digest(fixture.brief);
+  return {
+    ...fixture,
+    contextRow: {
+      snapshot_json: JSON.stringify(snapshot),
+      snapshot_sha256: projection.snapshot_sha256,
+      expires_at: snapshot.expires_at,
+    },
+  };
 }
 
 function judgmentFixture() {
@@ -441,4 +498,44 @@ test("judgment callback rejects unsupported claims before writing canonical stat
   );
   assert.equal(DB.receipts.length, 0);
   assert.equal(fixture.task.callback_id, null);
+});
+
+test("judgment callback rebinds the frozen customer context and rejects a rewritten projection", async () => {
+  const fixture = contextBoundJudgmentFixture();
+  const DB = new CallbackDb(fixture.campaign, fixture.task);
+  DB.contextRow = fixture.contextRow;
+  const callback = {
+    callback_id: `${fixture.task.task_id}:completed`,
+    task_id: fixture.task.task_id,
+    run_id: fixture.task.run_id,
+    account_id: fixture.task.account_id,
+    kind: "marketing_judgment",
+    result: fixture.result,
+  };
+  await receiveHostedMarketingJudgmentCallback({ DB }, fixture.task, callback);
+  assert.equal(DB.receipts.length, 1);
+
+  const forged = contextBoundJudgmentFixture();
+  forged.receipt.marketing_context.customer_signals[0].signal_sha256 = "0".repeat(64);
+  forged.brief.context_receipt_sha256 = digest(forged.receipt);
+  forged.result.output.context_receipt_sha256 = digest(forged.receipt);
+  forged.result.output.strategy_brief_sha256 = digest(forged.brief);
+  const forgedDb = new CallbackDb(forged.campaign, forged.task);
+  forgedDb.contextRow = forged.contextRow;
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback(
+      { DB: forgedDb },
+      forged.task,
+      {
+        callback_id: `${forged.task.task_id}:completed`,
+        task_id: forged.task.task_id,
+        run_id: forged.task.run_id,
+        account_id: forged.task.account_id,
+        kind: "marketing_judgment",
+        result: forged.result,
+      },
+    ),
+    /strategy scope is invalid/,
+  );
+  assert.equal(forgedDb.receipts.length, 0);
 });

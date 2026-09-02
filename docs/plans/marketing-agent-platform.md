@@ -2,10 +2,11 @@
 
 Status: Draft — establishes the product and architecture contract before multi-tenant platform
 implementation. Trace is the first reference tenant and evidence-producing integration, not the
-definition of the product. This PR preserves the existing Cloudflare automation; agent-runtime
-integration is a post-merge slice, not a rewrite of that automation.
+definition of the product. The hosted campaign ledger now carries a narrow customer-context reference
+lane, while the existing Cloudflare automation and effect owners remain intact; this is not a rewrite
+of that automation.
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 ## Product thesis
 
@@ -76,10 +77,10 @@ and approve only the few actions that cross a real-world boundary. The moat hypo
 product-evidence → customer-signal → experiment → outcome → reusable-playbook graph, not raw video
 volume.
 
-Do not further reorganize Cloudflare in this PR. After merge, build a provider-neutral agent runtime
-with a fake control-plane tool backend and test its decision trace, skill choice, budgets, stopping,
-and evaluation. Only then expose Cloudflare's existing operations as typed control-plane tools. This
-keeps the working automation release-verifiable while the high-level agent evolves independently.
+Do not reorganize existing Cloudflare effect owners to make them look generic. The provider-neutral
+runtime and its fake control-plane test backend evolve independently; each hosted addition binds a
+typed, account-scoped operation back to that control plane without creating a second agent runtime.
+This keeps working automation release-verifiable while the high-level agent evolves independently.
 
 Trace exercises the full loop with native capture and Threads. A future customer may use a web app,
 its own analytics, a CRM, a creative tool, or another channel without changing the agent core.
@@ -182,6 +183,12 @@ The first registry does **not** introduce that identity model early: `account_id
 transitional tenant boundary. It provides account-scoped installations and immutable
 context-receipt-scoped bindings while preserving the current Trace account path.
 
+The current Trace reference lane now also has a narrower `MarketingContextSnapshot` and
+`CustomerSignal` implementation under that same `account_id` boundary. It accepts a reviewed manual
+normalization only, freezes an approved snapshot whose signal freshness and retention cover its full
+lifetime, and sends the planner only an allowlisted projection. It is evidence for the boundary, not
+completion of the future `ProductContext`, connector, or role model.
+
 ## Business model and wedge
 
 The first sellable wedge is not “all marketing for every company.” It is an agent for small software
@@ -271,11 +278,12 @@ than a new branch inside `marketing-agent.js`.
 
 ## Next implementation slice
 
-First build the provider-neutral agent runtime: goal/decision trace, bounded skill selection, typed
-tool receipts, stop/budget policy, and evaluation fixtures against a fake control-plane backend. Only
-then implement the deferred account-scoped catalog binding and diagnostics against Cloudflare. The
-canonical companion for current Trace behavior remains
-[`threads-marketing-agent.md`](./threads-marketing-agent.md).
+The provider-neutral runtime, scorecard baseline, account-scoped capability catalog, and the narrow
+customer-context reference lane now exist. Next, use a private diverse corpus and repeated pinned
+provider/model trials before making a model-quality claim; then expose the existing evidence/context
+records through a reviewer-visible approval packet and campaign queue. Connector ingestion and a
+multi-product role model remain later policy work. The canonical companion for current Trace behavior
+remains [`threads-marketing-agent.md`](./threads-marketing-agent.md).
 
 ## Pre-implementation critique — 2026-09-01
 

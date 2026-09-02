@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -107,6 +107,36 @@ def _task() -> MarketingTask:
     )
 
 
+def _expired_context() -> JsonObject:
+    now = datetime.now(UTC)
+    return _JSON_OBJECT.validate_python(
+        {
+            "schema_version": "trace.marketing-context-projection.v1",
+            "snapshot_id": "expired-context-1",
+            "snapshot_sha256": "e" * 64,
+            "account_id": "trace_kr",
+            "brand_guardrails": ["Lead with verified product proof."],
+            "audience_context": ["iPhone users"],
+            "channel_policy_ids": [],
+            "customer_signals": [
+                {
+                    "schema_version": "trace.customer-signal-projection.v1",
+                    "signal_id": "signal-1",
+                    "signal_sha256": "d" * 64,
+                    "audience_segment_id": "ios-users",
+                    "kind": "desired_outcome",
+                    "summary": "People want a more personal lock screen.",
+                    "caveats": [],
+                    "confidence_basis_points": 6000,
+                    "observed_at": (now - timedelta(days=2)).isoformat(),
+                    "fresh_until": (now + timedelta(days=1)).isoformat(),
+                }
+            ],
+            "expires_at": (now - timedelta(seconds=1)).isoformat(),
+        }
+    )
+
+
 def _proposal(*, unknown_source: bool = False) -> JsonObject:
     return {
         "schema_version": "trace.reference-research-proposal.v1",
@@ -200,3 +230,19 @@ def test_reference_research_rejects_unbound_observations_after_search(tmp_path: 
 
     assert captured.value.failure_code == "reference_research_result_invalid"
     assert captured.value.unknown_side_effect is True
+
+
+def test_reference_research_does_not_send_expired_customer_context_to_codex(tmp_path: Path) -> None:
+    task = _task()
+    payload = dict(task.payload)
+    payload["marketing_context"] = _expired_context()
+    codex = StubResearchCodex(_proposal())
+    executor = HostedReferenceResearchExecutor(codex=codex, output_root=tmp_path)
+
+    with pytest.raises(MarketingExecutionError) as captured:
+        _ = executor.prepare(
+            task.model_copy(update={"payload": _JSON_OBJECT.validate_python(payload)})
+        )
+
+    assert captured.value.failure_code == "marketing_context_expired"
+    assert codex.prompts == []
