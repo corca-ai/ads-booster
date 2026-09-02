@@ -35,6 +35,7 @@ from ads_booster.marketing.worker_doctor import (
     inspect_mac_worker,
     installed_version,
 )
+from ads_booster.marketing.worker_events import QueuedWorkerEventReporter
 from ads_booster.marketing.worker_launchd import (
     MacWorkerLaunchd,
     MacWorkerUpdaterLaunchd,
@@ -647,11 +648,17 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     output_root=agent_home / "generated",
                 ),
             )
+            event_http = create_http_client()
+            event_broker = WorkerBrokerClient(event_http, config, credential, heartbeat)
             worker = MarketingWorkerLoop(
                 broker=broker,
                 inbox=MarketingInbox(root),
                 preparer=executor,
                 executor=executor,
+                event_reporter=QueuedWorkerEventReporter(
+                    event_broker,
+                    on_stop=event_http.close,
+                ),
             )
             try:
                 recovered = worker.recover()

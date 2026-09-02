@@ -27,6 +27,7 @@ from ads_booster.marketing.models import (
     TaskStatus,
     WorkerTaskEventType,
 )
+from ads_booster.marketing.worker_events import QueuedWorkerEventReporter
 from ads_booster.marketing.worker_loop import MarketingWorkerLoop
 
 if TYPE_CHECKING:
@@ -293,11 +294,13 @@ def test_worker_loop_completes_while_monitoring_delivery_is_blocked(tmp_path: Pa
         leases=(QueueLease(message_id="message-1", lease_id="lease-1", attempts=1, task=task),),
     )
     executor = FakeExecutor(broker.events)
+    event_delivery_closed = Event()
     worker = MarketingWorkerLoop(
         broker=broker,
         inbox=inbox,
         preparer=FakePreparer(broker.events),
         executor=executor,
+        event_reporter=QueuedWorkerEventReporter(broker, on_stop=event_delivery_closed.set),
     )
     broker.event_started = Event()
     broker.event_release = Event()
@@ -310,10 +313,21 @@ def test_worker_loop_completes_while_monitoring_delivery_is_blocked(tmp_path: Pa
     try:
         assert broker.callback_delivered.wait(timeout=1)
         assert executor.calls == 1
+        worker.close()
+        assert not event_delivery_closed.is_set()
     finally:
         _ = broker.event_release.set()
         runner.join(timeout=1)
-        worker.close()
+        assert event_delivery_closed.wait(timeout=1)
+
+
+def test_worker_event_reporter_clamps_nonpositive_pending_limit(tmp_path: Path) -> None:
+    reporter = QueuedWorkerEventReporter(FakeBroker(MarketingInbox(tmp_path), ()), 0)
+
+    try:
+        assert reporter.max_pending_events == 1
+    finally:
+        reporter.close()
 
 
 def test_local_admission_is_immutable_before_barrier(tmp_path: Path) -> None:
