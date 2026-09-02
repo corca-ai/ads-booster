@@ -8,6 +8,7 @@ import { receiveHostedExperimentEvaluationCallback } from
   "../src/hosted-experiment-evaluation-callback.js";
 import { receiveHostedLearningSynthesisCallback } from
   "../src/hosted-learning-synthesis-callback.js";
+import { deriveExperimentEvaluation } from "../src/experiment-evaluation.js";
 import {
   createShadowCampaign,
   createVariantLink,
@@ -501,19 +502,22 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
   const request = JSON.parse(task.task_json).payload.request;
   assert.equal(request.observations.length, 4);
   assert.equal(request.observations.filter((item) => item.converted).length, 2);
-  const evaluation = {
+  const evaluation = deriveExperimentEvaluation(request);
+  assert.deepEqual(evaluation, {
     schema_version: "trace.experiment-evaluation.v1",
     evaluation_id: requested.evaluation_id,
     campaign_id: "campaign-1",
     experiment_id: registration.experiment_id,
     state: "evaluated",
+    outcome_scope: "direct_response_attribution",
     winner_hypothesis_id: "challenger",
     eligible_blocks: 2,
     attribution_coverage_basis_points: 10000,
     guardrail_failures: [],
-    interpretation: "Challenger won on direct-response attribution; this is not a causal effect.",
+    lineage_ids: request.observations.map((observation) => observation.assignment_id),
+    interpretation: "challenger has the highest observed direct-response attribution rate inside complete eligible blocks. This is descriptive attribution, not a causal effect.",
     evaluated_at: request.evaluated_at,
-  };
+  });
   const callback = {
     callback_id: `${task.task_id}:completed`,
     task_id: task.task_id,
@@ -531,6 +535,60 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
       },
     },
   };
+  const evaluationMutationSnapshot = () => ({
+    attribution_observations: DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_attribution_observations",
+    ).get().count,
+    evaluations: DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_experiment_evaluations",
+    ).get().count,
+    experiment: DB.sqlite.prepare(
+      `SELECT state, updated_at FROM hosted_marketing_experiments WHERE experiment_id = 'experiment-1'`,
+    ).get(),
+    campaign: DB.sqlite.prepare(
+      `SELECT state, projection_revision, updated_at
+       FROM hosted_marketing_campaigns WHERE campaign_id = 'campaign-1'`,
+    ).get(),
+    task: DB.sqlite.prepare(
+      `SELECT callback_id, callback_reservation_id, result_json
+       FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
+    ).get(task.task_id),
+    evaluation_events: DB.sqlite.prepare(
+      `SELECT COUNT(*) AS count FROM hosted_marketing_run_events
+       WHERE campaign_id = 'campaign-1' AND event_type = 'experiment_evaluated'`,
+    ).get().count,
+  });
+  const beforeRejectedEvaluation = evaluationMutationSnapshot();
+  const assertRejectedEvaluation = async (tamperedEvaluation) => {
+    const tampered = structuredClone(callback);
+    tampered.result.output.evaluation = tamperedEvaluation;
+    tampered.result.output.evaluation_sha256 = digest(tamperedEvaluation);
+    await assert.rejects(
+      receiveHostedExperimentEvaluationCallback(
+        { DB },
+        task,
+        tampered,
+        { worker_id: "worker-1" },
+      ),
+      (error) => error.status === 409,
+    );
+    assert.deepEqual(evaluationMutationSnapshot(), beforeRejectedEvaluation);
+  };
+  await assertRejectedEvaluation({
+    ...evaluation,
+    winner_hypothesis_id: "control",
+    interpretation: "control has the highest observed direct-response attribution rate inside complete eligible blocks. This is descriptive attribution, not a causal effect.",
+  });
+  await assertRejectedEvaluation({
+    ...evaluation,
+    attribution_coverage_basis_points: 9_999,
+  });
+  await assertRejectedEvaluation({
+    ...evaluation,
+    state: "inconclusive",
+    winner_hypothesis_id: null,
+    interpretation: "Direct-response attribution is tied across active hypotheses.",
+  });
   const accepted = await receiveHostedExperimentEvaluationCallback(
     { DB },
     task,

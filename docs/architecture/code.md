@@ -117,9 +117,13 @@ action. `marketing/hosted_candidate_judgment.py` materializes one approved, evid
 candidate; `marketing/hosted_reference_research.py` returns an immutable quarantined observation
 snapshot; and `marketing/hosted_learning_judgment.py` creates only a reversible learning candidate.
 `marketing/hosted_experiment_evaluation.py` is deterministic and has no model or external effect.
-Their Cloudflare callbacks independently validate every receipt, claim, plan, assignment, and
-approval binding before writing a projection. `marketing-agent.js` owns assisted campaign gating,
-variant links, product-event intake, scheduled evaluation dispatch, and learning approval.
+`experiment-evaluation.js` is its pure control-plane re-deriver: it accepts only the frozen request
+and reproduces its conclusion, coverage, lineage, and guardrail result. The experiment-evaluation
+callback canonical-compares the worker output to that derived value and persists the derived value
+only after the frozen registration digest also matches D1. Their Cloudflare callbacks independently
+validate every receipt, claim, plan, assignment, and approval binding before writing a projection.
+`marketing-agent.js` owns assisted campaign gating, variant links, product-event intake, scheduled
+evaluation dispatch, and learning approval.
 
 Migrations `0018`–`0023` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,

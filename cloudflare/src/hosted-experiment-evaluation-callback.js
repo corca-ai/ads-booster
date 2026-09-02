@@ -1,6 +1,10 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import {
+  deriveExperimentEvaluation,
+  InvalidExperimentEvaluationRequest,
+} from "./experiment-evaluation.js";
 
 export async function receiveHostedExperimentEvaluationCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -66,16 +70,28 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     return { accepted: true, duplicate: false, state: "failed" };
   }
   const output = requireObject(callback.result?.output, "evaluation output");
-  const evaluation = normalizeEvaluation(output.evaluation);
+  const suppliedEvaluation = requireObject(output.evaluation, "experiment evaluation");
+  let evaluation;
+  try {
+    evaluation = deriveExperimentEvaluation(request);
+  } catch (error) {
+    if (error instanceof InvalidExperimentEvaluationRequest) {
+      throw new HttpError(409, "frozen experiment evaluation request is invalid");
+    }
+    throw error;
+  }
   const evaluationSha256 = await canonicalSha256(evaluation);
+  const registrationSha256 = await canonicalSha256(request.registration);
   if (
     output.pipeline !== MARKETING_JUDGMENT_PIPELINE
     || output.judgment !== "experiment_evaluation"
     || output.tool_actions_created !== 0
     || output.evaluation_sha256 !== evaluationSha256
+    || canonicalJson(suppliedEvaluation) !== canonicalJson(evaluation)
     || evaluation.evaluation_id !== request.evaluation_id
     || evaluation.campaign_id !== campaign.campaign_id
     || evaluation.experiment_id !== campaign.experiment_id
+    || registrationSha256 !== campaign.registration_sha256
   ) {
     throw new HttpError(409, "experiment evaluation output binding is invalid");
   }
@@ -199,22 +215,6 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     evaluation_id: evaluation.evaluation_id,
     state: evaluation.state,
   };
-}
-
-function normalizeEvaluation(value) {
-  const item = requireObject(value, "experiment evaluation");
-  if (
-    item.schema_version !== "trace.experiment-evaluation.v1"
-    || !["evaluated", "inconclusive", "stopped"].includes(item.state)
-    || !Number.isInteger(item.eligible_blocks)
-    || !Number.isInteger(item.attribution_coverage_basis_points)
-    || item.attribution_coverage_basis_points < 0
-    || item.attribution_coverage_basis_points > 10_000
-    || (item.state !== "evaluated" && item.winner_hypothesis_id != null)
-  ) {
-    throw new HttpError(409, "experiment evaluation contract is invalid");
-  }
-  return item;
 }
 
 function completionStatement(env, task, callback, worker, status, resultJson, now) {

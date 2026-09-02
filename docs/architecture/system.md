@@ -144,10 +144,13 @@ the existing `threads/*` owner remains responsible for every publication effect.
 The hosted route creates short-lived variant redirects and accepts versioned, deduplicated product
 events only under event-ingest authority. The scheduler queues an evaluation only after the
 pre-registered observation window or horizon closes; the deterministic evaluator distinguishes
-direct-response lineage from a causal estimate, incomplete coverage, and guardrail failure. A
-learning synthesis can create only a candidate from independent evaluated campaigns; an exact human
-approval is required before a scoped principle is written. Generic recording, composition, Figma,
-and generated-media executors remain deferred, so no unsupported artifact capability is simulated.
+direct-response lineage from a causal estimate, incomplete coverage, and guardrail failure. Its
+callback independently re-derives the full result from the immutable task request, verifies the
+frozen registration digest, and stores only that derived result; a worker-provided state, winner, or
+coverage cannot promote false learning. A learning synthesis can create only a candidate from
+independent evaluated campaigns; an exact human approval is required before a scoped principle is
+written. Generic recording, composition, Figma, and generated-media executors remain deferred, so no
+unsupported artifact capability is simulated.
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
 
