@@ -653,15 +653,20 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                 preparer=executor,
                 executor=executor,
             )
-            recovered = worker.recover()
-            if recovered:
-                typer.echo(f"recovered {recovered} interrupted task(s)")
-            while True:
-                active = worker.tick(accept_remote=not update_drain_requested(managed_paths.guard))
-                if once:
-                    return
-                if not active:
-                    time.sleep(config.poll_seconds)
+            try:
+                recovered = worker.recover()
+                if recovered:
+                    typer.echo(f"recovered {recovered} interrupted task(s)")
+                while True:
+                    active = worker.tick(
+                        accept_remote=not update_drain_requested(managed_paths.guard)
+                    )
+                    if once:
+                        return
+                    if not active:
+                        time.sleep(config.poll_seconds)
+            finally:
+                worker.close()
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=5)

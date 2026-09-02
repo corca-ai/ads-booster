@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final, Protocol
 
 from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.inbox import (
@@ -19,16 +20,22 @@ from ads_booster.marketing.models import (
     TaskStatus,
     WorkerTaskEventType,
 )
+from ads_booster.marketing.worker_events import QueuedWorkerEventReporter
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+_EVENT_TYPE_BY_STATUS: Final[Mapping[TaskStatus, WorkerTaskEventType]] = MappingProxyType(
+    {
+        TaskStatus.SUCCEEDED: WorkerTaskEventType.EXECUTION_SUCCEEDED,
+        TaskStatus.FAILED: WorkerTaskEventType.EXECUTION_FAILED,
+        TaskStatus.UNKNOWN_SIDE_EFFECT: WorkerTaskEventType.EXECUTION_UNKNOWN,
+    }
+)
 
 
 def _event_for_status(status: TaskStatus) -> WorkerTaskEventType:
-    match status:
-        case TaskStatus.SUCCEEDED:
-            return WorkerTaskEventType.EXECUTION_SUCCEEDED
-        case TaskStatus.FAILED:
-            return WorkerTaskEventType.EXECUTION_FAILED
-        case TaskStatus.UNKNOWN_SIDE_EFFECT:
-            return WorkerTaskEventType.EXECUTION_UNKNOWN
+    return _EVENT_TYPE_BY_STATUS[status]
 
 
 class PreparedTask(Protocol):
@@ -66,12 +73,33 @@ class WorkerBroker(Protocol):
     def deliver(self, callback: TaskCallback) -> None: ...
 
 
+class WorkerEventReporter(Protocol):
+    def report(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None: ...
+
+    def close(self) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class MarketingWorkerLoop[TPrepared: PreparedTask]:
     broker: WorkerBroker
     inbox: MarketingInbox
     preparer: TaskPreparer[TPrepared]
     executor: TaskExecutor[TPrepared]
+    event_reporter: WorkerEventReporter | None = None
+    _events: WorkerEventReporter = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Install a bounded reporter unless a deterministic test reporter was supplied."""
+        reporter = self.event_reporter or QueuedWorkerEventReporter(self.broker)
+        object.__setattr__(self, "_events", reporter)
+
+    def close(self) -> None:
+        self._events.close()
 
     def recover(self) -> int:
         recovered = self.inbox.recover_interrupted()
@@ -165,8 +193,7 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         event_type: WorkerTaskEventType,
         failure_code: str | None = None,
     ) -> None:
-        with suppress(CloudflareQueueError):
-            self.broker.report_event(task.task_id, event_type, failure_code)
+        self._events.report(task.task_id, event_type, failure_code)
 
     def _flush_callbacks(self) -> int:
         delivered = 0

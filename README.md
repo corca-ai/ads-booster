@@ -80,6 +80,7 @@ rule while retaining its underlying review evidence.
 display name, task kind/ID, timestamps, and sanitized failure codes for fourteen days. Prompts,
 provider output, callback bodies, tokens, enrollment codes, exception messages, and local paths stay
 on the Mac and are never exposed through this workspace endpoint. Event delivery is best-effort and
+uses a bounded local queue, so a saturated or unavailable control plane may drop diagnostics but
 cannot block or retry the underlying job; D1 task state and callbacks remain authoritative.
 
 ## Bootstrap a verified Mac worker release

@@ -100,8 +100,9 @@ flowchart LR
 The public workspace reads recent worker task events only inside the selected account scope. The
 timeline is a debug projection, not an execution authority: D1 lease, local admission, execution
 barrier, callback reservation, callback result, and review state remain canonical. The worker emits
-preparation and execution outcome events best-effort so an unavailable monitoring endpoint cannot
-block or repeat a task. Cloudflare records its own barrier and callback transitions.
+preparation and execution outcome events through a bounded local daemon queue. A saturated or
+unavailable monitoring endpoint can drop diagnostics but cannot block or repeat a task. Cloudflare
+records its own barrier and callback transitions.
 
 Events use a closed vocabulary and a unique task/type key, expire after fourteen days, and are
 returned with a bounded newest-first limit. They never contain a worker token, control-plane token,
@@ -164,7 +165,8 @@ A post-barrier crash or exception is
 requeues interrupted safe work and leaves post-barrier ambiguity visible. Callback retries are
 delivery-only.
 Monitoring-event delivery is also best-effort and never advances task state. Missing events during a
-control-plane outage do not change the inbox/outbox recovery contract.
+control-plane outage do not change the inbox/outbox recovery contract; a worker exits without waiting
+for a blocked diagnostic delivery thread.
 
 `trace-marketing worker run` is the foreground worker. The managed labels are
 `com.corca.trace-marketing-worker` and `com.corca.trace-marketing-updater`; they run in the same

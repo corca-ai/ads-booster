@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from threading import Event, Thread
 from typing import TYPE_CHECKING
 
 import pytest
@@ -49,6 +50,25 @@ class PreparedCapture:
     execution_admission: ExecutionAdmission
 
 
+@dataclass(frozen=True, slots=True)
+class InlineEventReporter:
+    broker: FakeBroker
+
+    def report(
+        self,
+        task_id: str,
+        event_type: WorkerTaskEventType,
+        failure_code: str | None = None,
+    ) -> None:
+        try:
+            self.broker.report_event(task_id, event_type, failure_code)
+        except CloudflareQueueError:
+            return
+
+    def close(self) -> None:
+        return
+
+
 @dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeBroker:
     """Mutable fixture advances leases and records delivery outcomes across a worker tick."""
@@ -60,6 +80,9 @@ class FakeBroker:
     callback_failures: int = 0
     barrier_failures: int = 0
     event_failures: int = 0
+    event_started: Event | None = None
+    event_release: Event | None = None
+    callback_delivered: Event | None = None
 
     def pull(self) -> tuple[QueueLease, ...]:
         leases, self.leases = self.leases, ()
@@ -99,6 +122,10 @@ class FakeBroker:
             self.event_failures -= 1
             message = "event unavailable"
             raise CloudflareQueueError(message)
+        if self.event_started is not None:
+            _ = self.event_started.set()
+            assert self.event_release is not None
+            _ = self.event_release.wait()
 
     def deliver(self, callback: TaskCallback) -> None:
         self.events.append("callback")
@@ -107,6 +134,8 @@ class FakeBroker:
             message = "callback unavailable"
             raise CloudflareQueueError(message)
         self.callbacks.append(callback)
+        if self.callback_delivered is not None:
+            _ = self.callback_delivered.set()
 
 
 @dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
@@ -178,6 +207,7 @@ def _loop(
         inbox=inbox,
         preparer=FakePreparer(broker.events, failure_code=preparation_failure),
         executor=executor,
+        event_reporter=InlineEventReporter(broker),
     )
     return worker, broker, executor
 
@@ -253,6 +283,37 @@ def test_monitoring_event_failure_never_blocks_worker_execution(tmp_path: Path) 
 
     assert executor.calls == 1
     assert broker.callbacks[0].result.status is TaskStatus.SUCCEEDED
+
+
+def test_worker_loop_completes_while_monitoring_delivery_is_blocked(tmp_path: Path) -> None:
+    inbox = MarketingInbox(tmp_path)
+    task = _task()
+    broker = FakeBroker(
+        inbox=inbox,
+        leases=(QueueLease(message_id="message-1", lease_id="lease-1", attempts=1, task=task),),
+    )
+    executor = FakeExecutor(broker.events)
+    worker = MarketingWorkerLoop(
+        broker=broker,
+        inbox=inbox,
+        preparer=FakePreparer(broker.events),
+        executor=executor,
+    )
+    broker.event_started = Event()
+    broker.event_release = Event()
+    broker.callback_delivered = Event()
+    runner = Thread(target=worker.tick, daemon=True)
+
+    runner.start()
+    assert broker.event_started.wait(timeout=1)
+
+    try:
+        assert broker.callback_delivered.wait(timeout=1)
+        assert executor.calls == 1
+    finally:
+        _ = broker.event_release.set()
+        runner.join(timeout=1)
+        worker.close()
 
 
 def test_local_admission_is_immutable_before_barrier(tmp_path: Path) -> None:
