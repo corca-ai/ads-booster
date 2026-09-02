@@ -14,8 +14,15 @@ from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Annotated, Never, Protocol
 
 import typer
+from pydantic import ValidationError
 
+from ads_booster.marketing.dynamic_evidence_research import (
+    DynamicEvidenceResearchError,
+    DynamicEvidenceResearchRequest,
+    DynamicEvidenceResearchRunner,
+)
 from ads_booster.marketing.errors import CloudflareQueueError
+from ads_booster.marketing.evidence_research_operator import EvidenceResearchOperatorError
 from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
 from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
 from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
@@ -75,10 +82,13 @@ if TYPE_CHECKING:
 
 _HTTP_SUCCESS_MIN = 200
 _HTTP_SUCCESS_MAX = 300
+_DYNAMIC_RESEARCH_REQUEST_MAX_BYTES = 1024 * 1024
 
 app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
+agent_app = typer.Typer(no_args_is_help=True, help="Run bounded Marketing OS reasoning sessions.")
 app.add_typer(worker_app, name="worker")
+app.add_typer(agent_app, name="agent")
 
 
 @app.command("version")
@@ -94,6 +104,62 @@ def version_command(
         typer.echo(json.dumps({"version": package_version}))
     else:
         typer.echo(package_version)
+
+
+@agent_app.command("research")
+def agent_research(
+    input_path: Annotated[
+        Path,
+        typer.Option(
+            "--input",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Immutable dynamic-research request JSON.",
+        ),
+    ],
+    model: Annotated[
+        str,
+        typer.Option(help="Pinned official Codex model recorded in every planner receipt."),
+    ],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    timeout_seconds: Annotated[
+        float,
+        typer.Option(min=30.0, max=1800.0, help="Per-Codex-turn timeout."),
+    ] = 300.0,
+) -> None:
+    """Dynamically choose read-only evidence tools and emit a receipt-grounded brief."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and log in"
+        raise typer.BadParameter(message)
+    try:
+        request = _load_dynamic_research_request(input_path)
+        result = DynamicEvidenceResearchRunner(
+            codex=CodexCli(executable=executable, model=model),
+            state_root=_home(home) / "marketing-agent" / "runtime",
+            model_id=model,
+            timeout_seconds=timeout_seconds,
+        ).run(request)
+    except ValidationError as error:
+        typer.echo("dynamic_research_request_invalid", err=True)
+        raise typer.Exit(code=2) from error
+    except (EvidenceResearchOperatorError, OSError, UnicodeError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(result.model_dump_json(indent=2))
+    if result.state == "awaiting_reconciliation":
+        raise typer.Exit(code=3)
+
+
+def _load_dynamic_research_request(input_path: Path) -> DynamicEvidenceResearchRequest:
+    if input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
+        message = "dynamic_research_request_too_large"
+        raise DynamicEvidenceResearchError(message)
+    return DynamicEvidenceResearchRequest.model_validate_json(
+        input_path.read_text(encoding="utf-8")
+    )
 
 
 @dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK

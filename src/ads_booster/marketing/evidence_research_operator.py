@@ -23,6 +23,7 @@ from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.marketing.feature_launch_evidence_brief import (
     BriefEvidenceItem,
     BriefScope,
+    EvidenceTrustState,
     FeatureLaunchEvidenceBrief,
     FeatureLaunchEvidenceBriefVerificationError,
 )
@@ -78,10 +79,14 @@ _BRIEF_SCOPE_BY_RESEARCH_SCOPE: dict[ResearchScope, BriefScope] = {
 
 
 class EvidenceResearchGoal(ContractModel):
-    schema_version: Literal["trace.evidence-research-goal.v1"]
+    schema_version: Literal["trace.evidence-research-goal.v2"]
     goal_id: AgentIdentifier
     feature_packet_id: AgentIdentifier
     feature_packet_sha256: Sha256Digest
+    input_snapshot_sha256: Sha256Digest
+    planner_provider_id: Annotated[str, Field(min_length=1, max_length=120)]
+    planner_model_id: Annotated[str, Field(min_length=1, max_length=240)]
+    planner_protocol_sha256: Sha256Digest
     pinned_skill_registry_sha256: Sha256Digest
     required_scopes: Annotated[tuple[ResearchScope, ...], Field(min_length=1, max_length=3)]
     max_iterations: Annotated[int, Field(ge=1, le=3)]
@@ -95,8 +100,20 @@ class EvidenceResearchGoal(ContractModel):
         return self
 
 
+class PlannerInvocationReceipt(ContractModel):
+    """Non-secret model invocation identity committed with a planner decision."""
+
+    schema_version: Literal["trace.planner-invocation-receipt.v1"]
+    provider_id: Annotated[str, Field(min_length=1, max_length=120)]
+    model_id: Annotated[str, Field(min_length=1, max_length=240)]
+    prompt_sha256: Sha256Digest
+    context_sha256: Sha256Digest
+    output_schema_sha256: Sha256Digest
+    planner_protocol_sha256: Sha256Digest
+
+
 class ResearchDecision(ContractModel):
-    schema_version: Literal["trace.evidence-research-decision.v1"]
+    schema_version: Literal["trace.evidence-research-decision.v2"]
     decision_id: AgentIdentifier
     goal_id: AgentIdentifier
     iteration: Annotated[int, Field(ge=1, le=3)]
@@ -111,6 +128,7 @@ class ResearchDecision(ContractModel):
     claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(min_length=1, max_length=16)]
     research_question: Annotated[str, Field(min_length=1, max_length=1000)]
     counter_evidence_question: Annotated[str, Field(min_length=1, max_length=1000)]
+    planner_receipt: PlannerInvocationReceipt
 
     @model_validator(mode="after")
     def require_unique_claim_ids(self) -> Self:
@@ -120,7 +138,7 @@ class ResearchDecision(ContractModel):
 
 
 class ResearchObservation(ContractModel):
-    schema_version: Literal["trace.evidence-research-observation.v1"]
+    schema_version: Literal["trace.evidence-research-observation.v2"]
     observation_id: AgentIdentifier
     scope: ResearchScope
     receipt_sha256: Sha256Digest
@@ -130,6 +148,9 @@ class ResearchObservation(ContractModel):
     decision_sha256: Sha256Digest
     source_ref: Annotated[str, Field(min_length=1, max_length=1000)]
     source_sha256: Sha256Digest
+    evidence_summary: Annotated[str, Field(min_length=1, max_length=2000)]
+    caveats: Annotated[tuple[str, ...], Field(max_length=12)] = ()
+    trust_state: EvidenceTrustState
     supported_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
     evidence_status: Literal["sufficient", "insufficient"]
     observed_at: datetime
@@ -142,14 +163,19 @@ class ResearchObservation(ContractModel):
             raise ValueError("observed_at must be UTC")
         if len(set(self.supported_claim_ids)) != len(self.supported_claim_ids):
             raise ValueError("supported claim IDs must be unique")
+        if self.trust_state == "unverified_model_proposal" and self.evidence_status == "sufficient":
+            raise ValueError("unverified model evidence cannot be sufficient")
         return self
 
 
 class ResearchObservationSummary(ContractModel):
-    """Whitelisted planning projection; it excludes raw source text and instructions."""
+    """Whitelisted semantic projection; it excludes raw sources, locations, and instructions."""
 
     scope: ResearchScope
     evidence_status: Literal["sufficient", "insufficient"]
+    evidence_summary: Annotated[str, Field(min_length=1, max_length=2000)]
+    caveats: Annotated[tuple[str, ...], Field(max_length=12)] = ()
+    trust_state: EvidenceTrustState
     supported_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
 
 
@@ -235,6 +261,7 @@ class EvidenceResearchSkillRegistry:
                 f"research:{task.goal.goal_id}:{decision.iteration}:{decision.action_id}"
             ),
             request={
+                "schema_version": "trace.evidence-research-tool-request.v1",
                 "goal": task.goal.model_dump(mode="json"),
                 "feature_packet_sha256": packet_sha256,
                 "decision": decision.model_dump(mode="json"),
@@ -273,6 +300,12 @@ class EvidenceResearchSkillRegistry:
             raise EvidenceResearchOperatorError("research_decision_goal_mismatch")
         if decision.skill_sha256 != self.skill_sha256:
             raise EvidenceResearchOperatorError("research_decision_skill_digest_mismatch")
+        if decision.planner_receipt.provider_id != task.goal.planner_provider_id:
+            raise EvidenceResearchOperatorError("research_decision_provider_mismatch")
+        if decision.planner_receipt.model_id != task.goal.planner_model_id:
+            raise EvidenceResearchOperatorError("research_decision_model_mismatch")
+        if decision.planner_receipt.planner_protocol_sha256 != task.goal.planner_protocol_sha256:
+            raise EvidenceResearchOperatorError("research_decision_protocol_mismatch")
         if decision.scope not in task.goal.required_scopes:
             raise EvidenceResearchOperatorError("research_scope_not_required")
         if decision.scope in observed_scopes:
@@ -458,14 +491,17 @@ class EvidenceResearchOperator:
             available_actions = context.dependencies.registry.available_actions(observed_scopes)
             if not available_actions:
                 return self._stop(session, context, "no_unobserved_research_action")
-            decision = context.dependencies.planner.propose(
-                ResearchPlanningContext(
-                    context.task.goal,
-                    FeaturePlanningProjection.from_packet(context.task.feature_packet),
-                    available_actions,
-                    tuple(_summary(item) for item in observations),
+            try:
+                decision = context.dependencies.planner.propose(
+                    ResearchPlanningContext(
+                        context.task.goal,
+                        FeaturePlanningProjection.from_packet(context.task.feature_packet),
+                        available_actions,
+                        tuple(_summary(item) for item in observations),
+                    )
                 )
-            )
+            except EvidenceResearchOperatorError as error:
+                return self._stop(session, context, str(error))
             session = self._runtime.append_persisted_event(
                 context.store,
                 session,
@@ -612,6 +648,9 @@ def build_feature_launch_evidence_brief(
             request_sha256=observation.request_sha256,
             decision_sha256=observation.decision_sha256,
             source_sha256=observation.source_sha256,
+            evidence_summary=observation.evidence_summary,
+            caveats=observation.caveats,
+            trust_state=observation.trust_state,
             supported_allowed_claim_ids=tuple(
                 claim_id
                 for claim_id in observation.supported_claim_ids
@@ -621,7 +660,7 @@ def build_feature_launch_evidence_brief(
         for observation in _observations(session)
     )
     return FeatureLaunchEvidenceBrief(
-        schema_version="trace.feature-launch-evidence-brief.v1",
+        schema_version="trace.feature-launch-evidence-brief.v2",
         brief_id=brief_id,
         feature_packet_id=context.task.feature_packet.packet_id,
         feature_packet_sha256=contract_sha256(context.task.feature_packet),
@@ -864,6 +903,9 @@ def _summary(observation: ResearchObservation) -> ResearchObservationSummary:
     return ResearchObservationSummary(
         scope=observation.scope,
         evidence_status=observation.evidence_status,
+        evidence_summary=observation.evidence_summary,
+        caveats=observation.caveats,
+        trust_state=observation.trust_state,
         supported_claim_ids=observation.supported_claim_ids,
     )
 

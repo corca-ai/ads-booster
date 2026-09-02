@@ -11,6 +11,12 @@ from ads_booster.contracts.marketing_agent import AgentIdentifier, contract_sha2
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 
 type BriefScope = Literal["product_truth", "customer_intelligence", "market_evidence"]
+type EvidenceTrustState = Literal[
+    "packet_bound",
+    "caller_supplied_projection",
+    "verified_source_receipts",
+    "unverified_model_proposal",
+]
 
 
 class FeatureLaunchEvidenceBriefVerificationError(ValueError):
@@ -18,7 +24,7 @@ class FeatureLaunchEvidenceBriefVerificationError(ValueError):
 
 
 class BriefEvidenceItem(ContractModel):
-    """One receipt-grounded research observation, without source text or source location."""
+    """One receipt-grounded observation with bounded semantics but no raw source/location."""
 
     scope: BriefScope
     research_observation_id: AgentIdentifier
@@ -28,6 +34,9 @@ class BriefEvidenceItem(ContractModel):
     request_sha256: Sha256Digest
     decision_sha256: Sha256Digest
     source_sha256: Sha256Digest
+    evidence_summary: Annotated[str, Field(min_length=1, max_length=2000)]
+    caveats: Annotated[tuple[str, ...], Field(max_length=12)] = ()
+    trust_state: EvidenceTrustState
     supported_allowed_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=64)] = ()
 
     @model_validator(mode="after")
@@ -40,7 +49,7 @@ class BriefEvidenceItem(ContractModel):
 class FeatureLaunchEvidenceBrief(ContractModel):
     """Completed research trace frozen as input provenance for exactly one launch task."""
 
-    schema_version: Literal["trace.feature-launch-evidence-brief.v1"]
+    schema_version: Literal["trace.feature-launch-evidence-brief.v2"]
     brief_id: AgentIdentifier
     feature_packet_id: AgentIdentifier
     feature_packet_sha256: Sha256Digest
@@ -88,11 +97,14 @@ class BriefEvidenceProjection(ContractModel):
     scope: BriefScope
     research_observation_id: AgentIdentifier
     research_observation_sha256: Sha256Digest
+    evidence_summary: Annotated[str, Field(min_length=1, max_length=2000)]
+    caveats: Annotated[tuple[str, ...], Field(max_length=12)] = ()
+    trust_state: EvidenceTrustState
     supported_allowed_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=64)] = ()
 
 
 class FeatureLaunchEvidenceBriefProjection(ContractModel):
-    """Data-only planner projection; raw sources and research text cannot enter the prompt."""
+    """Data-only projection with bounded signals; raw sources and locations stay excluded."""
 
     brief_id: AgentIdentifier
     brief_sha256: Sha256Digest
@@ -110,6 +122,9 @@ class FeatureLaunchEvidenceBriefProjection(ContractModel):
                     scope=item.scope,
                     research_observation_id=item.research_observation_id,
                     research_observation_sha256=item.research_observation_sha256,
+                    evidence_summary=item.evidence_summary,
+                    caveats=item.caveats,
+                    trust_state=item.trust_state,
                     supported_allowed_claim_ids=item.supported_allowed_claim_ids,
                 )
                 for item in brief.evidence

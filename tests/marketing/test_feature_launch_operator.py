@@ -219,7 +219,7 @@ def _registry() -> FeatureLaunchSkillRegistry:
 
 def _task(packet: FeatureEvidencePacket) -> FeatureLaunchTask:
     brief = FeatureLaunchEvidenceBrief(
-        schema_version="trace.feature-launch-evidence-brief.v1",
+        schema_version="trace.feature-launch-evidence-brief.v2",
         brief_id="brief-1",
         feature_packet_id=packet.packet_id,
         feature_packet_sha256=contract_sha256(packet),
@@ -241,6 +241,9 @@ def _task(packet: FeatureEvidencePacket) -> FeatureLaunchTask:
                 request_sha256="8" * 64,
                 decision_sha256="9" * 64,
                 source_sha256="a" * 64,
+                evidence_summary="Packet-bound product evidence supports the selected claim.",
+                caveats=("One installed product snapshot.",),
+                trust_state="packet_bound",
                 supported_allowed_claim_ids=("claim-ready",),
             ),
         ),

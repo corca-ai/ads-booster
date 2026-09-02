@@ -136,6 +136,32 @@ The v2 contract fixes non-secret input and completion bindings, not selectors or
 
 ## Marketing-agent foundation
 
+### Local dynamic evidence research
+
+`trace-marketing agent research` is a separate local composition root for the provider-neutral
+runtime. It does not enter the hosted worker router or any existing capture/publication path. One
+immutable input snapshot pins the feature packet, caller-supplied customer-context projection, market
+objective, required evidence scopes, and budget. The official Codex CLI receives only a safe planning
+projection and chooses one available observe action; the host derives all IDs, capability bindings,
+and invocation receipts.
+
+```text
+immutable request -> safe planner projection -> official Codex decision
+-> registry-bound observe hand -> immutable local receipt -> re-plan
+-> completed Evidence Brief | inconclusive | awaiting reconciliation
+```
+
+Product truth reads only the frozen packet, customer intelligence reads only the caller-supplied
+planning projection, and market evidence uses the existing quarantined Codex web-research contract.
+The local runner does not prove that customer projection was approved and does not fetch/hash market
+source bytes, so generated market proposals remain `insufficient`; their complete proposal artifact
+is retained privately for later verification. Every hand
+stores a mode-0600 immutable result under a mode-0700 state root. The runtime persists its canonical
+decision and bound invocation before dispatch, so restart replays the ledger instead of asking the
+model to reproduce an earlier choice. Only `observe` capabilities exist in this registry. Appium,
+candidate materialization, Threads publication, messaging, CRM mutation, and spend remain outside
+this composition root.
+
 New strategy work uses a separate `agent_v1` hosted campaign epoch. D1 owns immutable feature
 packets, account-scoped campaign projections, ordered run events, context receipts, strategy briefs,
 pre-registered experiments, approval grants, and tool-action intent. It does not dual-write these
@@ -317,9 +343,9 @@ reconstructs the same checkpoint for an offline trace grader; it confers no exec
 Current serialization is explicitly
 versioned: v3 writes the ledger header, while verified pre-header v1/v2 terminal traces are read-only
 and pre-header pending or non-terminal sessions fail closed rather than being rewritten or re-executed.
-General live planning, skill routing, and outcome evaluation remain deferred; no live tool can
-invoke them yet. The local fake-backend verticals below only establish replay, receipt, and bounded
-evaluation contracts.
+General hosted orchestration and outcome optimization remain deferred. The installed local research
+composition invokes the official Codex planner and only the three observe hands described below;
+tests retain fake backends for deterministic contract coverage.
 
 The first exercise is `feature_launch_operator`: a provider-neutral, observe-only Feature Launch
 Experiment Operator. A new launch session first verifies an immutable research evidence brief by
@@ -341,21 +367,28 @@ research or publication path.
 `evidence_research_operator` is the first bounded multi-step research vertical. It lets a strict
 planner choose exactly one unobserved, observe-only hand at a time from `product_truth`,
 `customer_intelligence`, and `market_evidence`. Each hand must produce a runtime receipt before its
-observation can be recorded. The next planning turn receives only a whitelisted scope/status/claim-ID
-summary and a product projection of packet ID, digest, lifecycle, and claim IDs—never raw source,
-claim text, or instructions. The registry rechecks the pinned packet, skill snapshot, canonical
+observation can be recorded. The next planning turn receives a bounded semantic summary, caveats,
+trust state, scope/status/claim IDs, and a product projection of packet ID, digest, lifecycle, and
+claim IDs. The local composition deterministically removes recognizable URLs and known proposal
+source/packet-claim literals; the remaining model-authored string is explicitly untrusted data and
+cannot grant authority. Opposing evidence therefore changes the next planning context without
+changing authority. The registry rechecks the pinned packet, provider/model/protocol, skill snapshot,
+canonical
 action-to-scope mapping, claim IDs, iteration, and effect class. On replay it reconstructs every
 decision/receipt/observation lineage and deterministically regrades every prior evaluation before a
 new hand can run; terminal sessions audit the same trace without reinvoking a hand. The loop
 completes only after every required scope has sufficient receipt-bound evidence; otherwise its
-at-most-three iterations end in an explicit inconclusive result. This is research preparation over
-fake hands, not a claim-authoring, publication, Cloudflare, or live-market-performance path.
+at-most-three iterations end in an explicit inconclusive result. The installed composition uses an
+official Codex planner and real local read hands; an unverified model proposal is forbidden from
+closing a scope. This is not a claim-authoring, publication, Cloudflare, or live-market-performance
+path.
 
 A completed Evidence Research session can be converted without any new planner, hand, or session-store
-side effect into `trace.feature-launch-evidence-brief.v1`. Its provenance pins the completed research
-goal, registry snapshot, terminal evaluation, and canonical event-trace digest. The brief retains only
-receipt/call/request/decision/source digests and allowed supported claim IDs for each required scope;
-it excludes source locations, source text, and research questions. The next Feature Launch run is a
+side effect into `trace.feature-launch-evidence-brief.v2`. Its provenance pins the completed research
+goal, planner provider/model/protocol, registry snapshot, terminal evaluation, and canonical
+event-trace digest. The brief retains bounded semantic summaries, caveats, trust state,
+receipt/call/request/decision/source digests, and allowed supported claim IDs for each required scope;
+it excludes source locations, URLs, raw source text, and research questions. The next Feature Launch run is a
 separate session with a distinct budget and registry. This is an immutable hand-off contract, not a
 merged multi-skill loop or proof of a live-market outcome.
 

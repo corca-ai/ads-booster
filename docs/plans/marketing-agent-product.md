@@ -40,7 +40,9 @@ Implemented provider-neutral foundations:
   non-secret request payload, receipt, budget, approval grant, idempotency, and reconciliation
   contracts;
 - an observe-only evidence-research vertical across product truth, customer intelligence, and market
-  evidence;
+  evidence. Its installed `trace-marketing agent research` composition root uses the official Codex
+  CLI for model-owned action choice, records a planner invocation receipt, derives every call from a
+  pinned registry, persists immutable hand results, and resumes without repeating committed work;
 - a separate Feature Launch experiment vertical whose planner cannot create a raw tool call;
 - immutable research-to-launch evidence briefs, safe planner projections, receipt-bound evaluation,
   source-session re-derivation at the handoff boundary, and explicit `inconclusive` on missing or
@@ -175,6 +177,9 @@ to inspect grader memory; privacy still requires separate process/mount isolatio
 does not hash the grader tool environment, so that must be a separately versioned comparison contract
 before it is used for cross-environment claims.
 
+The source-tested runner now exercises real model-owned action selection against product,
+caller-supplied customer, and quarantined market hands, but the named scorecard still uses its
+deterministic planner.
 Next, run a private diverse corpus with repeated pinned provider/model trials before treating this as
 model-quality validation. Duplicate dispatch and restart after execution-start remain owned by
 runtime-ledger tests, while stale/revoked approval requires an external-effect adapter. Do not call the
@@ -198,8 +203,8 @@ v1/v2 terminal traces are read-only, while pre-header pending or non-terminal tr
 rather than being upgraded or re-executed.
 The next additions stay in this order:
 
-1. extend the named test-owned scorecard with more adversarial traces, then add a private corpus
-   loader and model/provider trials before treating it as model-quality validation;
+1. adapt the private corpus runner to the installed dynamic composition root, execute repeated pinned
+   provider/model trials, and keep process validity separate from marketing judgment quality;
 2. extend the implemented read-only strategy/creative/learning review queue and packet to the
    remaining existing approval/effect surfaces without widening its raw-data boundary;
 3. then introduce consented connector ingestion and a multi-product tenant context only after their

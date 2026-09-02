@@ -102,6 +102,12 @@ adapter; the sibling marketing-agent route delegates no-effect judgment tasks to
 
 `ads_booster.contracts.marketing_agent` owns the Python source contract for feature evidence,
 strategy portfolios, registered outcomes, and frozen context receipts.
+`marketing/dynamic_evidence_research.py` is the installed CLI composition root for the first dynamic
+observe-only loop. It adapts the official Codex CLI to `evidence_research_operator`, builds a
+source-derived three-hand capability registry, owns the product/customer/market collectors and their
+private immutable local receipts, and emits a receipt-grounded Evidence Brief. The generic runtime and
+operator remain provider-neutral; this module contains no Appium, Threads, Cloudflare, outreach, CRM,
+or spend adapter. `cli/marketing.py` only validates the immutable request and selects the state root.
 `ads_booster.contracts.marketing_context` separately owns the allowlisted customer-signal and
 campaign-context shapes: its full signal retains provenance and consent, while its planning
 projection deliberately excludes both. D1 migration
@@ -247,8 +253,9 @@ and instructions remain outside planner context.
 
 `marketing/feature_launch_evidence_brief.py` owns the immutable contract between completed Evidence
 Research and a new Feature Launch session. It contains only research-trace provenance digests,
-scope-complete receipt-bound observation digests, and allowed supported claim IDs, plus the data-only
-projection used by the Feature Launch planner. It also owns the narrow verifier protocol and its
+scope-complete receipt-bound observation digests, bounded semantic summaries/caveats/trust states,
+and allowed supported claim IDs, plus the data-only projection used by the Feature Launch planner.
+Raw sources, URLs, and locations stay out. It also owns the narrow verifier protocol and its
 failure type, but imports no runtime, planner, registry, hand, or session owner.
 `evidence_research_operator.py` alone converts an already terminal validated research trace into this
 contract and supplies the local verifier that reloads and re-derives its source session. Before its
@@ -263,7 +270,8 @@ never a `ToolCall`; `FeatureLaunchSkillRegistry` derives the call from the pinne
 approved claim set, evidence-brief-supported claim set, action schema, and descriptor. It commits
 exactly one source-verified evidence brief before its goal, and propagates the brief digest and selected
 research observation IDs through proposal, derived call, observation, and evaluation. The planner
-receives only the shared data-only product and evidence-brief projections rather than raw evidence text. It
+receives only the shared product projection and a brief projection containing bounded evidence
+summaries, caveats, trust states, and lineage—not raw source text or URLs. It
 revalidates a persisted decision, observation, and evaluation against the registry, runtime receipt,
 and event-time prefix before finalizing; terminal sessions audit that trace without calling a hand.
 This module accepts only an observe effect class and has no Cloudflare or live-channel backend.
@@ -272,8 +280,12 @@ This module accepts only an observe effect class and has no Cloudflare or live-c
 runtime. Its registry maps the three distinct research scopes—product truth, customer intelligence,
 and market evidence—to canonical versioned observe-only actions; it derives each call from the pinned
 goal, feature packet, decision, and action schema. The planner can emit a typed decision but never a
-raw call. It receives `ResearchObservationSummary` plus `FeaturePlanningProjection`: both deliberately
-exclude raw sources, claim text, and instructions. The evaluator closes a scope only from a
+raw call. It receives `ResearchObservationSummary` plus `FeaturePlanningProjection`: bounded semantic
+signals/caveats/trust state are included; the local hand removes recognizable URLs and known proposal
+source/packet-claim literals, while the remaining model string stays untrusted. Provider, model, and
+planner protocol are pinned in the goal and checked on every decision. The protocol digest includes
+the actual stable prompt-prefix bytes rather than relying only on a manually bumped version.
+The evaluator closes a scope only from a
 receipt-bound sufficient observation and revalidates each persisted decision/receipt/observation and
 historical evaluation against its trace prefix before another hand can run. The module owns replay of a
 committed decision, terminal trace audit without hand reinvocation, the at-most-three-step stop

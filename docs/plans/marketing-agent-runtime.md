@@ -50,8 +50,11 @@ a pinned registry derives every observe-only call and fixes each action to its s
 advance, the evaluator replays all prior decision/receipt/observation lineage and historical
 evaluation prefixes; terminal sessions audit that trace without invoking a hand. Required scopes with
 sufficient evidence complete; missing or invalid evidence after the bounded three iterations is
-inconclusive. It remains a fake-hand preparation loop and cannot author a public claim or run a
-control-plane action.
+inconclusive. The installed `trace-marketing agent research` composition now supplies an official
+Codex planner plus real local product, caller-supplied-customer, and quarantined-market read hands. It records
+provider/model and prompt/context/schema/skill digests, persists each hand result and resumes without
+repeating committed provider work. It still cannot author a public claim or run a control-plane
+action. The named scorecard remains deterministic and is not yet a repeated provider/model benchmark.
 
 ### Entities
 
@@ -205,6 +208,18 @@ observation lineage, raw-source-and-claim-text-free planning projections, one-us
 historical and terminal evaluation revalidation, deterministic stop at sufficient coverage or the
 three-step limit, and a held-out packet fixture.
 
+Implemented: `dynamic_evidence_research` is the first installed composition of that contract. The
+official Codex CLI chooses among only the currently available observe actions from a safe projection;
+the host derives identifiers and the bound invocation, and a source-generated registry pins exact
+request-schema, descriptor, skill, and snapshot digests. Product, caller-supplied customer intelligence,
+and quarantined web research are separate collectors with private immutable receipts. Bounded semantic
+summaries, caveats, and trust state reach the next planner and Feature Launch brief, while raw source
+text and URLs do not. Local market proposals are preserved but remain insufficient until independently
+verified byte receipts exist. An invalid model
+action stops before dispatch, missing evidence is explicit, a failed read cannot become evidence, and
+an ambiguous backend exception requires reconciliation. `trace-marketing agent research` exposes the
+runner without entering the hosted worker, Appium, or Threads owners.
+
 Implemented: a completed Evidence Research session can now be frozen as
 `FeatureLaunchEvidenceBrief` for a distinct Feature Launch session. The brief pins the research goal,
 registry snapshot, terminal evaluation, canonical event-trace digest, receipt-bound scope evidence,
@@ -230,8 +245,8 @@ Feature Launch contracts. A failed verifier is an invalid trial and fails the sc
 expected safe result itself has `process_passed: false`; a rehashed but fabricated trace cannot borrow
 the semantics of a blocked-claim stop.
 
-Next: introduce a private corpus loader and pinned provider/model repeated trials before making any
-model-quality claim. Before any external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
+Next: run the existing private corpus contract through this installed composition with repeated pinned
+provider/model trials before making any model-quality claim. Before any external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
 receipt proof, validated registry-manifest binding, a closed effect-class contract, and provider
 idempotency/readback/reconciliation. The local ledger derives its own checkpoint, but a hosted
 monotonic authority ledger/CAS lease must own the external effect. Then run fresh design critique

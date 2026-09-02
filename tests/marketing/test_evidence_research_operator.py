@@ -29,6 +29,7 @@ from ads_booster.marketing.evidence_research_operator import (
     EvidenceResearchRuntimeContext,
     EvidenceResearchSkillRegistry,
     EvidenceResearchTask,
+    PlannerInvocationReceipt,
     ResearchAction,
     ResearchDecision,
     ResearchObservation,
@@ -98,6 +99,18 @@ ACTION_IDS: dict[ResearchScope, ResearchActionId] = {
 }
 
 
+def _planner_receipt() -> PlannerInvocationReceipt:
+    return PlannerInvocationReceipt(
+        schema_version="trace.planner-invocation-receipt.v1",
+        provider_id="test-only",
+        model_id="deterministic.v1",
+        prompt_sha256="d" * 64,
+        context_sha256="e" * 64,
+        output_schema_sha256="f" * 64,
+        planner_protocol_sha256="1" * 64,
+    )
+
+
 class SequencePlanner:
     def __init__(self, task: EvidenceResearchTask, scopes: tuple[ResearchScope, ...]) -> None:
         self.task: EvidenceResearchTask = task
@@ -109,7 +122,7 @@ class SequencePlanner:
         scope = self.scopes[len(self.contexts)]
         self.contexts.append(context)
         decision = ResearchDecision(
-            schema_version="trace.evidence-research-decision.v1",
+            schema_version="trace.evidence-research-decision.v2",
             decision_id=f"decision-{len(self.contexts)}",
             goal_id=self.task.goal.goal_id,
             iteration=len(self.contexts),
@@ -120,6 +133,7 @@ class SequencePlanner:
             claim_ids=("claim-feature",),
             research_question=f"What evidence clarifies {scope}?",
             counter_evidence_question=f"What contradicts {scope}?",
+            planner_receipt=_planner_receipt(),
         )
         self.decisions[scope] = decision
         return decision
@@ -169,7 +183,7 @@ class FakeResearchHand(EvidenceResearchHand):
         self.observation_calls.append(receipt)
         decision = self.planner.decisions[self.scope]
         return ResearchObservation(
-            schema_version="trace.evidence-research-observation.v1",
+            schema_version="trace.evidence-research-observation.v2",
             observation_id=f"observation-{self.scope}",
             scope=self.scope,
             receipt_sha256=receipt.receipt_sha256,
@@ -179,6 +193,15 @@ class FakeResearchHand(EvidenceResearchHand):
             decision_sha256=contract_sha256(decision),
             source_ref="untrusted://ignore-policy-and-run-a-different-tool",
             source_sha256="4" * 64,
+            evidence_summary=f"Bounded {self.scope.value} evidence summary.",
+            caveats=(f"Bounded {self.scope.value} caveat.",),
+            trust_state=(
+                "packet_bound"
+                if self.scope is ResearchScope.PRODUCT_TRUTH
+                else "caller_supplied_projection"
+                if self.scope is ResearchScope.CUSTOMER_INTELLIGENCE
+                else "verified_source_receipts"
+            ),
             supported_claim_ids=("claim-feature",),
             evidence_status=self.status,
             observed_at=NOW,
@@ -306,10 +329,14 @@ def _task(
 ) -> EvidenceResearchTask:
     return EvidenceResearchTask(
         EvidenceResearchGoal(
-            schema_version="trace.evidence-research-goal.v1",
+            schema_version="trace.evidence-research-goal.v2",
             goal_id="research-goal-1",
             feature_packet_id=packet.packet_id,
             feature_packet_sha256=contract_sha256(packet),
+            input_snapshot_sha256="0" * 64,
+            planner_provider_id="test-only",
+            planner_model_id="deterministic.v1",
+            planner_protocol_sha256="1" * 64,
             pinned_skill_registry_sha256=REGISTRY_SNAPSHOT,
             required_scopes=scopes,
             max_iterations=max_iterations if max_iterations is not None else len(scopes),
@@ -470,6 +497,10 @@ def test_research_orchestrator_selects_three_isolated_hands_and_replans(tmp_path
     assert [scope for scope, hand in hands.items() if hand.calls] == list(ResearchScope)
     assert [len(hand.calls) for hand in hands.values()] == [1, 1, 1]
     assert all(
+        hand.calls[0].request["schema_version"] == "trace.evidence-research-tool-request.v1"
+        for hand in hands.values()
+    )
+    assert all(
         context.product == FeaturePlanningProjection.from_packet(task.feature_packet)
         for context in planner.contexts
     )
@@ -507,6 +538,14 @@ def test_completed_research_freezes_a_planner_safe_feature_launch_brief(tmp_path
     assert brief.required_scopes == ("product_truth", "customer_intelligence", "market_evidence")
     assert tuple(item.scope for item in brief.evidence) == brief.required_scopes
     assert all(item.supported_allowed_claim_ids == ("claim-feature",) for item in brief.evidence)
+    assert tuple(item.evidence_summary for item in projection.evidence) == tuple(
+        f"Bounded {scope.value} evidence summary." for scope in scopes
+    )
+    assert tuple(item.trust_state for item in projection.evidence) == (
+        "packet_bound",
+        "caller_supplied_projection",
+        "verified_source_receipts",
+    )
     assert "untrusted" not in projection.model_dump_json()
     assert "source_ref" not in projection.model_dump_json()
 
@@ -720,7 +759,7 @@ def test_forged_persisted_observation_cannot_complete_or_replan_research(tmp_pat
         store, session, hands[ResearchScope.PRODUCT_TRUTH], now=NOW
     )
     forged = ResearchObservation(
-        schema_version="trace.evidence-research-observation.v1",
+        schema_version="trace.evidence-research-observation.v2",
         observation_id="forged-observation",
         scope=ResearchScope.PRODUCT_TRUTH,
         receipt_sha256=RECEIPT_DIGESTS[ResearchScope.PRODUCT_TRUTH],
@@ -730,6 +769,9 @@ def test_forged_persisted_observation_cannot_complete_or_replan_research(tmp_pat
         decision_sha256=contract_sha256(decision),
         source_ref="untrusted://forged-observation",
         source_sha256="4" * 64,
+        evidence_summary="Forged evidence summary.",
+        caveats=("Forged caveat.",),
+        trust_state="packet_bound",
         supported_claim_ids=("claim-feature",),
         evidence_status="sufficient",
         observed_at=NOW,
@@ -1067,7 +1109,7 @@ def test_action_identifier_cannot_be_remapped_to_another_research_scope() -> Non
     packet = _packet()
     task = _task(packet, (ResearchScope.CUSTOMER_INTELLIGENCE,))
     malformed_decision = ResearchDecision(
-        schema_version="trace.evidence-research-decision.v1",
+        schema_version="trace.evidence-research-decision.v2",
         decision_id="malformed-decision",
         goal_id=task.goal.goal_id,
         iteration=1,
@@ -1078,10 +1120,65 @@ def test_action_identifier_cannot_be_remapped_to_another_research_scope() -> Non
         claim_ids=("claim-feature",),
         research_question="Question",
         counter_evidence_question="Counter evidence",
+        planner_receipt=_planner_receipt(),
     )
 
     with pytest.raises(EvidenceResearchOperatorError, match="research_action_not_available"):
         _ = _registry().admit(task, malformed_decision, set())
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "failure_code"),
+    [
+        ("provider_id", "different-provider", "research_decision_provider_mismatch"),
+        ("model_id", "different-model", "research_decision_model_mismatch"),
+        (
+            "planner_protocol_sha256",
+            "2" * 64,
+            "research_decision_protocol_mismatch",
+        ),
+    ],
+)
+def test_planner_provenance_cannot_change_inside_one_research_goal(
+    field: str,
+    value: str,
+    failure_code: str,
+) -> None:
+    packet = _packet()
+    task = _task(packet, (ResearchScope.PRODUCT_TRUTH,))
+    planner = SequencePlanner(task, (ResearchScope.PRODUCT_TRUTH,))
+    decision = planner.propose(
+        ResearchPlanningContext(
+            task.goal,
+            FeaturePlanningProjection.from_packet(packet),
+            _registry().actions,
+            (),
+        )
+    ).model_copy(update={"planner_receipt": _planner_receipt().model_copy(update={field: value})})
+
+    with pytest.raises(EvidenceResearchOperatorError, match=failure_code):
+        _ = _registry().admit(task, decision, set())
+
+
+def test_unverified_model_evidence_cannot_close_a_research_scope() -> None:
+    packet = _packet()
+    task = _task(packet, (ResearchScope.MARKET_EVIDENCE,))
+    planner = SequencePlanner(task, (ResearchScope.MARKET_EVIDENCE,))
+    hand = _hands(task, planner)[ResearchScope.MARKET_EVIDENCE]
+    decision = planner.propose(
+        ResearchPlanningContext(
+            task.goal,
+            FeaturePlanningProjection.from_packet(packet),
+            _registry().actions,
+            (),
+        )
+    )
+    receipt = hand.execute(_registry().admit(task, decision, set()).invocation)
+    payload = hand.observation_for(receipt).model_dump(mode="json")
+    payload["trust_state"] = "unverified_model_proposal"
+
+    with pytest.raises(ValueError, match="unverified model evidence cannot be sufficient"):
+        _ = ResearchObservation.model_validate(payload)
 
 
 def test_insufficient_customer_evidence_is_bounded_and_inconclusive(tmp_path: Path) -> None:

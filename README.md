@@ -21,6 +21,32 @@ feature packet -> agent_v1 shadow campaign -> marketing_judgment lease
 -> one structured official Codex turn -> bound context receipt + strategy + experiment
 ```
 
+The installed CLI also exposes the first dynamic, observe-only Marketing OS slice:
+
+```bash
+trace-marketing agent research --input request.json --home /private/path/to/state --model gpt-5.4
+```
+
+[`docs/examples/dynamic-evidence-research-product-only.json`](docs/examples/dynamic-evidence-research-product-only.json)
+shows the complete request shape. Its hashes are illustrative; replace them with fresh installed
+product evidence before making a product-truth claim.
+
+This command freezes one `trace.dynamic-evidence-research-request.v1`, asks the official Codex CLI
+to choose exactly one still-needed evidence scope at a time, invokes only registry-bound
+`observe.product_truth`, `observe.customer_intelligence`, or `observe.market_evidence` hands, and
+re-plans from persisted, receipt-bound evidence summaries and caveats. The installed command requires
+an explicit model so a default-model change cannot alter a resumed session. Planner calls record
+provider/model/protocol and prompt, context, schema, and skill digests. Known packet claim text,
+recognizable URLs, and proposal source IDs/titles/summaries are deterministically redacted from the
+bounded planning signal. The remaining semantic string is still untrusted data, never authority. A
+request-supplied customer projection is not independently approved by the local runner,
+and market proposals remain unverified and `insufficient` until a trusted byte-receipt verifier is
+connected. Raw proposals are preserved only in the private content-addressed hand result and cannot
+expand product claims. Sessions resume without
+repeating a committed decision or completed hand. Missing evidence ends `inconclusive`, and an
+ambiguous post-dispatch backend failure ends `awaiting_reconciliation` with exit code 3. It creates no
+candidate, Appium action, Threads post, outreach, ad spend, or hosted campaign mutation.
+
 `POST /api/marketing-agent/campaigns` accepts an account-scoped source packet, business outcome,
 current control, and caller-chosen campaign ID. `GET /api/marketing-agent/campaigns` and
 `GET /api/marketing-agent/campaigns/:id` expose its durable state. This shadow path cannot create
