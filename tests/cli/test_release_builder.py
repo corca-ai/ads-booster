@@ -125,6 +125,21 @@ def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -
     assert 'requires = ["hatchling==1.32.0"]' in PROJECT.read_text(encoding="utf-8")
 
 
+def test_release_workflow_signals_public_stable_versions_to_macs() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    public_readback = "Verify the public release through an unauthenticated readback"
+    release_signal = "Signal the exact stable release to enrolled Macs"
+
+    assert release_signal in workflow
+    assert "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}" in workflow
+    assert "CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}" in workflow
+    assert "workers/scripts/trace-marketing-control/secrets" in workflow
+    assert "TRACE_MARKETING_RELEASE_VERSION" in workflow
+    assert "jq -r '.success'" in workflow
+    assert "jq -r '.result.name'" in workflow
+    assert workflow.index(public_readback) < workflow.index(release_signal)
+
+
 def test_release_workflow_checks_the_reduced_worker_wheel() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 

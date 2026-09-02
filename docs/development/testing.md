@@ -22,6 +22,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | Codex ImageGen iOS UI layer | `uv run pytest tests/capture/test_codex_imagegen_ui.py tests/capture/test_ios_lock_screen_layer.py tests/capture/test_imagegen_ios_ui_contract.py tests/marketing/test_imagegen_ios_ui_capture.py`; from `cloudflare/`: `node --test test/hosted-capture-result.test.js` |
 | inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
 | update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
+| immediate stable-release update signal | `uv run pytest tests/marketing/test_worker_broker.py tests/cli/test_release_builder.py`; from `cloudflare/`: `node --test test/mac-workers.test.js` |
 | CLI surface | `uv run pytest tests/cli/test_cli_compatibility.py`; `uv run trace-marketing --help`; `uv run trace-marketing worker --help` |
 
 For changed Python paths, run the matching scoped Ruff, formatter, BasedPyright, and

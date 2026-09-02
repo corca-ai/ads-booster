@@ -751,6 +751,26 @@ test("heartbeat renews pre-execution work only within the one-hour claim cap", a
   assert.equal(db.task.lease_expires_at, previousExpiry);
 });
 
+test("heartbeat signals only a newer strict stable release", async () => {
+  const now = new Date("2026-08-26T00:10:00.000Z");
+  const workerRow = worker("worker-1");
+  const body = { version: "0.4.13", capabilities: {}, doctor: { ready: true, summary: "ready" } };
+
+  const newer = await heartbeatWorker(
+    new HeartbeatDb(workerRow, task()), workerRow, body, now, "0.4.14",
+  );
+  const current = await heartbeatWorker(
+    new HeartbeatDb(workerRow, task()), workerRow, body, now, "0.4.13",
+  );
+  const malformed = await heartbeatWorker(
+    new HeartbeatDb(workerRow, task()), workerRow, body, now, "0.4.14-preview",
+  );
+
+  assert.equal(newer.update_target_version, "0.4.14");
+  assert.equal(current.update_target_version, null);
+  assert.equal(malformed.update_target_version, null);
+});
+
 // A Mac enrolled before caption generation existed advertises nothing about task kinds.
 const legacyWorker = (workerId) => worker(workerId, { capabilities_json: '{"native_appium":true}' });
 

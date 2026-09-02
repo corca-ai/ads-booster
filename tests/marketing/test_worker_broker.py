@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import plistlib
 import stat
+import subprocess
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -30,7 +32,12 @@ from ads_booster.marketing.worker_broker import (
     normalize_control_plane_origin,
 )
 from ads_booster.marketing.worker_doctor import MacWorkerDoctorReport, inspect_mac_worker
-from ads_booster.marketing.worker_launchd import MacWorkerLaunchd, MacWorkerUpdaterLaunchd
+from ads_booster.marketing.worker_launchd import (
+    MacWorkerLaunchd,
+    MacWorkerUpdaterLaunchd,
+    kickstart_managed_updater,
+)
+from ads_booster.marketing.worker_update import HeartbeatReceiptStore, ManagedWorkerPaths
 from ads_booster.transport.http import HttpResponse
 from ads_booster.transport.json_types import JsonObject
 
@@ -205,6 +212,41 @@ def test_broker_claim_ack_and_callback_use_only_the_worker_scoped_token() -> Non
     assert all("queue" not in json.dumps(request).lower() for request in http.requests)
 
 
+def test_heartbeat_returns_the_server_update_target() -> None:
+    client = WorkerBrokerClient(
+        http=StubHttp(
+            [
+                _response(
+                    {
+                        "worker_id": "worker-1",
+                        "state": "active",
+                        "seen_at": "2026-09-02T00:00:00Z",
+                        "update_target_version": "0.4.14",
+                    }
+                )
+            ]
+        ),
+        config=MacWorkerConfig(
+            worker_id="worker-1",
+            display_name="Studio Mac",
+            control_plane_url="https://workspace.example.test",
+        ),
+        credential=MacWorkerCredential(
+            worker_token="worker-secret"  # noqa: S106 - inert fixture credential.
+        ),
+        heartbeat=lambda: {
+            "version": "0.4.13",
+            "capabilities": {"native_appium": True},
+            "doctor": {"ready": True, "summary": "ready"},
+        },
+    )
+
+    receipt = client.heartbeat_once()
+
+    assert receipt["version"] == "0.4.13"
+    assert receipt["update_target_version"] == "0.4.14"
+
+
 def test_launchd_lifecycle_resolution_does_not_require_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -333,6 +375,65 @@ def test_managed_launchagents_keep_the_current_symlink_and_separate_updater(
     assert worker.owns_installed_plist()
     assert updater.owns_installed_plist()
     assert "must-not-be-persisted" not in updater_plist.read_text(encoding="utf-8")
+
+
+def test_updater_kickstart_does_not_force_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    result = kickstart_managed_updater()
+
+    assert result.returncode == 0
+    assert commands == [
+        ("/bin/launchctl", "kickstart", f"gui/{os.getuid()}/com.corca.trace-marketing-updater")
+    ]
+
+
+def test_heartbeat_target_kickstarts_the_loaded_updater(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stop = Event()
+    signals: list[None] = []
+    report = MacWorkerDoctorReport(ready=True, summary="ready", checks={}, version="0.4.13")
+    heartbeat = marketing_cli.DoctorHeartbeat(report=report, checked_at=0.0)
+    config = MacWorkerConfig(
+        worker_id="worker-1",
+        display_name="Studio Mac",
+        control_plane_url="https://workspace.example.test",
+    )
+    credential = MacWorkerCredential(worker_token="worker-secret")  # noqa: S106
+    paths = ManagedWorkerPaths(root=tmp_path / "managed", agent_home=tmp_path / "agent")
+    monkeypatch.setattr(marketing_cli, "create_http_client", lambda: nullcontext(StubHttp([])))
+
+    def heartbeat_once(_client: WorkerBrokerClient) -> JsonObject:
+        return {"version": "0.4.13", "update_target_version": "0.4.14"}
+
+    monkeypatch.setattr(
+        WorkerBrokerClient,
+        "heartbeat_once",
+        heartbeat_once,
+    )
+
+    def kickstart() -> subprocess.CompletedProcess[str]:
+        signals.append(None)
+        stop.set()
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(marketing_cli, "kickstart_managed_updater", kickstart)
+
+    marketing_cli._heartbeat_loop(config, credential, heartbeat, stop, paths)
+
+    assert signals == [None]
+    receipt = HeartbeatReceiptStore(paths.heartbeat).load()
+    assert receipt is not None
+    assert receipt.version == "0.4.13"
 
 
 def test_doctor_heartbeat_serves_cached_state_during_a_slow_refresh(

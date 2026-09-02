@@ -34,7 +34,9 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
 
     if (request.method === "POST" && url.pathname === "/v1/workers/heartbeat") {
       const worker = await requireWorker(request, env.DB);
-      return Response.json(await heartbeatWorker(env.DB, worker, await readJson(request)));
+      return Response.json(await heartbeatWorker(
+        env.DB, worker, await readJson(request), new Date(), env.TRACE_MARKETING_RELEASE_VERSION,
+      ));
     }
     if (request.method === "POST" && url.pathname === "/v1/workers/tasks/claim") {
       const worker = await requireWorker(request, env.DB);
@@ -411,8 +413,15 @@ async function requireWorker(request, db) {
   return worker;
 }
 
-export async function heartbeatWorker(db, worker, body, clock = new Date()) {
+export async function heartbeatWorker(
+  db,
+  worker,
+  body,
+  clock = new Date(),
+  releaseTarget = null,
+) {
   const now = clock.toISOString();
+  const version = optionalName(body.version, "version", 80);
   const renewedUntil = new Date(clock.getTime() + ACCEPTED_LEASE_SECONDS * 1000).toISOString();
   const maximumStartedAt = new Date(
     clock.getTime() - MAX_EXECUTION_LEASE_SECONDS * 1000,
@@ -424,7 +433,7 @@ export async function heartbeatWorker(db, worker, body, clock = new Date()) {
     ).bind(
       JSON.stringify(normalizeObject(body.capabilities)),
       JSON.stringify(normalizeDoctor(body.doctor)),
-      optionalName(body.version, "version", 80),
+      version,
       now,
       now,
       worker.worker_id,
@@ -437,7 +446,12 @@ export async function heartbeatWorker(db, worker, body, clock = new Date()) {
     ).bind(renewedUntil, now, worker.worker_id, maximumStartedAt),
   ]);
   if (updated.meta.changes !== 1) throw new WorkerHttpError(401, "worker was revoked");
-  return { worker_id: worker.worker_id, state: worker.state, seen_at: now };
+  return {
+    worker_id: worker.worker_id,
+    state: worker.state,
+    seen_at: now,
+    update_target_version: newerReleaseTarget(releaseTarget, version),
+  };
 }
 
 async function acknowledgeWorkerLeases(db, worker, body) {
@@ -720,6 +734,27 @@ function requiredName(value, field, maxLength) {
 function optionalName(value, field, maxLength) {
   if (value === undefined || value === null || value === "") return null;
   return requiredName(value, field, maxLength);
+}
+
+function newerReleaseTarget(target, current) {
+  const targetParts = strictReleaseVersion(target);
+  const currentParts = strictReleaseVersion(current);
+  if (!targetParts || !currentParts) return null;
+  for (let index = 0; index < targetParts.length; index += 1) {
+    const order = numericPartOrder(targetParts[index], currentParts[index]);
+    if (order !== 0) return order > 0 ? target : null;
+  }
+  return null;
+}
+
+function strictReleaseVersion(value) {
+  if (typeof value !== "string") return null;
+  const matched = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(value);
+  return matched ? matched.slice(1) : null;
+}
+
+function numericPartOrder(left, right) {
+  return left.length === right.length ? left.localeCompare(right) : left.length - right.length;
 }
 
 function boundedInteger(value, fallback, minimum, maximum) {

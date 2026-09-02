@@ -224,6 +224,8 @@ jobs:
       RELEASE_REPOSITORY: ${{ github.repository }}
       RELEASE_SHA: ${{ github.sha }}
       RELEASE_VERSION: ${{ needs.check.outputs.release_version }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
     steps:
       - name: Check out the exact merged revision
@@ -458,6 +460,20 @@ jobs:
           if payload["version"] != sys.argv[2] or payload["commit_sha"] != sys.argv[3]:
               raise SystemExit("public release manifest identity mismatch")
           PY
+
+      - name: Signal the exact stable release to enrolled Macs
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?missing CLOUDFLARE_API_TOKEN Actions secret}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?missing CLOUDFLARE_ACCOUNT_ID repository variable}"
+          response="$(curl --fail --silent --show-error --request PUT \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/trace-marketing-control/secrets" \
+            --header "authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --header "content-type: application/json" \
+            --data "$(jq -cn --arg version "$RELEASE_VERSION" '{name: "TRACE_MARKETING_RELEASE_VERSION", text: $version, type: "secret_text"}')")"
+          test "$(jq -r '.success' <<<"$response")" = true
+          test "$(jq -r '.result.name' <<<"$response")" = TRACE_MARKETING_RELEASE_VERSION
 
       - name: Remove only this run's unpublished draft state
         if: failure() && steps.release_identity.outputs.state == 'new'
