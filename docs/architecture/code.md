@@ -232,10 +232,12 @@ input from its grader-only expectation and test-only tool environment. The runne
 terminal event traces plus an attempted brief—not self-reported quality booleans—and the scorecard
 replays the traces through the runtime reducer before it derives budget, brief lineage, claim
 containment, process, and environment grades. A pinned grader-side vertical verifier re-runs the
-Research and Feature Launch trace contracts; its failure makes a trial invalid regardless of whether a
-safe expected outcome is `inconclusive`. The report pins the corpus digest and
-runner/model/prompt/registry metadata. This versioned regression corpus proves local vertical behavior
-only; it is neither private held-out model evidence, hosted authority, nor a live marketing result.
+Research and Feature Launch trace contracts and checks each terminal fixture receipt against the
+test-owned receipt authority that issued it. Its failure makes a trial invalid and prevents a launch
+or research outcome from passing, regardless of whether a safe expected outcome is `inconclusive`.
+The report pins the corpus digest and runner/model/prompt/registry metadata. This versioned regression
+corpus proves local vertical behavior only; it is neither private held-out model evidence, hosted
+authority, nor a live marketing result.
 
 The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Object storage are not
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and

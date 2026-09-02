@@ -286,7 +286,7 @@ class MarketingOsScorecardRunner(Protocol):
 
 
 class MarketingOsVerticalTraceVerifier(Protocol):
-    """Validate replayed vertical traces against the pinned registry and evaluator authority."""
+    """Validate vertical traces against pinned registry, evaluator, and receipt authority."""
 
     def validate_research(self, case: MarketingOsEvalInput, session: AgentSession) -> None: ...
 
@@ -455,6 +455,7 @@ def _derive_assessment(
     research_verified = _verification_passes(
         lambda: verifier.validate_research(input_case, research)
     )
+    research_outcome_ready = research_ready and research_verified
     research_process = (
         _research_process_passes(research, research_observations) and research_verified
     )
@@ -468,7 +469,9 @@ def _derive_assessment(
     )
     if observation.launch_trace is None:
         launch_brief = observation.launch_brief
-        brief_lineage = _brief_lineage_without_launch(input_case, research, launch_brief)
+        brief_lineage = research_verified and _brief_lineage_without_launch(
+            input_case, research, launch_brief
+        )
         if brief_lineage and launch_brief is not None:
             brief_lineage = _verification_passes(
                 lambda: verifier.rederive_brief(input_case, research, launch_brief)
@@ -483,7 +486,7 @@ def _derive_assessment(
             research_state=_terminal_state(research),
             launch_state="not_started",
             research_process_passed=research_process,
-            research_outcome_ready=research_ready,
+            research_outcome_ready=research_outcome_ready,
             research_vertical_trace_valid=research_verified,
             launch_process_passed=None,
             launch_outcome_passed=None,
@@ -505,7 +508,7 @@ def _derive_assessment(
         raise MarketingOsScorecardError("scorecard_launch_brief_trace_mismatch")
     proposals = _models(launch, _DECISION_EVENT, DecisionProposal)
     launch_observations = _models(launch, _LAUNCH_OBSERVATION_EVENT, FeatureLaunchObservation)
-    brief_lineage = _brief_lineage_without_launch(input_case, research, brief)
+    brief_lineage = research_verified and _brief_lineage_without_launch(input_case, research, brief)
     if brief_lineage:
         brief_lineage = _verification_passes(
             lambda: verifier.rederive_brief(input_case, research, brief)
@@ -522,6 +525,7 @@ def _derive_assessment(
         launch_observations,
         brief_lineage,
         claim_contained,
+        launch_verified,
     )
     reason_codes = tuple(
         dict.fromkeys(
@@ -542,7 +546,7 @@ def _derive_assessment(
         research_state=_terminal_state(research),
         launch_state=_terminal_state(launch),
         research_process_passed=research_process,
-        research_outcome_ready=research_ready,
+        research_outcome_ready=research_outcome_ready,
         research_vertical_trace_valid=research_verified,
         launch_process_passed=launch_process,
         launch_outcome_passed=launch_outcome,
@@ -682,10 +686,12 @@ def _launch_outcome_passes(
     observations: tuple[FeatureLaunchObservation, ...],
     brief_lineage: bool,
     claim_contained: bool,
+    launch_verified: bool,
 ) -> bool:
     return bool(
         brief_lineage
         and claim_contained
+        and launch_verified
         and len(observations) == 1
         and observations[0].evidence_status == "sufficient"
         and not observations[0].counter_evidence_found

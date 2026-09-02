@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import TYPE_CHECKING, Literal, override
 
 from ads_booster.contracts.marketing_agent import (
@@ -65,6 +66,7 @@ from ads_booster.marketing.runtime import (
     SessionStore,
     ToolCapability,
     ToolReceipt,
+    tool_receipt_from_event,
 )
 
 if TYPE_CHECKING:
@@ -82,11 +84,7 @@ _BRIEF_REDERIVATION_MISMATCH = "scorecard_brief_rederivation_mismatch"
 _FEATURE_GOAL_MISSING = "scorecard_feature_goal_missing"
 _FEATURE_PROPOSAL_MISSING = "scorecard_feature_proposal_missing"
 _RESEARCH_SOURCE_MISMATCH = "scorecard_research_source_mismatch"
-_RECEIPT_DIGESTS = {
-    ResearchScope.PRODUCT_TRUTH: "1" * 64,
-    ResearchScope.CUSTOMER_INTELLIGENCE: "2" * 64,
-    ResearchScope.MARKET_EVIDENCE: "3" * 64,
-}
+_RECEIPT_PROOF_UNVERIFIED = "scorecard_receipt_proof_unverified"
 type ResearchActionId = Literal[
     "observe.product_truth",
     "observe.customer_intelligence",
@@ -132,25 +130,23 @@ class _ResearchHand(EvidenceResearchHand):
         scope: ResearchScope,
         planner: _ResearchPlanner,
         packet_sha256: str,
+        receipt_authority: FixtureReceiptAuthority,
         *,
         status: Literal["sufficient", "insufficient"],
     ) -> None:
         self.scope: ResearchScope = scope
         self.planner: _ResearchPlanner = planner
         self.packet_sha256: str = packet_sha256
+        self.receipt_authority: FixtureReceiptAuthority = receipt_authority
         self.status: Literal["sufficient", "insufficient"] = status
         self.calls: list[BoundToolInvocation] = []
 
     @override
     def execute(self, invocation: BoundToolInvocation) -> ToolReceipt:
         self.calls.append(invocation)
-        return ToolReceipt(
-            invocation.call.call_id,
-            invocation.call.digest,
-            None,
-            EffectDisposition.SUCCEEDED,
-            1,
-            _RECEIPT_DIGESTS[self.scope],
+        return self.receipt_authority.issue(
+            kind=f"research:{self.scope}",
+            invocation=invocation,
         )
 
     @override
@@ -213,24 +209,22 @@ class _FeatureHand(FeatureLaunchHand):
         self,
         task: FeatureLaunchTask,
         planner: _FeaturePlanner,
+        receipt_authority: FixtureReceiptAuthority,
         *,
         counter_evidence_found: bool = False,
     ) -> None:
         self.task: FeatureLaunchTask = task
         self.planner: _FeaturePlanner = planner
+        self.receipt_authority: FixtureReceiptAuthority = receipt_authority
         self.counter_evidence_found: bool = counter_evidence_found
         self.calls: list[BoundToolInvocation] = []
 
     @override
     def execute(self, invocation: BoundToolInvocation) -> ToolReceipt:
         self.calls.append(invocation)
-        return ToolReceipt(
-            invocation.call.call_id,
-            invocation.call.digest,
-            None,
-            EffectDisposition.SUCCEEDED,
-            1,
-            "f" * 64,
+        return self.receipt_authority.issue(
+            kind="feature_launch",
+            invocation=invocation,
         )
 
     @override
@@ -260,6 +254,39 @@ class _LaunchOutcome:
     trace: MarketingOsSessionTrace | None
 
 
+class FixtureReceiptAuthority:
+    """Test-only effect owner that independently retains the receipts it issued."""
+
+    def __init__(self) -> None:
+        self._issued: dict[str, ToolReceipt] = {}
+
+    def issue(self, *, kind: str, invocation: BoundToolInvocation) -> ToolReceipt:
+        call = invocation.call
+        proof_material = (
+            f"trace.marketing-os.fixture-receipt.v1:{kind}:{call.call_id}:{call.digest}"
+        )
+        receipt = ToolReceipt(
+            call.call_id,
+            call.digest,
+            None,
+            EffectDisposition.SUCCEEDED,
+            1,
+            sha256(proof_material.encode()).hexdigest(),
+        )
+        issued = self._issued.setdefault(receipt.call_sha256, receipt)
+        if issued != receipt:
+            raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
+        return issued
+
+    def validate(self, session: AgentSession) -> None:
+        for event in session.events:
+            if event.event_type != "tool_succeeded":
+                continue
+            receipt = tool_receipt_from_event(event)
+            if self._issued.get(receipt.call_sha256) != receipt:
+                raise ValueError(_RECEIPT_PROOF_UNVERIFIED)
+
+
 @dataclass(frozen=True, slots=True)
 class FixtureScenario:
     """Private fake-tool behavior; never supplied as a runner input or grader expectation."""
@@ -275,6 +302,7 @@ class FixtureEnvironment:
     """Resolve opaque scorecard IDs into tool behavior after the runner has started."""
 
     scenarios: Mapping[str, FixtureScenario]
+    receipt_authority: FixtureReceiptAuthority
 
     def for_case(self, case_id: str) -> FixtureScenario:
         try:
@@ -292,10 +320,12 @@ class TestOnlyMarketingOsTraceVerifier:
 
     __test__: bool = False
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, receipt_authority: FixtureReceiptAuthority) -> None:
         self.root: Path = root
+        self.receipt_authority: FixtureReceiptAuthority = receipt_authority
 
     def validate_research(self, case: MarketingOsEvalInput, session: AgentSession) -> None:
+        self.receipt_authority.validate(session)
         context = self._research_context(case)
         _ = EvidenceResearchOperator(MarketingAgentRuntime()).run(session, context)
 
@@ -323,6 +353,7 @@ class TestOnlyMarketingOsTraceVerifier:
         brief: FeatureLaunchEvidenceBrief,
         session: AgentSession,
     ) -> None:
+        self.receipt_authority.validate(session)
         research_context = self._research_context(case)
         self._store_research(research_context.store, research)
         goals = tuple(
@@ -352,7 +383,7 @@ class TestOnlyMarketingOsTraceVerifier:
             if str(error) not in stopped_reasons:
                 raise
         planner = _FeaturePlanner(task)
-        hand = _FeatureHand(task, planner)
+        hand = _FeatureHand(task, planner, self.receipt_authority)
         context = FeatureLaunchRuntimeContext(
             JsonSessionStore(self.root / case.case_id / "launch"),
             task,
@@ -370,7 +401,12 @@ class TestOnlyMarketingOsTraceVerifier:
     def _research_context(self, case: MarketingOsEvalInput) -> EvidenceResearchRuntimeContext:
         task = _research_task(case.feature_packet, case.required_scopes)
         planner = _ResearchPlanner(task, case.required_scopes)
-        hands = _research_hands(task, planner, customer_status="sufficient")
+        hands = _research_hands(
+            task,
+            planner,
+            customer_status="sufficient",
+            receipt_authority=self.receipt_authority,
+        )
         return EvidenceResearchRuntimeContext(
             JsonSessionStore(self.root / case.case_id / "research"),
             task,
@@ -414,6 +450,7 @@ class TestOnlyMarketingOsRunner:
             task,
             planner,
             customer_status=scenario.customer_status,
+            receipt_authority=self.environment.receipt_authority,
         )
         research_context = EvidenceResearchRuntimeContext(
             JsonSessionStore(self.root / case.case_id / "research"),
@@ -456,6 +493,7 @@ class TestOnlyMarketingOsRunner:
         launch_hand = _FeatureHand(
             launch_task,
             launch_planner,
+            self.environment.receipt_authority,
             counter_evidence_found=scenario.counter_evidence_found,
         )
         launch_context = FeatureLaunchRuntimeContext(
@@ -529,6 +567,7 @@ def _research_hands(
     planner: _ResearchPlanner,
     *,
     customer_status: Literal["sufficient", "insufficient"],
+    receipt_authority: FixtureReceiptAuthority,
 ) -> dict[ResearchScope, _ResearchHand]:
     packet_sha256 = contract_sha256(task.feature_packet)
     return {
@@ -536,6 +575,7 @@ def _research_hands(
             scope,
             planner,
             packet_sha256,
+            receipt_authority,
             status=(
                 customer_status if scope is ResearchScope.CUSTOMER_INTELLIGENCE else "sufficient"
             ),

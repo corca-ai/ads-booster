@@ -157,11 +157,14 @@ booleans. The first implemented cases cover normal completion, insufficient cust
 counter-evidence, blocked claims, and evidence-brief mismatch. A fluent final answer cannot pass this
 corpus alone.
 
-The grader pins a vertical verifier that re-runs Research and Feature Launch contracts. Failure is an
-invalid trial rather than an expected `process_passed: false` result, so a canonicalized fabricated
-trace cannot pass by imitating a safe blocked-claim stop.
+The grader pins a vertical verifier that re-runs Research and Feature Launch contracts and checks
+fixture receipts against a separate test-owned receipt authority. Failure is an invalid trial rather
+than an expected `process_passed: false` result, and also prevents a research or launch outcome from
+passing. A canonicalized fabricated trace therefore cannot pass by imitating either a safe
+blocked-claim stop or a matching forged receipt/observation pair. This is a test-only proof boundary,
+not a claim that remote adapter receipts are trusted yet.
 
-Next, extend the regression baseline with forged receipt/evaluation, duplicate dispatch, restart after
+Next, extend the regression baseline with forged evaluation, duplicate dispatch, restart after
 execution-start, and stale/revoked approval; use a private corpus loader plus real provider/model
 repeated trials for model validation. Do not call the source-visible baseline a model-quality or
 market-effectiveness result.

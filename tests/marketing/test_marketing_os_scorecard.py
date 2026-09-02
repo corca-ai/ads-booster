@@ -24,6 +24,7 @@ from ads_booster.marketing.marketing_os_scorecard import (
 from ads_booster.marketing.runtime import canonical_json_object
 from tests.marketing.marketing_os_scorecard_runner import (
     FixtureEnvironment,
+    FixtureReceiptAuthority,
     FixtureScenario,
     TestOnlyMarketingOsRunner,
     TestOnlyMarketingOsTraceVerifier,
@@ -70,8 +71,10 @@ def _metadata(*, runner_id: str = "test-only-runner") -> MarketingOsRunnerMetada
     )
 
 
-def _scorecard(root: Path) -> MarketingOsScorecard:
-    return MarketingOsScorecard(TestOnlyMarketingOsTraceVerifier(root / "verifier"))
+def _scorecard(root: Path, environment: FixtureEnvironment) -> MarketingOsScorecard:
+    return MarketingOsScorecard(
+        TestOnlyMarketingOsTraceVerifier(root / "verifier", environment.receipt_authority)
+    )
 
 
 def _environment() -> FixtureEnvironment:
@@ -79,7 +82,7 @@ def _environment() -> FixtureEnvironment:
         "dict[str, dict[str, object]]", _load_fixture("tool_environment.json")["cases"]
     )
     return FixtureEnvironment(
-        {
+        scenarios={
             case_id: FixtureScenario(
                 customer_status=cast(
                     "Literal['sufficient', 'insufficient']",
@@ -90,15 +93,17 @@ def _environment() -> FixtureEnvironment:
                 mismatched_brief=cast("bool", scenario.get("mismatched_brief", False)),
             )
             for case_id, scenario in raw_cases.items()
-        }
+        },
+        receipt_authority=FixtureReceiptAuthority(),
     )
 
 
 def test_versioned_marketing_os_scorecard_grades_real_multiskill_paths(tmp_path: Path) -> None:
     cases = _load_cases()
-    runner = TestOnlyMarketingOsRunner(tmp_path, _environment())
+    environment = _environment()
+    runner = TestOnlyMarketingOsRunner(tmp_path, environment)
 
-    report = _scorecard(tmp_path).evaluate(cases, runner, _metadata())
+    report = _scorecard(tmp_path, environment).evaluate(cases, runner, _metadata())
 
     assert len(cases) == 5
     assert report.process_pass_count == 5
@@ -125,18 +130,17 @@ def test_versioned_marketing_os_scorecard_grades_real_multiskill_paths(tmp_path:
 
 def test_scorecard_fails_a_safety_regression_and_enforces_its_threshold(tmp_path: Path) -> None:
     cases = _load_cases()
-    scorecard = _scorecard(tmp_path)
+    environment = _environment()
+    scorecard = _scorecard(tmp_path, environment)
     baseline = scorecard.evaluate(
         cases,
-        TestOnlyMarketingOsRunner(tmp_path / "compliant", _environment()),
+        TestOnlyMarketingOsRunner(tmp_path / "compliant", environment),
         _metadata(),
     )
 
     class TraceTruncatingRunner:
         def run(self, case: MarketingOsEvalInput) -> MarketingOsEvalObservation:
-            observation = TestOnlyMarketingOsRunner(tmp_path / "truncated", _environment()).run(
-                case
-            )
+            observation = TestOnlyMarketingOsRunner(tmp_path / "truncated", environment).run(case)
             if case.case_id == "trace.marketing-os.v2.case-001":
                 return observation.model_copy(update={"launch_trace": None})
             return observation
@@ -167,10 +171,11 @@ def test_scorecard_fails_a_safety_regression_and_enforces_its_threshold(tmp_path
 
 def test_scorecard_rejects_a_rehashed_invalid_blocked_claim_trace(tmp_path: Path) -> None:
     cases = _load_cases()
+    environment = _environment()
 
     class ForgedStoppedTraceRunner:
         def run(self, case: MarketingOsEvalInput) -> MarketingOsEvalObservation:
-            observation = TestOnlyMarketingOsRunner(tmp_path / "forged", _environment()).run(case)
+            observation = TestOnlyMarketingOsRunner(tmp_path / "forged", environment).run(case)
             if case.case_id != "trace.marketing-os.v2.case-004":
                 return observation
             assert observation.launch_trace is not None
@@ -186,12 +191,89 @@ def test_scorecard_rejects_a_rehashed_invalid_blocked_claim_trace(tmp_path: Path
                 }
             )
 
-    report = _scorecard(tmp_path).evaluate(cases, ForgedStoppedTraceRunner(), _metadata())
+    report = _scorecard(tmp_path, environment).evaluate(
+        cases, ForgedStoppedTraceRunner(), _metadata()
+    )
     blocked = report.results[3]
 
     assert blocked.assessment.launch_vertical_trace_valid is False
     assert "launch_vertical_trace_invalid" in blocked.process_reasons
     assert not blocked.passed
+
+
+def test_scorecard_rejects_a_rehashed_forged_launch_receipt(tmp_path: Path) -> None:
+    cases = _load_cases()
+    environment = _environment()
+
+    class ForgedReceiptRunner:
+        def run(self, case: MarketingOsEvalInput) -> MarketingOsEvalObservation:
+            observation = TestOnlyMarketingOsRunner(tmp_path / "forged-receipt", environment).run(
+                case
+            )
+            if case.case_id != "trace.marketing-os.v2.case-001":
+                return observation
+            assert observation.launch_trace is not None
+            events = tuple(
+                _with_forged_receipt_digest(event)
+                if event.event_type in {"tool_succeeded", "feature_observation_recorded"}
+                else event
+                for event in observation.launch_trace.events
+            )
+            return observation.model_copy(
+                update={
+                    "launch_trace": observation.launch_trace.model_copy(update={"events": events})
+                }
+            )
+
+    report = _scorecard(tmp_path, environment).evaluate(cases, ForgedReceiptRunner(), _metadata())
+    forged = report.results[0]
+
+    assert forged.assessment.launch_state == "completed"
+    assert forged.assessment.launch_vertical_trace_valid is False
+    assert forged.assessment.launch_process_passed is False
+    assert forged.assessment.launch_outcome_passed is False
+    assert "launch_vertical_trace_invalid" in forged.process_reasons
+    assert "launch_outcome_grade_mismatch" in forged.environment_reasons
+    assert not forged.passed
+
+
+def test_scorecard_rejects_a_rehashed_forged_research_receipt(tmp_path: Path) -> None:
+    cases = _load_cases()
+    environment = _environment()
+
+    class ForgedReceiptRunner:
+        def run(self, case: MarketingOsEvalInput) -> MarketingOsEvalObservation:
+            observation = TestOnlyMarketingOsRunner(
+                tmp_path / "forged-research-receipt", environment
+            ).run(case)
+            if case.case_id != "trace.marketing-os.v2.case-001":
+                return observation
+            events = tuple(
+                _with_forged_receipt_digest(event)
+                if event.event_type in {"tool_succeeded", "research_observation_recorded"}
+                else event
+                for event in observation.research_trace.events
+            )
+            return observation.model_copy(
+                update={
+                    "research_trace": observation.research_trace.model_copy(
+                        update={"events": events}
+                    )
+                }
+            )
+
+    report = _scorecard(tmp_path, environment).evaluate(cases, ForgedReceiptRunner(), _metadata())
+    forged = report.results[0]
+
+    assert forged.assessment.research_vertical_trace_valid is False
+    assert forged.assessment.research_process_passed is False
+    assert forged.assessment.research_outcome_ready is False
+    assert forged.assessment.brief_lineage_verified is False
+    assert forged.assessment.launch_vertical_trace_valid is False
+    assert forged.assessment.launch_outcome_passed is False
+    assert "research_vertical_trace_invalid" in forged.process_reasons
+    assert "research_outcome_grade_mismatch" in forged.environment_reasons
+    assert not forged.passed
 
 
 def _with_forged_proposal_digest(event: MarketingOsTraceEvent) -> MarketingOsTraceEvent:
@@ -208,17 +290,32 @@ def _with_forged_proposal_digest(event: MarketingOsTraceEvent) -> MarketingOsTra
     )
 
 
+def _with_forged_receipt_digest(event: MarketingOsTraceEvent) -> MarketingOsTraceEvent:
+    payload_value = cast("object", json.loads(event.payload_json))
+    assert isinstance(payload_value, dict)
+    payload = cast("JsonObject", payload_value)
+    payload["receipt_sha256"] = "0" * 64
+    payload_json = canonical_json_object(payload)
+    return event.model_copy(
+        update={
+            "payload_json": payload_json,
+            "payload_sha256": sha256(payload_json.encode()).hexdigest(),
+        }
+    )
+
+
 def test_scorecard_comparison_requires_the_same_corpus(tmp_path: Path) -> None:
     cases = _load_cases()
-    scorecard = _scorecard(tmp_path)
+    environment = _environment()
+    scorecard = _scorecard(tmp_path, environment)
     baseline = scorecard.evaluate(
         cases,
-        TestOnlyMarketingOsRunner(tmp_path / "a", _environment()),
+        TestOnlyMarketingOsRunner(tmp_path / "a", environment),
         _metadata(),
     )
     candidate = scorecard.evaluate(
         cases,
-        TestOnlyMarketingOsRunner(tmp_path / "b", _environment()),
+        TestOnlyMarketingOsRunner(tmp_path / "b", environment),
         _metadata(runner_id="candidate-runner"),
     )
 
