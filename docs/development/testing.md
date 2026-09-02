@@ -23,6 +23,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
 | workspace worker execution timeline | `uv run pytest tests/marketing/test_worker_loop.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `npm run build && node --test test/mac-workers.test.js test/hosted-workspace.test.js test/workspace-static.test.js` |
 | update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
+| immediate stable-release update signal | `uv run pytest tests/marketing/test_worker_broker.py tests/cli/test_release_builder.py`; from `cloudflare/`: `node --test test/mac-workers.test.js` |
 | CLI surface | `uv run pytest tests/cli/test_cli_compatibility.py`; `uv run trace-marketing --help`; `uv run trace-marketing worker --help` |
 
 For changed Python paths, run the matching scoped Ruff, formatter, BasedPyright, and

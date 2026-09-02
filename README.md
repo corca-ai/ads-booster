@@ -186,6 +186,16 @@ makes the updater defer; it is read-only compatibility input and is never resume
 and drain them separately. The current labels are
 `com.corca.trace-marketing-worker` and `com.corca.trace-marketing-updater`.
 
+When a release changes the Cloudflare control plane, the release workflow first waits for that exact
+revision's deployed health check. After it confirms the stable release and assets are publicly
+readable, it records the version in the hosted control plane. An enrolled worker at an older strict
+semantic version receives the target on its next heartbeat and starts the already-loaded updater,
+normally within 15 seconds. The updater still verifies GitHub attestation, drains work, switches
+atomically, and rolls back on failure. The hourly LaunchAgent interval remains the fallback. Workers
+installed before this signal support need one normal `trace-marketing worker update --apply` to gain
+it. While the installed version remains older, each heartbeat repeats the non-forced wake-up; it
+never kills a running updater.
+
 ## Proof boundaries
 
 - A checkout or `uv run` proves source behavior, not a managed installation.

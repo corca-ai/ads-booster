@@ -211,8 +211,11 @@ class WorkerBrokerClient:
             payload,
             self._headers(),
         )
-        _ = _response_payload(response, operation="worker heartbeat")
-        return payload
+        receipt = _response_payload(response, operation="worker heartbeat")
+        target_version = receipt.get("update_target_version")
+        if not isinstance(target_version, str):
+            return payload
+        return {**payload, "update_target_version": target_version}
 
     def _url(self, path: str) -> str:
         return f"{self.config.control_plane_url.rstrip('/')}{path}"

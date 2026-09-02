@@ -172,6 +172,14 @@ control-plane outage do not change the inbox/outbox recovery contract.
 state home. The updater only reads legacy `codex-runs/<id>/executing` without `result.json` to
 defer activation; it preserves that compatibility state across releases.
 
+When a release changes control-plane paths, the release workflow waits for the exact deployed health
+SHA before it makes the GitHub Release public. It then writes the strict version to the Cloudflare
+control-plane binding. An authenticated heartbeat returns it only to an older worker. The worker
+starts the loaded updater once with `launchctl kickstart`; it does not receive release bytes or
+bypass attestation, draining, atomic switching, or rollback. The 15-second heartbeat is the
+immediate path and repeats the non-forced wake-up while the version is older. The hourly updater
+schedule remains the fallback.
+
 `com.corca.trace-agent` and `com.corca.trace-ads` are migration-only old plist labels, not current
 service instructions. Native manifest validation does not prove visual semantics. Human review is
 mandatory. Only the default-OFF hosted Threads path can publish; the Mac worker, generic `/v1`

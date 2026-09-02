@@ -40,6 +40,7 @@ from ads_booster.marketing.worker_launchd import (
     MacWorkerUpdaterLaunchd,
     default_updater_plist_path,
     default_worker_plist_path,
+    kickstart_managed_updater,
 )
 from ads_booster.marketing.worker_loop import MarketingWorkerLoop
 from ads_booster.marketing.worker_update import (
@@ -684,6 +685,9 @@ def _heartbeat_loop(
                         worker_id=config.worker_id,
                         version=version,
                     )
+                target_version = payload.get("update_target_version")
+                if isinstance(target_version, str):
+                    _ = kickstart_managed_updater()
             _ = stop.wait(15)
 
 
