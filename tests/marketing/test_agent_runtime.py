@@ -77,6 +77,18 @@ def test_public_runtime_surface_has_no_non_durable_tool_dispatch() -> None:
     assert not hasattr(runtime, "execute_tool")
 
 
+def test_unknown_effect_class_is_rejected_before_binding() -> None:
+    unknown = ToolCapability("unknown", "a" * 64, "b" * 64, "typo_write", 1)
+
+    with pytest.raises(MarketingRuntimeError, match="tool_effect_class_invalid"):
+        bind_tool_invocation(
+            unknown,
+            call_id="call-unknown",
+            idempotency_key="unknown:one",
+            request={"operation": "unknown"},
+        )
+
+
 def test_external_tool_waits_for_exact_unrevoked_grant() -> None:
     runtime = MarketingAgentRuntime()
     waiting = runtime._request_tool(

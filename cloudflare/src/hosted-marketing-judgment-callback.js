@@ -1,6 +1,9 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
-import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import {
+  agentRunLineageFromRow,
+  MARKETING_JUDGMENT_PIPELINE,
+} from "./marketing-agent.js";
 import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
 
 export async function receiveHostedMarketingJudgmentCallback(env, task, callback, worker = null) {
@@ -32,7 +35,8 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
   const campaign = await env.DB.prepare(
     `SELECT campaign_id, account_id, feature_packet_id, feature_packet_sha256, mode, state,
             projection_revision, business_outcome, marketing_context_snapshot_id,
-            marketing_context_snapshot_sha256
+            marketing_context_snapshot_sha256, agent_run_id, research_session_id,
+            research_input_sha256, research_trace_sha256, research_continuation_sha256
      FROM hosted_marketing_campaigns WHERE campaign_id = ? AND account_id = ?`,
   ).bind(task.run_id, task.account_id).first();
   if (
@@ -43,6 +47,13 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     throw new HttpError(409, "agent campaign is not awaiting a strategy judgment");
   }
   const now = new Date().toISOString();
+  const agentRunLineage = agentRunLineageFromRow(campaign);
+  if (
+    canonicalJson(publishedPayload.agent_run_lineage ?? null)
+    !== canonicalJson(agentRunLineage)
+  ) {
+    throw new HttpError(409, "strategy agent-run lineage binding is invalid");
+  }
   if (status !== "succeeded") {
     if (worker) {
       const reservation = await reserveWorkerTaskCallback(
@@ -67,6 +78,7 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     || publishedPayload.judgment !== "shadow_strategy"
     || publishedPayload.campaign_id !== campaign.campaign_id
     || (publishedPayload.mode ?? "shadow") !== campaign.mode
+    || canonicalJson(output.agent_run_lineage ?? null) !== canonicalJson(agentRunLineage)
   ) {
     throw new HttpError(409, "marketing judgment output binding is invalid");
   }
@@ -172,6 +184,7 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     allocation_method: allocationMethod,
     randomization_seed_sha256: randomizationSeedSha256,
     exposure_plan_sha256: exposurePlan?.plan_sha256 ?? null,
+    agent_run_lineage: agentRunLineage,
   };
   const statements = [
     env.DB.prepare(

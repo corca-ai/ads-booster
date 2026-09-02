@@ -269,6 +269,19 @@ export async function createShadowCampaign(env, account, input) {
   const businessOutcome = requiredString(input?.business_outcome, "business_outcome", 1000);
   const currentControl = requiredString(input?.current_control, "current_control", 4000);
   const packet = normalizeFeaturePacket(input?.feature_packet);
+  const agentRunLineage = normalizeAgentRunLineage(input?.agent_run_lineage);
+  const requestedAccountId = input?.account_id == null
+    ? null
+    : safeId(input.account_id, "account_id");
+  if (agentRunLineage && requestedAccountId == null) {
+    throw new MarketingAgentHttpError(400, "agent run lineage에는 account_id가 필요합니다.");
+  }
+  if (requestedAccountId != null && requestedAccountId !== account.account_id) {
+    throw new MarketingAgentHttpError(403, "agent run account가 인증 계정과 일치하지 않습니다.");
+  }
+  if (agentRunLineage && agentRunLineage.agent_run_id !== campaignId) {
+    throw new MarketingAgentHttpError(400, "agent_run_id는 campaign_id와 같아야 합니다.");
+  }
   const marketingContext = await resolveMarketingContextProjection(
     env.DB,
     account.account_id,
@@ -316,7 +329,10 @@ export async function createShadowCampaign(env, account, input) {
   const existing = await env.DB.prepare(
     `SELECT campaign.campaign_id, campaign.feature_packet_sha256, campaign.business_outcome,
             campaign.mode, campaign.origin_campaign_id, campaign.marketing_context_snapshot_id,
-            campaign.marketing_context_snapshot_sha256, campaign.state, task.task_json
+            campaign.marketing_context_snapshot_sha256, campaign.state, task.task_json,
+            campaign.agent_run_id, campaign.research_session_id,
+            campaign.research_input_sha256, campaign.research_trace_sha256,
+            campaign.research_continuation_sha256
      FROM hosted_marketing_campaigns AS campaign
      LEFT JOIN hosted_workspace_capture_tasks AS task
        ON task.account_id = campaign.account_id AND task.kind = 'marketing_judgment'
@@ -348,6 +364,7 @@ export async function createShadowCampaign(env, account, input) {
       || existing.marketing_context_snapshot_sha256 !== (marketingContext?.snapshot_sha256 ?? null)
       || existingControl !== currentControl
       || existingJudgment !== (researchEnabled ? "market_research" : "shadow_strategy")
+      || canonicalJson(agentRunLineage) !== canonicalJson(agentRunLineageFromRow(existing))
     ) {
       throw new MarketingAgentHttpError(409, "campaign_id가 다른 agent 요청에 이미 사용됐습니다.");
     }
@@ -409,6 +426,7 @@ export async function createShadowCampaign(env, account, input) {
       available_capabilities: [...SHADOW_CAPABILITIES],
       capability_snapshot_sha256: capabilitySnapshotSha256,
       query_budget: 6,
+      agent_run_lineage: agentRunLineage,
       requested_by: "hosted_workspace",
     },
     created_at: now,
@@ -440,6 +458,7 @@ export async function createShadowCampaign(env, account, input) {
       knowledge_snapshot_sha256: knowledgeSnapshotSha256,
       available_capabilities: [...SHADOW_CAPABILITIES],
       capability_snapshot_sha256: capabilitySnapshotSha256,
+      agent_run_lineage: agentRunLineage,
       requested_by: "hosted_workspace",
     },
     created_at: now,
@@ -456,6 +475,7 @@ export async function createShadowCampaign(env, account, input) {
     marketing_context_snapshot_id: marketingContext?.snapshot_id ?? null,
     marketing_context_snapshot_sha256: marketingContext?.snapshot_sha256 ?? null,
     research_enabled: researchEnabled,
+    agent_run_lineage: agentRunLineage,
   };
   const taskJson = JSON.stringify(task);
   if (new TextEncoder().encode(taskJson).byteLength > MAX_WORKER_PAYLOAD_BYTES) {
@@ -493,8 +513,9 @@ export async function createShadowCampaign(env, account, input) {
         (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
          mode, origin_campaign_id, marketing_context_snapshot_id,
          marketing_context_snapshot_sha256, state, projection_revision, business_outcome,
-         created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'agent_v1', ?, ?, ?, ?, 'strategy_requested', 1, ?, ?, ?)`,
+         agent_run_id, research_session_id, research_input_sha256, research_trace_sha256,
+         research_continuation_sha256, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'agent_v1', ?, ?, ?, ?, 'strategy_requested', 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       campaignId,
       account.account_id,
@@ -505,6 +526,11 @@ export async function createShadowCampaign(env, account, input) {
       marketingContext?.snapshot_id ?? null,
       marketingContext?.snapshot_sha256 ?? null,
       businessOutcome,
+      agentRunLineage?.agent_run_id ?? null,
+      agentRunLineage?.research_session_id ?? null,
+      agentRunLineage?.research_input_sha256 ?? null,
+      agentRunLineage?.research_trace_sha256 ?? null,
+      agentRunLineage?.research_continuation_sha256 ?? null,
       now,
       now,
     ),
@@ -583,6 +609,7 @@ export async function createShadowCampaign(env, account, input) {
     ] : []),
   ]);
   return {
+    account_id: account.account_id,
     campaign_id: campaignId,
     task_id: taskId,
     mode,
@@ -594,6 +621,7 @@ export async function createShadowCampaign(env, account, input) {
     feature_packet_id: packet.packet_id,
     feature_packet_sha256: packetSha256,
     publication_allowed: packet.gate.publication_allowed,
+    agent_run_lineage: agentRunLineage,
     created_at: now,
   };
 }
@@ -2865,11 +2893,14 @@ async function loadCanonicalPrinciples(db, applicability) {
 
 async function campaignStatus(env, accountId, campaignId) {
   const row = await env.DB.prepare(
-    `SELECT campaign.campaign_id, campaign.feature_packet_id, campaign.feature_packet_sha256,
+    `SELECT campaign.account_id, campaign.campaign_id, campaign.feature_packet_id, campaign.feature_packet_sha256,
             campaign.mode, campaign.state, campaign.projection_revision,
             campaign.origin_campaign_id,
             campaign.business_outcome, campaign.marketing_context_snapshot_id,
             campaign.marketing_context_snapshot_sha256, campaign.created_at, campaign.updated_at,
+            campaign.agent_run_id, campaign.research_session_id,
+            campaign.research_input_sha256, campaign.research_trace_sha256,
+            campaign.research_continuation_sha256,
             packet.publication_allowed,
             research_task.task_id AS research_task_id,
             research_task.state AS research_task_state,
@@ -2887,7 +2918,25 @@ async function campaignStatus(env, accountId, campaignId) {
             reassessment.reassessment_sha256, reassessment.reassessment_json,
             reassessment.state AS reassessment_state,
             brief.brief_id, brief.brief_json, brief.brief_sha256,
-            plan.plan_id, plan.plan_json, plan.plan_sha256, plan.state AS plan_state
+            plan.plan_id, plan.plan_json, plan.plan_sha256, plan.state AS plan_state,
+            (SELECT evaluation_id FROM hosted_marketing_experiment_evaluations
+             WHERE campaign_id = campaign.campaign_id ORDER BY evaluated_at DESC LIMIT 1)
+              AS evaluation_id,
+            (SELECT evaluation_sha256 FROM hosted_marketing_experiment_evaluations
+             WHERE campaign_id = campaign.campaign_id ORDER BY evaluated_at DESC LIMIT 1)
+              AS evaluation_sha256,
+            (SELECT state FROM hosted_marketing_experiment_evaluations
+             WHERE campaign_id = campaign.campaign_id ORDER BY evaluated_at DESC LIMIT 1)
+              AS evaluation_state,
+            (SELECT learning_id FROM hosted_marketing_learning_candidates
+             WHERE campaign_id = campaign.campaign_id ORDER BY created_at DESC LIMIT 1)
+              AS learning_id,
+            (SELECT candidate_sha256 FROM hosted_marketing_learning_candidates
+             WHERE campaign_id = campaign.campaign_id ORDER BY created_at DESC LIMIT 1)
+              AS learning_sha256,
+            (SELECT state FROM hosted_marketing_learning_candidates
+             WHERE campaign_id = campaign.campaign_id ORDER BY created_at DESC LIMIT 1)
+              AS learning_state
      FROM hosted_marketing_campaigns AS campaign
      JOIN hosted_marketing_feature_packets AS packet
        ON packet.packet_id = campaign.feature_packet_id
@@ -2923,6 +2972,7 @@ async function campaignStatus(env, accountId, campaignId) {
   ).bind(accountId, campaignId).first();
   if (!row) throw new MarketingAgentHttpError(404, "마케팅 캠페인을 찾을 수 없습니다.");
   return {
+    account_id: row.account_id,
     campaign_id: row.campaign_id,
     feature_packet_id: row.feature_packet_id,
     feature_packet_sha256: row.feature_packet_sha256,
@@ -2931,6 +2981,7 @@ async function campaignStatus(env, accountId, campaignId) {
     state: row.state,
     projection_revision: row.projection_revision,
     business_outcome: row.business_outcome,
+    agent_run_lineage: agentRunLineageFromRow(row),
     marketing_context_snapshot: row.marketing_context_snapshot_id ? {
       snapshot_id: row.marketing_context_snapshot_id,
       sha256: row.marketing_context_snapshot_sha256,
@@ -2979,9 +3030,57 @@ async function campaignStatus(env, accountId, campaignId) {
       state: row.plan_state,
       value: JSON.parse(row.plan_json),
     } : null,
+    latest_evaluation: row.evaluation_id ? {
+      evaluation_id: row.evaluation_id,
+      sha256: row.evaluation_sha256,
+      state: row.evaluation_state,
+    } : null,
+    latest_learning_candidate: row.learning_id ? {
+      learning_id: row.learning_id,
+      sha256: row.learning_sha256,
+      state: row.learning_state,
+    } : null,
     publication_allowed: Number(row.publication_allowed) === 1,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+export function normalizeAgentRunLineage(value) {
+  if (value == null) return null;
+  assertExactKeys(value, [
+    "schema_version",
+    "agent_run_id",
+    "research_session_id",
+    "research_input_sha256",
+    "research_trace_sha256",
+    "research_continuation_sha256",
+  ], "agent_run_lineage");
+  if (value.schema_version !== "trace.feature-launch-lineage.v1") {
+    throw new MarketingAgentHttpError(400, "agent run lineage schema가 올바르지 않습니다.");
+  }
+  return {
+    schema_version: value.schema_version,
+    agent_run_id: safeId(value.agent_run_id, "agent_run_id"),
+    research_session_id: safeId(value.research_session_id, "research_session_id"),
+    research_input_sha256: sha256Digest(value.research_input_sha256, "research_input_sha256"),
+    research_trace_sha256: sha256Digest(value.research_trace_sha256, "research_trace_sha256"),
+    research_continuation_sha256: sha256Digest(
+      value.research_continuation_sha256,
+      "research_continuation_sha256",
+    ),
+  };
+}
+
+export function agentRunLineageFromRow(row) {
+  if (row?.agent_run_id == null) return null;
+  return {
+    schema_version: "trace.feature-launch-lineage.v1",
+    agent_run_id: row.agent_run_id,
+    research_session_id: row.research_session_id,
+    research_input_sha256: row.research_input_sha256,
+    research_trace_sha256: row.research_trace_sha256,
+    research_continuation_sha256: row.research_continuation_sha256,
   };
 }
 

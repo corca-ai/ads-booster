@@ -162,6 +162,38 @@ model to reproduce an earlier choice. Only `observe` capabilities exist in this 
 candidate materialization, Threads publication, messaging, CRM mutation, and spend remain outside
 this composition root.
 
+### Dynamic research to hosted campaign handoff
+
+`trace-marketing agent launch` is the first canonical bridge from that local reasoning loop into the
+existing hosted feedback loop. It currently accepts only a closed-gate shadow packet and requires
+both product-truth and market-evidence scopes. Product truth must be bound to the exact packet;
+optional customer intelligence must be sufficient. A successful but locally unverified market
+proposal produces a terminal `ResearchContinuation` instead of a false Evidence Brief. Only this
+specific continuation may ask the hosted market-research owner to fetch and hash source bytes.
+
+```text
+dynamic research terminal trace
+-> host-derived ResearchContinuation + immutable lineage
+-> persist bound control-plane invocation + execution-start
+-> POST shadow campaign once
+-> hosted byte verification -> strategy -> approvals -> existing execution/outcome/learning loop
+                         \
+                          ambiguous response -> GET-only reconciliation
+```
+
+The model proposes research decisions and observations; it cannot choose the endpoint, request body,
+idempotency key, effect class, or workflow transition. The caller supplies the agent-run ID and the
+host binds the same value as the campaign ID. D1 migration `0032` stores the
+agent-run ID and research input/trace/continuation digests as an all-or-none immutable lineage. The
+market callback rebinds that lineage before it can queue strategy, and campaign status returns the
+authenticated account ID, lineage, and latest evaluation and learning-candidate IDs. The local
+preflight rejects a handoff above the hosted 64 KiB request limit before model or network work, and
+the create route rejects a researched account that differs from the authenticated account. Appium,
+image generation, candidate
+materialization, approval, Threads publication, evaluation, reassessment, and learning remain their
+existing independently tested tools. A missing customer signal, failed provider call, altered packet,
+altered local ledger, or mismatched hosted status produces no new POST.
+
 New strategy work uses a separate `agent_v1` hosted campaign epoch. D1 owns immutable feature
 packets, account-scoped campaign projections, ordered run events, context receipts, strategy briefs,
 pre-registered experiments, approval grants, and tool-action intent. It does not dual-write these

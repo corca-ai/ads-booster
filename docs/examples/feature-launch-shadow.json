@@ -1,0 +1,62 @@
+{
+  "schema_version": "trace.feature-launch-run-request.v1",
+  "agent_run_id": "ai-lock-screen-launch-one",
+  "business_outcome": "Discover a stronger launch format.",
+  "current_control": "A generic iPhone-owner text hook.",
+  "marketing_context_snapshot_id": null,
+  "research": {
+    "schema_version": "trace.dynamic-evidence-research-request.v1",
+    "session_id": "ai-lock-screen-research-one",
+    "account_id": "trace-kr",
+    "feature_packet": {
+      "schema_version": "trace.feature-evidence.v1",
+      "packet_id": "packet-ai-lock-screen-source-candidate",
+      "feature_id": "ai-lock-screen-concept",
+      "title": "AI Lock Screen Concept",
+      "lifecycle": "source_candidate",
+      "repository": "corca-ai/trace",
+      "mutable_ref": "develop",
+      "resolved_commit_sha": "1111111111111111111111111111111111111111",
+      "tree_sha": "2222222222222222222222222222222222222222",
+      "claims": [
+        {
+          "claim_id": "claim-scheduled-character-wallpaper",
+          "text": "A selected character can appear in a concept-driven lock-screen wallpaper.",
+          "status": "source_supported",
+          "evidence_ids": ["source-diff"]
+        }
+      ],
+      "evidence": [
+        {
+          "evidence_id": "source-diff",
+          "kind": "source_diff",
+          "source_uri": "repo://corca-ai/trace",
+          "immutable_ref": "1111111111111111111111111111111111111111",
+          "content_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "result": "observed",
+          "collected_at": "2026-09-02T03:00:00Z"
+        }
+      ],
+      "limitations": ["Installed behavior is not yet proven."],
+      "gate": {
+        "publication_allowed": false,
+        "allowed_claim_ids": [],
+        "blocked_claim_ids": ["claim-scheduled-character-wallpaper"],
+        "reasons": ["Fresh installed-product evidence is required before publication."]
+      },
+      "observed_at": "2026-09-02T03:00:00Z"
+    },
+    "required_scopes": ["product_truth", "market_evidence"],
+    "marketing_context": null,
+    "market_context": {
+      "schema_version": "trace.dynamic-market-research-context.v1",
+      "country": "KR",
+      "language": "ko",
+      "business_outcome": "Discover a stronger launch format.",
+      "current_control": "A generic iPhone-owner text hook.",
+      "query_budget": 4
+    },
+    "max_tool_calls": 2,
+    "max_cost_units": 8
+  }
+}

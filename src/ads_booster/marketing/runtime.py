@@ -51,6 +51,7 @@ _SESSION_HEADER_SCHEMA_VERSION = "trace.marketing-session-header.v1"
 _TERMINAL_STATES = frozenset(
     {RuntimeState.STOPPED, RuntimeState.INCONCLUSIVE, RuntimeState.COMPLETED}
 )
+_KNOWN_EFFECT_CLASSES = frozenset({"observe", "local_artifact", "control_plane_write", "external"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +135,7 @@ def bind_tool_invocation(
     request: JsonObject,
 ) -> BoundToolInvocation:
     """Create the only supported call/request binding for a capability handoff."""
+    _validate_effect_class(capability.effect_class)
     request_json = canonical_json_object(request)
     invocation = BoundToolInvocation(
         ToolCall(
@@ -487,7 +489,7 @@ class MarketingAgentRuntime:
         self._validate_dispatch_state(session)
         self._validate_invocation(capability, invocation)
         grant_digest: str | None = None
-        if call.effect_class == "external":
+        if _effect_requires_approval(call.effect_class):
             if grant is None:
                 return self._append(
                     session,
@@ -671,6 +673,27 @@ class MarketingAgentRuntime:
         self._persist_transition(store, session, reconciled)
         return reconciled
 
+    def resolve_persisted_reconciliation(
+        self,
+        store: SessionStore,
+        session: AgentSession,
+        receipt: ToolReceipt,
+        *,
+        now: datetime,
+    ) -> AgentSession:
+        """Persist a terminal GET-derived receipt for one ambiguous, never-retried effect."""
+        self._require_current_session(store, session)
+        if (
+            session.state is not RuntimeState.AWAITING_RECONCILIATION
+            or session.pending_call is None
+            or not session.execution_started
+            or receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT
+        ):
+            raise MarketingRuntimeError("reconciliation_receipt_invalid")
+        resolved = self._record_receipt(session, receipt, now=now)
+        self._persist_transition(store, session, resolved)
+        return resolved
+
     def append_persisted_event(
         self,
         store: SessionStore,
@@ -720,6 +743,13 @@ class MarketingAgentRuntime:
     ) -> AgentSession:
         if session.state is not RuntimeState.EXECUTING or session.pending_call is None:
             raise MarketingRuntimeError("receipt_without_executing_session")
+        return self._record_receipt(session, receipt, now=now)
+
+    def _record_receipt(
+        self, session: AgentSession, receipt: ToolReceipt, *, now: datetime
+    ) -> AgentSession:
+        if session.pending_call is None:
+            raise MarketingRuntimeError("receipt_without_pending_call")
         if receipt.call_id != session.pending_call.call_id:
             raise MarketingRuntimeError("receipt_call_id_mismatch")
         if receipt.call_sha256 != session.pending_call.digest:
@@ -753,6 +783,8 @@ class MarketingAgentRuntime:
     def _validate_invocation(capability: ToolCapability, invocation: BoundToolInvocation) -> None:
         invocation.validate()
         call = invocation.call
+        _validate_effect_class(capability.effect_class)
+        _validate_effect_class(call.effect_class)
         if (
             capability.capability_id != call.capability_id
             or capability.descriptor_sha256 != call.descriptor_sha256
@@ -1312,14 +1344,25 @@ def _require_dispatchable(replay: _RuntimeReplay) -> None:
 def _validate_replayed_grant(
     replay: _RuntimeReplay, invocation: BoundToolInvocation, grant_sha256: str | None
 ) -> None:
-    if invocation.call.effect_class == "external" and grant_sha256 is None:
+    requires_approval = _effect_requires_approval(invocation.call.effect_class)
+    if requires_approval and grant_sha256 is None:
         raise MarketingRuntimeError("session_event_approval_missing")
-    if invocation.call.effect_class != "external" and grant_sha256 is not None:
+    if not requires_approval and grant_sha256 is not None:
         raise MarketingRuntimeError("session_event_approval_unexpected")
     if grant_sha256 is not None:
         if grant_sha256 in replay.consumed_grant_sha256s:
             raise MarketingRuntimeError("session_event_grant_duplicate")
         replay.consumed_grant_sha256s.append(grant_sha256)
+
+
+def _validate_effect_class(effect_class: str) -> None:
+    if effect_class not in _KNOWN_EFFECT_CLASSES:
+        raise MarketingRuntimeError("tool_effect_class_invalid")
+
+
+def _effect_requires_approval(effect_class: str) -> bool:
+    _validate_effect_class(effect_class)
+    return effect_class == "external"
 
 
 def _is_runtime_reserved_event(event_type: str) -> bool:

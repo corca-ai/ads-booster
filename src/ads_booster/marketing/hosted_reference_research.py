@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol
 
 from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
-from ads_booster.contracts.marketing_agent import FeatureEvidencePacket, contract_sha256
+from ads_booster.contracts.marketing_agent import (
+    FeatureEvidencePacket,
+    FeatureLaunchLineage,
+    contract_sha256,
+)
 from ads_booster.contracts.marketing_context import MarketingContextPlanningProjection
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
@@ -149,6 +153,7 @@ class ReferenceResearchRequest(ResearchModel):
     available_capabilities: Annotated[tuple[str, ...], Field(max_length=32)]
     capability_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     query_budget: Annotated[int, Field(ge=2, le=12)] = 6
+    agent_run_lineage: FeatureLaunchLineage | None = None
     requested_by: Literal["hosted_workspace"]
 
     @model_validator(mode="after")
@@ -168,6 +173,11 @@ class ReferenceResearchRequest(ResearchModel):
             and self.marketing_context.account_id != self.account.account_id
         ):
             raise ValueError("research-carried marketing context is out of account scope")
+        if (
+            self.agent_run_lineage is not None
+            and self.agent_run_lineage.agent_run_id != self.campaign_id
+        ):
+            raise ValueError("research-carried agent run does not match the campaign")
         return self
 
 
@@ -272,6 +282,13 @@ class HostedReferenceResearchExecutor:
                     snapshot.model_dump(mode="json")
                 ),
                 "reference_snapshot_sha256": contract_sha256(snapshot),
+                "agent_run_lineage": (
+                    None
+                    if prepared.request.agent_run_lineage is None
+                    else _JSON_OBJECT.validate_python(
+                        prepared.request.agent_run_lineage.model_dump(mode="json")
+                    )
+                ),
                 "tool_actions_created": 0,
             },
         )

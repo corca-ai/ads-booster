@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { receiveHostedReferenceResearchCallback } from
   "../src/hosted-reference-research-callback.js";
-import { createShadowCampaign } from "../src/marketing-agent.js";
+import { createShadowCampaign, handleHostedMarketingAgent } from "../src/marketing-agent.js";
 import { D1Adapter } from "./d1-fixture.js";
 
 function canonicalJson(value) {
@@ -93,13 +93,34 @@ test("market research stays quarantined and deterministically dispatches strateg
     language: "ko",
     timezone: "Asia/Seoul",
   };
+  const lineage = {
+    schema_version: "trace.feature-launch-lineage.v1",
+    agent_run_id: "campaign-research-1",
+    research_session_id: "local-research-1",
+    research_input_sha256: "1".repeat(64),
+    research_trace_sha256: "2".repeat(64),
+    research_continuation_sha256: "3".repeat(64),
+  };
   const created = await createShadowCampaign({ DB }, account, {
+    account_id: account.account_id,
     campaign_id: "campaign-research-1",
     business_outcome: "Increase completed lock-screen setups.",
     current_control: "아이폰 쓰는 유저들...",
     feature_packet: packet(),
+    agent_run_lineage: lineage,
   });
   assert.equal(created.stage, "market_research");
+  const statusResponse = await handleHostedMarketingAgent(
+    new Request(`https://control.example/api/marketing-agent/campaigns/${created.campaign_id}`),
+    { DB },
+    account,
+  );
+  assert.equal(statusResponse.status, 200);
+  const status = await statusResponse.json();
+  assert.equal(status.account_id, account.account_id);
+  assert.deepEqual(status.agent_run_lineage, lineage);
+  assert.equal(status.latest_evaluation, null);
+  assert.equal(status.latest_learning_candidate, null);
   DB.sqlite.prepare(
     `UPDATE hosted_workspace_capture_tasks
      SET worker_id = 'worker-1', lease_id = 'lease-1', execution_started_at = 'now'
@@ -168,6 +189,7 @@ test("market research stays quarantined and deterministically dispatches strateg
         campaign_id: created.campaign_id,
         reference_snapshot: snapshot,
         reference_snapshot_sha256: digest(snapshot),
+        agent_run_lineage: lineage,
         tool_actions_created: 0,
       },
     },
@@ -191,6 +213,7 @@ test("market research stays quarantined and deterministically dispatches strateg
   ).get(accepted.strategy_task_id);
   assert.equal(strategyTask.required_capability, "shadow_strategy_v1");
   const strategyPayload = JSON.parse(strategyTask.task_json).payload;
+  assert.deepEqual(strategyPayload.agent_run_lineage, lineage);
   assert.equal(strategyPayload.reference_snapshot_sha256, digest(snapshot));
   assert.equal(strategyPayload.reference_snapshot.quarantine, true);
   assert.equal(strategyPayload.reference_verification.receipts.length, 2);

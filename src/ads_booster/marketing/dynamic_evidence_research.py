@@ -67,7 +67,7 @@ _PLANNER_PROMPT_VERSION = "trace.dynamic-evidence-research-planner.v1"
 _MARKET_PROMPT_VERSION = "trace.dynamic-market-evidence-hand.v1"
 _SKILL_VERSION = "trace.dynamic-evidence-research-skill.v1"
 _REGISTRY_VERSION = "trace.dynamic-evidence-research-registry.v1"
-_RESULT_SCHEMA_VERSION = "trace.dynamic-evidence-research-result.v1"
+_RESULT_SCHEMA_VERSION = "trace.dynamic-evidence-research-result.v2"
 _DEFAULT_TIMEOUT_SECONDS = 300.0
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
@@ -136,8 +136,32 @@ class DynamicEvidenceFinding(ContractModel):
     supported_claim_ids: Annotated[tuple[AgentIdentifier, ...], Field(max_length=16)] = ()
 
 
+class ResearchContinuation(ContractModel):
+    """Terminal, fail-closed handoff for evidence only the hosted verifier may promote."""
+
+    schema_version: Literal["trace.research-continuation.v1"]
+    continuation_id: AgentIdentifier
+    account_id: AgentIdentifier
+    feature_packet_id: AgentIdentifier
+    feature_packet_sha256: Sha256Digest
+    research_session_id: AgentIdentifier
+    research_input_sha256: Sha256Digest
+    research_trace_sha256: Sha256Digest
+    pending_scope: Literal[ResearchScope.MARKET_EVIDENCE]
+    pending_reason: Literal["unverified_model_proposal"]
+    completed_scopes: Annotated[tuple[ResearchScope, ...], Field(max_length=2)]
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def require_terminal_market_boundary(self) -> Self:
+        _require_utc(self.created_at)
+        if ResearchScope.MARKET_EVIDENCE in self.completed_scopes:
+            raise ValueError("market evidence cannot be completed before hosted byte verification")
+        return self
+
+
 class DynamicEvidenceResearchResult(ContractModel):
-    schema_version: Literal["trace.dynamic-evidence-research-result.v1"]
+    schema_version: Literal["trace.dynamic-evidence-research-result.v2"]
     session_id: AgentIdentifier
     state: Literal["completed", "inconclusive", "awaiting_reconciliation"]
     input_snapshot_sha256: Sha256Digest
@@ -150,11 +174,16 @@ class DynamicEvidenceResearchResult(ContractModel):
     spent_cost_units: Annotated[int, Field(ge=0, le=24)]
     findings: Annotated[tuple[DynamicEvidenceFinding, ...], Field(max_length=3)]
     evidence_brief: FeatureLaunchEvidenceBrief | None = None
+    continuation: ResearchContinuation | None = None
 
     @model_validator(mode="after")
     def require_terminal_brief_consistency(self) -> Self:
         if (self.state == "completed") != (self.evidence_brief is not None):
             raise ValueError("only completed dynamic research may expose an evidence brief")
+        if self.continuation is not None and self.state != "inconclusive":
+            raise ValueError("only terminal inconclusive research may expose a continuation")
+        if self.evidence_brief is not None and self.continuation is not None:
+            raise ValueError("research cannot complete and continue at the same time")
         return self
 
 
@@ -747,6 +776,15 @@ class DynamicEvidenceResearchRunner:
             else None
         )
         state = _result_state(completed.state)
+        findings = tuple(item.finding() for item in result_store.for_goal(goal.goal_id))
+        trace_sha256 = session_trace_sha256(completed)
+        continuation = _research_continuation(
+            request,
+            state=state,
+            findings=findings,
+            trace_sha256=trace_sha256,
+            created_at=completed.events[-1].occurred_at,
+        )
         return DynamicEvidenceResearchResult(
             schema_version=_RESULT_SCHEMA_VERSION,
             session_id=request.session_id,
@@ -756,12 +794,69 @@ class DynamicEvidenceResearchRunner:
             planner_protocol_sha256=goal.planner_protocol_sha256,
             provider_id=goal.planner_provider_id,
             model_id=goal.planner_model_id,
-            trace_sha256=session_trace_sha256(completed),
+            trace_sha256=trace_sha256,
             tool_calls=completed.tool_calls,
             spent_cost_units=completed.spent_cost_units,
-            findings=tuple(item.finding() for item in result_store.for_goal(goal.goal_id)),
+            findings=findings,
             evidence_brief=brief,
+            continuation=continuation,
         )
+
+
+def _research_continuation(
+    request: DynamicEvidenceResearchRequest,
+    *,
+    state: Literal["completed", "inconclusive", "awaiting_reconciliation"],
+    findings: tuple[DynamicEvidenceFinding, ...],
+    trace_sha256: str,
+    created_at: datetime,
+) -> ResearchContinuation | None:
+    """Admit only a fully observed shadow run whose sole open trust boundary is market bytes."""
+    if state != "inconclusive" or request.feature_packet.gate.publication_allowed:
+        return None
+    by_scope = {finding.scope: finding for finding in findings}
+    if set(by_scope) != set(request.required_scopes):
+        return None
+    market = by_scope.get(ResearchScope.MARKET_EVIDENCE)
+    if (
+        market is None
+        or market.evidence_status != "insufficient"
+        or market.trust_state != "unverified_model_proposal"
+        or not market.source_ref.startswith("quarantined-codex-search:")
+    ):
+        return None
+    completed_scopes: list[ResearchScope] = []
+    for scope in request.required_scopes:
+        if scope is ResearchScope.MARKET_EVIDENCE:
+            continue
+        finding = by_scope[scope]
+        if scope is ResearchScope.PRODUCT_TRUTH:
+            packet_is_bound = (
+                finding.trust_state == "packet_bound"
+                and finding.source_sha256 == contract_sha256(request.feature_packet)
+                and finding.evidence_status == "insufficient"
+                and not finding.supported_claim_ids
+            )
+            if not packet_is_bound:
+                return None
+        elif finding.evidence_status != "sufficient":
+            return None
+        completed_scopes.append(scope)
+    input_sha256 = contract_sha256(request)
+    return ResearchContinuation(
+        schema_version="trace.research-continuation.v1",
+        continuation_id=f"continuation-{input_sha256[:24]}",
+        account_id=request.account_id,
+        feature_packet_id=request.feature_packet.packet_id,
+        feature_packet_sha256=contract_sha256(request.feature_packet),
+        research_session_id=request.session_id,
+        research_input_sha256=input_sha256,
+        research_trace_sha256=trace_sha256,
+        pending_scope=ResearchScope.MARKET_EVIDENCE,
+        pending_reason="unverified_model_proposal",
+        completed_scopes=tuple(completed_scopes),
+        created_at=created_at,
+    )
 
 
 def build_dynamic_research_registry(

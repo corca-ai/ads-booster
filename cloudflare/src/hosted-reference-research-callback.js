@@ -1,6 +1,7 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
 import {
+  agentRunLineageFromRow,
   MARKETING_JUDGMENT_PIPELINE,
   resolveMarketingContextProjection,
 } from "./marketing-agent.js";
@@ -52,11 +53,16 @@ export async function receiveHostedReferenceResearchCallback(
   const campaign = await env.DB.prepare(
     `SELECT campaign_id, account_id, feature_packet_id, feature_packet_sha256,
             mode, state, projection_revision, marketing_context_snapshot_id,
-            marketing_context_snapshot_sha256
+            marketing_context_snapshot_sha256, agent_run_id, research_session_id,
+            research_input_sha256, research_trace_sha256, research_continuation_sha256
      FROM hosted_marketing_campaigns WHERE campaign_id = ? AND account_id = ?`,
   ).bind(payload.campaign_id, task.account_id).first();
   if (!campaign || campaign.state !== "strategy_requested") {
     throw new HttpError(409, "campaign is not awaiting reference research");
+  }
+  const agentRunLineage = agentRunLineageFromRow(campaign);
+  if (canonicalJson(payload.agent_run_lineage ?? null) !== canonicalJson(agentRunLineage)) {
+    throw new HttpError(409, "reference research agent-run lineage binding is invalid");
   }
   const now = new Date().toISOString();
   if (status !== "succeeded") {
@@ -86,6 +92,7 @@ export async function receiveHostedReferenceResearchCallback(
     || snapshot.campaign_id !== campaign.campaign_id
     || snapshot.feature_packet_sha256 !== campaign.feature_packet_sha256
     || snapshot.quarantine !== true
+    || canonicalJson(output.agent_run_lineage ?? null) !== canonicalJson(agentRunLineage)
     || output.tool_actions_created !== 0
   ) {
     throw new HttpError(409, "reference research output binding is invalid");
@@ -141,6 +148,7 @@ export async function receiveHostedReferenceResearchCallback(
       knowledge_snapshot_sha256: payload.knowledge_snapshot_sha256,
       available_capabilities: payload.available_capabilities,
       capability_snapshot_sha256: payload.capability_snapshot_sha256,
+      agent_run_lineage: agentRunLineage,
       requested_by: "hosted_workspace",
     },
     created_at: now,
@@ -170,6 +178,7 @@ export async function receiveHostedReferenceResearchCallback(
     source_count: snapshot.sources.length,
     verified_source_count: verificationBundle.receipts.length,
     reference_verification_sha256: verificationBundleSha256,
+    agent_run_lineage: agentRunLineage,
   };
   const statements = [
     env.DB.prepare(

@@ -1,7 +1,8 @@
 # Marketing Agent Runtime
 
-Status: Draft — post-merge implementation contract. This is the high-level agent over the existing
-Trace control plane; it does not replace or directly reorganize Cloudflare automation in this PR.
+Status: Draft — the first dynamic-research-to-hosted-shadow bridge is implemented; broader skill
+selection and autonomous next-experiment planning remain future work. This high-level agent uses the
+existing Trace control plane and does not replace or directly reorganize its execution automation.
 
 ## Problem
 
@@ -227,7 +228,19 @@ and only feature-gate-allowed supported claim IDs. Feature Launch commits that i
 its goal and binds its digest and selected research observations into its proposal, derived call,
 observation, evaluation, replay, and terminal audit. Raw source locations, source text, and research
 questions remain outside the next planner context. This is a local fake-backend hand-off contract, not
-a hosted orchestrator, adapter, or live-market evaluation claim.
+a general hosted orchestrator or live-market evaluation claim.
+
+Implemented: `feature_launch_run` connects a terminal local research trace to one hosted shadow
+campaign. A closed publication gate may yield a `ResearchContinuation` only when product truth is
+bound to the exact packet, optional customer evidence is sufficient, and the sole remaining trust
+boundary is a successfully quarantined market proposal. The host—not the model—derives the campaign
+body, capability, and idempotency key, and binds the caller-supplied agent-run ID as the campaign ID.
+The runtime rejects unknown effect classes and cross-account status, preflights the hosted 64 KiB
+request limit, then writes dispatch and execution-start before the
+single POST; ambiguous completion is GET-only reconciliation. D1 stores immutable research lineage,
+the reference callback carries it through byte verification, and strategy revalidates it. This bridge
+delegates all capture, materialization, publication, evaluation, reassessment, and learning behavior
+to the existing owners.
 
 Implemented: `trace.marketing-os-scorecard.v1` is a named test-owned, versioned five-case adversarial
 regression corpus that executes separate Evidence Research -> immutable Brief -> Feature Launch
@@ -246,8 +259,7 @@ expected safe result itself has `process_passed: false`; a rehashed but fabricat
 the semantics of a blocked-claim stop.
 
 Next: run the existing private corpus contract through this installed composition with repeated pinned
-provider/model trials before making any model-quality claim. Before any external-effect adapter, add execution-time approval/revocation verification, versioned verifiable
-receipt proof, validated registry-manifest binding, a closed effect-class contract, and provider
-idempotency/readback/reconciliation. The local ledger derives its own checkpoint, but a hosted
-monotonic authority ledger/CAS lease must own the external effect. Then run fresh design critique
-before adding a thin control-plane adapter in a new post-merge PR.
+provider/model trials before making any model-quality claim. Extend dynamic planning from caller-fixed
+research scopes to evidence-gap-driven scope proposals without relaxing the registry, budget, product
+claim, approval, or channel-owner boundaries. Then make hosted outcome/reassessment/learning receipts
+select the next bounded experiment rather than merely exposing those IDs in campaign status.

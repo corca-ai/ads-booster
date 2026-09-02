@@ -120,6 +120,14 @@ def _payload() -> JsonObject:
             "knowledge_snapshot_sha256": _json_sha256({"principles": principles}),
             "available_capabilities": capabilities,
             "capability_snapshot_sha256": _json_sha256({"capabilities": capabilities}),
+            "agent_run_lineage": {
+                "schema_version": "trace.feature-launch-lineage.v1",
+                "agent_run_id": "campaign-1",
+                "research_session_id": "local-research-1",
+                "research_input_sha256": "1" * 64,
+                "research_trace_sha256": "2" * 64,
+                "research_continuation_sha256": "3" * 64,
+            },
             "requested_by": "hosted_workspace",
         },
     )
@@ -366,6 +374,7 @@ def test_shadow_judgment_binds_strategy_to_evidence_and_receipts(tmp_path: Path)
     assert result.status is TaskStatus.SUCCEEDED
     assert result.output["publication_allowed"] is False
     assert result.output["context_receipt_sha256"] == prepared.context_receipt_sha256
+    assert result.output["agent_run_lineage"] == _payload()["agent_run_lineage"]
     strategy = result.output["strategy_brief"]
     assert isinstance(strategy, dict)
     assert strategy["feature_packet_id"] == "packet-lockscreen-v1"

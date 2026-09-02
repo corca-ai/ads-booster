@@ -26,6 +26,17 @@ AgentIdentifier = Annotated[
 CommitSha = Annotated[str, Field(pattern=r"^[a-f0-9]{40}$")]
 
 
+class FeatureLaunchLineage(ContractModel):
+    """Immutable local-research identity carried across hosted reasoning tools."""
+
+    schema_version: Literal["trace.feature-launch-lineage.v1"]
+    agent_run_id: AgentIdentifier
+    research_session_id: AgentIdentifier
+    research_input_sha256: Sha256Digest
+    research_trace_sha256: Sha256Digest
+    research_continuation_sha256: Sha256Digest
+
+
 @unique
 class FeatureLifecycle(StrEnum):
     SOURCE_CANDIDATE = "source_candidate"

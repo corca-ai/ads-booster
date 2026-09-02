@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -88,6 +89,7 @@ test("canonical integer fixture matches the Python contract digest", () => {
 
 function campaignInput(packet = featurePacket()) {
   return {
+    account_id: ACCOUNT.account_id,
     campaign_id: "lockscreen-shadow-1",
     business_outcome: "AI 잠금화면의 차별점을 검증 가능한 Threads 포맷으로 찾는다.",
     current_control: "아이폰 쓰는 유저들...",
@@ -559,6 +561,22 @@ test("feature packet normalization preserves only canonical shadow evidence", ()
     () => normalizeFeaturePacket(featurePacket({ observed_at: "2026-08-31T09:00:00+09:00" })),
     /UTC ISO timestamp/,
   );
+  assert.throws(
+    () => normalizeFeaturePacket(featurePacket({ title: "😀".repeat(200) })),
+    /title 값/,
+  );
+});
+
+test("documented feature packet digest matches the Python launch contract", () => {
+  const input = JSON.parse(readFileSync(
+    new URL("../../docs/examples/feature-launch-shadow.json", import.meta.url),
+    "utf8",
+  ));
+
+  assert.equal(
+    digest(normalizeFeaturePacket(input.research.feature_packet)),
+    "a1ed255fc06292f2350247f57e3f625b41cbe89bce4de45dfda2f2b34fcbc3a0",
+  );
 });
 
 test("shadow campaign creates only an event and a judgment task", async () => {
@@ -579,6 +597,60 @@ test("shadow campaign creates only an event and a judgment task", async () => {
   assert.doesNotMatch(sql, /hosted_workspace_candidates/);
   assert.doesNotMatch(sql, /hosted_marketing_tool_actions/);
   assert.doesNotMatch(sql, /threads_publications/);
+});
+
+test("feature launch lineage is normalized and bound into the hosted task", async () => {
+  const DB = creationDb();
+  const lineage = {
+    schema_version: "trace.feature-launch-lineage.v1",
+    agent_run_id: "launch-one",
+    research_session_id: "research-one",
+    research_input_sha256: "1".repeat(64),
+    research_trace_sha256: "2".repeat(64),
+    research_continuation_sha256: "3".repeat(64),
+  };
+  const created = await createShadowCampaign(
+    { DB },
+    ACCOUNT,
+    { ...campaignInput(), campaign_id: "launch-one", agent_run_lineage: lineage },
+  );
+  const taskStatement = DB.batches[0].find((statement) =>
+    statement.sql.includes("INSERT INTO hosted_workspace_capture_tasks"));
+  const task = JSON.parse(taskStatement.values[4]);
+  const campaignStatement = DB.batches[0].find((statement) =>
+    statement.sql.includes("INSERT INTO hosted_marketing_campaigns"));
+
+  assert.deepEqual(created.agent_run_lineage, lineage);
+  assert.equal(created.account_id, ACCOUNT.account_id);
+  assert.deepEqual(task.payload.agent_run_lineage, lineage);
+  assert.deepEqual(campaignStatement.values.slice(9, 14), [
+    "launch-one",
+    "research-one",
+    "1".repeat(64),
+    "2".repeat(64),
+    "3".repeat(64),
+  ]);
+  await assert.rejects(
+    createShadowCampaign(
+      { DB: creationDb() },
+      ACCOUNT,
+      { ...campaignInput(), agent_run_lineage: { ...lineage, injected: true } },
+    ),
+    /허용되지 않은 field/,
+  );
+  await assert.rejects(
+    createShadowCampaign(
+      { DB: creationDb() },
+      ACCOUNT,
+      {
+        ...campaignInput(),
+        account_id: "another-account",
+        campaign_id: "launch-one",
+        agent_run_lineage: lineage,
+      },
+    ),
+    /인증 계정과 일치하지 않습니다/,
+  );
 });
 
 test("shadow campaign fails closed without a judgment worker or with a packet ID collision", async () => {
@@ -635,6 +707,68 @@ test("judgment callback stores a bound brief and registered experiment exactly o
   );
   assert.deepEqual(duplicate, { accepted: true, duplicate: true });
   assert.equal(DB.briefs.length, 1);
+});
+
+test("strategy callback rebinds feature-launch lineage and rejects a changed worker result", async () => {
+  const lineage = {
+    schema_version: "trace.feature-launch-lineage.v1",
+    agent_run_id: "lockscreen-shadow-1",
+    research_session_id: "research-one",
+    research_input_sha256: "1".repeat(64),
+    research_trace_sha256: "2".repeat(64),
+    research_continuation_sha256: "3".repeat(64),
+  };
+  const acceptedFixture = judgmentFixture();
+  Object.assign(acceptedFixture.campaign, {
+    agent_run_id: lineage.agent_run_id,
+    research_session_id: lineage.research_session_id,
+    research_input_sha256: lineage.research_input_sha256,
+    research_trace_sha256: lineage.research_trace_sha256,
+    research_continuation_sha256: lineage.research_continuation_sha256,
+  });
+  const acceptedTask = JSON.parse(acceptedFixture.task.task_json);
+  acceptedTask.payload.agent_run_lineage = lineage;
+  acceptedFixture.task.task_json = JSON.stringify(acceptedTask);
+  acceptedFixture.result.output.agent_run_lineage = lineage;
+  const acceptedDb = new CallbackDb(acceptedFixture.campaign, acceptedFixture.task);
+  const callback = {
+    callback_id: `${acceptedFixture.task.task_id}:completed`,
+    task_id: acceptedFixture.task.task_id,
+    run_id: acceptedFixture.task.run_id,
+    account_id: acceptedFixture.task.account_id,
+    kind: "marketing_judgment",
+    result: acceptedFixture.result,
+  };
+
+  await receiveHostedMarketingJudgmentCallback({ DB: acceptedDb }, acceptedFixture.task, callback);
+  assert.equal(acceptedDb.briefs.length, 1);
+
+  const rejectedFixture = judgmentFixture();
+  Object.assign(rejectedFixture.campaign, {
+    agent_run_id: lineage.agent_run_id,
+    research_session_id: lineage.research_session_id,
+    research_input_sha256: lineage.research_input_sha256,
+    research_trace_sha256: lineage.research_trace_sha256,
+    research_continuation_sha256: lineage.research_continuation_sha256,
+  });
+  const rejectedTask = JSON.parse(rejectedFixture.task.task_json);
+  rejectedTask.payload.agent_run_lineage = lineage;
+  rejectedFixture.task.task_json = JSON.stringify(rejectedTask);
+  rejectedFixture.result.output.agent_run_lineage = {
+    ...lineage,
+    research_trace_sha256: "9".repeat(64),
+  };
+  const rejectedDb = new CallbackDb(rejectedFixture.campaign, rejectedFixture.task);
+  const rejectedCallback = { ...callback, result: rejectedFixture.result };
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback(
+      { DB: rejectedDb },
+      rejectedFixture.task,
+      rejectedCallback,
+    ),
+    /output binding/,
+  );
+  assert.equal(rejectedDb.briefs.length, 0);
 });
 
 test("causal strategy registration freezes one account and Threads exposure plan", async () => {

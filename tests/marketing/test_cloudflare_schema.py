@@ -192,6 +192,45 @@ def test_shadow_marketing_campaign_cannot_create_tool_actions() -> None:
         ).fetchone() == (0,)
 
 
+def test_agent_run_lineage_is_complete_unique_and_immutable() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _insert_marketing_agent_account_and_packet(connection)
+        with pytest.raises(sqlite3.IntegrityError, match="lineage must be complete"):
+            _ = connection.execute(
+                """INSERT INTO hosted_marketing_campaigns
+                (campaign_id, account_id, feature_packet_id, feature_packet_sha256,
+                 runtime_epoch, mode, state, business_outcome, agent_run_id,
+                 created_at, updated_at)
+                VALUES ('partial-lineage', 'trace_kr', 'packet-1', ?, 'agent_v1', 'shadow',
+                        'evidence_candidate', 'outcome', 'run-one', 'now', 'now')""",
+                ("a" * 64,),
+            )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_campaigns
+            (campaign_id, account_id, feature_packet_id, feature_packet_sha256,
+             runtime_epoch, mode, state, business_outcome, agent_run_id, research_session_id,
+             research_input_sha256, research_trace_sha256, research_continuation_sha256,
+             created_at, updated_at)
+            VALUES ('campaign-lineage', 'trace_kr', 'packet-1', ?, 'agent_v1', 'shadow',
+                    'evidence_candidate', 'outcome', 'run-one', 'research-one', ?, ?, ?,
+                    'now', 'now')""",
+            ("a" * 64, "b" * 64, "c" * 64, "d" * 64),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="lineage is immutable"):
+            _ = connection.execute(
+                """UPDATE hosted_marketing_campaigns SET research_trace_sha256 = ?
+                WHERE campaign_id = 'campaign-lineage'""",
+                ("e" * 64,),
+            )
+
+        assert connection.execute(
+            """SELECT agent_run_id, research_session_id, research_input_sha256,
+                      research_trace_sha256, research_continuation_sha256
+               FROM hosted_marketing_campaigns WHERE campaign_id = 'campaign-lineage'"""
+        ).fetchone() == ("run-one", "research-one", "b" * 64, "c" * 64, "d" * 64)
+
+
 def test_adapter_capability_migration_seeds_trace_reference_installations() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection, through="0023_marketing_knowledge_snapshots.sql")

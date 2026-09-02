@@ -23,6 +23,12 @@ from ads_booster.marketing.dynamic_evidence_research import (
 )
 from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.evidence_research_operator import EvidenceResearchOperatorError
+from ads_booster.marketing.feature_launch_run import (
+    FeatureLaunchRunError,
+    FeatureLaunchRunner,
+    FeatureLaunchRunRequest,
+    HttpHostedCampaignControlPlane,
+)
 from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
 from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
 from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
@@ -153,13 +159,79 @@ def agent_research(
         raise typer.Exit(code=3)
 
 
+@agent_app.command("launch")
+def agent_launch(
+    input_path: Annotated[
+        Path,
+        typer.Option(
+            "--input",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Immutable feature-launch run request JSON.",
+        ),
+    ],
+    url: Annotated[str, typer.Option(help="Hosted Trace control-plane HTTPS origin.")],
+    model: Annotated[
+        str,
+        typer.Option(help="Pinned official Codex model recorded in research receipts."),
+    ],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    timeout_seconds: Annotated[
+        float,
+        typer.Option(min=30.0, max=1800.0, help="Per-Codex-turn timeout."),
+    ] = 300.0,
+) -> None:
+    """Research a feature, then safely hand one shadow campaign to the hosted loop."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and log in"
+        raise typer.BadParameter(message)
+    token = _required("TRACE_MARKETING_CONTROL_TOKEN")
+    agent_home = _home(home) / "marketing-agent"
+    try:
+        request = FeatureLaunchRunRequest.model_validate_json(
+            _read_bounded_input(input_path, error="feature_launch_request_too_large")
+        )
+        with create_http_client() as http:
+            result = FeatureLaunchRunner(
+                research_runner=DynamicEvidenceResearchRunner(
+                    codex=CodexCli(executable=executable, model=model),
+                    state_root=agent_home / "runtime",
+                    model_id=model,
+                    timeout_seconds=timeout_seconds,
+                ),
+                control_plane=HttpHostedCampaignControlPlane(
+                    http=http,
+                    origin=_https_origin(url),
+                    bearer_token=token,
+                ),
+                state_root=agent_home / "feature-launch",
+            ).run(request)
+    except ValidationError as error:
+        typer.echo("feature_launch_request_invalid", err=True)
+        raise typer.Exit(code=2) from error
+    except (EvidenceResearchOperatorError, FeatureLaunchRunError, OSError, UnicodeError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(result.model_dump_json(indent=2))
+    if result.state == "awaiting_reconciliation":
+        raise typer.Exit(code=3)
+    if result.state == "blocked":
+        raise typer.Exit(code=4)
+
+
 def _load_dynamic_research_request(input_path: Path) -> DynamicEvidenceResearchRequest:
-    if input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
-        message = "dynamic_research_request_too_large"
-        raise DynamicEvidenceResearchError(message)
     return DynamicEvidenceResearchRequest.model_validate_json(
-        input_path.read_text(encoding="utf-8")
+        _read_bounded_input(input_path, error="dynamic_research_request_too_large")
     )
+
+
+def _read_bounded_input(input_path: Path, *, error: str) -> str:
+    if input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
+        raise DynamicEvidenceResearchError(error)
+    return input_path.read_text(encoding="utf-8")
 
 
 @dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK

@@ -84,18 +84,24 @@ def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
     )
 
 
-def test_marketing_agent_help_exposes_only_bounded_research() -> None:
+def test_marketing_agent_help_exposes_bounded_research_and_shadow_launch() -> None:
     result = CliRunner().invoke(marketing_app, ["agent", "--help"])
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
     assert "research" in output
+    assert "launch" in output
     assert all(command not in output for command in ("publish", "capture", "spend", "outreach"))
 
     research = CliRunner().invoke(marketing_app, ["agent", "research", "--help"])
     research_output = unstyle(research.stdout)
     assert research.exit_code == 0
     assert all(option in research_output for option in ("--input", "--home", "--model"))
+
+    launch = CliRunner().invoke(marketing_app, ["agent", "launch", "--help"])
+    launch_output = unstyle(launch.stdout)
+    assert launch.exit_code == 0
+    assert all(option in launch_output for option in ("--input", "--home", "--model", "--url"))
 
 
 def test_worker_stop_treats_an_already_missing_launchd_service_as_stopped(

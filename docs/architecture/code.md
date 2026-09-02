@@ -108,6 +108,14 @@ source-derived three-hand capability registry, owns the product/customer/market 
 private immutable local receipts, and emits a receipt-grounded Evidence Brief. The generic runtime and
 operator remain provider-neutral; this module contains no Appium, Threads, Cloudflare, outreach, CRM,
 or spend adapter. `cli/marketing.py` only validates the immutable request and selects the state root.
+`marketing/feature_launch_run.py` is the thin composition boundary that admits a terminal
+`ResearchContinuation`, derives one `control_plane.create_shadow_campaign` invocation, and binds it to
+the existing hosted campaign API. It owns neither strategy nor channel effects. Its local runtime
+ledger is written before POST; ambiguous dispatches can be resolved only by exact-lineage campaign
+readback. `marketing/runtime.py` owns the generic persisted reconciliation-receipt transition used by
+that adapter. D1 migration `0032_marketing_agent_run_lineage.sql` owns the all-or-none, immutable,
+account-unique local-to-hosted lineage. `marketing-agent.js` validates and stores it, while the
+reference-research and strategy callbacks independently rebind it before advancing state.
 `ads_booster.contracts.marketing_context` separately owns the allowlisted customer-signal and
 campaign-context shapes: its full signal retains provenance and consent, while its planning
 projection deliberately excludes both. D1 migration
@@ -231,7 +239,9 @@ digest binds capability, schema, payload digest, idempotency, and effect class. 
 receives this envelope rather than a digest-only call; connector-secret resolution remains with the
 adapter owner. `MarketingAgentRuntime` admits one invocation at a time, reserves budget, requires
 and consumes an exact one-use grant for external effects, and validates the returned receipt against
-the pending call and approval digest. `request_persisted_tool` CASes the call and invocation;
+the pending call and approval digest. Effect classes are a closed runtime policy set (`observe`,
+`local_artifact`, `control_plane_write`, and `external`), so an unknown or misspelled class cannot
+silently bypass the external-effect approval rule. `request_persisted_tool` CASes the call and invocation;
 `execute_persisted_tool` CASes an execution-start event before it calls a `ToolBackend`, and a
 restart-recovered execution can only be closed by `reconcile_interrupted_execution`. On reload,
 `JsonSessionStore` replays the closed runtime-event grammar from a hashed v3 `session_started`
@@ -239,6 +249,9 @@ header. It rejects a missing/mismatched pending invocation, rewritten budget or 
 invalid event digest/time, unknown reserved event, or an event after finalization. It supplies
 host-local append-only CAS persistence, file locking, atomic replacement, and serialization
 integrity checking for replay tests; it is not a distributed lease or production control-plane store.
+`feature_launch_run.py` additionally binds the local research account to the hosted handoff, checks
+the exact compact UTF-8 request size against the control plane's 64 KiB limit before research, and
+requires the authenticated account to round-trip in every successful create or status response.
 `replay_session(events)` is the matching public read-only reducer for an exported v3 trace; it returns
 only the checkpoint re-derived from that ledger. The persisted admission and execution methods remain
 the only public effect APIs; non-durable transforms are private test primitives. General planner, skill-registry, context-projection, and

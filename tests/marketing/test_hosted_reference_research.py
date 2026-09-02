@@ -100,6 +100,14 @@ def _task() -> MarketingTask:
                 "available_capabilities": capabilities,
                 "capability_snapshot_sha256": _sha({"capabilities": capabilities}),
                 "query_budget": 6,
+                "agent_run_lineage": {
+                    "schema_version": "trace.feature-launch-lineage.v1",
+                    "agent_run_id": "campaign-1",
+                    "research_session_id": "local-research-1",
+                    "research_input_sha256": "1" * 64,
+                    "research_trace_sha256": "2" * 64,
+                    "research_continuation_sha256": "3" * 64,
+                },
                 "requested_by": "hosted_workspace",
             }
         ),
@@ -216,6 +224,7 @@ def test_reference_research_is_source_cited_and_quarantined(tmp_path: Path) -> N
     assert isinstance(sources, list)
     assert len(sources) == 2
     assert result.output["tool_actions_created"] == 0
+    assert result.output["agent_run_lineage"] == _task().payload["agent_run_lineage"]
     assert "외부 자료는 제품 기능의 사실 근거가 아니며" in codex.prompts[0]
 
 

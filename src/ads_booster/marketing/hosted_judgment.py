@@ -18,6 +18,7 @@ from ads_booster.contracts.marketing_agent import (
     EvidenceDisposition,
     ExperimentRegistration,
     FeatureEvidencePacket,
+    FeatureLaunchLineage,
     MarketingHypothesis,
     StrategyBrief,
     contract_sha256,
@@ -80,6 +81,7 @@ class ShadowStrategyRequest(JudgmentModel):
     knowledge_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     available_capabilities: Annotated[tuple[str, ...], Field(max_length=32)] = ()
     capability_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    agent_run_lineage: FeatureLaunchLineage | None = None
     requested_by: Literal["hosted_workspace"]
 
     @model_validator(mode="after")
@@ -102,6 +104,11 @@ class ShadowStrategyRequest(JudgmentModel):
             and self.marketing_context.account_id != self.account.account_id
         ):
             raise ValueError("marketing context does not match the strategy request scope")
+        if (
+            self.agent_run_lineage is not None
+            and self.agent_run_lineage.agent_run_id != self.campaign_id
+        ):
+            raise ValueError("strategy agent run does not match the campaign")
         return self
 
 
@@ -307,6 +314,13 @@ class HostedMarketingJudgmentExecutor:
                 "context_receipt_sha256": prepared.context_receipt_sha256,
                 "strategy_brief": _JSON_OBJECT.validate_python(brief.model_dump(mode="json")),
                 "strategy_brief_sha256": contract_sha256(brief),
+                "agent_run_lineage": (
+                    None
+                    if prepared.request.agent_run_lineage is None
+                    else _JSON_OBJECT.validate_python(
+                        prepared.request.agent_run_lineage.model_dump(mode="json")
+                    )
+                ),
                 "publication_allowed": (prepared.request.feature_packet.gate.publication_allowed),
             },
         )

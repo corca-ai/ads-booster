@@ -47,6 +47,32 @@ repeating a committed decision or completed hand. Missing evidence ends `inconcl
 ambiguous post-dispatch backend failure ends `awaiting_reconciliation` with exit code 3. It creates no
 candidate, Appium action, Threads post, outreach, ad spend, or hosted campaign mutation.
 
+The installed CLI also connects this reasoning loop to the existing hosted workflow without taking
+ownership of any execution adapter:
+
+```bash
+TRACE_MARKETING_CONTROL_TOKEN=... trace-marketing agent launch \
+  --input launch.json --url https://control.example.com --home /private/path/to/state \
+  --model gpt-5.4
+```
+
+[`docs/examples/feature-launch-shadow.json`](docs/examples/feature-launch-shadow.json) shows the
+closed-gate request shape; all hashes and timestamps in it are illustrative.
+
+`launch` currently admits only a closed-gate shadow packet with both product-truth and market scopes.
+It reruns or replays the exact research request, and creates no hosted request unless the sole open
+trust boundary is a successfully quarantined market proposal. The hosted market-research worker then
+verifies source bytes before strategy. The host derives the campaign body, idempotency key, and tool
+capability from the frozen request; it binds the caller-supplied agent-run ID as the campaign ID.
+None of them are model output. A local append-only session commits the bound handoff and
+execution-start marker before POST. An ambiguous response is never POSTed again: later invocations use
+only `GET /api/marketing-agent/campaigns/:id` to reconcile. D1 stores immutable agent-run, research
+input, trace, and continuation digests and carries them through market research into strategy. The
+handoff binds the researched account to the authenticated hosted account and rejects payloads over the
+hosted 64 KiB request limit before research or network I/O. Existing
+Appium, candidate materialization, Threads approval/publication, evaluation, reassessment, and learning
+owners are unchanged.
+
 `POST /api/marketing-agent/campaigns` accepts an account-scoped source packet, business outcome,
 current control, and caller-chosen campaign ID. `GET /api/marketing-agent/campaigns` and
 `GET /api/marketing-agent/campaigns/:id` expose its durable state. This shadow path cannot create
@@ -256,7 +282,7 @@ wrangler secret put TRACE_EVENT_INGEST_TOKEN
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
-`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, every marketing-agent campaign creation or assisted action, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql`, main's `0017_worker_task_events.sql`, and marketing-agent migrations `0018`–`0031` in order before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, every marketing-agent campaign creation or assisted action, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; it must not be exposed to the browser or a Mac worker. Deploy D1 migration `0016_hosted_threads.sql`, main's `0017_worker_task_events.sql`, and marketing-agent migrations `0018`–`0032` in order before enabling the marketing-agent runtime. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
 
 ## Managed releases and compatibility
 
