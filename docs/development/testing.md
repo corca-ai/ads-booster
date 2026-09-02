@@ -21,6 +21,7 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 | native Trace lock-screen preview passthrough | `uv run pytest tests/marketing/test_native_capture.py tests/capture/test_codex_appium_handshake.py` |
 | Codex ImageGen iOS UI layer | `uv run pytest tests/capture/test_codex_imagegen_ui.py tests/capture/test_ios_lock_screen_layer.py tests/capture/test_imagegen_ios_ui_contract.py tests/marketing/test_imagegen_ios_ui_capture.py`; from `cloudflare/`: `node --test test/hosted-capture-result.test.js` |
 | inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
+| workspace worker execution timeline | `uv run pytest tests/marketing/test_worker_loop.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `npm run build && node --test test/mac-workers.test.js test/hosted-workspace.test.js test/workspace-static.test.js` |
 | update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
 | CLI surface | `uv run pytest tests/cli/test_cli_compatibility.py`; `uv run trace-marketing --help`; `uv run trace-marketing worker --help` |
 
@@ -59,3 +60,9 @@ focus, overflow, and console errors. It is not live Meta proof. A production-rea
 requires explicit authorization for a non-production Meta test profile, authoritative post-ID and
 permalink readback, then at least one metric snapshot and top-level reply. Never record tokens,
 authorization codes, OAuth states, or unexpired signed media URLs in test artifacts.
+
+Worker timeline QA opens `실행 기록` in the 1440x900 desktop workspace, confirms newest-first polling
+and account switching, and checks that preparation, execution, failure, and callback states are readable.
+Inspect the rendered DOM and network payload to confirm there is no prompt, raw provider/callback
+output, credential, enrollment code, exception message, or local path. A visible event is diagnostic
+evidence only; the task row and callback remain completion evidence.
