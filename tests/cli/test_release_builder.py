@@ -125,6 +125,42 @@ def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -
     assert 'requires = ["hatchling==1.32.0"]' in PROJECT.read_text(encoding="utf-8")
 
 
+def test_release_workflow_signals_public_stable_versions_to_macs() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    public_readback = "Verify the public release through an unauthenticated readback"
+    release_signal = "Signal the exact stable release to enrolled Macs"
+    cloudflare_deploy = "Wait for the exact Cloudflare deployment"
+    publish_release = "Publish the verified new stable release"
+    release_start = workflow.index("  release:")
+    release_steps = workflow.index("    steps:", release_start)
+    release_job = workflow[release_start:release_steps]
+    wait_start = workflow.index(cloudflare_deploy)
+    next_release_step = "Set up Python 3.14 for release state recovery"
+    wait_step = workflow[wait_start : workflow.index(next_release_step)]
+    signal_step = workflow[workflow.index(release_signal) :]
+
+    assert cloudflare_deploy in workflow
+    assert "github.event.before" in workflow
+    assert "head_sha=$RELEASE_SHA" in workflow
+    assert "git diff --quiet" in workflow
+    assert "fetch-depth: 0" in workflow
+    assert "github.event_name == 'push'" not in wait_step
+    assert 'git rev-parse "$RELEASE_SHA^"' in wait_step
+    assert "runs?head_sha=$RELEASE_SHA" in wait_step
+    assert '"workflow_dispatch"' in wait_step
+    assert release_signal in workflow
+    assert "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}" in workflow
+    assert "CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}" in workflow
+    assert "CLOUDFLARE_API_TOKEN" not in release_job
+    assert "        env:\n          CLOUDFLARE_API_TOKEN" in signal_step
+    assert "workers/scripts/trace-marketing-control/secrets" in workflow
+    assert "TRACE_MARKETING_RELEASE_VERSION" in workflow
+    assert "jq -r '.success'" in workflow
+    assert "jq -r '.result.name'" in workflow
+    assert workflow.index(cloudflare_deploy) < workflow.index(publish_release)
+    assert workflow.index(public_readback) < workflow.index(release_signal)
+
+
 def test_release_workflow_checks_the_reduced_worker_wheel() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
