@@ -8,13 +8,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.candidate_generation import DEFAULT_MAX_BATCH
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
 from ads_booster.contracts.models import TraceScheduleItem
 from ads_booster.marketing.hosted_generation import (
     PIPELINE,
+    GeneratedImageInputs,
     GeneratedScheduleEntry,
+    HostedGenerationResponse,
     HostedWorkspaceGenerationExecutor,
 )
 from ads_booster.marketing.inbox import MarketingExecutionError
@@ -28,6 +31,10 @@ if TYPE_CHECKING:
 
     from ads_booster.candidate_generation import CandidateDocument
     from ads_booster.transport.json_types import JsonObject, JsonValue
+
+# The schema comes back as plain JSON, so reading it needs the adapters the source uses.
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(dict)
+_STRING_LIST: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 _ASSIGNMENT: Final = re.compile(
     r"- 후보 \d+: 형태 (\w+) \(.+?\) · 도메인 (\w+) \(.+?\)(?: · 소재 축 (.+))?$",
@@ -559,3 +566,49 @@ def test_schedule_entry_when_the_bar_fits_then_leaves_it_alone() -> None:
     # When the generation layer reads it
     # Then nothing is trimmed
     assert (entry.day, entry.days) == (2, 3)
+
+
+def _image_inputs_schema() -> JsonObject:
+    """The image_inputs half of the schema one Codex turn is held to."""
+    schema = _JSON_OBJECT.validate_python(HostedGenerationResponse.model_json_schema())
+    definitions = _JSON_OBJECT.validate_python(schema["$defs"])
+    return _JSON_OBJECT.validate_python(definitions["GeneratedImageInputs"])
+
+
+def test_every_image_input_the_instruction_asks_for_is_required_by_the_schema() -> None:
+    # Given the schema one Codex turn is held to
+    image_inputs = _image_inputs_schema()
+    required = _STRING_LIST.validate_python(image_inputs["required"])
+    properties = _JSON_OBJECT.validate_python(image_inputs["properties"])
+
+    # Then every field is required. A strict structured-output schema drops a property it is
+    # allowed to omit, and a dropped property is silent: background_search_query carried a
+    # default, fell out of `required`, went unwritten, and the search quietly fell back to
+    # the composed "<subject>: <mood>" intent — so it ran "sports_team: 밤 경기 외야석 너머
+    # 환한 전광판" while the instruction was asking for two to four words naming a wallpaper.
+    # Ordering the fields cannot help when the field is never asked for at all.
+    assert set(required) == set(properties)
+
+
+def test_the_search_query_may_be_written_as_null_but_never_left_out() -> None:
+    # Given a turn that answers with an explicit null for the query
+    row = {"title": "출근", "day": 0, "days": 1, "time": None, "color": None}
+    image_inputs: dict[str, object] = {
+        "trace_items": [row] * 5,
+        "trace_todos": [],
+        "device_time": "21:16",
+        "background_subject": "sports_team",
+        "background_search_query": None,
+        "background_mood": "밤 경기 외야석 너머 환한 전광판",
+        "language": "ko",
+    }
+
+    # Then null validates. A field the model could not answer is not a reason to lose the
+    # captions sitting beside it in the same turn.
+    assert GeneratedImageInputs.model_validate(image_inputs).background_search_query is None
+
+    # And leaving the key out entirely does not validate, which is what keeps the strict
+    # schema asking for it instead of quietly dropping it.
+    del image_inputs["background_search_query"]
+    with pytest.raises(ValidationError):
+        _ = GeneratedImageInputs.model_validate(image_inputs)
