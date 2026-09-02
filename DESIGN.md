@@ -24,8 +24,7 @@ is the Hallmark-compatible entrypoint that imports that source of truth.
 The work surface has eight stable regions.
 
 1. `workspace-toolbar` names the product and shows one live status line without an explanatory hero.
-2. `account-console` keeps the logical account selector visible while market, schedule, automation,
-   and account creation stay behind one settings disclosure.
+2. `account-console` keeps only the logical account selector visible.
 3. `worker-console` keeps sanitized Mac availability visible and opens a separate protected manager
    for registration, replacement, and detailed health only when an operator asks for it. Its safe
    account-scoped execution timeline stays collapsed until a teammate opens `실행 기록`.
@@ -34,8 +33,7 @@ The work surface has eight stable regions.
 5. `pipeline-summary` exposes compact counts for caption review, image work, and publication-ready
    results.
 6. The two-tab rail separates candidate preparation from human review.
-7. `generation-workbench` keeps the persona selector and four-candidate action together; full context,
-   feedback learning, and manual registration use progressive disclosure.
+7. `generation-workbench` keeps only the four-candidate generation action.
 8. The candidate list follows the generation action immediately and can be filtered by operational
    state without hiding the canonical total.
 
@@ -47,24 +45,20 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
 ## Context surface
 
 - The selected logical account stays visible because D1 candidates, profiles, and Durable Object
-  memory are isolated by that boundary; its raw account ID remains available in context details.
-- The active country/persona is selected before generation. Audience, situation, tone, guidance,
-  and reference IDs remain inspectable in one disclosure instead of occupying the default work path.
-- Starter context is labeled honestly as a generic seed. Team operators can add, edit, or hide
-  profiles; prior candidates retain immutable context snapshots.
-- KR, JP, TW, US, DE, FR, and BR ship as starter markets with 16 total starter profiles. Adding
-  another country remains data-driven through the packaged manifest and profiles. Generation
-  fails visibly when country documents are missing instead of silently using the wrong country.
+  memory are isolated by that boundary.
+- Candidate generation uses the active account/persona context without exposing context selection,
+  editing, or provenance controls in the workbench. Prior candidates retain immutable context
+  snapshots.
 
 ## Review and states
 
-- Compact candidate rows show topic, source, country, date, status, and edit/delete controls. Detailed
+- Compact candidate rows show topic, source, country, date, status, and delete controls. Detailed
   captions, context snapshots, and the decision journey stay on the review surface.
 - One generation action creates four candidates grouped into two morning and two evening slots.
 - A one-click approval records 5 points. Rejection expands inline to a 1–3 rating and explicit tags;
   three equal account/persona tags surface as a rule for the next generation.
-- Any candidate, including `submitted`, can be edited or deleted in the hosted workspace. Editing
-  invalidates approvals and image provenance and returns the candidate to caption review.
+- Any candidate, including `submitted`, can be deleted in the hosted workspace. Editing is not
+  exposed in this simplified UI.
 - Image approval ends at `submitted`; the UI never implies that Threads publishing occurred.
 - Errors stay next to the action that failed, while changes already visible in the list use silent
   success plus the global status line.
@@ -87,9 +81,12 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
 
 ## Progressive disclosure
 
-- The default screen answers three questions only: which account, which persona, and what needs work.
-- Account administration, full context provenance, feedback learning, manual candidate entry, and
-  native capture mechanics are available but collapsed by default.
+- The default screen answers two questions only: which account and what needs work.
+- Account administration, full context provenance, feedback learning, and manual candidate entry
+  are not exposed in this workspace UI.
+- AI account suggestions appear only after the `AI 제안 받기` action. Each proposed concept has one
+  direct account-creation action, using the proposed identity and the selected country's default
+  language and timezone.
 - Detailed Mac inventory and mutating controls stay behind `Mac 연결 관리`; the operator token is
   entered only inside that dialog and is cleared together with one-time code output on close.
 - `실행 기록` reveals only bounded task lifecycle events, worker display name, task kind, task ID,

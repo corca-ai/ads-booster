@@ -298,6 +298,14 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
       const personaId = await requirePersonaScope(scopedEnv, requestedPersonaId);
       return json(await insertCandidate(scopedEnv, draft, "manual", profile, personaId), 201);
     }
+    if (request.method === "DELETE" && url.pathname === "/api/candidates") {
+      const deletion = await deleteCandidates(
+        scopedEnv,
+        await requirePersonaScope(scopedEnv, requestedPersonaId),
+      );
+      if (deletion.artifact_cleanup_failures > 0) return json(deletion, 207);
+      return new Response(null, { status: 204 });
+    }
     if (request.method === "GET" && url.pathname === "/api/candidates/generation-tasks") {
       return json(
         await listGenerationTasks(
@@ -2210,15 +2218,36 @@ async function deleteCandidate(env, candidateId, revision) {
   await deleteCandidateArtifact(env, current.image_path);
 }
 
+async function deleteCandidates(env, personaId = null) {
+  const scope = personaId ? " AND persona_id = ?" : "";
+  const parameters = personaId ? [accountId(env), personaId] : [accountId(env)];
+  const deleted = await env.DB.prepare(
+    `DELETE FROM hosted_workspace_candidates
+     WHERE account_id = ?${scope}
+     RETURNING image_key`,
+  )
+    .bind(...parameters)
+    .all();
+  const cleanup = await Promise.all(
+    deleted.results.map((candidate) => deleteCandidateArtifact(env, candidate.image_key)),
+  );
+  return {
+    deleted: deleted.results.length,
+    artifact_cleanup_failures: cleanup.filter(Boolean).length,
+  };
+}
+
 async function deleteCandidateArtifact(env, key) {
-  if (!key) return;
+  if (!key) return false;
   try {
     await env.ARTIFACTS.delete(key);
+    return false;
   } catch (error) {
     console.error("hosted workspace candidate artifact cleanup failed", {
       key,
       message: error instanceof Error ? error.message : "unknown error",
     });
+    return true;
   }
 }
 
