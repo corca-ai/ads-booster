@@ -62,6 +62,10 @@
   const workerAgentPrompt = one("[data-worker-agent-prompt]");
   const workerAgentPromptCopy = one("[data-worker-agent-prompt-copy]");
   const workerAgentPromptFeedback = one("[data-worker-agent-prompt-feedback]");
+  const workerEventsDetails = one("[data-worker-events]");
+  const workerEventList = one("[data-worker-event-list]");
+  const workerEventEmpty = one("[data-worker-event-empty]");
+  const workerEventCount = one("[data-worker-event-count]");
   const threadsManager = one("[data-threads-manager]");
   const threadsManagerOpen = one("[data-threads-manager-open]");
   const threadsManagerClose = one("[data-threads-manager-close]");
@@ -94,6 +98,8 @@
   let feedbackSignal = null;
   let capturePoll = null;
   let workerPoll = null;
+  let workerEventPoll = null;
+  let workerEvents = [];
   let macWorkerStatus = null;
   let controlPlaneToken = "";
   let workerAdminPoll = null;
@@ -243,6 +249,20 @@
   // pending fetch, and the ceiling is generous because four provider calls take minutes.
   const HOSTED_GENERATION_POLL_MS = 5000;
   const HOSTED_GENERATION_TIMEOUT_MS = 15 * 60 * 1000;
+  const WORKER_EVENT_POLL_MS = 5000;
+  const WORKER_EVENT_LABELS = Object.freeze({
+    preparation_started: "실행 준비 시작",
+    preparation_failed: "실행 준비 실패",
+    execution_started: "워커 실행 시작",
+    execution_succeeded: "워커 실행 완료",
+    execution_failed: "워커 실행 실패",
+    execution_unknown: "실행 결과 확인 필요",
+    callback_applied: "결과 반영 완료",
+  });
+  const WORKER_TASK_LABELS = Object.freeze({
+    capture: "이미지 캡처",
+    generate_candidates: "후보 생성",
+  });
   const GENERATION_FAILURE_MESSAGES = Object.freeze({
     hosted_generation_ai_login_required:
       "워커 Mac에 AI 로그인이 없습니다. 그 Mac에서 Codex 로그인을 먼저 끝내 주세요.",
@@ -316,6 +336,83 @@
       workerPoll = window.setTimeout(() => {
         loadMacWorkerStatus().catch((error) => setNotice(error.message));
       }, 15000);
+    }
+  };
+
+  const renderWorkerEvents = () => {
+    if (!workerEventList) return;
+    const nodes = workerEvents.map((event) => {
+      const item = document.createElement("li");
+      item.className = "worker-event";
+      item.dataset.state = event.event_type;
+
+      const time = document.createElement("time");
+      time.dateTime = event.created_at;
+      time.textContent = new Date(event.created_at).toLocaleString("ko-KR", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+      const content = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = WORKER_EVENT_LABELS[event.event_type] ?? event.event_type;
+      const meta = document.createElement("span");
+      const taskKind = WORKER_TASK_LABELS[event.task_kind] ?? event.task_kind;
+      meta.textContent = `${event.worker_name} · ${taskKind} · ${event.task_id}`;
+      content.append(title, meta);
+      if (event.failure_code) {
+        const failure = document.createElement("code");
+        failure.textContent = event.failure_code;
+        content.append(failure);
+      }
+      item.append(time, content);
+      return item;
+    });
+    workerEventList.replaceChildren(...nodes);
+    if (workerEventEmpty) workerEventEmpty.hidden = nodes.length > 0;
+    const count = `최근 ${nodes.length}건`;
+    if (workerEventCount && workerEventCount.textContent !== count) {
+      workerEventCount.textContent = count;
+    }
+  };
+
+  const sameWorkerEvents = (left, right) =>
+    left.length === right.length && left.every((event, index) => {
+      const compared = right[index];
+      return event.event_id === compared?.event_id
+        && event.task_id === compared.task_id
+        && event.worker_name === compared.worker_name
+        && event.task_kind === compared.task_kind
+        && event.event_type === compared.event_type
+        && event.failure_code === compared.failure_code
+        && event.created_at === compared.created_at;
+    });
+
+  const scheduleWorkerEventPoll = () => {
+    if (workerEventPoll) window.clearTimeout(workerEventPoll);
+    workerEventPoll = null;
+    if (!workerEventsDetails?.open) return;
+    workerEventPoll = window.setTimeout(() => {
+      loadWorkerEvents().catch((error) => setNotice(error.message));
+    }, WORKER_EVENT_POLL_MS);
+  };
+
+  const loadWorkerEvents = async () => {
+    if (!hostedCandidateControls || !workerEventsDetails?.open) return;
+    const eventAccountId = selectedAccountId;
+    try {
+      const payload = await request("/api/worker-events");
+      if (eventAccountId !== selectedAccountId || !workerEventsDetails?.open) return;
+      const events = Array.isArray(payload?.events) ? payload.events : [];
+      if (!sameWorkerEvents(workerEvents, events)) {
+        workerEvents = events;
+        renderWorkerEvents();
+      }
+    } finally {
+      if (eventAccountId === selectedAccountId) scheduleWorkerEventPoll();
     }
   };
   const candidateDate = (seconds) => new Date(seconds * 1000).toLocaleDateString("ko-KR");
@@ -2648,6 +2745,7 @@
         loadCandidates(),
         loadFeedbackSummary(),
         loadMacWorkerStatus().catch((error) => setNotice(error.message)),
+        loadWorkerEvents().catch((error) => setNotice(error.message)),
       ]);
       // Not awaited: a batch already running on a Mac is minutes of waiting, and the screen
       // is usable throughout. This only reattaches the button to work already in flight.
@@ -3267,6 +3365,8 @@
     const next = accountSelect.value;
     if (!hostedAccounts.some((account) => account.account_id === next)) return;
     selectedAccountId = next;
+    workerEvents = [];
+    renderWorkerEvents();
     if (threadsManager?.open) lockThreadsManager("계정이 바뀌었습니다. 운영 권한을 다시 열어 주세요.");
     try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
       if (!(error instanceof DOMException)) throw error;
@@ -3278,7 +3378,7 @@
     setBusy(workspaceLive, true, "운영 계정을 바꾸는 중…");
     try {
       await loadContextProfiles();
-      await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      await Promise.all([loadCandidates(), loadFeedbackSummary(), loadWorkerEvents()]);
       void adoptHostedGeneration();
       setNotice(`${selectedHostedAccount()?.display_name ?? selectedAccountId} 계정으로 전환했습니다.`);
     } catch (error) {
@@ -3347,6 +3447,8 @@
         }),
       });
       selectedAccountId = created.account_id;
+      workerEvents = [];
+      renderWorkerEvents();
       try { window.localStorage.setItem("trace:hosted-account", selectedAccountId); } catch (error) {
         if (!(error instanceof DOMException)) throw error;
       }
@@ -3372,6 +3474,15 @@
     const profile = selectedContextProfile();
     if (profile) candidateField("candidate-country").value = profile.country;
     void loadFeedbackSummary().catch((error) => setNotice(error.message));
+  });
+
+  workerEventsDetails?.addEventListener("toggle", () => {
+    if (workerEventsDetails.open) {
+      void loadWorkerEvents().catch((error) => setNotice(error.message));
+      return;
+    }
+    if (workerEventPoll) window.clearTimeout(workerEventPoll);
+    workerEventPoll = null;
   });
 
   const candidateProblem = (draft) => {

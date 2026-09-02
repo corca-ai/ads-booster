@@ -14,6 +14,29 @@ test("built workspace exposes separate Mac and Threads operations controls", asy
   assert.match(markup, /OFF로 바꾸면 아직 발행 장벽을 넘지 않은 예약만 취소/u);
 });
 
+test("built workspace exposes an account-scoped worker execution timeline", async () => {
+  const [markup, source, styles] = await Promise.all([
+    built("index.html"),
+    built("static/workspace-live.js"),
+    built("static/workspace.css"),
+  ]);
+  assert.match(markup, /data-worker-events/u);
+  assert.match(markup, /data-worker-event-list/u);
+  assert.match(markup, /실행 기록/u);
+  assert.match(source, /request\("\/api\/worker-events"\)/u);
+  assert.match(source, /preparation_started/u);
+  assert.match(source, /execution_started/u);
+  assert.match(source, /callback_applied/u);
+  assert.match(source, /const eventAccountId = selectedAccountId/u);
+  assert.match(source, /eventAccountId !== selectedAccountId/u);
+  assert.match(source, /sameWorkerEvents/u);
+  assert.match(markup, /data-worker-event-count[^>]+role="status"[^>]+aria-live="polite"/u);
+  assert.doesNotMatch(markup, /data-worker-event-list[^>]+aria-live/u);
+  assert.match(styles, /\.worker-events > summary::after/u);
+  assert.match(styles, /\.worker-events\[open\] > summary::after/u);
+  assert.match(styles, /\.worker-events > summary:focus-visible/u);
+});
+
 test("control token remains memory-only and popup completion is origin and source checked", async () => {
   const source = await built("static/workspace-live.js");
   assert.match(source, /let controlPlaneToken = ""/u);

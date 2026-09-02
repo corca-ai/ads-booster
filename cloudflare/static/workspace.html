@@ -123,6 +123,16 @@
           </div>
           <div class="worker-console__badges" data-worker-badges aria-label="Mac worker 요약"></div>
           <button class="button button-secondary" type="button" data-worker-manager-open>Mac 연결 관리</button>
+          <details class="worker-events" data-worker-events>
+            <summary>실행 기록 <span class="mono" data-worker-event-count role="status" aria-live="polite" aria-atomic="true">최근 0건</span></summary>
+            <div class="worker-events__body">
+              <p>현재 계정의 작업 단계와 실패 코드만 표시합니다. 프롬프트, 인증 정보, 로컬 경로는 기록하지 않습니다.</p>
+              <ol class="worker-event-list" data-worker-event-list></ol>
+              <div class="empty-surface worker-events__empty" data-worker-event-empty>
+                <p>아직 실행 기록이 없습니다.</p>
+              </div>
+            </div>
+          </details>
         </section>
 
         <section class="threads-console" data-hosted-only hidden aria-labelledby="threads-console-title">
