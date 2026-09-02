@@ -4,6 +4,24 @@ import test from "node:test";
 
 const built = async (path) => readFile(new URL(`../dist/${path}`, import.meta.url), "utf8");
 
+test("built workspace retains only the requested intake controls and candidate bulk deletion", async () => {
+  const [markup, source] = await Promise.all([
+    built("index.html"),
+    built("static/workspace-live.js"),
+  ]);
+  assert.doesNotMatch(markup, /data-account-settings/u);
+  assert.doesNotMatch(markup, /data-account-form/u);
+  assert.doesNotMatch(markup, /data-context-select/u);
+  assert.doesNotMatch(markup, /data-manual-entry/u);
+  assert.match(markup, /data-account-propose/u);
+  assert.match(markup, /data-autogen/u);
+  assert.match(markup, /data-candidate-delete-all/u);
+  assert.match(source, /const createProposalAccount/u);
+  assert.match(source, /createProposalAccount\(proposal, use\)/u);
+  assert.match(source, /const deleteAllCandidates/u);
+  assert.match(source, /request\("\/api\/candidates", \{[\s\S]*method: "DELETE"/u);
+});
+
 test("built workspace exposes separate Mac and Threads operations controls", async () => {
   const markup = await built("index.html");
   assert.match(markup, /data-worker-manager-open/u);

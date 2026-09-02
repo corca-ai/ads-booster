@@ -55,46 +55,6 @@
             </label>
             <p class="account-console__hint" id="account-selector-help">계정을 바꾸면 후보와 컨텍스트도 함께 바뀝니다.</p>
           </div>
-          <details class="account-settings" data-account-settings>
-            <summary>계정 정보·설정</summary>
-            <div class="account-settings__body">
-              <dl class="account-facts">
-                <div><dt>국가·언어</dt><dd data-account-market>—</dd></div>
-                <div><dt>게시 슬롯</dt><dd data-account-slots>—</dd></div>
-                <div><dt>자동 생성</dt><dd data-account-automation>—</dd></div>
-              </dl>
-              <form class="stack-form" data-account-edit-form novalidate aria-describedby="account-edit-feedback">
-                <h3>현재 계정 설정</h3>
-                <div class="candidate-fields">
-                  <label for="account-display-name">표시 이름<input id="account-display-name" name="display-name" required maxlength="80" autocomplete="off"></label>
-                  <label for="account-timezone">시간대<input id="account-timezone" name="timezone" required maxlength="80" autocomplete="off" placeholder="Asia/Seoul"></label>
-                  <label for="account-morning-time">오전 게시 시각<input id="account-morning-time" name="morning-time" type="time" required></label>
-                  <label for="account-evening-time">저녁 게시 시각<input id="account-evening-time" name="evening-time" type="time" required></label>
-                  <label class="check-row candidate-fields__wide" for="account-generation-enabled"><input id="account-generation-enabled" name="generation-enabled" type="checkbox"><span>매일 오전 게시 시각에 오전 2개·저녁 2개 후보 자동 생성</span></label>
-                </div>
-                <p class="candidate-feedback" id="account-edit-feedback" data-account-edit-feedback role="alert" hidden></p>
-                <div class="form-actions"><button class="button button-secondary" type="submit">설정 저장</button></div>
-              </form>
-              <details class="advanced-input">
-                <summary>새 격리 계정 추가</summary>
-                <div class="advanced-input__body">
-                  <form class="stack-form" data-account-create-form novalidate aria-describedby="account-create-feedback">
-                    <div class="candidate-fields">
-                      <label for="new-account-id">계정 ID<input id="new-account-id" name="account-id" required maxlength="64" pattern="[a-z0-9][a-z0-9_-]*" autocomplete="off" placeholder="trace_jp_01"></label>
-                      <label for="new-account-name">표시 이름<input id="new-account-name" name="display-name" required maxlength="80" autocomplete="off" placeholder="Trace Japan 01"></label>
-                      <label for="new-account-country">국가<select id="new-account-country" name="country" required></select></label>
-                      <label for="new-account-timezone">시간대<input id="new-account-timezone" name="timezone" required maxlength="80" autocomplete="off" placeholder="Asia/Tokyo"></label>
-                      <label for="new-account-morning-time">오전 게시 시각<input id="new-account-morning-time" name="morning-time" type="time" value="07:30" required></label>
-                      <label for="new-account-evening-time">저녁 게시 시각<input id="new-account-evening-time" name="evening-time" type="time" value="19:30" required></label>
-                      <label class="check-row candidate-fields__wide" for="new-account-generation-enabled"><input id="new-account-generation-enabled" name="generation-enabled" type="checkbox"><span>추가 직후 매일 자동 생성 시작</span></label>
-                    </div>
-                    <p class="candidate-feedback" id="account-create-feedback" data-account-create-feedback role="alert" hidden></p>
-                    <div class="form-actions"><button class="button button-secondary" type="submit">계정 추가</button></div>
-                  </form>
-                </div>
-              </details>
-            </div>
-          </details>
         </section>
 
         <section class="country-home" data-country-home aria-labelledby="country-home-title">
@@ -166,35 +126,11 @@
             <h3>등록된 계정이 없습니다</h3>
             <p>계정을 추가하면 그 컨셉 안에서 후보가 만들어집니다.</p>
           </div>
-          <details class="advanced-input" data-account-form-details>
-            <summary>계정 추가</summary>
-            <div class="advanced-input__body">
-              <div class="proposal-bar">
-                <button class="button button-quiet" type="button" data-account-propose>🤖 AI 제안 받기</button>
-                <p class="form-help">레퍼런스 성과 기록과 이미 있는 계정을 읽고 컨셉 2~3개를 제안합니다. 고르면 아래 폼이 채워지고, 그대로 고쳐 쓸 수 있습니다.</p>
-              </div>
-              <p class="candidate-feedback" data-account-proposal-feedback role="alert" hidden></p>
-              <div class="proposal-grid" data-account-proposals hidden></div>
-              <form class="stack-form" data-account-form novalidate aria-describedby="account-feedback">
-                <div class="candidate-fields">
-                  <label for="account-country">국가<select id="account-country" name="country" required><option value="KR" selected>한국 (KR)</option><option value="JP">일본 (JP)</option><option value="TW">대만 (TW)</option><option value="US">미국 (US)</option></select></label>
-                  <label for="account-name">이름<input id="account-name" name="display-name" required maxlength="40" autocomplete="off" placeholder="예: 박세나"></label>
-                  <label for="account-age">나이<input id="account-age" name="age" type="number" min="13" max="99" value="27" required></label>
-                  <label for="account-region">지역<input id="account-region" name="region" required maxlength="40" autocomplete="off" placeholder="예: 서울"></label>
-                  <label for="account-occupation">직업<input id="account-occupation" name="occupation" required maxlength="60" autocomplete="off" placeholder="예: 야구 좋아하는 백엔드 개발자"></label>
-                  <label for="account-domain">도메인<select id="account-domain" name="domain" required data-account-domain></select></label>
-                  <label for="account-concept">컨셉 한 줄<input id="account-concept" name="concept" required maxlength="200" autocomplete="off" placeholder="예: 야근과 직관 사이에서 일정으로 버티는 개발자"></label>
-                  <label for="account-interests">관심사<input id="account-interests" name="interests" required autocomplete="off" placeholder="쉼표로 구분: 기아 타이거즈, 러닝"></label>
-                  <label for="account-rhythm">생활 리듬<input id="account-rhythm" name="life-rhythm" required maxlength="200" autocomplete="off" placeholder="예: 10시 출근, 경기 있는 날은 퇴근 직행"></label>
-                  <label for="account-background-subject">배경 소재<select id="account-background-subject" name="background-subject" required data-account-background-subject></select></label>
-                  <label for="account-background-mood">배경 분위기<input id="account-background-mood" name="background-mood" required maxlength="60" autocomplete="off" placeholder="예: 야간 경기 조명 아래 관중석"></label>
-                  <label for="account-font">잠금화면 폰트<select id="account-font" name="font" required data-account-font></select></label>
-                </div>
-                <p class="candidate-feedback" id="account-feedback" data-account-feedback role="alert" hidden></p>
-                <button class="button button-primary" type="submit">계정 추가</button>
-              </form>
-            </div>
-          </details>
+          <div class="proposal-bar">
+            <button class="button button-quiet" type="button" data-account-propose>AI 제안 받기</button>
+            <p class="candidate-feedback" data-account-proposal-feedback role="alert" hidden></p>
+            <div class="proposal-grid" data-account-proposals hidden></div>
+          </div>
         </section>
 
         <div class="account-workspace" data-account-workspace hidden>
@@ -204,7 +140,6 @@
               <strong data-account-current-name>계정</strong>
               <span class="mono" data-account-current-concept></span>
             </div>
-            <div class="account-workspace__verdict" data-account-verdict></div>
           </div>
 
         <div class="filter-tabs" role="tablist" aria-label="워크스페이스 보기">
@@ -218,134 +153,19 @@
             <span class="mono" role="status" data-candidate-count>입장하면 후보를 불러옵니다</span>
           </div>
           <div class="generation-workbench">
-            <section class="context-panel" data-hosted-only hidden aria-labelledby="context-panel-title">
-              <div class="context-panel__heading">
-                <h3 id="context-panel-title">생성 컨텍스트</h3>
-                <span class="context-source" data-context-source>기본</span>
-              </div>
-              <label class="context-selector" for="workspace-context-profile">국가·페르소나
-                <select id="workspace-context-profile" data-context-select aria-describedby="context-selector-help"></select>
-              </label>
-              <p class="context-selector__help" id="context-selector-help">선택한 기준으로 후보 4개를 만듭니다.</p>
-              <details class="context-detail">
-                <summary>선택한 컨텍스트 자세히 보기</summary>
-                <div class="context-detail__body">
-                  <p class="context-scope">계정 <code data-workspace-account>불러오는 중…</code> · 생성 당시 값은 후보에 보존됩니다.</p>
-                  <dl class="context-summary" data-context-summary>
-                    <div><dt>대상</dt><dd data-context-audience>불러오는 중…</dd></div>
-                    <div><dt>상황</dt><dd data-context-situation>—</dd></div>
-                    <div><dt>문체</dt><dd data-context-tone>—</dd></div>
-                    <div class="context-summary__wide"><dt>추가 지침</dt><dd data-context-guidance>—</dd></div>
-                    <div class="context-summary__wide"><dt>레퍼런스</dt><dd data-context-refs>—</dd></div>
-                  </dl>
-                  <details class="context-manager" data-context-manager>
-                    <summary>컨텍스트 추가·수정</summary>
-                    <div class="context-manager__body">
-                      <p class="section-note">기본값은 실제 팀 데이터가 아닌 범용 시작점입니다. 팀 기준에 맞게 추가하거나 수정하세요.</p>
-                      <div class="context-profile-list" data-context-profile-list></div>
-                      <form class="stack-form context-form" data-context-form novalidate aria-describedby="context-feedback">
-                        <h4 data-context-form-title>새 컨텍스트 추가</h4>
-                        <div class="candidate-fields">
-                          <label for="context-name">표시 이름<input id="context-name" name="name" required maxlength="80" autocomplete="off" placeholder="예: KR · 대학생 시험 기간"></label>
-                          <label for="context-persona-id">페르소나 ID<input id="context-persona-id" name="persona-id" required maxlength="80" autocomplete="off" pattern="[a-z0-9][a-z0-9_-]+" placeholder="예: kr_university_exam"></label>
-                          <label for="context-country">국가<select id="context-country" name="country" required><option value="KR" selected>한국 (KR)</option></select></label>
-                          <label for="context-tone">문체<input id="context-tone" name="tone" required maxlength="300" autocomplete="off" placeholder="예: 짧고 현실적인 1인칭"></label>
-                          <label class="candidate-fields__wide" for="context-audience">대상<input id="context-audience" name="audience" required maxlength="500" autocomplete="off" placeholder="누구를 위한 메시지인지 적으세요."></label>
-                          <label class="candidate-fields__wide" for="context-situation">상황<input id="context-situation" name="situation" required maxlength="500" autocomplete="off" placeholder="후보가 다뤄야 할 구체적인 사용 상황을 적으세요."></label>
-                          <label class="candidate-fields__wide" for="context-guidance">추가 지침<textarea id="context-guidance" name="guidance" required rows="4" maxlength="2000" placeholder="반드시 지킬 주장 범위, 훅, 금지 표현 등을 적으세요."></textarea></label>
-                          <label class="candidate-fields__wide" for="context-refs">레퍼런스 ID<input id="context-refs" name="reference-ids" autocomplete="off" placeholder="쉼표로 구분: kr-study-day, ref-b"></label>
-                        </div>
-                        <p class="candidate-feedback" id="context-feedback" data-context-feedback role="alert" hidden></p>
-                        <div class="form-actions">
-                          <button class="button button-secondary" type="submit" data-context-submit>컨텍스트 추가</button>
-                          <button class="button button-quiet" type="button" data-context-cancel hidden>수정 취소</button>
-                        </div>
-                      </form>
-                    </div>
-                  </details>
-                </div>
-              </details>
-            </section>
-
-            <section class="entry-block" aria-labelledby="new-candidate-title">
-              <div class="entry-block__heading">
-                <h3 class="entry-block__title" id="new-candidate-title">오늘 후보 4개</h3>
-                <span>오전 2개 · 저녁 2개</span>
-              </div>
-              <p class="entry-block__help" id="autogen-help">공통 원리와 선택한 컨텍스트를 읽고 후보를 등록합니다.</p>
-              <button class="button button-primary entry-block__action" type="button" data-autogen aria-describedby="autogen-help">오늘 후보 4개 생성</button>
+            <section class="entry-block">
+              <button class="button button-primary entry-block__action" type="button" data-autogen>오늘 후보 4개 생성</button>
               <p class="entry-block__status" role="status" data-autogen-feedback hidden></p>
-              <details class="workflow-tools">
-                <summary>고급 도구</summary>
-                <div class="workflow-tools__body">
-                  <section class="learning-panel" data-hosted-only hidden aria-labelledby="learning-panel-title">
-                    <h4 id="learning-panel-title">다음 생성에 반영되는 신호</h4>
-                    <p data-feedback-learning>아직 누적된 반려 신호가 없습니다.</p>
-                    <div class="approval-badges" data-feedback-tags></div>
-                  </section>
-                  <details class="advanced-input" data-manual-entry>
-                  <summary data-candidate-form-title>수동 후보 등록</summary>
-                  <div class="advanced-input__body">
-                    <form class="stack-form" data-candidate-form novalidate aria-describedby="candidate-feedback">
-                  <div class="candidate-fields">
-                    <label class="candidate-fields__wide" for="candidate-topic">주제/컨셉<input id="candidate-topic" name="topic" required maxlength="200" autocomplete="off" placeholder="예: 시험기간 일정 관리 — 잠금화면 데모로 공감 훅"></label>
-                    <label for="candidate-country">국가<select id="candidate-country" name="country" required><option value="KR" selected>한국 (KR)</option></select></label>
-                    <label for="candidate-posting-slot">게시 슬롯<select id="candidate-posting-slot" name="posting-slot" required><option value="manual" selected>수동</option><option value="morning">오전</option><option value="evening">저녁</option></select></label>
-                    <label for="candidate-hypothesis">가설<input id="candidate-hypothesis" name="hypothesis" required maxlength="2000" autocomplete="off" placeholder="예: 1인칭 감탄이 저장률을 올린다"></label>
-                    <label class="candidate-fields__wide" for="candidate-caption">캡션<textarea id="candidate-caption" name="caption" required rows="5" placeholder="게시할 캡션을 그대로 붙여넣으세요."></textarea></label>
-                    <label for="candidate-persona-domain">페르소나 도메인<select id="candidate-persona-domain" name="persona-domain">
-                      <option value="" selected>선택 안 함</option>
-                      <option value="sports_fan">스포츠 팬</option>
-                      <option value="idol_fandom">아이돌·밴드 팬덤</option>
-                      <option value="exam_prepper">수험생</option>
-                      <option value="parenting">육아</option>
-                      <option value="office_worker">직군 직장인</option>
-                      <option value="fitness_crew">러닝·등산 크루</option>
-                      <option value="pet_owner">반려동물 보호자</option>
-                      <option value="cert_student">자격증 준비생</option>
-                      <option value="small_business">자영업</option>
-                    </select></label>
-                    <label for="candidate-refs">참조 레퍼런스<input id="candidate-refs" name="refs-used" autocomplete="off" placeholder="쉼표로 구분: ref-a, ref-b"></label>
-                    <label for="candidate-principles">적용 원리<input id="candidate-principles" name="principles-applied" autocomplete="off" placeholder="쉼표로 구분: 1, 4"></label>
-                    <label class="candidate-fields__wide" for="candidate-shooting-order">Appium 프롬프트<textarea id="candidate-shooting-order" name="shooting-order" rows="4" placeholder="이미지 생성 시 Appium에 전달할 지시 (일정 문자열, 기기 시각, 배경 등)"></textarea></label>
-                    <label class="candidate-fields__wide" for="candidate-schedule">잠금화면 일정<textarea id="candidate-schedule" name="trace-items" required rows="4" aria-describedby="candidate-schedule-help" placeholder="한 줄에 하나씩&#10;09:00 통계학 2교시&#10;13:00 스터디"></textarea></label>
-                    <p class="form-help candidate-fields__wide" id="candidate-schedule-help">한 줄에 하나씩, 1~8줄까지 입력합니다.</p>
-                    <label for="candidate-device-time">기기 시각<input id="candidate-device-time" name="device-time" required placeholder="07:20" inputmode="numeric" autocomplete="off" maxlength="5"></label>
-                    <label for="candidate-background-subject">배경 소재<select id="candidate-background-subject" name="background-subject" required>
-                      <option value="scenery" selected>풍경</option>
-                      <option value="character_kitty">고양이 캐릭터</option>
-                      <option value="character_other">기타 캐릭터</option>
-                      <option value="family_photo">가족 사진</option>
-                      <option value="person">인물</option>
-                      <option value="pet">반려동물</option>
-                      <option value="minimal">미니멀</option>
-                      <option value="sports_team">스포츠 팀</option>
-                      <option value="none">없음</option>
-                    </select></label>
-                    <label for="candidate-background-mood">배경 분위기<input id="candidate-background-mood" name="background-mood" required maxlength="40" autocomplete="off" placeholder="예: 늦은 밤 책상 위 스탠드 불빛"></label>
-                    <label class="candidate-fields__wide" for="candidate-background-query">배경 검색어<input id="candidate-background-query" name="background-search-query" maxlength="200" autocomplete="off" aria-describedby="candidate-background-query-help" placeholder="예: 김도영 타격 직캠"></label>
-                    <p class="form-help candidate-fields__wide" id="candidate-background-query-help">웹에서 이 배경을 찾을 검색어입니다. 인물·캐릭터·팀 이름을 그대로 써도 됩니다. 비워두면 배경 소재와 분위기로 자동 생성합니다.</p>
-                  </div>
-                  <p class="form-help" data-candidate-edit-note hidden>수정하면 기존 승인과 이미지가 무효화되고 캡션·주제 검수부터 다시 시작합니다.</p>
-                  <p class="candidate-feedback" id="candidate-feedback" data-candidate-feedback role="alert" hidden></p>
-                  <div class="form-actions">
-                    <button class="button button-secondary" type="submit" data-candidate-submit>후보 등록</button>
-                    <button class="button button-quiet" type="button" data-candidate-cancel hidden>수정 취소</button>
-                  </div>
-                    </form>
-                  </div>
-                  </details>
-                </div>
-              </details>
             </section>
           </div>
           <div class="candidate-list-toolbar">
             <h3>후보 목록</h3>
+            <button class="button candidate-delete__confirm" type="button" data-candidate-delete-all disabled>후보 전체 삭제</button>
           </div>
           <div class="candidate-list" data-candidate-list></div>
           <div class="empty-surface" data-candidate-empty>
             <h3 data-candidate-empty-title>등록된 후보가 없습니다</h3>
-            <p data-candidate-empty-copy>위에서 컨텍스트를 고른 뒤 후보 4개를 생성하세요.</p>
+            <p data-candidate-empty-copy>오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.</p>
           </div>
         </section>
 

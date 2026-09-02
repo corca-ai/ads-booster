@@ -1431,14 +1431,6 @@
       `candidate-status ${record.capture_state ? `capture_${record.capture_state}` : record.status}`,
       candidateStatusLabel(record),
     ));
-    if (hostedCandidateControls) {
-      const edit = document.createElement("button");
-      edit.className = "button button-quiet candidate-row__action";
-      edit.type = "button";
-      edit.textContent = "수정";
-      edit.addEventListener("click", () => beginCandidateEdit(record));
-      trailing.append(edit);
-    }
     trailing.append(deleteControl(record, false));
     row.append(source, content, trailing);
     return row;
@@ -1911,6 +1903,7 @@
     const emptyCopy = one("[data-candidate-empty-copy]");
     if (emptyTitle) emptyTitle.textContent = "등록된 후보가 없습니다";
     if (emptyCopy) emptyCopy.textContent = "오늘 후보 4개 생성을 눌러 첫 작업을 만드세요.";
+    renderCandidateDeleteAll();
   };
 
 
@@ -2221,7 +2214,8 @@
     if (candidateEditNote) candidateEditNote.hidden = true;
     setCandidateFeedback("");
     const profile = selectedContextProfile();
-    if (profile) candidateField("candidate-country").value = profile.country;
+    const country = candidateField("candidate-country");
+    if (profile && country) country.value = profile.country;
   };
 
   const beginCandidateEdit = (record) => {
@@ -2280,6 +2274,55 @@
     }
   };
 
+  const candidateDeleteAll = one("[data-candidate-delete-all]");
+  let candidateDeleteAllTimer = null;
+
+  const resetCandidateDeleteAll = () => {
+    if (!candidateDeleteAll) return;
+    if (candidateDeleteAllTimer !== null) window.clearTimeout(candidateDeleteAllTimer);
+    candidateDeleteAllTimer = null;
+    candidateDeleteAll.dataset.confirming = "false";
+    candidateDeleteAll.disabled = candidateRecords.length === 0;
+    candidateDeleteAll.textContent = "후보 전체 삭제";
+  };
+
+  const renderCandidateDeleteAll = () => {
+    if (!candidateDeleteAll) return;
+    if (candidateRecords.length === 0) resetCandidateDeleteAll();
+    else if (candidateDeleteAll.dataset.confirming !== "true") candidateDeleteAll.disabled = false;
+  };
+
+  const deleteAllCandidates = async () => {
+    if (!candidateDeleteAll) return;
+    candidateDeleteAll.disabled = true;
+    setBusy(candidateDeleteAll, true, "후보 전체를 삭제하는 중…");
+    try {
+      const result = await request("/api/candidates", { method: "DELETE" });
+      await loadCandidates();
+      const cleanupFailures = Number(result?.artifact_cleanup_failures ?? 0);
+      setNotice(
+        cleanupFailures > 0
+          ? `후보는 삭제됐지만 이미지 ${cleanupFailures}개는 정리가 필요합니다.`
+          : "후보 전체를 삭제했습니다.",
+      );
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(candidateDeleteAll, false);
+      resetCandidateDeleteAll();
+    }
+  };
+
+  candidateDeleteAll?.addEventListener("click", () => {
+    if (candidateDeleteAll.dataset.confirming === "true") {
+      void deleteAllCandidates();
+      return;
+    }
+    candidateDeleteAll.dataset.confirming = "true";
+    candidateDeleteAll.textContent = "전체 삭제 확정";
+    candidateDeleteAllTimer = window.setTimeout(resetCandidateDeleteAll, CONFIRM_REVERT_MS);
+  });
+
 
   // ---- 국가 홈 · 계정 홈 ---------------------------------------------------
   // 화면은 세 층이다: 국가 → 그 국가의 계정 → 그 계정의 작업 화면. 계정 하나가 하나의
@@ -2300,7 +2343,6 @@
   const accountBack = one("[data-account-back]");
   const accountCurrentName = one("[data-account-current-name]");
   const accountCurrentConcept = one("[data-account-current-concept]");
-  const accountVerdict = one("[data-account-verdict]");
   const accountForm = one("[data-account-form]");
   const accountFormDetails = one("[data-account-form-details]");
   const accountFormFeedback = one("[data-account-feedback]");
@@ -2457,36 +2499,6 @@
     }
   };
 
-  const renderAccountVerdict = () => {
-    if (!accountVerdict) return;
-    accountVerdict.replaceChildren();
-    if (!currentAccount) return;
-    const next = currentAccount.status === "active" ? "retired" : "active";
-    const button = document.createElement("button");
-    button.className = "button button-quiet";
-    button.type = "button";
-    button.textContent = next === "active" ? "활성으로 승격" : "폐기";
-    button.addEventListener("click", async () => {
-      setBusy(button, true, "계정 상태를 바꾸는 중…");
-      try {
-        const updated = await request(
-          `${personaPath()}/${encodeURIComponent(currentAccount.account_id)}/status`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: next, expected_revision: currentAccount.revision }),
-          },
-        );
-        currentAccount = updated;
-        accounts = accounts.map((item) => item.account_id === updated.account_id ? updated : item);
-        renderAccounts(); renderAccountVerdict();
-        setNotice(`계정을 ${ACCOUNT_STATUS_LABELS[updated.status]} 상태로 바꿨습니다.`);
-      } catch (error) { setNotice(error.message); }
-      finally { setBusy(button, false); }
-    });
-    accountVerdict.append(button);
-  };
-
   // 레벨 1. 국가를 벗어나면 열려 있던 계정도 함께 닫힌다.
   const showCountryHome = () => {
     currentAccount = null;
@@ -2532,7 +2544,6 @@
     if (accountCurrentConcept) {
       accountCurrentConcept.textContent = account.identity?.concept ?? account.country;
     }
-    renderAccountVerdict();
     renderAutogenButtons();
     setBusy(workspaceLive, true, `${account.display_name} 계정을 여는 중…`);
     try {
@@ -2555,7 +2566,7 @@
     renderCountries();
     if (currentAccount) {
       const refreshed = accounts.find((item) => item.account_id === currentAccount.account_id);
-      if (refreshed) { currentAccount = refreshed; renderAccountVerdict(); }
+      if (refreshed) currentAccount = refreshed;
       else showAccountHome();
     }
   };
@@ -2571,11 +2582,9 @@
   });
 
   countryAddAccount?.addEventListener("click", () => {
-    // 계정이 하나도 없으면 고를 국가도 없다. 폼에서 국가를 고르는 것이 곧 그 국가를 여는
-    // 일이라, 국가 없이 계정 목록으로 내려보내고 추가 폼을 펼쳐 준다.
     activeCountry = null;
     showAccountHome();
-    if (accountFormDetails) accountFormDetails.open = true;
+    accountProposeButton?.focus();
   });
 
   const accountProposeButton = one("[data-account-propose]");
@@ -2588,34 +2597,42 @@
     accountProposalFeedback.hidden = !message;
   };
 
-  // 제안은 저장하지 않는다. 고른 것만 폼에 실려 평소 등록 경로로 내려간다.
-  const applyProposal = (proposal) => {
-    const identity = proposal.identity;
-    const values = {
-      "account-name": identity.display_name,
-      "account-age": String(identity.age),
-      "account-region": identity.region,
-      "account-occupation": identity.occupation,
-      "account-domain": identity.domain,
-      "account-concept": identity.concept,
-      "account-interests": identity.interests.join(", "),
-      "account-rhythm": identity.life_rhythm,
-      "account-background-subject": identity.taste.background_subject,
-      "account-background-mood": identity.taste.background_mood,
-      "account-font": identity.taste.font,
-    };
-    Object.entries(values).forEach(([id, value]) => {
-      const field = document.getElementById(id);
-      if (field) field.value = value;
-    });
-    // 고른 근거는 계정 note 로 남는다 — 왜 이 계정을 열었는지가 계정과 함께 있어야 한다.
-    proposalNote = proposal.reason;
-    if (accountProposalGrid) {
-      accountProposalGrid.replaceChildren();
-      accountProposalGrid.hidden = true;
-    }
+  const createProposalAccount = async (proposal, button) => {
+    if (button.disabled) return;
+    const country = activeCountry || "KR";
+    button.disabled = true;
     setAccountProposalFeedback("");
-    setNotice(`${identity.display_name} 컨셉을 폼에 채웠습니다. 고쳐서 등록하세요.`);
+    setBusy(button, true, "계정을 추가하는 중…");
+    try {
+      const created = await request(personaPath(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          country,
+          identity: proposal.identity,
+          schedule: {
+            language: countryLanguage(country),
+            timezone: ACCOUNT_ZONES[country] ?? "UTC",
+          },
+          note: proposal.reason,
+        }),
+      });
+      activeCountry = created.country;
+      if (accountProposalGrid) {
+        accountProposalGrid.replaceChildren();
+        accountProposalGrid.hidden = true;
+      }
+      await loadAccounts();
+      showAccountHome();
+      accountHome?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setNotice(`${created.display_name} 계정을 추가했습니다.`);
+    } catch (error) {
+      setAccountProposalFeedback(error.message);
+      setNotice(error.message);
+      button.disabled = false;
+    } finally {
+      setBusy(button, false);
+    }
   };
 
   const proposalCard = (proposal) => {
@@ -2642,8 +2659,8 @@
     const use = document.createElement("button");
     use.className = "button button-primary";
     use.type = "button";
-    use.textContent = "이 컨셉 쓰기";
-    use.addEventListener("click", () => applyProposal(proposal));
+    use.textContent = "이 컨셉으로 계정 만들기";
+    use.addEventListener("click", () => createProposalAccount(proposal, use));
 
     card.append(name, concept, meta, reason, use);
     return card;
@@ -2666,7 +2683,7 @@
         accountProposalGrid.replaceChildren(...proposals.map(proposalCard));
         accountProposalGrid.hidden = proposals.length === 0;
       }
-      setNotice(`컨셉 ${proposals.length}개를 제안받았습니다. 하나를 고르면 폼이 채워집니다.`);
+      setNotice(`컨셉 ${proposals.length}개를 제안받았습니다.`);
     } catch (error) {
       setAccountProposalFeedback(error.message);
       setNotice(error.message);
