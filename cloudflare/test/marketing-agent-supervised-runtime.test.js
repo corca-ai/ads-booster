@@ -754,6 +754,32 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     digest(secondEvaluation),
     secondEvaluatedAt,
   );
+  const tasksBeforeMismatchedLineages = DB.sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks",
+  ).get().count;
+  DB.sqlite.prepare(
+    "UPDATE hosted_marketing_campaigns SET mode = 'shadow' WHERE campaign_id = 'campaign-2'",
+  ).run();
+  await assert.rejects(
+    requestLearningSynthesis(
+      { DB },
+      ACCOUNT,
+      {
+        learning_id: "learning-mismatched-selector",
+        evaluation_ids: [requested.evaluation_id, secondEvaluation.evaluation_id],
+      },
+    ),
+    (error) => error.status === 409,
+  );
+  assert.equal(
+    DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks",
+    ).get().count,
+    tasksBeforeMismatchedLineages,
+  );
+  DB.sqlite.prepare(
+    "UPDATE hosted_marketing_campaigns SET mode = 'assisted' WHERE campaign_id = 'campaign-2'",
+  ).run();
   const learningRequest = await requestLearningSynthesis(
     { DB },
     ACCOUNT,
@@ -809,6 +835,24 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     ).get(learningTask.task_id),
   });
   const beforeRejectedLearning = learningMutationSnapshot();
+  const forgedApplicability = structuredClone(learningCallback);
+  forgedApplicability.result.output.learning_candidate.applicability = {
+    ...learningPayload.applicability,
+    feature_id: "trace.lockscreen.unknown",
+  };
+  forgedApplicability.result.output.learning_candidate_sha256 = digest(
+    forgedApplicability.result.output.learning_candidate,
+  );
+  await assert.rejects(
+    receiveHostedLearningSynthesisCallback(
+      { DB },
+      learningTask,
+      forgedApplicability,
+      { worker_id: "worker-1" },
+    ),
+    (error) => error.status === 409,
+  );
+  assert.deepEqual(learningMutationSnapshot(), beforeRejectedLearning);
   const missingApplicability = structuredClone(learningCallback);
   delete missingApplicability.result.output.learning_candidate.applicability;
   missingApplicability.result.output.learning_candidate_sha256 = digest(
