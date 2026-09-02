@@ -338,6 +338,16 @@ def test_learning_synthesis_accepts_independent_semantic_replication(tmp_path: P
                 "learning_id": "learning-1",
                 "target_campaign_id": "campaign-2",
                 "account_id": "trace_kr",
+                "applicability": {
+                    "schema_version": "trace.marketing-learning-applicability.v1",
+                    "account_id": "trace_kr",
+                    "feature_id": "trace.lockscreen.ai-concepts",
+                    "feature_packet_sha256": "a" * 64,
+                    "country": "KR",
+                    "language": "ko",
+                    "mode": "assisted",
+                    "marketing_context_snapshot_sha256": None,
+                },
                 "lineages": lineages,
                 "requested_by": "hosted_workspace",
             }
@@ -367,6 +377,16 @@ def test_learning_synthesis_accepts_independent_semantic_replication(tmp_path: P
         "evaluation-campaign-1",
         "evaluation-campaign-2",
     ]
+    assert candidate["applicability"] == {
+        "schema_version": "trace.marketing-learning-applicability.v1",
+        "account_id": "trace_kr",
+        "feature_id": "trace.lockscreen.ai-concepts",
+        "feature_packet_sha256": "a" * 64,
+        "country": "KR",
+        "language": "ko",
+        "mode": "assisted",
+        "marketing_context_snapshot_sha256": None,
+    }
     assert result.output["tool_actions_created"] == 0
 
 

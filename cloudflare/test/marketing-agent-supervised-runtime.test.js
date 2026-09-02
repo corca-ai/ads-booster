@@ -14,6 +14,7 @@ import {
   createVariantLink,
   decideLearningCandidate,
   ingestProductEvent,
+  normalizeFeaturePacket,
   requestCandidateMaterialization,
   requestExperimentEvaluation,
   requestLearningSynthesis,
@@ -42,7 +43,7 @@ function digest(value) {
 
 function seedSupervisedCampaign(DB) {
   const now = new Date().toISOString();
-  const packet = {
+  const packet = normalizeFeaturePacket({
     schema_version: "trace.feature-evidence.v1",
     packet_id: "packet-installed-1",
     feature_id: "trace.lockscreen.ai-concepts",
@@ -75,7 +76,7 @@ function seedSupervisedCampaign(DB) {
       reasons: ["installed runtime observed"],
     },
     observed_at: now,
-  };
+  });
   const packetSha = digest(packet);
   const registration = {
     experiment_id: "experiment-1",
@@ -308,7 +309,7 @@ function seedSupervisedCampaign(DB) {
       now,
     );
   }
-  return { registration };
+  return { packet, registration };
 }
 
 function claimTask(DB, taskId) {
@@ -411,7 +412,7 @@ async function materializeOne(DB, projectionRevision) {
 
 test("assisted loop materializes balanced blocks and evaluates attributed outcomes", async () => {
   const DB = new D1Adapter();
-  const { registration } = seedSupervisedCampaign(DB);
+  const { packet, registration } = seedSupervisedCampaign(DB);
   const materialized = [];
   for (let revision = 4; revision < 8; revision += 1) {
     try {
@@ -748,6 +749,7 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     campaign_id: "campaign-2",
     statement: "Character-day framing may improve attributed setup completion.",
     scope: "KR iPhone installed-evidence campaigns",
+    applicability: learningPayload.applicability,
     independent_lineage_ids: learningPayload.lineages.map(
       (item) => item.evaluation.evaluation_id,
     ),
@@ -772,6 +774,51 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
       },
     },
   };
+  const learningMutationSnapshot = () => ({
+    candidates: DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_learning_candidates",
+    ).get().count,
+    campaign: DB.sqlite.prepare(
+      `SELECT state, projection_revision FROM hosted_marketing_campaigns
+       WHERE campaign_id = 'campaign-2'`,
+    ).get(),
+    task: DB.sqlite.prepare(
+      `SELECT callback_id, callback_reservation_id, result_json
+       FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
+    ).get(learningTask.task_id),
+  });
+  const beforeRejectedLearning = learningMutationSnapshot();
+  const missingApplicability = structuredClone(learningCallback);
+  delete missingApplicability.result.output.learning_candidate.applicability;
+  missingApplicability.result.output.learning_candidate_sha256 = digest(
+    missingApplicability.result.output.learning_candidate,
+  );
+  await assert.rejects(
+    receiveHostedLearningSynthesisCallback(
+      { DB },
+      learningTask,
+      missingApplicability,
+      { worker_id: "worker-1" },
+    ),
+    (error) => error.status === 409,
+  );
+  assert.deepEqual(learningMutationSnapshot(), beforeRejectedLearning);
+  DB.sqlite.prepare(
+    "UPDATE hosted_marketing_campaigns SET mode = 'shadow' WHERE campaign_id = 'campaign-2'",
+  ).run();
+  await assert.rejects(
+    receiveHostedLearningSynthesisCallback(
+      { DB },
+      learningTask,
+      learningCallback,
+      { worker_id: "worker-1" },
+    ),
+    (error) => error.status === 409,
+  );
+  assert.deepEqual(learningMutationSnapshot(), beforeRejectedLearning);
+  DB.sqlite.prepare(
+    "UPDATE hosted_marketing_campaigns SET mode = 'assisted' WHERE campaign_id = 'campaign-2'",
+  ).run();
   const learningAccepted = await receiveHostedLearningSynthesisCallback(
     { DB },
     learningTask,
@@ -787,6 +834,60 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
   });
   assert.equal(approval.decision, "approved");
   assert.ok(approval.principle_id);
+  assert.deepEqual(
+    JSON.parse(DB.sqlite.prepare(
+      "SELECT principle_json FROM hosted_marketing_principles WHERE principle_id = ?",
+    ).get(approval.principle_id).principle_json).applicability,
+    learningPayload.applicability,
+  );
+  const learningGrant = DB.sqlite.prepare(
+    `SELECT grant_id FROM hosted_marketing_approval_grants
+     WHERE target_kind = 'learning_candidate' AND target_id = 'learning-1'`,
+  ).get();
+  const legacyPrinciple = {
+    schema_version: "trace.marketing-principle.v1",
+    principle_id: "principle-legacy-without-applicability",
+    learning_id: "learning-1",
+    statement: "This legacy principle must not auto-apply.",
+    scope: "KR",
+    independent_lineage_ids: learningCandidate.independent_lineage_ids,
+    state: "provisional",
+    created_at: secondEvaluatedAt,
+  };
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_principles
+      (principle_id, learning_id, approval_grant_id, principle_json,
+       principle_sha256, state, created_at, updated_at)
+     VALUES (?, 'learning-1', ?, ?, ?, 'provisional', ?, ?)`,
+  ).run(
+    legacyPrinciple.principle_id,
+    learningGrant.grant_id,
+    canonicalJson(legacyPrinciple),
+    digest(legacyPrinciple),
+    secondEvaluatedAt,
+    secondEvaluatedAt,
+  );
+  for (let index = 0; index < 100; index += 1) {
+    const nonmatchingPrinciple = {
+      ...legacyPrinciple,
+      principle_id: `principle-000-nonmatching-${index}`,
+      statement: `Nonmatching principle ${index}`,
+      applicability: { ...learningPayload.applicability, mode: "shadow" },
+    };
+    DB.sqlite.prepare(
+      `INSERT INTO hosted_marketing_principles
+        (principle_id, learning_id, approval_grant_id, principle_json,
+         principle_sha256, state, created_at, updated_at)
+       VALUES (?, 'learning-1', ?, ?, ?, 'provisional', ?, ?)`,
+    ).run(
+      nonmatchingPrinciple.principle_id,
+      learningGrant.grant_id,
+      canonicalJson(nonmatchingPrinciple),
+      digest(nonmatchingPrinciple),
+      secondEvaluatedAt,
+      secondEvaluatedAt,
+    );
+  }
 
   const shadowPacket = {
     ...JSON.parse(DB.sqlite.prepare(
@@ -827,8 +928,82 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     JSON.parse(nextTask.task_json).payload.canonical_principles,
   );
   assert.ok(
-    JSON.parse(nextTask.task_json).payload.canonical_principles.includes(
+    !JSON.parse(nextTask.task_json).payload.canonical_principles.includes(
       learningCandidate.statement,
+    ),
+  );
+  const legacyCandidate = {
+    schema_version: "trace.learning-candidate.v1",
+    learning_id: "learning-legacy",
+    campaign_id: "campaign-next",
+    statement: "Legacy candidate must not be promoted.",
+    scope: "KR",
+    independent_lineage_ids: learningCandidate.independent_lineage_ids,
+    status: "candidate",
+    created_at: secondEvaluatedAt,
+  };
+  const legacyCandidateSha = digest(legacyCandidate);
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_learning_candidates
+      (learning_id, campaign_id, schema_version, candidate_json, candidate_sha256,
+       state, created_at, updated_at)
+     VALUES (?, 'campaign-next', 'trace.learning-candidate.v1', ?, ?, 'candidate', ?, ?)`,
+  ).run(
+    legacyCandidate.learning_id,
+    canonicalJson(legacyCandidate),
+    legacyCandidateSha,
+    secondEvaluatedAt,
+    secondEvaluatedAt,
+  );
+  await assert.rejects(
+    decideLearningCandidate({ DB }, ACCOUNT, legacyCandidate.learning_id, {
+      candidate_sha256: legacyCandidateSha,
+      reviewer_id: "reviewer-legacy",
+      decision: "approved",
+    }),
+    (error) => error.status === 409,
+  );
+  assert.equal(
+    DB.sqlite.prepare(
+      "SELECT state FROM hosted_marketing_learning_candidates WHERE learning_id = 'learning-legacy'",
+    ).get().state,
+    "candidate",
+  );
+  assert.equal(
+    DB.sqlite.prepare(
+      `SELECT COUNT(*) AS count FROM hosted_marketing_approval_grants
+       WHERE target_kind = 'learning_candidate' AND target_id = 'learning-legacy'`,
+    ).get().count,
+    0,
+  );
+
+  const applicablePacket = structuredClone(packet);
+  const applicableCampaign = await createShadowCampaign({ DB }, ACCOUNT, {
+    campaign_id: "campaign-applicable",
+    business_outcome: "Replicate the bounded installed-evidence format.",
+    current_control: "아이폰 쓰는 유저들...",
+    feature_packet: applicablePacket,
+    mode: "assisted",
+    origin_campaign_id: "origin-1",
+    product_truth_review: {
+      decision: "approved",
+      approved_claim_ids: ["claim-installed"],
+      reviewer_id: "reviewer-3",
+      reviewed_at: new Date().toISOString(),
+    },
+    research_enabled: false,
+  });
+  const applicableTask = DB.sqlite.prepare(
+    "SELECT task_json FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).get(applicableCampaign.task_id);
+  assert.ok(
+    JSON.parse(applicableTask.task_json).payload.canonical_principles.includes(
+      learningCandidate.statement,
+    ),
+  );
+  assert.ok(
+    !JSON.parse(applicableTask.task_json).payload.canonical_principles.includes(
+      legacyPrinciple.statement,
     ),
   );
 });

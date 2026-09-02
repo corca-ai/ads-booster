@@ -1,6 +1,9 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
-import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
+import {
+  MARKETING_JUDGMENT_PIPELINE,
+  rederiveLearningApplicability,
+} from "./marketing-agent.js";
 
 export async function receiveHostedLearningSynthesisCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -58,7 +61,18 @@ export async function receiveHostedLearningSynthesisCallback(env, task, callback
   const output = requireObject(callback.result?.output, "learning synthesis output");
   const candidate = requireObject(output.learning_candidate, "learning candidate");
   const candidateSha256 = await canonicalSha256(candidate);
+  const applicability = requireObject(payload.applicability, "learning applicability");
   const expectedLineages = payload.lineages.map((item) => item.evaluation.evaluation_id);
+  let rederivedApplicability;
+  try {
+    rederivedApplicability = await rederiveLearningApplicability(
+      env.DB,
+      task.account_id,
+      expectedLineages,
+    );
+  } catch {
+    throw new HttpError(409, "learning applicability lineage is no longer valid");
+  }
   if (
     output.pipeline !== MARKETING_JUDGMENT_PIPELINE
     || output.judgment !== "learning_synthesis"
@@ -68,22 +82,11 @@ export async function receiveHostedLearningSynthesisCallback(env, task, callback
     || candidate.learning_id !== payload.learning_id
     || candidate.campaign_id !== payload.target_campaign_id
     || candidate.status !== "candidate"
+    || canonicalJson(candidate.applicability) !== canonicalJson(applicability)
+    || canonicalJson(applicability) !== canonicalJson(rederivedApplicability)
     || !sameSet(candidate.independent_lineage_ids, expectedLineages)
   ) {
     throw new HttpError(409, "learning candidate binding is invalid");
-  }
-  const storedLineages = await env.DB.prepare(
-    `SELECT evaluation_id, campaign_id, state
-     FROM hosted_marketing_experiment_evaluations
-     WHERE evaluation_id IN (${expectedLineages.map(() => "?").join(",")})`,
-  ).bind(...expectedLineages).all();
-  if (
-    storedLineages.results.length !== expectedLineages.length
-    || storedLineages.results.some((item) => item.state !== "evaluated")
-    || new Set(storedLineages.results.map((item) => item.campaign_id)).size
-      !== expectedLineages.length
-  ) {
-    throw new HttpError(409, "learning replication lineage is no longer valid");
   }
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(

@@ -469,12 +469,26 @@ class ExperimentEvaluation(ContractModel):
         return self
 
 
+class MarketingLearningApplicability(ContractModel):
+    """Exact campaign selector that may receive a human-promoted learning."""
+
+    schema_version: Literal["trace.marketing-learning-applicability.v1"]
+    account_id: AgentIdentifier
+    feature_id: AgentIdentifier
+    feature_packet_sha256: Sha256Digest
+    country: Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
+    language: Annotated[str, Field(pattern=r"^[a-z]{2,3}$")]
+    mode: Literal["shadow", "assisted"]
+    marketing_context_snapshot_sha256: Sha256Digest | None = None
+
+
 class LearningCandidate(ContractModel):
     schema_version: Literal["trace.learning-candidate.v1"]
     learning_id: AgentIdentifier
     campaign_id: AgentIdentifier
     statement: Annotated[str, Field(min_length=1, max_length=2000)]
     scope: Annotated[str, Field(min_length=1, max_length=500)]
+    applicability: MarketingLearningApplicability | None = None
     independent_lineage_ids: Annotated[
         tuple[AgentIdentifier, ...],
         Field(min_length=2, max_length=32),

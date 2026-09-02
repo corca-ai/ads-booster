@@ -46,7 +46,10 @@ Implemented provider-neutral foundations:
   source-session re-derivation at the handoff boundary, and explicit `inconclusive` on missing or
   counter-evidence;
 - a hosted Trace campaign ledger with product evidence, strategy, experiment, approval, attribution,
-  and conservative learning ownership. Existing Cloudflare, Threads, and Appium owners remain intact.
+  and conservative learning ownership. A human-approved learning has a prose explanation plus a
+  server-derived exact applicability selector; only a matching future campaign may receive it, and
+  legacy prose-only principles are not auto-applied. Existing Cloudflare, Threads, and Appium owners
+  remain intact.
 - an account-scoped customer-intelligence reference lane: manual normalized signals, one final human
   review decision, immutable context snapshots, safe task/receipt projection, and callback rebinding.
   It is deliberately not a transcript or CRM connector.

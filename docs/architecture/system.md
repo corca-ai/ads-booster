@@ -148,9 +148,14 @@ direct-response lineage from a causal estimate, incomplete coverage, and guardra
 callback independently re-derives the full result from the immutable task request, verifies the
 frozen registration digest, and stores only that derived result; a worker-provided state, winner, or
 coverage cannot promote false learning. A learning synthesis can create only a candidate from
-independent evaluated campaigns; an exact human approval is required before a scoped principle is
-written. Generic recording, composition, Figma, and generated-media executors remain deferred, so no
-unsupported artifact capability is simulated.
+independent evaluated campaigns with one frozen structured applicability selector. An exact human
+approval is required before a scoped principle is written, and a future campaign receives it only
+when its account, feature packet digest, country, language, mode, and context-snapshot digest exactly
+match. The learning callback re-derives that selector from the current D1 evaluation lineage before it
+writes a candidate, and the knowledge loader narrows by those selector fields before its bounded
+result limit. Legacy or prose-only scope records never auto-apply. Generic recording, composition,
+Figma, and generated-media executors remain deferred, so no unsupported artifact capability is
+simulated.
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
 

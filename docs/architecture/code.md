@@ -122,8 +122,14 @@ and reproduces its conclusion, coverage, lineage, and guardrail result. The expe
 callback canonical-compares the worker output to that derived value and persists the derived value
 only after the frozen registration digest also matches D1. Their Cloudflare callbacks independently
 validate every receipt, claim, plan, assignment, and approval binding before writing a projection.
-`marketing-agent.js` owns assisted campaign gating, variant links, product-event intake, scheduled
-evaluation dispatch, and learning approval.
+Learning synthesis receives a server-derived `MarketingLearningApplicability`; its model may explain
+scope in prose but cannot broaden the selector. The callback binds that selector into the candidate,
+re-derives it from D1's evaluation/campaign/packet/account lineage, and rejects drift before a write.
+Learning approval copies it into the immutable principle, and `marketing-agent.js` SQL-narrows on every
+selector member before the bounded lookup, then applies a defensive exact canonical match before a
+new campaign's knowledge snapshot receives a principle. Legacy principles without the selector are
+read but never auto-applied. `marketing-agent.js` also owns assisted campaign gating, variant links,
+product-event intake, scheduled evaluation dispatch, and learning approval.
 
 Migrations `0018`–`0023` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,

@@ -286,7 +286,14 @@ export async function createShadowCampaign(env, account, input) {
     );
   }
   const packetSha256 = await canonicalSha256(packet);
-  const canonicalPrinciples = await loadCanonicalPrinciples(env.DB, account.account_id);
+  const learningApplicability = marketingLearningApplicability({
+    account,
+    packet,
+    packetSha256,
+    mode,
+    marketingContext,
+  });
+  const canonicalPrinciples = await loadCanonicalPrinciples(env.DB, learningApplicability);
   const knowledgeSnapshotSha256 = await canonicalSha256({ principles: canonicalPrinciples });
   const capabilitySnapshotSha256 = await canonicalSha256({ capabilities: SHADOW_CAPABILITIES });
   const existing = await env.DB.prepare(
@@ -1516,11 +1523,17 @@ export async function requestLearningSynthesis(env, account, input) {
   const placeholders = evaluationIds.map(() => "?").join(",");
   const result = await env.DB.prepare(
     `SELECT evaluation.evaluation_id, evaluation.evaluation_json,
-            campaign.campaign_id,
+            campaign.campaign_id, campaign.mode, campaign.feature_packet_sha256,
+            campaign.marketing_context_snapshot_sha256,
+            packet.feature_id, account.country, account.language,
             hypothesis.hypothesis_json, treatment.treatment_json
      FROM hosted_marketing_experiment_evaluations AS evaluation
      JOIN hosted_marketing_campaigns AS campaign
        ON campaign.campaign_id = evaluation.campaign_id
+     JOIN hosted_workspace_accounts AS account ON account.account_id = campaign.account_id
+     JOIN hosted_marketing_feature_packets AS packet
+       ON packet.packet_id = campaign.feature_packet_id
+      AND packet.packet_sha256 = campaign.feature_packet_sha256
      JOIN hosted_marketing_hypotheses AS hypothesis
        ON hypothesis.campaign_id = campaign.campaign_id
       AND hypothesis.hypothesis_id = json_extract(
@@ -1540,6 +1553,7 @@ export async function requestLearningSynthesis(env, account, input) {
   if (new Set(ordered.map((row) => row.campaign_id)).size !== ordered.length) {
     throw new MarketingAgentHttpError(409, "learning에는 독립 campaign이 필요합니다.");
   }
+  const applicability = learningApplicabilityFromLineages(account.account_id, ordered);
   const existing = await env.DB.prepare(
     `SELECT learning_id FROM hosted_marketing_learning_candidates WHERE learning_id = ?`,
   ).bind(learningId).first();
@@ -1562,6 +1576,7 @@ export async function requestLearningSynthesis(env, account, input) {
       learning_id: learningId,
       target_campaign_id: targetCampaignId,
       account_id: account.account_id,
+      applicability,
       lineages: ordered.map((row) => ({
         evaluation: JSON.parse(row.evaluation_json),
         winner_hypothesis: JSON.parse(row.hypothesis_json),
@@ -1640,12 +1655,19 @@ export async function decideLearningCandidate(env, account, learningId, input) {
   let principleId = null;
   if (decision === "approved") {
     const candidate = JSON.parse(row.candidate_json);
+    if (!isMarketingLearningApplicability(candidate.applicability)) {
+      throw new MarketingAgentHttpError(
+        409,
+        "legacy learning candidate에는 구조화된 applicability가 필요합니다.",
+      );
+    }
     const principle = {
       schema_version: "trace.marketing-principle.v1",
       principle_id: `principle-${candidateSha256.slice(0, 48)}`,
       learning_id: learningId,
       statement: candidate.statement,
       scope: candidate.scope,
+      applicability: candidate.applicability,
       independent_lineage_ids: candidate.independent_lineage_ids,
       state: "provisional",
       created_at: now,
@@ -2296,7 +2318,106 @@ function marketingContextPlanningProjection(snapshot, snapshotSha256) {
   };
 }
 
-async function loadCanonicalPrinciples(db, accountId) {
+function marketingLearningApplicability({ account, packet, packetSha256, mode, marketingContext }) {
+  return {
+    schema_version: "trace.marketing-learning-applicability.v1",
+    account_id: account.account_id,
+    feature_id: packet.feature_id,
+    feature_packet_sha256: packetSha256,
+    country: account.country,
+    language: account.language,
+    mode,
+    marketing_context_snapshot_sha256: marketingContext?.snapshot_sha256 ?? null,
+  };
+}
+
+function learningApplicabilityFromLineages(accountId, lineages) {
+  const [first] = lineages;
+  const applicability = marketingLearningApplicability({
+    account: {
+      account_id: accountId,
+      country: first.country,
+      language: first.language,
+    },
+    packet: { feature_id: first.feature_id },
+    packetSha256: first.feature_packet_sha256,
+    mode: first.mode,
+    marketingContext: first.marketing_context_snapshot_sha256
+      ? { snapshot_sha256: first.marketing_context_snapshot_sha256 }
+      : null,
+  });
+  if (!lineages.every((lineage) => canonicalJson(marketingLearningApplicability({
+    account: {
+      account_id: accountId,
+      country: lineage.country,
+      language: lineage.language,
+    },
+    packet: { feature_id: lineage.feature_id },
+    packetSha256: lineage.feature_packet_sha256,
+    mode: lineage.mode,
+    marketingContext: lineage.marketing_context_snapshot_sha256
+      ? { snapshot_sha256: lineage.marketing_context_snapshot_sha256 }
+      : null,
+  })) === canonicalJson(applicability))) {
+    throw new MarketingAgentHttpError(
+      409,
+      "learning lineage의 구조화된 applicability가 일치하지 않습니다.",
+    );
+  }
+  return applicability;
+}
+
+export async function rederiveLearningApplicability(db, accountId, evaluationIds) {
+  if (!Array.isArray(evaluationIds) || evaluationIds.length < 2) {
+    throw new MarketingAgentHttpError(409, "learning applicability requires replication lineages");
+  }
+  if (new Set(evaluationIds).size !== evaluationIds.length) {
+    throw new MarketingAgentHttpError(409, "learning applicability lineages must be unique");
+  }
+  const placeholders = evaluationIds.map(() => "?").join(",");
+  const result = await db.prepare(
+    `SELECT evaluation.evaluation_id, campaign.campaign_id, campaign.mode,
+            campaign.feature_packet_sha256, campaign.marketing_context_snapshot_sha256,
+            packet.feature_id, account.country, account.language
+     FROM hosted_marketing_experiment_evaluations AS evaluation
+     JOIN hosted_marketing_campaigns AS campaign
+       ON campaign.campaign_id = evaluation.campaign_id
+     JOIN hosted_workspace_accounts AS account ON account.account_id = campaign.account_id
+     JOIN hosted_marketing_feature_packets AS packet
+       ON packet.packet_id = campaign.feature_packet_id
+      AND packet.packet_sha256 = campaign.feature_packet_sha256
+     WHERE campaign.account_id = ? AND evaluation.state = 'evaluated'
+       AND evaluation.evaluation_id IN (${placeholders})`,
+  ).bind(accountId, ...evaluationIds).all();
+  const byId = new Map(result.results.map((row) => [row.evaluation_id, row]));
+  if (byId.size !== evaluationIds.length) {
+    throw new MarketingAgentHttpError(409, "learning applicability lineages are stale");
+  }
+  const ordered = evaluationIds.map((evaluationId) => byId.get(evaluationId));
+  if (new Set(ordered.map((lineage) => lineage.campaign_id)).size !== ordered.length) {
+    throw new MarketingAgentHttpError(409, "learning applicability requires independent campaigns");
+  }
+  return learningApplicabilityFromLineages(accountId, ordered);
+}
+
+function isMarketingLearningApplicability(value) {
+  return value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && value.schema_version === "trace.marketing-learning-applicability.v1"
+    && typeof value.account_id === "string"
+    && typeof value.feature_id === "string"
+    && typeof value.feature_packet_sha256 === "string"
+    && /^[a-f0-9]{64}$/.test(value.feature_packet_sha256)
+    && /^[A-Z]{2}$/.test(value.country)
+    && /^[a-z]{2,3}$/.test(value.language)
+    && ["shadow", "assisted"].includes(value.mode)
+    && (value.marketing_context_snapshot_sha256 === null
+      || (typeof value.marketing_context_snapshot_sha256 === "string"
+        && /^[a-f0-9]{64}$/.test(value.marketing_context_snapshot_sha256)));
+}
+
+async function loadCanonicalPrinciples(db, applicability) {
   const result = await db.prepare(
     `SELECT principle.principle_id, principle.principle_json
      FROM hosted_marketing_principles AS principle
@@ -2304,14 +2425,39 @@ async function loadCanonicalPrinciples(db, accountId) {
        ON learning.learning_id = principle.learning_id
      JOIN hosted_marketing_campaigns AS campaign ON campaign.campaign_id = learning.campaign_id
      WHERE campaign.account_id = ? AND principle.state IN ('provisional', 'durable')
+       AND json_extract(principle.principle_json, '$.applicability.schema_version') = ?
+       AND json_extract(principle.principle_json, '$.applicability.account_id') = ?
+       AND json_extract(principle.principle_json, '$.applicability.feature_id') = ?
+       AND json_extract(principle.principle_json, '$.applicability.feature_packet_sha256') = ?
+       AND json_extract(principle.principle_json, '$.applicability.country') = ?
+       AND json_extract(principle.principle_json, '$.applicability.language') = ?
+       AND json_extract(principle.principle_json, '$.applicability.mode') = ?
+       AND json_extract(principle.principle_json, '$.applicability.marketing_context_snapshot_sha256') IS ?
      ORDER BY principle.principle_id
      LIMIT 100`,
-  ).bind(accountId).all();
+  ).bind(
+    applicability.account_id,
+    applicability.schema_version,
+    applicability.account_id,
+    applicability.feature_id,
+    applicability.feature_packet_sha256,
+    applicability.country,
+    applicability.language,
+    applicability.mode,
+    applicability.marketing_context_snapshot_sha256,
+  ).all();
   const learned = [];
   for (const row of result.results) {
     try {
-      const statement = JSON.parse(row.principle_json)?.statement;
-      if (typeof statement === "string" && statement.trim() && statement.length <= 2000) {
+      const principle = JSON.parse(row.principle_json);
+      const statement = principle?.statement;
+      if (
+        isMarketingLearningApplicability(principle?.applicability)
+        && canonicalJson(principle.applicability) === canonicalJson(applicability)
+        && typeof statement === "string"
+        && statement.trim()
+        && statement.length <= 2000
+      ) {
         learned.push(statement.trim());
       }
     } catch {

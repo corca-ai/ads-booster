@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 from ads_booster.contracts.marketing_agent import (
     ExperimentEvaluation,
     LearningCandidate,
+    MarketingLearningApplicability,
     contract_sha256,
 )
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
@@ -47,6 +48,7 @@ class LearningSynthesisRequest(LearningModel):
     learning_id: Annotated[str, Field(min_length=1, max_length=128)]
     target_campaign_id: Annotated[str, Field(min_length=1, max_length=128)]
     account_id: Annotated[str, Field(min_length=1, max_length=128)]
+    applicability: MarketingLearningApplicability
     lineages: Annotated[tuple[LearningLineage, ...], Field(min_length=2, max_length=32)]
     requested_by: Literal["hosted_workspace"]
 
@@ -156,6 +158,7 @@ class HostedLearningJudgmentExecutor:
                 campaign_id=prepared.request.target_campaign_id,
                 statement=proposal.statement,
                 scope=proposal.scope,
+                applicability=prepared.request.applicability,
                 independent_lineage_ids=tuple(
                     item.evaluation.evaluation_id for item in prepared.request.lineages
                 ),
@@ -189,14 +192,22 @@ def _learning_prompt(request: LearningSynthesisRequest) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+    applicability = json.dumps(
+        request.applicability.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return (
         "당신은 Trace Threads 마케팅 에이전트의 learning governor다. 독립 캠페인의 "
         "descriptive attribution 결과를 비교해 재사용 가능한 학습 후보를 제안한다. 이것은 "
         "원칙 승격이 아니라 사람 검수 대상이며, 인과 효과라고 표현하지 않는다.\n\n"
         "규칙:\n"
         "1. 모든 평가가 보여준 공통 방향만 statement에 쓰고 차이를 숨기지 않는다.\n"
-        "2. scope를 계정·시장·기능·proof 조건에 맞게 좁힌다.\n"
+        "2. scope를 계정·시장·기능·proof 조건에 맞게 좁힌다. 구조화된 applicability를 넓히거나 "
+        "대체하지 않는다.\n"
         "3. 최소 한 개 limitations를 명시한다.\n"
         "4. 단일 게시물 일반화, causal claim, 자동 게시 지시는 금지한다.\n\n"
+        f"frozen applicability: {applicability}\n"
         f"replicated lineages: {payload}\n"
     )
