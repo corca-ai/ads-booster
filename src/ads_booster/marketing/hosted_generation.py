@@ -117,6 +117,19 @@ class HostedGenerationRequest(GenerationModel):
 
 
 _LEGACY_CLOCK: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+# What "wallpaper" is called in each language a screen is written in. The query is searched
+# verbatim, so the word has to be the one people in that market actually tag a phone
+# background with - an English "wallpaper" appended to a Korean phrase finds nothing.
+_WALLPAPER_WORD: Final = {
+    "ko": "배경화면",
+    "ja": "壁紙",
+    "zh": "桌布",
+    "en": "wallpaper",
+    "de": "Hintergrundbild",
+    "fr": "fond d'écran",
+    "pt": "papel de parede",
+}
+_WALLPAPER_FALLBACK: Final = "wallpaper"
 # The lock screen shows one week, so a row sits on one of seven days and a bar spans at
 # most the rest of them.
 _WEEK_DAYS: Final = 7
@@ -215,6 +228,28 @@ class GeneratedImageInputs(GenerationModel):
     background_search_query: Annotated[str | None, Field(max_length=200)]
     background_mood: Annotated[str, Field(min_length=1, max_length=40)]
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
+
+    @model_validator(mode="after")
+    def name_the_query_as_a_wallpaper(self) -> GeneratedImageInputs:
+        """Make the query ask for a wallpaper, in the language the screen is written in.
+
+        Without the word, the same phrase searches the whole web: "김도영" returns news
+        photography of a player, wide and small, and the resolution gate then throws every
+        one of them away. With it, the query lands on the phone-wallpaper corner of the
+        index, where the images are already portrait. It is the cheapest thing that moves
+        the aspect ratio, and the instruction has asked for it all along - this only makes
+        an answer that forgot it still usable instead of wasting the capture behind it.
+        """
+        query = self.background_search_query
+        if query is None or not query.strip():
+            return self
+        word = _WALLPAPER_WORD.get(self.language.split("-", maxsplit=1)[0], _WALLPAPER_FALLBACK)
+        stripped = query.strip()
+        if word.casefold() in stripped.casefold():
+            if stripped == query:
+                return self
+            return self.model_copy(update={"background_search_query": stripped})
+        return self.model_copy(update={"background_search_query": f"{stripped} {word}"[:200]})
 
 
 class GeneratedCandidate(GenerationModel):

@@ -263,7 +263,9 @@ def test_instruction_sanctions_real_names_only_in_the_background_search_query(
         "이 필드에 한해 실존 인물명·캐릭터명·팀명·아이돌 그룹명을 그대로 써도 됩니다."
         in instruction
     )
-    assert '"김도영 직캠"' in instruction
+    # And every example ends in the word, because the search runs the string verbatim:
+    # bare "김도영" returns news photography the resolution gate then throws away whole.
+    assert '"김도영 배경화면"' in instruction
     assert '"쿠로미 배경화면"' in instruction
     # And the output example names the field so the model actually emits it. Only the
     # example: the output block re-describing the field's content is how the last drift

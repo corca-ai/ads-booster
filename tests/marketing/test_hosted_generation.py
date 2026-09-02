@@ -612,3 +612,48 @@ def test_the_search_query_may_be_written_as_null_but_never_left_out() -> None:
     del image_inputs["background_search_query"]
     with pytest.raises(ValidationError):
         _ = GeneratedImageInputs.model_validate(image_inputs)
+
+
+def _query(written: str | None, language: str = "ko") -> str | None:
+    row: JsonObject = {"title": "출근", "day": 0, "days": 1, "time": None, "color": None}
+    return GeneratedImageInputs.model_validate(
+        {
+            "trace_items": [row] * 5,
+            "trace_todos": [],
+            "device_time": "07:42",
+            "background_subject": "family_photo",
+            "background_search_query": written,
+            "background_mood": "해 질 무렵 그네 옆을 뛰어가는 남매",
+            "language": language,
+        }
+    ).background_search_query
+
+
+def test_the_query_is_named_as_a_wallpaper_when_the_answer_forgot_to() -> None:
+    # Given a query written without the word the instruction asks for
+    # Then it is added. Searched bare, "김도영" returns news photography of a player - wide,
+    # small, and thrown away whole by the resolution gate. With the word the query lands on
+    # the phone-wallpaper corner of the index, where the images are already portrait.
+    assert _query("김도영") == "김도영 배경화면"
+    assert _query("남매 노을") == "남매 노을 배경화면"
+
+
+def test_a_query_that_already_names_a_wallpaper_is_left_alone() -> None:
+    # Then nothing is appended twice, and surrounding space is still cleaned up
+    assert _query("제주 바다 노을 배경화면") == "제주 바다 노을 배경화면"
+    assert _query("  쿠로미 배경화면  ") == "쿠로미 배경화면"
+
+
+def test_the_word_is_the_one_the_screen_is_written_in() -> None:
+    # Then each market gets the word people there actually tag a phone background with. An
+    # English "wallpaper" appended to a Japanese phrase finds nothing.
+    assert _query("猫", "ja") == "猫 壁紙"
+    assert _query("sunset beach", "en") == "sunset beach wallpaper"
+    assert _query("praia", "pt") == "praia papel de parede"
+    assert _query("chat", "fr-FR") == "chat fond d'écran"
+
+
+def test_an_unwritten_query_is_not_turned_into_a_bare_wallpaper_search() -> None:
+    # Then null stays null. "배경화면" alone names no wallpaper, and the capture is better
+    # served by the composed intent fallback than by a search for the word itself.
+    assert _query(None) is None
