@@ -265,12 +265,10 @@ def test_instruction_sanctions_real_names_only_in_the_background_search_query(
     )
     assert '"김도영 직캠"' in instruction
     assert '"쿠로미 배경화면"' in instruction
-    # And the output contract names the field so the model actually emits it
+    # And the output example names the field so the model actually emits it. Only the
+    # example: the output block re-describing the field's content is how the last drift
+    # started, so the shape of the query lives in rule 7 alone.
     assert '"background_search_query"' in instruction
-    assert (
-        "- background_search_query: 그 사람이 배경화면으로 저장했을 사진을 찾을 검색어"
-        in instruction
-    )
 
 
 def test_instruction_carries_the_persona_specificity_blocks(tmp_path: Path) -> None:
@@ -512,13 +510,34 @@ def test_each_background_field_is_ruled_from_one_block_only(tmp_path: Path) -> N
         for field in _BACKGROUND_FIELDS
     }
 
-    # Then no field is ruled from two places. Split across blocks, the rules drift apart and
-    # nothing reconciles them: 배경_분위기 was told to be a concrete scene while the search
-    # query two lines later was told never to be one, neither mentioned the other, and every
-    # stored query turned out to be the mood reworded.
+    # Then no field is ruled from two places — the output block included. Split across
+    # blocks, the rules drift apart and nothing reconciles them: 배경_분위기 was told to be
+    # a concrete scene while the search query two lines later was told never to be one,
+    # neither mentioned the other, and every stored query turned out to be the mood
+    # reworded. The output block used to be exempt here, and that exemption is exactly
+    # where the next drift happened: its trailing bullets kept describing the old contract
+    # ("문자열 5~7개", "배경화면: 소재와 무드") after the rules had moved on, and being the
+    # last text before the JSON, they won.
     for field, names in ruling.items():
-        instructing = [name for name in names if name != "출력 형식"]
-        assert len(instructing) <= 1, f"{field} 를 {instructing} 가 함께 지시합니다"
+        assert len(names) <= 1, f"{field} 를 {names} 가 함께 지시합니다"
+
+
+def test_the_instruction_carries_no_trace_of_the_old_contract(tmp_path: Path) -> None:
+    # Given the instruction a real batch is sent
+    instruction = build_instruction(_bundle(tmp_path), assignments=_for(3))
+
+    # Then no fragment of the retired contract survives anywhere in it. Each of these once
+    # sat in the output block after the rules had moved on, and produced exactly what it
+    # described: queries reading "배경화면: <장면 묘사>" and weeks capped at seven rows.
+    for fragment in (
+        "일정 문자열",  # trace_items are objects on days of a week, not "HH:MM 제목" strings
+        "문자열 배열",
+        "HH:MM 제목",
+        "5~7개",  # the week holds 18~22 rows; this cap starved the strip
+        "배경화면: 소재와 무드",  # the shape the search query field then copied verbatim
+        "같은 내용을 기계가 읽는",  # told the model to mirror prose into image_inputs
+    ):
+        assert fragment not in instruction, f"옛 계약의 흔적: {fragment!r}"
 
 
 def test_the_search_query_is_asked_for_before_the_mood(tmp_path: Path) -> None:
