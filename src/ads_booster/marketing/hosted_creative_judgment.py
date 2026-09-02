@@ -48,6 +48,29 @@ class CreativeAccountSnapshot(CreativeJudgmentModel):
     timezone: Annotated[str, Field(min_length=1, max_length=100)]
 
 
+class CreativeCapabilityBinding(CreativeJudgmentModel):
+    capability_id: Annotated[
+        str,
+        Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+    ]
+    descriptor_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    effect_class: Literal["local_artifact"]
+    request_schema_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    receipt_schema_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    owner_id: Annotated[
+        str,
+        Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+    ]
+    binding_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_binding_digest(self) -> CreativeCapabilityBinding:
+        bound_value = self.model_dump(mode="json", exclude={"binding_sha256"})
+        if _json_sha256(bound_value) != self.binding_sha256:
+            raise ValueError("capability binding digest does not match its descriptor")
+        return self
+
+
 class CreativePlanningRequest(CreativeJudgmentModel):
     pipeline: Literal["hosted_marketing_judgment_v1"]
     judgment: Literal["creative_plan"]
@@ -60,6 +83,10 @@ class CreativePlanningRequest(CreativeJudgmentModel):
     canonical_principles: Annotated[tuple[str, ...], Field(min_length=1, max_length=32)]
     knowledge_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     available_capabilities: Annotated[tuple[str, ...], Field(min_length=1, max_length=32)]
+    capability_bindings: Annotated[
+        tuple[CreativeCapabilityBinding, ...],
+        Field(min_length=1, max_length=32),
+    ]
     capability_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     requested_by: Literal["hosted_workspace"]
 
@@ -79,11 +106,25 @@ class CreativePlanningRequest(CreativeJudgmentModel):
             self.knowledge_snapshot_sha256
         ):
             raise ValueError("knowledge snapshot digest does not match its principles")
-        if _json_sha256({"capabilities": list(self.available_capabilities)}) != (
-            self.capability_snapshot_sha256
-        ):
-            raise ValueError("capability snapshot digest does not match its advertised values")
+        binding_ids = tuple(binding.capability_id for binding in self.capability_bindings)
+        if len(set(binding_ids)) != len(binding_ids) or tuple(sorted(binding_ids)) != binding_ids:
+            raise ValueError("capability bindings must use unique sorted IDs")
+        if self.available_capabilities != binding_ids:
+            raise ValueError("available capabilities do not match bound capabilities")
+        binding_snapshot = _JSON_OBJECT.validate_python(
+            {
+                "capability_bindings": [
+                    binding.model_dump(mode="json") for binding in self.capability_bindings
+                ]
+            }
+        )
+        if _json_sha256(binding_snapshot) != self.capability_snapshot_sha256:
+            raise ValueError("capability snapshot digest does not match its bound values")
         return self
+
+    @property
+    def available_capability_ids(self) -> tuple[str, ...]:
+        return tuple(binding.capability_id for binding in self.capability_bindings)
 
 
 class CreativePlanProposal(CreativeJudgmentModel):
@@ -237,14 +278,14 @@ def _validate_treatment(
 ) -> None:
     if not set(treatment.claim_ids).issubset(hypothesis.claim_ids):
         raise ValueError("creative treatment escaped its strategy hypothesis claims")
-    available = set(request.available_capabilities)
+    available = set(request.available_capability_ids)
     if any(item.capability_id not in available for item in treatment.artifact_requests):
         raise ValueError("creative treatment requested an unavailable capability")
 
 
 def _creative_prompt(request: CreativePlanningRequest) -> str:
     capabilities = json.dumps(
-        list(request.available_capabilities),
+        list(request.available_capability_ids),
         ensure_ascii=False,
         separators=(",", ":"),
     )

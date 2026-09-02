@@ -1,4 +1,9 @@
 import { hasWorkerForTaskKind } from "./mac-workers.js";
+import {
+  assertCurrentCapabilityBinding,
+  MarketingCapabilityError,
+  resolveCreativeCapabilityBindings,
+} from "./marketing-adapter-capabilities.js";
 import { listMarketingReviewQueue, marketingReviewPacket } from "./marketing-review.js";
 
 export const MARKETING_JUDGMENT_PIPELINE = "hosted_marketing_judgment_v1";
@@ -13,10 +18,6 @@ const SHADOW_PRINCIPLES = Object.freeze([
   "단일 게시물의 성과를 장기 마케팅 원칙으로 승격하지 않는다.",
 ]);
 const SHADOW_CAPABILITIES = Object.freeze(["strategy.shadow"]);
-const CREATIVE_PLANNING_CAPABILITIES = Object.freeze([
-  "capture.native_png",
-  "copy.text",
-]);
 const FEATURE_LIFECYCLES = new Set([
   "source_candidate",
   "build_candidate",
@@ -719,8 +720,17 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
       throw new MarketingAgentHttpError(409, "campaign knowledge snapshot이 손상되었습니다.");
     }
     const knowledgeSnapshotSha256 = row.snapshot_sha256;
+    let capabilityBindings;
+    try {
+      capabilityBindings = await resolveCreativeCapabilityBindings(env.DB, account.account_id);
+    } catch (error) {
+      if (error instanceof MarketingCapabilityError) {
+        throw new MarketingAgentHttpError(409, error.message);
+      }
+      throw error;
+    }
     const capabilitySnapshotSha256 = await canonicalSha256({
-      capabilities: CREATIVE_PLANNING_CAPABILITIES,
+      capability_bindings: capabilityBindings,
     });
     const task = {
       schema_version: "1",
@@ -745,7 +755,8 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
         },
         canonical_principles: canonicalPrinciples,
         knowledge_snapshot_sha256: knowledgeSnapshotSha256,
-        available_capabilities: [...CREATIVE_PLANNING_CAPABILITIES],
+        available_capabilities: capabilityBindings.map((binding) => binding.capability_id),
+        capability_bindings: capabilityBindings,
         capability_snapshot_sha256: capabilitySnapshotSha256,
         requested_by: "hosted_workspace",
       },
@@ -912,6 +923,12 @@ export async function decideMediaPlan(env, account, campaignId, input) {
 
 export async function registerArtifactManifest(env, account, campaignId, input) {
   const manifest = normalizeArtifactManifest(input);
+  if (manifest.capability_id === "capture.native_png") {
+    throw new MarketingAgentHttpError(
+      409,
+      "native capture artifact은 검증된 hosted capture callback으로만 기록할 수 있습니다.",
+    );
+  }
   if (manifest.campaign_id !== campaignId) {
     throw new MarketingAgentHttpError(409, "artifact manifest campaign binding이 다릅니다.");
   }
@@ -928,7 +945,7 @@ export async function registerArtifactManifest(env, account, campaignId, input) 
   }
   const row = await env.DB.prepare(
     `SELECT request.request_id, request.capability_id, request.request_sha256,
-            request.request_json, request.state AS request_state,
+            request.capability_binding_sha256, request.request_json, request.state AS request_state,
             treatment.treatment_id, plan.state AS plan_state,
             packet.packet_json
      FROM hosted_marketing_campaigns AS campaign
@@ -962,18 +979,36 @@ export async function registerArtifactManifest(env, account, campaignId, input) 
     row.plan_state !== "approved"
     || !["approved", "executing", "succeeded"].includes(row.request_state)
     || row.capability_id !== manifest.capability_id
+    || row.capability_binding_sha256 !== manifest.capability_binding_sha256
     || row.request_sha256 !== manifest.input_sha256
     || manifest.claim_ids.some((id) => !requestClaims.has(id))
     || manifest.evidence_ids.some((id) => !evidenceIds.has(id))
   ) {
     throw new MarketingAgentHttpError(409, "artifact manifest가 승인된 request와 일치하지 않습니다.");
   }
+  if (!manifest.capability_binding_sha256) {
+    throw new MarketingAgentHttpError(409, "artifact manifest에는 capability binding이 필요합니다.");
+  }
+  try {
+    await assertCurrentCapabilityBinding(
+      env.DB,
+      account.account_id,
+      manifest.capability_id,
+      manifest.capability_binding_sha256,
+    );
+  } catch (error) {
+    if (error instanceof MarketingCapabilityError) {
+      throw new MarketingAgentHttpError(409, error.message);
+    }
+    throw error;
+  }
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO hosted_marketing_artifact_manifests
         (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
-         manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256,
+         capability_binding_sha256, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       manifest.manifest_id,
       campaignId,
@@ -986,6 +1021,7 @@ export async function registerArtifactManifest(env, account, campaignId, input) 
       manifest.artifact_uri,
       manifest.artifact_sha256,
       manifest.input_sha256,
+      manifest.capability_binding_sha256,
       manifest.created_at,
     ),
     env.DB.prepare(
@@ -2752,6 +2788,10 @@ function normalizeArtifactManifest(value) {
     treatment_id: safeId(manifest.treatment_id, "treatment_id"),
     request_id: safeId(manifest.request_id, "request_id"),
     capability_id: safeId(manifest.capability_id, "capability_id"),
+    capability_binding_sha256: sha256Digest(
+      manifest.capability_binding_sha256,
+      "capability_binding_sha256",
+    ),
     artifact_uri: artifactUri,
     artifact_sha256: sha256Digest(manifest.artifact_sha256, "artifact_sha256"),
     input_sha256: sha256Digest(manifest.input_sha256, "input_sha256"),

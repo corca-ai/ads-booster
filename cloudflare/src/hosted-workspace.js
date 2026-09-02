@@ -1,4 +1,8 @@
 import { hasRegisteredBrokerWorker, hasWorkerForTaskKind } from "./mac-workers.js";
+import {
+  assertCurrentCapabilityBinding,
+  MarketingCapabilityError,
+} from "./marketing-adapter-capabilities.js";
 import { handleHostedMarketingAgent } from "./marketing-agent.js";
 import { handleThreadsMediaRequest } from "./threads/media-capability.js";
 import { handleHostedThreadsProfiles } from "./threads/profiles-api.js";
@@ -2246,6 +2250,14 @@ async function generateCandidateImage(env, candidateId) {
   if (candidate.capture_state === "queued") {
     throw new WorkspaceHttpError(409, "이미지 캡처가 이미 Mac worker를 기다리고 있습니다.");
   }
+  try {
+    await assertMarketingCaptureCapability(env, candidateId);
+  } catch (error) {
+    if (error instanceof MarketingCapabilityError) {
+      throw new WorkspaceHttpError(409, error.message);
+    }
+    throw error;
+  }
   if (!(await hasWorkerForTaskKind(env.DB, "capture", FEEDBACK_CONTEXT_CAPABILITY))) {
     throw new WorkspaceHttpError(
       503,
@@ -2409,6 +2421,33 @@ async function generateCandidateImage(env, candidateId) {
     throw new WorkspaceHttpError(409, "후보가 다른 요청에서 먼저 변경되었습니다.");
   }
   return requireCandidate(env, candidateId);
+}
+
+async function assertMarketingCaptureCapability(env, candidateId) {
+  const candidate = await env.DB.prepare(
+    `SELECT marketing_assignment_id FROM hosted_workspace_candidates
+     WHERE account_id = ? AND candidate_id = ?`,
+  ).bind(accountId(env), candidateId).first();
+  if (!candidate?.marketing_assignment_id) return;
+  const requests = await env.DB.prepare(
+    `SELECT request.capability_id, request.capability_binding_sha256
+     FROM hosted_marketing_post_assignments AS assignment
+     JOIN hosted_marketing_artifact_requests AS request
+       ON request.treatment_id = assignment.treatment_id
+      AND request.capability_id = 'capture.native_png'
+     WHERE assignment.assignment_id = ? AND assignment.campaign_id IS NOT NULL`,
+  ).bind(candidate.marketing_assignment_id).all();
+  if (!requests.results.length) {
+    throw new MarketingCapabilityError("marketing candidate has no approved native capture request");
+  }
+  for (const request of requests.results) {
+    await assertCurrentCapabilityBinding(
+      env.DB,
+      accountId(env),
+      request.capability_id,
+      request.capability_binding_sha256,
+    );
+  }
 }
 
 async function reviewCandidateImage(env, candidateId, body) {

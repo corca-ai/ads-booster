@@ -139,6 +139,9 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
               if (sql.includes("FROM hosted_workspace_feedback_events") && sql.includes("event_id = ?")) {
                 return options.feedbackEvent ?? null;
               }
+              if (sql.includes("SELECT marketing_assignment_id FROM hosted_workspace_candidates")) {
+                return row ? { marketing_assignment_id: row.marketing_assignment_id ?? null } : null;
+              }
               if (!sql.includes("SELECT * FROM hosted_workspace_candidates")) return null;
               const [accountId, candidateId] = values;
               return row?.account_id === accountId && row?.candidate_id === candidateId ? { ...row } : null;
@@ -339,6 +342,9 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
               }
               if (sql.includes("FROM hosted_workspace_feedback_rule_overrides")) {
                 return { results: options.feedbackOverrides ?? [] };
+              }
+              if (sql.includes("FROM hosted_marketing_post_assignments")) {
+                return { results: options.marketingCaptureRequests ?? [] };
               }
               throw new Error(`unexpected all SQL: ${sql}`);
             },
@@ -1224,6 +1230,34 @@ test("image generation fails before queueing when no Mac worker is registered", 
   assert.equal(state.row().capture_state, null);
   assert.equal(state.queuedTasks.length, 0);
   assert.equal(state.captureTasks.length, 0);
+});
+
+test("a marketing candidate needs an approved bound native-capture request before queueing", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /native capture request/u);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.captureTasks.length, 0);
+  assert.equal(state.queuedTasks.length, 0);
 });
 
 test("image generation rolls back the broker task when candidate queueing fails", async () => {

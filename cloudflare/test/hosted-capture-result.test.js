@@ -16,6 +16,9 @@ function result(overrides = {}) {
     output: {
       content_type: "image/png",
       capture_source: "native_appium",
+      artifact_role: "trace_wallpaper",
+      image_postprocess_source: "none",
+      native_image_sha256: digest,
       native_export_binding_verified: true,
       image_base64: image.toString("base64"),
       image_sha256: digest,
@@ -41,9 +44,19 @@ test("rejects an unverified native provenance claim", async () => {
   );
 });
 
+test("rejects a native result with a non-Trace artifact role", async () => {
+  await assert.rejects(
+    prepareHostedCaptureResult(result({ artifact_role: "imagen_ios_ui" })),
+    (error) => error instanceof HostedCaptureResultError && error.status === 400,
+  );
+});
+
 test("rejects a PNG whose callback digest changed", async () => {
   await assert.rejects(
-    prepareHostedCaptureResult(result({ image_sha256: "0".repeat(64) })),
+    prepareHostedCaptureResult(result({
+      image_sha256: "0".repeat(64),
+      native_image_sha256: "0".repeat(64),
+    })),
     (error) => error instanceof HostedCaptureResultError && error.status === 409,
   );
 });

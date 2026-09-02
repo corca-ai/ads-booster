@@ -31,6 +31,48 @@ const account = {
   timezone: "Asia/Seoul",
 };
 
+function creativeCapabilityRows() {
+  return [
+    ["capture.native_png", "trace.native_capture"],
+    ["copy.text", "trace.marketing_copy"],
+  ].map(([capability_id, owner_id]) => {
+    const descriptor = {
+      schema_version: "trace.adapter-capability.v1",
+      capability_id,
+      effect_class: "local_artifact",
+      owner_id,
+      request_schema_sha256: "a".repeat(64),
+      receipt_schema_sha256: "b".repeat(64),
+      activation_state: "active",
+    };
+    return {
+      capability_id,
+      descriptor_json: canonicalJson(descriptor),
+      descriptor_sha256: digest(descriptor),
+      effect_class: descriptor.effect_class,
+      request_schema_sha256: descriptor.request_schema_sha256,
+      receipt_schema_sha256: descriptor.receipt_schema_sha256,
+      owner_id,
+      enabled: 1,
+      activation_state: "active",
+    };
+  });
+}
+
+function creativeCapabilityBindings() {
+  return creativeCapabilityRows().map((row) => {
+    const binding = {
+      capability_id: row.capability_id,
+      descriptor_sha256: row.descriptor_sha256,
+      effect_class: row.effect_class,
+      request_schema_sha256: row.request_schema_sha256,
+      receipt_schema_sha256: row.receipt_schema_sha256,
+      owner_id: row.owner_id,
+    };
+    return { ...binding, binding_sha256: digest(binding) };
+  });
+}
+
 function featurePacket() {
   return {
     schema_version: "trace.feature-evidence.v1",
@@ -144,8 +186,11 @@ function approvalDb({ workers = true } = {}) {
                     ? [{ capabilities_json: JSON.stringify({
                       task_kinds: "capture,generate_candidates,marketing_judgment",
                     }) }]
-                    : [],
+                  : [],
                 };
+              }
+              if (sql.includes("FROM hosted_marketing_adapter_capabilities")) {
+                return { results: creativeCapabilityRows() };
               }
               throw new Error(`unexpected all SQL: ${sql}`);
             },
@@ -256,6 +301,7 @@ class CreativeCallbackDb {
     this.plans = [];
     this.treatments = [];
     this.requests = [];
+    this.capabilityBindings = [];
     this.events = [];
   }
 
@@ -269,6 +315,12 @@ class CreativeCallbackDb {
           async first() {
             if (sql.includes("FROM hosted_marketing_campaigns")) return database.campaign;
             throw new Error(`unexpected first SQL: ${sql}`);
+          },
+          async all() {
+            if (sql.includes("FROM hosted_marketing_adapter_capabilities")) {
+              return { results: creativeCapabilityRows() };
+            }
+            throw new Error(`unexpected all SQL: ${sql}`);
           },
           async run() {
             return database.execute(statement);
@@ -285,6 +337,8 @@ class CreativeCallbackDb {
   async execute({ sql, values }) {
     if (sql.includes("INSERT INTO hosted_marketing_context_receipts")) {
       this.receipts.push(values);
+    } else if (sql.includes("INSERT INTO hosted_marketing_capability_bindings")) {
+      this.capabilityBindings.push(values);
     } else if (sql.includes("INSERT INTO hosted_marketing_media_plans")) {
       this.plans.push(values);
     } else if (sql.includes("INSERT INTO hosted_marketing_creative_treatments")) {
@@ -317,8 +371,8 @@ function treatment(hypothesisId) {
     claim_ids: ["claim-concept"],
     artifact_requests: [{
       request_id: `request-${hypothesisId}`,
-      capability_id: "compose.explanation",
-      proof_kind: "composed_explanation",
+      capability_id: "copy.text",
+      proof_kind: "copy_only",
       claim_ids: ["claim-concept"],
       instructions: "Compose a source-labeled explanation.",
     }],
@@ -328,13 +382,8 @@ function treatment(hypothesisId) {
 function creativeFixture() {
   const packet = featurePacket();
   const strategy = strategyBrief(packet);
-  const capabilities = [
-    "capture.native_png",
-    "record.screen",
-    "compose.explanation",
-    "design.figma",
-    "copy.text",
-  ];
+  const capabilityBindings = creativeCapabilityBindings();
+  const capabilities = capabilityBindings.map((binding) => binding.capability_id);
   const payload = {
     pipeline: MARKETING_JUDGMENT_PIPELINE,
     judgment: "creative_plan",
@@ -344,8 +393,9 @@ function creativeFixture() {
     strategy_brief: strategy,
     strategy_brief_sha256: digest(strategy),
     knowledge_snapshot_sha256: "e".repeat(64),
-    capability_snapshot_sha256: digest({ capabilities }),
+    capability_snapshot_sha256: digest({ capability_bindings: capabilityBindings }),
     available_capabilities: capabilities,
+    capability_bindings: capabilityBindings,
   };
   const task = {
     task_id: "creative-task-1",
@@ -477,6 +527,7 @@ test("creative callback persists plan and proof requests without executing them"
     media_plan_id: fixture.plan.plan_id,
   });
   assert.equal(DB.receipts.length, 1);
+  assert.equal(DB.capabilityBindings.length, 2);
   assert.equal(DB.plans.length, 1);
   assert.equal(DB.treatments.length, 2);
   assert.equal(DB.requests.length, 2);

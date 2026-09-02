@@ -138,7 +138,21 @@ def _task() -> MarketingTask:
     packet = _packet()
     brief = _brief(packet)
     principles = ["proof before media"]
-    capabilities = ["capture.native_png", "compose.explanation", "record.screen"]
+    capability_bindings = []
+    for capability_id, owner_id in (
+        ("capture.native_png", "trace.native_capture"),
+        ("copy.text", "trace.marketing_copy"),
+    ):
+        binding = {
+            "capability_id": capability_id,
+            "descriptor_sha256": ("a" if capability_id == "capture.native_png" else "b") * 64,
+            "effect_class": "local_artifact",
+            "request_schema_sha256": "c" * 64,
+            "receipt_schema_sha256": "d" * 64,
+            "owner_id": owner_id,
+        }
+        capability_bindings.append({**binding, "binding_sha256": _digest(binding)})
+    capabilities = [binding["capability_id"] for binding in capability_bindings]
     return MarketingTask(
         schema_version="1",
         task_id="creative-task-1",
@@ -163,7 +177,8 @@ def _task() -> MarketingTask:
             "canonical_principles": principles,
             "knowledge_snapshot_sha256": _digest({"principles": principles}),
             "available_capabilities": capabilities,
-            "capability_snapshot_sha256": _digest({"capabilities": capabilities}),
+            "capability_bindings": capability_bindings,
+            "capability_snapshot_sha256": _digest({"capability_bindings": capability_bindings}),
             "requested_by": "hosted_workspace",
         },
         created_at=NOW,
@@ -172,7 +187,7 @@ def _task() -> MarketingTask:
 
 def _proposal(
     *,
-    capability: str = "compose.explanation",
+    capability: str = "copy.text",
     claim_id: str = "claim-concept",
 ) -> JsonObject:
     def treatment(hypothesis_id: str) -> JsonObject:
@@ -189,7 +204,7 @@ def _proposal(
                 {
                     "request_id": f"request-{hypothesis_id}",
                     "capability_id": capability,
-                    "proof_kind": "composed_explanation",
+                    "proof_kind": "copy_only",
                     "claim_ids": [claim_id],
                     "instructions": "Compose a source-labeled explanation.",
                 }

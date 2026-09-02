@@ -365,7 +365,7 @@ async function loadTreatments(database, campaignId) {
 async function loadArtifactRequests(database, campaignId) {
   const rows = await database.prepare(
     `SELECT request_id, treatment_id, capability_id, proof_kind, request_sha256, state,
-            request_json, created_at, updated_at
+            request_json, capability_binding_sha256, created_at, updated_at
      FROM hosted_marketing_artifact_requests WHERE campaign_id = ? ORDER BY created_at ASC, request_id ASC`,
   ).bind(campaignId).all();
   return rows.results.map((row) => ({
@@ -374,6 +374,7 @@ async function loadArtifactRequests(database, campaignId) {
     capability_id: row.capability_id,
     proof_kind: row.proof_kind,
     sha256: row.request_sha256,
+    capability_binding_sha256: row.capability_binding_sha256,
     state: row.state,
     value: storedJson(row.request_json, "artifact request"),
     created_at: row.created_at,
@@ -384,7 +385,7 @@ async function loadArtifactRequests(database, campaignId) {
 async function loadArtifactManifests(database, campaignId) {
   const rows = await database.prepare(
     `SELECT manifest_id, treatment_id, request_id, manifest_sha256, artifact_sha256, input_sha256,
-            created_at
+            capability_binding_sha256, manifest_json, created_at
      FROM hosted_marketing_artifact_manifests WHERE campaign_id = ?
      ORDER BY created_at ASC, manifest_id ASC`,
   ).bind(campaignId).all();
@@ -395,8 +396,29 @@ async function loadArtifactManifests(database, campaignId) {
     sha256: row.manifest_sha256,
     artifact_sha256: row.artifact_sha256,
     input_sha256: row.input_sha256,
+    capability_binding_sha256: row.capability_binding_sha256,
+    capture_provenance: safeCaptureProvenance(row.manifest_json),
     created_at: row.created_at,
   }));
+}
+
+function safeCaptureProvenance(rawManifest) {
+  const provenance = storedJson(rawManifest, "artifact manifest")?.capture_provenance;
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) return null;
+  if (
+    provenance.schema_version !== "trace.capture-artifact-provenance.v1"
+    || !["native_appium", "imagen_ios_ui"].includes(provenance.capture_source)
+    || !["trace_wallpaper", "imagen_ios_ui"].includes(provenance.artifact_role)
+    || typeof provenance.source_trace_artifact_sha256 !== "string"
+    || !/^[a-f0-9]{64}$/.test(provenance.source_trace_artifact_sha256)
+  ) {
+    return null;
+  }
+  return {
+    capture_source: provenance.capture_source,
+    artifact_role: provenance.artifact_role,
+    source_trace_artifact_sha256: provenance.source_trace_artifact_sha256,
+  };
 }
 
 async function loadEvaluations(database, campaignId) {

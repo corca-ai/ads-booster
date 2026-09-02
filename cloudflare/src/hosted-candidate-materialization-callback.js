@@ -1,5 +1,9 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
+import {
+  assertCurrentCapabilityBinding,
+  MarketingCapabilityError,
+} from "./marketing-adapter-capabilities.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
 
 export async function receiveHostedCandidateMaterializationCallback(
@@ -151,10 +155,26 @@ export async function receiveHostedCandidateMaterializationCallback(
   };
   const assignmentSha256 = await canonicalSha256(assignment);
   const requests = await env.DB.prepare(
-    `SELECT request_id, capability_id, request_json, request_sha256
+    `SELECT request_id, capability_id, request_json, request_sha256, capability_binding_sha256
      FROM hosted_marketing_artifact_requests
      WHERE campaign_id = ? AND treatment_id = ?`,
   ).bind(reservation.campaign_id, reservation.treatment_id).all();
+  for (const request of requests.results) {
+    if (request.capability_id !== "copy.text") continue;
+    try {
+      await assertCurrentCapabilityBinding(
+        env.DB,
+        reservation.account_id,
+        request.capability_id,
+        request.capability_binding_sha256,
+      );
+    } catch (error) {
+      if (error instanceof MarketingCapabilityError) {
+        throw new HttpError(409, error.message);
+      }
+      throw error;
+    }
+  }
   if (worker) {
     const claimed = await reserveWorkerTaskCallback(
       env.DB,
@@ -269,6 +289,7 @@ export async function receiveHostedCandidateMaterializationCallback(
       treatment_id: reservation.treatment_id,
       request_id: request.request_id,
       capability_id: request.capability_id,
+      capability_binding_sha256: request.capability_binding_sha256,
       artifact_uri: `artifact:candidate/${candidateId}`,
       artifact_sha256: candidateSha256,
       input_sha256: request.request_sha256,
@@ -279,10 +300,11 @@ export async function receiveHostedCandidateMaterializationCallback(
     };
     statements.push(
       env.DB.prepare(
-        `INSERT INTO hosted_marketing_artifact_manifests
-          (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
-           manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO hosted_marketing_artifact_manifests
+            (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
+             manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256,
+             capability_binding_sha256, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         manifest.manifest_id,
         reservation.campaign_id,
@@ -295,6 +317,7 @@ export async function receiveHostedCandidateMaterializationCallback(
         manifest.artifact_uri,
         manifest.artifact_sha256,
         manifest.input_sha256,
+        manifest.capability_binding_sha256,
         now,
       ),
       env.DB.prepare(

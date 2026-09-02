@@ -1,5 +1,10 @@
 import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
+import {
+  assertCreativeCapabilitySnapshot,
+  capabilityBindingStatements,
+  MarketingCapabilityError,
+} from "./marketing-adapter-capabilities.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
 
 export async function receiveHostedCreativePlanCallback(env, task, callback, worker = null) {
@@ -51,6 +56,18 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
   if (!campaign || campaign.state !== "experiment_registered") {
     throw new HttpError(409, "campaign is not awaiting a creative plan");
   }
+  let capabilityBindings;
+  try {
+    capabilityBindings = await assertCreativeCapabilitySnapshot(env.DB, task.account_id, payload);
+  } catch (error) {
+    if (error instanceof MarketingCapabilityError) {
+      throw new HttpError(409, error.message);
+    }
+    throw error;
+  }
+  const capabilityBindingsById = new Map(
+    capabilityBindings.map((binding) => [binding.capability_id, binding]),
+  );
   const now = new Date().toISOString();
   if (status !== "succeeded") {
     if (worker) {
@@ -104,7 +121,7 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
   ) {
     throw new HttpError(409, "creative media plan scope is invalid");
   }
-  const treatments = validateTreatments(plan, strategy, payload.available_capabilities);
+  const treatments = validateTreatments(plan, strategy, capabilityBindingsById);
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
       env.DB,
@@ -145,6 +162,7 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
       receipt.output_schema_sha256,
       receipt.created_at,
     ),
+    ...capabilityBindingStatements(env.DB, receipt.receipt_id, capabilityBindings, receipt.created_at),
     env.DB.prepare(
       `INSERT INTO hosted_marketing_media_plans
         (plan_id, campaign_id, strategy_brief_id, context_receipt_id, schema_version,
@@ -185,12 +203,16 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
       ),
     );
     for (const request of treatment.artifact_requests) {
+      const binding = capabilityBindingsById.get(request.capability_id);
+      if (!binding) {
+        throw new HttpError(409, "creative treatment requested an unavailable capability");
+      }
       statements.push(
         env.DB.prepare(
           `INSERT INTO hosted_marketing_artifact_requests
             (request_id, campaign_id, treatment_id, capability_id, proof_kind,
-             request_json, request_sha256, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?)`,
+             request_json, request_sha256, capability_binding_sha256, state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?)`,
         ).bind(
           safeId(request.request_id, "artifact request_id"),
           campaign.campaign_id,
@@ -199,6 +221,7 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
           request.proof_kind,
           canonicalJson(request),
           await canonicalSha256(request),
+          binding.binding_sha256,
           now,
           now,
         ),
@@ -253,7 +276,7 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
   };
 }
 
-function validateTreatments(plan, strategy, availableCapabilities) {
+function validateTreatments(plan, strategy, capabilityBindingsById) {
   const treatments = requireArray(plan.treatments, "creative treatments", 2, 8);
   const active = new Set(requireArray(
     strategy.experiment?.activated_hypothesis_ids,
@@ -263,12 +286,6 @@ function validateTreatments(plan, strategy, availableCapabilities) {
   ));
   const hypotheses = new Map(requireArray(strategy.hypotheses, "strategy hypotheses", 2, 8)
     .map((hypothesis) => [safeId(hypothesis.hypothesis_id, "hypothesis_id"), hypothesis]));
-  const capabilities = new Set(requireArray(
-    availableCapabilities,
-    "creative capabilities",
-    1,
-    32,
-  ));
   const planned = new Set();
   for (const treatment of treatments) {
     const hypothesisId = safeId(treatment?.hypothesis_id, "treatment hypothesis_id");
@@ -283,7 +300,7 @@ function validateTreatments(plan, strategy, availableCapabilities) {
     }
     const requests = requireArray(treatment.artifact_requests, "artifact requests", 1, 8);
     for (const request of requests) {
-      if (!capabilities.has(request?.capability_id)) {
+      if (!capabilityBindingsById.has(request?.capability_id)) {
         throw new HttpError(409, "creative treatment requested an unavailable capability");
       }
       const requestClaims = requireArray(request.claim_ids ?? [], "artifact claim_ids", 0, 16);

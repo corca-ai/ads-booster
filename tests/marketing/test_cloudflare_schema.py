@@ -178,8 +178,26 @@ def test_adapter_capability_migration_seeds_trace_reference_installations() -> N
         ).fetchall()
 
         assert rows == [
-            ("capture.native_png", "local_artifact", "trace.native_capture", 1, "active", 64, 64, 64),
-            ("publish.threads", "external", "threads.publisher", 1, "registered_reference", 64, 64, 64),
+            (
+                "capture.native_png",
+                "local_artifact",
+                "trace.native_capture",
+                1,
+                "active",
+                64,
+                64,
+                64,
+            ),
+            (
+                "publish.threads",
+                "external",
+                "threads.publisher",
+                1,
+                "registered_reference",
+                64,
+                64,
+                64,
+            ),
         ]
         columns = {
             row[1]
@@ -214,6 +232,35 @@ def test_adapter_capability_migration_seeds_trace_reference_installations() -> N
                 VALUES ('threads-action', 'campaign-assisted', 'publish.threads', 'external',
                         'queued', '{}', ?, 'threads-action', 'now', 'now')""",
                 ("b" * 64,),
+            )
+
+
+def test_bound_artifacts_require_immutable_context_capabilities() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _insert_marketing_execution_fixture(connection, mode="assisted")
+        catalog = connection.execute(
+            """SELECT capability_id, effect_class, owner_id, enabled, activation_state
+            FROM hosted_marketing_adapter_capabilities
+            WHERE account_id = 'trace_kr' ORDER BY capability_id"""
+        ).fetchall()
+        assert ("copy.text", "local_artifact", "trace.marketing_copy", 1, "active") in catalog
+
+        with pytest.raises(sqlite3.IntegrityError, match="capability binding is immutable"):
+            _ = connection.execute(
+                """UPDATE hosted_marketing_capability_bindings
+                SET owner_id = 'forged-owner'
+                WHERE context_receipt_id = 'receipt-execution' AND capability_id = 'copy.text'"""
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="artifact request requires"):
+            _ = connection.execute(
+                """INSERT INTO hosted_marketing_artifact_requests
+                (request_id, campaign_id, treatment_id, capability_id, proof_kind,
+                 request_json, request_sha256, capability_binding_sha256, state, created_at,
+                 updated_at)
+                VALUES ('request-unbound', 'campaign-execution', 'treatment-execution',
+                        'copy.text', 'copy_only', '{}', ?, '', 'planned', 'now', 'now')""",
+                ("a" * 64,),
             )
 
 
@@ -294,12 +341,12 @@ def test_artifact_manifests_are_immutable_and_principles_need_exact_learning_app
             """INSERT INTO hosted_marketing_artifact_manifests
             (manifest_id, campaign_id, assignment_id, treatment_id, request_id, schema_version,
              manifest_json, manifest_sha256, artifact_uri, artifact_sha256, input_sha256,
-             created_at)
+             capability_binding_sha256, created_at)
             VALUES ('manifest-1', 'campaign-execution', 'assignment-execution',
                     'treatment-execution', 'request-execution',
-                    'trace.artifact-manifest.v1', '{}', ?,
-                    'r2://artifact.png', ?, ?, 'now')""",
-            ("1" * 64, "2" * 64, "3" * 64),
+                    'trace.artifact-manifest.v1', '{"capability_id":"copy.text"}', ?,
+                    'r2://artifact.png', ?, ?, ?, 'now')""",
+            ("1" * 64, "2" * 64, "3" * 64, "1" * 64),
         )
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             _ = connection.execute(
@@ -404,6 +451,14 @@ def _insert_marketing_execution_fixture(
         ("6" * 64, "a" * 64, "7" * 64, "8" * 64, "9" * 64, "0" * 64),
     )
     _ = connection.execute(
+        """INSERT INTO hosted_marketing_capability_bindings
+        (context_receipt_id, capability_id, binding_sha256, descriptor_sha256, effect_class,
+         request_schema_sha256, receipt_schema_sha256, owner_id, created_at)
+        VALUES ('receipt-execution', 'copy.text', ?, ?, 'local_artifact', ?, ?,
+                'trace.marketing_copy', 'now')""",
+        ("1" * 64, "2" * 64, "3" * 64, "4" * 64),
+    )
+    _ = connection.execute(
         """INSERT INTO hosted_marketing_strategy_briefs
         (brief_id, campaign_id, context_receipt_id, schema_version, brief_json,
          brief_sha256, created_at)
@@ -456,10 +511,10 @@ def _insert_marketing_execution_fixture(
     _ = connection.execute(
         """INSERT INTO hosted_marketing_artifact_requests
         (request_id, campaign_id, treatment_id, capability_id, proof_kind,
-         request_json, request_sha256, state, created_at, updated_at)
+         request_json, request_sha256, capability_binding_sha256, state, created_at, updated_at)
         VALUES ('request-execution', 'campaign-execution', 'treatment-execution',
-                'compose.explanation', 'composed_explanation', '{}', ?, 'planned', 'now', 'now')""",
-        ("1" * 64,),
+                'copy.text', 'copy_only', '{}', ?, ?, 'planned', 'now', 'now')""",
+        ("1" * 64, "1" * 64),
     )
     _ = connection.execute(
         """INSERT INTO hosted_workspace_candidates

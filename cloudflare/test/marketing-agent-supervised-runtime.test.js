@@ -181,6 +181,20 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     VALUES ('worker-1', 'Mac', 'appium', 'active',
             '{"task_kinds":"marketing_judgment"}', '{}', 'now', 'now');
   `);
+  const copyCatalog = DB.sqlite.prepare(
+    `SELECT descriptor_sha256, effect_class, request_schema_sha256, receipt_schema_sha256, owner_id
+     FROM hosted_marketing_adapter_capabilities
+     WHERE account_id = 'trace_kr' AND capability_id = 'copy.text'`,
+  ).get();
+  const copyBinding = {
+    capability_id: "copy.text",
+    descriptor_sha256: copyCatalog.descriptor_sha256,
+    effect_class: copyCatalog.effect_class,
+    request_schema_sha256: copyCatalog.request_schema_sha256,
+    receipt_schema_sha256: copyCatalog.receipt_schema_sha256,
+    owner_id: copyCatalog.owner_id,
+  };
+  const copyBindingSha256 = digest(copyBinding);
   if (reviewContext) {
     DB.sqlite.prepare(
       `INSERT INTO hosted_marketing_context_snapshots
@@ -247,7 +261,29 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
        feature_packet_sha256, knowledge_snapshot_sha256, capability_snapshot_sha256,
        prompt_sha256, output_schema_sha256, created_at)
      VALUES ('receipt-1', 'campaign-1', 'trace.context-receipt.v1', '{}', ?, ?, ?, ?, ?, ?, ?)`,
-  ).run("1".repeat(64), packetSha, "2".repeat(64), "3".repeat(64), "4".repeat(64), "5".repeat(64), now);
+  ).run(
+    "1".repeat(64),
+    packetSha,
+    "2".repeat(64),
+    digest({ capability_bindings: [{ ...copyBinding, binding_sha256: copyBindingSha256 }] }),
+    "4".repeat(64),
+    "5".repeat(64),
+    now,
+  );
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_capability_bindings
+      (context_receipt_id, capability_id, binding_sha256, descriptor_sha256, effect_class,
+       request_schema_sha256, receipt_schema_sha256, owner_id, created_at)
+     VALUES ('receipt-1', 'copy.text', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    copyBindingSha256,
+    copyBinding.descriptor_sha256,
+    copyBinding.effect_class,
+    copyBinding.request_schema_sha256,
+    copyBinding.receipt_schema_sha256,
+    copyBinding.owner_id,
+    now,
+  );
   DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_strategy_briefs
       (brief_id, campaign_id, context_receipt_id, schema_version, brief_json,
@@ -319,18 +355,19 @@ function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
     DB.sqlite.prepare(
       `INSERT INTO hosted_marketing_artifact_requests
         (request_id, campaign_id, treatment_id, capability_id, proof_kind,
-         request_json, request_sha256, state, created_at, updated_at)
-       VALUES (?, 'campaign-1', ?, 'copy.text', 'copy_only', ?, ?, 'approved', ?, ?)`,
+         request_json, request_sha256, capability_binding_sha256, state, created_at, updated_at)
+       VALUES (?, 'campaign-1', ?, 'copy.text', 'copy_only', ?, ?, ?, 'approved', ?, ?)`,
     ).run(
       request.request_id,
       treatment.treatment_id,
       canonicalJson(request),
       digest(request),
+      copyBindingSha256,
       now,
       now,
     );
   }
-  return { packet, registration };
+  return { packet, registration, copyBindingSha256 };
 }
 
 function claimTask(DB, taskId) {
@@ -1075,7 +1112,7 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
 
 test("review queue exposes one exact, read-only decision packet without customer source data", async () => {
   const DB = new D1Adapter();
-  seedSupervisedCampaign(DB, { reviewContext: true });
+  const seeded = seedSupervisedCampaign(DB, { reviewContext: true });
   await assert.rejects(
     marketingReviewPacket({ DB }, ACCOUNT.account_id, "campaign-1"),
     (error) => error.status === 409,
@@ -1089,20 +1126,24 @@ test("review queue exposes one exact, read-only decision packet without customer
   const manifest = {
     schema_version: "trace.artifact-manifest.v1",
     manifest_id: "manifest-review-1",
+    capability_id: "copy.text",
+    capability_binding_sha256: seeded.copyBindingSha256,
     artifact_uri: privateArtifactUri,
   };
   DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_artifact_manifests
       (manifest_id, campaign_id, treatment_id, request_id, schema_version, manifest_json,
-       manifest_sha256, artifact_uri, artifact_sha256, input_sha256, created_at)
+       manifest_sha256, artifact_uri, artifact_sha256, input_sha256, capability_binding_sha256,
+       created_at)
      VALUES ('manifest-review-1', 'campaign-1', 'treatment-control', 'request-control',
-             'trace.artifact-manifest.v1', ?, ?, ?, ?, ?, '2026-09-02T00:00:00Z')`,
+             'trace.artifact-manifest.v1', ?, ?, ?, ?, ?, ?, '2026-09-02T00:00:00Z')`,
   ).run(
     canonicalJson(manifest),
     digest(manifest),
     privateArtifactUri,
     "1".repeat(64),
     "2".repeat(64),
+    seeded.copyBindingSha256,
   );
   const readSnapshot = () => ({
     grants: DB.sqlite.prepare(
@@ -1152,6 +1193,8 @@ test("review queue exposes one exact, read-only decision packet without customer
     sha256: digest(manifest),
     artifact_sha256: "1".repeat(64),
     input_sha256: "2".repeat(64),
+    capability_binding_sha256: seeded.copyBindingSha256,
+    capture_provenance: null,
     created_at: "2026-09-02T00:00:00Z",
   });
   assert.ok(!JSON.stringify(creativePacket).includes(privateArtifactUri));

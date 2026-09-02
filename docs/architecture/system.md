@@ -132,13 +132,14 @@ or learning effect. Installed-product evidence and later stages remain governed 
 
 After exact human strategy approval, the same broker may run one `creative_plan` judgment. It picks
 proof before medium and emits only a MediaPlan plus typed artifact requests; it cannot execute those
-requests. Cloudflare rechecks active-arm coverage, claim containment, capability containment,
-publication status, and both receipts before storing the plan. Exact creative review is recorded
+requests. Cloudflare freezes active capture/copy adapter descriptors into the task, re-derives their
+binding digests, and rejects a callback if that catalog changed; receipt-scoped binding rows and
+binding-bearing artifact requests are then written atomically. Exact creative review is recorded
 separately. Candidate assignment requires an approved plan, a non-shadow assisted/live campaign,
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0018`–`0023` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0018`–`0025` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
 observations, evaluations, quarantined reference snapshots, learning candidates, and approval-bound
 principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
@@ -174,10 +175,11 @@ the exact existing POST body that can approve or reject that target. It makes no
 approval grant, artifact, or channel action. Customer-source records and context-snapshot contents
 are never loaded into this packet; only an already-bound snapshot ID and digest may appear. Cost,
 blast-radius, rollback, and external-effect approval are not yet recorded for these no-effect
-decisions, so the packet names that limit rather than simulating an authority. Artifact-manifest
-rows expose only their identifiers and content/input digests; neither artifact URI nor manifest JSON
-is a review-packet field. An effect owner must issue a separately bounded read capability when an
-actual asset needs inspection.
+decisions, so the packet names that limit rather than simulating an authority. Artifact requests and
+manifests expose their capability-binding digest; capture manifests may also expose a safe source,
+role, and source-artifact digest projection. Neither artifact URI, raw manifest JSON, nor catalog
+descriptor is a review-packet field. An effect owner must issue a separately bounded read capability
+when an actual asset needs inspection.
 
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
@@ -200,12 +202,15 @@ physical deletion of all immutable audit copies is a later privacy-control-plane
 account-scoped reference lane, not a CRM/transcript connector, RAG memory system, role model, or
 automatic channel action.
 
-`0023` adds an account-scoped effect-adapter catalog and a context-receipt-scoped capability-binding
-ledger. Existing accounts receive active `capture.native_png` and reference-only
-`publish.threads` descriptors; the latter cannot open a new publishing path. The catalog stores the
-descriptor, schema digests, owner, effect class, enabled flag, and activation state so later request
-and manifest validation can bind execution to the exact creative context rather than a capability
-name alone. Core judgment remains outside this catalog.
+`0023` and `0025` add an account-scoped effect-adapter catalog and a context-receipt-scoped
+capability-binding ledger. Existing accounts receive active `capture.native_png`, active
+`copy.text`, and reference-only `publish.threads` descriptors; the latter cannot open a new
+publishing path. A resolver validates the canonical descriptor against its typed catalog fields and
+derives a binding digest server-side. A request and manifest must carry that exact immutable context
+binding; later copy or capture action rechecks that the same descriptor remains active. Native/ImageGen
+capture verifies that binding before R2 or candidate mutation and records `native_appium` or
+`imagen_ios_ui` provenance in the manifest. ImageGen is provenance of `capture.native_png`, not a
+second planner capability. Core judgment remains outside this catalog.
 
 The provider-neutral `marketing.runtime` harness is a local, pre-adapter runtime boundary. It
 persists append-only session history under a host-local lock. A capability owns its descriptor and

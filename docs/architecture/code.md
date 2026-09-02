@@ -114,7 +114,8 @@ and the bound result. Cloudflare
 strategy state. The generic worker broker owns leasing and callback transport only.
 
 `marketing/hosted_creative_judgment.py` owns the proof-first MediaPlan proposal and creates no tool
-action. `marketing/hosted_candidate_judgment.py` materializes one approved, evidence-bound
+action. It validates frozen capability descriptor bindings and derives the prompt's capability IDs
+from them; it never constructs a binding. `marketing/hosted_candidate_judgment.py` materializes one approved, evidence-bound
 candidate; `marketing/hosted_reference_research.py` returns an immutable quarantined observation
 snapshot; and `marketing/hosted_learning_judgment.py` creates only a reversible learning candidate.
 `marketing/hosted_experiment_evaluation.py` is deterministic and has no model or external effect.
@@ -138,10 +139,11 @@ unreviewed target digest, and builds the versioned queue and review packet. Its 
 projection of the existing approval endpoint—not a new mutation API or authority source. The module
 does not query customer-signal or context-snapshot payload tables, and `marketing-agent.js` guards
 both review routes with control-plane authority before delegating to it. Artifact-manifest read
-models deliberately retain only IDs and digests: URI and manifest payload stay behind their effect
-owner rather than becoming an incidental review-token transport.
+models deliberately retain only IDs, content/input/binding digests, and safe capture provenance:
+URI, raw manifest payload, and adapter descriptor stay behind their effect owner rather than becoming
+an incidental review-token transport.
 
-Migrations `0018`–`0023` own the execution/observation lineage, assisted-shadow origin binding,
+Migrations `0018`–`0025` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 
@@ -157,10 +159,13 @@ D1 before accepting the receipt. The optional `marketing_context` member of
 `trace.context-receipt.v1` is therefore an additive receipt binding, not a replacement for the source
 signal ledger.
 
-`0023_marketing_adapter_capabilities.sql` owns account-scoped adapter registrations and
-context-receipt-scoped immutable capability bindings. It records descriptor/schema digests, owner,
-effect class, enabled state, and whether a capability is active or reference-only; it does not add a
-generic dispatcher or move capture/Threads effect ownership.
+`marketing-adapter-capabilities.js` owns canonical catalog validation, server-derived binding
+digests, frozen-task comparison, and current-action admission. `0023_marketing_adapter_capabilities.sql`
+and `0025_marketing_copy_capability.sql` own account-scoped registrations and receipt-scoped immutable
+bindings. `0025` provisions active `copy.text`, rejects blank/mismatched request or manifest bindings,
+and prevents binding updates. Neither adds a generic dispatcher or moves capture/Threads effect
+ownership: `hosted-workspace.js` gates capture queueing, `index.js` verifies binding/provenance before
+R2, and existing effect owners execute.
 
 `marketing/runtime.py` owns the provider-neutral, local session-and-dispatch harness. It has no
 Cloudflare, Appium, Threads, or model-provider import. `ToolCapability` owns both descriptor and
