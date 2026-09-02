@@ -395,12 +395,13 @@ def test_updater_kickstart_does_not_force_restart(
     ]
 
 
-def test_heartbeat_target_kickstarts_the_loaded_updater(
+def test_heartbeat_target_retries_the_loaded_updater_until_the_version_changes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     stop = Event()
     signals: list[None] = []
+    waits = 0
     report = MacWorkerDoctorReport(ready=True, summary="ready", checks={}, version="0.4.13")
     heartbeat = marketing_cli.DoctorHeartbeat(report=report, checked_at=0.0)
     config = MacWorkerConfig(
@@ -421,16 +422,24 @@ def test_heartbeat_target_kickstarts_the_loaded_updater(
         heartbeat_once,
     )
 
+    def wait(event: Event, _timeout: float | None = None) -> bool:
+        nonlocal waits
+        waits += 1
+        if waits == 2:
+            event.set()
+        return event.is_set()
+
+    monkeypatch.setattr(Event, "wait", wait)
+
     def kickstart() -> subprocess.CompletedProcess[str]:
         signals.append(None)
-        stop.set()
         return subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
     monkeypatch.setattr(marketing_cli, "kickstart_managed_updater", kickstart)
 
     marketing_cli._heartbeat_loop(config, credential, heartbeat, stop, paths)
 
-    assert signals == [None]
+    assert signals == [None, None]
     receipt = HeartbeatReceiptStore(paths.heartbeat).load()
     assert receipt is not None
     assert receipt.version == "0.4.13"
