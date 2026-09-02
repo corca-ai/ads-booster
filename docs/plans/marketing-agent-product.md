@@ -50,6 +50,10 @@ Implemented provider-neutral foundations:
   server-derived exact applicability selector; only a matching future campaign may receive it, and
   legacy prose-only principles are not auto-applied. Existing Cloudflare, Threads, and Appium owners
   remain intact.
+- a control-plane-protected, read-only review queue and exact per-campaign packet for the existing
+  pending strategy, creative, and learning decisions. It reveals the exact target digest and current
+  approval body, but does not create a new effect authority, load customer source records, or claim
+  that budget, rollback, or channel-effect data already exists.
 - an account-scoped customer-intelligence reference lane: manual normalized signals, one final human
   review decision, immutable context snapshots, safe task/receipt projection, and callback rebinding.
   It is deliberately not a transcript or CRM connector.
@@ -182,8 +186,8 @@ The next additions stay in this order:
 
 1. extend the named test-owned scorecard with more adversarial traces, then add a private corpus
    loader and model/provider trials before treating it as model-quality validation;
-2. turn the implemented account-scoped context/signal reference lane into a reviewer-visible approval
-   packet and campaign queue without widening its raw-data boundary;
+2. extend the implemented read-only strategy/creative/learning review queue and packet to the
+   remaining existing approval/effect surfaces without widening its raw-data boundary;
 3. then introduce consented connector ingestion and a multi-product tenant context only after their
    retention, access-control, and deletion contracts exist.
 
@@ -221,12 +225,19 @@ their consent, retention, deletion, and access contracts are specified. `retenti
 means a use/visibility deadline rather than physical deletion of immutable audit copies; that privacy
 deletion contract remains explicitly deferred.
 
-### 2. Close the reviewable campaign loop
+### 2. Close the reviewable campaign loop — first read surface implemented
 
-Expose the existing experiment ledger through one orchestrator contract and create a common approval
-packet: evidence, claim diff, preview/manifest, cost, blast radius, success definition, rollback, and
-exact approve/revise/reject/stop decisions. Add static policy checks before, and receipt/readback after,
-any adapter effect.
+`GET /api/marketing-agent/review-queue` and
+`GET /api/marketing-agent/campaigns/:id/review-packet` now make an existing pending strategy,
+creative, or learning approval reviewable without reconstructing IDs and digests from several tables.
+They are control-plane reads: the queue is bounded and state-derived; the packet shows evidence,
+claim containment, current manifest IDs/digests, receipt digests, exact existing approval body, and
+an explicit no-effect boundary. It excludes raw customer-source records and artifact URIs. No queue
+entry creates a grant, task, artifact, publication, or new capability.
+
+The complete effect review packet is still not implemented: cost, blast radius, rollback, candidate
+preview, external-effect approval, static policy checks, and adapter receipt/readback must be added
+at their actual effect owners, not fabricated in this read model.
 
 Exit: a reviewer can make one informed decision without reconstructing model context, and a later audit
 can reproduce exactly what that decision authorized.

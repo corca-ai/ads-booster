@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 ## Runtime boundary
 
@@ -156,6 +156,21 @@ writes a candidate, and the knowledge loader narrows by those selector fields be
 result limit. Legacy or prose-only scope records never auto-apply. Generic recording, composition,
 Figma, and generated-media executors remain deferred, so no unsupported artifact capability is
 simulated.
+
+The control plane also exposes a bounded, read-only `trace.marketing-review-queue.v1` for pending
+strategy, creative, and learning decisions, plus one
+`trace.marketing-review-packet.v1` per campaign. Both reads require control-plane authority and
+derive their target ID, SHA-256, campaign state, and current projection revision from D1. The packet
+contains feature evidence, receipt digests, current strategy/creative/outcome/learning records, and
+the exact existing POST body that can approve or reject that target. It makes no write, task,
+approval grant, artifact, or channel action. Customer-source records and context-snapshot contents
+are never loaded into this packet; only an already-bound snapshot ID and digest may appear. Cost,
+blast-radius, rollback, and external-effect approval are not yet recorded for these no-effect
+decisions, so the packet names that limit rather than simulating an authority. Artifact-manifest
+rows expose only their identifiers and content/input digests; neither artifact URI nor manifest JSON
+is a review-packet field. An effect owner must issue a separately bounded read capability when an
+actual asset needs inspection.
+
 Existing Threads publication rows merely snapshot an optional assignment ID; publisher, OAuth,
 publish-once, readback, and metrics behavior are unchanged.
 

@@ -274,16 +274,19 @@ than a new branch inside `marketing-agent.js`.
 | Campaign capability is reproducible | integration | an artifact request and manifest are accepted only when their binding carries the exact descriptor digest, schema digest, and effect class used by the creative context receipt |
 | External effects stay governed | integration | a frozen binding alone cannot dispatch; a current enabled registration plus exact, unrevoked approval and effect-owner receipt remain required |
 | Product intelligence is not raw prompt memory | unit | unapproved signal/transcript records cannot enter a campaign knowledge snapshot |
+| Reviewer can recover an exact current decision | integration | a protected read-only queue emits only the pending target and a packet whose action body matches the existing approval endpoint without reading customer-source payloads or writing a grant/task |
 | Operator can diagnose a stalled loop | integration | seeded missing prerequisites return stable, ordered blocker objects from the read-only transition diagnostic |
 
 ## Next implementation slice
 
-The provider-neutral runtime, scorecard baseline, account-scoped capability catalog, and the narrow
-customer-context reference lane now exist. Next, use a private diverse corpus and repeated pinned
-provider/model trials before making a model-quality claim; then expose the existing evidence/context
-records through a reviewer-visible approval packet and campaign queue. Connector ingestion and a
-multi-product role model remain later policy work. The canonical companion for current Trace behavior
-remains [`threads-marketing-agent.md`](./threads-marketing-agent.md).
+The provider-neutral runtime, scorecard baseline, account-scoped capability catalog, narrow
+customer-context reference lane, and first protected review surface now exist. The review queue and
+packet cover only current no-effect strategy, creative, and learning decisions; extend them to actual
+effect owners only with their cost, blast-radius, rollback, policy, receipt, and readback contracts.
+In parallel, use a private diverse corpus and repeated pinned provider/model trials before making a
+model-quality claim. Connector ingestion and a multi-product role model remain later policy work. The
+canonical companion for current Trace behavior remains
+[`threads-marketing-agent.md`](./threads-marketing-agent.md).
 
 ## Pre-implementation critique — 2026-09-01
 

@@ -14,11 +14,16 @@ import {
   createVariantLink,
   decideLearningCandidate,
   ingestProductEvent,
+  handleHostedMarketingAgent,
   normalizeFeaturePacket,
   requestCandidateMaterialization,
   requestExperimentEvaluation,
   requestLearningSynthesis,
 } from "../src/marketing-agent.js";
+import {
+  listMarketingReviewQueue,
+  marketingReviewPacket,
+} from "../src/marketing-review.js";
 import { D1Adapter } from "./d1-fixture.js";
 
 const ACCOUNT = {
@@ -41,7 +46,7 @@ function digest(value) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
-function seedSupervisedCampaign(DB) {
+function seedSupervisedCampaign(DB, { reviewContext = false } = {}) {
   const now = new Date().toISOString();
   const packet = normalizeFeaturePacket({
     schema_version: "trace.feature-evidence.v1",
@@ -176,6 +181,19 @@ function seedSupervisedCampaign(DB) {
     VALUES ('worker-1', 'Mac', 'appium', 'active',
             '{"task_kinds":"marketing_judgment"}', '{}', 'now', 'now');
   `);
+  if (reviewContext) {
+    DB.sqlite.prepare(
+      `INSERT INTO hosted_marketing_context_snapshots
+        (snapshot_id, account_id, schema_version, snapshot_json, snapshot_sha256,
+         approved_by, approved_at, expires_at, created_at)
+       VALUES ('review-context-1', 'trace_kr', 'trace.marketing-context.v1', ?, ?,
+               'reviewer-1', '2026-09-01T00:00:00Z', '2027-09-01T00:00:00Z',
+               '2026-09-01T00:00:00Z')`,
+    ).run(
+      JSON.stringify({ raw_transcript: "private customer source must never enter this packet" }),
+      "f".repeat(64),
+    );
+  }
   DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_feature_packets
       (packet_id, feature_id, schema_version, lifecycle, repository, mutable_ref,
@@ -204,10 +222,13 @@ function seedSupervisedCampaign(DB) {
             'shadow', 'completed', 1, 'origin', '${now}', '${now}');
     INSERT INTO hosted_marketing_campaigns
       (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
-       mode, origin_campaign_id, state, projection_revision, business_outcome,
+       mode, origin_campaign_id, marketing_context_snapshot_id,
+       marketing_context_snapshot_sha256, state, projection_revision, business_outcome,
        created_at, updated_at)
     VALUES ('campaign-1', 'trace_kr', 'packet-installed-1', '${packetSha}', 'agent_v1',
-            'assisted', 'origin-1', 'creative_planned', 4, 'outcome', '${now}', '${now}');
+            'assisted', 'origin-1', ${reviewContext ? "'review-context-1'" : "NULL"},
+            ${reviewContext ? `'${"f".repeat(64)}'` : "NULL"}, 'creative_planned', 4,
+            'outcome', '${now}', '${now}');
   `);
   DB.sqlite.prepare(
     `INSERT INTO hosted_marketing_knowledge_snapshots
@@ -1006,4 +1027,197 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
       legacyPrinciple.statement,
     ),
   );
+});
+
+test("review queue exposes one exact, read-only decision packet without customer source data", async () => {
+  const DB = new D1Adapter();
+  seedSupervisedCampaign(DB, { reviewContext: true });
+  await assert.rejects(
+    marketingReviewPacket({ DB }, ACCOUNT.account_id, "campaign-1"),
+    (error) => error.status === 409,
+  );
+  const snapshotSha256 = "f".repeat(64);
+  DB.sqlite.exec(`
+    DELETE FROM hosted_marketing_approval_grants WHERE grant_id = 'creative-grant-1';
+    UPDATE hosted_marketing_media_plans SET state = 'proposed' WHERE plan_id = 'plan-1';
+  `);
+  const privateArtifactUri = "https://assets.example/review.png?sig=review-secret";
+  const manifest = {
+    schema_version: "trace.artifact-manifest.v1",
+    manifest_id: "manifest-review-1",
+    artifact_uri: privateArtifactUri,
+  };
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_artifact_manifests
+      (manifest_id, campaign_id, treatment_id, request_id, schema_version, manifest_json,
+       manifest_sha256, artifact_uri, artifact_sha256, input_sha256, created_at)
+     VALUES ('manifest-review-1', 'campaign-1', 'treatment-control', 'request-control',
+             'trace.artifact-manifest.v1', ?, ?, ?, ?, ?, '2026-09-02T00:00:00Z')`,
+  ).run(
+    canonicalJson(manifest),
+    digest(manifest),
+    privateArtifactUri,
+    "1".repeat(64),
+    "2".repeat(64),
+  );
+  const readSnapshot = () => ({
+    grants: DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_approval_grants",
+    ).get().count,
+    events: DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_run_events WHERE campaign_id = 'campaign-1'",
+    ).get().count,
+    tasks: DB.sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks WHERE account_id = 'trace_kr'",
+    ).get().count,
+    campaign: DB.sqlite.prepare(
+      `SELECT state, projection_revision FROM hosted_marketing_campaigns
+       WHERE campaign_id = 'campaign-1'`,
+    ).get(),
+    plan: DB.sqlite.prepare(
+      "SELECT state FROM hosted_marketing_media_plans WHERE plan_id = 'plan-1'",
+    ).get(),
+  });
+  const beforeRead = readSnapshot();
+  const creativeQueue = await listMarketingReviewQueue({ DB }, ACCOUNT.account_id);
+  const planSha256 = DB.sqlite.prepare(
+    "SELECT plan_sha256 FROM hosted_marketing_media_plans WHERE plan_id = 'plan-1'",
+  ).get().plan_sha256;
+  assert.equal(creativeQueue.schema_version, "trace.marketing-review-queue.v1");
+  assert.equal(creativeQueue.items.length, 1);
+  assert.deepEqual(creativeQueue.items[0].target, {
+    kind: "media_plan",
+    id: "plan-1",
+    sha256: planSha256,
+  });
+  assert.equal(creativeQueue.items[0].approval.action.body.media_plan_id, "plan-1");
+  assert.equal(creativeQueue.items[0].approval.action.body.projection_revision, 4);
+  const creativePacket = await marketingReviewPacket({ DB }, ACCOUNT.account_id, "campaign-1");
+  assert.equal(creativePacket.approval.scope, "creative");
+  assert.equal(creativePacket.approval.target_id, "plan-1");
+  assert.equal(creativePacket.effect.external_side_effect, false);
+  assert.deepEqual(creativePacket.campaign.marketing_context_snapshot, {
+    snapshot_id: "review-context-1",
+    sha256: snapshotSha256,
+  });
+  assert.ok(!JSON.stringify(creativePacket).includes("private customer source"));
+  assert.deepEqual(creativePacket.creative.artifact_manifests[0], {
+    manifest_id: "manifest-review-1",
+    treatment_id: "treatment-control",
+    request_id: "request-control",
+    sha256: digest(manifest),
+    artifact_sha256: "1".repeat(64),
+    input_sha256: "2".repeat(64),
+    created_at: "2026-09-02T00:00:00Z",
+  });
+  assert.ok(!JSON.stringify(creativePacket).includes(privateArtifactUri));
+  assert.ok(!JSON.stringify(creativePacket).includes("review-secret"));
+  assert.deepEqual(readSnapshot(), beforeRead);
+
+  const unauthorized = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/review-queue"),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(unauthorized.status, 401);
+  const unauthorizedPacket = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1/review-packet"),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(unauthorizedPacket.status, 401);
+  const authorizedQueue = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/review-queue", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(authorizedQueue.status, 200);
+  assert.equal((await authorizedQueue.json()).items[0].review_kind, "creative");
+  const authorizedPacket = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1/review-packet", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(authorizedPacket.status, 200);
+  assert.equal((await authorizedPacket.json()).approval.target_kind, "media_plan");
+  assert.deepEqual(readSnapshot(), beforeRead);
+
+  DB.sqlite.prepare(
+    "UPDATE hosted_marketing_media_plans SET state = 'stale' WHERE plan_id = 'plan-1'",
+  ).run();
+  const beforeStaleApproval = readSnapshot();
+  const staleApproval = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1/media-approval", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        ...creativeQueue.items[0].approval.action.body,
+        reviewer_id: "reviewer-stale",
+        decision: "approved",
+      }),
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(staleApproval.status, 409);
+  assert.deepEqual(readSnapshot(), beforeStaleApproval);
+
+  DB.sqlite.exec(`
+    UPDATE hosted_marketing_media_plans SET state = 'approved' WHERE plan_id = 'plan-1';
+    UPDATE hosted_marketing_campaigns SET state = 'experiment_registered' WHERE campaign_id = 'campaign-1';
+  `);
+  const strategyQueue = await listMarketingReviewQueue({ DB }, ACCOUNT.account_id);
+  assert.equal(strategyQueue.items[0].review_kind, "strategy");
+  const strategyPacket = await marketingReviewPacket({ DB }, ACCOUNT.account_id, "campaign-1");
+  assert.equal(strategyPacket.approval.target_kind, "strategy_brief");
+  assert.equal(strategyPacket.approval.action.body.strategy_brief_id, "brief-1");
+
+  const learningCandidate = {
+    schema_version: "trace.learning-candidate.v1",
+    learning_id: "learning-review-1",
+    campaign_id: "campaign-1",
+    statement: "A bounded candidate learning still needs human promotion.",
+    scope: "exact account and feature selector",
+    applicability: {
+      schema_version: "trace.marketing-learning-applicability.v1",
+      account_id: ACCOUNT.account_id,
+      feature_id: "trace.lockscreen.ai-concepts",
+      feature_packet_sha256: "a".repeat(64),
+      country: "KR",
+      language: "ko",
+      mode: "assisted",
+      marketing_context_snapshot_sha256: snapshotSha256,
+    },
+    independent_lineage_ids: ["evaluation-1", "evaluation-2"],
+    status: "candidate",
+    created_at: "2026-09-02T00:00:00Z",
+  };
+  DB.sqlite.prepare(
+    `INSERT INTO hosted_marketing_learning_candidates
+      (learning_id, campaign_id, schema_version, candidate_json, candidate_sha256,
+       state, created_at, updated_at)
+     VALUES (?, 'campaign-1', 'trace.learning-candidate.v1', ?, ?, 'candidate', ?, ?)`,
+  ).run(
+    learningCandidate.learning_id,
+    canonicalJson(learningCandidate),
+    digest(learningCandidate),
+    learningCandidate.created_at,
+    learningCandidate.created_at,
+  );
+  DB.sqlite.prepare(
+    "UPDATE hosted_marketing_campaigns SET state = 'learning_candidate' WHERE campaign_id = 'campaign-1'",
+  ).run();
+  const learningQueue = await listMarketingReviewQueue({ DB }, ACCOUNT.account_id);
+  assert.equal(learningQueue.items[0].review_kind, "learning");
+  assert.equal(learningQueue.items[0].approval.action.body.candidate_sha256, digest(learningCandidate));
+  const learningPacket = await marketingReviewPacket({ DB }, ACCOUNT.account_id, "campaign-1");
+  assert.equal(learningPacket.approval.target_kind, "learning_candidate");
+  assert.equal(learningPacket.learning.candidates[0].learning_id, "learning-review-1");
 });

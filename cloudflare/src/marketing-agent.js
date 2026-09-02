@@ -1,4 +1,5 @@
 import { hasWorkerForTaskKind } from "./mac-workers.js";
+import { listMarketingReviewQueue, marketingReviewPacket } from "./marketing-review.js";
 
 export const MARKETING_JUDGMENT_PIPELINE = "hosted_marketing_judgment_v1";
 const MAX_CAMPAIGNS = 100;
@@ -117,6 +118,10 @@ export async function handleHostedMarketingAgent(request, env, account) {
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/campaigns") {
       return agentJson({ campaigns: await listCampaigns(env, account.account_id) });
     }
+    if (request.method === "GET" && url.pathname === "/api/marketing-agent/review-queue") {
+      requireMarketingAuthority(request, env);
+      return agentJson(await listMarketingReviewQueue(env, account.account_id));
+    }
     if (request.method === "POST" && url.pathname === "/api/marketing-agent/learning-syntheses") {
       requireMarketingAuthority(request, env);
       return agentJson(await requestLearningSynthesis(env, account, await readJson(request)), 202);
@@ -228,6 +233,17 @@ export async function handleHostedMarketingAgent(request, env, account) {
       ), 202);
     }
     const campaignRoute = url.pathname.match(/^\/api\/marketing-agent\/campaigns\/([^/]+)$/);
+    const reviewPacketRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/campaigns\/([^/]+)\/review-packet$/,
+    );
+    if (request.method === "GET" && reviewPacketRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await marketingReviewPacket(
+        env,
+        account.account_id,
+        decodedRouteId(reviewPacketRoute[1]),
+      ));
+    }
     if (request.method === "GET" && campaignRoute) {
       let campaignId;
       try {

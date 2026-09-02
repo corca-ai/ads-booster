@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 ## Composition
 
@@ -130,6 +130,15 @@ selector member before the bounded lookup, then applies a defensive exact canoni
 new campaign's knowledge snapshot receives a principle. Legacy principles without the selector are
 read but never auto-applied. `marketing-agent.js` also owns assisted campaign gating, variant links,
 product-event intake, scheduled evaluation dispatch, and learning approval.
+
+`cloudflare/src/marketing-review.js` owns only read models over that immutable/append-only ledger.
+It selects pending strategy, media-plan, or learning-candidate decisions from their exact state and
+unreviewed target digest, and builds the versioned queue and review packet. Its action template is a
+projection of the existing approval endpoint—not a new mutation API or authority source. The module
+does not query customer-signal or context-snapshot payload tables, and `marketing-agent.js` guards
+both review routes with control-plane authority before delegating to it. Artifact-manifest read
+models deliberately retain only IDs and digests: URI and manifest payload stay behind their effect
+owner rather than becoming an incidental review-token transport.
 
 Migrations `0018`–`0023` own the execution/observation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, and assignment-specific artifact proof. Existing candidate review,
