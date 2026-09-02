@@ -179,8 +179,12 @@ class GeneratedImageInputs(GenerationModel):
         min_length=5,
         max_length=24,
     )
+    # Required for the same reason as the query below: a defaulted property is one a strict
+    # schema may drop, and the to-dos are the entire right-hand panel of the screen. Nothing
+    # upstream authors them, so a dropped key renders that cell empty. Required means the
+    # key must be written, not that it must be long - an empty list still validates, so no
+    # batch dies here over a list the instruction already asks for.
     trace_todos: tuple[Annotated[str, Field(min_length=1, max_length=60)], ...] = Field(
-        default=(),
         max_length=20,
     )
     device_time: Annotated[str, Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")]
@@ -200,7 +204,15 @@ class GeneratedImageInputs(GenerationModel):
     # row did exactly that, down to "해질녘 캠핑장, 아이 둘의 뒷모습" becoming "해질녘
     # 캠핑장 아이 둘 뒷모습 가족사진 배경화면". Naming the wallpaper first gives the mood
     # something to describe, instead of giving the query something to paraphrase.
-    background_search_query: Annotated[str | None, Field(max_length=200)] = None
+    #
+    # Required and nullable rather than defaulted, for the reason `GeneratedScheduleEntry`
+    # spells out: a strict structured-output schema drops a property it is allowed to omit,
+    # and this one was being dropped. A batch that never writes the field falls back to
+    # `background_intent`, which is composed mechanically as "<subject>: <mood>" - so the
+    # image search ran "sports_team: 밤 경기 외야석 너머 환한 전광판", an English token
+    # followed by the scene sentence rule 8 exists to forbid. Ordering the fields cannot
+    # help when the field is not asked for at all.
+    background_search_query: Annotated[str | None, Field(max_length=200)]
     background_mood: Annotated[str, Field(min_length=1, max_length=40)]
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
 
