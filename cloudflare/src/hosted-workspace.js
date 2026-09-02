@@ -1,4 +1,9 @@
-import { hasRegisteredBrokerWorker, hasWorkerForTaskKind } from "./mac-workers.js";
+import {
+  hasRegisteredBrokerWorker,
+  hasWorkerForTaskKind,
+  MAX_PUBLIC_WORKER_EVENT_LIMIT,
+  publicWorkerTaskEvents,
+} from "./mac-workers.js";
 import { handleThreadsMediaRequest } from "./threads/media-capability.js";
 import { handleHostedThreadsProfiles } from "./threads/profiles-api.js";
 import { handleHostedThreadsStatus } from "./threads/status-api.js";
@@ -179,6 +184,15 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
 
     await ensureDefaultHostedAccount(env);
     await requireHostedAccount(scopedEnv);
+    if (request.method === "GET" && url.pathname === "/api/worker-events") {
+      return json({
+        events: await publicWorkerTaskEvents(
+          scopedEnv.DB,
+          accountId(scopedEnv),
+          publicWorkerEventListLimit(url.searchParams.get("limit")),
+        ),
+      });
+    }
     if (request.method === "GET" && url.pathname === "/api/personas") {
       return json(await listHostedPersonas(scopedEnv, url.searchParams.get("country")));
     }
@@ -3080,6 +3094,18 @@ function booleanField(value, field) {
 function positiveInteger(value, fallback) {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function publicWorkerEventListLimit(value) {
+  if (value === null) return 50;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PUBLIC_WORKER_EVENT_LIMIT) {
+    throw new WorkspaceHttpError(
+      400,
+      `limit must be an integer between 1 and ${MAX_PUBLIC_WORKER_EVENT_LIMIT}`,
+    );
+  }
+  return limit;
 }
 
 function accountId(env) {

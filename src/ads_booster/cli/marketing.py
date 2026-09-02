@@ -35,6 +35,7 @@ from ads_booster.marketing.worker_doctor import (
     inspect_mac_worker,
     installed_version,
 )
+from ads_booster.marketing.worker_events import QueuedWorkerEventReporter
 from ads_booster.marketing.worker_launchd import (
     MacWorkerLaunchd,
     MacWorkerUpdaterLaunchd,
@@ -647,21 +648,32 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     output_root=agent_home / "generated",
                 ),
             )
+            event_http = create_http_client()
+            event_broker = WorkerBrokerClient(event_http, config, credential, heartbeat)
             worker = MarketingWorkerLoop(
                 broker=broker,
                 inbox=MarketingInbox(root),
                 preparer=executor,
                 executor=executor,
+                event_reporter=QueuedWorkerEventReporter(
+                    event_broker,
+                    on_stop=event_http.close,
+                ),
             )
-            recovered = worker.recover()
-            if recovered:
-                typer.echo(f"recovered {recovered} interrupted task(s)")
-            while True:
-                active = worker.tick(accept_remote=not update_drain_requested(managed_paths.guard))
-                if once:
-                    return
-                if not active:
-                    time.sleep(config.poll_seconds)
+            try:
+                recovered = worker.recover()
+                if recovered:
+                    typer.echo(f"recovered {recovered} interrupted task(s)")
+                while True:
+                    active = worker.tick(
+                        accept_remote=not update_drain_requested(managed_paths.guard)
+                    )
+                    if once:
+                        return
+                    if not active:
+                        time.sleep(config.poll_seconds)
+            finally:
+                worker.close()
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=5)

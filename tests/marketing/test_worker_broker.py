@@ -22,6 +22,7 @@ from ads_booster.marketing.models import (
     TaskKind,
     TaskResult,
     TaskStatus,
+    WorkerTaskEventType,
 )
 from ads_booster.marketing.worker_broker import (
     MacWorkerConfig,
@@ -176,6 +177,7 @@ def test_broker_claim_ack_and_callback_use_only_the_worker_scoped_token() -> Non
             ),
             _response({"accepted": 1, "retried": 0}),
             _response({"accepted": True, "duplicate": False}),
+            _response({"accepted": True, "duplicate": False}),
             _response({"accepted": True}, status=202),
         ]
     )
@@ -199,6 +201,7 @@ def test_broker_claim_ack_and_callback_use_only_the_worker_scoped_token() -> Non
     leases = client.pull()
     client.acknowledge(ack_lease_ids=(leases[0].lease_id,))
     client.mark_execution_started(task.task_id)
+    client.report_event(task.task_id, WorkerTaskEventType.EXECUTION_FAILED, "fixture_failure")
     client.deliver(callback)
 
     assert leases[0].task == task
@@ -206,8 +209,14 @@ def test_broker_claim_ack_and_callback_use_only_the_worker_scoped_token() -> Non
         "https://workspace.example.test/v1/workers/tasks/claim",
         "https://workspace.example.test/v1/workers/tasks/ack",
         "https://workspace.example.test/v1/workers/tasks/executing",
+        "https://workspace.example.test/v1/workers/task-events",
         "https://workspace.example.test/v1/workers/task-callbacks",
     ]
+    assert http.requests[3][1] == {
+        "task_id": "task-1",
+        "event_type": "execution_failed",
+        "failure_code": "fixture_failure",
+    }
     assert all(request[2]["authorization"] == "Bearer worker-secret" for request in http.requests)
     assert all("queue" not in json.dumps(request).lower() for request in http.requests)
 

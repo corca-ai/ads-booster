@@ -27,7 +27,8 @@ The work surface has eight stable regions.
 2. `account-console` keeps the logical account selector visible while market, schedule, automation,
    and account creation stay behind one settings disclosure.
 3. `worker-console` keeps sanitized Mac availability visible and opens a separate protected manager
-   for registration, replacement, and detailed health only when an operator asks for it.
+   for registration, replacement, and detailed health only when an operator asks for it. Its safe
+   account-scoped execution timeline stays collapsed until a teammate opens `실행 기록`.
 4. `threads-console` keeps only the safe ON/OFF state visible and opens a distinct protected manager
    for OAuth profiles, default selection, and the auto-publish toggle.
 5. `pipeline-summary` exposes compact counts for caption review, image work, and publication-ready
@@ -91,6 +92,9 @@ exposes hosted-only controls only after the public Cloudflare session is confirm
   native capture mechanics are available but collapsed by default.
 - Detailed Mac inventory and mutating controls stay behind `Mac 연결 관리`; the operator token is
   entered only inside that dialog and is cleared together with one-time code output on close.
+- `실행 기록` reveals only bounded task lifecycle events, worker display name, task kind, task ID,
+  timestamp, and sanitized failure code. It never renders prompts, tokens, provider output, or local
+  paths, and it polls only while the disclosure is open.
 - Threads profile identity, scopes, expiry, default selection, and the auto-publish toggle stay behind
   `Threads 연결 관리`. Candidate cards expose only a safe target label until operations are unlocked.
 - Candidate rows avoid repeating caption and journey details already owned by the review tab.
