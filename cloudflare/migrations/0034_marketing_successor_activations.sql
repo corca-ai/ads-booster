@@ -64,7 +64,6 @@ WHEN NOT EXISTS (
 BEGIN
     SELECT RAISE(ABORT, 'successor activation requires one exact approved draft lineage');
 END;
-
 CREATE TRIGGER hosted_marketing_successor_activation_payload_immutable
 BEFORE UPDATE OF account_id, source_campaign_id, source_lineage_sha256, request_id,
     request_sha256, draft_id, draft_sha256, approval_grant_id, successor_campaign_id,
@@ -112,4 +111,3 @@ WHEN NEW.state = 'activated' AND NOT EXISTS (
 BEGIN
     SELECT RAISE(ABORT, 'successor activation requires its exact shadow strategy task');
 END;
-
