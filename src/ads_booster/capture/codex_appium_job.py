@@ -47,6 +47,10 @@ _JOB_CONTEXT_MISMATCH = "codex_appium_job_context_mismatch"
 _JOB_CONTEXT_MISMATCH_MESSAGE = "job identity, context, device, locale, and time zone must agree"
 _CALENDAR_NAMESPACE_MISMATCH = "codex_appium_job_calendar_namespace_mismatch"
 _CALENDAR_NAMESPACE_MISMATCH_MESSAGE = "calendar namespace must be owned by the request identity"
+_TODO_CALENDAR_NAMESPACE_MISMATCH = "codex_appium_job_todo_calendar_namespace_mismatch"
+_TODO_CALENDAR_NAMESPACE_MISMATCH_MESSAGE = (
+    "todo calendar namespace must be derived from the request calendar namespace"
+)
 _REQUEST_DIGEST_MISMATCH = "codex_appium_job_digest_mismatch"
 _REQUEST_DIGEST_MISMATCH_MESSAGE = "request_sha256 must match the canonical v2 job payload"
 _LAUNCH_ARGUMENTS_MISMATCH = "codex_appium_job_launch_arguments_mismatch"
@@ -97,6 +101,7 @@ class CodexAppiumJobContract(ContractModel):
     locale: Locale
     time_zone: IanaTimeZone
     calendar_namespace: Identifier
+    todo_calendar_namespace: Identifier
     export_nonce: Sha256Digest
     request_sha256: Sha256Digest = ""
     launch_arguments: tuple[str, ...] = ()
@@ -122,6 +127,11 @@ class CodexAppiumJobContract(ContractModel):
             raise PydanticCustomError(
                 _CALENDAR_NAMESPACE_MISMATCH,
                 _CALENDAR_NAMESPACE_MISMATCH_MESSAGE,
+            )
+        if self.todo_calendar_namespace != f"{self.calendar_namespace}-todos":
+            raise PydanticCustomError(
+                _TODO_CALENDAR_NAMESPACE_MISMATCH,
+                _TODO_CALENDAR_NAMESPACE_MISMATCH_MESSAGE,
             )
         expected_digest = canonical_json_digest(self._digest_payload())
         if self.request_sha256 and self.request_sha256 != expected_digest:
@@ -159,6 +169,7 @@ class CodexAppiumJobContract(ContractModel):
             "time_zone": self.time_zone,
             "export_nonce": self.export_nonce,
             "calendar_namespace": self.calendar_namespace,
+            "todo_calendar_namespace": self.todo_calendar_namespace,
         }
 
 

@@ -3,32 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Protocol
 
+from ads_booster.capture.calendar_automation_client import SimctlCalendarAutomationClient
 from ads_booster.capture.calendar_automation_contract import (
+    CalendarAutomationEvent,
     CalendarAutomationOperation,
     CalendarAutomationRequest,
     CalendarAutomationResult,
     CalendarPreparation,
     build_calendar_events,
+    build_todo_calendar_events,
 )
-from ads_booster.capture.capture_safety import CaptureAdapterError
-from ads_booster.capture.simctl_command import (
-    CommandRunner,
-    SubprocessCommandRunner,
-    parse_app_group_container,
-)
-from ads_booster.capture.wallpaper_validation import reject_symlink_path
+from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureControl
+from ads_booster.capture.simctl_command import CommandRunner, SubprocessCommandRunner
 from ads_booster.contracts import ErrorCode
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    from ads_booster.capture.capture_safety import CaptureControl
     from ads_booster.capture.codex_appium_job import CodexAppiumJobContract
 
 _REQUEST_SCHEMA: Final = "trace.marketing-calendar-automation.v1"
-_RESULT_SCHEMA: Final = "trace.marketing-calendar-automation-result.v1"
-_REQUEST_FILENAME: Final = "trace_marketing_calendar_request.json"
-_RESULT_FILENAME: Final = "trace_marketing_calendar_result.json"
+_CLEANUP_TIMEOUT_SECONDS: Final = 30.0
 
 
 class CalendarDataPort(Protocol):
@@ -57,23 +50,54 @@ class SimctlEventKitCalendarDataPort:
         contract: CodexAppiumJobContract,
         control: CaptureControl,
     ) -> CalendarPreparation:
-        request = CalendarAutomationRequest(
-            schema_version=_REQUEST_SCHEMA,
-            operation=CalendarAutomationOperation.PREPARE,
-            request_sha256=contract.request_sha256,
-            calendar_namespace=contract.calendar_namespace,
-            calendar_identifier=None,
-            events=build_calendar_events(contract),
+        schedule_events = build_calendar_events(contract)
+        todo_events = build_todo_calendar_events(contract)
+        if not todo_events:
+            schedule_identifier = self._prepare_calendar(
+                contract,
+                contract.calendar_namespace,
+                schedule_events,
+                control,
+            )
+            return CalendarPreparation(
+                request_sha256=contract.request_sha256,
+                calendar_namespace=contract.calendar_namespace,
+                calendar_identifier=schedule_identifier,
+                event_count=len(schedule_events),
+            )
+        todo_identifier = self._prepare_calendar(
+            contract,
+            contract.todo_calendar_namespace,
+            todo_events,
+            control,
         )
-        result = self._execute(contract, request, control)
-        identifier = self._require_completed(contract, request, result)
-        if result.event_count != len(request.events):
-            raise self._failure(request.operation, "calendar event verification failed")
+        try:
+            schedule_identifier = self._prepare_calendar(
+                contract,
+                contract.calendar_namespace,
+                schedule_events,
+                control,
+            )
+        except CaptureAdapterError as error:
+            try:
+                self._cleanup_calendar(
+                    contract,
+                    contract.todo_calendar_namespace,
+                    todo_identifier,
+                    todo_events,
+                    _cleanup_control(control),
+                )
+            except CaptureAdapterError as cleanup_error:
+                raise error.with_cleanup_error(str(cleanup_error)) from cleanup_error
+            raise
         return CalendarPreparation(
             request_sha256=contract.request_sha256,
             calendar_namespace=contract.calendar_namespace,
-            calendar_identifier=identifier,
-            event_count=result.event_count,
+            calendar_identifier=schedule_identifier,
+            event_count=len(schedule_events),
+            todo_calendar_namespace=contract.todo_calendar_namespace,
+            todo_calendar_identifier=todo_identifier,
+            todo_event_count=len(todo_events),
         )
 
     def cleanup(
@@ -85,22 +109,80 @@ class SimctlEventKitCalendarDataPort:
         if (
             preparation.request_sha256 != contract.request_sha256
             or preparation.calendar_namespace != contract.calendar_namespace
+            or preparation.todo_calendar_namespace not in {None, contract.todo_calendar_namespace}
         ):
             raise self._failure(
                 CalendarAutomationOperation.CLEANUP,
                 "calendar cleanup binding does not match the request",
             )
+        cleanup_error: CaptureAdapterError | None = None
+        todo_events = build_todo_calendar_events(contract)
+        if preparation.todo_calendar_identifier is not None:
+            try:
+                self._cleanup_calendar(
+                    contract,
+                    contract.todo_calendar_namespace,
+                    preparation.todo_calendar_identifier,
+                    todo_events,
+                    control,
+                )
+            except CaptureAdapterError as error:
+                cleanup_error = error
+        try:
+            self._cleanup_calendar(
+                contract,
+                contract.calendar_namespace,
+                preparation.calendar_identifier,
+                build_calendar_events(contract),
+                control,
+            )
+        except CaptureAdapterError as error:
+            if cleanup_error is not None:
+                raise cleanup_error.with_cleanup_error(str(error)) from error
+            raise
+        if cleanup_error is not None:
+            raise cleanup_error
+
+    def _prepare_calendar(
+        self,
+        contract: CodexAppiumJobContract,
+        namespace: str,
+        events: tuple[CalendarAutomationEvent, ...],
+        control: CaptureControl,
+    ) -> str:
+        request = CalendarAutomationRequest(
+            schema_version=_REQUEST_SCHEMA,
+            operation=CalendarAutomationOperation.PREPARE,
+            request_sha256=contract.request_sha256,
+            calendar_namespace=namespace,
+            calendar_identifier=None,
+            events=events,
+        )
+        result = self._execute(contract, request, control)
+        identifier = self._require_completed(contract, request, result)
+        if result.event_count != len(events):
+            raise self._failure(request.operation, "calendar event verification failed")
+        return identifier
+
+    def _cleanup_calendar(
+        self,
+        contract: CodexAppiumJobContract,
+        namespace: str,
+        identifier: str,
+        events: tuple[CalendarAutomationEvent, ...],
+        control: CaptureControl,
+    ) -> None:
         request = CalendarAutomationRequest(
             schema_version=_REQUEST_SCHEMA,
             operation=CalendarAutomationOperation.CLEANUP,
             request_sha256=contract.request_sha256,
-            calendar_namespace=contract.calendar_namespace,
-            calendar_identifier=preparation.calendar_identifier,
-            events=build_calendar_events(contract),
+            calendar_namespace=namespace,
+            calendar_identifier=identifier,
+            events=events,
         )
         result = self._execute(contract, request, control)
-        identifier = self._require_completed(contract, request, result)
-        if identifier != preparation.calendar_identifier or result.event_count != 0:
+        completed_identifier = self._require_completed(contract, request, result)
+        if completed_identifier != identifier or result.event_count != 0:
             raise self._failure(request.operation, "calendar cleanup verification failed")
 
     def _execute(
@@ -109,102 +191,11 @@ class SimctlEventKitCalendarDataPort:
         request: CalendarAutomationRequest,
         control: CaptureControl,
     ) -> CalendarAutomationResult:
-        permission = self.runner.run(
-            (
-                self.xcrun,
-                "simctl",
-                "privacy",
-                contract.device.udid,
-                "grant",
-                "calendar",
-                contract.bundle_id,
-            ),
-            control.remaining_seconds(),
-        )
-        if permission.returncode != 0:
-            raise self._failure(
-                request.operation,
-                "Trace Calendar access could not be granted on the Simulator",
-            )
-        control.checkpoint()
-        request_path, result_path = self._automation_paths(
-            contract,
-            request.operation,
-            control,
-        )
-        try:
-            result_path.unlink(missing_ok=True)
-            _write_private_request(request_path, request)
-        except OSError as error:
-            raise self._failure(
-                request.operation, "calendar automation files are unavailable"
-            ) from error
-        launched = self.runner.run(
-            (
-                self.xcrun,
-                "simctl",
-                "launch",
-                "--terminate-running-process",
-                contract.device.udid,
-                contract.bundle_id,
-                *contract.launch_arguments,
-                "-traceMarketingCalendarAutomation",
-            ),
-            control.remaining_seconds(),
-        )
-        if launched.returncode != 0:
-            raise self._failure(
-                request.operation,
-                f"Trace calendar automation launch failed with exit code {launched.returncode}",
-            )
-        while not result_path.is_file():
-            control.wait(self.poll_interval_seconds)
-        try:
-            result = CalendarAutomationResult.model_validate_json(
-                result_path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as error:
-            raise self._failure(
-                request.operation, "calendar automation result is invalid"
-            ) from error
-        control.checkpoint()
-        return result
-
-    def _automation_paths(
-        self,
-        contract: CodexAppiumJobContract,
-        operation: CalendarAutomationOperation,
-        control: CaptureControl,
-    ) -> tuple[Path, Path]:
-        completed = self.runner.run(
-            (
-                self.xcrun,
-                "simctl",
-                "get_app_container",
-                contract.device.udid,
-                contract.bundle_id,
-                "groups",
-            ),
-            control.remaining_seconds(),
-        )
-        if completed.returncode != 0:
-            raise self._failure(
-                operation,
-                "Trace App Group lookup failed for calendar automation",
-            )
-        try:
-            container = parse_app_group_container(completed.stdout, contract.app_group_id)
-        except CaptureAdapterError as error:
-            raise self._failure(
-                operation,
-                "Trace App Group container is unavailable for calendar automation",
-            ) from error
-        request_path = container / _REQUEST_FILENAME
-        result_path = container / _RESULT_FILENAME
-        reject_symlink_path(container)
-        reject_symlink_path(request_path)
-        reject_symlink_path(result_path)
-        return request_path, result_path
+        return SimctlCalendarAutomationClient(
+            xcrun=self.xcrun,
+            runner=self.runner,
+            poll_interval_seconds=self.poll_interval_seconds,
+        ).execute(contract, request, control)
 
     @staticmethod
     def _require_completed(
@@ -216,7 +207,7 @@ class SimctlEventKitCalendarDataPort:
         if not (
             result.operation is request.operation
             and result.request_sha256 == contract.request_sha256
-            and result.calendar_namespace == contract.calendar_namespace
+            and result.calendar_namespace == request.calendar_namespace
             and result.status == "completed"
             and identifier is not None
         ):
@@ -239,18 +230,13 @@ class SimctlEventKitCalendarDataPort:
         return CaptureAdapterError(code=code, message=message)
 
 
-def _write_private_request(
-    path: Path,
-    request: CalendarAutomationRequest,
-) -> None:
-    temporary = path.with_name(f".{path.name}.tmp")
-    reject_symlink_path(temporary)
-    try:
-        _ = temporary.write_text(request.model_dump_json(), encoding="utf-8")
-        temporary.chmod(0o600)
-        _ = temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+def _cleanup_control(control: CaptureControl) -> CaptureControl:
+    return CaptureControl(
+        expires_at=control.clock.monotonic() + _CLEANUP_TIMEOUT_SECONDS,
+        cancel_file=None,
+        clock=control.clock,
+        sleeper=control.sleeper,
+    )
 
 
 __all__ = [
@@ -261,4 +247,5 @@ __all__ = [
     "CalendarPreparation",
     "SimctlEventKitCalendarDataPort",
     "build_calendar_events",
+    "build_todo_calendar_events",
 ]

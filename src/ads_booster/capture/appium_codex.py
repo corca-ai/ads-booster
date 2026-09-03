@@ -24,6 +24,7 @@ from ads_booster.capture.appium_codex_validation import (
 from ads_booster.capture.appium_editor_verifier import (
     DEFAULT_APPIUM_EDITOR_VERIFIER,
     AppiumEditorVerifier,
+    AppiumProcessBinding,
 )
 from ads_booster.capture.appium_endpoint import validate_appium_server_url
 from ads_booster.capture.calendar_lifecycle import prepared_calendar
@@ -132,25 +133,28 @@ class CodexAppiumJobAdapter:
             provenances: list[CaptureProvenance] = []
             ready_states: list[CodexAppiumReadyState] = []
             saved_states: list[CodexAppiumSavedState] = []
+            process_bindings: list[AppiumProcessBinding] = []
             collection_errors: list[CaptureAdapterError] = []
             expected_titles = expected_trace_item_titles(contract)
 
             def verify_ready_editor(ready: CodexAppiumReadyState) -> bool:
                 ready_states.append(ready)
-                verified = self._ready_state_is_verified(
+                binding = self._ready_process_binding(
                     contract,
                     ready,
                     expected_titles,
                     control,
                 )
-                if verified:
+                if binding is not None:
+                    process_bindings.append(binding)
                     cleared_at_ns[0] = self.collector.clear(contract.device.udid, control)
-                return verified
+                    return True
+                return False
 
             def collect_saved_export(saved: CodexAppiumSavedState) -> bool:
                 try:
                     session_id = require_saved_state(saved, ready_states[-1])
-                    self._require_live_process_binding(contract, session_id, control)
+                    self._require_live_process_binding(contract, process_bindings[-1], control)
                     provenances.append(
                         self.collector.collect(
                             WallpaperCollectionRequest(
@@ -228,15 +232,15 @@ class CodexAppiumJobAdapter:
                 message="Codex Appium job failed",
             ) from error
 
-    def _ready_state_is_verified(
+    def _ready_process_binding(
         self,
         contract: CodexAppiumJobContract,
         ready: CodexAppiumReadyState,
         expected_titles: tuple[str, ...],
         control: CaptureControl,
-    ) -> bool:
+    ) -> AppiumProcessBinding | None:
         if not rendered_titles_are_credible(ready.rendered_trace_item_titles, expected_titles):
-            return False
+            return None
         if not self.editor_verifier.verify(
             contract.appium_server,
             ready,
@@ -244,8 +248,8 @@ class CodexAppiumJobAdapter:
             contract.context.promotion_material.trace_todos,
             control,
         ):
-            return False
-        return self.editor_verifier.verify_process_binding(
+            return None
+        return self.editor_verifier.capture_process_binding(
             contract.appium_server,
             ready.session_id,
             contract.launch_arguments,
@@ -255,12 +259,11 @@ class CodexAppiumJobAdapter:
     def _require_live_process_binding(
         self,
         contract: CodexAppiumJobContract,
-        session_id: str,
+        binding: AppiumProcessBinding,
         control: CaptureControl,
     ) -> None:
         if not self.editor_verifier.verify_process_binding(
-            contract.appium_server,
-            session_id,
+            binding,
             contract.launch_arguments,
             control,
         ):

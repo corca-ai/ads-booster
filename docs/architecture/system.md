@@ -50,29 +50,35 @@ flowchart LR
    mode-0700 request root, and checks readiness. These failures have not started Appium.
 5. Local SQLite records the immutable admission digest/nonce. The worker then records the D1
    barrier. If it cannot, it does not start native work.
-6. After the barrier, the worker writes a digest-bound Calendar request into the Trace App Group and
+6. After the barrier, the worker writes digest-bound Calendar requests into the Trace App Group and
    launches the DEBUG Trace EventKit helper. The helper creates or reuses only the
-   `trace-<request-id>` calendar, writes the requested events, re-reads their exact titles and times,
-   and returns its calendar identifier and count. Every temporary event carries the request digest
-   as its ownership marker. A title collision without that marker is rejected, and a failure after
-   EventKit commit rolls the new calendar back before returning failure. This helper launch adds
-   `-traceMarketingCalendarAutomation`; it is not the final editor process.
+   `trace-<request-id>` schedule calendar and the `trace-<request-id>-todos` capture calendar. The
+   latter projects the request's undated to-dos into all-day rows used only by the right-hand image
+   panel, so capture never writes to Trace's shared internal to-do list. The helper re-reads each
+   calendar's exact titles and times, then returns its identifier and count. Every temporary event
+   carries the request digest as its ownership marker. A title collision without that marker is
+   rejected, and a failure after EventKit commit rolls the new calendar back before returning
+   failure. These helper launches add `-traceMarketingCalendarAutomation`; neither is the final
+   editor process.
 7. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
    user/project configuration disabled and the `trace-appium` permission profile. Commands can use
    the request workspace and the allowlisted loopback Appium endpoint, but cannot read home secrets
    or reach external hosts. The contract supplies context, prepared background, device/UDID, Trace
-   bundle, endpoint, locale/time zone, digest/nonce, and `trace-<request-id>` calendar namespace.
+   bundle, endpoint, locale/time zone, digest/nonce, and both request-owned calendar namespaces.
    The final bound Trace launch opens the wallpaper editor directly. Codex owns editor observation,
    layout, component settings, preview inspection, and Save. It does not enter Trace Orb/Quick Setup,
-   open Shortcuts or Calendar, or create, edit, or delete Calendar data. The worker owns deterministic
-   data preparation, Simulator preparation, collection, and cleanup.
+   open Shortcuts or Calendar, or create, edit, or delete Calendar data. It clears each component's
+   existing selections and binds the schedule, weekly strip, and to-do panel only to their assigned
+   request-owned calendar. The worker owns deterministic data preparation, Simulator preparation,
+   collection, and cleanup.
    Before Save, Codex publishes its active wallpaper-editor state. The worker independently checks
    the Trace editor identifier, every requested title, and the live Trace process arguments in the
    same Appium session. A bundle-only terminate/activate cycle loses the immutable export binding,
    so the worker rejects that Ready marker before Save and permits one replacement Trace session.
    Codex recreates the final Trace editor with the exact original launch arguments, restores the UI
-   state, and submits a new Ready marker. The worker checks the binding again at the
-   saved marker, clears any earlier App Group export, and acknowledges Save only after those
+   state, and submits a new Ready marker. The worker retains the Ready-verified Trace PID, clears any
+   earlier App Group export, and at the saved marker rechecks that same process's full launch
+   arguments without rebuilding the post-Save UI hierarchy. It acknowledges Save only after those
    boundaries. A second rejected Ready ends the turn without Save. Collection therefore cannot wait
    on or accept an export from an unbound process.
 8. When Save is accepted, Trace renders the configured background and Trace content into its bound
@@ -89,9 +95,10 @@ flowchart LR
    `trace.imagen-ios-ui.v1`. The returned image is explicitly `imagen_ios_ui`: it is a
    generated copy of the default iPhone UI, not an iOS system wallpaper render. After collection or a
    terminal capture failure, the
-   worker asks the helper to delete only the recorded request-owned calendar whose identifier,
-   namespace, digest marker, and events all match. Cleanup has an independent bounded budget; a
-   cleanup failure remains attached to the primary capture failure.
+   worker asks the helper to delete both recorded request-owned calendars whose identifiers,
+   namespaces, digest markers, and events all match. Cleanup has an independent bounded budget; one
+   cleanup attempt does not prevent the other, and a cleanup failure remains attached to the primary
+   capture failure.
 9. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1, appends `callback_applied`, and opens human image review.
 

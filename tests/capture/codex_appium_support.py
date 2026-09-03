@@ -2,27 +2,16 @@ from __future__ import annotations
 
 import stat
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from PIL import Image
 
+from ads_booster.capture.appium_editor_verifier import AppiumProcessBinding
 from ads_booster.capture.calendar_automation_contract import CalendarPreparation
-from ads_booster.capture.codex_appium_job import (
-    CodexAppiumJobContract,
-    CodexAppiumJobIdentity,
-)
 from ads_booster.contracts import (
     CaptureProvenance,
-    DeviceKind,
     DeviceTarget,
-    MarketingContextBundle,
-    PersonaProfile,
-    PreparedBackground,
-    PromotionMaterial,
-    TraceBackgroundSearchProvenance,
-    TraceScheduleItem,
 )
 from ads_booster.providers.codex_cli import (
     CodexAppiumJobCallbacks,
@@ -30,10 +19,13 @@ from ads_booster.providers.codex_cli import (
     CodexAppiumSavedState,
 )
 
+from .codex_appium_contract_support import V2JobInputs, v2_contract
+
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.capture.capture_safety import CaptureAdapterError, CaptureControl
+    from ads_booster.capture.codex_appium_job import CodexAppiumJobContract
     from ads_booster.capture.wallpaper_collection import WallpaperCollectionRequest
     from ads_booster.transport.json_types import JsonObject
 
@@ -110,6 +102,17 @@ class RecordingCalendarDataPort:
             calendar_namespace=contract.calendar_namespace,
             calendar_identifier="trace-calendar-identifier",
             event_count=len(contract.context.promotion_material.trace_items or ()),
+            todo_calendar_namespace=(
+                contract.todo_calendar_namespace
+                if contract.context.promotion_material.trace_todos
+                else None
+            ),
+            todo_calendar_identifier=(
+                "trace-todo-calendar-identifier"
+                if contract.context.promotion_material.trace_todos
+                else None
+            ),
+            todo_event_count=len(contract.context.promotion_material.trace_todos),
         )
         self.preparations.append(preparation)
         return preparation
@@ -142,14 +145,28 @@ class AcceptingEditorVerifier:
         control.checkpoint()
         return ready.rendered_trace_item_titles == expected_titles
 
-    def verify_process_binding(
+    def capture_process_binding(
         self,
         appium_server: str,
         session_id: str,
         expected_arguments: tuple[str, ...],
         control: CaptureControl,
+    ) -> AppiumProcessBinding | None:
+        del appium_server
+        control.checkpoint()
+        return (
+            AppiumProcessBinding(session_id=session_id, process_id="4321")
+            if expected_arguments
+            else None
+        )
+
+    def verify_process_binding(
+        self,
+        binding: AppiumProcessBinding,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
     ) -> bool:
-        del appium_server, session_id
+        del binding
         control.checkpoint()
         return bool(expected_arguments)
 
@@ -203,92 +220,6 @@ class RecordingWallpaperCollector:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class V2JobInputs:
-    task_id: str = "task-1"
-    concept: str = "Planless native capture"
-    device_name: str = "iPhone 17 Pro"
-    country: str = "KR"
-    locale: str = "ko-KR"
-    time_zone: str = "Asia/Seoul"
-    background_sha256: str = "a" * 64
-    export_nonce: str = "b" * 64
-    calendar_namespace: str = "trace-request-1"
-    # A row is a `"HH:MM 제목"` string or the object form the generator now writes.
-    trace_items: tuple[str | JsonObject, ...] = ("Focus block",)
-    # The wallpaper layout is derived from this, so it also decides how wide a week draws.
-    request_id: str = "request-1"
-    reference_date: datetime = datetime(2026, 8, 28, tzinfo=UTC)
-
-
-_DEFAULT_V2_JOB_INPUTS = V2JobInputs()
-
-
-def v2_contract(
-    inputs: V2JobInputs = _DEFAULT_V2_JOB_INPUTS,
-) -> CodexAppiumJobContract:
-    device = DeviceTarget(
-        kind=DeviceKind.SIMULATOR,
-        udid="E1FB798D-79E6-4B25-A987-D298A4FD122A",
-        platform_version="26.0",
-        device_name=inputs.device_name,
-    )
-    context = MarketingContextBundle(
-        schema_version="trace.marketing-context.v1",
-        request_id=inputs.request_id,
-        campaign_id="campaign-1",
-        persona=PersonaProfile(
-            persona_id="persona-1",
-            country=inputs.country,
-            locale=inputs.locale,
-        ),
-        promotion_material=PromotionMaterial(
-            promotion_material_id="promotion-1",
-            concept=inputs.concept,
-            background_intent="quiet Seoul desk at dawn",
-            trace_items=tuple(
-                TraceScheduleItem.model_validate(item) for item in inputs.trace_items
-            ),
-        ),
-        reference_date=inputs.reference_date,
-        device=device,
-    )
-    return CodexAppiumJobContract(
-        schema_version="trace.codex-appium-job.v2",
-        identity=CodexAppiumJobIdentity(
-            task_id=inputs.task_id,
-            run_id="run-1",
-            request_id=inputs.request_id,
-            idempotency_key="hosted:task-1:request-1",
-            candidate_id="candidate-1",
-            candidate_revision=3,
-        ),
-        context=context,
-        prepared_background=PreparedBackground(
-            path="inputs/background.png",
-            sha256=inputs.background_sha256,
-            provenance=TraceBackgroundSearchProvenance(
-                schema_version="trace.background-search.v1",
-                artifact_path="inputs/background.png",
-                artifact_sha256=inputs.background_sha256,
-                query="quiet Seoul desk at dawn",
-                provider="google-images",
-                image_url="https://images.pexels.com/photo/1",
-                source_url="https://www.pexels.com/photo/1",
-            ),
-        ),
-        device=device,
-        locale=inputs.locale,
-        time_zone=inputs.time_zone,
-        python_executable="/usr/bin/python3",
-        appium_server="http://127.0.0.1:4723",
-        bundle_id="com.corca.Trace",
-        app_group_id="group.ai.corca.trace",
-        calendar_namespace=inputs.calendar_namespace,
-        export_nonce=inputs.export_nonce,
-    )
-
-
 def job_paths(tmp_path: Path) -> tuple[Path, Path, Path, str]:
     job_root = tmp_path / "request-1"
     background = job_root / "inputs" / "background.png"
@@ -305,3 +236,6 @@ def completed_result() -> JsonObject:
         "session_closed": True,
         "error_code": None,
     }
+
+
+__all__ = ["V2JobInputs", "v2_contract"]
