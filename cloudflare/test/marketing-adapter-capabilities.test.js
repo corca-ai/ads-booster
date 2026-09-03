@@ -7,6 +7,7 @@ import {
   canonicalJson,
   creativeFormatsForCapabilities,
   installMarketingToolReference,
+  listMarketingSkills,
   listMarketingToolInstallations,
   MarketingCapabilityError,
   resolveCreativeCapabilityBindings,
@@ -242,7 +243,23 @@ test("tool inventory distinguishes available setup from active execution", async
   }]), "trace_kr");
 
   assert.deepEqual(tools.map((tool) => [tool.capability_id, tool.activation_state]), [
+    ["research.web", "not_installed"],
+    ["capture.native_png", "not_installed"],
     ["publish.threads", "registered_reference"],
     ["deliver.slack", "not_installed"],
   ]);
+});
+
+test("skills are versioned procedures whose readiness comes from independent tools", async () => {
+  const skills = await listMarketingSkills(mutationDb([
+    { capability_id: "capture.native_png", enabled: 1, activation_state: "active" },
+    { capability_id: "publish.threads", enabled: 1, activation_state: "active" },
+    { capability_id: "research.web", enabled: 1, activation_state: "active" },
+  ]), "trace_kr");
+
+  assert.deepEqual(skills.map((skill) => [skill.skill_id, skill.ready, skill.blockers]), [
+    ["research.daily_slack", false, ["deliver.slack"]],
+    ["threads.validated_format_replication", true, []],
+  ]);
+  assert.equal(skills[1].human_checkpoint, "artifact_and_publication_approval");
 });

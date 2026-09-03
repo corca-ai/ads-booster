@@ -6,6 +6,7 @@ import {
   assertCurrentCapabilityBinding,
   creativeFormatsForCapabilities,
   installMarketingToolReference,
+  listMarketingSkills,
   listMarketingToolInstallations,
   MarketingCapabilityError,
   resolveCreativeCapabilityBindings,
@@ -99,6 +100,10 @@ export async function handleHostedMarketingAgent(request, env, account) {
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/tools") {
       requireMarketingAuthority(request, env);
       return agentJson({ tools: await listMarketingToolInstallations(env.DB, account.account_id) });
+    }
+    if (request.method === "GET" && url.pathname === "/api/marketing-agent/skills") {
+      requireMarketingAuthority(request, env);
+      return agentJson({ skills: await listMarketingSkills(env.DB, account.account_id) });
     }
     if (request.method === "POST" && url.pathname === "/api/marketing-agent/tools/install") {
       requireMarketingAuthority(request, env);

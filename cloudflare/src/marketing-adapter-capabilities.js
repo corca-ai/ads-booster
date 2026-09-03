@@ -40,11 +40,32 @@ const GENERIC_REQUEST_SCHEMA_SHA256 = "fa609647bf7cfc267927f5e42c63ed3ae42d60a1f
 const GENERIC_RECEIPT_SCHEMA_SHA256 = "368888b194fc57a818cf666788ff2e8fe79dab96c17a4c6b79f908e92a9dd91c";
 
 export const MARKETING_TOOL_CATALOG = Object.freeze({
+  "research.web": Object.freeze({
+    effect_class: "none", owner_id: "trace.evidence_research", setup_path: null,
+  }),
+  "capture.native_png": Object.freeze({
+    effect_class: "local_artifact", owner_id: "trace.native_capture", setup_path: null,
+  }),
   "publish.threads": Object.freeze({
     effect_class: "external", owner_id: "threads.publisher", setup_path: "/api/threads/oauth/start",
   }),
   "deliver.slack": Object.freeze({
     effect_class: "external", owner_id: "slack.delivery", setup_path: null,
+  }),
+});
+
+export const MARKETING_SKILL_CATALOG = Object.freeze({
+  "research.daily_slack": Object.freeze({
+    version: "1",
+    purpose: "Find evidence-backed Trace marketing opportunities and deliver a daily team brief.",
+    required_capabilities: Object.freeze(["research.web", "deliver.slack"]),
+    human_checkpoint: "none",
+  }),
+  "threads.validated_format_replication": Object.freeze({
+    version: "1",
+    purpose: "Localize a proven image or URL format, capture Trace, review, and publish to Threads.",
+    required_capabilities: Object.freeze(["capture.native_png", "publish.threads"]),
+    human_checkpoint: "artifact_and_publication_approval",
   }),
 });
 
@@ -67,6 +88,25 @@ export async function listMarketingToolInstallations(db, accountId) {
       activation_state: row?.activation_state ?? "not_installed",
       setup_path: definition.setup_path,
       updated_at: row?.updated_at ?? null,
+    };
+  });
+}
+
+export async function listMarketingSkills(db, accountId) {
+  const tools = await listMarketingToolInstallations(db, accountId);
+  const active = new Set(tools
+    .filter((tool) => tool.enabled && tool.activation_state === "active")
+    .map((tool) => tool.capability_id));
+  return Object.entries(MARKETING_SKILL_CATALOG).map(([skillId, skill]) => {
+    const blockers = skill.required_capabilities.filter((capabilityId) => !active.has(capabilityId));
+    return {
+      skill_id: skillId,
+      version: skill.version,
+      purpose: skill.purpose,
+      required_capabilities: [...skill.required_capabilities],
+      human_checkpoint: skill.human_checkpoint,
+      ready: blockers.length === 0,
+      blockers,
     };
   });
 }
