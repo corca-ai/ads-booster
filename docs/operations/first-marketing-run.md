@@ -116,20 +116,26 @@ approve one candidate, and record:
 Turn auto-publish OFF again after the canary unless the team separately approves ongoing operation.
 An ambiguous publication must remain `unknown_side_effect`; never retry it as a new post.
 
-## 7. Exercise the current service boundary
+## 7. Deploy the Agent Service with OAuth
 
-The target agent belongs on an HTTPS server with OAuth/OIDC. Until that deployment slice exists,
-exercise only the loopback development boundary and do not treat it as production hosting:
+Place the service behind an HTTPS ingress on the chosen on-premises or cloud server. Register an
+OAuth confidential client with a token-introspection endpoint, then inject its secret from the
+server secret store:
 
 ```bash
-export TRACE_MARKETING_SERVICE_TOKEN='<private-local-token>'
-trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
+export TRACE_MARKETING_OAUTH_INTROSPECTION_URL='https://identity.example/oauth/introspect'
+export TRACE_MARKETING_OAUTH_CLIENT_ID='trace-marketing-agent'
+export TRACE_MARKETING_OAUTH_CLIENT_SECRET='<secret-store-reference>'
+export TRACE_MARKETING_OAUTH_AUDIENCE='trace-marketing-agent'
+export TRACE_MARKETING_OAUTH_TENANT_CLAIM='workspace_id'
+trace-marketing service run --model '<approved-codex-model>' --host 0.0.0.0 --port 8765
 ```
 
-Open `http://127.0.0.1:8765/`, create an Appium-independent reasoning Run, and retain its
+Open the HTTPS service URL, create an Appium-independent reasoning Run, and retain its
 `/runs/<run-id>` URL across a restart. A provider outage must return retryable HTTP `503` while the
-Run remains durable. Until the production registry cutover is separately completed, use the hosted
-workspace—not this local UI—for candidate, Appium, and Threads effects.
+Run remains durable. Verify that an inactive token, wrong audience, or missing workspace claim is
+rejected and that one workspace cannot read another workspace's Run. Until the production registry
+cutover is separately completed, use the hosted workspace for candidate, Appium, and Threads effects.
 
 ## 8. Let the agent register supported tools
 

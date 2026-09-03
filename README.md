@@ -18,9 +18,22 @@ export TRACE_MARKETING_SERVICE_TOKEN='replace-with-a-private-token'
 trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8765
 ```
 
-The loopback command is a development proof, not the target deployment. The target is an HTTPS
-server deployment with OAuth/OIDC user and workspace identity; Macs enroll only as remote Appium
-workers. That server packaging and OAuth boundary are not yet implemented in this PR.
+For an on-premises or cloud server, terminate HTTPS at the ingress/reverse proxy and configure OAuth
+2.0 token introspection before binding beyond loopback:
+
+```bash
+export TRACE_MARKETING_OAUTH_INTROSPECTION_URL='https://identity.example/oauth/introspect'
+export TRACE_MARKETING_OAUTH_CLIENT_ID='trace-marketing-agent'
+export TRACE_MARKETING_OAUTH_CLIENT_SECRET='<secret-store-reference>'
+export TRACE_MARKETING_OAUTH_AUDIENCE='trace-marketing-agent'
+export TRACE_MARKETING_OAUTH_TENANT_CLAIM='workspace_id'
+trace-marketing service run --model gpt-5.4 --host 0.0.0.0 --port 8765
+```
+
+The service accepts a token only when introspection returns `active: true`, the configured audience,
+a non-empty `sub`, and a non-empty tenant claim. `sub` owns approval decisions and the tenant claim
+scopes every Run read and write. Macs enroll separately as remote Appium workers. A static
+`TRACE_MARKETING_SERVICE_TOKEN` is accepted only for loopback development binding.
 
 `POST /v1/runs` creates a canonical run, `GET /v1/runs/:id` returns its complete step and record
 journey, `POST /v1/runs/:id/input` resumes requested evidence, and

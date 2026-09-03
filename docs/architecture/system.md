@@ -20,9 +20,10 @@ PR #99 is a transition, so the two truths must not be confused:
   projection; `/runs/<run-id>` is the shared result-link surface for browser and channel adapters.
   A reasoning-provider failure is sanitized into retryable HTTP `503`, while the admitted Run stays
   durable so an identical request can resume it after provider recovery.
-- **Target service deployment:** the canonical agent runs on an HTTPS-reachable on-premises or cloud
-  server with OAuth/OIDC user and workspace identity. Macs are separately enrolled Appium workers.
-  The current loopback bearer-token service proves the domain boundary but is not that deployment.
+- **Implemented server authentication boundary:** the canonical agent can bind on an on-premises or
+  cloud server only when OAuth 2.0 token introspection is configured. The ingress terminates HTTPS;
+  introspected audience, subject, and workspace claim scope every request. Static bearer auth is
+  restricted to loopback development. Macs remain separately enrolled Appium workers.
 - **Implemented hosted registration seam:** the hosted agent can list and install server-owned tool
   catalog entries. Installation creates a non-executable reference; Threads becomes active only from
   its verified OAuth callback. Arbitrary caller-supplied adapters or effect policy are rejected.
