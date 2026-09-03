@@ -11,6 +11,7 @@ from ads_booster.capture.appium_codex_prompt import (
     days_left_in_week,
     wallpaper_template,
 )
+from ads_booster.capture.appium_editor_verifier import AppiumProcessBinding
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
@@ -61,19 +62,34 @@ class RecordingEditorVerifier:
         expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
-        del appium_server, ready
+        del appium_server, ready, expected_todos
         control.checkpoint()
         self.expected_titles = expected_titles
         return all(title in self.visible_titles for title in expected_titles)
 
-    def verify_process_binding(
+    def capture_process_binding(
         self,
         appium_server: str,
         session_id: str,
         expected_arguments: tuple[str, ...],
         control: CaptureControl,
+    ) -> AppiumProcessBinding | None:
+        del appium_server
+        control.checkpoint()
+        self.expected_launch_arguments.append(expected_arguments)
+        return (
+            AppiumProcessBinding(session_id=session_id, process_id="4321")
+            if self.process_binding_results.pop(0)
+            else None
+        )
+
+    def verify_process_binding(
+        self,
+        binding: AppiumProcessBinding,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
     ) -> bool:
-        del appium_server, session_id
+        del binding
         control.checkpoint()
         self.expected_launch_arguments.append(expected_arguments)
         return self.process_binding_results.pop(0)
