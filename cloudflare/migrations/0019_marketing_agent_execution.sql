@@ -112,7 +112,7 @@ CREATE TRIGGER hosted_marketing_candidate_assignment_insert
 BEFORE INSERT ON hosted_workspace_candidates
 WHEN NEW.marketing_assignment_id IS NOT NULL
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1 FROM hosted_marketing_post_assignments AS assignment
         JOIN hosted_marketing_campaigns AS campaign
           ON campaign.campaign_id = assignment.campaign_id
@@ -142,7 +142,7 @@ BEGIN
           AND packet.publication_allowed = 1
           AND plan.state = 'approved'
           AND plan.publication_allowed = 1
-    ) THEN RAISE(ABORT, 'marketing candidate assignment is invalid') END;
+    ) THEN RAISE(ABORT, 'marketing candidate assignment is invalid') END);
 END;
 
 CREATE TRIGGER hosted_marketing_candidate_assignment_update
@@ -151,7 +151,7 @@ BEFORE UPDATE OF marketing_campaign_id, marketing_experiment_id, marketing_hypot
 ON hosted_workspace_candidates
 WHEN NEW.marketing_assignment_id IS NOT NULL
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1 FROM hosted_marketing_post_assignments AS assignment
         JOIN hosted_marketing_campaigns AS campaign
           ON campaign.campaign_id = assignment.campaign_id
@@ -181,7 +181,7 @@ BEGIN
           AND packet.publication_allowed = 1
           AND plan.state = 'approved'
           AND plan.publication_allowed = 1
-    ) THEN RAISE(ABORT, 'marketing candidate assignment is invalid') END;
+    ) THEN RAISE(ABORT, 'marketing candidate assignment is invalid') END);
 END;
 
 CREATE TRIGGER hosted_marketing_assigned_candidate_content_immutable
