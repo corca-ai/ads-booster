@@ -17,6 +17,7 @@ import {
   MarketingCapabilityError,
 } from "./marketing-adapter-capabilities.js";
 import { handleHostedMarketingAgent } from "./marketing-agent.js";
+import { handleBackgroundAssetRequest } from "./background-assets.js";
 import { handleThreadsMediaRequest } from "./threads/media-capability.js";
 import { handleHostedThreadsProfiles } from "./threads/profiles-api.js";
 import { handleHostedThreadsStatus } from "./threads/status-api.js";
@@ -145,6 +146,11 @@ export async function handleHostedWorkspace(request, env, contextRegistry, start
     if (threadsStatusResponse) return threadsStatusResponse;
     const threadsResponse = await handleHostedThreadsProfiles(request, scopedEnv);
     if (threadsResponse) return threadsResponse;
+    const assetResponse = await handleBackgroundAssetRequest(request, scopedEnv, {
+      workspaceId: workspaceId(scopedEnv),
+      requirePersona: (personaId) => requireHostedPersona(scopedEnv, personaId),
+    });
+    if (assetResponse) return assetResponse;
     // A persona is a different layer from the operating account, so it is a different
     // parameter. Sending it as the account id is what made "delete this candidate" answer
     // "워크스페이스 계정을 찾을 수 없습니다".

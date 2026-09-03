@@ -1913,6 +1913,92 @@
       : `account_id=${encodeURIComponent(currentAccount.account_id)}`
   );
 
+  // ── 배경 자산 검수 ──────────────────────────────────────────────────────────
+  // The pool a capture draws its wallpaper from. Seeds arrive approved (saving the pin to
+  // the board was the review); related-pin expansions arrive pending and pass this yes/no.
+  const assetCount = one("[data-asset-count]");
+  const assetPendingGrid = one("[data-asset-pending]");
+  const assetApprovedGrid = one("[data-asset-approved]");
+  const assetPendingEmpty = one("[data-asset-pending-empty]");
+  const assetApprovedEmpty = one("[data-asset-approved-empty]");
+
+  const assetImageUrl = (asset) => {
+    const accountQuery = selectedAccountId ? `?account_id=${encodeURIComponent(selectedAccountId)}` : "";
+    return `${asset.image_path}${accountQuery}`;
+  };
+
+  const assetCard = (asset) => {
+    const card = document.createElement("article");
+    card.className = "asset-card";
+    const image = document.createElement("img");
+    image.className = "asset-card__image";
+    image.loading = "lazy";
+    image.alt = `배경 자산 ${asset.sha256.slice(0, 8)}`;
+    image.src = assetImageUrl(asset);
+    const meta = document.createElement("p");
+    meta.className = "mono asset-card__meta";
+    const origin = asset.origin === "seed" ? "시드" : "연관";
+    meta.textContent = asset.status === "approved"
+      ? `${origin} · ${asset.used_count}회 사용`
+      : origin;
+    const source = document.createElement("a");
+    source.className = "asset-card__source";
+    source.href = asset.source_url;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = "출처";
+    card.append(image, meta, source);
+    if (asset.status === "pending") {
+      const actions = document.createElement("div");
+      actions.className = "asset-card__actions";
+      const approve = document.createElement("button");
+      approve.className = "button button-primary";
+      approve.type = "button";
+      approve.textContent = "승인";
+      const reject = document.createElement("button");
+      reject.className = "button button-secondary";
+      reject.type = "button";
+      reject.textContent = "제외";
+      const review = async (accepted) => {
+        approve.disabled = true; reject.disabled = true;
+        try {
+          await request(`/api/background-assets/${encodeURIComponent(asset.asset_id)}/review`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ accepted }),
+          });
+          await loadBackgroundAssets();
+        } catch (error) {
+          setNotice(error.message);
+          approve.disabled = false; reject.disabled = false;
+        }
+      };
+      approve.addEventListener("click", () => review(true));
+      reject.addEventListener("click", () => review(false));
+      actions.append(approve, reject);
+      card.append(actions);
+    }
+    return card;
+  };
+
+  const loadBackgroundAssets = async () => {
+    // The pool is a hosted persona's resource; the local surface has no personas to hang
+    // one on, and its stripped shell has no asset panel to render into.
+    if (!hostedCandidateControls || !currentAccount || !assetPendingGrid) return;
+    const { assets } = await request(
+      `/api/personas/${encodeURIComponent(currentAccount.account_id)}/background-assets`,
+    );
+    const pending = assets.filter((asset) => asset.status === "pending");
+    const approved = assets.filter((asset) => asset.status === "approved");
+    if (assetCount) {
+      assetCount.textContent = `승인 ${approved.length} · 대기 ${pending.length}`;
+    }
+    assetPendingGrid.replaceChildren(...pending.map(assetCard));
+    assetApprovedGrid.replaceChildren(...approved.map(assetCard));
+    if (assetPendingEmpty) assetPendingEmpty.hidden = pending.length > 0;
+    if (assetApprovedEmpty) assetApprovedEmpty.hidden = approved.length > 0;
+  };
+
   const loadCandidates = async () => {
     // Scoped to the open account: another account's drafts are another person's.
     const scope = candidateScope();
@@ -2548,6 +2634,7 @@
     setBusy(workspaceLive, true, `${account.display_name} 계정을 여는 중…`);
     try {
       await Promise.all([loadCandidates(), loadFeedbackSummary()]);
+      void loadBackgroundAssets();
       void adoptHostedGeneration();
       setNotice(`${account.display_name} 계정으로 작업합니다.`);
     } catch (error) { setNotice(error.message); }
