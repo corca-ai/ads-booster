@@ -116,19 +116,35 @@ approve one candidate, and record:
 Turn auto-publish OFF again after the canary unless the team separately approves ongoing operation.
 An ambiguous publication must remain `unknown_side_effect`; never retry it as a new post.
 
-## 7. Exercise the installed on-premises Run surface
+## 7. Install the always-on on-premises Agent Service
 
-This is an independent service-boundary check, not a second publication path:
+Run on the dedicated Trace Mac, as the same logged-in user that owns the official Codex session:
 
 ```bash
-export TRACE_MARKETING_SERVICE_TOKEN='<private-local-token>'
-trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
+trace-marketing service install --model '<approved-codex-model>' --port 8765
+trace-marketing service status
 ```
+
+The installer creates `~/Library/LaunchAgents/com.corca.trace-marketing-agent.plist`, enables
+`RunAtLoad` and `KeepAlive`, and writes the unprinted bearer token to
+`$TRACE_AGENT_HOME/marketing-agent/service-token` (or the default state root) with mode 0600.
+Use `trace-marketing service stop` for an intentional stop. Use foreground `service run` only for
+diagnosis.
 
 Open `http://127.0.0.1:8765/`, create an Appium-independent reasoning Run, and retain its
 `/runs/<run-id>` URL across a restart. A provider outage must return retryable HTTP `503` while the
 Run remains durable. Until the production registry cutover is separately completed, use the hosted
 workspace—not this local UI—for candidate, Appium, and Threads effects.
+
+## 8. Let the agent register supported tools
+
+The hosted agent reads `GET /api/marketing-agent/tools` and calls
+`POST /api/marketing-agent/tools/install` with a catalog capability such as `publish.threads`.
+Installation does not grant effect authority. For Threads it returns `/api/threads/oauth/start`; the
+agent initiates that flow and presents the authorization URL, the operator completes Meta consent,
+and the verified callback activates the capability. The existing default-OFF and human-review gates
+remain in force. `deliver.slack` may be registered in the same way but remains a non-executable
+reference until a live Slack delivery adapter ships.
 
 ## External preparation owned by the operator
 
@@ -139,8 +155,10 @@ workspace—not this local UI—for candidate, Appium, and Threads effects.
 - one known-good successful format and its source evidence;
 - two initial countries, their languages, personas, and reviewer-approved account mapping;
 - a Meta developer app, Threads configuration/secrets, App Review scopes, and one non-production
-  test profile;
+  test profile; the agent performs registration and starts OAuth, while the operator performs the
+  provider-side app setup and consent;
 - a named human reviewer and explicit authorization for the one live Threads canary;
-- Slack app credentials, callback hosting, workspace installation, channel, and member mapping only
-  when live Slack delivery is scheduled as a separate rollout. Current fake Slack contract tests are
-  not a live Slack installation.
+- Slack App creation, scopes/App Review, redirect URL, signing secret/bot token issuance, workspace
+  admin installation consent, destination channel invitation, and member mapping. The agent should
+  register and validate the adapter once that live owner exists; this PR deliberately cannot
+  activate or send Slack because only fake channel contracts exist today.

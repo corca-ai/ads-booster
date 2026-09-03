@@ -323,6 +323,11 @@ reimplementing orchestration.
 client does not import, wrap, or duplicate those effect paths. `build-workspace.mjs` copies both
 clients as separate static assets.
 
+`marketing-adapter-capabilities.js` also owns the closed hosted tool-install catalog and its durable
+account registrations. `marketing-agent.js` exposes list/install orchestration, while the existing
+Threads OAuth owner alone promotes its registered reference to active. Catalog installation never
+accepts caller-defined executable code, schemas, owners, or effect class.
+
 Migrations `0019`–`0041` own the execution/observation/reassessment/next-experiment, successor-activation, forward-only activation admission hardening, hosted agent-run lineage, capability-receipt ledger, intent snapshot, run-step and bounded-resume lineage, the durable campaign-delegation outbox, and bounded journey traversal indexes, assisted-shadow origin binding,
 quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.

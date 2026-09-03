@@ -20,6 +20,12 @@ PR #99 is a transition, so the two truths must not be confused:
   projection; `/runs/<run-id>` is the shared result-link surface for browser and channel adapters.
   A reasoning-provider failure is sanitized into retryable HTTP `503`, while the admitted Run stays
   durable so an identical request can resume it after provider recovery.
+- **Implemented service deployment:** the canonical service runs as the dedicated Mac user's
+  `com.corca.trace-marketing-agent` LaunchAgent. Its bearer token is generated into a mode-0600 state
+  file rather than stored in the plist; `RunAtLoad` and `KeepAlive` provide login lifecycle recovery.
+- **Implemented hosted registration seam:** the hosted agent can list and install server-owned tool
+  catalog entries. Installation creates a non-executable reference; Threads becomes active only from
+  its verified OAuth callback. Arbitrary caller-supplied adapters or effect policy are rejected.
 - **Not implemented yet:** Cloudflare projection-only cutover, separate remote Mac tool enrollment,
   production research/candidate/Appium/Threads registry wiring, and live Slack/KakaoTalk installation.
   The channel adapters and signed fake webhook contracts exist, but fake roundtrips are not live
@@ -28,6 +34,13 @@ PR #99 is a transition, so the two truths must not be confused:
 The binding contract and migration gates are in
 [`on-prem-marketing-agent-service.md`](../contracts/on-prem-marketing-agent-service.md). Until those
 gates pass, the hosted flow below is current behavior but not the final architecture.
+
+`GET /api/marketing-agent/tools` projects the server-owned install catalog and account state.
+`POST /api/marketing-agent/tools/install` lets the agent register a known capability without a
+migration or arbitrary descriptor upload. Registration is fail-closed as `registered_reference`.
+The Threads OAuth callback alone promotes `publish.threads` to `active`; auto-publish, review,
+idempotency, and readback barriers still apply independently. `deliver.slack` intentionally remains
+a reference because this repository has no verified live Slack delivery owner yet.
 
 ## Runtime boundary
 

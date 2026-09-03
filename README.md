@@ -7,16 +7,20 @@ systems are replaceable provider or tool adapters. The only installed command re
 
 ## On-premises Agent Service (implemented foundation)
 
-The current PR adds the installed service boundary, portable Run/Step/Intent/CapabilitySnapshot/
+The current PR adds the installed service boundary, a per-user macOS LaunchAgent, portable Run/Step/Intent/CapabilitySnapshot/
 Invocation/Approval/Receipt/Outcome/Learning contracts, a unified tool descriptor registry, a
 replaceable Codex reasoning provider, append-only SQLite recovery, exact effect approval, and a
 tenant-scoped HTTP API. Start it with the same macOS user's official Codex CLI login:
 
 ```bash
-export TRACE_MARKETING_SERVICE_TOKEN='replace-with-a-private-token'
 trace-marketing service doctor
-trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8765
+trace-marketing service install --model gpt-5.4 --port 8765
+trace-marketing service status
 ```
+
+`service install` generates a mode-0600 bearer-token file under the agent state root, keeps the
+secret out of the LaunchAgent plist, and starts `com.corca.trace-marketing-agent` with `RunAtLoad`
+and `KeepAlive`. `service run` remains the foreground diagnostic entrypoint.
 
 `POST /v1/runs` creates a canonical run, `GET /v1/runs/:id` returns its complete step and record
 journey, `POST /v1/runs/:id/input` resumes requested evidence, and
@@ -43,8 +47,8 @@ external-preparation checklist are in
 ```bash
 trace-marketing version --json
 trace-marketing service doctor
-export TRACE_MARKETING_SERVICE_TOKEN='generate-a-private-local-token'
-trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
+trace-marketing service install --model '<approved-codex-model>' --port 8765
+trace-marketing service status
 ```
 
 In a second terminal, verify the installed service—not the checkout—and then use the browser UI:
@@ -61,12 +65,18 @@ connection. This service exercise proves the canonical local Run boundary only. 
 workspace flow below for the currently integrated candidate/Appium/Threads path until the production
 tool registry cutover is complete.
 
-This is a transition, not a claim that the full target product is already live. The production
+The hosted agent API exposes `GET /api/marketing-agent/tools` and authenticated
+`POST /api/marketing-agent/tools/install`. The agent can install only server-owned catalog entries;
+callers cannot upload code or effect policy. Threads installation returns its OAuth setup path and
+remains `registered_reference` until a human completes Meta consent, after which the verified OAuth
+callback activates it automatically. Slack can be registered as a pending reference, but remains
+non-executable until a live Slack delivery owner is implemented and verified.
+
+This is a transition, not a claim that the full target product is already live. The local production
 registry still needs the existing research, candidate, Appium, Threads, and Cloudflare owners
-wrapped as tool adapters. The run-centric browser UI and Slack/Kakao channel adapters are not yet
-live. Existing Cloudflare/D1 hosted runs below remain the compatibility owner for the old web path
-until the cutover is implemented. Fake channel tests will not count as live Slack/Kakao installation
-or platform-review evidence.
+wrapped as tool adapters. Existing Cloudflare/D1 hosted runs remain the compatibility owner for
+those effects until cutover. Fake channel tests do not count as live Slack/Kakao installation or
+platform-review evidence.
 
 ## Legacy compatibility path
 
