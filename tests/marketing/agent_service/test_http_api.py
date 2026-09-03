@@ -15,8 +15,14 @@ from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.application import MarketingAgentService
 from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
 from ads_booster.marketing.agent_service.oauth import OAuthIdentity
+from ads_booster.marketing.agent_service.scheduler import AgentSkillScheduler, DailySkillSchedule
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.marketing.tool_adapters.descriptors import (
+    notion_daily_descriptor,
+    research_descriptor,
+    slack_delivery_descriptor,
+)
 from ads_booster.providers.codex_reasoning import CodexReasoningError
 
 if TYPE_CHECKING:
@@ -121,6 +127,93 @@ def test_oauth_identity_scopes_repository_reads_to_introspected_workspace(tmp_pa
     assert response.status == 200
     assert response.body == {"runs": []}
     assert oauth_api.dispatch("GET", "/v1/runs", authorization="Bearer wrong").status == 401
+
+
+def test_skill_catalog_reports_real_runtime_blockers(tmp_path: Path) -> None:
+    response = _api(tmp_path).dispatch("GET", "/v1/skills", authorization="Bearer secret", now=NOW)
+
+    assert response.status == 200
+    assert isinstance(response.body, dict)
+    skills = response.body["skills"]
+    assert isinstance(skills, list)
+    first = skills[0]
+    assert isinstance(first, dict)
+    assert first["skill_id"] == "research.daily_slack"
+    assert first["ready"] is False
+    assert first["blockers"] == ["research.web", "deliver.slack", "store.notion.daily"]
+
+
+def test_ready_skill_creates_canonical_run_with_versioned_procedure(tmp_path: Path) -> None:
+    api = _api(tmp_path)
+    api.service.registry = ToolRegistry(
+        (
+            research_descriptor(installation_id="research", observed_at=NOW, ready=True),
+            slack_delivery_descriptor(installation_id="slack", observed_at=NOW, ready=True),
+            notion_daily_descriptor(installation_id="notion", observed_at=NOW, ready=True),
+        )
+    )
+    body = json.dumps(
+        {
+            "run_id": "daily-2026-09-03",
+            "context": {"research_request": {"session_id": "research-1"}},
+        }
+    ).encode()
+
+    tools_response = api.dispatch("GET", "/v1/tools", authorization="Bearer secret", now=NOW)
+
+    response = api.dispatch(
+        "POST",
+        "/v1/skills/research.daily_slack/runs",
+        authorization="Bearer secret",
+        body=body,
+        now=NOW,
+    )
+
+    assert response.status == 202
+    assert isinstance(tools_response.body, dict)
+    tools = tools_response.body["tools"]
+    assert isinstance(tools, list)
+    assert all(isinstance(item, dict) for item in tools)
+    assert [item["capability_id"] for item in tools if isinstance(item, dict)] == [
+        "deliver.slack",
+        "research.web",
+        "store.notion.daily",
+    ]
+    run = api.service.repository.get("trace", "daily-2026-09-03")
+    assert run is not None
+    assert run.goal.context["skill_id"] == "research.daily_slack"
+    assert "deliver.slack" in run.goal.objective
+
+
+def test_daily_scheduler_uses_date_stable_canonical_skill_run(tmp_path: Path) -> None:
+    api = _api(tmp_path)
+    api.service.registry = ToolRegistry(
+        (
+            research_descriptor(installation_id="research", observed_at=NOW, ready=True),
+            slack_delivery_descriptor(installation_id="slack", observed_at=NOW, ready=True),
+            notion_daily_descriptor(installation_id="notion", observed_at=NOW, ready=True),
+        )
+    )
+    scheduler = AgentSkillScheduler(
+        api.service,
+        (
+            DailySkillSchedule(
+                skill_id="research.daily_slack",
+                tenant_id="trace",
+                principal_id="scheduled-service",
+                timezone="Asia/Seoul",
+                hour=8,
+                minute=0,
+                context={"research_request": {"session_id": "research-1"}},
+            ),
+        ),
+    )
+
+    first = scheduler.tick(now=NOW)
+    second = scheduler.tick(now=NOW)
+
+    assert first == second == ("scheduled-research-daily-slack-2026-09-03",)
+    assert len(api.service.repository.list_runs("trace")) == 1
 
 
 def test_reasoning_failure_returns_retryable_service_status_and_preserves_run(

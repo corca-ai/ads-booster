@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Literal, override
+from typing import TYPE_CHECKING, Literal, override
 from urllib.parse import urlsplit
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal
 from ads_booster.contracts.models import ContractModel
@@ -20,9 +20,13 @@ from ads_booster.marketing.agent_service.application import (
     MarketingAgentService,
 )
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
+from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
 from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.transport.json_types import JsonObject
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _MAX_BODY_BYTES = 1024 * 1024
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -43,6 +47,14 @@ class ApiApprovalRequest(ContractModel):
     expires_at: datetime | None = None
 
 
+class ApiSkillRunRequest(ContractModel):
+    run_id: str
+    context: JsonObject
+    budget: AgentBudget = Field(
+        default_factory=lambda: AgentBudget(max_tool_calls=6, max_cost_units=100)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ApiResponse:
     status: int
@@ -58,7 +70,7 @@ class MarketingAgentApi:
     bearer_token: str
     oauth_authenticator: AccessTokenAuthenticator | None = None
 
-    def dispatch(  # noqa: C901,PLR0911 - explicit route table keeps auth and tenant scope visible.
+    def dispatch(  # noqa: C901,PLR0911,PLR0912 - explicit routes keep auth and scope visible.
         self,
         method: str,
         target: str,
@@ -77,6 +89,46 @@ class MarketingAgentApi:
             return ApiResponse(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            skills = MarketingSkillCatalog(self.service.registry)
+            if method == "GET" and path == "/v1/tools":
+                return ApiResponse(
+                    HTTPStatus.OK,
+                    {
+                        "tools": [
+                            {
+                                "capability_id": item.capability_id,
+                                "version": item.version,
+                                "owner": item.owner,
+                                "effect_class": item.effect_class.value,
+                                "approval_mode": item.approval_policy.mode,
+                                "ready": item.readiness.ready,
+                            }
+                            for item in self.service.registry.current_descriptors(now=occurred_at)
+                        ]
+                    },
+                )
+            if method == "GET" and path == "/v1/skills":
+                return ApiResponse(
+                    HTTPStatus.OK,
+                    _JSON_OBJECT.validate_python({"skills": skills.list(now=occurred_at)}),
+                )
+            skill_id = _skill_run_target(path)
+            if method == "POST" and skill_id is not None:
+                request = ApiSkillRunRequest.model_validate(_body_json(body))
+                skill = skills.require_ready(skill_id, now=occurred_at)
+                run = self.service.create(
+                    CreateAgentRunRequest(
+                        run_id=request.run_id,
+                        tenant_id=identity.tenant_id,
+                        goal=skill.goal(request.context),
+                        budget=request.budget,
+                    ),
+                    now=occurred_at,
+                )
+                return ApiResponse(
+                    HTTPStatus.ACCEPTED,
+                    self._run_view(identity.tenant_id, run.run_id),
+                )
             if method == "POST" and path == "/v1/runs":
                 request = ApiCreateRunRequest.model_validate(_body_json(body))
                 run = self.service.create(
@@ -163,7 +215,13 @@ class MarketingAgentApi:
         )
 
 
-def serve_marketing_agent_api(api: MarketingAgentApi, *, host: str, port: int) -> None:
+def serve_marketing_agent_api(
+    api: MarketingAgentApi,
+    *,
+    host: str,
+    port: int,
+    on_started: Callable[[], None] | None = None,
+) -> None:
     if host not in {"127.0.0.1", "::1"} and api.oauth_authenticator is None:
         raise ValueError("agent_service_host_must_be_loopback")
 
@@ -208,6 +266,8 @@ def serve_marketing_agent_api(api: MarketingAgentApi, *, host: str, port: int) -
 
     server = ThreadingHTTPServer((host, port), Handler)
     try:
+        if on_started is not None:
+            on_started()
         server.serve_forever()
     finally:
         server.server_close()
@@ -238,6 +298,17 @@ def _run_ui_path(path: str) -> str | None:
     if not run_id or "/" in run_id:
         return None
     return run_id
+
+
+def _skill_run_target(path: str) -> str | None:
+    prefix = "/v1/skills/"
+    suffix = "/runs"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return None
+    skill_id = path[len(prefix) : -len(suffix)]
+    if not skill_id or "/" in skill_id:
+        return None
+    return skill_id
 
 
 def _content_length(value: str | None) -> int:

@@ -9,9 +9,10 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import TYPE_CHECKING, Annotated, Never, Protocol
+from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 
 import typer
 from pydantic import ValidationError
@@ -20,11 +21,16 @@ from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
+from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
 from ads_booster.marketing.agent_service.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )
 from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
+from ads_booster.marketing.agent_service.scheduler import (
+    AgentSkillScheduler,
+    DailySkillSchedule,
+)
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
@@ -95,6 +101,7 @@ from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
+    from ads_booster.marketing.agent_service.application import MarketingAgentService
     from ads_booster.marketing.hosted_task_router import PlanlessPrepared
     from ads_booster.transport.http import HttpClient
     from ads_booster.transport.json_types import JsonObject
@@ -194,19 +201,43 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
         codex_executable=executable,
         model_id=model,
         timeout_seconds=timeout_seconds,
-    )
-    typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
-    serve_marketing_agent_api(
-        MarketingAgentApi(
-            service=service,
-            tenant_id=tenant,
-            principal_id=principal,
-            bearer_token=token,
-            oauth_authenticator=oauth,
+        integrations=AgentServiceIntegrationConfig(
+            hosted_origin=os.environ.get("TRACE_MARKETING_HOSTED_ORIGIN"),
+            hosted_token=os.environ.get("TRACE_MARKETING_CONTROL_TOKEN"),
+            slack_bot_token=os.environ.get("TRACE_MARKETING_SLACK_BOT_TOKEN"),
+            slack_channel_id=os.environ.get("TRACE_MARKETING_SLACK_CHANNEL_ID"),
+            notion_token=os.environ.get("TRACE_MARKETING_NOTION_TOKEN"),
+            notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
         ),
-        host=host,
-        port=port,
     )
+    scheduler = _configured_daily_scheduler(service, tenant=tenant, principal=principal)
+    scheduler_stop = Event()
+    scheduler_thread = None
+    if scheduler is not None:
+        scheduler_thread = Thread(
+            target=_run_skill_scheduler,
+            args=(scheduler, scheduler_stop),
+            name="trace-marketing-skill-scheduler",
+            daemon=True,
+        )
+    typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
+    try:
+        serve_marketing_agent_api(
+            MarketingAgentApi(
+                service=service,
+                tenant_id=tenant,
+                principal_id=principal,
+                bearer_token=token,
+                oauth_authenticator=oauth,
+            ),
+            host=host,
+            port=port,
+            on_started=None if scheduler_thread is None else scheduler_thread.start,
+        )
+    finally:
+        scheduler_stop.set()
+        if scheduler_thread is not None:
+            scheduler_thread.join(timeout=5)
 
 
 @agent_app.command("research")
@@ -323,6 +354,49 @@ def _load_dynamic_research_request(input_path: Path) -> DynamicEvidenceResearchR
     return DynamicEvidenceResearchRequest.model_validate_json(
         _read_bounded_input(input_path, error="dynamic_research_request_too_large")
     )
+
+
+def _configured_daily_scheduler(
+    service: MarketingAgentService, *, tenant: str, principal: str
+) -> AgentSkillScheduler | None:
+    input_value = os.environ.get("TRACE_MARKETING_DAILY_RESEARCH_INPUT")
+    if not input_value:
+        return None
+    input_path = Path(input_value).expanduser()
+    if not input_path.is_file() or input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
+        message = "TRACE_MARKETING_DAILY_RESEARCH_INPUT must be a bounded JSON file"
+        raise typer.BadParameter(message)
+    context = {"research_request": json.loads(input_path.read_text(encoding="utf-8"))}
+    schedule_at = os.environ.get("TRACE_MARKETING_DAILY_AT", "08:00")
+    try:
+        hour_text, minute_text = schedule_at.split(":", maxsplit=1)
+        hour, minute = int(hour_text), int(minute_text)
+    except ValueError as error:
+        message = "TRACE_MARKETING_DAILY_AT must be HH:MM"
+        raise typer.BadParameter(message) from error
+    return AgentSkillScheduler(
+        service,
+        (
+            DailySkillSchedule(
+                skill_id="research.daily_slack",
+                tenant_id=os.environ.get("TRACE_MARKETING_DAILY_TENANT", tenant),
+                principal_id=os.environ.get("TRACE_MARKETING_DAILY_PRINCIPAL", principal),
+                timezone=os.environ.get("TRACE_MARKETING_DAILY_TIMEZONE", "Asia/Seoul"),
+                hour=hour,
+                minute=minute,
+                context=cast("JsonObject", context),
+            ),
+        ),
+    )
+
+
+def _run_skill_scheduler(scheduler: AgentSkillScheduler, stop: Event) -> None:
+    while not stop.is_set():
+        try:
+            _ = scheduler.tick(now=datetime.now(UTC))
+        except Exception as error:  # noqa: BLE001 - scheduler survives one bounded run failure.
+            typer.echo(f"scheduled skill deferred: {type(error).__name__}", err=True)
+        _ = stop.wait(30)
 
 
 def _read_bounded_input(input_path: Path, *, error: str) -> str:
