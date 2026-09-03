@@ -249,8 +249,19 @@ NFKC/case-fold/trim contract in Python and Cloudflare, and restricts claims to t
 selected parent hypotheses. Source strings enter the model prompt through an explicit untrusted,
 non-authoritative boundary. Full reasoning is exposed only by the control-plane-authorized exact
 draft review packet, which keeps host-verified evaluation and evidence dispositions separate from
-model-proposed interpretations. Draft approval is a final no-effect review receipt and intentionally does not create a
-successor campaign or call candidate, Appium, Threads, publication, or spend owners.
+model-proposed interpretations. Draft approval is a no-effect review receipt: it atomically appends
+an immutable `trace.successor-activation.v1` intent but calls no candidate, Appium, Threads,
+publication, or spend owner. A scheduler waits for `shadow_strategy_v1`, then re-reads and re-hashes
+the exact request, draft, approval, packet, strategy, evaluation, reassessment, knowledge, research
+lineage, unknown-effect state, and optional context expiry. Only a passing admission creates one
+deterministically identified successor shadow campaign plus one strategy task. The task freezes the
+approved candidate and host-derived experiment identities. If the evaluated assisted source packet
+has an open publication gate, the host derives a new digest-bound packet with the same evidence and
+claims but a closed gate for the successor; it never copies live publication authority into shadow.
+The Python executor and Cloudflare
+callback both enforce the prior control, business outcome, primary outcome, held constants,
+challenger claims, reassessment dossier, and reviewer lineage. The successor re-enters the existing
+strategy-review flow and still has no tool action.
 
 Source evidence cannot open the publication gate, and a database trigger prevents every shadow
 campaign from creating tool actions. This path creates no candidate, capture, publication, metric,
@@ -266,9 +277,10 @@ separately. Candidate assignment requires an approved plan, a non-shadow assiste
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 
-Migrations `0019`–`0033` add the execution and observation ledger: immutable artifact manifests,
+Migrations `0019`–`0034` add the execution and observation ledger: immutable artifact manifests,
 candidate/post assignments, variant links, versioned product events, direct-response attribution
-observations, evaluations, outcome reassessments, next-experiment outbox/drafts, quarantined reference snapshots and source-byte receipts, learning candidates, and approval-bound
+observations, evaluations, outcome reassessments, next-experiment outbox/drafts, successor activation
+outbox, quarantined reference snapshots and source-byte receipts, learning candidates, and approval-bound
 principles. Each campaign freezes its approved knowledge snapshot before its first judgment; strategy,
 creative planning, and candidate materialization reuse that snapshot, so a later learning approval
 improves a future campaign without contaminating an active experiment. An assisted campaign must name a same-account shadow origin, carry an installed-evidence

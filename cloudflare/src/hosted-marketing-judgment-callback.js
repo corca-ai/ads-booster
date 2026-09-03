@@ -5,6 +5,7 @@ import {
   MARKETING_JUDGMENT_PIPELINE,
 } from "./marketing-agent.js";
 import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
+import { SUCCESSOR_CONVERSATION_MOTIVE } from "./marketing-successor-activation.js";
 
 export async function receiveHostedMarketingJudgmentCallback(env, task, callback, worker = null) {
   assertHostedCallbackTransport(task, worker);
@@ -124,13 +125,31 @@ export async function receiveHostedMarketingJudgmentCallback(env, task, callback
     campaign,
     publishedPayload,
   );
-  validateHypothesisEvidence(hypotheses, publishedPayload.feature_packet, referenceIds);
-  validateDecisionDossier(
-    brief.decision_dossier,
+  const successorSeed = publishedPayload.next_experiment_seed ?? null;
+  validateHypothesisEvidence(
+    hypotheses,
     publishedPayload.feature_packet,
-    marketingContext,
-    referenceSnapshot,
+    referenceIds,
+    successorSeed,
   );
+  if (successorSeed == null) {
+    validateDecisionDossier(
+      brief.decision_dossier,
+      publishedPayload.feature_packet,
+      marketingContext,
+      referenceSnapshot,
+    );
+  } else {
+    await validateSuccessorStrategy(
+      env.DB,
+      task,
+      campaign,
+      receipt,
+      brief,
+      hypotheses,
+      successorSeed,
+    );
+  }
   const experiment = requireObject(brief.experiment, "strategy experiment");
   const experimentId = safeId(experiment.experiment_id, "experiment_id");
   const activated = requireArray(
@@ -615,7 +634,12 @@ function publishedJudgmentPayload(task) {
   }
 }
 
-function validateHypothesisEvidence(hypotheses, featurePacket, allowedReferenceIds) {
+function validateHypothesisEvidence(
+  hypotheses,
+  featurePacket,
+  allowedReferenceIds,
+  successorSeed = null,
+) {
   const packet = requireObject(featurePacket, "published feature packet");
   const claims = requireArray(packet.claims, "published feature claims", 1, 64);
   const supportedClaimIds = new Set(claims
@@ -631,12 +655,141 @@ function validateHypothesisEvidence(hypotheses, featurePacket, allowedReferenceI
     if (claimIds.some((claimId) => !supportedClaimIds.has(claimId))) {
       throw new HttpError(409, "strategy uses an unsupported feature claim");
     }
-    if (
-      !Array.isArray(hypothesis?.reference_ids)
-      || hypothesis.reference_ids.some((referenceId) => !allowedReferenceIds.has(referenceId))
-    ) {
+    const sourceControlReferences = successorSeed != null && hypothesis?.role === "control"
+      ? new Set(requireArray(
+        requireArray(
+          requireObject(successorSeed.prior_strategy, "successor prior strategy").hypotheses,
+          "successor prior hypotheses",
+          2,
+          8,
+        ).find((item) => item?.role === "control")?.reference_ids,
+        "successor control reference_ids",
+        0,
+        16,
+      ))
+      : new Set();
+    if (!Array.isArray(hypothesis?.reference_ids)
+      || hypothesis.reference_ids.some((referenceId) => (
+        !allowedReferenceIds.has(referenceId) && !sourceControlReferences.has(referenceId)
+      ))) {
       throw new HttpError(409, "shadow strategy breached the external reference quarantine");
     }
+  }
+}
+
+async function validateSuccessorStrategy(
+  database,
+  task,
+  campaign,
+  receipt,
+  brief,
+  hypotheses,
+  seed,
+) {
+  const row = await database.prepare(
+    `SELECT activation.activation_json, activation.activation_sha256,
+            activation.source_campaign_id, activation.source_lineage_sha256,
+            activation.request_sha256, activation.draft_sha256,
+            activation.approval_grant_id, activation.successor_campaign_id,
+            activation.strategy_task_id, activation.state,
+            request.request_json, draft.draft_json,
+            grant.decision AS grant_decision, grant.reviewer_id, grant.reviewed_at
+     FROM hosted_marketing_successor_activations AS activation
+     JOIN hosted_marketing_next_experiment_requests AS request
+       ON request.request_id = activation.request_id
+      AND request.request_sha256 = activation.request_sha256
+     JOIN hosted_marketing_next_experiment_drafts AS draft
+       ON draft.draft_id = activation.draft_id
+      AND draft.draft_sha256 = activation.draft_sha256
+     JOIN hosted_marketing_approval_grants AS grant
+       ON grant.grant_id = activation.approval_grant_id
+     WHERE activation.activation_id = ? AND activation.account_id = ?`,
+  ).bind(seed.activation_id, campaign.account_id).first();
+  if (!row) throw new HttpError(409, "successor activation lineage is missing");
+  const activation = parsedObject(row.activation_json, "successor activation");
+  const request = parsedObject(row.request_json, "successor request");
+  const draft = parsedObject(row.draft_json, "successor draft");
+  const priorStrategy = requireObject(request.prior_strategy, "successor prior strategy");
+  const evaluation = requireObject(request.evaluation, "successor evaluation");
+  const reassessment = requireObject(request.reassessment, "successor reassessment");
+  if (
+    row.state !== "activated"
+    || row.strategy_task_id !== task.task_id
+    || row.successor_campaign_id !== campaign.campaign_id
+    || row.grant_decision !== "approved"
+    || await canonicalSha256(activation) !== row.activation_sha256
+    || await canonicalSha256(request) !== row.request_sha256
+    || await canonicalSha256(draft) !== row.draft_sha256
+    || seed.schema_version !== "trace.successor-strategy-seed.v1"
+    || seed.activation_id !== activation.activation_id
+    || seed.successor_campaign_id !== campaign.campaign_id
+    || seed.source_campaign_id !== row.source_campaign_id
+    || seed.source_feature_packet_sha256 !== priorStrategy.feature_packet_sha256
+    || seed.successor_feature_packet_sha256 !== campaign.feature_packet_sha256
+    || priorStrategy.feature_packet_id === campaign.feature_packet_id
+    || seed.source_lineage_sha256 !== row.source_lineage_sha256
+    || seed.request_sha256 !== row.request_sha256
+    || seed.approval_grant_id !== row.approval_grant_id
+    || seed.approved_by !== row.reviewer_id
+    || seed.approved_at !== row.reviewed_at
+    || seed.approved_draft_sha256 !== row.draft_sha256
+    || canonicalJson(seed.approved_draft) !== canonicalJson(draft)
+    || canonicalJson(seed.prior_strategy) !== canonicalJson(priorStrategy)
+    || canonicalJson(seed.evaluation) !== canonicalJson(evaluation)
+    || canonicalJson(seed.reassessment) !== canonicalJson(reassessment)
+    || await canonicalSha256(priorStrategy) !== seed.prior_strategy_sha256
+    || await canonicalSha256(evaluation) !== seed.evaluation_sha256
+    || await canonicalSha256(reassessment) !== seed.reassessment_sha256
+  ) throw new HttpError(409, "successor strategy source binding is invalid");
+  const candidate = requireObject(draft.candidate, "successor candidate");
+  const controls = hypotheses.filter((hypothesis) => hypothesis?.role === "control");
+  const challengers = hypotheses.filter((hypothesis) => hypothesis?.role === "challenger");
+  const priorControl = requireArray(
+    priorStrategy.hypotheses,
+    "prior hypotheses",
+    2,
+    8,
+  ).find((hypothesis) => hypothesis?.role === "control");
+  const expectedControl = { ...requireObject(priorControl, "prior control") };
+  expectedControl.hypothesis_id = seed.successor_control_hypothesis_id;
+  const experiment = requireObject(brief.experiment, "successor experiment");
+  const expectedRationale = `${candidate.hypothesis}\n\n${candidate.rationale}`;
+  const expectedProofRequirement = `Expected signal: ${candidate.expected_signal}`;
+  if (
+    controls.length !== 1 || challengers.length !== 1
+    || canonicalJson(controls[0]) !== canonicalJson(expectedControl)
+    || challengers[0].hypothesis_id !== seed.successor_challenger_hypothesis_id
+    || canonicalJson(challengers[0].claim_ids) !== canonicalJson(candidate.claim_ids)
+    || challengers[0].value_frame !== candidate.treatment_concept
+    || challengers[0].rationale !== expectedRationale
+    || challengers[0].falsifier !== candidate.falsifier
+    || challengers[0].proof_requirement !== expectedProofRequirement
+    || challengers[0].conversation_motive !== SUCCESSOR_CONVERSATION_MOTIVE
+    || brief.audience_situation !== candidate.audience_situation
+    || brief.belief_to_change !== candidate.belief_to_change
+    || canonicalJson(brief.decision_dossier) !== canonicalJson(reassessment.decision_dossier)
+    || experiment.experiment_id !== seed.successor_experiment_id
+    || experiment.manipulated_component !== candidate.manipulated_component
+    || canonicalJson(experiment.held_constant_components)
+      !== canonicalJson(draft.held_constant_components)
+    || canonicalJson(experiment.primary_outcome) !== canonicalJson(draft.primary_outcome)
+    || canonicalJson(experiment.activated_hypothesis_ids) !== canonicalJson([
+      seed.successor_control_hypothesis_id,
+      seed.successor_challenger_hypothesis_id,
+    ])
+    || !receipt.included_record_ids.includes(seed.activation_id)
+    || !receipt.included_record_ids.includes(draft.draft_id)
+    || !receipt.included_record_ids.includes(evaluation.evaluation_id)
+    || !receipt.included_record_ids.includes(reassessment.reassessment_id)
+  ) throw new HttpError(409, "successor strategy changed approved constraints");
+}
+
+function parsedObject(raw, name) {
+  try {
+    return requireObject(JSON.parse(raw), name);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(409, `${name} is invalid`);
   }
 }
 

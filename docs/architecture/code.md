@@ -182,7 +182,11 @@ dispatch, cross-runtime validation, and host-copied experimental controls.
 storing a draft/admission in migration `0033_marketing_next_experiments.sql`.
 `cloudflare/src/marketing-next-experiment-review.js` owns the protected exact review packet, presents
 host-verified evaluation/disposition facts separately from model interpretation, and records the
-final no-effect approval receipt. None of these modules imports or replaces candidate, native-capture, or
+no-effect approval receipt plus activation intent.
+`cloudflare/src/marketing-successor-activation.js` owns the activation-time source revalidation and
+the atomic, deterministic creation of one successor shadow campaign and its ordinary strategy task;
+`marketing/hosted_judgment.py` and `hosted-marketing-judgment-callback.js` independently enforce the
+approved successor constraints before storing its strategy. None of these modules imports or replaces candidate, native-capture, or
 Threads effect owners.
 Learning synthesis receives a server-derived `MarketingLearningApplicability`; its model may explain
 scope in prose but cannot broaden the selector. The callback binds that selector into the candidate,
@@ -213,7 +217,7 @@ models deliberately retain only IDs, content/input/binding digests, and safe cap
 URI, raw manifest payload, and adapter descriptor stay behind their effect owner rather than becoming
 an incidental review-token transport.
 
-Migrations `0019`–`0033` own the execution/observation/reassessment/next-experiment lineage, assisted-shadow origin binding,
+Migrations `0019`–`0034` own the execution/observation/reassessment/next-experiment and successor-activation lineage, assisted-shadow origin binding,
 quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 

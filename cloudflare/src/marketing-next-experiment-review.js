@@ -1,4 +1,8 @@
 import { canonicalSha256 } from "./marketing-next-experiment.js";
+import {
+  successorActivationInsertStatement,
+  successorActivationRecord,
+} from "./marketing-successor-activation.js";
 
 const REVIEW_DECISIONS = new Set(["approved", "rejected"]);
 
@@ -109,11 +113,11 @@ export async function nextExperimentReviewPacket(database, accountId, draftId) {
     effect: {
       effect_class: "none",
       external_side_effect: false,
-      on_approval: "Freeze reviewer acceptance only; no candidate, capture, publication, spend, or successor campaign is created.",
+      on_approval: "Freeze reviewer acceptance and queue one successor shadow activation; no candidate, capture, publication, or spend is created.",
     },
     limitations: [
       "승인은 이 draft의 판단을 고정할 뿐 기존 Appium·Threads·candidate 실행 주체를 호출하지 않습니다.",
-      "실제 successor campaign materialization은 별도의 freshness·capability·effect admission이 생기기 전까지 지원하지 않습니다.",
+      "후속 campaign은 freshness·capability·effect admission을 다시 통과한 뒤 shadow strategy 검수 단계까지만 생성됩니다.",
     ],
   };
 }
@@ -136,13 +140,13 @@ export async function decideNextExperimentDraft(database, accountId, draftId, in
          AND target_sha256 = ? AND reviewer_id = ?`,
     ).bind(row.campaign_id, draftId, row.draft_sha256, input.reviewer_id).first();
     if (existing?.decision === input.decision) {
-      return decisionResult(row, input.decision, true);
+      return decisionResult(database, row, input.decision, true);
     }
     throw new NextExperimentReviewError(409, "이 다음 실험 draft는 이미 다른 결정으로 검수됐습니다.");
   }
   const reviewedAt = new Date().toISOString();
   const grantId = crypto.randomUUID();
-  const results = await database.batch([
+  const statements = [
     database.prepare(
       `INSERT INTO hosted_marketing_approval_grants
         (grant_id, campaign_id, scope, target_kind, target_id, target_sha256,
@@ -169,11 +173,24 @@ export async function decideNextExperimentDraft(database, accountId, draftId, in
        SET state = ?, updated_at = ?
        WHERE draft_id = ? AND account_id = ? AND draft_sha256 = ? AND state = 'draft'`,
     ).bind(input.decision, reviewedAt, row.draft_id, accountId, row.draft_sha256),
-  ]);
+  ];
+  if (input.decision === "approved") {
+    const activation = await successorActivationRecord(
+      row,
+      grantId,
+      input.reviewer_id,
+      reviewedAt,
+    );
+    statements.push(successorActivationInsertStatement(database, activation, reviewedAt));
+  }
+  const results = await database.batch(statements);
   if (results.some((result) => result?.meta?.changes !== 1)) {
     throw new NextExperimentReviewError(409, "다음 실험 검수 상태가 경합했습니다.");
   }
-  return { ...decisionResult(row, input.decision, false), grant_id: grantId };
+  return {
+    ...await decisionResult(database, row, input.decision, false),
+    grant_id: grantId,
+  };
 }
 
 function approvalRequest(row) {
@@ -199,7 +216,7 @@ function approvalRequest(row) {
 
 async function loadDraft(database, accountId, draftId) {
   return database.prepare(
-    `SELECT draft.draft_id, draft.draft_sha256, draft.draft_json,
+    `SELECT draft.draft_id, draft.draft_sha256, draft.draft_json, draft.account_id,
             draft.admission_json, draft.admission_sha256, draft.state AS draft_state,
             draft.request_id, draft.request_sha256, draft.source_lineage_sha256,
             request.source_strategy_sha256, request.source_evaluation_sha256,
@@ -259,7 +276,14 @@ function sourceObject(value, name) {
   return value;
 }
 
-function decisionResult(row, decision, duplicate) {
+async function decisionResult(database, row, decision, duplicate) {
+  const activation = decision === "approved"
+    ? await database.prepare(
+      `SELECT activation_id, successor_campaign_id, strategy_task_id, state, blocker_code
+       FROM hosted_marketing_successor_activations
+       WHERE draft_id = ? AND draft_sha256 = ?`,
+    ).bind(row.draft_id, row.draft_sha256).first()
+    : null;
   return {
     accepted: true,
     duplicate,
@@ -268,6 +292,13 @@ function decisionResult(row, decision, duplicate) {
     draft_sha256: row.draft_sha256,
     decision,
     effect_class: "none",
-    successor_created: false,
+    activation: activation ? {
+      activation_id: activation.activation_id,
+      successor_campaign_id: activation.successor_campaign_id,
+      strategy_task_id: activation.strategy_task_id,
+      state: activation.state,
+      blocker_code: activation.blocker_code,
+    } : null,
+    successor_created: activation?.state === "activated",
   };
 }

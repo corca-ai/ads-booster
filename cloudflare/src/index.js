@@ -36,6 +36,7 @@ import { runHostedThreadsPublications } from "./threads/scheduling.js";
 import { threadsConfigurationState } from "./threads/config.js";
 import { runDueMarketingEvaluations } from "./marketing-agent.js";
 import { runDueNextExperimentRequests } from "./marketing-next-experiment.js";
+import { runDueSuccessorActivations } from "./marketing-successor-activation.js";
 
 import {
   accountName,
@@ -478,6 +479,7 @@ export default {
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
       runDueMarketingEvaluations(env),
       runDueNextExperimentRequests(env),
+      runDueSuccessorActivations(env),
       ...threadsTasks,
     ]));
   },

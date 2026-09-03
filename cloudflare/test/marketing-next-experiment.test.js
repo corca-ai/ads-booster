@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { receiveHostedNextExperimentCallback } from "../src/hosted-next-experiment-callback.js";
+import { receiveHostedMarketingJudgmentCallback } from
+  "../src/hosted-marketing-judgment-callback.js";
 import { receiveHostedOutcomeReassessmentCallback } from "../src/hosted-outcome-reassessment-callback.js";
 import { handleHostedMarketingAgent } from "../src/marketing-agent.js";
 import {
@@ -17,6 +19,7 @@ import {
   validateNextExperimentDraft,
 } from "../src/marketing-next-experiment.js";
 import { D1Adapter } from "./d1-fixture.js";
+import { runDueSuccessorActivations } from "../src/marketing-successor-activation.js";
 
 const NOW = "2026-09-02T00:00:00.000Z";
 const ACCOUNT = "trace_kr";
@@ -103,8 +106,21 @@ async function fixture(recommendedNextStep = "design_experiment", withNextTest =
       required_proof_ids: ["claim-1"],
     },
     hypotheses: [
-      { hypothesis_id: "control", role: "control", claim_ids: ["claim-1"] },
-      { hypothesis_id: "challenger", role: "challenger", claim_ids: ["claim-1"] },
+      {
+        hypothesis_id: "control", role: "control", claim_ids: ["claim-1"],
+        value_frame: "A practical dynamic lock screen.", rationale: "Keep the baseline.",
+        falsifier: "The baseline does not produce attributed completions.",
+        proof_requirement: "Show the changing lock screen.",
+        conversation_motive: "Ask when the viewer changes wallpapers.", reference_ids: [],
+      },
+      {
+        hypothesis_id: "challenger", role: "challenger", claim_ids: ["claim-1"],
+        value_frame: "A character companion across the day.",
+        rationale: "Test continuity as the mechanism.",
+        falsifier: "Continuity does not improve attributed completions.",
+        proof_requirement: "Show the same character across several scenes.",
+        conversation_motive: "Ask which scene viewers want next.", reference_ids: [],
+      },
     ],
     experiment: experimentRegistration,
     created_at: NOW,
@@ -115,9 +131,14 @@ async function fixture(recommendedNextStep = "design_experiment", withNextTest =
     campaign_id: "campaign-1",
     experiment_id: experimentRegistration.experiment_id,
     state: "evaluated",
+    outcome_scope: "direct_response_attribution",
+    eligible_blocks: 2,
+    attribution_coverage_basis_points: 8000,
     winner_hypothesis_id: "challenger",
+    causal_estimate: null,
     guardrail_failures: [],
     interpretation: "The challenger had the highest observed attributed rate.",
+    lineage_ids: ["experiment-1", "evaluation-1"],
     evaluated_at: NOW,
   };
   const evaluationSha256 = await canonicalSha256(evaluation);
@@ -162,7 +183,7 @@ async function fixture(recommendedNextStep = "design_experiment", withNextTest =
     unanswered_questions: ["Will this replicate?"],
     created_at: NOW,
   };
-  const knowledgeSnapshot = { principles: [] };
+  const knowledgeSnapshot = { principles: ["Change one component at a time."] };
   const campaign = {
     campaign_id: "campaign-1",
     account_id: ACCOUNT,
@@ -603,7 +624,161 @@ test("callback re-derives stored source digests and stores only a no-effect draf
     { account_id: ACCOUNT },
   );
   assert.equal(approval.status, 200);
-  assert.equal((await approval.json()).successor_created, false);
+  const approvalResult = await approval.json();
+  assert.equal(approvalResult.successor_created, false);
+  assert.equal(approvalResult.activation.state, "pending");
+  assert.deepEqual(
+    await runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => false, now: new Date(NOW) },
+    ),
+    { activated: 0, blocked: 0, waiting_for_worker: true },
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  assert.deepEqual(
+    await runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => true, now: new Date(NOW) },
+    ),
+    { activated: 1, blocked: 0, waiting_for_worker: false },
+  );
+  const successor = sqlite.prepare(
+    "SELECT mode, state FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id);
+  assert.equal(successor.mode, "shadow");
+  assert.equal(successor.state, "strategy_requested");
+  const successorTask = sqlite.prepare(
+    `SELECT task_json, required_capability FROM hosted_workspace_capture_tasks
+     WHERE run_id = ? AND kind = 'marketing_judgment'`,
+  ).get(approvalResult.activation.successor_campaign_id);
+  assert.equal(successorTask.required_capability, "shadow_strategy_v1");
+  const successorPayload = JSON.parse(successorTask.task_json).payload;
+  assert.equal(successorPayload.feature_packet.gate.publication_allowed, false);
+  assert.notEqual(successorPayload.feature_packet_sha256, packetSha);
+  assert.equal(successorPayload.next_experiment_seed.source_feature_packet_sha256, packetSha);
+  assert.equal(successorPayload.next_experiment_seed.successor_feature_packet_sha256,
+    successorPayload.feature_packet_sha256);
+  assert.equal(successorPayload.next_experiment_seed.approved_draft_sha256,
+    await canonicalSha256(acceptedDraft));
+  assert.equal(successorPayload.next_experiment_seed.approval_grant_id,
+    approvalResult.grant_id);
+  assert.deepEqual(successorPayload.next_experiment_seed.approved_draft.candidate,
+    acceptedDraft.candidate);
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_tool_actions WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  const successorTaskEnvelope = JSON.parse(successorTask.task_json);
+  sqlite.prepare(
+    `UPDATE mac_workers SET current_task_id = ?, updated_at = ? WHERE worker_id = 'worker-1'`,
+  ).run(successorTaskEnvelope.task_id, NOW);
+  sqlite.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET worker_id = 'worker-1', lease_id = 'successor-lease', lease_expires_at = ?,
+         lease_started_at = ?, lease_accepted_at = ?, attempt_count = 1,
+         execution_started_at = ? WHERE task_id = ?`,
+  ).run("2026-09-02T01:00:00.000Z", NOW, NOW, NOW, successorTaskEnvelope.task_id);
+  const seed = successorPayload.next_experiment_seed;
+  const candidate = seed.approved_draft.candidate;
+  const successorControl = {
+    ...seed.prior_strategy.hypotheses.find((hypothesis) => hypothesis.role === "control"),
+    hypothesis_id: seed.successor_control_hypothesis_id,
+  };
+  const successorChallenger = {
+    hypothesis_id: seed.successor_challenger_hypothesis_id,
+    role: "challenger",
+    claim_ids: candidate.claim_ids,
+    value_frame: candidate.treatment_concept,
+    rationale: `${candidate.hypothesis}\n\n${candidate.rationale}`,
+    falsifier: candidate.falsifier,
+    proof_requirement: `Expected signal: ${candidate.expected_signal}`,
+    conversation_motive: "Discuss the approved experiment without changing its hypothesis.",
+    reference_ids: [],
+  };
+  const successorExperiment = {
+    ...seed.prior_strategy.experiment,
+    experiment_id: seed.successor_experiment_id,
+    manipulated_component: candidate.manipulated_component,
+    activated_hypothesis_ids: [
+      seed.successor_control_hypothesis_id,
+      seed.successor_challenger_hypothesis_id,
+    ],
+  };
+  const receipt = {
+    schema_version: "trace.context-receipt.v1",
+    receipt_id: successorTaskEnvelope.task_id,
+    campaign_id: seed.successor_campaign_id,
+    feature_packet_id: successorPayload.feature_packet.packet_id,
+    feature_packet_sha256: successorPayload.feature_packet_sha256,
+    knowledge_snapshot_sha256: successorPayload.knowledge_snapshot_sha256,
+    capability_snapshot_sha256: successorPayload.capability_snapshot_sha256,
+    prompt_version: "trace.shadow-strategist.v1",
+    prompt_sha256: "1".repeat(64),
+    output_schema_version: "trace.strategy-proposal.v1",
+    output_schema_sha256: "2".repeat(64),
+    included_record_ids: [
+      successorTaskEnvelope.task_id,
+      successorPayload.feature_packet.packet_id,
+      seed.activation_id,
+      seed.approved_draft.draft_id,
+      seed.evaluation.evaluation_id,
+      seed.reassessment.reassessment_id,
+    ],
+    omitted_modules: [],
+    marketing_context: null,
+    created_at: NOW,
+  };
+  const successorBrief = {
+    schema_version: "trace.strategy-brief.v1",
+    brief_id: "successor-brief-1",
+    campaign_id: seed.successor_campaign_id,
+    account_id: ACCOUNT,
+    feature_packet_id: successorPayload.feature_packet.packet_id,
+    feature_packet_sha256: successorPayload.feature_packet_sha256,
+    context_receipt_sha256: await canonicalSha256(receipt),
+    business_outcome: data.priorStrategy.business_outcome,
+    audience_situation: candidate.audience_situation,
+    belief_to_change: candidate.belief_to_change,
+    decision_dossier: seed.reassessment.decision_dossier,
+    hypotheses: [successorControl, successorChallenger],
+    experiment: successorExperiment,
+    created_at: NOW,
+  };
+  const storedSuccessorTask = sqlite.prepare(
+    "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).get(successorTaskEnvelope.task_id);
+  const successorCallback = {
+    task_id: successorTaskEnvelope.task_id,
+    run_id: seed.successor_campaign_id,
+    account_id: ACCOUNT,
+    kind: "marketing_judgment",
+    callback_id: `${successorTaskEnvelope.task_id}:completed`,
+    result: {
+      status: "succeeded",
+      output: {
+        pipeline: "hosted_marketing_judgment_v1",
+        judgment: "shadow_strategy",
+        campaign_id: seed.successor_campaign_id,
+        context_receipt: receipt,
+        context_receipt_sha256: await canonicalSha256(receipt),
+        strategy_brief: successorBrief,
+        strategy_brief_sha256: await canonicalSha256(successorBrief),
+        agent_run_lineage: null,
+        publication_allowed: false,
+      },
+    },
+  };
+  const strategyAccepted = await receiveHostedMarketingJudgmentCallback(
+    { DB: db },
+    storedSuccessorTask,
+    successorCallback,
+    { worker_id: "worker-1" },
+  );
+  assert.equal(strategyAccepted.state, "experiment_registered");
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_tool_actions WHERE campaign_id = ?",
+  ).get(seed.successor_campaign_id).count, 0);
   const replayApproval = await handleHostedMarketingAgent(
     new Request(
       `https://workspace.example/api/marketing-agent/next-experiment-drafts/${acceptedDraft.draft_id}/approval`,
@@ -625,7 +800,20 @@ test("callback re-derives stored source digests and stores only a no-effect draf
     { account_id: ACCOUNT },
   );
   assert.equal(replayApproval.status, 200);
-  assert.equal((await replayApproval.json()).duplicate, true);
+  const replayResult = await replayApproval.json();
+  assert.equal(replayResult.duplicate, true);
+  assert.equal(replayResult.successor_created, true);
+  assert.equal(replayResult.activation.strategy_task_id, JSON.parse(successorTask.task_json).task_id);
+  assert.deepEqual(
+    await runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => true, now: new Date(NOW) },
+    ),
+    { activated: 0, blocked: 0, waiting_for_worker: false },
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 1);
   assert.equal(sqlite.prepare(
     "SELECT state FROM hosted_marketing_next_experiment_drafts WHERE draft_id = ?",
   ).get(acceptedDraft.draft_id).state, "approved");

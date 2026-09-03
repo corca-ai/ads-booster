@@ -13,10 +13,14 @@ from ads_booster.contracts.marketing_agent import (
     EvidenceKind,
     EvidenceReference,
     EvidenceResult,
+    ExperimentEvaluation,
     FeatureClaim,
     FeatureEvidencePacket,
     FeatureGate,
     FeatureLifecycle,
+    MarketingReassessment,
+    NextExperimentDraft,
+    StrategyBrief,
     contract_sha256,
 )
 from ads_booster.contracts.marketing_context import (
@@ -245,13 +249,14 @@ def _reference_context() -> tuple[ReferenceResearchSnapshot, ReferenceVerificati
 
 
 def _task(payload: JsonObject | None = None) -> MarketingTask:
+    task_payload = _payload() if payload is None else payload
     return MarketingTask(
         task_id="task-1",
-        run_id="campaign-1",
+        run_id=cast("str", task_payload["campaign_id"]),
         account_id="trace_kr",
         kind=TaskKind.MARKETING_JUDGMENT,
         idempotency_key="marketing-judgment:campaign-1",
-        payload=_payload() if payload is None else payload,
+        payload=task_payload,
         created_at=NOW,
     )
 
@@ -344,6 +349,201 @@ def _proposal(
     )
 
 
+def _successor_case(*, control_reference_id: str | None = None) -> tuple[JsonObject, JsonObject]:
+    packet = _packet()
+    ordinary = _proposal()
+    strategy = StrategyBrief.model_validate(
+        {
+            "schema_version": "trace.strategy-brief.v1",
+            "brief_id": "brief-source",
+            "campaign_id": "campaign-source",
+            "account_id": "trace_kr",
+            "feature_packet_id": packet.packet_id,
+            "feature_packet_sha256": contract_sha256(packet),
+            "context_receipt_sha256": "4" * 64,
+            "business_outcome": ordinary["business_outcome"],
+            "audience_situation": ordinary["audience_situation"],
+            "belief_to_change": ordinary["belief_to_change"],
+            "decision_dossier": ordinary["decision_dossier"],
+            "hypotheses": ordinary["hypotheses"],
+            "experiment": ordinary["experiment"],
+            "created_at": NOW,
+        }
+    )
+    if control_reference_id is not None:
+        strategy = strategy.model_copy(
+            update={
+                "hypotheses": (
+                    strategy.hypotheses[0].model_copy(
+                        update={"reference_ids": (control_reference_id,)}
+                    ),
+                    strategy.hypotheses[1],
+                )
+            }
+        )
+    evaluation = ExperimentEvaluation.model_validate(
+        {
+            "schema_version": "trace.experiment-evaluation.v1",
+            "evaluation_id": "evaluation-source",
+            "campaign_id": "campaign-source",
+            "experiment_id": strategy.experiment.experiment_id,
+            "state": "evaluated",
+            "outcome_scope": "direct_response_attribution",
+            "eligible_blocks": 2,
+            "attribution_coverage_basis_points": 8000,
+            "winner_hypothesis_id": "character-day",
+            "causal_estimate": None,
+            "interpretation": "The challenger led on attributed setup completion.",
+            "guardrail_failures": [],
+            "lineage_ids": ["assignment-1", "assignment-2"],
+            "evaluated_at": NOW,
+        }
+    )
+    dossier = dict(cast("dict[str, object]", ordinary["decision_dossier"]))
+    dossier.update(
+        {
+            "situation": "experiment_result",
+            "recommended_next_step": "design_experiment",
+            "selected_icp_id": "ios-character-fans",
+        }
+    )
+    reassessment = MarketingReassessment.model_validate(
+        {
+            "schema_version": "trace.marketing-reassessment.v1",
+            "reassessment_id": "reassessment-source",
+            "campaign_id": "campaign-source",
+            "trigger_evaluation_id": evaluation.evaluation_id,
+            "trigger_evaluation_sha256": contract_sha256(evaluation),
+            "situation": "experiment_result",
+            "decision_dossier": dossier,
+            "hypothesis_reassessments": [
+                {
+                    "hypothesis_id": "control",
+                    "disposition": "retain",
+                    "rationale": "Keep the baseline.",
+                    "next_test": None,
+                },
+                {
+                    "hypothesis_id": "character-day",
+                    "disposition": "revise",
+                    "rationale": "Isolate the opening value frame.",
+                    "next_test": "Change only the opening value frame.",
+                },
+            ],
+            "created_at": NOW,
+        }
+    )
+    draft = NextExperimentDraft.model_validate(
+        {
+            "schema_version": "trace.next-experiment-draft.v1",
+            "draft_id": "next-experiment-draft-source",
+            "campaign_id": "campaign-source",
+            "account_id": "trace_kr",
+            "trigger_evaluation_id": evaluation.evaluation_id,
+            "trigger_evaluation_sha256": contract_sha256(evaluation),
+            "trigger_reassessment_id": reassessment.reassessment_id,
+            "trigger_reassessment_sha256": contract_sha256(reassessment),
+            "prior_strategy_sha256": contract_sha256(strategy),
+            "control_hypothesis_id": "control",
+            "primary_outcome": strategy.experiment.primary_outcome,
+            "held_constant_components": strategy.experiment.held_constant_components,
+            "source_hypothesis_ids": ["character-day"],
+            "supporting_claim_ids": ["claim-scenes"],
+            "evidence": [
+                {"evidence_id": "evaluation-source", "interpretation": "A direction emerged."}
+            ],
+            "counterevidence": [],
+            "assumptions": ["The same audience remains reachable."],
+            "candidate": {
+                "parent_hypothesis_ids": ["character-day"],
+                "claim_ids": ["claim-scenes"],
+                "audience_situation": "A character fan wants continuity through the day.",
+                "belief_to_change": "The changing scenes create continuity, not novelty alone.",
+                "hypothesis": "A continuity-first opening improves attributed setups.",
+                "rationale": "It isolates the mechanism suggested by the observed direction.",
+                "manipulated_component": "opening value frame",
+                "treatment_concept": "Open on one character moving through the day.",
+                "expected_signal": "Higher attributed setup completion than control.",
+                "falsifier": "The direction does not repeat across eligible blocks.",
+            },
+            "effect_class": "none",
+            "state": "draft",
+            "human_review_required": True,
+            "created_at": NOW,
+        }
+    )
+    successor_control = strategy.hypotheses[0].model_copy(
+        update={"hypothesis_id": "successor-control"}
+    )
+    proposal = cast(
+        "JsonObject",
+        {
+            "schema_version": "trace.strategy-proposal.v1",
+            "business_outcome": strategy.business_outcome,
+            "audience_situation": draft.candidate.audience_situation,
+            "belief_to_change": draft.candidate.belief_to_change,
+            "decision_dossier": reassessment.decision_dossier.model_dump(mode="json"),
+            "hypotheses": [
+                successor_control.model_dump(mode="json"),
+                {
+                    "hypothesis_id": "successor-challenger",
+                    "role": "challenger",
+                    "claim_ids": ["claim-scenes"],
+                    "value_frame": draft.candidate.treatment_concept,
+                    "rationale": (f"{draft.candidate.hypothesis}\n\n{draft.candidate.rationale}"),
+                    "falsifier": draft.candidate.falsifier,
+                    "proof_requirement": f"Expected signal: {draft.candidate.expected_signal}",
+                    "conversation_motive": (
+                        "Discuss the approved experiment without changing its hypothesis."
+                    ),
+                    "reference_ids": [],
+                },
+            ],
+            "experiment": {
+                **strategy.experiment.model_dump(mode="json"),
+                "experiment_id": "successor-experiment",
+                "manipulated_component": draft.candidate.manipulated_component,
+                "activated_hypothesis_ids": ["successor-control", "successor-challenger"],
+            },
+        },
+    )
+    payload = _payload()
+    successor_packet = packet.model_copy(update={"packet_id": "packet-lockscreen-successor"})
+    payload.update(
+        {
+            "campaign_id": "campaign-successor",
+            "feature_packet": successor_packet.model_dump(mode="json"),
+            "feature_packet_sha256": contract_sha256(successor_packet),
+            "agent_run_lineage": None,
+            "next_experiment_seed": {
+                "schema_version": "trace.successor-strategy-seed.v1",
+                "activation_id": "activation-1",
+                "successor_campaign_id": "campaign-successor",
+                "successor_control_hypothesis_id": "successor-control",
+                "successor_challenger_hypothesis_id": "successor-challenger",
+                "successor_experiment_id": "successor-experiment",
+                "source_campaign_id": "campaign-source",
+                "source_feature_packet_sha256": contract_sha256(packet),
+                "successor_feature_packet_sha256": contract_sha256(successor_packet),
+                "source_lineage_sha256": "5" * 64,
+                "request_sha256": "6" * 64,
+                "approval_grant_id": "grant-1",
+                "approved_by": "reviewer-1",
+                "approved_at": NOW.isoformat().replace("+00:00", "Z"),
+                "prior_strategy": strategy.model_dump(mode="json"),
+                "prior_strategy_sha256": contract_sha256(strategy),
+                "evaluation": evaluation.model_dump(mode="json"),
+                "evaluation_sha256": contract_sha256(evaluation),
+                "reassessment": reassessment.model_dump(mode="json"),
+                "reassessment_sha256": contract_sha256(reassessment),
+                "approved_draft": draft.model_dump(mode="json"),
+                "approved_draft_sha256": contract_sha256(draft),
+            },
+        }
+    )
+    return payload, proposal
+
+
 @dataclass(slots=True)
 class StubCodex:
     result: JsonObject
@@ -362,6 +562,70 @@ class StubCodex:
         assert timeout_seconds == 240
         self.prompts.append(prompt)
         return self.result
+
+
+def test_successor_strategy_preserves_the_approved_experiment_constraints(
+    tmp_path: Path,
+) -> None:
+    payload, proposal = _successor_case()
+    task = _task(payload)
+    codex = StubCodex(proposal)
+    executor = HostedMarketingJudgmentExecutor(codex=codex, output_root=tmp_path)
+
+    result = executor.execute(executor.prepare(task))
+
+    assert result.status is TaskStatus.SUCCEEDED
+    brief = result.output["strategy_brief"]
+    assert isinstance(brief, dict)
+    assert brief["campaign_id"] == "campaign-successor"
+    experiment = cast("dict[str, object]", brief["experiment"])
+    assert experiment["experiment_id"] == "successor-experiment"
+    assert "approved successor constraints" in codex.prompts[0]
+    receipt = result.output["context_receipt"]
+    assert isinstance(receipt, dict)
+    included_record_ids = cast("list[object]", receipt["included_record_ids"])
+    assert "activation-1" in included_record_ids
+
+
+def test_successor_strategy_cannot_replace_the_approved_candidate(tmp_path: Path) -> None:
+    payload, proposal = _successor_case()
+    hypotheses = cast("list[dict[str, object]]", proposal["hypotheses"])
+    hypotheses[1]["value_frame"] = "A different treatment invented after approval."
+    executor = HostedMarketingJudgmentExecutor(
+        codex=StubCodex(proposal),
+        output_root=tmp_path,
+    )
+
+    with pytest.raises(
+        MarketingExecutionError,
+        match="marketing_successor_constraints_changed",
+    ):
+        _ = executor.execute(executor.prepare(_task(payload)))
+
+
+def test_successor_preserves_source_control_references_without_reusing_them_for_challenger(
+    tmp_path: Path,
+) -> None:
+    payload, proposal = _successor_case(control_reference_id="source-reference-1")
+    executor = HostedMarketingJudgmentExecutor(
+        codex=StubCodex(proposal),
+        output_root=tmp_path,
+    )
+
+    result = executor.execute(executor.prepare(_task(payload)))
+    assert result.status is TaskStatus.SUCCEEDED
+
+    hypotheses = cast("list[dict[str, object]]", proposal["hypotheses"])
+    hypotheses[1]["reference_ids"] = ["source-reference-1"]
+    changed_executor = HostedMarketingJudgmentExecutor(
+        codex=StubCodex(proposal),
+        output_root=tmp_path / "challenger",
+    )
+    with pytest.raises(
+        MarketingExecutionError,
+        match="marketing_judgment_reference_quarantine_breached",
+    ):
+        _ = changed_executor.execute(changed_executor.prepare(_task(payload)))
 
 
 def test_shadow_judgment_binds_strategy_to_evidence_and_receipts(tmp_path: Path) -> None:
