@@ -14,6 +14,7 @@ from ads_booster.contracts.reasoning import (
 from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.application import MarketingAgentService
 from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
+from ads_booster.marketing.agent_service.oauth import OAuthIdentity
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.runtime import SqliteSessionStore
 from ads_booster.providers.codex_reasoning import CodexReasoningError
@@ -53,6 +54,13 @@ class FailedReasoning:
         _ = request
         message = "reasoning_provider_result_invalid"
         raise CodexReasoningError(message)
+
+
+class WorkspaceAuthenticator:
+    def authenticate(self, authorization: str | None) -> OAuthIdentity | None:
+        if authorization != "Bearer oauth-token":
+            return None
+        return OAuthIdentity(tenant_id="oauth-workspace", principal_id="oauth-member")
 
 
 def test_common_api_creates_and_reads_one_canonical_run(tmp_path: Path) -> None:
@@ -96,6 +104,23 @@ def test_common_api_derives_tenant_and_rejects_missing_identity(tmp_path: Path) 
 
     assert unauthorized.status == 401
     assert health.body == {"status": "ok", "owner": "on_prem_agent"}
+
+
+def test_oauth_identity_scopes_repository_reads_to_introspected_workspace(tmp_path: Path) -> None:
+    api = _api(tmp_path)
+    oauth_api = MarketingAgentApi(
+        api.service,
+        tenant_id="unused",
+        principal_id="unused",
+        bearer_token="",
+        oauth_authenticator=WorkspaceAuthenticator(),
+    )
+
+    response = oauth_api.dispatch("GET", "/v1/runs", authorization="Bearer oauth-token")
+
+    assert response.status == 200
+    assert response.body == {"runs": []}
+    assert oauth_api.dispatch("GET", "/v1/runs", authorization="Bearer wrong").status == 401
 
 
 def test_reasoning_failure_returns_retryable_service_status_and_preserves_run(

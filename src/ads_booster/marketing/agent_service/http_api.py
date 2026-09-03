@@ -19,6 +19,7 @@ from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
+from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
 from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.transport.json_types import JsonObject
@@ -55,6 +56,7 @@ class MarketingAgentApi:
     tenant_id: str
     principal_id: str
     bearer_token: str
+    oauth_authenticator: AccessTokenAuthenticator | None = None
 
     def dispatch(  # noqa: C901,PLR0911 - explicit route table keeps auth and tenant scope visible.
         self,
@@ -70,7 +72,8 @@ class MarketingAgentApi:
             return ApiResponse(HTTPStatus.OK, AGENT_RUN_UI, "text/html; charset=utf-8")
         if method == "GET" and path == "/health":
             return ApiResponse(HTTPStatus.OK, {"status": "ok", "owner": "on_prem_agent"})
-        if not self._authorized(authorization):
+        identity = self._identity(authorization)
+        if identity is None:
             return ApiResponse(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
         occurred_at = datetime.now(UTC) if now is None else now
         try:
@@ -79,46 +82,49 @@ class MarketingAgentApi:
                 run = self.service.create(
                     CreateAgentRunRequest(
                         run_id=request.run_id,
-                        tenant_id=self.tenant_id,
+                        tenant_id=identity.tenant_id,
                         goal=request.goal,
                         budget=request.budget,
                     ),
                     now=occurred_at,
                 )
-                return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(run.run_id))
+                return ApiResponse(
+                    HTTPStatus.ACCEPTED,
+                    self._run_view(identity.tenant_id, run.run_id),
+                )
             if method == "GET" and path == "/v1/runs":
                 return ApiResponse(
                     HTTPStatus.OK,
                     {
                         "runs": [
                             item.model_dump(mode="json")
-                            for item in self.service.repository.list_runs(self.tenant_id)
+                            for item in self.service.repository.list_runs(identity.tenant_id)
                         ]
                     },
                 )
             run_id, suffix = _run_target(path)
-            run = self.service.repository.get(self.tenant_id, run_id)
+            run = self.service.repository.get(identity.tenant_id, run_id)
             if run is None:
                 return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "agent_run_not_found"})
             if method == "GET" and suffix == "":
-                return ApiResponse(HTTPStatus.OK, self._run_view(run_id))
+                return ApiResponse(HTTPStatus.OK, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/input":
                 request = ApiInputRequest.model_validate(_body_json(body))
                 _ = self.service.submit_input(
-                    self.tenant_id, run_id, request.evidence, now=occurred_at
+                    identity.tenant_id, run_id, request.evidence, now=occurred_at
                 )
-                return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(run_id))
+                return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/approval":
                 request = ApiApprovalRequest.model_validate(_body_json(body))
                 _ = self.service.decide_approval(
-                    self.tenant_id,
+                    identity.tenant_id,
                     run_id,
-                    approver_id=self.principal_id,
+                    approver_id=identity.principal_id,
                     granted=request.decision == "granted",
                     expires_at=request.expires_at,
                     now=occurred_at,
                 )
-                return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(run_id))
+                return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
         except (ValidationError, ValueError) as error:
             return ApiResponse(HTTPStatus.CONFLICT, {"error": _safe_error(error)})
         except CodexReasoningError:
@@ -128,13 +134,17 @@ class MarketingAgentApi:
             )
         return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "route_not_found"})
 
-    def _authorized(self, authorization: str | None) -> bool:
+    def _identity(self, authorization: str | None) -> OAuthIdentity | None:
+        if self.oauth_authenticator is not None:
+            return self.oauth_authenticator.authenticate(authorization)
         if authorization is None:
-            return False
-        return hmac.compare_digest(authorization, f"Bearer {self.bearer_token}")
+            return None
+        if not hmac.compare_digest(authorization, f"Bearer {self.bearer_token}"):
+            return None
+        return OAuthIdentity(tenant_id=self.tenant_id, principal_id=self.principal_id)
 
-    def _run_view(self, run_id: str) -> JsonObject:
-        run = self.service.repository.get(self.tenant_id, run_id)
+    def _run_view(self, tenant_id: str, run_id: str) -> JsonObject:
+        run = self.service.repository.get(tenant_id, run_id)
         if run is None:
             raise ValueError("agent_run_not_found")
         return _JSON_OBJECT.validate_python(
@@ -143,18 +153,18 @@ class MarketingAgentApi:
                 "run": run.model_dump(mode="json"),
                 "steps": [
                     item.model_dump(mode="json")
-                    for item in self.service.repository.steps(self.tenant_id, run_id)
+                    for item in self.service.repository.steps(tenant_id, run_id)
                 ],
                 "records": [
                     item.model_dump(mode="json")
-                    for item in self.service.repository.records(self.tenant_id, run_id)
+                    for item in self.service.repository.records(tenant_id, run_id)
                 ],
             }
         )
 
 
 def serve_marketing_agent_api(api: MarketingAgentApi, *, host: str, port: int) -> None:
-    if host not in {"127.0.0.1", "::1"}:
+    if host not in {"127.0.0.1", "::1"} and api.oauth_authenticator is None:
         raise ValueError("agent_service_host_must_be_loopback")
 
     class Handler(BaseHTTPRequestHandler):

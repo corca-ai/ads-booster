@@ -24,6 +24,7 @@ from ads_booster.marketing.agent_service.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )
+from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
@@ -157,7 +158,9 @@ def service_doctor(
 def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays explicit.
     model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
-    host: Annotated[str, typer.Option(help="Loopback bind address.")] = "127.0.0.1",
+    host: Annotated[
+        str, typer.Option(help="Bind address; remote binds require OAuth.")
+    ] = "127.0.0.1",
     port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
     tenant: Annotated[str, typer.Option(help="Tenant bound to this service token.")] = "trace",
     principal: Annotated[
@@ -172,7 +175,19 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
     if executable is None:
         message = "codex is not installed on PATH; install Codex CLI and run `codex login`"
         raise typer.BadParameter(message)
-    token = _required("TRACE_MARKETING_SERVICE_TOKEN")
+    introspection_url = os.environ.get("TRACE_MARKETING_OAUTH_INTROSPECTION_URL")
+    oauth = None
+    if introspection_url:
+        oauth = OAuthTokenIntrospector(
+            introspection_url=introspection_url,
+            client_id=_required("TRACE_MARKETING_OAUTH_CLIENT_ID"),
+            client_secret=_required("TRACE_MARKETING_OAUTH_CLIENT_SECRET"),
+            audience=_required("TRACE_MARKETING_OAUTH_AUDIENCE"),
+            tenant_claim=os.environ.get("TRACE_MARKETING_OAUTH_TENANT_CLAIM", "workspace_id"),
+        )
+    token = os.environ.get("TRACE_MARKETING_SERVICE_TOKEN", "")
+    if oauth is None and not token:
+        token = _required("TRACE_MARKETING_SERVICE_TOKEN")
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
     service = build_installed_marketing_agent_service(
         paths=paths,
@@ -187,6 +202,7 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
             tenant_id=tenant,
             principal_id=principal,
             bearer_token=token,
+            oauth_authenticator=oauth,
         ),
         host=host,
         port=port,
