@@ -102,6 +102,9 @@ class CalendarPreparation:
     calendar_namespace: str
     calendar_identifier: str
     event_count: int
+    todo_calendar_namespace: str | None = None
+    todo_calendar_identifier: str | None = None
+    todo_event_count: int = 0
 
 
 def build_calendar_events(
@@ -148,6 +151,24 @@ def build_calendar_events(
     return tuple(events)
 
 
+def build_todo_calendar_events(
+    contract: CodexAppiumJobContract,
+) -> tuple[CalendarAutomationEvent, ...]:
+    zone = ZoneInfo(contract.time_zone)
+    reference_day = contract.context.reference_date.astimezone(zone).date()
+    start = datetime.combine(reference_day, time(), tzinfo=zone)
+    end = start + timedelta(days=1)
+    return tuple(
+        CalendarAutomationEvent(
+            title=title,
+            starts_at_epoch=int(start.timestamp()),
+            ends_at_epoch=int(end.timestamp()),
+            is_all_day=True,
+        )
+        for title in contract.context.promotion_material.trace_todos
+    )
+
+
 __all__ = [
     "CalendarAutomationEvent",
     "CalendarAutomationOperation",
@@ -155,4 +176,5 @@ __all__ = [
     "CalendarAutomationResult",
     "CalendarPreparation",
     "build_calendar_events",
+    "build_todo_calendar_events",
 ]
