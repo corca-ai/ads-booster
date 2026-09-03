@@ -32,10 +32,17 @@ class AppiumEditorVerifier(Protocol):
         control: CaptureControl,
     ) -> bool: ...
 
-    def verify_process_binding(
+    def capture_process_binding(
         self,
         appium_server: str,
         session_id: str,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
+    ) -> AppiumProcessBinding | None: ...
+
+    def verify_process_binding(
+        self,
+        binding: AppiumProcessBinding,
         expected_arguments: tuple[str, ...],
         control: CaptureControl,
     ) -> bool: ...
@@ -51,6 +58,12 @@ _SOURCE_READ_TIMEOUT_SECONDS: Final = 10.0
 _WALLPAPER_EDITOR_IDENTIFIER: Final = "lockScreenWallpaperSave"
 _APPLICATION_PROCESS_ID: Final = re.compile(r'processId="([1-9]\d*)"')
 _PS_EXECUTABLE: Final = "/bin/ps"
+
+
+@dataclass(frozen=True, slots=True)
+class AppiumProcessBinding:
+    session_id: str
+    process_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,23 +97,34 @@ class DefaultAppiumEditorVerifier:
         # what a cell with no calendar or reminder list selected looks like.
         return not expected_todos or any(todo in visible_source for todo in expected_todos)
 
-    def verify_process_binding(
+    def capture_process_binding(
         self,
         appium_server: str,
         session_id: str,
         expected_arguments: tuple[str, ...],
         control: CaptureControl,
-    ) -> bool:
+    ) -> AppiumProcessBinding | None:
         visible_source = self._read_source(appium_server, session_id, control)
         if visible_source is None:
-            return False
+            return None
         matched = _APPLICATION_PROCESS_ID.search(visible_source)
         if matched is None:
-            return False
+            return None
+        binding = AppiumProcessBinding(session_id=session_id, process_id=matched.group(1))
+        return (
+            binding if self.verify_process_binding(binding, expected_arguments, control) else None
+        )
+
+    def verify_process_binding(
+        self,
+        binding: AppiumProcessBinding,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
+    ) -> bool:
         timeout = min(control.remaining_seconds(), _SOURCE_READ_TIMEOUT_SECONDS)
         try:
             completed = self.runner.run(
-                (_PS_EXECUTABLE, "-p", matched.group(1), "-ww", "-o", "command="),
+                (_PS_EXECUTABLE, "-p", binding.process_id, "-ww", "-o", "command="),
                 timeout,
             )
         except CaptureAdapterError:
@@ -156,5 +180,6 @@ def _contains_contiguous_arguments(
 __all__ = [
     "DEFAULT_APPIUM_EDITOR_VERIFIER",
     "AppiumEditorVerifier",
+    "AppiumProcessBinding",
     "DefaultAppiumEditorVerifier",
 ]
