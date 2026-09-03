@@ -128,26 +128,47 @@ export TRACE_MARKETING_OAUTH_CLIENT_ID='trace-marketing-agent'
 export TRACE_MARKETING_OAUTH_CLIENT_SECRET='<secret-store-reference>'
 export TRACE_MARKETING_OAUTH_AUDIENCE='trace-marketing-agent'
 export TRACE_MARKETING_OAUTH_TENANT_CLAIM='workspace_id'
+export TRACE_MARKETING_HOSTED_ORIGIN='https://trace.example'
+export TRACE_MARKETING_CONTROL_TOKEN='<control-plane-token>'
+export TRACE_MARKETING_SLACK_BOT_TOKEN='<xoxb-token>'
+export TRACE_MARKETING_SLACK_CHANNEL_ID='<channel-id>'
+export TRACE_MARKETING_NOTION_TOKEN='<notion-integration-token>'
+export TRACE_MARKETING_NOTION_PARENT_PAGE_ID='<parent-page-id>'
 trace-marketing service run --model '<approved-codex-model>' --host 0.0.0.0 --port 8765
 ```
 
 Open the HTTPS service URL, create an Appium-independent reasoning Run, and retain its
 `/runs/<run-id>` URL across a restart. A provider outage must return retryable HTTP `503` while the
 Run remains durable. Verify that an inactive token, wrong audience, or missing workspace claim is
-rejected and that one workspace cannot read another workspace's Run. Until the production registry
-cutover is separately completed, use the hosted workspace for candidate, Appium, and Threads effects.
+rejected and that one workspace cannot read another workspace's Run. Call authenticated
+`GET /v1/tools` and require `research.web`, `catalog.hosted.install`,
+`workflow.feature_launch`, `deliver.slack`, and `store.notion.daily` to be ready. The canonical Run
+delegates candidate, Appium, review, Threads, outcome, and learning effects to the existing hosted
+workflow during cutover.
 
 ## 8. Let the agent register supported tools
 
-The hosted agent reads `GET /api/marketing-agent/tools` and calls
+The canonical agent may invoke `catalog.hosted.install`, which calls the protected hosted
 `POST /api/marketing-agent/tools/install` with a catalog capability such as `publish.threads`.
 Installation does not grant effect authority. For Threads it returns `/api/threads/oauth/start`; the
 agent initiates that flow and presents the authorization URL, the operator completes Meta consent,
 and the verified callback activates the capability. The existing default-OFF and human-review gates
-remain in force. `deliver.slack` may be registered in the same way but remains a non-executable
-reference until a live Slack delivery adapter ships.
-It reads `GET /api/marketing-agent/skills` to choose a coherent procedure. A skill becoming visible
-does not make it executable: every listed blocker must be cleared by an active tool registration.
+remain in force. It reads `GET /v1/skills` and starts a procedure through
+`POST /v1/skills/<skill-id>/runs`; every listed blocker must first be cleared.
+
+For the daily research skill, write the already validated immutable research request to a server
+file and configure the schedule before starting the service:
+
+```bash
+export TRACE_MARKETING_DAILY_RESEARCH_INPUT='/secure/config/daily-research.json'
+export TRACE_MARKETING_DAILY_AT='08:00'
+export TRACE_MARKETING_DAILY_TIMEZONE='Asia/Seoul'
+export TRACE_MARKETING_DAILY_TENANT='<workspace-id>'
+export TRACE_MARKETING_DAILY_PRINCIPAL='<scheduled-service-member-id>'
+```
+
+The scheduler creates one date-stable canonical Run and may grant only its exact Slack and Notion
+delivery invocations. It cannot approve Appium or Threads publication.
 
 ## External preparation owned by the operator
 
@@ -161,7 +182,7 @@ does not make it executable: every listed blocker must be cleared by an active t
   test profile; the agent performs registration and starts OAuth, while the operator performs the
   provider-side app setup and consent;
 - a named human reviewer and explicit authorization for the one live Threads canary;
-- Slack App creation, scopes/App Review, redirect URL, signing secret/bot token issuance, workspace
-  admin installation consent, destination channel invitation, and member mapping. The agent should
-  register and validate the adapter once that live owner exists; this PR deliberately cannot
-  activate or send Slack because only fake channel contracts exist today.
+- Slack App creation, `chat:write`, bot token issuance, workspace installation consent, and inviting
+  the bot to the destination channel;
+- a Notion integration token, one shared parent page, and permission for that integration to create
+  child pages.

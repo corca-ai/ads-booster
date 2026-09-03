@@ -27,10 +27,14 @@ PR #99 is a transition, so the two truths must not be confused:
 - **Implemented hosted registration seam:** the hosted agent can list and install server-owned tool
   catalog entries. Installation creates a non-executable reference; Threads becomes active only from
   its verified OAuth callback. Arbitrary caller-supplied adapters or effect policy are rejected.
-- **Not implemented yet:** Cloudflare projection-only cutover, separate remote Mac tool enrollment,
-  production research/candidate/Appium/Threads registry wiring, and live Slack/KakaoTalk installation.
-  The channel adapters and signed fake webhook contracts exist, but fake roundtrips are not live
-  platform evidence.
+- **Implemented compatibility wiring:** the server registry refreshes configured tool readiness at
+  each planning boundary. Installed research runs locally; hosted catalog registration and the full
+  feature-launch pipeline are HTTPS tools; Slack delivery and Notion daily storage are direct
+  adapters. The hosted workflow remains the effect owner for candidate, Appium, review, Threads,
+  outcome, and learning during cutover.
+- **Not implemented yet:** Cloudflare projection-only cutover, direct Mac enrollment against the
+  on-premises API, KakaoTalk delivery, and deletion of hosted canonical campaign ownership. Fake
+  Slack/Notion roundtrips are not live platform evidence.
 
 The binding contract and migration gates are in
 [`on-prem-marketing-agent-service.md`](../contracts/on-prem-marketing-agent-service.md). Until those
@@ -40,11 +44,16 @@ gates pass, the hosted flow below is current behavior but not the final architec
 `POST /api/marketing-agent/tools/install` lets the agent register a known capability without a
 migration or arbitrary descriptor upload. Registration is fail-closed as `registered_reference`.
 The Threads OAuth callback alone promotes `publish.threads` to `active`; auto-publish, review,
-idempotency, and readback barriers still apply independently. `deliver.slack` intentionally remains
-a reference because this repository has no verified live Slack delivery owner yet.
-`GET /api/marketing-agent/skills` projects versioned multi-tool procedures. A skill is ready only
+idempotency, and readback barriers still apply independently. The hosted `deliver.slack` catalog row
+remains a reference; the canonical service instead owns a direct Slack adapter when its bot token and
+channel are configured. Live Slack delivery remains unverified until an operator runs a real canary.
+`GET /v1/skills` on the canonical service projects versioned executable procedures and
+`POST /v1/skills/<id>/runs` creates their canonical Run. A skill is ready only
 when every required tool is enabled and active; `research.daily_slack` and
 `threads.validated_format_replication` therefore expose their missing integration blockers directly.
+The daily scheduler creates one stable Run per tenant, skill, and local date. Its configured service
+principal may approve only exact `deliver.slack` and `store.notion.daily` invocations; image and
+publication approval remain human checkpoints in the hosted workflow.
 
 ## Runtime boundary
 

@@ -17,6 +17,13 @@ behind wrappers; they must not import or become the Agent core.
 | `marketing/agent_core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
 | `marketing/agent_service/` | canonical on-prem application flow and append-only SQLite repository | channel-specific planning or effect implementation |
 
+`marketing/agent_service/integrations.py` is the composition boundary for installed research,
+hosted workflow/catalog, Slack, and Notion owners. It resolves secrets only inside adapters and does
+not move their effect logic into Agent Core. `skills.py` owns versioned procedures and readiness;
+`scheduler.py` owns date-stable daily admission and the narrow scheduled-delivery approval allowlist.
+`ToolRegistry` accepts a live catalog provider so readiness is refreshed at plan and dispatch time
+rather than frozen at process startup.
+
 `marketing/runtime.py` remains the execution-safety kernel for write-ahead invocation, exact-call
 approval, receipt validation, restart recovery, and reconciliation. The service composes it; it does
 not fork those guarantees. The previous deleted `agent/` connector-specific product is not restored,

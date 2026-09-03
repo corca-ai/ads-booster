@@ -27,6 +27,12 @@ export TRACE_MARKETING_OAUTH_CLIENT_ID='trace-marketing-agent'
 export TRACE_MARKETING_OAUTH_CLIENT_SECRET='<secret-store-reference>'
 export TRACE_MARKETING_OAUTH_AUDIENCE='trace-marketing-agent'
 export TRACE_MARKETING_OAUTH_TENANT_CLAIM='workspace_id'
+export TRACE_MARKETING_HOSTED_ORIGIN='https://trace.example'
+export TRACE_MARKETING_CONTROL_TOKEN='<cloudflare-control-plane-token>'
+export TRACE_MARKETING_SLACK_BOT_TOKEN='<xoxb-token>'
+export TRACE_MARKETING_SLACK_CHANNEL_ID='<channel-id>'
+export TRACE_MARKETING_NOTION_TOKEN='<notion-integration-token>'
+export TRACE_MARKETING_NOTION_PARENT_PAGE_ID='<daily-marketing-parent-page-id>'
 trace-marketing service run --model gpt-5.4 --host 0.0.0.0 --port 8765
 ```
 
@@ -35,7 +41,15 @@ a non-empty `sub`, and a non-empty tenant claim. `sub` owns approval decisions a
 scopes every Run read and write. Macs enroll separately as remote Appium workers. A static
 `TRACE_MARKETING_SERVICE_TOKEN` is accepted only for loopback development binding.
 
-`POST /v1/runs` creates a canonical run, `GET /v1/runs/:id` returns its complete step and record
+The installed service exposes `research.web` directly and adds `catalog.hosted.install` plus
+`workflow.feature_launch` when the hosted origin and control token are configured. The latter
+delegates to the existing research → strategy → candidate → Appium → review → Threads → outcome
+pipeline; it does not duplicate those effect owners. Slack and Notion become executable tools only
+when both values for that integration are present. Inspect the live catalog with `GET /v1/tools` and
+the executable procedures with `GET /v1/skills`.
+
+`POST /v1/runs` creates a canonical run, `POST /v1/skills/:skill-id/runs` starts a versioned skill,
+`GET /v1/runs/:id` returns its complete step and record
 journey, `POST /v1/runs/:id/input` resumes requested evidence, and
 `POST /v1/runs/:id/approval` decides the exact pending invocation. The bearer token is bound by
 service configuration to one tenant and principal; callers cannot supply either identity in the
@@ -74,26 +88,28 @@ open http://127.0.0.1:8765/
 The first safe exercise is an Appium-independent goal such as “일본 Threads에서 검증된 Trace
 포맷을 확장하기 위해 다음에 확인할 근거를 정한다.” Confirm that the Run URL survives a service
 restart and that a provider outage yields the retryable response above instead of dropping the HTTP
-connection. This service exercise proves the canonical local Run boundary only. Use the hosted
-workspace flow below for the currently integrated candidate/Appium/Threads path until the production
-tool registry cutover is complete.
+connection. With `TRACE_MARKETING_HOSTED_ORIGIN` and its control token configured, the canonical Run
+can delegate the integrated candidate/Appium/Threads path to the hosted compatibility workflow.
 
-The hosted agent API exposes `GET /api/marketing-agent/tools` and authenticated
+The hosted compatibility API exposes `GET /api/marketing-agent/tools` and authenticated
 `POST /api/marketing-agent/tools/install`. The agent can install only server-owned catalog entries;
 callers cannot upload code or effect policy. Threads installation returns its OAuth setup path and
 remains `registered_reference` until a human completes Meta consent, after which the verified OAuth
-callback activates it automatically. Slack can be registered as a pending reference, but remains
-non-executable until a live Slack delivery owner is implemented and verified.
+callback activates it automatically. The installed service provides live Slack and Notion adapter
+owners when their credential pairs are configured.
 `GET /api/marketing-agent/skills` exposes versioned procedures separately from tools. The initial
 skills are `research.daily_slack` and `threads.validated_format_replication`; readiness is derived
 from their independently registered tools, so neither can be reported ready while Slack, research,
 capture, or Threads is missing.
 
-This is a transition, not a claim that the full target product is already live. The local production
-registry still needs the existing research, candidate, Appium, Threads, and Cloudflare owners
-wrapped as tool adapters. Existing Cloudflare/D1 hosted runs remain the compatibility owner for
-those effects until cutover. Fake channel tests do not count as live Slack/Kakao installation or
-platform-review evidence.
+To run `research.daily_slack` every day from the server, point
+`TRACE_MARKETING_DAILY_RESEARCH_INPUT` at an immutable research-request JSON file and optionally set
+`TRACE_MARKETING_DAILY_AT` (`08:00`), `TRACE_MARKETING_DAILY_TIMEZONE` (`Asia/Seoul`),
+`TRACE_MARKETING_DAILY_TENANT`, and `TRACE_MARKETING_DAILY_PRINCIPAL`. The scheduler uses one stable
+Run ID per local date and grants only the exact scheduled Slack/Notion delivery invocations; it can
+never preapprove Appium or Threads publication. Existing Cloudflare/D1 hosted runs remain the
+compatibility effect owner until projection cutover. Fake adapter tests do not count as live Slack,
+Notion, Meta, or platform-review evidence.
 
 ## Legacy compatibility path
 
