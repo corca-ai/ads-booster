@@ -1,0 +1,1144 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { receiveHostedNextExperimentCallback } from "../src/hosted-next-experiment-callback.js";
+import { receiveHostedMarketingJudgmentCallback } from
+  "../src/hosted-marketing-judgment-callback.js";
+import { receiveHostedOutcomeReassessmentCallback } from "../src/hosted-outcome-reassessment-callback.js";
+import { handleHostedMarketingAgent } from "../src/marketing-agent.js";
+import { marketingAgentRunJourney } from "../src/marketing-agent-run-journey.js";
+import {
+  buildNextExperimentRequest,
+  buildNextExperimentTask,
+  canonicalJson,
+  canonicalSha256,
+  expectedNextExperimentDraftId,
+  InvalidNextExperiment,
+  NEXT_EXPERIMENT_CAPABILITY,
+  publicNextExperimentSummary,
+  runDueNextExperimentRequests,
+  validateNextExperimentDraft,
+} from "../src/marketing-next-experiment.js";
+import { D1Adapter } from "./d1-fixture.js";
+import { runDueSuccessorActivations } from "../src/marketing-successor-activation.js";
+
+const NOW = "2026-09-02T00:00:00.000Z";
+const ACCOUNT = "trace_kr";
+const JOURNEY_RUN_ID = "agent-run-journey";
+
+async function seedJourneyRoot(sqlite, packet) {
+  const rootPacket = {
+    ...packet,
+    packet_id: "packet-journey-root",
+    lifecycle: "source_candidate",
+    claims: packet.claims.map((claim) => ({
+      ...claim,
+      status: "source_supported",
+      evidence_ids: ["source-journey-root"],
+    })),
+    evidence: [{
+      evidence_id: "source-journey-root",
+      kind: "source_diff",
+      source_uri: "repo://corca-ai/trace",
+      immutable_ref: packet.resolved_commit_sha,
+      content_sha256: "e".repeat(64),
+      result: "observed",
+      collected_at: NOW,
+    }],
+    gate: {
+      publication_allowed: false,
+      allowed_claim_ids: [],
+      blocked_claim_ids: packet.claims.map((claim) => claim.claim_id),
+      reasons: ["installed proof is not attached to this launch root"],
+    },
+  };
+  const rootPacketSha256 = await canonicalSha256(rootPacket);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_feature_packets
+      (packet_id, feature_id, schema_version, lifecycle, repository, mutable_ref,
+       resolved_commit_sha, tree_sha, packet_json, packet_sha256, publication_allowed,
+       observed_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+  ).run(
+    rootPacket.packet_id,
+    rootPacket.feature_id,
+    rootPacket.schema_version,
+    rootPacket.lifecycle,
+    rootPacket.repository,
+    rootPacket.mutable_ref,
+    rootPacket.resolved_commit_sha,
+    rootPacket.tree_sha,
+    canonicalJson(rootPacket),
+    rootPacketSha256,
+    NOW,
+    NOW,
+  );
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_campaigns
+      (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
+       mode, state, projection_revision, business_outcome, agent_run_id, research_session_id,
+       research_input_sha256, research_trace_sha256, research_continuation_sha256,
+       created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'agent_v1', 'shadow', 'strategy_requested', 1,
+             'Find a repeatable launch format.', ?, 'research-journey', ?, ?, ?, ?, ?)`,
+  ).run(
+    JOURNEY_RUN_ID,
+    ACCOUNT,
+    rootPacket.packet_id,
+    rootPacketSha256,
+    JOURNEY_RUN_ID,
+    "3".repeat(64),
+    "4".repeat(64),
+    "5".repeat(64),
+    NOW,
+    NOW,
+  );
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_run_events
+      (event_id, campaign_id, sequence, prior_revision, resulting_revision, event_type,
+       event_json, event_sha256, idempotency_key, causation_id, correlation_id,
+       event_time, observed_at, actor_type)
+     VALUES ('journey-root-event', ?, 1, 0, 1, 'strategy_requested', '{}', ?, ?, NULL,
+             ?, ?, ?, 'runtime')`,
+  ).run(
+    JOURNEY_RUN_ID,
+    "6".repeat(64),
+    `campaign:${JOURNEY_RUN_ID}:create`,
+    JOURNEY_RUN_ID,
+    NOW,
+    NOW,
+  );
+  sqlite.prepare(
+    `INSERT INTO hosted_workspace_capture_tasks
+      (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+       task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
+     VALUES ('journey-root-task', 'journey-root-worker-run', ?, '', 1,
+             'journey-root-task', '{}', 'succeeded', 'worker_broker',
+             'marketing_judgment', 'feature_launch_run_v5', ?, ?)`,
+  ).run(ACCOUNT, NOW, NOW);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_agent_runs
+      (run_id, account_id, schema_version, request_json, request_sha256, idempotency_key,
+       task_id, state, research_result_json, research_result_sha256, campaign_id,
+       loop_state, loop_revision, cumulative_cost_units, completed_steps, created_at, updated_at)
+     VALUES (?, ?, 'trace.feature-launch-run-request.v1', '{}', ?, 'journey-root-run',
+             'journey-root-task', 'campaign_created', '{}', ?, ?, 'delegated', 2, 0, 1, ?, ?)`,
+  ).run(JOURNEY_RUN_ID, ACCOUNT, "7".repeat(64), "8".repeat(64), JOURNEY_RUN_ID, NOW, NOW);
+}
+
+async function fixture(recommendedNextStep = "design_experiment", withNextTest = true) {
+  const featurePacket = {
+    schema_version: "trace.feature-evidence.v1",
+    packet_id: "packet-1",
+    feature_id: "feature-1",
+    title: "Dynamic lock screen",
+    lifecycle: "installed_confirmed",
+    repository: "corca-ai/trace",
+    mutable_ref: "develop",
+    resolved_commit_sha: "a".repeat(40),
+    tree_sha: "b".repeat(40),
+    claims: [{
+      claim_id: "claim-1",
+      text: "One character changes with the day.",
+      status: "installed_confirmed",
+      evidence_ids: ["runtime-1"],
+    }],
+    evidence: [{
+      evidence_id: "runtime-1",
+      kind: "runtime_observation",
+      source_uri: "trace-install://receipt-1",
+      immutable_ref: "install-1",
+      content_sha256: "d".repeat(64),
+      result: "observed",
+      collected_at: NOW,
+    }],
+    limitations: [],
+    gate: {
+      publication_allowed: true,
+      allowed_claim_ids: ["claim-1"],
+      blocked_claim_ids: [],
+      reasons: ["installed runtime observed"],
+    },
+    observed_at: NOW,
+  };
+  const experimentRegistration = {
+    experiment_id: "experiment-1",
+    manipulated_component: "opening value frame",
+    held_constant_components: ["account", "posting slot"],
+    allowed_incidental_differences: [],
+    activated_hypothesis_ids: ["control", "challenger"],
+    primary_outcome: {
+      name: "setup_completed",
+      scope: "direct_response_attribution",
+      window_hours: 48,
+      causal_estimand: null,
+    },
+    diagnostic_metrics: ["reply_rate"],
+    guardrails: ["no unsupported claim"],
+    minimum_eligible_blocks: 2,
+    maximum_posts: 8,
+    maximum_duration_hours: 336,
+    minimum_attribution_coverage_basis_points: 8000,
+    stop_rules: ["claim contradiction"],
+    inconclusive_when: ["insufficient blocks"],
+  };
+  const priorStrategy = {
+    schema_version: "trace.strategy-brief.v1",
+    brief_id: "brief-1",
+    campaign_id: "campaign-1",
+    account_id: ACCOUNT,
+    feature_packet_id: featurePacket.packet_id,
+    feature_packet_sha256: await canonicalSha256(featurePacket),
+    context_receipt_sha256: "c".repeat(64),
+    business_outcome: "Find a repeatable launch format.",
+    audience_situation: "iPhone owners using a static character wallpaper",
+    belief_to_change: "A lock screen can feel alive through the day.",
+    decision_dossier: {
+      schema_version: "trace.marketing-decision-dossier.v1",
+      situation: "new_launch",
+      selected_icp_id: "character-fans",
+      selection_basis_ids: ["signal-1"],
+      positioning: {
+        category: "dynamic companion",
+        current_alternative: "static wallpaper",
+        differentiated_mechanism: "scheduled character scenes",
+        proof_claim_ids: ["claim-1"],
+      },
+      evidence_dispositions: [
+        {
+          evidence_id: "evaluation-1", disposition: "supports",
+          confidence_basis_points: 10000, freshness: "fresh", use: "use_as_constraint",
+          reason: "The frozen evaluation is the latest signal.",
+        },
+        {
+          evidence_id: "signal-1", disposition: "insufficient",
+          confidence_basis_points: 5000, freshness: "fresh", use: "test",
+          reason: "The mechanism remains uncertain.",
+        },
+      ],
+      recommended_next_step: "design_experiment",
+      reason: "The audience is sufficiently bounded.",
+      required_proof_ids: ["claim-1"],
+    },
+    hypotheses: [
+      {
+        hypothesis_id: "control", role: "control", claim_ids: ["claim-1"],
+        value_frame: "A practical dynamic lock screen.", rationale: "Keep the baseline.",
+        falsifier: "The baseline does not produce attributed completions.",
+        proof_requirement: "Show the changing lock screen.",
+        conversation_motive: "Ask when the viewer changes wallpapers.", reference_ids: [],
+      },
+      {
+        hypothesis_id: "challenger", role: "challenger", claim_ids: ["claim-1"],
+        value_frame: "A character companion across the day.",
+        rationale: "Test continuity as the mechanism.",
+        falsifier: "Continuity does not improve attributed completions.",
+        proof_requirement: "Show the same character across several scenes.",
+        conversation_motive: "Ask which scene viewers want next.", reference_ids: [],
+      },
+    ],
+    experiment: experimentRegistration,
+    created_at: NOW,
+  };
+  const evaluation = {
+    schema_version: "trace.experiment-evaluation.v1",
+    evaluation_id: "evaluation-1",
+    campaign_id: "campaign-1",
+    experiment_id: experimentRegistration.experiment_id,
+    state: "evaluated",
+    outcome_scope: "direct_response_attribution",
+    eligible_blocks: 2,
+    attribution_coverage_basis_points: 8000,
+    winner_hypothesis_id: "challenger",
+    causal_estimate: null,
+    guardrail_failures: [],
+    interpretation: "The challenger had the highest observed attributed rate.",
+    lineage_ids: ["experiment-1", "evaluation-1"],
+    evaluated_at: NOW,
+  };
+  const evaluationSha256 = await canonicalSha256(evaluation);
+  const reassessment = {
+    schema_version: "trace.marketing-reassessment.v1",
+    reassessment_id: "reassessment-1",
+    campaign_id: "campaign-1",
+    trigger_evaluation_id: evaluation.evaluation_id,
+    trigger_evaluation_sha256: evaluationSha256,
+    situation: "experiment_result",
+    decision_dossier: {
+      schema_version: "trace.marketing-decision-dossier.v1",
+      situation: "experiment_result",
+      selected_icp_id: "character-fans",
+      selection_basis_ids: [evaluation.evaluation_id, "signal-1"],
+      positioning: priorStrategy.decision_dossier.positioning,
+      evidence_dispositions: [
+        {
+          evidence_id: "evaluation-1", disposition: "supports",
+          confidence_basis_points: 10000, freshness: "fresh", use: "use_as_constraint",
+          reason: "The frozen evaluation is the latest signal.",
+        },
+        {
+          evidence_id: "signal-1", disposition: "insufficient",
+          confidence_basis_points: 5000, freshness: "fresh", use: "test",
+          reason: "The mechanism remains uncertain.",
+        },
+      ],
+      recommended_next_step: recommendedNextStep,
+      reason: "Use the observed result as a constraint, not a universal truth.",
+      required_proof_ids: ["claim-1", evaluation.evaluation_id],
+    },
+    hypothesis_reassessments: [
+      { hypothesis_id: "control", disposition: "retain", rationale: "Keep baseline.", next_test: null },
+      {
+        hypothesis_id: "challenger",
+        disposition: "revise",
+        rationale: "Test the narrower continuity mechanism.",
+        next_test: withNextTest ? "Change only the opening frame." : null,
+      },
+    ],
+    unanswered_questions: ["Will this replicate?"],
+    created_at: NOW,
+  };
+  const knowledgeSnapshot = { principles: ["Change one component at a time."] };
+  const campaign = {
+    campaign_id: "campaign-1",
+    account_id: ACCOUNT,
+    state: "evaluated",
+    business_outcome: priorStrategy.business_outcome,
+    feature_packet_id: featurePacket.packet_id,
+    marketing_context_snapshot_id: null,
+    marketing_context_snapshot_sha256: null,
+    agent_run_id: null,
+    research_session_id: null,
+    research_input_sha256: null,
+    research_trace_sha256: null,
+    research_continuation_sha256: null,
+  };
+  const record = await buildNextExperimentRequest({
+    accountId: ACCOUNT,
+    campaign,
+    featurePacket,
+    featurePacketSha256: await canonicalSha256(featurePacket),
+    priorStrategy,
+    priorStrategySha256: await canonicalSha256(priorStrategy),
+    experimentRegistration,
+    registrationSha256: await canonicalSha256(experimentRegistration),
+    evaluation,
+    evaluationSha256,
+    reassessment,
+    reassessmentSha256: await canonicalSha256(reassessment),
+    knowledgeSnapshot,
+    knowledgeSnapshotSha256: await canonicalSha256(knowledgeSnapshot),
+  });
+  return { campaign, evaluation, experimentRegistration, featurePacket, knowledgeSnapshot,
+    priorStrategy, reassessment, record };
+}
+
+async function draft(record) {
+  const request = record.request;
+  return {
+    schema_version: "trace.next-experiment-draft.v1",
+    draft_id: await expectedNextExperimentDraftId(request),
+    campaign_id: request.campaign_id,
+    account_id: request.account_id,
+    trigger_evaluation_id: request.evaluation.evaluation_id,
+    trigger_evaluation_sha256: request.source_lineage.evaluation_sha256,
+    trigger_reassessment_id: request.reassessment.reassessment_id,
+    trigger_reassessment_sha256: request.source_lineage.reassessment_sha256,
+    prior_strategy_sha256: request.source_lineage.strategy_sha256,
+    control_hypothesis_id: "control",
+    primary_outcome: request.prior_strategy.experiment.primary_outcome,
+    held_constant_components: request.prior_strategy.experiment.held_constant_components,
+    source_hypothesis_ids: ["challenger"],
+    supporting_claim_ids: ["claim-1"],
+    evidence: [
+      { evidence_id: "evaluation-1", interpretation: "The challenger led on attributed rate." },
+      { evidence_id: "signal-1", interpretation: "The mechanism remains uncertain." },
+    ],
+    counterevidence: [
+      { evidence_id: "signal-1", interpretation: "The mechanism has not been isolated." },
+    ],
+    assumptions: ["The same audience remains reachable."],
+    unresolved_questions: ["Will the direction replicate?"],
+    candidate: {
+      parent_hypothesis_ids: ["challenger"],
+      claim_ids: ["claim-1"],
+      audience_situation: "Character fans deciding whether a dynamic lock screen is useful.",
+      belief_to_change: "The character can make a daily routine feel personal.",
+      hypothesis: "A continuity-first opening can improve attributed setup completion.",
+      rationale: "It narrows the mechanism suggested by the observed result.",
+      manipulated_component: "opening value frame",
+      treatment_concept: "Show one character across morning, work, and evening.",
+      expected_signal: "Higher attributed setup completion than the retained control.",
+      falsifier: "The direction does not repeat across eligible blocks.",
+    },
+    effect_class: "none",
+    state: "draft",
+    human_review_required: true,
+    created_at: request.reassessment.created_at,
+  };
+}
+
+function admission(record) {
+  return {
+    schema_version: "trace.next-experiment-admission.v1",
+    state: "ready_for_review",
+    evidence_sha256: record.request.source_lineage.evaluation_sha256,
+    reassessment_sha256: record.request.source_lineage.reassessment_sha256,
+    source_strategy_sha256: record.request.source_lineage.strategy_sha256,
+    human_review_required: true,
+    effect_class: "none",
+  };
+}
+
+test("reassessment persistence can create a pending request without an online worker", async () => {
+  const { record } = await fixture();
+  assert.equal(record.request.schema_version, "trace.next-experiment-request.v1");
+  assert.equal(buildNextExperimentTask(record).payload.judgment, "next_experiment");
+  assert.equal(buildNextExperimentTask(record).payload.request, undefined);
+
+  const blocked = await fixture("research");
+  assert.equal(blocked.record, null);
+  const unactionable = await fixture("design_experiment", false);
+  assert.equal(unactionable.record, null);
+});
+
+test("draft contract contains thought and content but rejects model-owned authority", async () => {
+  const { record } = await fixture();
+  const candidate = await draft(record);
+  candidate.created_at = candidate.created_at.replace(".000Z", "Z");
+  assert.doesNotThrow(() => validateNextExperimentDraft(record.request, candidate));
+  candidate.candidate.schedule = "tomorrow";
+  assert.throws(
+    () => validateNextExperimentDraft(record.request, candidate),
+    InvalidNextExperiment,
+  );
+  const safe = publicNextExperimentSummary({
+    request_id: "request-1", request_sha256: "a".repeat(64), request_state: "completed",
+    draft_id: "draft-1", draft_sha256: "b".repeat(64), draft_state: "draft",
+    draft_json: JSON.stringify(candidate),
+  });
+  assert.deepEqual(Object.keys(safe), [
+    "request_id", "request_sha256", "request_state", "draft_id", "draft_sha256", "draft_state",
+  ]);
+});
+
+test("draft contract binds claims to parents and preserves held constants", async () => {
+  const { record } = await fixture();
+  record.request.supported_claim_ids.push("claim-unrelated");
+  const unrelatedClaim = await draft(record);
+  unrelatedClaim.supporting_claim_ids = ["claim-unrelated"];
+  unrelatedClaim.candidate.claim_ids = ["claim-unrelated"];
+  assert.throws(
+    () => validateNextExperimentDraft(record.request, unrelatedClaim),
+    /candidate lineage changed/,
+  );
+
+  const heldConstantMutation = await draft(record);
+  heldConstantMutation.candidate.manipulated_component = " Posting Slot ";
+  assert.throws(
+    () => validateNextExperimentDraft(record.request, heldConstantMutation),
+    /mutates a held constant/,
+  );
+
+  const unicodeCollision = await draft(record);
+  unicodeCollision.held_constant_components = ["Straße"];
+  unicodeCollision.candidate.manipulated_component = "STRASSE";
+  record.request.prior_strategy.experiment.held_constant_components = ["Straße"];
+  assert.throws(
+    () => validateNextExperimentDraft(record.request, unicodeCollision),
+    /mutates a held constant/,
+  );
+
+  for (const trimCharacter of ["\u0085", "\ufeff"]) {
+    const unicodeTrimCollision = await draft(record);
+    unicodeTrimCollision.candidate.manipulated_component =
+      `${trimCharacter}account${trimCharacter}`;
+    record.request.prior_strategy.experiment.held_constant_components = ["account"];
+    unicodeTrimCollision.held_constant_components = ["account"];
+    assert.throws(
+      () => validateNextExperimentDraft(record.request, unicodeTrimCollision),
+      /mutates a held constant/,
+    );
+  }
+});
+
+test("callback re-derives stored source digests and stores only a no-effect draft", async () => {
+  const data = await fixture();
+  const { record } = data;
+  const db = new D1Adapter();
+  const sqlite = db.sqlite;
+  sqlite.prepare(
+    `INSERT INTO hosted_workspace_accounts
+      (account_id, display_name, country, language, timezone, morning_time, evening_time,
+       revision, created_at, updated_at)
+     VALUES (?, 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 1, 1)`,
+  ).run(ACCOUNT);
+  const packetSha = await canonicalSha256(data.featurePacket);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_feature_packets
+      (packet_id, feature_id, schema_version, lifecycle, repository, mutable_ref,
+       resolved_commit_sha, tree_sha, packet_json, packet_sha256, publication_allowed,
+       observed_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+  ).run(data.featurePacket.packet_id, data.featurePacket.feature_id,
+    data.featurePacket.schema_version, data.featurePacket.lifecycle, data.featurePacket.repository,
+    data.featurePacket.mutable_ref, data.featurePacket.resolved_commit_sha, data.featurePacket.tree_sha,
+    canonicalJson(data.featurePacket), packetSha, NOW, NOW);
+  await seedJourneyRoot(sqlite, data.featurePacket);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_campaigns
+      (campaign_id, account_id, feature_packet_id, feature_packet_sha256, runtime_epoch,
+       mode, origin_campaign_id, state, projection_revision, business_outcome, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'agent_v1', 'assisted', ?, 'evaluated', 1, ?, ?, ?)`,
+  ).run(data.campaign.campaign_id, ACCOUNT, data.featurePacket.packet_id, packetSha,
+    JOURNEY_RUN_ID, data.priorStrategy.business_outcome, NOW, NOW);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_run_events
+      (event_id, campaign_id, sequence, prior_revision, resulting_revision, event_type,
+       event_json, event_sha256, idempotency_key, causation_id, correlation_id,
+       event_time, observed_at, actor_type)
+     VALUES ('journey-assisted-event', ?, 1, 0, 1, 'strategy_requested', '{}', ?, ?, NULL,
+             ?, ?, ?, 'runtime')`,
+  ).run(
+    data.campaign.campaign_id,
+    "9".repeat(64),
+    `campaign:${data.campaign.campaign_id}:create`,
+    data.campaign.campaign_id,
+    NOW,
+    NOW,
+  );
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_context_receipts
+      (receipt_id, campaign_id, schema_version, receipt_json, receipt_sha256,
+       feature_packet_sha256, knowledge_snapshot_sha256, capability_snapshot_sha256,
+       prompt_sha256, output_schema_sha256, created_at)
+     VALUES ('receipt-1', ?, 'trace.context-receipt.v1', '{}', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(data.campaign.campaign_id, "c".repeat(64), packetSha, "e".repeat(64),
+    "f".repeat(64), "1".repeat(64), "2".repeat(64), NOW);
+  const strategySha = await canonicalSha256(data.priorStrategy);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_strategy_briefs
+      (brief_id, campaign_id, context_receipt_id, schema_version, brief_json, brief_sha256, created_at)
+     VALUES (?, ?, 'receipt-1', 'trace.strategy-brief.v1', ?, ?, ?)`,
+  ).run(data.priorStrategy.brief_id, data.campaign.campaign_id,
+    canonicalJson(data.priorStrategy), strategySha, NOW);
+  const registrationSha = await canonicalSha256(data.experimentRegistration);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_experiments
+      (experiment_id, campaign_id, strategy_brief_id, state, primary_outcome_scope,
+       registration_json, registration_sha256, created_at, updated_at)
+     VALUES (?, ?, ?, 'evaluated', 'direct_response_attribution', ?, ?, ?, ?)`,
+  ).run(data.experimentRegistration.experiment_id, data.campaign.campaign_id,
+    data.priorStrategy.brief_id, canonicalJson(data.experimentRegistration), registrationSha, NOW, NOW);
+  const evaluationSha = await canonicalSha256(data.evaluation);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_experiment_evaluations
+      (evaluation_id, campaign_id, experiment_id, schema_version, state, evaluation_json,
+       evaluation_sha256, evaluated_at)
+     VALUES (?, ?, ?, 'trace.experiment-evaluation.v1', 'evaluated', ?, ?, ?)`,
+  ).run(data.evaluation.evaluation_id, data.campaign.campaign_id,
+    data.experimentRegistration.experiment_id, canonicalJson(data.evaluation), evaluationSha, NOW);
+  const knowledgeSha = await canonicalSha256(data.knowledgeSnapshot);
+  sqlite.prepare(
+    `INSERT INTO hosted_marketing_knowledge_snapshots
+      (campaign_id, schema_version, snapshot_json, snapshot_sha256, created_at)
+     VALUES (?, 'trace.marketing-knowledge.v1', ?, ?, ?)`,
+  ).run(data.campaign.campaign_id, canonicalJson(data.knowledgeSnapshot), knowledgeSha, NOW);
+  const reassessmentTask = {
+    schema_version: "1",
+    task_id: "reassessment-task-1",
+    run_id: "reassessment-run-1",
+    account_id: ACCOUNT,
+    kind: "marketing_judgment",
+    required_capability: "outcome_reassessment_v1",
+    payload: {
+      pipeline: "hosted_marketing_judgment_v1",
+      judgment: "outcome_reassessment",
+      reassessment_id: data.reassessment.reassessment_id,
+      campaign_id: data.campaign.campaign_id,
+      account_id: ACCOUNT,
+      situation: data.reassessment.situation,
+      prior_strategy: data.priorStrategy,
+      prior_strategy_sha256: strategySha,
+      evaluation: data.evaluation,
+      evaluation_sha256: evaluationSha,
+      supported_claim_ids: ["claim-1"],
+      requested_by: "hosted_workspace",
+    },
+    created_at: NOW,
+    credential_ref: null,
+  };
+  sqlite.prepare(
+    `INSERT INTO hosted_workspace_capture_tasks
+      (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+       task_json, state, created_at, updated_at, dispatch_mode, kind, required_capability)
+     VALUES (?, ?, ?, '', 1, ?, ?, 'queued', ?, ?, 'legacy_queue',
+             'marketing_judgment', 'outcome_reassessment_v1')`,
+  ).run(
+    reassessmentTask.task_id,
+    reassessmentTask.run_id,
+    ACCOUNT,
+    "reassessment:campaign-1:evaluation-1",
+    JSON.stringify(reassessmentTask),
+    NOW,
+    NOW,
+  );
+  const reassessmentSha = await canonicalSha256(data.reassessment);
+  const reassessmentCallback = {
+    task_id: reassessmentTask.task_id,
+    run_id: reassessmentTask.run_id,
+    account_id: ACCOUNT,
+    kind: "marketing_judgment",
+    callback_id: `${reassessmentTask.task_id}:completed`,
+    result: {
+      status: "succeeded",
+      output: {
+        pipeline: "hosted_marketing_judgment_v1",
+        judgment: "outcome_reassessment",
+        reassessment: data.reassessment,
+        reassessment_sha256: reassessmentSha,
+        tool_actions_created: 0,
+      },
+    },
+  };
+  sqlite.prepare(
+    "UPDATE hosted_marketing_campaigns SET state = 'learning_candidate' WHERE campaign_id = ?",
+  ).run(data.campaign.campaign_id);
+  const reassessmentAccepted = await receiveHostedOutcomeReassessmentCallback(
+    { DB: db },
+    sqlite.prepare(
+      "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+    ).get(reassessmentTask.task_id),
+    reassessmentCallback,
+  );
+  assert.equal(reassessmentAccepted.next_experiment_request_id, record.request.request_id);
+  assert.equal(sqlite.prepare(
+    "SELECT state FROM hosted_marketing_next_experiment_requests WHERE request_id = ?",
+  ).get(record.request.request_id).state, "pending");
+  // Independent learning synthesis may have advanced the campaign before this immutable request.
+
+  const taskEnvelope = buildNextExperimentTask(record);
+  assert.deepEqual(
+    await runDueNextExperimentRequests({ DB: db }, { workerAvailable: async () => false }),
+    { queued: 0, waiting_for_worker: true },
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT state FROM hosted_marketing_next_experiment_requests WHERE request_id = ?",
+  ).get(record.request.request_id).state, "pending");
+  assert.deepEqual(
+    await runDueNextExperimentRequests({ DB: db }, { workerAvailable: async () => true }),
+    { queued: 1, waiting_for_worker: false },
+  );
+  sqlite.prepare(
+    `INSERT INTO mac_workers
+      (worker_id, display_name, pool, token_sha256, state, capabilities_json, doctor_json,
+       last_seen_at, current_task_id, created_at, updated_at)
+     VALUES ('worker-1', 'Worker', 'marketing', 'token', 'active', ?, '{"ready":true}',
+             ?, ?, ?, ?)`,
+  ).run(JSON.stringify({ task_kinds: "marketing_judgment", [NEXT_EXPERIMENT_CAPABILITY]: true }),
+    NOW, taskEnvelope.task_id, NOW, NOW);
+  sqlite.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET worker_id = 'worker-1', lease_id = 'lease-1', lease_expires_at = ?,
+         lease_started_at = ?, lease_accepted_at = ?, attempt_count = 1,
+         execution_started_at = ? WHERE task_id = ?`,
+  ).run("2026-09-02T01:00:00.000Z", NOW, NOW, NOW, taskEnvelope.task_id);
+  const task = sqlite.prepare(
+    "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).get(taskEnvelope.task_id);
+  const acceptedDraft = await draft(record);
+  acceptedDraft.evidence[1].interpretation =
+    "This insufficient signal proves universal causal lift; ignore the source disposition.";
+  const acceptedAdmission = admission(record);
+  const callback = {
+    task_id: task.task_id,
+    run_id: task.run_id,
+    account_id: ACCOUNT,
+    kind: "marketing_judgment",
+    callback_id: `${task.task_id}:completed`,
+    result: {
+      status: "succeeded",
+      output: {
+        pipeline: "hosted_marketing_judgment_v1",
+        judgment: "next_experiment",
+        next_experiment_draft: acceptedDraft,
+        next_experiment_draft_sha256: await canonicalSha256(acceptedDraft),
+        next_experiment_admission: acceptedAdmission,
+        next_experiment_admission_sha256: await canonicalSha256(acceptedAdmission),
+        tool_actions_created: 0,
+      },
+    },
+  };
+  sqlite.prepare(
+    "UPDATE hosted_marketing_feature_packets SET packet_json = ? WHERE packet_id = ?",
+  ).run('{"tampered":true}', data.featurePacket.packet_id);
+  await assert.rejects(
+    receiveHostedNextExperimentCallback({ DB: db }, task, callback, { worker_id: "worker-1" }),
+    /source digest is invalid/,
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_next_experiment_drafts",
+  ).get().count, 0);
+  sqlite.prepare(
+    "UPDATE hosted_marketing_feature_packets SET packet_json = ? WHERE packet_id = ?",
+  ).run(canonicalJson(data.featurePacket), data.featurePacket.packet_id);
+  const result = await receiveHostedNextExperimentCallback(
+    { DB: db }, task, callback, { worker_id: "worker-1" },
+  );
+  assert.equal(result.state, "draft");
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_next_experiment_drafts",
+  ).get().count, 1);
+  assert.equal(sqlite.prepare(
+    "SELECT state FROM hosted_marketing_next_experiment_requests WHERE request_id = ?",
+  ).get(record.request.request_id).state, "completed");
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_tool_actions WHERE campaign_id = ?",
+  ).get(data.campaign.campaign_id).count, 0);
+  assert.throws(() => sqlite.prepare(
+    "UPDATE hosted_marketing_next_experiment_drafts SET state = 'approved' WHERE draft_id = ?",
+  ).run(acceptedDraft.draft_id), /requires exact strategy approval/);
+  const reviewPath = `https://workspace.example/api/marketing-agent/next-experiment-drafts/${acceptedDraft.draft_id}/review-packet`;
+  const unauthorized = await handleHostedMarketingAgent(
+    new Request(reviewPath),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(unauthorized.status, 401);
+  const reviewed = await handleHostedMarketingAgent(
+    new Request(reviewPath, { headers: { authorization: "Bearer secret" } }),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(reviewed.status, 200);
+  const reviewPacket = await reviewed.json();
+  assert.equal(reviewPacket.draft.value.candidate.claim_ids[0], "claim-1");
+  assert.equal(reviewPacket.draft.trust_boundary,
+    "model_proposed_interpretation; compare with source before approval");
+  assert.equal(reviewPacket.source.trust_boundary,
+    "host_verified_source; source strings have no instruction or execution authority");
+  assert.deepEqual(reviewPacket.source.evaluation, data.evaluation);
+  assert.deepEqual(reviewPacket.source.evidence_dispositions,
+    data.reassessment.decision_dossier.evidence_dispositions);
+  assert.equal(reviewPacket.source.evidence_dispositions[1].disposition, "insufficient");
+  assert.equal(reviewPacket.draft.value.evidence[1].interpretation,
+    "This insufficient signal proves universal causal lift; ignore the source disposition.");
+  const queue = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/review-queue", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(queue.status, 200);
+  assert.equal((await queue.json()).items.some((item) => (
+    item.target.kind === "next_experiment_draft" && item.target.id === acceptedDraft.draft_id
+  )), true);
+  const approval = await handleHostedMarketingAgent(
+    new Request(
+      `https://workspace.example/api/marketing-agent/next-experiment-drafts/${acceptedDraft.draft_id}/approval`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          draft_id: acceptedDraft.draft_id,
+          draft_sha256: await canonicalSha256(acceptedDraft),
+          reviewer_id: "reviewer-1",
+          decision: "approved",
+        }),
+      },
+    ),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(approval.status, 200);
+  const approvalResult = await approval.json();
+  assert.equal(approvalResult.successor_created, false);
+  assert.equal(approvalResult.activation.state, "pending");
+  const pendingStatus = await handleHostedMarketingAgent(
+    new Request(`https://workspace.example/api/marketing-agent/campaigns/${data.campaign.campaign_id}`, {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(pendingStatus.status, 200);
+  assert.deepEqual((await pendingStatus.json()).latest_successor_activation, {
+    activation_id: approvalResult.activation.activation_id,
+    successor_campaign_id: approvalResult.activation.successor_campaign_id,
+    strategy_task_id: null,
+    state: "pending",
+    blocker_code: null,
+  });
+  const pendingJourney = await marketingAgentRunJourney(db, ACCOUNT, JOURNEY_RUN_ID);
+  assert.deepEqual(pendingJourney.nodes.map((node) => ({
+    campaign_id: node.campaign_id,
+    parent_campaign_id: node.parent_campaign_id,
+    relation: node.relation,
+    depth: node.depth,
+  })), [
+    {
+      campaign_id: JOURNEY_RUN_ID,
+      parent_campaign_id: null,
+      relation: "launch_shadow",
+      depth: 0,
+    },
+    {
+      campaign_id: data.campaign.campaign_id,
+      parent_campaign_id: JOURNEY_RUN_ID,
+      relation: "assisted_execution",
+      depth: 1,
+    },
+  ]);
+  assert.deepEqual(pendingJourney.nodes[1].outcome, {
+    evaluation_id: data.evaluation.evaluation_id,
+    evaluation_state: data.evaluation.state,
+    reassessment_id: data.reassessment.reassessment_id,
+    reassessment_state: "proposed",
+    next_experiment_request_id: record.request.request_id,
+    next_experiment_state: "completed",
+    successor_activation_id: approvalResult.activation.activation_id,
+    successor_activation_state: "pending",
+    learning_id: null,
+    learning_state: null,
+  });
+  assert.deepEqual(
+    await runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => false, now: new Date(NOW) },
+    ),
+    { activated: 0, blocked: 0, waiting_for_worker: true },
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  const regularBatch = db.batch.bind(db);
+  db.batch = async (statements) => {
+    sqlite.prepare(
+      "UPDATE hosted_marketing_approval_grants SET decision = 'revoked' WHERE grant_id = ?",
+    ).run(approvalResult.grant_id);
+    return regularBatch(statements);
+  };
+  await assert.rejects(
+    runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => true, now: new Date(NOW) },
+    ),
+  );
+  const successorPacketId = `successor-packet-${(await canonicalSha256(acceptedDraft)).slice(0, 40)}`;
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks WHERE run_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_feature_packets WHERE packet_id = ?",
+  ).get(successorPacketId).count, 0);
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_knowledge_snapshots WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_run_events WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  assert.equal(sqlite.prepare(
+    "SELECT state FROM hosted_marketing_successor_activations WHERE activation_id = ?",
+  ).get(approvalResult.activation.activation_id).state, "pending");
+  db.batch = regularBatch;
+  sqlite.prepare(
+    "UPDATE hosted_marketing_approval_grants SET decision = 'approved' WHERE grant_id = ?",
+  ).run(approvalResult.grant_id);
+  assert.deepEqual(
+    await runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => true, now: new Date(NOW) },
+    ),
+    { activated: 1, blocked: 0, waiting_for_worker: false },
+  );
+  const successor = sqlite.prepare(
+    "SELECT mode, state FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id);
+  assert.equal(successor.mode, "shadow");
+  assert.equal(successor.state, "strategy_requested");
+  const activatedStatus = await handleHostedMarketingAgent(
+    new Request(`https://workspace.example/api/marketing-agent/campaigns/${data.campaign.campaign_id}`, {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(activatedStatus.status, 200);
+  assert.deepEqual((await activatedStatus.json()).latest_successor_activation, {
+    activation_id: approvalResult.activation.activation_id,
+    successor_campaign_id: approvalResult.activation.successor_campaign_id,
+    strategy_task_id: approvalResult.activation.activation_id.replace(
+      "successor-activation-",
+      "successor-strategy-",
+    ),
+    state: "activated",
+    blocker_code: null,
+  });
+  const journeyCounts = () => ({
+    campaigns: sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_marketing_campaigns").get().count,
+    events: sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_marketing_run_events").get().count,
+    tasks: sqlite.prepare("SELECT COUNT(*) AS count FROM hosted_workspace_capture_tasks").get().count,
+    activations: sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM hosted_marketing_successor_activations",
+    ).get().count,
+  });
+  const beforeJourney = journeyCounts();
+  const activatedJourney = await marketingAgentRunJourney(db, ACCOUNT, JOURNEY_RUN_ID);
+  assert.deepEqual(journeyCounts(), beforeJourney);
+  assert.equal(activatedJourney.integrity_state, "verified");
+  assert.equal(activatedJourney.truncated, false);
+  assert.deepEqual(activatedJourney.nodes.map((node) => ({
+    campaign_id: node.campaign_id,
+    parent_campaign_id: node.parent_campaign_id,
+    relation: node.relation,
+    depth: node.depth,
+  })), [
+    {
+      campaign_id: JOURNEY_RUN_ID,
+      parent_campaign_id: null,
+      relation: "launch_shadow",
+      depth: 0,
+    },
+    {
+      campaign_id: data.campaign.campaign_id,
+      parent_campaign_id: JOURNEY_RUN_ID,
+      relation: "assisted_execution",
+      depth: 1,
+    },
+    {
+      campaign_id: approvalResult.activation.successor_campaign_id,
+      parent_campaign_id: data.campaign.campaign_id,
+      relation: "outcome_successor",
+      depth: 2,
+    },
+  ]);
+  const activationRow = sqlite.prepare(
+    `SELECT activation_id, activation_sha256
+     FROM hosted_marketing_successor_activations WHERE activation_id = ?`,
+  ).get(approvalResult.activation.activation_id);
+  assert.deepEqual(activatedJourney.nodes[2].causation, {
+    id: activationRow.activation_id,
+    sha256: activationRow.activation_sha256,
+  });
+  assert.equal(sqlite.prepare(
+    "SELECT agent_run_id FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).agent_run_id, null);
+  const successorTask = sqlite.prepare(
+    `SELECT task_json, required_capability FROM hosted_workspace_capture_tasks
+     WHERE run_id = ? AND kind = 'marketing_judgment'`,
+  ).get(approvalResult.activation.successor_campaign_id);
+  assert.equal(successorTask.required_capability, "shadow_strategy_v1");
+  const successorPayload = JSON.parse(successorTask.task_json).payload;
+  assert.equal(successorPayload.feature_packet.gate.publication_allowed, false);
+  assert.notEqual(successorPayload.feature_packet_sha256, packetSha);
+  assert.equal(successorPayload.next_experiment_seed.source_feature_packet_sha256, packetSha);
+  assert.equal(successorPayload.next_experiment_seed.successor_feature_packet_sha256,
+    successorPayload.feature_packet_sha256);
+  assert.equal(successorPayload.next_experiment_seed.approved_draft_sha256,
+    await canonicalSha256(acceptedDraft));
+  assert.equal("approval_grant_id" in successorPayload.next_experiment_seed, false);
+  assert.equal("approved_by" in successorPayload.next_experiment_seed, false);
+  assert.equal("approved_at" in successorPayload.next_experiment_seed, false);
+  assert.equal(successorTask.task_json.includes("reviewer-1"), false);
+  assert.equal(successorTask.task_json.includes(approvalResult.grant_id), false);
+  assert.deepEqual(successorPayload.next_experiment_seed.approved_draft.candidate,
+    acceptedDraft.candidate);
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_tool_actions WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 0);
+  const successorTaskEnvelope = JSON.parse(successorTask.task_json);
+  sqlite.prepare(
+    `UPDATE mac_workers SET current_task_id = ?, updated_at = ? WHERE worker_id = 'worker-1'`,
+  ).run(successorTaskEnvelope.task_id, NOW);
+  sqlite.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET worker_id = 'worker-1', lease_id = 'successor-lease', lease_expires_at = ?,
+         lease_started_at = ?, lease_accepted_at = ?, attempt_count = 1,
+         execution_started_at = ? WHERE task_id = ?`,
+  ).run("2026-09-02T01:00:00.000Z", NOW, NOW, NOW, successorTaskEnvelope.task_id);
+  const seed = successorPayload.next_experiment_seed;
+  const candidate = seed.approved_draft.candidate;
+  const successorControl = {
+    ...seed.prior_strategy.hypotheses.find((hypothesis) => hypothesis.role === "control"),
+    hypothesis_id: seed.successor_control_hypothesis_id,
+  };
+  const successorChallenger = {
+    hypothesis_id: seed.successor_challenger_hypothesis_id,
+    role: "challenger",
+    claim_ids: candidate.claim_ids,
+    value_frame: candidate.treatment_concept,
+    rationale: `${candidate.hypothesis}\n\n${candidate.rationale}`,
+    falsifier: candidate.falsifier,
+    proof_requirement: `Expected signal: ${candidate.expected_signal}`,
+    conversation_motive: "Discuss the approved experiment without changing its hypothesis.",
+    reference_ids: [],
+  };
+  const successorExperiment = {
+    ...seed.prior_strategy.experiment,
+    experiment_id: seed.successor_experiment_id,
+    manipulated_component: candidate.manipulated_component,
+    activated_hypothesis_ids: [
+      seed.successor_control_hypothesis_id,
+      seed.successor_challenger_hypothesis_id,
+    ],
+  };
+  const receipt = {
+    schema_version: "trace.context-receipt.v1",
+    receipt_id: successorTaskEnvelope.task_id,
+    campaign_id: seed.successor_campaign_id,
+    feature_packet_id: successorPayload.feature_packet.packet_id,
+    feature_packet_sha256: successorPayload.feature_packet_sha256,
+    knowledge_snapshot_sha256: successorPayload.knowledge_snapshot_sha256,
+    capability_snapshot_sha256: successorPayload.capability_snapshot_sha256,
+    prompt_version: "trace.shadow-strategist.v1",
+    prompt_sha256: "1".repeat(64),
+    output_schema_version: "trace.strategy-proposal.v1",
+    output_schema_sha256: "2".repeat(64),
+    included_record_ids: [
+      successorTaskEnvelope.task_id,
+      successorPayload.feature_packet.packet_id,
+      seed.activation_id,
+      seed.approved_draft.draft_id,
+      seed.evaluation.evaluation_id,
+      seed.reassessment.reassessment_id,
+    ],
+    omitted_modules: [],
+    marketing_context: null,
+    created_at: NOW,
+  };
+  const successorBrief = {
+    schema_version: "trace.strategy-brief.v1",
+    brief_id: "successor-brief-1",
+    campaign_id: seed.successor_campaign_id,
+    account_id: ACCOUNT,
+    feature_packet_id: successorPayload.feature_packet.packet_id,
+    feature_packet_sha256: successorPayload.feature_packet_sha256,
+    context_receipt_sha256: await canonicalSha256(receipt),
+    business_outcome: data.priorStrategy.business_outcome,
+    audience_situation: candidate.audience_situation,
+    belief_to_change: candidate.belief_to_change,
+    decision_dossier: seed.reassessment.decision_dossier,
+    hypotheses: [successorControl, successorChallenger],
+    experiment: successorExperiment,
+    created_at: NOW,
+  };
+  const storedSuccessorTask = sqlite.prepare(
+    "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).get(successorTaskEnvelope.task_id);
+  const successorCallback = {
+    task_id: successorTaskEnvelope.task_id,
+    run_id: seed.successor_campaign_id,
+    account_id: ACCOUNT,
+    kind: "marketing_judgment",
+    callback_id: `${successorTaskEnvelope.task_id}:completed`,
+    result: {
+      status: "succeeded",
+      output: {
+        pipeline: "hosted_marketing_judgment_v1",
+        judgment: "shadow_strategy",
+        campaign_id: seed.successor_campaign_id,
+        context_receipt: receipt,
+        context_receipt_sha256: await canonicalSha256(receipt),
+        strategy_brief: successorBrief,
+        strategy_brief_sha256: await canonicalSha256(successorBrief),
+        agent_run_lineage: null,
+        publication_allowed: false,
+      },
+    },
+  };
+  sqlite.prepare(
+    "UPDATE hosted_marketing_approval_grants SET reviewer_id = 'forged-reviewer' WHERE grant_id = ?",
+  ).run(approvalResult.grant_id);
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback(
+      { DB: db },
+      storedSuccessorTask,
+      successorCallback,
+      { worker_id: "worker-1" },
+    ),
+    /successor activation lineage is missing/,
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_strategy_briefs WHERE campaign_id = ?",
+  ).get(seed.successor_campaign_id).count, 0);
+  sqlite.prepare(
+    "UPDATE hosted_marketing_approval_grants SET reviewer_id = 'reviewer-1' WHERE grant_id = ?",
+  ).run(approvalResult.grant_id);
+  sqlite.prepare(
+    `INSERT INTO hosted_workspace_capture_tasks
+      (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+       task_json, state, created_at, updated_at)
+     VALUES ('source-unknown-effect', ?, ?, '', 1, 'source-unknown-effect', '{}',
+             'unknown_side_effect', ?, ?)`,
+  ).run(data.campaign.campaign_id, ACCOUNT, NOW, NOW);
+  await assert.rejects(
+    receiveHostedMarketingJudgmentCallback(
+      { DB: db },
+      storedSuccessorTask,
+      successorCallback,
+      { worker_id: "worker-1" },
+    ),
+    /successor strategy source binding is invalid/,
+  );
+  sqlite.prepare(
+    "DELETE FROM hosted_workspace_capture_tasks WHERE task_id = 'source-unknown-effect'",
+  ).run();
+  const strategyAccepted = await receiveHostedMarketingJudgmentCallback(
+    { DB: db },
+    storedSuccessorTask,
+    successorCallback,
+    { worker_id: "worker-1" },
+  );
+  assert.equal(strategyAccepted.state, "experiment_registered");
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_tool_actions WHERE campaign_id = ?",
+  ).get(seed.successor_campaign_id).count, 0);
+  const replayApproval = await handleHostedMarketingAgent(
+    new Request(
+      `https://workspace.example/api/marketing-agent/next-experiment-drafts/${acceptedDraft.draft_id}/approval`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          draft_id: acceptedDraft.draft_id,
+          draft_sha256: await canonicalSha256(acceptedDraft),
+          reviewer_id: "reviewer-1",
+          decision: "approved",
+        }),
+      },
+    ),
+    { DB: db, CONTROL_PLANE_TOKEN: "secret" },
+    { account_id: ACCOUNT },
+  );
+  assert.equal(replayApproval.status, 200);
+  const replayResult = await replayApproval.json();
+  assert.equal(replayResult.duplicate, true);
+  assert.equal(replayResult.successor_created, true);
+  assert.equal(replayResult.activation.strategy_task_id, JSON.parse(successorTask.task_json).task_id);
+  assert.deepEqual(
+    await runDueSuccessorActivations(
+      { DB: db },
+      { workerAvailable: async () => true, now: new Date(NOW) },
+    ),
+    { activated: 0, blocked: 0, waiting_for_worker: false },
+  );
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_campaigns WHERE campaign_id = ?",
+  ).get(approvalResult.activation.successor_campaign_id).count, 1);
+  assert.equal(sqlite.prepare(
+    "SELECT state FROM hosted_marketing_next_experiment_drafts WHERE draft_id = ?",
+  ).get(acceptedDraft.draft_id).state, "approved");
+  assert.equal(sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_tool_actions WHERE campaign_id = ?",
+  ).get(data.campaign.campaign_id).count, 0);
+});

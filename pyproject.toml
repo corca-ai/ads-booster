@@ -1,13 +1,14 @@
 [project]
 name = "trace-appium-capture"
-version = "0.4.20"
-description = "Codex-driven Appium worker for verified Trace marketing captures"
+version = "0.4.21"
+description = "On-premises Trace Marketing Agent Service with replaceable execution workers"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "Appium-Python-Client>=5.1.1,<6",
     "ddgs>=9,<10",
     "httpx2[brotli,http2,zstd]>=0.1",
+    "jsonschema>=4.23,<5",
     "Pillow>=11,<13",
     "pydantic>=2.11,<3",
     "typer>=0.16,<1",

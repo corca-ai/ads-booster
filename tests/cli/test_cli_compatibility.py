@@ -69,7 +69,7 @@ def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
         )
     )
     root = unstyle(CliRunner().invoke(marketing_app, ["--help"]).stdout)
-    assert all(command in root for command in ("version", "worker"))
+    assert all(command in root for command in ("version", "worker", "agent", "service"))
     assert all(
         command not in root
         for command in (
@@ -82,6 +82,39 @@ def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
             "run",
         )
     )
+
+
+def test_marketing_agent_help_exposes_bounded_research_and_shadow_launch() -> None:
+    result = CliRunner().invoke(marketing_app, ["agent", "--help"])
+    output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert "research" in output
+    assert "launch" in output
+    assert all(command not in output for command in ("publish", "capture", "spend", "outreach"))
+
+    research = CliRunner().invoke(marketing_app, ["agent", "research", "--help"])
+    research_output = unstyle(research.stdout)
+    assert research.exit_code == 0
+    assert all(option in research_output for option in ("--input", "--home", "--model"))
+
+    launch = CliRunner().invoke(marketing_app, ["agent", "launch", "--help"])
+    launch_output = unstyle(launch.stdout)
+    assert launch.exit_code == 0
+    assert all(option in launch_output for option in ("--input", "--home", "--model", "--url"))
+
+
+def test_marketing_service_help_exposes_on_prem_owner_without_appium_dependency() -> None:
+    result = CliRunner().invoke(marketing_app, ["service", "--help"])
+    output = unstyle(result.stdout)
+
+    assert result.exit_code == 0
+    assert all(command in output for command in ("doctor", "run"))
+    doctor = CliRunner().invoke(marketing_app, ["service", "doctor"])
+    assert doctor.exit_code == 0
+    report = TypeAdapter(dict[str, object]).validate_json(doctor.stdout)
+    assert report["canonical_run_owner"] == "on_prem_marketing_agent_service"
+    assert report["appium_required"] is False
 
 
 def test_worker_stop_treats_an_already_missing_launchd_service_as_stopped(

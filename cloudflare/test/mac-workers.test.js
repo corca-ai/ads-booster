@@ -57,7 +57,7 @@ function worker(workerId, overrides = {}) {
     display_name: workerId,
     pool: "appium",
     state: "active",
-    capabilities_json: '{"task_kinds":"capture,generate_candidates","feedback_context_v1":true}',
+    capabilities_json: '{"task_kinds":"capture,generate_candidates,marketing_judgment","feedback_context_v1":true,"marketing_judgment_v1":true,"marketing_reasoning_ready":true,"shadow_strategy_v1":true,"market_research_v1":true,"creative_plan_v1":true,"creative_plan_v2":true,"candidate_materialization_v2":true,"experiment_evaluation_v1":true,"learning_synthesis_v1":true,"outcome_reassessment_v1":true}',
     doctor_json: '{"ready":true}',
     last_seen_at: "2026-08-26T00:00:00.000Z",
     current_task_id: null,
@@ -74,6 +74,10 @@ class ClaimDb {
 
   prepare(sql) {
     return new ClaimStatement(this, sql);
+  }
+
+  async batch(statements) {
+    return Promise.all(statements.map((statement) => statement.run()));
   }
 }
 
@@ -116,13 +120,13 @@ class ClaimStatement {
     if (this.sql.includes("WHERE worker_id = ?") && this.sql.includes("lease_expires_at > ?")) {
       const [workerId, now] = this.values;
       const kinds = this.values.slice(2, -1);
-      const requiredCapability = this.values.at(-1);
+      const advertisedCapabilities = JSON.parse(this.values.at(-1));
       return [...this.db.tasks.values()].find((row) =>
         row.worker_id === workerId && row.dispatch_mode === "worker_broker" &&
         row.state === "queued" && !row.callback_id && !row.execution_started_at &&
         (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
         kinds.includes(row.kind) &&
-        (!row.required_capability || row.required_capability === requiredCapability) &&
+        (!row.required_capability || advertisedCapabilities[row.required_capability] === true) &&
         row.lease_expires_at > now
       ) ?? null;
     }
@@ -130,12 +134,12 @@ class ClaimStatement {
         this.sql.includes("worker_id IS NULL")) {
       const [now] = this.values;
       const kinds = this.values.slice(1, -1);
-      const requiredCapability = this.values.at(-1);
+      const advertisedCapabilities = JSON.parse(this.values.at(-1));
       return [...this.db.tasks.values()].find((row) =>
         row.dispatch_mode === "worker_broker" && row.state === "queued" && !row.callback_id &&
         (!this.sql.includes("callback_reservation_id IS NULL") || !row.callback_reservation_id) &&
         kinds.includes(row.kind) &&
-        (!row.required_capability || row.required_capability === requiredCapability) &&
+        (!row.required_capability || advertisedCapabilities[row.required_capability] === true) &&
         !row.execution_started_at && (!row.worker_id || !row.lease_expires_at || row.lease_expires_at <= now)
       ) ?? null;
     }
@@ -167,6 +171,22 @@ class ClaimStatement {
   }
 
   async run() {
+    if (this.sql.includes("UPDATE mac_workers SET capabilities_json")) {
+      const [capabilitiesJson, doctorJson, version, lastSeenAt, updatedAt, workerId] = this.values;
+      const row = this.db.workers.get(workerId);
+      if (!row || row.state === "revoked") return { meta: { changes: 0 } };
+      Object.assign(row, {
+        capabilities_json: capabilitiesJson,
+        doctor_json: doctorJson,
+        version,
+        last_seen_at: lastSeenAt,
+        updated_at: updatedAt,
+      });
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("UPDATE hosted_workspace_capture_tasks SET lease_expires_at = ?")) {
+      return { meta: { changes: 0 } };
+    }
     if (this.sql.includes("DELETE FROM mac_worker_task_events")) {
       const [before] = this.values;
       this.db.events = this.db.events.filter((event) => event.created_at >= before);
@@ -213,7 +233,7 @@ class ClaimStatement {
       // The kind list sits between the task predicate and the owner check, so the last two
       // values are read from the end rather than by a fixed index.
       const [ownerWorkerId, reservation] = this.values.slice(-2);
-      const requiredCapability = this.values.at(-3);
+      const advertisedCapabilities = JSON.parse(this.values.at(-3));
       const kinds = this.values.slice(7, -3);
       const row = this.db.tasks.get(taskId);
       const owner = this.db.workers.get(ownerWorkerId);
@@ -221,7 +241,7 @@ class ClaimStatement {
           row.callback_id || row.execution_started_at || (row.worker_id && row.lease_expires_at && row.lease_expires_at > now) ||
           (this.sql.includes("callback_reservation_id IS NULL") && row.callback_reservation_id) ||
           !kinds.includes(row.kind) ||
-          (row.required_capability && row.required_capability !== requiredCapability) ||
+          (row.required_capability && advertisedCapabilities[row.required_capability] !== true) ||
           owner?.state !== "active" || owner.current_task_id !== reservation) {
         return { meta: { changes: 0 } };
       }
@@ -1055,6 +1075,57 @@ test("a worker without feedback context support cannot lease new feedback-aware 
   assert.equal(feedbackTask.worker_id, null);
 });
 
+test("an older marketing worker cannot lease an outcome reassessment subtype", async () => {
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"marketing_judgment","marketing_judgment_v1":true}',
+  });
+  const reassessment = task({
+    kind: "marketing_judgment",
+    required_capability: "outcome_reassessment_v1",
+  });
+  const db = new ClaimDb([oldWorker], [reassessment]);
+
+  assert.deepEqual(
+    await claimWorkerTasks(db, oldWorker, new Date("2026-08-26T00:00:00.000Z")),
+    [],
+  );
+  assert.equal(reassessment.worker_id, null);
+});
+
+test("an older marketing worker cannot lease a next-experiment subtype", async () => {
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"marketing_judgment","outcome_reassessment_v1":true}',
+  });
+  const nextExperiment = task({
+    kind: "marketing_judgment",
+    required_capability: "next_experiment_v1",
+  });
+  const db = new ClaimDb([oldWorker], [nextExperiment]);
+
+  assert.deepEqual(
+    await claimWorkerTasks(db, oldWorker, new Date("2026-08-26T00:00:00.000Z")),
+    [],
+  );
+  assert.equal(nextExperiment.worker_id, null);
+});
+
+test("an older marketing worker cannot lease structured candidate materialization", async () => {
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"marketing_judgment","marketing_judgment_v1":true}',
+  });
+  const materialization = task({
+    kind: "marketing_judgment",
+    required_capability: "candidate_materialization_v2",
+  });
+  const db = new ClaimDb([oldWorker], [materialization]);
+
+  assert.deepEqual(
+    await claimWorkerTasks(db, oldWorker, new Date("2026-08-26T00:00:00.000Z")),
+    [],
+  );
+  assert.equal(materialization.worker_id, null);
+});
+
 test("an updated Mac leases either kind, oldest first", async () => {
   const now = new Date("2026-08-26T00:00:30.000Z");
   const updated = worker("worker-1");
@@ -1064,6 +1135,58 @@ test("an updated Mac leases either kind, oldest first", async () => {
 
   assert.equal(leases.length, 1);
   assert.equal(leases[0].message_id, "task-1");
+});
+
+test("an updated Mac can drain a queued creative v1 task", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const updated = worker("worker-1");
+  const legacyCreative = task({
+    kind: "marketing_judgment",
+    required_capability: "creative_plan_v1",
+  });
+  const db = new ClaimDb([updated], [legacyCreative]);
+
+  const leases = await claimWorkerTasks(db, updated, now);
+
+  assert.equal(leases.length, 1);
+  assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+});
+
+test("an updated Mac resumes its still-valid creative v1 lease", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const updated = worker("worker-1", { current_task_id: "task-1" });
+  const legacyCreative = task({
+    kind: "marketing_judgment",
+    required_capability: "creative_plan_v1",
+    worker_id: "worker-1",
+    lease_id: "lease-1",
+    lease_started_at: "2026-08-26T00:00:00.000Z",
+    lease_expires_at: "2026-08-26T00:01:00.000Z",
+    attempt_count: 1,
+  });
+  const db = new ClaimDb([updated], [legacyCreative]);
+
+  const leases = await claimWorkerTasks(db, updated, now);
+
+  assert.equal(leases.length, 1);
+  assert.equal(leases[0].lease_id, "lease-1");
+  assert.equal(db.tasks.get("task-1").attempt_count, 1);
+});
+
+test("only a worker advertising marketing judgment leases a shadow strategy task", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const oldWorker = worker("worker-old", {
+    capabilities_json: '{"task_kinds":"capture,generate_candidates","feedback_context_v1":true}',
+  });
+  const updated = worker("worker-updated");
+  const strategy = task({ kind: "marketing_judgment" });
+  const db = new ClaimDb([oldWorker, updated], [strategy]);
+
+  assert.deepEqual(await claimWorkerTasks(db, oldWorker, now), []);
+  assert.deepEqual(
+    (await claimWorkerTasks(db, updated, now)).map((lease) => lease.message_id),
+    ["task-1"],
+  );
 });
 
 test("a caption batch waits for the updated Mac rather than stalling on the old one", async () => {
@@ -1087,8 +1210,8 @@ test("a caption batch waits for the updated Mac rather than stalling on the old 
 test("an advertisement is read as the closed set it is, and silence as capture only", () => {
   // The value is a comma-joined string because the control plane flattens every non-scalar
   // capability to null; a worker that sent a list would read as having said nothing.
-  assert.deepEqual(workerTaskKinds({ task_kinds: "capture,generate_candidates" }),
-    ["capture", "generate_candidates"]);
+  assert.deepEqual(workerTaskKinds({ task_kinds: "capture,generate_candidates,marketing_judgment" }),
+    ["capture", "generate_candidates", "marketing_judgment"]);
   assert.deepEqual(workerTaskKinds({ task_kinds: " generate_candidates , capture " }),
     ["generate_candidates", "capture"]);
   // Tokens this control plane does not define are dropped rather than trusted.
@@ -1294,6 +1417,74 @@ test("one worker identity cannot concurrently claim two tasks", async () => {
 
   assert.equal(first.length + second.length, 1);
   assert.equal([...db.tasks.values()].filter((row) => row.worker_id === "worker-1").length, 1);
+});
+
+test("reasoning-only admission leases marketing work without touching older capture work", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const reasoningWorker = worker("worker-1");
+  const captureTask = task();
+  const judgmentTask = task({
+    task_id: "task-marketing",
+    kind: "marketing_judgment",
+    required_capability: "shadow_strategy_v1",
+    task_json: task().task_json.replaceAll("task-1", "task-marketing"),
+    created_at: "2026-08-26T00:00:01.000Z",
+  });
+  const db = new ClaimDb([reasoningWorker], [captureTask, judgmentTask]);
+
+  const leases = await claimWorkerTasks(
+    db,
+    reasoningWorker,
+    now,
+    ["marketing_judgment"],
+  );
+
+  assert.deepEqual(leases.map((lease) => lease.message_id), ["task-marketing"]);
+  assert.equal(db.tasks.get("task-1").worker_id, null);
+});
+
+test("the degraded-worker HTTP claim route can lease only marketing reasoning", async () => {
+  const reasoningWorker = worker("worker-1");
+  const captureTask = task({ created_at: "2026-08-26T00:00:00.000Z" });
+  const generationTask = task({
+    task_id: "task-generation",
+    kind: "generate_candidates",
+    task_json: task().task_json.replaceAll("task-1", "task-generation"),
+    created_at: "2026-08-26T00:00:01.000Z",
+  });
+  const judgmentTask = task({
+    task_id: "task-marketing",
+    kind: "marketing_judgment",
+    required_capability: "shadow_strategy_v1",
+    task_json: task().task_json.replaceAll("task-1", "task-marketing"),
+    created_at: "2026-08-26T00:00:02.000Z",
+  });
+  const db = new ClaimDb([reasoningWorker], [captureTask, generationTask, judgmentTask]);
+  const capabilities = JSON.parse(reasoningWorker.capabilities_json);
+
+  const response = await handleMacWorkerRequest(
+    new Request("https://workspace.example/v1/workers/tasks/claim", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer worker-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        version: "0.4.20",
+        capabilities,
+        doctor: { ready: false, summary: "missing: appium" },
+      }),
+    }),
+    { DB: db },
+    () => { throw new Error("unexpected callback"); },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).leases.map((lease) => lease.message_id), [
+    "task-marketing",
+  ]);
+  assert.equal(db.tasks.get("task-1").worker_id, null);
+  assert.equal(db.tasks.get("task-generation").worker_id, null);
 });
 
 test("one-time enrollment stores only hashes and cannot be replayed", async () => {

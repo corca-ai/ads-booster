@@ -1,9 +1,121 @@
 # Trace Marketing Pipeline
 
-`ads-booster` runs the hosted Trace marketing workspace and its replaceable macOS capture worker.
-The only installed command is `trace-marketing`. It uses the same macOS user's official Codex CLI
-login to operate the Trace debug app through Appium. The Mac remains a request-bound image worker;
-default-OFF Threads publishing and engagement polling run only in the hosted Cloudflare boundary.
+`ads-booster` is transitioning to an always-on, on-premises Trace Marketing Agent Service. The
+service owns canonical Agent Runs; Codex, Cloudflare, Mac/Appium, Threads, research, and creative
+systems are replaceable provider or tool adapters. The only installed command remains
+`trace-marketing`; no separate custom-agent executable is introduced.
+
+## On-premises Agent Service (implemented foundation)
+
+The current PR adds the installed service boundary and portable Run/Step/Intent/CapabilitySnapshot/
+Invocation/Approval/Receipt/Outcome/Learning contracts, a unified tool descriptor registry, a
+replaceable Codex reasoning provider, append-only SQLite recovery, exact effect approval, and a
+tenant-scoped HTTP API. Start it with the same macOS user's official Codex CLI login:
+
+```bash
+trace-marketing service doctor
+export TRACE_MARKETING_SERVICE_TOKEN='replace-with-a-private-token'
+trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8765
+```
+
+For an on-premises or cloud server, terminate HTTPS at the ingress/reverse proxy and configure OAuth
+2.0 token introspection before binding beyond loopback:
+
+```bash
+export TRACE_MARKETING_OAUTH_INTROSPECTION_URL='https://identity.example/oauth/introspect'
+export TRACE_MARKETING_OAUTH_CLIENT_ID='trace-marketing-agent'
+export TRACE_MARKETING_OAUTH_CLIENT_SECRET='<secret-store-reference>'
+export TRACE_MARKETING_OAUTH_AUDIENCE='trace-marketing-agent'
+export TRACE_MARKETING_OAUTH_TENANT_CLAIM='workspace_id'
+export TRACE_MARKETING_HOSTED_ORIGIN='https://trace.example'
+export TRACE_MARKETING_CONTROL_TOKEN='<cloudflare-control-plane-token>'
+export TRACE_MARKETING_SLACK_BOT_TOKEN='<xoxb-token>'
+export TRACE_MARKETING_SLACK_CHANNEL_ID='<channel-id>'
+export TRACE_MARKETING_NOTION_TOKEN='<notion-integration-token>'
+export TRACE_MARKETING_NOTION_PARENT_PAGE_ID='<daily-marketing-parent-page-id>'
+trace-marketing service run --model gpt-5.4 --host 0.0.0.0 --port 8765
+```
+
+The service accepts a token only when introspection returns `active: true`, the configured audience,
+a non-empty `sub`, and a non-empty tenant claim. `sub` owns approval decisions and the tenant claim
+scopes every Run read and write. Macs enroll separately as remote Appium workers. A static
+`TRACE_MARKETING_SERVICE_TOKEN` is accepted only for loopback development binding.
+
+The installed service exposes `research.web` directly and adds `catalog.hosted.install` plus
+`workflow.feature_launch` when the hosted origin and control token are configured. The latter
+delegates to the existing research → strategy → candidate → Appium → review → Threads → outcome
+pipeline; it does not duplicate those effect owners. Slack and Notion become executable tools only
+when both values for that integration are present. Inspect the live catalog with `GET /v1/tools` and
+the executable procedures with `GET /v1/skills`.
+
+`POST /v1/runs` creates a canonical run, `POST /v1/skills/:skill-id/runs` starts a versioned skill,
+`GET /v1/runs/:id` returns its complete step and record
+journey, `POST /v1/runs/:id/input` resumes requested evidence, and
+`POST /v1/runs/:id/approval` decides the exact pending invocation. The bearer token is bound by
+service configuration to one tenant and principal; callers cannot supply either identity in the
+request body. Appium is not inspected or required for service startup or reasoning.
+
+Open `http://127.0.0.1:8765/` and enter the same service token to create and inspect Runs. Channel
+result links use `http://127.0.0.1:8765/runs/<run-id>` and open the same run-centric UI directly.
+If the official Codex turn is temporarily unavailable, run creation returns HTTP `503` with
+`{"error":"reasoning_provider_unavailable","retryable":true}`. The admitted Run remains durable;
+submit the identical create request or refresh and retry after provider readiness is restored.
+
+### First dogfood after merge and release
+
+Merging source is not an installed-product release. After the merge commit has a matching tag and
+GitHub Release, install it with the verified release bootstrap in
+[Bootstrap a verified Mac worker release](#bootstrap-a-verified-mac-worker-release), then run:
+
+The complete hosted workspace → Mac/Appium → approval → optional Threads canary procedure and its
+external-preparation checklist are in
+[`docs/operations/first-marketing-run.md`](docs/operations/first-marketing-run.md).
+
+```bash
+trace-marketing version --json
+trace-marketing service doctor
+export TRACE_MARKETING_SERVICE_TOKEN='generate-a-private-local-token'
+trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
+```
+
+In a second terminal, verify the installed service—not the checkout—and then use the browser UI:
+
+```bash
+curl -s http://127.0.0.1:8765/health
+open http://127.0.0.1:8765/
+```
+
+The first safe exercise is an Appium-independent goal such as “일본 Threads에서 검증된 Trace
+포맷을 확장하기 위해 다음에 확인할 근거를 정한다.” Confirm that the Run URL survives a service
+restart and that a provider outage yields the retryable response above instead of dropping the HTTP
+connection. With `TRACE_MARKETING_HOSTED_ORIGIN` and its control token configured, the canonical Run
+can delegate the integrated candidate/Appium/Threads path to the hosted compatibility workflow.
+
+The hosted compatibility API exposes `GET /api/marketing-agent/tools` and authenticated
+`POST /api/marketing-agent/tools/install`. The agent can install only server-owned catalog entries;
+callers cannot upload code or effect policy. Threads installation returns its OAuth setup path and
+remains `registered_reference` until a human completes Meta consent, after which the verified OAuth
+callback activates it automatically. The installed service provides live Slack and Notion adapter
+owners when their credential pairs are configured.
+`GET /api/marketing-agent/skills` exposes versioned procedures separately from tools. The initial
+skills are `research.daily_slack` and `threads.validated_format_replication`; readiness is derived
+from their independently registered tools, so neither can be reported ready while Slack, research,
+capture, or Threads is missing.
+
+To run `research.daily_slack` every day from the server, point
+`TRACE_MARKETING_DAILY_RESEARCH_INPUT` at an immutable research-request JSON file and optionally set
+`TRACE_MARKETING_DAILY_AT` (`08:00`), `TRACE_MARKETING_DAILY_TIMEZONE` (`Asia/Seoul`),
+`TRACE_MARKETING_DAILY_TENANT`, and `TRACE_MARKETING_DAILY_PRINCIPAL`. The scheduler uses one stable
+Run ID per local date and grants only the exact scheduled Slack/Notion delivery invocations; it can
+never preapprove Appium or Threads publication. Existing Cloudflare/D1 hosted runs remain the
+compatibility effect owner until projection cutover. Fake adapter tests do not count as live Slack,
+Notion, Meta, or platform-review evidence.
+
+## Legacy compatibility path
+
+The existing hosted Trace marketing workspace and replaceable macOS capture worker continue to
+operate unchanged while that transition proceeds. The Mac remains a request-bound image worker;
+default-OFF Threads publishing and engagement polling remain in the hosted Cloudflare boundary.
 
 ## Current request path
 
@@ -13,6 +125,211 @@ hosted candidate -> D1 lease -> durable inbox -> safe preparation -> local admis
 -> durable callback -> R2/D1 -> caption and image review
 -> next-slot Threads decision -> Cloudflare publish barrier -> readback -> engagement polling
 ```
+
+A separate no-effect strategy path starts from immutable product evidence:
+
+```text
+feature packet -> agent_v1 shadow campaign -> marketing_judgment lease
+-> one structured official Codex turn -> bound context receipt + strategy + experiment
+```
+
+The installed CLI also exposes the first dynamic, observe-only Marketing OS slice:
+
+```bash
+trace-marketing agent research --input request.json --home /private/path/to/state --model gpt-5.4
+```
+
+[`docs/examples/dynamic-evidence-research-product-only.json`](docs/examples/dynamic-evidence-research-product-only.json)
+shows the complete request shape. Its hashes are illustrative; replace them with fresh installed
+product evidence before making a product-truth claim.
+
+This command freezes one `trace.dynamic-evidence-research-request.v1`, asks the official Codex CLI
+to choose exactly one still-needed evidence scope at a time, invokes only registry-bound
+`observe.product_truth`, `observe.customer_intelligence`, or `observe.market_evidence` hands, and
+re-plans from persisted, receipt-bound evidence summaries and caveats. The installed command requires
+an explicit model so a default-model change cannot alter a resumed session. Planner calls record
+provider/model/protocol and prompt, context, schema, and skill digests. Known packet claim text,
+recognizable URLs, and proposal source IDs/titles/summaries are deterministically redacted from the
+bounded planning signal. The remaining semantic string is still untrusted data, never authority. A
+request-supplied customer projection is not independently approved by the local runner,
+and market proposals remain unverified and `insufficient` until a trusted byte-receipt verifier is
+connected. Raw proposals are preserved only in the private content-addressed hand result and cannot
+expand product claims. Sessions resume without
+repeating a committed decision or completed hand. Missing evidence ends `inconclusive`, and an
+ambiguous post-dispatch backend failure ends `awaiting_reconciliation` with exit code 3. It creates no
+candidate, Appium action, Threads post, outreach, ad spend, or hosted campaign mutation.
+
+The primary internal dogfood path is now a hosted, channel-independent agent run. The workspace,
+and later Slack or KakaoTalk adapters, submit the same immutable
+`trace.feature-launch-run-request.v1` to `POST /api/marketing-agent/runs`. D1 persists the run and
+queues one `feature_launch_run_v5` worker capability using the
+`hosted_marketing_agent_run_v5` no-effect contract. Before dispatch, Cloudflare derives and freezes
+the exact observe-only capability snapshot—including configuration bounds, schema digest, per-tool
+cost bound, and approval policy—from the requested research scopes. A compatible installed Mac
+worker pins the configured `MARKETING_AGENT_MODEL`, constructs its runtime registry from that host
+snapshot, performs dynamic evidence research with the official Codex CLI, and returns a bound
+research result plus an ordered canonical invocation/receipt/observation envelope and its quarantined market
+proposal. Cloudflare independently re-derives the snapshot and verifies complete scope coverage,
+lineage uniqueness, exact cost totals, planner protocol, source projection, and task/result bindings.
+It recomputes the descriptor, invocation, call, decision, hand-result, receipt, and observation
+digests from the redacted proof payload before appending the chain to D1. It then verifies the
+proposal digest and source lineage and hands the exact
+frozen proposal to the existing hosted byte
+verifier, and may then hand one admissible continuation to the shadow-campaign owner. The verifier
+does not ask the model to recreate that proposal: it fetches the proposed URLs, records byte receipts,
+and only those verified observations can reach strategy. The worker receives its worker token,
+never `CONTROL_PLANE_TOKEN`, and cannot create a campaign, candidate, Appium job, publication, or
+spend by itself. `GET /api/marketing-agent/runs` and `/runs/:id` expose account-scoped lifecycle,
+the frozen capability-snapshot digest, host-validated envelope count, and next links without returning raw
+research content. Planner prompt/context/schema hashes and the private session-trace hash remain
+authenticated worker claims rather than provider attestation or a host-replayed full trace; this
+first action plane therefore remains observe-only.
+
+After the research envelope is formed, a separate structured judgment sees only a host-derived,
+eligible no-effect intent snapshot. `stop` is always available; `request_more_evidence` appears only
+for an insufficient scope; and `propose_shadow_strategy` appears only for an exact quarantined
+continuation. Cloudflare reconstructs that snapshot and the planner prompt before accepting the
+choice. It appends an immutable run step: stop creates no task or campaign, while propose delegates
+to the existing shadow-campaign owner. When customer evidence was requested but absent,
+request-more moves the run to `needs_input`. An authorized operator may resume that same run once
+with an existing account-owned marketing-context snapshot through
+`POST /api/marketing-agent/runs/:id/resume`. Cloudflare compare-and-swaps the expected head and
+appends a new immutable child broker task instead of resetting the completed task. The worker reruns
+the same requested research scopes with the governed customer projection and records a second model
+decision. That bounded second step must stop or propose; it cannot request an unbounded third cycle.
+Public status exposes only the safe intent and loop projection; model-authored rationale remains in
+the protected durable decision record.
+
+The installed CLI remains a direct operator fallback that connects the same reasoning loop to the
+existing hosted workflow without taking ownership of any execution adapter:
+
+```bash
+TRACE_MARKETING_CONTROL_TOKEN=... trace-marketing agent launch \
+  --input launch.json --url https://control.example.com --home /private/path/to/state \
+  --model gpt-5.4
+```
+
+[`docs/examples/feature-launch-shadow.json`](docs/examples/feature-launch-shadow.json) shows the
+closed-gate request shape; all hashes and timestamps in it are illustrative.
+
+`launch` currently admits only a closed-gate shadow packet with both product-truth and market scopes.
+It reruns or replays the exact research request, and creates no hosted request unless the sole open
+trust boundary is a successfully quarantined market proposal. The hosted market-research worker then
+verifies source bytes before strategy. The host derives the campaign body, idempotency key, and tool
+capability from the frozen request; it binds the caller-supplied agent-run ID as the campaign ID.
+None of them are model output. A local append-only session commits the bound handoff and
+execution-start marker before POST. An ambiguous response is never POSTed again: later invocations use
+only `GET /api/marketing-agent/campaigns/:id` to reconcile. D1 stores immutable agent-run, research
+input, trace, and continuation digests and carries them through market research into strategy. The
+handoff binds the researched account to the authenticated hosted account and rejects payloads over the
+hosted 64 KiB request limit before research or network I/O. Existing
+Appium, candidate materialization, Threads approval/publication, evaluation, reassessment, and learning
+owners are unchanged.
+
+After the hosted workspace is deployed, open an account and expand **마케팅 에이전트**. This is the
+human handoff surface for the agent loop, not a replacement for the existing candidate/Appium/Threads
+screens. Enter the exact product repository/path and ref alongside the feature, desired business
+outcome, and current control, then copy **Codex에 준비 요청 복사** into a local Codex session that
+can inspect that product source. Codex prepares an immutable
+`trace.feature-launch-run-request.v1`; paste that JSON into **검증된 실행 요청 JSON** and choose
+**에이전트 실행 접수**. The browser now submits and polls the hosted run rather than asking the
+Codex conversation to hold a control-plane token or execute the CLI. Enter the control-plane token
+only when opening the run/campaign/review view. It is kept in tab memory, cleared on account change or
+panel close, and never included in the copied prompt. The selected hosted account must match
+`research.account_id`. If the named product ref cannot be read and digest-bound, the handoff instructs
+Codex to stop instead of inventing product evidence. Public/private Git connectors and automatic
+source-to-packet construction are not implemented yet, so this JSON preparation remains the current
+internal onboarding seam rather than a claimed one-click SaaS experience.
+Each run card can open a bounded, read-only outcome journey derived from the existing immutable
+campaign origin, evaluation, reassessment, next-experiment, and activated-successor records. It does
+not reopen the terminal launch run or create a second activity ledger. Shadow, execution-preparation,
+observation, and lineage-integrity states remain distinct in the UI.
+
+If a run card reports that customer intelligence is needed, first approve and freeze the relevant
+customer signals into an account-owned marketing-context snapshot. Enter that snapshot ID on the run
+card and choose **검증된 근거로 재개**. The browser preserves one resume identity across polling and
+safe retries, while the server rejects another account, a stale step head, changed retry body, raw
+evidence, or a second resume cycle.
+
+The same panel shows account-scoped campaign progress and pending strategy, creative, next-experiment,
+and learning decisions. Opening a decision reads its exact server-projected review packet; approve or
+reject submits that packet's current action. This reviewer ID is an audit label under the shared
+control-plane authority, not individual RBAC. A review does not itself publish to Threads.
+
+`POST /api/marketing-agent/campaigns` accepts an account-scoped source packet, business outcome,
+current control, and caller-chosen campaign ID. `GET /api/marketing-agent/campaigns` and
+`GET /api/marketing-agent/campaigns/:id` expose its durable state only with control-plane authority.
+All requests are scoped by `X-Trace-Account-ID`. This shadow path cannot create
+candidates, images, tool actions, or Threads publications. A source-only packet may shape a
+hypothesis, but cannot claim installed availability or open a publication gate.
+
+Exact strategy review at
+`POST /api/marketing-agent/campaigns/:id/strategy-approval` can request a second no-effect creative
+judgment. That judgment chooses proof and a medium per experiment arm, returning a reviewable
+MediaPlan without invoking Appium, recording, composition, Figma, candidate creation, or Threads.
+The host derives selectable formats from the account's currently active adapter subset; an optional
+tool being disabled no longer blocks a format that does not require it. The current installed
+capture/copy toolset still admits only `native_sequence`. Unsupported recording, carousel,
+designed-static, or text-only labels cannot enter an otherwise executable plan. A later tool
+activation affects later plans only; an in-flight plan rechecks the exact bindings it froze.
+`POST /api/marketing-agent/campaigns/:id/media-approval` records exact plan review.
+
+An account-authorized `mode: "assisted"` campaign must name a same-account shadow origin, contain
+installed evidence with an approved claim set, and bind every action to the exact packet, plan,
+treatment, assignment, and approval digests. It can request one candidate materialization through
+the existing Mac broker; that turn still creates no capture or publish effect. The existing candidate
+and image-review path remains the sole owner of native capture and default-OFF Threads publication.
+
+Variant links resolve at `/api/marketing-agent/v/:token`; a versioned Trace event receiver stores
+deduplicated, privacy-safe first-open through setup-complete receipts. The hosted scheduler creates
+only conservative, pre-registered experiment evaluations after their observation windows close.
+Direct-response rates stay descriptive. The causal-estimation contract additionally requires a
+server-owned randomized block plan, immutable allocation receipt, a complete immutable Threads
+exposure-slot schedule, exact publication/schedule readback within the fixed tolerance, and an exact
+two-sided randomization test. Missing, late, canceled, or mismatched exposure remains inconclusive.
+Live `new_launch` strategy judgments also carry a reviewable Decision Dossier: selected ICP or
+explicit research need, evidence-bound positioning, every frozen evidence disposition, and one
+bounded next action. Customer-signal freshness and confidence are re-derived; product and
+quarantined-market freshness remain `unknown`, not a live latest-event feed. Before quarantined
+market observations reach strategy, Cloudflare fetches every declared public HTTPS source itself,
+requires at least two distinct source and final hosts, and freezes byte-level SHA-256 receipts in
+D1. The strategy callback rebinds those receipts to D1; this proves source availability and exact
+bytes at collection time, not that the model's summary is faithful, current, or credible. After an
+experiment from a dossier-bearing live strategy is evaluated, its callback freezes the evaluation
+and prior strategy into exactly one
+`outcome_reassessment` turn. That no-effect turn distinguishes an ordinary result, a control win or
+stopped performance path, and an observed publication unknown-side-effect; it produces a bound
+hypothesis-by-hypothesis reassessment for inspection but cannot publish, spend, retry, or alter the
+active campaign. When that reassessment supports another bounded experiment, Cloudflare persists a
+`next_experiment` request even while every compatible Mac worker is offline. A later structured
+Codex turn must interpret every frozen evidence ID and every contradictory or insufficient item;
+it may propose only a challenger concept, may cite only claims owned by its selected parent
+hypotheses, and cannot select a held constant as the manipulated component. The host copies the
+control, primary outcome, held constants, lineage, admission, and IDs. The protected exact review
+packet presents host-verified evaluation/disposition facts separately from untrusted model
+interpretations. Approving it records reviewer acceptance but creates no
+candidate, capture, publication, spend, or tool action. It appends an immutable activation intent.
+When an exact strategy worker is available, the scheduler rechecks the approved draft, grant,
+packet claims, source records, unknown-effect state, knowledge, research lineage, and optional
+customer-context expiry, then creates exactly one successor `shadow` campaign and its existing
+`shadow_strategy` task. The approved challenger, prior control, outcome, and held constants remain
+host constraints, and the successor must pass the ordinary strategy review before any later stage.
+The source campaign status exposes the latest activation as `pending`, `blocked`, or `activated`
+without exposing reviewer authority. Product and market semantic freshness is not certified by this
+step; the successor remains a no-effect shadow artifact for explicit strategy review.
+The separate decision-quality evaluator still covers synthetic market-event
+scenarios offline. General market-event intake and general tool-effect reconciliation are not live.
+Replicated evaluated lineages may create a learning candidate, and only an exact human decision can
+promote it to a scoped principle. Generic recording, composition, Figma, and generated-media
+artifact executors are not yet product operations. New marketing candidates use the same structured
+weekly schedule and todo image-input contract as the main generator; legacy `HH:MM` rows remain
+read-compatible but are not a valid new marketing materialization. A new materialization fails before
+reservation unless a `candidate_materialization_v2` worker is online, and its callback must return
+the schema promised by that task capability; only already in-flight capability-less tasks retain v1
+callback compatibility. Strategy approval, MediaPlan approval, assisted
+campaign creation, candidate materialization, artifact registration, product-event ingestion,
+evaluation, and learning approval require the relevant control-plane authority; authority never
+enters a worker payload or durable campaign record.
 
 1. A teammate can request an automatic candidate batch. The hosted workspace writes an immutable
    `generate_candidates` task, and a compatible Mac runs one structured official Codex CLI turn to
@@ -166,15 +483,12 @@ cd cloudflare
 wrangler secret put THREADS_APP_SECRET
 wrangler secret put THREADS_TOKEN_ENCRYPTION_KEY
 wrangler secret put THREADS_MEDIA_SIGNING_KEY
+wrangler secret put TRACE_EVENT_INGEST_TOKEN
 ```
 
 `THREADS_TOKEN_ENCRYPTION_KEY` is a versioned 256-bit AES key such as `v1:<base64>`. The media-signing
 key is at least 32 random bytes. All three secrets must exist before health reports Threads ready.
-`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile
-mutation, reply content, and unknown-outcome resolution. Deploy D1 migration `0016_hosted_threads.sql`
-before enabling the feature, complete Meta App Review for the four documented scopes, connect a test
-profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and
-engagement canary. Source or fake-Graph success is not live Meta proof.
+`CONTROL_PLANE_TOKEN` continues to protect OAuth start, profile mutation, reply content, every marketing-agent run/campaign creation or assisted action, exact next-experiment review, and unknown-outcome resolution. `TRACE_EVENT_INGEST_TOKEN` is a separate Trace-app-only secret for product-event ingestion; neither it nor `CONTROL_PLANE_TOKEN` may enter a Mac worker task. Set `MARKETING_AGENT_MODEL` to the exact official Codex model that hosted agent runs must pin. Deploy D1 migration `0016_hosted_threads.sql`, main's `0017_worker_task_events.sql`, and marketing-agent migrations `0018`–`0041` in order before enabling the marketing-agent runtime. Migration `0036` is deliberately forward-only so environments that already recorded `0034` still receive the successor admission guards; `0037` freezes hosted research capability snapshots and adds the append-only run receipt ledger; `0038` freezes the eligible next-intent snapshot and adds the append-only run-step ledger; `0039` adds the bounded customer-evidence resume lineage; `0040` adds the durable campaign-delegation outbox; and `0041` adds parent-scoped journey traversal indexes. Complete Meta App Review for the four documented scopes, connect a test profile, keep auto-publish OFF, then run one explicitly authorized non-production post/readback and engagement canary. Source or fake-Graph success is not live Meta proof.
 
 ## Managed releases and compatibility
 

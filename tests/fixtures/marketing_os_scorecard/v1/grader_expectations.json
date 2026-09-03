@@ -1,0 +1,70 @@
+{
+  "schema_version": "trace.marketing-os-regression-expectations.v2",
+  "cases": [
+    {
+      "schema_version": "trace.marketing-os-scorecard-expectation.v2",
+      "case_id": "trace.marketing-os.v2.case-001",
+      "expected_research_state": "completed",
+      "expected_launch_state": "completed",
+      "expected_research_process_passed": true,
+      "expected_research_outcome_ready": true,
+      "expected_brief_lineage_verified": true,
+      "expected_claim_contained": true,
+      "expected_launch_tool_calls": 1,
+      "expected_launch_process_passed": true,
+      "expected_launch_outcome_passed": true
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-expectation.v2",
+      "case_id": "trace.marketing-os.v2.case-002",
+      "expected_research_state": "inconclusive",
+      "expected_launch_state": "not_started",
+      "expected_research_process_passed": true,
+      "expected_research_outcome_ready": false,
+      "expected_brief_lineage_verified": false,
+      "expected_claim_contained": true,
+      "expected_launch_tool_calls": 0,
+      "required_reason_codes": ["missing_scope:customer_intelligence"]
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-expectation.v2",
+      "case_id": "trace.marketing-os.v2.case-003",
+      "expected_research_state": "completed",
+      "expected_launch_state": "inconclusive",
+      "expected_research_process_passed": true,
+      "expected_research_outcome_ready": true,
+      "expected_brief_lineage_verified": true,
+      "expected_claim_contained": true,
+      "expected_launch_tool_calls": 1,
+      "expected_launch_process_passed": true,
+      "expected_launch_outcome_passed": false,
+      "required_reason_codes": ["counter_evidence_found"]
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-expectation.v2",
+      "case_id": "trace.marketing-os.v2.case-004",
+      "expected_research_state": "completed",
+      "expected_launch_state": "inconclusive",
+      "expected_research_process_passed": true,
+      "expected_research_outcome_ready": true,
+      "expected_brief_lineage_verified": true,
+      "expected_claim_contained": false,
+      "expected_launch_tool_calls": 0,
+      "expected_launch_process_passed": false,
+      "expected_launch_outcome_passed": false,
+      "required_reason_codes": ["proposal_claim_not_allowed"]
+    },
+    {
+      "schema_version": "trace.marketing-os-scorecard-expectation.v2",
+      "case_id": "trace.marketing-os.v2.case-005",
+      "expected_research_state": "completed",
+      "expected_launch_state": "not_started",
+      "expected_research_process_passed": true,
+      "expected_research_outcome_ready": true,
+      "expected_brief_lineage_verified": false,
+      "expected_claim_contained": true,
+      "expected_launch_tool_calls": 0,
+      "required_reason_codes": ["feature_launch_evidence_brief_unverified"]
+    }
+  ]
+}

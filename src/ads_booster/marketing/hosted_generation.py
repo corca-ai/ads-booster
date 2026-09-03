@@ -59,10 +59,6 @@ if TYPE_CHECKING:
         DraftedCandidate,
         ReferencePool,
     )
-    from ads_booster.marketing.native_capture import (
-        HostedWorkspaceCaptureExecutor,
-        PreparedCodexAppiumJob,
-    )
 
 PIPELINE: Final = "hosted_workspace_generation_v1"
 _DEFAULT_TIMEOUT_SECONDS: Final = 180.0
@@ -527,26 +523,6 @@ class HostedWorkspaceGenerationExecutor:
                 workspace_id=f"codex-generation:{request_digest}",
             ),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class PlanlessHostedTaskExecutor:
-    capture: HostedWorkspaceCaptureExecutor
-    generation: HostedWorkspaceGenerationExecutor
-
-    def prepare(self, task: MarketingTask) -> PreparedCodexAppiumJob | PreparedHostedGeneration:
-        match task.kind:
-            case TaskKind.CAPTURE:
-                return self.capture.prepare(task)
-            case TaskKind.GENERATE_CANDIDATES:
-                return self.generation.prepare(task)
-            case _:
-                raise MarketingExecutionError("unsupported_hosted_task")
-
-    def execute(self, prepared: PreparedCodexAppiumJob | PreparedHostedGeneration) -> TaskResult:
-        if isinstance(prepared, PreparedHostedGeneration):
-            return self.generation.execute(prepared)
-        return self.capture.execute(prepared)
 
 
 def _generation_schema() -> JsonObject:

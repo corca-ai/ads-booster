@@ -36,6 +36,7 @@ const options = (fixture, overrides = {}) => ({
   storeFactory: () => fixture.store,
   now: () => NOW,
   randomBytes: (size) => new Uint8Array(size).fill(7),
+  activateTool: async () => {},
   ...overrides,
 });
 

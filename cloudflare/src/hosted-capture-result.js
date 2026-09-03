@@ -26,6 +26,19 @@ export async function prepareHostedCaptureResult(result) {
     );
   }
   if (
+    isTraceWallpaper
+    && (
+      output.artifact_role !== "trace_wallpaper"
+      || output.image_postprocess_source !== "none"
+      || output.native_image_sha256 !== output.image_sha256
+    )
+  ) {
+    throw new HostedCaptureResultError(
+      400,
+      "native Appium capture requires verified Trace wallpaper provenance",
+    );
+  }
+  if (
     isImagegenUi &&
     (
       output.artifact_role !== "imagen_ios_ui" ||

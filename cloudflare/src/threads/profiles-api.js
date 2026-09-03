@@ -2,6 +2,7 @@ import { createThreadsGraphClient, THREADS_REQUIRED_SCOPES, ThreadsGraphError } 
 import { createThreadsTokenVaultFromEnv, ThreadsTokenVaultError } from "./crypto.js";
 import { threadsOAuthCallbackResponse } from "./oauth-callback.js";
 import { createThreadsProfilesStore, ThreadsProfilesStoreError } from "./profiles-store.js";
+import { activateMarketingTool } from "../marketing-adapter-capabilities.js";
 
 const AUTHORIZATION_ENDPOINT = "https://threads.net/oauth/authorize";
 const STATE_TTL_MS = 10 * 60_000;
@@ -133,6 +134,7 @@ export async function handleHostedThreadsProfiles(request, env, options = {}) {
   if (url.pathname.startsWith("/api/threads/media/")) return null;
   const now = () => new Date((options.now ?? Date.now)());
   const randomBytes = options.randomBytes ?? ((size) => crypto.getRandomValues(new Uint8Array(size)));
+  const activateTool = options.activateTool ?? activateMarketingTool;
 
   try {
     if (request.method === "GET" && url.pathname === "/api/threads/oauth/callback") {
@@ -169,6 +171,12 @@ export async function handleHostedThreadsProfiles(request, env, options = {}) {
       const profile = consumed.reconnect_profile_id
         ? await store.reconnectProfile(consumed.reconnect_profile_id, payload)
         : await store.connectProfile(payload);
+      await activateTool(
+        env.DB,
+        stateOwner.account_id,
+        "publish.threads",
+        now().toISOString(),
+      );
       return threadsOAuthCallbackResponse(request, consumed.redirect_uri, profile);
     }
 

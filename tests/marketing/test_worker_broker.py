@@ -644,7 +644,16 @@ def test_the_worker_advertises_the_job_kinds_it_can_actually_run() -> None:
     and that Mac updating itself, that default is what keeps a caption batch away from it.
     """
     # Given one worker's heartbeat
-    report = MacWorkerDoctorReport(ready=True, summary="ready", checks={}, version="0.3.12")
+    report = MacWorkerDoctorReport(
+        ready=True,
+        summary="ready",
+        checks={
+            "codex_cli": True,
+            "codex_authenticated": True,
+            "codex_web_search": True,
+        },
+        version="0.3.12",
+    )
 
     # When the control plane reads its capabilities
     capabilities = report.heartbeat()["capabilities"]
@@ -652,7 +661,43 @@ def test_the_worker_advertises_the_job_kinds_it_can_actually_run() -> None:
     # Then the advertisement is a scalar the control plane will not flatten to null, and it
     # names both jobs this build routes.
     assert isinstance(capabilities, dict)
-    assert capabilities["task_kinds"] == "capture,generate_candidates"
+    assert capabilities["task_kinds"] == "capture,generate_candidates,marketing_judgment"
     assert capabilities["native_appium"] is True
     assert capabilities["feedback_context_v1"] is True
+    assert capabilities["marketing_judgment_v1"] is True
+    assert capabilities["capture_ready"] is True
+    assert capabilities["marketing_reasoning_ready"] is True
+    assert capabilities["market_research_v1"] is True
+    assert capabilities["feature_launch_run_v5"] is True
+    assert capabilities["shadow_strategy_v1"] is True
+    assert capabilities["creative_plan_v1"] is True
+    assert capabilities["creative_plan_v2"] is True
+    assert capabilities["experiment_evaluation_v1"] is True
+    assert capabilities["learning_synthesis_v1"] is True
+    assert capabilities["outcome_reassessment_v1"] is True
+    assert capabilities["next_experiment_v1"] is True
+    assert capabilities["candidate_materialization_v2"] is True
     assert all(isinstance(value, str | bool) for value in capabilities.values())
+
+
+def test_reasoning_readiness_is_independent_from_existing_appium_readiness() -> None:
+    report = MacWorkerDoctorReport(
+        ready=False,
+        summary="missing: appium",
+        checks={
+            "appium": False,
+            "codex_cli": True,
+            "codex_authenticated": True,
+            "codex_web_search": False,
+        },
+        version="0.4.20",
+    )
+
+    capabilities = report.heartbeat()["capabilities"]
+
+    assert isinstance(capabilities, dict)
+    assert capabilities["capture_ready"] is False
+    assert capabilities["marketing_reasoning_ready"] is True
+    assert capabilities["shadow_strategy_v1"] is True
+    assert capabilities["market_research_v1"] is False
+    assert capabilities["feature_launch_run_v5"] is False

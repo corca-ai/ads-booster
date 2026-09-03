@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -19,6 +20,7 @@ import {
   validateGeneratedCandidateBatch,
   WORKSPACE_GENERATION_PROMPT_VERSION,
 } from "../src/hosted-workspace.js";
+import { canonicalJson } from "../src/marketing-adapter-capabilities.js";
 import {
   WORKSPACE_CONTEXT,
   WORKSPACE_CONTEXT_PROFILES,
@@ -104,6 +106,50 @@ function candidateRow(overrides = {}) {
   };
 }
 
+function marketingCaptureCapability({ requestState = "approved", bindingSha256 = null } = {}) {
+  const descriptor = {
+    schema_version: "trace.adapter-capability.v1",
+    capability_id: "capture.native_png",
+    effect_class: "local_artifact",
+    owner_id: "trace.native_capture",
+    request_schema_sha256: "a".repeat(64),
+    receipt_schema_sha256: "b".repeat(64),
+    activation_state: "active",
+  };
+  const descriptorSha256 = sha256(descriptor);
+  const binding = {
+    capability_id: descriptor.capability_id,
+    descriptor_sha256: descriptorSha256,
+    effect_class: descriptor.effect_class,
+    request_schema_sha256: descriptor.request_schema_sha256,
+    receipt_schema_sha256: descriptor.receipt_schema_sha256,
+    owner_id: descriptor.owner_id,
+  };
+  const resolvedBindingSha256 = sha256(binding);
+  return {
+    request: {
+      capability_id: descriptor.capability_id,
+      capability_binding_sha256: bindingSha256 ?? resolvedBindingSha256,
+      state: requestState,
+    },
+    catalog: {
+      capability_id: descriptor.capability_id,
+      descriptor_json: canonicalJson(descriptor),
+      descriptor_sha256: descriptorSha256,
+      effect_class: descriptor.effect_class,
+      request_schema_sha256: descriptor.request_schema_sha256,
+      receipt_schema_sha256: descriptor.receipt_schema_sha256,
+      owner_id: descriptor.owner_id,
+      enabled: 1,
+      activation_state: "active",
+    },
+  };
+}
+
+function sha256(value) {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
 function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = false, options = {}) {
   let row = { ...initial };
   const deletedArtifacts = [];
@@ -138,6 +184,9 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
               }
               if (sql.includes("FROM hosted_workspace_feedback_events") && sql.includes("event_id = ?")) {
                 return options.feedbackEvent ?? null;
+              }
+              if (sql.includes("SELECT marketing_assignment_id FROM hosted_workspace_candidates")) {
+                return row ? { marketing_assignment_id: row.marketing_assignment_id ?? null } : null;
               }
               if (!sql.includes("SELECT * FROM hosted_workspace_candidates")) return null;
               const [accountId, candidateId] = values;
@@ -339,6 +388,16 @@ function candidateEnvironment(initial = candidateRow(), activeBrokerWorker = fal
               }
               if (sql.includes("FROM hosted_workspace_feedback_rule_overrides")) {
                 return { results: options.feedbackOverrides ?? [] };
+              }
+              if (sql.includes("hosted_marketing_adapter_capabilities")) {
+                return { results: options.marketingCatalogRows ?? [] };
+              }
+              if (sql.includes("FROM hosted_marketing_post_assignments")) {
+                assert.match(sql, /request\.state = 'approved'/);
+                return {
+                  results: (options.marketingCaptureRequests ?? [])
+                    .filter((request) => request.state === "approved"),
+                };
               }
               throw new Error(`unexpected all SQL: ${sql}`);
             },
@@ -570,8 +629,11 @@ test("Workers AI schema uses provider-compatible constraints and keeps local uni
   assert.deepEqual(candidates.items.properties.refs_used.items.enum, ["kr-study-day", "kr-020"]);
   assert.equal(candidates.items.properties.principles_applied.minItems, 1);
   assert.equal("uniqueItems" in candidates.items.properties.principles_applied, false);
-  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.minItems, 5);
-  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.maxItems, 24);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.minItems, 18);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_items.maxItems, 22);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_todos.minItems, 8);
+  assert.equal(candidates.items.properties.image_inputs.properties.trace_todos.maxItems, 12);
+  assert.ok(candidates.items.properties.image_inputs.required.includes("trace_todos"));
   assert.ok(candidates.items.required.includes("posting_slot"));
   assert.ok(candidates.items.required.includes("appium_prompt"));
   assert.ok(candidates.items.required.includes("image_inputs"));
@@ -1057,6 +1119,8 @@ test("generation prompt binds the selected persona and country", () => {
   assert.match(prompt, new RegExp(profile.audience));
   assert.match(prompt, /topic, caption, trace_items/u);
   assert.match(prompt, /네 후보에서 각각 서로 달라야/u);
+  assert.match(prompt, /주간 일정 객체 18~22개/u);
+  assert.match(prompt, /할 일 8~12개/u);
   assert.deepEqual(schema.properties.candidates.items.properties.country.enum, ["KR"]);
   assert.deepEqual(
     schema.properties.candidates.items.properties.image_inputs.properties.language.enum,
@@ -1223,6 +1287,127 @@ test("image generation fails before queueing when no Mac worker is registered", 
   assert.equal(state.row().status, "caption_approved");
   assert.equal(state.row().capture_state, null);
   assert.equal(state.queuedTasks.length, 0);
+  assert.equal(state.captureTasks.length, 0);
+});
+
+test("a marketing candidate needs an approved bound native-capture request before queueing", async () => {
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true);
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /native capture request/u);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.captureTasks.length, 0);
+  assert.equal(state.queuedTasks.length, 0);
+});
+
+test("a planned native-capture request cannot queue a marketing candidate", async () => {
+  const capability = marketingCaptureCapability({ requestState: "planned" });
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true, {
+    marketingCaptureRequests: [capability.request],
+    marketingCatalogRows: [capability.catalog],
+  });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /native capture request/u);
+  assert.equal(state.row().capture_state, null);
+  assert.equal(state.captureTasks.length, 0);
+});
+
+test("a current approved native-capture binding queues exactly one marketing capture", async () => {
+  const capability = marketingCaptureCapability();
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true, {
+    marketingCaptureRequests: [capability.request],
+    marketingCatalogRows: [capability.catalog],
+  });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(state.row().capture_state, "queued");
+  assert.equal(state.captureTasks.length, 1);
+  assert.equal(state.queuedTasks.length, 0);
+});
+
+test("a stale native-capture binding cannot queue a marketing candidate", async () => {
+  const capability = marketingCaptureCapability({ bindingSha256: "f".repeat(64) });
+  const state = candidateEnvironment(candidateRow({
+    status: "caption_approved",
+    image_key: null,
+    image_sha256: null,
+    revision: 3,
+    capture_state: null,
+    capture_task_id: null,
+    capture_error: null,
+    capture_requested_at: null,
+    marketing_assignment_id: "assignment-1",
+  }), true, {
+    marketingCaptureRequests: [capability.request],
+    marketingCatalogRows: [capability.catalog],
+  });
+
+  const response = await handleHostedWorkspace(
+    new Request("https://workspace.example/api/candidates/candidate-1/generate-image", {
+      method: "POST",
+    }),
+    state.env,
+    "context",
+  );
+
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).detail, /binding is no longer active/u);
+  assert.equal(state.row().capture_state, null);
   assert.equal(state.captureTasks.length, 0);
 });
 

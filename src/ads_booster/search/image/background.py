@@ -74,19 +74,51 @@ _BLOCKED_IMAGE_HOSTS: Final = frozenset({"plus.unsplash.com"})
 # Stock farms serve watermarked previews - every hit carried a visible CrowdPic, LovePik or
 # Shutterstock stamp across the image.
 _WATERMARKED_STOCK_HOSTS: Final = (
-    "lovepik", "shutterstock", "freepik", "123rf", "dreamstime",
-    "istockphoto", "gettyimages", "crowdpic", "vecteezy",
+    "lovepik",
+    "shutterstock",
+    "freepik",
+    "123rf",
+    "dreamstime",
+    "istockphoto",
+    "gettyimages",
+    "crowdpic",
+    "vecteezy",
 )
 # Press photography: a real event, usually a real private person, and often a masthead
 # burned into the corner.
 _NEWS_HOSTS: Final = (
-    "news", "chosun", "donga", "joins", "joongang", "hani", "khan", "yna.co.kr",
-    "mk.co.kr", "hankyung", "sedaily", "topstarnews", "osen", "spotv", "mbn",
-    "sbs.co.kr", "kbs.co.kr", "imbc", "ytn", "nate.com", "newsis", "edaily",
+    "news",
+    "chosun",
+    "donga",
+    "joins",
+    "joongang",
+    "hani",
+    "khan",
+    "yna.co.kr",
+    "mk.co.kr",
+    "hankyung",
+    "sedaily",
+    "topstarnews",
+    "osen",
+    "spotv",
+    "mbn",
+    "sbs.co.kr",
+    "kbs.co.kr",
+    "imbc",
+    "ytn",
+    "nate.com",
+    "newsis",
+    "edaily",
 )
 _COMMERCE_HOSTS: Final = (
-    "ohou.se", "smartstore", "coupang", "11st", "gmarket", "auction.co.kr",
-    "wemakeprice", "tmon",
+    "ohou.se",
+    "smartstore",
+    "coupang",
+    "11st",
+    "gmarket",
+    "auction.co.kr",
+    "wemakeprice",
+    "tmon",
 )
 # Video thumbnails carry play affordances and burnt-in titles.
 _VIDEO_HOSTS: Final = ("youtube", "youtu.be", "douyin", "tiktok", "vimeo")
@@ -96,7 +128,13 @@ _LISTING_PATHS: Final = ("/search", "/s/photos", "/ideas/", "/images/search", "/
 # Titles that name the desktop the image was cut for. Measured, these are the 1920x1080
 # cohort that "고화질" style queries pull in, and none of them is shaped for a phone.
 _DESKTOP_TITLE_TOKENS: Final = (
-    "1920x1080", "2560x1440", "1366x768", "바탕 화면", "바탕화면", "듀얼", "모니터",
+    "1920x1080",
+    "2560x1440",
+    "1366x768",
+    "바탕 화면",
+    "바탕화면",
+    "듀얼",
+    "모니터",
 )
 # A brand asset, not a photograph. Kept to these two words: the wider list this started as
 # also matched "무료 다운로드" and "스톡", which ordinary Korean wallpaper sites put in

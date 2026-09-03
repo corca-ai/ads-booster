@@ -35,6 +35,7 @@ for (const filename of [
   "workspace.css",
   "workspace-navigation.js",
   "workspace-live.js",
+  "workspace-agent.js",
 ]) {
   const contents = await readFile(resolve(staticRoot, filename));
   await writeFile(resolve(outputRoot, "static", filename), contents);

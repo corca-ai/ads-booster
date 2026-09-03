@@ -12,7 +12,11 @@ const WORKER_EVENT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 export const MAX_PUBLIC_WORKER_EVENT_LIMIT = 100;
 const WORKER_STATES = new Set(["active", "draining"]);
 // The job kinds a task row can carry. A worker only leases a task whose kind it advertises.
-export const WORKER_TASK_KINDS = Object.freeze(["capture", "generate_candidates"]);
+export const WORKER_TASK_KINDS = Object.freeze([
+  "capture",
+  "generate_candidates",
+  "marketing_judgment",
+]);
 // What a worker that advertises nothing can do. Every Mac enrolled before caption generation
 // existed is one of those, and capture is the only job its Python knows how to run.
 const LEGACY_WORKER_TASK_KINDS = Object.freeze(["capture"]);
@@ -54,8 +58,15 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       const worker = await requireWorker(request, env.DB);
       const body = await readJson(request);
       await heartbeatWorker(env.DB, worker, body);
-      if (body.doctor?.ready !== true) return Response.json({ leases: [] });
-      return Response.json({ leases: await claimWorkerTasks(env.DB, worker, new Date()) });
+      if (body.doctor?.ready === true) {
+        return Response.json({ leases: await claimWorkerTasks(env.DB, worker, new Date()) });
+      }
+      if (body.capabilities?.marketing_reasoning_ready === true) {
+        return Response.json({
+          leases: await claimWorkerTasks(env.DB, worker, new Date(), ["marketing_judgment"]),
+        });
+      }
+      return Response.json({ leases: [] });
     }
     if (request.method === "POST" && url.pathname === "/v1/workers/tasks/ack") {
       const worker = await requireWorker(request, env.DB);
@@ -211,15 +222,17 @@ export function workerOperationalStatus(row, now = new Date()) {
   return row.current_task_id ? "busy" : "ready";
 }
 
-export async function claimWorkerTasks(db, worker, now = new Date()) {
+export async function claimWorkerTasks(db, worker, now = new Date(), allowedKinds = null) {
   if (worker.state !== "active") return [];
   await clearStaleWorkerAssignment(db, worker.worker_id, now);
   // What this Mac says it can run, read back from the row the heartbeat just wrote rather
   // than from the token lookup, so a worker that updated itself is trusted on this poll.
   const advertised = await claimableWorkerCapabilities(db, worker.worker_id);
-  const kinds = advertised.kinds;
+  const kinds = allowedKinds === null
+    ? advertised.kinds
+    : advertised.kinds.filter((kind) => allowedKinds.includes(kind));
   if (kinds.length === 0) return [];
-  const supportedCapability = advertised.feedbackContext ? "feedback_context_v1" : "__none__";
+  const advertisedCapabilitiesJson = JSON.stringify(advertised.capabilities);
   const kindPlaceholders = kinds.map(() => "?").join(", ");
   const current = await db.prepare(
     `SELECT task_id, task_json, lease_id, attempt_count
@@ -228,9 +241,10 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
        AND callback_id IS NULL AND callback_reservation_id IS NULL
        AND execution_started_at IS NULL AND lease_expires_at > ?
        AND kind IN (${kindPlaceholders})
-       AND (required_capability IS NULL OR required_capability = ?)
+       AND (required_capability IS NULL
+            OR json_extract(?, '$.' || required_capability) = 1)
      ORDER BY created_at LIMIT 1`,
-  ).bind(worker.worker_id, now.toISOString(), ...kinds, supportedCapability).first();
+  ).bind(worker.worker_id, now.toISOString(), ...kinds, advertisedCapabilitiesJson).first();
   if (current) return [leaseResponse(current)];
 
   const reservation = `claim:${crypto.randomUUID()}`;
@@ -247,9 +261,10 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND callback_reservation_id IS NULL AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND kind IN (${kindPlaceholders})
-         AND (required_capability IS NULL OR required_capability = ?)
+         AND (required_capability IS NULL
+              OR json_extract(?, '$.' || required_capability) = 1)
        ORDER BY created_at LIMIT 1`,
-    ).bind(now.toISOString(), ...kinds, supportedCapability).first();
+    ).bind(now.toISOString(), ...kinds, advertisedCapabilitiesJson).first();
     if (!task) {
       await clearWorkerReservation(db, worker.worker_id, reservation, now);
       return [];
@@ -266,7 +281,8 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
          AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
          AND kind IN (${kindPlaceholders})
-         AND (required_capability IS NULL OR required_capability = ?)
+         AND (required_capability IS NULL
+              OR json_extract(?, '$.' || required_capability) = 1)
          AND EXISTS (SELECT 1 FROM mac_workers
                      WHERE worker_id = ? AND state = 'active' AND current_task_id = ?)`,
     ).bind(
@@ -278,7 +294,7 @@ export async function claimWorkerTasks(db, worker, now = new Date()) {
       task.task_id,
       now.toISOString(),
       ...kinds,
-      supportedCapability,
+      advertisedCapabilitiesJson,
       worker.worker_id,
       reservation,
     ).run();
@@ -316,11 +332,11 @@ async function claimableWorkerCapabilities(db, workerId) {
   const row = await db.prepare(
     "SELECT capabilities_json FROM mac_workers WHERE worker_id = ?",
   ).bind(workerId).first();
-  if (!row) return { kinds: [], feedbackContext: false };
+  if (!row) return { kinds: [], capabilities: {} };
   const capabilities = parseObject(row.capabilities_json);
   return {
     kinds: workerTaskKinds(capabilities),
-    feedbackContext: capabilities.feedback_context_v1 === true,
+    capabilities,
   };
 }
 

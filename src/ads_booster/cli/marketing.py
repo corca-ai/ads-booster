@@ -9,17 +9,54 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import TYPE_CHECKING, Annotated, Never, Protocol
+from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 
 import typer
+from pydantic import ValidationError
 
-from ads_booster.marketing.errors import CloudflareQueueError
-from ads_booster.marketing.hosted_generation import (
-    HostedWorkspaceGenerationExecutor,
-    PlanlessHostedTaskExecutor,
+from ads_booster.marketing.agent_service.http_api import (
+    MarketingAgentApi,
+    serve_marketing_agent_api,
 )
+from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
+from ads_booster.marketing.agent_service.lifecycle import (
+    InstalledServicePaths,
+    build_installed_marketing_agent_service,
+)
+from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
+from ads_booster.marketing.agent_service.scheduler import (
+    AgentSkillScheduler,
+    DailySkillSchedule,
+)
+from ads_booster.marketing.dynamic_evidence_research import (
+    DynamicEvidenceResearchError,
+    DynamicEvidenceResearchRequest,
+    DynamicEvidenceResearchRunner,
+)
+from ads_booster.marketing.errors import CloudflareQueueError
+from ads_booster.marketing.evidence_research_operator import EvidenceResearchOperatorError
+from ads_booster.marketing.feature_launch_run import (
+    FeatureLaunchRunError,
+    FeatureLaunchRunner,
+    FeatureLaunchRunRequest,
+    HttpHostedCampaignControlPlane,
+)
+from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
+from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
+from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
+from ads_booster.marketing.hosted_feature_launch_run import HostedFeatureLaunchRunExecutor
+from ads_booster.marketing.hosted_generation import HostedWorkspaceGenerationExecutor
+from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
+from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
+from ads_booster.marketing.hosted_next_experiment_judgment import (
+    HostedNextExperimentJudgmentExecutor,
+)
+from ads_booster.marketing.hosted_reassessment_judgment import HostedOutcomeReassessmentExecutor
+from ads_booster.marketing.hosted_reference_research import HostedReferenceResearchExecutor
+from ads_booster.marketing.hosted_task_router import PlanlessHostedTaskExecutor
 from ads_booster.marketing.inbox import MarketingInbox
 from ads_booster.marketing.native_capture import build_hosted_capture_executor
 from ads_booster.marketing.worker_broker import (
@@ -64,15 +101,25 @@ from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.transport.http import create_http_client
 
 if TYPE_CHECKING:
+    from ads_booster.marketing.agent_service.application import MarketingAgentService
+    from ads_booster.marketing.hosted_task_router import PlanlessPrepared
     from ads_booster.transport.http import HttpClient
     from ads_booster.transport.json_types import JsonObject
 
 _HTTP_SUCCESS_MIN = 200
 _HTTP_SUCCESS_MAX = 300
+_DYNAMIC_RESEARCH_REQUEST_MAX_BYTES = 1024 * 1024
 
 app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
+agent_app = typer.Typer(no_args_is_help=True, help="Run bounded Marketing OS reasoning sessions.")
+service_app = typer.Typer(
+    no_args_is_help=True,
+    help="Operate the canonical on-premises Marketing Agent Service.",
+)
 app.add_typer(worker_app, name="worker")
+app.add_typer(agent_app, name="agent")
+app.add_typer(service_app, name="service")
 
 
 @app.command("version")
@@ -88,6 +135,274 @@ def version_command(
         typer.echo(json.dumps({"version": package_version}))
     else:
         typer.echo(package_version)
+
+
+@service_app.command("doctor")
+def service_doctor(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    """Report service readiness without requiring or inspecting Appium."""
+    executable = resolve_codex_executable()
+    paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    typer.echo(
+        json.dumps(
+            {
+                "schema_version": "trace.marketing-agent-service-doctor.v1",
+                "canonical_run_owner": "on_prem_marketing_agent_service",
+                "state_root": str(paths.root),
+                "reasoning_provider": "official-codex-cli",
+                "reasoning_ready": executable is not None,
+                "appium_required": False,
+                "ready": executable is not None,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@service_app.command("run")
+def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays explicit.
+    model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    host: Annotated[
+        str, typer.Option(help="Bind address; remote binds require OAuth.")
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    tenant: Annotated[str, typer.Option(help="Tenant bound to this service token.")] = "trace",
+    principal: Annotated[
+        str, typer.Option(help="Principal bound to approval decisions from this token.")
+    ] = "local-operator",
+    timeout_seconds: Annotated[
+        float, typer.Option(min=30.0, max=1800.0, help="Per-reasoning-turn timeout.")
+    ] = 300.0,
+) -> None:
+    """Run the always-on canonical Agent API; Appium workers are optional tools."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and run `codex login`"
+        raise typer.BadParameter(message)
+    introspection_url = os.environ.get("TRACE_MARKETING_OAUTH_INTROSPECTION_URL")
+    oauth = None
+    if introspection_url:
+        oauth = OAuthTokenIntrospector(
+            introspection_url=introspection_url,
+            client_id=_required("TRACE_MARKETING_OAUTH_CLIENT_ID"),
+            client_secret=_required("TRACE_MARKETING_OAUTH_CLIENT_SECRET"),
+            audience=_required("TRACE_MARKETING_OAUTH_AUDIENCE"),
+            tenant_claim=os.environ.get("TRACE_MARKETING_OAUTH_TENANT_CLAIM", "workspace_id"),
+        )
+    token = os.environ.get("TRACE_MARKETING_SERVICE_TOKEN", "")
+    if oauth is None and not token:
+        token = _required("TRACE_MARKETING_SERVICE_TOKEN")
+    paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    service = build_installed_marketing_agent_service(
+        paths=paths,
+        codex_executable=executable,
+        model_id=model,
+        timeout_seconds=timeout_seconds,
+        integrations=AgentServiceIntegrationConfig(
+            hosted_origin=os.environ.get("TRACE_MARKETING_HOSTED_ORIGIN"),
+            hosted_token=os.environ.get("TRACE_MARKETING_CONTROL_TOKEN"),
+            slack_bot_token=os.environ.get("TRACE_MARKETING_SLACK_BOT_TOKEN"),
+            slack_channel_id=os.environ.get("TRACE_MARKETING_SLACK_CHANNEL_ID"),
+            notion_token=os.environ.get("TRACE_MARKETING_NOTION_TOKEN"),
+            notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
+        ),
+    )
+    scheduler = _configured_daily_scheduler(service, tenant=tenant, principal=principal)
+    scheduler_stop = Event()
+    scheduler_thread = None
+    if scheduler is not None:
+        scheduler_thread = Thread(
+            target=_run_skill_scheduler,
+            args=(scheduler, scheduler_stop),
+            name="trace-marketing-skill-scheduler",
+            daemon=True,
+        )
+    typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
+    try:
+        serve_marketing_agent_api(
+            MarketingAgentApi(
+                service=service,
+                tenant_id=tenant,
+                principal_id=principal,
+                bearer_token=token,
+                oauth_authenticator=oauth,
+            ),
+            host=host,
+            port=port,
+            on_started=None if scheduler_thread is None else scheduler_thread.start,
+        )
+    finally:
+        scheduler_stop.set()
+        if scheduler_thread is not None:
+            scheduler_thread.join(timeout=5)
+
+
+@agent_app.command("research")
+def agent_research(
+    input_path: Annotated[
+        Path,
+        typer.Option(
+            "--input",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Immutable dynamic-research request JSON.",
+        ),
+    ],
+    model: Annotated[
+        str,
+        typer.Option(help="Pinned official Codex model recorded in every planner receipt."),
+    ],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    timeout_seconds: Annotated[
+        float,
+        typer.Option(min=30.0, max=1800.0, help="Per-Codex-turn timeout."),
+    ] = 300.0,
+) -> None:
+    """Dynamically choose read-only evidence tools and emit a receipt-grounded brief."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and log in"
+        raise typer.BadParameter(message)
+    try:
+        request = _load_dynamic_research_request(input_path)
+        result = DynamicEvidenceResearchRunner(
+            codex=CodexCli(executable=executable, model=model),
+            state_root=_home(home) / "marketing-agent" / "runtime",
+            model_id=model,
+            timeout_seconds=timeout_seconds,
+        ).run(request)
+    except ValidationError as error:
+        typer.echo("dynamic_research_request_invalid", err=True)
+        raise typer.Exit(code=2) from error
+    except (EvidenceResearchOperatorError, OSError, UnicodeError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(result.model_dump_json(indent=2))
+    if result.state == "awaiting_reconciliation":
+        raise typer.Exit(code=3)
+
+
+@agent_app.command("launch")
+def agent_launch(
+    input_path: Annotated[
+        Path,
+        typer.Option(
+            "--input",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Immutable feature-launch run request JSON.",
+        ),
+    ],
+    url: Annotated[str, typer.Option(help="Hosted Trace control-plane HTTPS origin.")],
+    model: Annotated[
+        str,
+        typer.Option(help="Pinned official Codex model recorded in research receipts."),
+    ],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    timeout_seconds: Annotated[
+        float,
+        typer.Option(min=30.0, max=1800.0, help="Per-Codex-turn timeout."),
+    ] = 300.0,
+) -> None:
+    """Research a feature, then safely hand one shadow campaign to the hosted loop."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and log in"
+        raise typer.BadParameter(message)
+    token = _required("TRACE_MARKETING_CONTROL_TOKEN")
+    agent_home = _home(home) / "marketing-agent"
+    try:
+        request = FeatureLaunchRunRequest.model_validate_json(
+            _read_bounded_input(input_path, error="feature_launch_request_too_large")
+        )
+        with create_http_client() as http:
+            result = FeatureLaunchRunner(
+                research_runner=DynamicEvidenceResearchRunner(
+                    codex=CodexCli(executable=executable, model=model),
+                    state_root=agent_home / "runtime",
+                    model_id=model,
+                    timeout_seconds=timeout_seconds,
+                ),
+                control_plane=HttpHostedCampaignControlPlane(
+                    http=http,
+                    origin=_https_origin(url),
+                    bearer_token=token,
+                ),
+                state_root=agent_home / "feature-launch",
+            ).run(request)
+    except ValidationError as error:
+        typer.echo("feature_launch_request_invalid", err=True)
+        raise typer.Exit(code=2) from error
+    except (EvidenceResearchOperatorError, FeatureLaunchRunError, OSError, UnicodeError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(result.model_dump_json(indent=2))
+    if result.state == "awaiting_reconciliation":
+        raise typer.Exit(code=3)
+    if result.state == "blocked":
+        raise typer.Exit(code=4)
+
+
+def _load_dynamic_research_request(input_path: Path) -> DynamicEvidenceResearchRequest:
+    return DynamicEvidenceResearchRequest.model_validate_json(
+        _read_bounded_input(input_path, error="dynamic_research_request_too_large")
+    )
+
+
+def _configured_daily_scheduler(
+    service: MarketingAgentService, *, tenant: str, principal: str
+) -> AgentSkillScheduler | None:
+    input_value = os.environ.get("TRACE_MARKETING_DAILY_RESEARCH_INPUT")
+    if not input_value:
+        return None
+    input_path = Path(input_value).expanduser()
+    if not input_path.is_file() or input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
+        message = "TRACE_MARKETING_DAILY_RESEARCH_INPUT must be a bounded JSON file"
+        raise typer.BadParameter(message)
+    context = {"research_request": json.loads(input_path.read_text(encoding="utf-8"))}
+    schedule_at = os.environ.get("TRACE_MARKETING_DAILY_AT", "08:00")
+    try:
+        hour_text, minute_text = schedule_at.split(":", maxsplit=1)
+        hour, minute = int(hour_text), int(minute_text)
+    except ValueError as error:
+        message = "TRACE_MARKETING_DAILY_AT must be HH:MM"
+        raise typer.BadParameter(message) from error
+    return AgentSkillScheduler(
+        service,
+        (
+            DailySkillSchedule(
+                skill_id="research.daily_slack",
+                tenant_id=os.environ.get("TRACE_MARKETING_DAILY_TENANT", tenant),
+                principal_id=os.environ.get("TRACE_MARKETING_DAILY_PRINCIPAL", principal),
+                timezone=os.environ.get("TRACE_MARKETING_DAILY_TIMEZONE", "Asia/Seoul"),
+                hour=hour,
+                minute=minute,
+                context=cast("JsonObject", context),
+            ),
+        ),
+    )
+
+
+def _run_skill_scheduler(scheduler: AgentSkillScheduler, stop: Event) -> None:
+    while not stop.is_set():
+        try:
+            _ = scheduler.tick(now=datetime.now(UTC))
+        except Exception as error:  # noqa: BLE001 - scheduler survives one bounded run failure.
+            typer.echo(f"scheduled skill deferred: {type(error).__name__}", err=True)
+        _ = stop.wait(30)
+
+
+def _read_bounded_input(input_path: Path, *, error: str) -> str:
+    if input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
+        raise DynamicEvidenceResearchError(error)
+    return input_path.read_text(encoding="utf-8")
 
 
 @dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
@@ -647,10 +962,43 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                     codex=CodexCli(executable=executable),
                     output_root=agent_home / "generated",
                 ),
+                judgment=HostedMarketingJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                creative_judgment=HostedCreativeJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                candidate_judgment=HostedCandidateJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                experiment_evaluation=HostedExperimentEvaluationExecutor(),
+                learning_judgment=HostedLearningJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                reference_research=HostedReferenceResearchExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                outcome_reassessment=HostedOutcomeReassessmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                next_experiment=HostedNextExperimentJudgmentExecutor(
+                    codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                feature_launch_run=HostedFeatureLaunchRunExecutor(
+                    codex_executable=executable,
+                    output_root=agent_home / "generated",
+                ),
             )
             event_http = create_http_client()
             event_broker = WorkerBrokerClient(event_http, config, credential, heartbeat)
-            worker = MarketingWorkerLoop(
+            worker: MarketingWorkerLoop[PlanlessPrepared] = MarketingWorkerLoop(
                 broker=broker,
                 inbox=MarketingInbox(root),
                 preparer=executor,

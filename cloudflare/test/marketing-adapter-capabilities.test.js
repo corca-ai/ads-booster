@@ -1,0 +1,265 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+
+import {
+  assertCreativeCapabilitySnapshot,
+  canonicalJson,
+  creativeFormatsForCapabilities,
+  installMarketingToolReference,
+  listMarketingSkills,
+  listMarketingToolInstallations,
+  MarketingCapabilityError,
+  resolveCreativeCapabilityBindings,
+  validateCreativeCapabilitySnapshot,
+} from "../src/marketing-adapter-capabilities.js";
+
+function mutationDb(rows = []) {
+  const calls = [];
+  return {
+    calls,
+    prepare(sql) {
+      return {
+        bind(...values) {
+          calls.push({ sql, values });
+          return {
+            async all() { return { results: rows }; },
+            async run() { return { meta: { changes: 1 } }; },
+          };
+        },
+      };
+    },
+  };
+}
+
+function digest(value) {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function catalogRows({ copyEnabled = 1, tamperCaptureDescriptor = false } = {}) {
+  return [
+    ["capture.native_png", "trace.native_capture", 1],
+    ["copy.text", "trace.marketing_copy", copyEnabled],
+  ].map(([capability_id, owner_id, enabled]) => {
+    const descriptor = {
+      schema_version: "trace.adapter-capability.v1",
+      capability_id,
+      effect_class: "local_artifact",
+      owner_id,
+      request_schema_sha256: "a".repeat(64),
+      receipt_schema_sha256: "b".repeat(64),
+      activation_state: "active",
+    };
+    return {
+      capability_id,
+      descriptor_json: canonicalJson(descriptor),
+      descriptor_sha256: tamperCaptureDescriptor && capability_id === "capture.native_png"
+        ? "0".repeat(64)
+        : digest(descriptor),
+      effect_class: descriptor.effect_class,
+      request_schema_sha256: descriptor.request_schema_sha256,
+      receipt_schema_sha256: descriptor.receipt_schema_sha256,
+      owner_id,
+      enabled,
+      activation_state: "active",
+    };
+  });
+}
+
+function catalogDb(rows) {
+  return {
+    prepare(sql) {
+      return {
+        bind(_accountId, ...capabilityIds) {
+          return {
+            async all() {
+              assert.match(sql, /hosted_marketing_adapter_capabilities/);
+              return {
+                results: rows.filter((row) => capabilityIds.includes(row.capability_id)),
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+async function payloadFor(rows) {
+  const bindings = await resolveCreativeCapabilityBindings(catalogDb(rows), "trace_kr");
+  return {
+    creative_contract_version: "v2",
+    available_capabilities: bindings.map((binding) => binding.capability_id),
+    available_formats: creativeFormatsForCapabilities(
+      bindings.map((binding) => binding.capability_id),
+    ),
+    capability_bindings: bindings,
+    capability_snapshot_sha256: digest({ capability_bindings: bindings }),
+  };
+}
+
+test("creative planning freezes server-derived descriptor bindings", async () => {
+  const rows = catalogRows();
+  const bindings = await resolveCreativeCapabilityBindings(catalogDb(rows), "trace_kr");
+
+  assert.deepEqual(bindings.map((binding) => binding.capability_id), [
+    "capture.native_png",
+    "copy.text",
+  ]);
+  assert.equal(bindings[0].binding_sha256, digest({
+    capability_id: "capture.native_png",
+    descriptor_sha256: rows[0].descriptor_sha256,
+    effect_class: "local_artifact",
+    request_schema_sha256: "a".repeat(64),
+    receipt_schema_sha256: "b".repeat(64),
+    owner_id: "trace.native_capture",
+  }));
+});
+
+test("creative formats are derived from executable adapter capabilities", async () => {
+  const payload = await payloadFor(catalogRows());
+  assert.deepEqual(payload.available_formats, ["native_sequence"]);
+  await assert.doesNotReject(validateCreativeCapabilitySnapshot(payload));
+
+  payload.available_formats = ["native_sequence", "screen_recording"];
+  await assert.rejects(
+    validateCreativeCapabilitySnapshot(payload),
+    (error) => error instanceof MarketingCapabilityError && /formats/.test(error.message),
+  );
+});
+
+test("creative planning adapts to the active tool subset instead of requiring optional copy", async () => {
+  const bindings = await resolveCreativeCapabilityBindings(
+    catalogDb(catalogRows({ copyEnabled: 0 })),
+    "trace_kr",
+  );
+  const payload = {
+    creative_contract_version: "v2",
+    available_capabilities: bindings.map((binding) => binding.capability_id),
+    available_formats: creativeFormatsForCapabilities(
+      bindings.map((binding) => binding.capability_id),
+    ),
+    capability_bindings: bindings,
+    capability_snapshot_sha256: digest({ capability_bindings: bindings }),
+  };
+
+  assert.deepEqual(payload.available_capabilities, ["capture.native_png"]);
+  assert.deepEqual(payload.available_formats, ["native_sequence"]);
+  await assert.doesNotReject(validateCreativeCapabilitySnapshot(payload));
+});
+
+test("creative planning stops when active tools cannot complete any format", async () => {
+  await assert.rejects(
+    resolveCreativeCapabilityBindings(catalogDb(catalogRows({ copyEnabled: 0 }).slice(1)), "trace_kr"),
+    (error) => error instanceof MarketingCapabilityError && /no executable/.test(error.message),
+  );
+});
+
+test("creative callback fails closed if a frozen adapter was revoked or changed", async () => {
+  const activeRows = catalogRows();
+  const payload = await payloadFor(activeRows);
+
+  await assert.doesNotReject(
+    assertCreativeCapabilitySnapshot(catalogDb(activeRows), "trace_kr", payload),
+  );
+  await assert.rejects(
+    assertCreativeCapabilitySnapshot(catalogDb(catalogRows({ copyEnabled: 0 })), "trace_kr", payload),
+    (error) => error instanceof MarketingCapabilityError
+      && /not active|catalog changed/.test(error.message),
+  );
+});
+
+test("activating an unrelated creative tool does not invalidate a frozen plan", async () => {
+  const originalRows = catalogRows();
+  const payload = await payloadFor(originalRows);
+  const screenDescriptor = {
+    schema_version: "trace.adapter-capability.v1",
+    capability_id: "capture.screen_recording",
+    effect_class: "local_artifact",
+    owner_id: "trace.screen_recording",
+    request_schema_sha256: "c".repeat(64),
+    receipt_schema_sha256: "d".repeat(64),
+    activation_state: "active",
+  };
+  const laterRows = [...originalRows, {
+    capability_id: screenDescriptor.capability_id,
+    descriptor_json: canonicalJson(screenDescriptor),
+    descriptor_sha256: digest(screenDescriptor),
+    effect_class: screenDescriptor.effect_class,
+    request_schema_sha256: screenDescriptor.request_schema_sha256,
+    receipt_schema_sha256: screenDescriptor.receipt_schema_sha256,
+    owner_id: screenDescriptor.owner_id,
+    enabled: 1,
+    activation_state: "active",
+  }];
+
+  await assert.doesNotReject(
+    assertCreativeCapabilitySnapshot(catalogDb(laterRows), "trace_kr", payload),
+  );
+});
+
+test("descriptor or wire-binding tampering never becomes a valid capability snapshot", async () => {
+  await assert.rejects(
+    resolveCreativeCapabilityBindings(catalogDb(catalogRows({ tamperCaptureDescriptor: true })), "trace_kr"),
+    (error) => error instanceof MarketingCapabilityError && /descriptor digest/.test(error.message),
+  );
+  const payload = await payloadFor(catalogRows());
+  payload.capability_bindings[1].binding_sha256 = "f".repeat(64);
+
+  await assert.rejects(
+    validateCreativeCapabilitySnapshot(payload),
+    (error) => error instanceof MarketingCapabilityError && /binding digest/.test(error.message),
+  );
+});
+
+test("agent installs only server-owned tool definitions as non-executable references", async () => {
+  const db = mutationDb();
+  const result = await installMarketingToolReference(
+    db,
+    "trace_kr",
+    "publish.threads",
+    "2026-09-03T00:00:00.000Z",
+  );
+
+  assert.equal(result.activation_state, "registered_reference");
+  assert.equal(result.operator_action_required, "oauth_consent");
+  assert.equal(result.setup_path, "/api/threads/oauth/start");
+  assert.match(db.calls[0].sql, /ON CONFLICT/);
+  assert.equal(db.calls[0].values[1], "publish.threads");
+  assert.match(db.calls[0].values[2], /"activation_state":"registered_reference"/);
+
+  await assert.rejects(
+    installMarketingToolReference(db, "trace_kr", "arbitrary.shell", "now"),
+    (error) => error instanceof MarketingCapabilityError && /supported catalog/.test(error.message),
+  );
+});
+
+test("tool inventory distinguishes available setup from active execution", async () => {
+  const tools = await listMarketingToolInstallations(mutationDb([{
+    capability_id: "publish.threads",
+    enabled: 1,
+    activation_state: "registered_reference",
+    updated_at: "2026-09-03T00:00:00.000Z",
+  }]), "trace_kr");
+
+  assert.deepEqual(tools.map((tool) => [tool.capability_id, tool.activation_state]), [
+    ["research.web", "not_installed"],
+    ["capture.native_png", "not_installed"],
+    ["publish.threads", "registered_reference"],
+    ["deliver.slack", "not_installed"],
+  ]);
+});
+
+test("skills are versioned procedures whose readiness comes from independent tools", async () => {
+  const skills = await listMarketingSkills(mutationDb([
+    { capability_id: "capture.native_png", enabled: 1, activation_state: "active" },
+    { capability_id: "publish.threads", enabled: 1, activation_state: "active" },
+    { capability_id: "research.web", enabled: 1, activation_state: "active" },
+  ]), "trace_kr");
+
+  assert.deepEqual(skills.map((skill) => [skill.skill_id, skill.ready, skill.blockers]), [
+    ["research.daily_slack", false, ["deliver.slack"]],
+    ["threads.validated_format_replication", true, []],
+  ]);
+  assert.equal(skills[1].human_checkpoint, "artifact_and_publication_approval");
+});

@@ -1,8 +1,22 @@
 import { DurableObject, WorkflowEntrypoint } from "cloudflare:workers";
 
 import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-workspace.js";
+import { receiveHostedCreativePlanCallback } from "./hosted-creative-plan-callback.js";
+import { receiveHostedCandidateMaterializationCallback } from "./hosted-candidate-materialization-callback.js";
+import { receiveHostedExperimentEvaluationCallback } from "./hosted-experiment-evaluation-callback.js";
+import { receiveHostedFeatureLaunchRunCallback } from "./hosted-feature-launch-run-callback.js";
+import { receiveHostedLearningSynthesisCallback } from "./hosted-learning-synthesis-callback.js";
+import { receiveHostedNextExperimentCallback } from "./hosted-next-experiment-callback.js";
+import { receiveHostedOutcomeReassessmentCallback } from "./hosted-outcome-reassessment-callback.js";
+import { receiveHostedReferenceResearchCallback } from "./hosted-reference-research-callback.js";
 import { receiveHostedGenerationCallback } from "./hosted-generation-callback.js";
+import { receiveHostedMarketingJudgmentCallback } from "./hosted-marketing-judgment-callback.js";
 import { HttpError } from "./http-error.js";
+import { MarketingCapabilityError } from "./marketing-adapter-capabilities.js";
+import {
+  prepareMarketingCaptureManifests,
+  recordMarketingCaptureManifests,
+} from "./hosted-capture-manifests.js";
 import {
   MAX_HOSTED_CAPTURE_CALLBACK_BYTES,
   prepareHostedCaptureResult,
@@ -21,6 +35,10 @@ import { runHostedThreadsEngagement } from "./threads/engagement.js";
 import { dispatchHostedThreadsPublication } from "./threads/publication.js";
 import { runHostedThreadsPublications } from "./threads/scheduling.js";
 import { threadsConfigurationState } from "./threads/config.js";
+import { runDueMarketingEvaluations } from "./marketing-agent.js";
+import { runDueMarketingAgentDelegations } from "./marketing-agent-delegations.js";
+import { runDueNextExperimentRequests } from "./marketing-next-experiment.js";
+import { runDueSuccessorActivations } from "./marketing-successor-activation.js";
 
 import {
   accountName,
@@ -461,6 +479,10 @@ export default {
     ctx.waitUntil(Promise.all([
       startDueRuns(env),
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
+      runDueMarketingEvaluations(env),
+      runDueMarketingAgentDelegations(env),
+      runDueNextExperimentRequests(env),
+      runDueSuccessorActivations(env),
       ...threadsTasks,
     ]));
   },
@@ -655,13 +677,47 @@ export async function receiveCallback(env, callback, worker = null) {
   const hostedTask = await env.DB.prepare(
     `SELECT task_id, run_id, account_id, candidate_id, candidate_revision,
             state, callback_id, result_json, dispatch_mode, worker_id, lease_id,
-            execution_started_at, callback_reservation_id, kind, persona_id, task_json
+            execution_started_at, callback_reservation_id, kind, persona_id, task_json,
+            required_capability, created_at
      FROM hosted_workspace_capture_tasks WHERE task_id = ?`,
   )
     .bind(callback.task_id)
     .first();
   if (hostedTask?.kind === "generate_candidates") {
     return receiveHostedGenerationCallback(env, hostedTask, callback, worker);
+  }
+  if (hostedTask?.kind === "marketing_judgment") {
+    let judgment = null;
+    try {
+      judgment = JSON.parse(hostedTask.task_json)?.payload?.judgment ?? null;
+    } catch {
+      // The strategy callback owns the stable malformed-payload error for this task kind.
+    }
+    if (judgment === "creative_plan") {
+      return receiveHostedCreativePlanCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "candidate_materialization") {
+      return receiveHostedCandidateMaterializationCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "experiment_evaluation") {
+      return receiveHostedExperimentEvaluationCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "learning_synthesis") {
+      return receiveHostedLearningSynthesisCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "outcome_reassessment") {
+      return receiveHostedOutcomeReassessmentCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "next_experiment") {
+      return receiveHostedNextExperimentCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "market_research") {
+      return receiveHostedReferenceResearchCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "feature_launch_run") {
+      return receiveHostedFeatureLaunchRunCallback(env, hostedTask, callback, worker);
+    }
+    return receiveHostedMarketingJudgmentCallback(env, hostedTask, callback, worker);
   }
   if (hostedTask) return receiveHostedCaptureCallback(env, hostedTask, callback, worker);
   if (resultBytes > MAX_CALLBACK_RESULT_BYTES) {
@@ -754,6 +810,24 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
     return { accepted: true, duplicate: true };
   }
 
+  const now = new Date().toISOString();
+  let marketingCaptureManifests = [];
+  if (status === "succeeded") {
+    try {
+      marketingCaptureManifests = await prepareMarketingCaptureManifests(
+        env,
+        task,
+        imageKey,
+        imageDigest,
+        storedResult.output,
+      );
+    } catch (error) {
+      if (error instanceof MarketingCapabilityError) {
+        throw new HttpError(409, error.message);
+      }
+      throw error;
+    }
+  }
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
       env.DB, worker, task, callback.callback_id, storedResultJson,
@@ -761,7 +835,6 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
     if (reservation.duplicate) return { accepted: true, duplicate: true };
   }
 
-  const now = new Date().toISOString();
   if (status === "succeeded") {
     await env.ARTIFACTS.put(imageKey, image, {
       httpMetadata: { contentType: "image/png" },
@@ -807,6 +880,7 @@ async function receiveHostedCaptureCallback(env, task, callback, worker = null) 
         await env.ARTIFACTS.delete(imageKey);
       }
     }
+    await recordMarketingCaptureManifests(env, marketingCaptureManifests);
   } else {
     const failureCode = typeof callback.result?.failure_code === "string"
       ? callback.result.failure_code.slice(0, 200)
@@ -1061,4 +1135,13 @@ async function sha256(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

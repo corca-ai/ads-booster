@@ -14,6 +14,7 @@ from ads_booster.marketing.models import (
     TaskCallback,
     TaskResult,
     TaskStatus,
+    task_unknown_side_effect_code,
 )
 
 if TYPE_CHECKING:
@@ -257,7 +258,7 @@ class MarketingInbox:
                     task,
                     TaskResult(
                         status=TaskStatus.UNKNOWN_SIDE_EFFECT,
-                        failure_code="native_appium_side_effect_unknown",
+                        failure_code=task_unknown_side_effect_code(task.kind),
                     ),
                     now,
                 )
