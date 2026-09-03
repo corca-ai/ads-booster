@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const built = async (path) => readFile(new URL(`../dist/${path}`, import.meta.url), "utf8");
+const deployWorkflow = async () =>
+  readFile(new URL("../../.github/workflows/deploy-cloudflare.yml", import.meta.url), "utf8");
 
 test("built workspace retains only the requested intake controls and candidate bulk deletion", async () => {
   const [markup, source] = await Promise.all([
@@ -20,6 +22,15 @@ test("built workspace retains only the requested intake controls and candidate b
   assert.match(source, /createProposalAccount\(proposal, use\)/u);
   assert.match(source, /const deleteAllCandidates/u);
   assert.match(source, /request\("\/api\/candidates", \{[\s\S]*method: "DELETE"/u);
+});
+
+test("deployment health check follows the current workspace navigation contract", async () => {
+  const [markup, workflow] = await Promise.all([built("index.html"), deployWorkflow()]);
+  for (const marker of ["data-country-home", "data-account-home", "data-account-workspace"]) {
+    assert.match(markup, new RegExp(marker, "u"));
+    assert.match(workflow, new RegExp(marker, "u"));
+  }
+  assert.doesNotMatch(workflow, /data-context-select/u);
 });
 
 test("built workspace exposes separate Mac and Threads operations controls", async () => {

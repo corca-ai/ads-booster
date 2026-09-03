@@ -135,7 +135,9 @@ jobs:
             --retry 5 --retry-all-errors --retry-delay 3 \
             "$workspace_url")"
           test "${workspace#*data-workspace-live}" != "$workspace"
-          test "${workspace#*data-context-select}" != "$workspace"
+          test "${workspace#*data-country-home}" != "$workspace"
+          test "${workspace#*data-account-home}" != "$workspace"
+          test "${workspace#*data-account-workspace}" != "$workspace"
           test "${workspace#*data-worker-title}" != "$workspace"
           test "${workspace#*data-threads-manager-open}" != "$workspace"
           test "${workspace#*워크스페이스 접속 ID}" = "$workspace"
