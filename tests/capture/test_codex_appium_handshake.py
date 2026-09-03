@@ -689,14 +689,10 @@ def test_codex_appium_prompt_no_longer_demands_every_row_on_screen() -> None:
     assert "visibly contain" not in prompt
 
 
-def test_codex_appium_prompt_does_not_ask_codex_to_retype_the_calendar() -> None:
+def test_codex_appium_prompt_references_both_worker_owned_calendar_namespaces() -> None:
     # When the prompt is built
     prompt = codex_appium_prompt("panels")
 
-    # Then it does not ask for the schedule rows to be created. The worker already wrote
-    # them into the request-owned iOS calendar and Trace draws what that calendar holds, so
-    # authoring them again in the UI is duplicated work on the slowest surface in the job.
-    assert "Do not create the trace_items rows" in prompt
-    assert "Each trace_items entry is an object" not in prompt
-    # And the to-dos are still authored here, because nothing upstream creates reminders.
-    assert "Do create every promotion_material.trace_todos entry" in prompt
+    # Then the machine-readable job fields route each panel to its own prepared Calendar
+    assert "calendar_namespace" in prompt
+    assert "todo_calendar_namespace" in prompt
