@@ -1,7 +1,31 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-03
+
+## On-premises Marketing Agent transition
+
+The new dependency direction is portable contracts → agent core → agent service → provider/tool/
+channel adapters. Existing Appium, candidate, Threads, and Cloudflare effect owners remain leaves
+behind wrappers; they must not import or become the Agent core.
+
+| Package | Responsibility | Must not own |
+| --- | --- | --- |
+| `contracts/agent_run.py` | portable Run, Step, Intent, snapshot, invocation, approval, receipt, outcome, learning, and record envelopes | provider calls, storage, channel state |
+| `contracts/tool_capability.py` | complete ToolDescriptor policy/readiness/idempotency/reconciliation contract | registry selection or execution |
+| `contracts/reasoning.py` | replaceable structured reasoning request and decision | Codex process lifecycle |
+| `marketing/agent_core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
+| `marketing/agent_service/` | canonical on-prem application flow and append-only SQLite repository | channel-specific planning or effect implementation |
+
+`marketing/runtime.py` remains the execution-safety kernel for write-ahead invocation, exact-call
+approval, receipt validation, restart recovery, and reconciliation. The service composes it; it does
+not fork those guarantees. The previous deleted `agent/` connector-specific product is not restored,
+and no `trace-agent` or `trace-ads` entrypoint is introduced.
+
+Current Cloudflare/D1 hosted Run code remains a compatibility owner until the projection cutover is
+implemented and verified. New portable records must not be dual-written as independently mutable
+authorities. See [`on-prem-marketing-agent-service.md`](../contracts/on-prem-marketing-agent-service.md)
+for current, transition, and target boundaries.
 
 ## Composition
 
@@ -134,9 +158,66 @@ Codex reasoning is ready; capture and candidate-generation readiness are unchang
 `marketing/hosted_task_router.py` is the worker composition root mapping subtypes to leaf executors.
 `hosted_generation.py`, native capture, and each judgment module remain tool owners.
 
+`cloudflare/src/marketing-agent-runs.js` owns the channel-independent hosted run intake, immutable
+request/task binding, account-scoped lifecycle projection, and idempotent replay. Migration
+`0035_hosted_marketing_agent_runs.sql` owns that run ledger separately from the campaign ledger.
+`cloudflare/src/marketing-run-capabilities.js` owns the host projection of the first common,
+observe-only research action plane. Migration
+`0037_marketing_agent_run_capability_receipts.sql` freezes its per-run snapshot and owns the
+append-only invocation/receipt/observation ledger. The matching strict Python shapes live in
+`contracts/marketing_capability.py`; parity tests bind the host and installed worker constants and
+canonical subset digest.
+`marketing/hosted_feature_launch_run.py` is its no-effect Mac leaf: it pins the task-selected official
+Codex model, validates the host snapshot before provider execution, constructs the runtime registry
+from that snapshot, and invokes only `DynamicEvidenceResearchRunner`. Its result exports a
+worker-reported ordered canonical envelope derived from persisted runtime events. The callback independently
+re-derives the host snapshot and recomputes the redacted descriptor, invocation, call, decision,
+hand-result, receipt, and observation digests before validating exact scope/action/source/cost/lineage
+coverage and appending the full proof envelope. It never constructs a
+`FeatureLaunchRunner`, control-plane client, campaign, candidate, Appium action, or publication.
+`cloudflare/src/marketing-run-intents.js` and the matching Python contract own the next no-effect
+intent descriptor projection. They derive only currently eligible stop, bounded needs-input, and
+shadow-proposal options from the validated research result. Migration
+`0038_marketing_agent_run_intent_steps.sql` freezes the chosen snapshot/decision and owns the
+append-only run-step record. `0039_marketing_agent_resume_loop.sql` adds the immutable run-to-task
+mapping, child receipt ledger, and compare-and-swap run head. `marketing-agent-runs.js` owns the
+single account-scoped customer-context resume admission and creates a new sequence-two task; it never
+resets a completed broker task. The callback reconstructs the planner bytes and may delegate only
+the shadow proposal to the existing campaign owner; stop creates no task, and request-more may
+create only that bounded research child.
+`cloudflare/src/hosted-feature-launch-run-callback.js` independently binds the worker result back to
+the stored request, validates the full quarantined market proposal against its finding digest, and
+derives the only admissible lineage. For a proposal it commits the proof, decision step, completed
+worker task, and a `0040` immutable delegation outbox record in one batch.
+`cloudflare/src/marketing-agent-delegations.js` owns scheduled and immediate reconciliation: it
+revalidates the stored outbox/step/run binding, delegates campaign creation to the existing
+idempotent `createShadowCampaign` owner, CAS-finalizes the run, and durably defers failed rows with
+capped exponential backoff and a non-sensitive failure code so later rows remain eligible. That owner places the exact proposal and digest in the existing
+`market_research` task. `marketing/hosted_reference_research.py` consumes a frozen seed without a
+second provider search, and its Cloudflare callback requires the returned snapshot to equal that seed
+before the existing URL byte verifier can create receipts and strategy input. `index.js` performs judgment-subtype callback
+dispatch and schedules delegation reconciliation. Broker task IDs and product run/campaign IDs are distinct to preserve the existing task
+run uniqueness contract.
+`cloudflare/src/marketing-agent-run-journey.js` is a read-only projection owner. It derives a bounded
+run journey from the existing campaign, origin, activation, evaluation, reassessment,
+next-experiment, and learning records. It performs parent-scoped breadth-first expansion through
+constant-parameter, index-forced queries and hydrates in D1-safe 99-ID chunks under fixed node/depth
+bounds; migration `0041` owns the matching origin/activation/evaluation/learning indexes. It owns no state
+transition and writes no duplicate graph.
+`hosted-experiment-evaluation-callback.js` commits a valid evaluation and the downstream
+capability-gated reassessment task atomically without requiring a compatible worker to be online at
+callback time.
+
 `marketing/hosted_creative_judgment.py` owns the proof-first MediaPlan proposal and creates no tool
 action. It validates frozen capability descriptor bindings and derives the prompt's capability IDs
-from them; it never constructs a binding. `marketing/hosted_candidate_judgment.py` materializes one approved, evidence-bound
+and executable format allowlist from them; it never constructs a binding. Cloudflare derives the same
+allowlist when creating a `creative_plan_v2` task and revalidates each format-to-capability
+requirement on callback. Currently only `native_sequence` is executable; recording, carousel,
+designed-static, and text-only formats remain unavailable until their adapters exist. The current
+worker heartbeat additionally advertises `creative_plan_v1` only as a drain capability for frozen
+queued tasks. Only the creative callback opts into that legacy validator; current task creation and
+every other judgment subtype continue to require their exact current version.
+`marketing/hosted_candidate_judgment.py` materializes one approved, evidence-bound
 candidate and reuses `workspace.CandidateImageInputs` rather than defining a marketing-only image
 shape. `cloudflare/src/candidate-image-inputs.js` is the matching control-plane normalizer shared by
 ordinary candidate delivery and marketing materialization. New marketing materialization requires
@@ -186,8 +267,11 @@ no-effect approval receipt plus activation intent.
 `cloudflare/src/marketing-successor-activation.js` owns the activation-time source revalidation and
 the atomic, deterministic creation of one successor shadow campaign and its ordinary strategy task;
 `marketing/hosted_judgment.py` and `hosted-marketing-judgment-callback.js` independently enforce the
-approved successor constraints before storing its strategy. None of these modules imports or replaces candidate, native-capture, or
-Threads effect owners.
+approved successor constraints before storing its strategy. Reviewer authority remains in the
+Cloudflare activation ledger and is not part of a worker/model projection. None of these modules
+imports or replaces candidate, native-capture, or Threads effect owners.
+`marketing-agent.js` projects the latest activation's safe operational status on the source campaign;
+it does not expose the approval grant or reviewer record.
 Learning synthesis receives a server-derived `MarketingLearningApplicability`; its model may explain
 scope in prose but cannot broaden the selector. The callback binds that selector into the candidate,
 re-derives it from D1's evaluation/campaign/packet/account lineage, and rejects drift before a write.
@@ -207,6 +291,18 @@ evaluation's publication `tool_failure`. Their Cloudflare callbacks independentl
 input before storage. Neither path runs the offline evaluator, and live market-event reasoning is
 still absent. The grader, dossier, and reassessment have no tool or publication authority.
 
+`marketing/marketing_judgment_canary.py` owns an observe-only repeated-provider canary for that
+reassessment leaf. It gives the evaluated runner only a frozen request, creates a fresh no-tool
+workspace per trial, records the observed executable/package and requested model plus prompt/schema
+provenance, grades the existing typed decision contract, predeclared evidence/hypothesis direction,
+and human-authored semantic anchors, and requires a same-situation outcome-evidence pair to differ on
+predeclared decision fields. `marketing_judgment_canary_corpus.py` separately loads the runner inputs
+and grader expectations. File separation prevents accidental prompt exposure but does not make a
+same-process runner confidential; a trusted caller must provide process/mount isolation. Nor does the
+requested model field attest the model actually served by the provider. This canary measures one
+outcome-judgment vertical only after real trials are run; it does not validate research-tool choice,
+source truth, creative quality, or market lift.
+
 `cloudflare/src/marketing-review.js` owns only read models over that immutable/append-only ledger.
 It selects pending strategy, media-plan, next-experiment-draft, or learning-candidate decisions from their exact state and
 unreviewed target digest, and builds the versioned queue and review packet. Its action template is a
@@ -217,7 +313,17 @@ models deliberately retain only IDs, content/input/binding digests, and safe cap
 URI, raw manifest payload, and adapter descriptor stay behind their effect owner rather than becoming
 an incidental review-token transport.
 
-Migrations `0019`–`0034` own the execution/observation/reassessment/next-experiment and successor-activation lineage, assisted-shadow origin binding,
+`cloudflare/static/workspace-agent.js` is the browser presentation client for the agent loop. It owns
+only the Codex product-evidence preparation prompt, a memory-only agent control token,
+hosted-account-scoped run/campaign/review reads, hosted run submission, safe text rendering, and
+submission of the server-projected exact approval action. It does not run Codex in the browser or
+hold a worker credential. Future Slack and Kakao clients must call the same run API rather than
+reimplementing orchestration.
+`workspace-live.js` continues to own candidate, Mac worker/Appium, and Threads UI behavior; the agent
+client does not import, wrap, or duplicate those effect paths. `build-workspace.mjs` copies both
+clients as separate static assets.
+
+Migrations `0019`–`0041` own the execution/observation/reassessment/next-experiment, successor-activation, forward-only activation admission hardening, hosted agent-run lineage, capability-receipt ledger, intent snapshot, run-step and bounded-resume lineage, the durable campaign-delegation outbox, and bounded journey traversal indexes, assisted-shadow origin binding,
 quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,
 native capture, and `threads/*` modules remain the only effect owners; marketing-agent code refers to them by immutable IDs rather than reimplementing them.
 
@@ -239,7 +345,12 @@ D1 before accepting the receipt. The optional `marketing_context` member of
 signal ledger.
 
 `marketing-adapter-capabilities.js` owns canonical catalog validation, server-derived binding
-digests, frozen-task comparison, and current-action admission. `0024_marketing_adapter_capabilities.sql`
+digests, frozen-task comparison, and current-action admission. Creative planning queries the known
+creative capability IDs as optional account installations, freezes only the active subset, and
+derives executable formats from that subset. It stops when the active combination cannot complete
+any format. Dispatch rechecks only the bindings frozen by that plan, so enabling an additional tool
+does not invalidate in-flight work while disabling or changing a selected tool still fails closed.
+`0024_marketing_adapter_capabilities.sql`
 and `0026_marketing_copy_capability.sql` own account-scoped registrations and receipt-scoped immutable
 bindings. `0026` provisions active `copy.text`, rejects blank/mismatched request or manifest bindings,
 and prevents binding updates. Neither adds a generic dispatcher or moves capture/Threads effect

@@ -1,7 +1,33 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-03
+
+## Canonical product direction and transition
+
+The target product is one always-on, on-premises Marketing Agent Service. It is the canonical owner
+of Agent Runs and the observe, plan, approve, execute, verify, evaluate, and replan loop. Cloudflare,
+Codex, Mac/Appium, Threads, research, creative generation, and Web/Slack/KakaoTalk are adapters.
+
+PR #99 is a transition, so the two truths must not be confused:
+
+- **Current production:** the hosted Cloudflare/D1 flow described below still owns existing hosted
+  campaign and publication facts and remains operational.
+- **Implemented transition foundation:** `contracts/agent_run.py`, `contracts/tool_capability.py`,
+  `marketing/agent_core/`, and `marketing/agent_service/` define a provider-neutral run domain,
+  planner-visible registry, append-only local run repository, and the first Appium-independent
+  decision loop. The loopback API includes exact effect approval and a Run-oriented browser
+  projection; `/runs/<run-id>` is the shared result-link surface for browser and channel adapters.
+  A reasoning-provider failure is sanitized into retryable HTTP `503`, while the admitted Run stays
+  durable so an identical request can resume it after provider recovery.
+- **Not implemented yet:** Cloudflare projection-only cutover, separate remote Mac tool enrollment,
+  production research/candidate/Appium/Threads registry wiring, and live Slack/KakaoTalk installation.
+  The channel adapters and signed fake webhook contracts exist, but fake roundtrips are not live
+  platform evidence.
+
+The binding contract and migration gates are in
+[`on-prem-marketing-agent-service.md`](../contracts/on-prem-marketing-agent-service.md). Until those
+gates pass, the hosted flow below is current behavior but not the final architecture.
 
 ## Runtime boundary
 
@@ -50,29 +76,35 @@ flowchart LR
    mode-0700 request root, and checks readiness. These failures have not started Appium.
 5. Local SQLite records the immutable admission digest/nonce. The worker then records the D1
    barrier. If it cannot, it does not start native work.
-6. After the barrier, the worker writes a digest-bound Calendar request into the Trace App Group and
+6. After the barrier, the worker writes digest-bound Calendar requests into the Trace App Group and
    launches the DEBUG Trace EventKit helper. The helper creates or reuses only the
-   `trace-<request-id>` calendar, writes the requested events, re-reads their exact titles and times,
-   and returns its calendar identifier and count. Every temporary event carries the request digest
-   as its ownership marker. A title collision without that marker is rejected, and a failure after
-   EventKit commit rolls the new calendar back before returning failure. This helper launch adds
-   `-traceMarketingCalendarAutomation`; it is not the final editor process.
+   `trace-<request-id>` schedule calendar and the `trace-<request-id>-todos` capture calendar. The
+   latter projects the request's undated to-dos into all-day rows used only by the right-hand image
+   panel, so capture never writes to Trace's shared internal to-do list. The helper re-reads each
+   calendar's exact titles and times, then returns its identifier and count. Every temporary event
+   carries the request digest as its ownership marker. A title collision without that marker is
+   rejected, and a failure after EventKit commit rolls the new calendar back before returning
+   failure. These helper launches add `-traceMarketingCalendarAutomation`; neither is the final
+   editor process.
 7. The worker writes `trace.codex-appium-job.v2` and runs one ephemeral official `codex exec` with
    user/project configuration disabled and the `trace-appium` permission profile. Commands can use
    the request workspace and the allowlisted loopback Appium endpoint, but cannot read home secrets
    or reach external hosts. The contract supplies context, prepared background, device/UDID, Trace
-   bundle, endpoint, locale/time zone, digest/nonce, and `trace-<request-id>` calendar namespace.
+   bundle, endpoint, locale/time zone, digest/nonce, and both request-owned calendar namespaces.
    The final bound Trace launch opens the wallpaper editor directly. Codex owns editor observation,
    layout, component settings, preview inspection, and Save. It does not enter Trace Orb/Quick Setup,
-   open Shortcuts or Calendar, or create, edit, or delete Calendar data. The worker owns deterministic
-   data preparation, Simulator preparation, collection, and cleanup.
+   open Shortcuts or Calendar, or create, edit, or delete Calendar data. It clears each component's
+   existing selections and binds the schedule, weekly strip, and to-do panel only to their assigned
+   request-owned calendar. The worker owns deterministic data preparation, Simulator preparation,
+   collection, and cleanup.
    Before Save, Codex publishes its active wallpaper-editor state. The worker independently checks
    the Trace editor identifier, every requested title, and the live Trace process arguments in the
    same Appium session. A bundle-only terminate/activate cycle loses the immutable export binding,
    so the worker rejects that Ready marker before Save and permits one replacement Trace session.
    Codex recreates the final Trace editor with the exact original launch arguments, restores the UI
-   state, and submits a new Ready marker. The worker checks the binding again at the
-   saved marker, clears any earlier App Group export, and acknowledges Save only after those
+   state, and submits a new Ready marker. The worker retains the Ready-verified Trace PID, clears any
+   earlier App Group export, and at the saved marker rechecks that same process's full launch
+   arguments without rebuilding the post-Save UI hierarchy. It acknowledges Save only after those
    boundaries. A second rejected Ready ends the turn without Save. Collection therefore cannot wait
    on or accept an export from an unbound process.
 8. When Save is accepted, Trace renders the configured background and Trace content into its bound
@@ -89,9 +121,10 @@ flowchart LR
    `trace.imagen-ios-ui.v1`. The returned image is explicitly `imagen_ios_ui`: it is a
    generated copy of the default iPhone UI, not an iOS system wallpaper render. After collection or a
    terminal capture failure, the
-   worker asks the helper to delete only the recorded request-owned calendar whose identifier,
-   namespace, digest marker, and events all match. Cleanup has an independent bounded budget; a
-   cleanup failure remains attached to the primary capture failure.
+   worker asks the helper to delete both recorded request-owned calendars whose identifiers,
+   namespaces, digest markers, and events all match. Cleanup has an independent bounded budget; one
+   cleanup attempt does not prevent the other, and a cleanup failure remains attached to the primary
+   capture failure.
 9. It commits a callback to the outbox. Callback delivery retries without rerunning Codex; Cloudflare
    stores accepted output in R2/D1, appends `callback_applied`, and opens human image review.
 
@@ -194,6 +227,104 @@ materialization, approval, Threads publication, evaluation, reassessment, and le
 existing independently tested tools. A missing customer signal, failed provider call, altered packet,
 altered local ledger, or mismatched hosted status produces no new POST.
 
+The hosted product now owns this first transition as a durable service run as well. An authenticated
+client submits the exact Feature Launch request once; D1 binds its canonical digest to an
+account-scoped run and a capability-gated broker task. The task's broker `run_id` is deliberately
+different from the product `agent_run_id`, because later campaign tasks retain their existing
+campaign-derived run IDs.
+
+```text
+web / future Slack or Kakao client
+-> POST immutable FeatureLaunchRunRequest
+-> host-derived observe-only capability snapshot + D1 MarketingAgentRun
+-> feature_launch_run_v5 broker capability + hosted_marketing_agent_run_v5 initial task
+-> installed Mac: snapshot-backed registry + pinned official Codex
+-> canonical redacted invocation/receipt/observation envelope
+-> host-rederived snapshot and proof-digest/source/cost verification + frozen quarantined market proposal
+-> host-derived eligible no-effect intents -> Codex selects stop | needs input | propose shadow
+-> immutable run step -> stop | needs-input -> governed customer snapshot + child task + second decision
+                      \-> existing createShadowCampaign owner
+-> exact proposed-URL byte verification -> strategy/review/execution loop
+```
+
+The worker task contains no control-plane credential and cannot call the campaign API. Its
+capability list is not a worker-authored string set: the host derives configuration bounds, schema
+digest, worst-case cost, and approval policy for every requested observe action and freezes the
+canonical snapshot on both the product run and task. The worker builds the runtime registry from
+that exact snapshot. Its result carries the worker-reported dynamic invocation order as a canonical,
+redacted envelope; the callback re-derives the snapshot from the stored request and recomputes
+descriptor, invocation, call, decision, hand-result, receipt, and observation digests. It accepts the
+result only when scope coverage, action binding, source projection, unique lineage digests,
+per-action fixed cost, total cost, tool-call count, and planner protocol all match. Accepted succeeded or inconclusive observations
+are appended to the `0037` run receipt ledger before the run reaches its terminal projection.
+Planner prompt/context/schema hashes and the private session-trace hash are still authenticated
+worker claims: Cloudflare neither reconstructs the private planner turn nor replays the full local
+trace, so this is not provider execution attestation and cannot admit effect capabilities.
+After research validation, the worker performs a separate structured next-intent judgment over a
+host-mirrored eligible subset. Cloudflare reconstructs the intent descriptors, input context,
+planner prompt, and decision binding. Migration `0038` freezes the intent snapshot and decision on
+the run and appends a parent-ready state/decision/result-hashed step. Migration `0039` adds the
+append-only run-to-task chain, per-child receipts, head/active-task projection, cumulative bounds,
+and account-scoped resume identity. `request_more_evidence` is admissible only for missing customer
+intelligence and may resume once with an already governed marketing-context snapshot. The endpoint
+compare-and-swaps the exact first-step head, creates a sequence-two child task, and the fresh
+observation changes the second model turn. That turn can only stop or
+`propose_shadow_strategy`; only the latter may call the existing campaign owner. This is one bounded
+feedback iteration, not an arbitrary multi-turn or outcome-driven loop. Account-scoped status
+exposes the safe intent and loop projection, not model-authored rationale retained in the protected
+record.
+`GET /api/marketing-agent/runs/:id/journey` projects the longer product journey without mutating that
+terminal launch state. A bounded, cycle-safe breadth-first read expands only the current same-account
+frontier and stops at 100 nodes or 16 edges of depth. Migration `0041` indexes assisted-origin and
+activated-successor parent lookup plus per-campaign evaluation and learning hydration. Traversal
+uses two constant-parameter, index-forced, row-limited reads per depth and hydrates at most 99 IDs
+per query, staying inside D1's 100-bound-parameter ceiling. Tenant-wide campaign history is never
+materialized merely to return a bounded response. The projection follows the root campaign's immutable agent-run lineage,
+same-account assisted origins, and activated successor receipts, then joins the existing evaluation,
+reassessment, next-experiment, and learning owners. It stores no duplicate
+membership or activity ledger and exposes no model rationale, customer source, artifact URI, or
+credential. A queued run reports `launch_pending`; a terminal run whose root provenance is missing
+reports `root_missing` rather than pretending that the journey is empty. An already accepted evaluation is committed together with its capability-gated
+reassessment task even when no compatible downstream worker is online; the task waits in the
+existing broker instead of making downstream liveness decide whether upstream outcome truth exists.
+For `propose_shadow_strategy`, migration `0040` separates worker completion from campaign
+materialization. The validated callback atomically appends receipts and the immutable decision step,
+stores a server-owned `delegation_pending` outbox record, advances the run head, and completes the
+worker task without creating a campaign. An immediate best-effort reconciliation and the ordinary
+Cloudflare scheduler both invoke the existing idempotent `createShadowCampaign` owner, then
+compare-and-swap the outbox and run to finalized/delegated. If the process stops after campaign
+creation but before that final D1 batch, a later scheduler pass binds the existing campaign and task
+and completes the run without the original worker. A failed reconciliation stores only a bounded
+failure code, capped attempt count, and next-attempt timestamp; exponential backoff makes that row
+temporarily ineligible so older permanent failures cannot starve later delegations. Stop and
+needs-input paths never create this outbox.
+The full
+market proposal is bound to the redacted market finding digest and continuation; the next research
+leaf consumes that frozen proposal without a second model search, while Cloudflare independently
+fetches the exact proposed URLs and binds their byte receipts before strategy. A callback without the
+exact request, account, configured model, input/result/proposal digests, source-bound product finding,
+and quarantined market continuation creates no campaign. Exact intake and callback retries
+are idempotent; changed reuse is rejected. Run status is stored separately from campaign state and
+returns only lifecycle, digests, typed failure, and next-resource links. The current global
+control-plane token is sufficient only for internal dogfood; individual member/service-principal
+RBAC and automatic product-source connectors remain unimplemented.
+
+The hosted workspace exposes a separate marketing-agent presentation client. It does not execute the
+local Codex runtime itself: it builds an account- and origin-bound request for product-evidence JSON,
+submits that exact JSON to the hosted run API, polls run/campaign progress, and reads exact review
+packets. Campaign/run list and detail, review queue, packet, and approval requests require
+control-plane authority and the selected hosted account header. The browser keeps that authority only
+in memory and clears it when the account or panel changes. Model-written packet content is rendered
+as untrusted text. Approval consumes the server-projected action after rechecking method, same-origin
+API prefix, target ID, and target digest. Candidate, Appium, and Threads effects remain behind their
+existing screens and owners.
+
+Creative planning reads the account's active adapter subset at strategy approval time. The model sees
+only formats whose complete required capability set is active; optional missing tools do not block
+independent formats, and no executable combination stops before a creative task is queued. The task
+freezes the selected descriptor bindings, and later activation of a different tool does not change or
+invalidate that in-flight plan.
+
 New strategy work uses a separate `agent_v1` hosted campaign epoch. D1 owns immutable feature
 packets, account-scoped campaign projections, ordered run events, context receipts, strategy briefs,
 pre-registered experiments, approval grants, and tool-action intent. It does not dual-write these
@@ -260,8 +391,15 @@ has an open publication gate, the host derives a new digest-bound packet with th
 claims but a closed gate for the successor; it never copies live publication authority into shadow.
 The Python executor and Cloudflare
 callback both enforce the prior control, business outcome, primary outcome, held constants,
-challenger claims, reassessment dossier, and reviewer lineage. The successor re-enters the existing
-strategy-review flow and still has no tool action.
+challenger claims, and reassessment dossier. Reviewer and approval-grant authority stays only in the
+server-side immutable activation/event ledger; it is never projected into the worker task or model
+prompt. The callback rechecks that server-side approval lineage plus source state and unknown effects
+before accepting the strategy. The successor re-enters the existing strategy-review flow and still
+has no tool action. Campaign status exposes only the safe latest activation identity, successor/task
+identity, state, and blocker code for operator recovery. This admission checks product lifecycle and
+claim support plus customer-context expiry; it does not upgrade quarantined product or market
+semantic freshness from `unknown`. That limitation is acceptable only because this stage is a
+no-effect shadow strategy followed by another human review.
 
 Source evidence cannot open the publication gate, and a database trigger prevents every shadow
 campaign from creating tool actions. This path creates no candidate, capture, publication, metric,
@@ -271,9 +409,16 @@ or learning effect. Installed-product evidence and later stages remain governed 
 After exact human strategy approval, the same broker may run one `creative_plan` judgment. It picks
 proof before medium and emits only a MediaPlan plus typed artifact requests; it cannot execute those
 requests. Cloudflare freezes active capture/copy adapter descriptors into the task, re-derives their
-binding digests, and rejects a callback if that catalog changed; receipt-scoped binding rows and
-binding-bearing artifact requests are then written atomically. Exact creative review is recorded
-separately. Candidate assignment requires an approved plan, a non-shadow assisted/live campaign,
+binding digests, derives the closed set of executable formats, and rejects either a worker proposal
+or callback whose format lacks its required capability. The current
+`capture.native_png`/`copy.text` set exposes only `native_sequence`; recording, carousel,
+designed-static, and text-only execution require their own adapters. New tasks use
+`creative_plan_v2`, so older workers cannot silently accept the expanded request contract. Updated
+workers also advertise `creative_plan_v1` only to drain already-persisted v1 work; no new v1 task is
+created, and the creative callback enters its frozen legacy validator only for a task whose required
+capability is exactly v1.
+Receipt-scoped binding rows and binding-bearing artifact requests are then written atomically. Exact
+creative review is recorded separately. Candidate assignment requires an approved plan, a non-shadow assisted/live campaign,
 an open installed-evidence publication gate, exact experiment/treatment lineage, and the existing
 control-plane authority. Reviewer authority never enters a worker payload.
 

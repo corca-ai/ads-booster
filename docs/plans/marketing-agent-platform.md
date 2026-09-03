@@ -104,6 +104,15 @@ Three external patterns reinforce the architecture:
 - Conversations are a first-class research source, but their raw text is not a product decision.
   Intercom's [Living Spaces case study](https://www.intercom.com/customers/livingspaces) describes
   product teams searching conversation evidence and acting on it alongside marketing and support.
+- OpenAI's [agent orchestration guide](https://openai.github.io/openai-agents-python/multi_agent/)
+  treats specialists as tools or explicit handoffs, while its
+  [tracing guide](https://openai.github.io/openai-agents-python/tracing/) records model turns, tool
+  calls, guardrails, and handoffs as one run. Trace therefore needs a durable run-step graph above
+  its existing specialist owners, not another set of duplicated adapters.
+- Jasper's [marketing agent system](https://www.jasper.ai/agents) combines specialized pipeline
+  agents with shared brand, audience, knowledge, and governance context. That validates the shared
+  marketing-context direction, while also making current tool breadth and multi-stage orchestration
+  explicit competitive gaps rather than capabilities this draft may claim today.
 
 The implication is a product with a compounding **evidence and decision ledger**, not a collection of
 automation recipes. Claims above are evidence for product shape; they do not prove market size,
@@ -289,6 +298,33 @@ and repeated pinned provider/model paired trials before making a model-quality c
 ingestion and a multi-product role model remain later policy work. The
 canonical companion for current Trace behavior remains
 [`threads-marketing-agent.md`](./threads-marketing-agent.md).
+
+The hosted research entrypoint now also has the first host-owned common action-plane proof. The host
+derives an observe-only capability snapshot with bounded configuration, schema, cost, and approval
+policy; the installed worker builds its registry from that snapshot; and the callback independently
+re-derives it before appending the canonical worker-reported envelope. This removes arbitrary
+digest substitution and binds source/cost/authority, but it does not attest that the provider turn
+occurred. Effect tools still require receipts from their independent owners. It is not yet the final
+run-level orchestrator. An append-only step records a model-selected eligible intent—stop, request
+operator evidence, or propose a shadow strategy—without bypassing the existing campaign owner.
+Request-more now admits one account-owned marketing-context snapshot, appends a child broker task,
+reruns research, and records a second stop-or-propose judgment against the first step's exact head.
+This completes one bounded evidence feedback iteration. The next architectural slice should extend
+the same ledger to wait-for-outcome and reassessment actions. Existing campaign owners remain the executors,
+and Appium or Threads must not enter
+that selectable set until their exact approval and reconciliation contracts can be represented by
+the same plane.
+
+The implemented resume slice appends a new broker task rather than resetting the completed task row.
+The run-to-task binding records each child task, sequence, immutable resume input, and parent step.
+An account-scoped request compares the expected head, binds an already governed customer-context
+snapshot, and creates the child task through the D1 batch boundary. The run projection keeps a
+head-step digest, active task, cumulative cost, and host-owned two-step budget; callbacks append
+observations and the next decision while advancing the head. Further repeated scope requests are not
+admitted in this slice. This design reuses the existing research runner and broker without
+duplicating product, customer, campaign, Appium, or channel owners. Campaign creation still precedes
+the callback's final run-projection batch, so a process crash in that narrow interval is not yet an
+outbox-atomic transition and remains future reliability work.
 
 ## Pre-implementation critique — 2026-09-01
 

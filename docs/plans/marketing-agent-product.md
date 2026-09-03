@@ -3,7 +3,7 @@
 Status: Draft — product direction and staged implementation contract. It does not authorize a new
 publisher, CRM mutation, spend, customer outreach, or SaaS rollout.
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-03
 
 ## Product thesis
 
@@ -59,12 +59,18 @@ Implemented provider-neutral foundations:
 - an account-scoped customer-intelligence reference lane: manual normalized signals, one final human
   review decision, immutable context snapshots, safe task/receipt projection, and callback rebinding.
   It is deliberately not a transcript or CRM connector.
+- a channel-independent hosted `MarketingAgentRun` intake and lifecycle. Web submits the same exact
+  request future Slack/Kakao clients will use; D1 queues a capability-gated, no-effect dynamic
+  research task, binds its full quarantined market proposal to the result digest, and only a
+  server-reverified continuation can enter the existing shadow campaign owner. The existing market
+  research leaf reuses that frozen proposal without another search; Cloudflare verifies its exact
+  source bytes before the observations reach strategy. The Mac receives no control-plane credential. Initial dogfood still requires a separately
+  prepared, digest-bound feature packet.
 
 Not implemented or claimed:
 
-- a real provider/model evaluation corpus, trusted remote adapter receipts, execution-time
-  approval revalidation, provider idempotency/reconciliation, cross-session external approval
-  authority, or a hosted runtime adapter;
+- a real provider/model evaluation corpus, trusted effect-adapter receipts, execution-time
+  approval revalidation, cross-session external approval authority, or a fully managed worker fleet;
 - a customer-interview/CRM connector, shared multi-product tenant context, approval inbox,
   collaboration surfaces, billing, or public SaaS onboarding;
 - automatic post publication, ad spend, cold outreach, generic CRM mutation, or autonomous budget
@@ -180,8 +186,18 @@ before it is used for cross-environment claims.
 The source-tested runner now exercises real model-owned action selection against product,
 caller-supplied customer, and quarantined market hands, but the named scorecard still uses its
 deterministic planner.
-Next, run a private diverse corpus with repeated pinned provider/model trials before treating this as
-model-quality validation. Duplicate dispatch and restart after execution-start remain owned by
+An initial repeated-provider canary now exists for the narrower outcome-reassessment leaf. It keeps
+runner inputs and grader expectations in separate fixed files, uses fresh non-linkable workspaces,
+requires at least two trials, records the observed Codex executable/package and requested model plus
+prompt/schema digests, and combines typed decision checks, explicit evidence/hypothesis direction,
+and human-authored semantic anchors. Its same-situation outcome-evidence pair defeats a canned
+situation router; the fixed-router negative control must fail. File separation alone is not a privacy
+boundary, so private use still requires the caller to isolate runner and grader processes/mounts. The
+requested model is not served-model attestation. This is infrastructure for private trials, not
+evidence that a particular model has passed them, and substring anchors are a bounded human-authored
+holdout rather than a general semantic judge.
+Next, run a private diverse corpus against the installed dynamic research composition with repeated
+pinned provider/model trials before treating the whole agent as model-quality validated. Duplicate dispatch and restart after execution-start remain owned by
 runtime-ledger tests, while stale/revoked approval requires an external-effect adapter. Do not call the
 source-visible baseline a model-quality or market-effectiveness result.
 
@@ -203,8 +219,9 @@ v1/v2 terminal traces are read-only, while pre-header pending or non-terminal tr
 rather than being upgraded or re-executed.
 The next additions stay in this order:
 
-1. adapt the private corpus runner to the installed dynamic composition root, execute repeated pinned
-   provider/model trials, and keep process validity separate from marketing judgment quality;
+1. generalize the outcome-reassessment canary boundary to the installed dynamic research composition,
+   execute repeated pinned provider/model trials, and keep process validity separate from marketing
+   judgment quality;
 2. extend the implemented read-only strategy/creative/learning review queue and packet to the
    remaining existing approval/effect surfaces without widening its raw-data boundary;
 3. then introduce consented connector ingestion and a multi-product tenant context only after their
@@ -280,6 +297,12 @@ cost, and eligible outcome coverage. Use the evidence—not feature breadth—to
 
 Exit: users can approve or stop a campaign faster than their current spreadsheet/chat process, and the
 system produces a verifiable next action after the observation window.
+
+The first dogfood slice now exists: authenticated run submission/list/status, installed-worker
+dynamic research, verified shadow handoff, and a workspace intake/review surface share one hosted
+contract. It is not yet the exit condition above. Product-source connector onboarding, member RBAC,
+managed worker operations, useful experiment cost/override metrics, and two or three observed Trace
+cycles remain required before this is called a SaaS launch.
 
 ### 5. Expand surfaces and autonomy deliberately
 
