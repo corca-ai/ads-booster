@@ -20,9 +20,9 @@ PR #99 is a transition, so the two truths must not be confused:
   projection; `/runs/<run-id>` is the shared result-link surface for browser and channel adapters.
   A reasoning-provider failure is sanitized into retryable HTTP `503`, while the admitted Run stays
   durable so an identical request can resume it after provider recovery.
-- **Implemented service deployment:** the canonical service runs as the dedicated Mac user's
-  `com.corca.trace-marketing-agent` LaunchAgent. Its bearer token is generated into a mode-0600 state
-  file rather than stored in the plist; `RunAtLoad` and `KeepAlive` provide login lifecycle recovery.
+- **Target service deployment:** the canonical agent runs on an HTTPS-reachable on-premises or cloud
+  server with OAuth/OIDC user and workspace identity. Macs are separately enrolled Appium workers.
+  The current loopback bearer-token service proves the domain boundary but is not that deployment.
 - **Implemented hosted registration seam:** the hosted agent can list and install server-owned tool
   catalog entries. Installation creates a non-executable reference; Threads becomes active only from
   its verified OAuth callback. Arbitrary caller-supplied adapters or effect policy are rejected.
@@ -41,6 +41,9 @@ migration or arbitrary descriptor upload. Registration is fail-closed as `regist
 The Threads OAuth callback alone promotes `publish.threads` to `active`; auto-publish, review,
 idempotency, and readback barriers still apply independently. `deliver.slack` intentionally remains
 a reference because this repository has no verified live Slack delivery owner yet.
+`GET /api/marketing-agent/skills` projects versioned multi-tool procedures. A skill is ready only
+when every required tool is enabled and active; `research.daily_slack` and
+`threads.validated_format_replication` therefore expose their missing integration blockers directly.
 
 ## Runtime boundary
 

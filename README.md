@@ -7,20 +7,20 @@ systems are replaceable provider or tool adapters. The only installed command re
 
 ## On-premises Agent Service (implemented foundation)
 
-The current PR adds the installed service boundary, a per-user macOS LaunchAgent, portable Run/Step/Intent/CapabilitySnapshot/
+The current PR adds the installed service boundary and portable Run/Step/Intent/CapabilitySnapshot/
 Invocation/Approval/Receipt/Outcome/Learning contracts, a unified tool descriptor registry, a
 replaceable Codex reasoning provider, append-only SQLite recovery, exact effect approval, and a
 tenant-scoped HTTP API. Start it with the same macOS user's official Codex CLI login:
 
 ```bash
 trace-marketing service doctor
-trace-marketing service install --model gpt-5.4 --port 8765
-trace-marketing service status
+export TRACE_MARKETING_SERVICE_TOKEN='replace-with-a-private-token'
+trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8765
 ```
 
-`service install` generates a mode-0600 bearer-token file under the agent state root, keeps the
-secret out of the LaunchAgent plist, and starts `com.corca.trace-marketing-agent` with `RunAtLoad`
-and `KeepAlive`. `service run` remains the foreground diagnostic entrypoint.
+The loopback command is a development proof, not the target deployment. The target is an HTTPS
+server deployment with OAuth/OIDC user and workspace identity; Macs enroll only as remote Appium
+workers. That server packaging and OAuth boundary are not yet implemented in this PR.
 
 `POST /v1/runs` creates a canonical run, `GET /v1/runs/:id` returns its complete step and record
 journey, `POST /v1/runs/:id/input` resumes requested evidence, and
@@ -47,8 +47,8 @@ external-preparation checklist are in
 ```bash
 trace-marketing version --json
 trace-marketing service doctor
-trace-marketing service install --model '<approved-codex-model>' --port 8765
-trace-marketing service status
+export TRACE_MARKETING_SERVICE_TOKEN='generate-a-private-local-token'
+trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
 ```
 
 In a second terminal, verify the installed service—not the checkout—and then use the browser UI:
@@ -71,6 +71,10 @@ callers cannot upload code or effect policy. Threads installation returns its OA
 remains `registered_reference` until a human completes Meta consent, after which the verified OAuth
 callback activates it automatically. Slack can be registered as a pending reference, but remains
 non-executable until a live Slack delivery owner is implemented and verified.
+`GET /api/marketing-agent/skills` exposes versioned procedures separately from tools. The initial
+skills are `research.daily_slack` and `threads.validated_format_replication`; readiness is derived
+from their independently registered tools, so neither can be reported ready while Slack, research,
+capture, or Threads is missing.
 
 This is a transition, not a claim that the full target product is already live. The local production
 registry still needs the existing research, candidate, Appium, Threads, and Cloudflare owners

@@ -327,6 +327,8 @@ clients as separate static assets.
 account registrations. `marketing-agent.js` exposes list/install orchestration, while the existing
 Threads OAuth owner alone promotes its registered reference to active. Catalog installation never
 accepts caller-defined executable code, schemas, owners, or effect class.
+The same module owns the initial versioned skill catalog. Skills contain procedures and required
+capability IDs, never credentials or executable adapter implementations.
 
 Migrations `0019`–`0041` own the execution/observation/reassessment/next-experiment, successor-activation, forward-only activation admission hardening, hosted agent-run lineage, capability-receipt ledger, intent snapshot, run-step and bounded-resume lineage, the durable campaign-delegation outbox, and bounded journey traversal indexes, assisted-shadow origin binding,
 quarantined reference snapshots, immutable source-byte receipts, and assignment-specific artifact proof. Existing candidate review,

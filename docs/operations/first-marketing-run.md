@@ -116,20 +116,15 @@ approve one candidate, and record:
 Turn auto-publish OFF again after the canary unless the team separately approves ongoing operation.
 An ambiguous publication must remain `unknown_side_effect`; never retry it as a new post.
 
-## 7. Install the always-on on-premises Agent Service
+## 7. Exercise the current service boundary
 
-Run on the dedicated Trace Mac, as the same logged-in user that owns the official Codex session:
+The target agent belongs on an HTTPS server with OAuth/OIDC. Until that deployment slice exists,
+exercise only the loopback development boundary and do not treat it as production hosting:
 
 ```bash
-trace-marketing service install --model '<approved-codex-model>' --port 8765
-trace-marketing service status
+export TRACE_MARKETING_SERVICE_TOKEN='<private-local-token>'
+trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
 ```
-
-The installer creates `~/Library/LaunchAgents/com.corca.trace-marketing-agent.plist`, enables
-`RunAtLoad` and `KeepAlive`, and writes the unprinted bearer token to
-`$TRACE_AGENT_HOME/marketing-agent/service-token` (or the default state root) with mode 0600.
-Use `trace-marketing service stop` for an intentional stop. Use foreground `service run` only for
-diagnosis.
 
 Open `http://127.0.0.1:8765/`, create an Appium-independent reasoning Run, and retain its
 `/runs/<run-id>` URL across a restart. A provider outage must return retryable HTTP `503` while the
@@ -145,6 +140,8 @@ agent initiates that flow and presents the authorization URL, the operator compl
 and the verified callback activates the capability. The existing default-OFF and human-review gates
 remain in force. `deliver.slack` may be registered in the same way but remains a non-executable
 reference until a live Slack delivery adapter ships.
+It reads `GET /api/marketing-agent/skills` to choose a coherent procedure. A skill becoming visible
+does not make it executable: every listed blocker must be cleared by an active tool registration.
 
 ## External preparation owned by the operator
 
