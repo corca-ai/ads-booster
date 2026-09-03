@@ -172,7 +172,7 @@ def test_unavailable_worker_descriptor_cannot_be_delegated() -> None:
         ),
         (
             threads_descriptor,
-            "threads.publish",
+            "publish.threads",
             "ads_booster.marketing.threads",
             EffectClass.EXTERNAL,
         ),

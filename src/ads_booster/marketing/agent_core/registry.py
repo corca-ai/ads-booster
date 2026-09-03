@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from ads_booster.contracts.agent_run import CapabilitySnapshot
 
@@ -12,6 +12,12 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ads_booster.contracts.tool_capability import ToolDescriptor
+
+
+class ToolCatalogProvider(Protocol):
+    """Return the currently installed tool catalog for one decision boundary."""
+
+    def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +32,12 @@ class CapabilityPolicy:
 
 
 class ToolRegistry:
-    def __init__(self, descriptors: Iterable[ToolDescriptor]) -> None:
+    def __init__(
+        self,
+        descriptors: Iterable[ToolDescriptor],
+        *,
+        provider: ToolCatalogProvider | None = None,
+    ) -> None:
         ordered = tuple(sorted(descriptors, key=lambda item: (item.capability_id, item.version)))
         keys = tuple((item.capability_id, item.version) for item in ordered)
         if len(keys) != len(set(keys)):
@@ -39,6 +50,21 @@ class ToolRegistry:
         ):
             raise ValueError("adapter_defined_idempotency_not_supported")
         self._descriptors: tuple[ToolDescriptor, ...] = ordered
+        self._provider: ToolCatalogProvider | None = provider
+
+    def _current(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
+        if self._provider is None:
+            return self._descriptors
+        current = tuple(
+            sorted(
+                self._provider.descriptors(now=now),
+                key=lambda item: (item.capability_id, item.version),
+            )
+        )
+        keys = tuple((item.capability_id, item.version) for item in current)
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate_tool_descriptor")
+        return current
 
     def require_current_dispatch(
         self,
@@ -51,7 +77,7 @@ class ToolRegistry:
         current = next(
             (
                 item
-                for item in self._descriptors
+                for item in self._current(now=now)
                 if item.capability_id == frozen.capability_id and item.version == frozen.version
             ),
             None,
@@ -73,6 +99,10 @@ class ToolRegistry:
     def descriptors(self) -> tuple[ToolDescriptor, ...]:
         return self._descriptors
 
+    def current_descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
+        """Expose the same live catalog used to freeze a planning snapshot."""
+        return self._current(now=now)
+
     def snapshot_for_plan(  # noqa: PLR0913 - all selection inputs are explicit snapshot lineage.
         self,
         *,
@@ -85,7 +115,7 @@ class ToolRegistry:
     ) -> CapabilitySnapshot:
         selected = tuple(
             descriptor
-            for descriptor in self._descriptors
+            for descriptor in self._current(now=now)
             if remaining_tool_calls > 0
             and descriptor.enabled
             and descriptor.readiness.ready
@@ -104,4 +134,4 @@ class ToolRegistry:
         )
 
 
-__all__ = ["CapabilityPolicy", "ToolRegistry"]
+__all__ = ["CapabilityPolicy", "ToolCatalogProvider", "ToolRegistry"]

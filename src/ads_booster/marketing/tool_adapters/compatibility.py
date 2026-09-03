@@ -118,7 +118,7 @@ def capture_adapter(
 def threads_adapter(
     *, executor_id: str, executor: ToolExecutor, version: str = "1"
 ) -> DelegatingToolAdapter:
-    return _adapter("threads.publish", version, executor_id, executor)
+    return _adapter("publish.threads", version, executor_id, executor)
 
 
 def _adapter(
