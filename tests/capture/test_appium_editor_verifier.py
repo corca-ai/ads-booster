@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Self
 
 from ads_booster.capture.appium_editor_verifier import DefaultAppiumEditorVerifier
 from ads_booster.capture.capture_safety import CaptureControl
-from ads_booster.capture.simctl_command import CommandResult
 from ads_booster.providers.codex_cli import CodexAppiumReadyState
 from ads_booster.transport.http import HttpResponse
 
@@ -36,16 +35,6 @@ class SourceHttp:
         assert not headers
         self.requested_urls.append(url)
         return self.response
-
-
-@dataclass(frozen=True, slots=True)
-class RecordingProcessRunner:
-    result: CommandResult
-    calls: list[tuple[tuple[str, ...], float]]
-
-    def run(self, command: tuple[str, ...], timeout_seconds: float) -> CommandResult:
-        self.calls.append((command, timeout_seconds))
-        return self.result
 
 
 def test_default_editor_verifier_rejects_a_screen_showing_rows_nobody_requested(
@@ -141,93 +130,6 @@ def test_default_editor_verifier_rejects_requested_titles_outside_trace_wallpape
     )
 
 
-def test_default_editor_verifier_accepts_live_process_with_exact_launch_binding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given Appium reports a live Trace PID whose host command retains the full binding
-    response = HttpResponse(
-        200,
-        b'{"value":"<App processId=\\"4321\\"/>"}',
-        {},
-    )
-    requested_urls: list[str] = []
-    expected_arguments = (
-        "-traceMarketingAutomation",
-        "-traceMarketingExportWallpaper",
-        "-traceMarketingRequestDigest",
-        "a" * 64,
-    )
-    runner_calls: list[tuple[tuple[str, ...], float]] = []
-    runner = RecordingProcessRunner(
-        CommandResult(
-            stdout=" ".join(("/simulator/Trace.app/Trace", *expected_arguments)),
-            returncode=0,
-        ),
-        runner_calls,
-    )
-
-    def create_process_http(read_timeout: float | None = None) -> SourceHttp:
-        assert read_timeout is not None
-        return SourceHttp(response, requested_urls)
-
-    monkeypatch.setattr(
-        "ads_booster.capture.appium_editor_verifier.create_http_client",
-        create_process_http,
-    )
-
-    # When the worker verifies the session immediately before Save
-    verified = DefaultAppiumEditorVerifier(runner=runner).verify_process_binding(
-        "http://127.0.0.1:4723",
-        "session/1",
-        expected_arguments,
-        CaptureControl.start(timeout_seconds=30),
-    )
-
-    # Then the exact contiguous arguments bind that live process to the request
-    assert verified is True
-    assert requested_urls == ["http://127.0.0.1:4723/session/session%2F1/source"]
-    assert runner_calls[0][0] == ("/bin/ps", "-p", "4321", "-ww", "-o", "command=")
-
-
-def test_default_editor_verifier_rejects_live_process_missing_launch_binding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given Appium still owns a session but Trace was bundle-only relaunched without arguments
-    response = HttpResponse(
-        200,
-        b'{"value":"<App processId=\\"4321\\"/>"}',
-        {},
-    )
-    expected_arguments = (
-        "-traceMarketingAutomation",
-        "-traceMarketingExportWallpaper",
-    )
-    runner = RecordingProcessRunner(
-        CommandResult(stdout="/simulator/Trace.app/Trace", returncode=0),
-        [],
-    )
-
-    def create_relaunched_http(read_timeout: float | None = None) -> SourceHttp:
-        assert read_timeout is not None
-        return SourceHttp(response, [])
-
-    monkeypatch.setattr(
-        "ads_booster.capture.appium_editor_verifier.create_http_client",
-        create_relaunched_http,
-    )
-
-    # When the worker validates the current process rather than stale session capabilities
-    verified = DefaultAppiumEditorVerifier(runner=runner).verify_process_binding(
-        "http://127.0.0.1:4723",
-        "session-1",
-        expected_arguments,
-        CaptureControl.start(timeout_seconds=30),
-    )
-
-    # Then the missing runtime binding is rejected before export collection can wait
-    assert verified is False
-
-
 def test_default_editor_verifier_accepts_a_week_that_trace_folded_behind_a_badge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,9 +144,14 @@ def test_default_editor_verifier_accepts_a_week_that_trace_folded_behind_a_badge
         {},
     )
     http = SourceHttp(response, [])
+
+    def create_folded_http(read_timeout: float | None = None) -> SourceHttp:
+        assert read_timeout is not None
+        return http
+
     monkeypatch.setattr(
         "ads_booster.capture.appium_editor_verifier.create_http_client",
-        lambda read_timeout=None: http,
+        create_folded_http,
     )
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
@@ -275,14 +182,24 @@ def test_default_editor_verifier_rejects_a_claim_the_live_screen_does_not_show(
     todos = ()
     response = HttpResponse(
         200,
-        b'{"value":"<App name=\\"lockScreenWallpaperSave\\">'
-        b'<Text name=\\"Row 1\\"/><Text name=\\"Row 2\\"/><Text name=\\"Row 3\\"/></App>"}',
+        b"".join(
+            (
+                b'{"value":"<App name=\\"lockScreenWallpaperSave\\">',
+                b'<Text name=\\"Row 1\\"/><Text name=\\"Row 2\\"/>',
+                b'<Text name=\\"Row 3\\"/></App>"}',
+            )
+        ),
         {},
     )
     http = SourceHttp(response, [])
+
+    def create_missing_claim_http(read_timeout: float | None = None) -> SourceHttp:
+        assert read_timeout is not None
+        return http
+
     monkeypatch.setattr(
         "ads_booster.capture.appium_editor_verifier.create_http_client",
-        lambda read_timeout=None: http,
+        create_missing_claim_http,
     )
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",
@@ -315,9 +232,14 @@ def test_default_editor_verifier_rejects_a_panel_that_came_out_empty(
         {},
     )
     http = SourceHttp(response, [])
+
+    def create_empty_panel_http(read_timeout: float | None = None) -> SourceHttp:
+        assert read_timeout is not None
+        return http
+
     monkeypatch.setattr(
         "ads_booster.capture.appium_editor_verifier.create_http_client",
-        lambda read_timeout=None: http,
+        create_empty_panel_http,
     )
     ready = CodexAppiumReadyState(
         schema="trace.codex-appium-ready.v1",

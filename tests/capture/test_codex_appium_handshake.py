@@ -11,6 +11,7 @@ from ads_booster.capture.appium_codex_prompt import (
     days_left_in_week,
     wallpaper_template,
 )
+from ads_booster.capture.appium_editor_verifier import AppiumProcessBinding
 from ads_booster.capture.capture_safety import (
     CaptureAdapterError,
     CaptureControl,
@@ -61,19 +62,34 @@ class RecordingEditorVerifier:
         expected_todos: tuple[str, ...],
         control: CaptureControl,
     ) -> bool:
-        del appium_server, ready
+        del appium_server, ready, expected_todos
         control.checkpoint()
         self.expected_titles = expected_titles
         return all(title in self.visible_titles for title in expected_titles)
 
-    def verify_process_binding(
+    def capture_process_binding(
         self,
         appium_server: str,
         session_id: str,
         expected_arguments: tuple[str, ...],
         control: CaptureControl,
+    ) -> AppiumProcessBinding | None:
+        del appium_server
+        control.checkpoint()
+        self.expected_launch_arguments.append(expected_arguments)
+        return (
+            AppiumProcessBinding(session_id=session_id, process_id="4321")
+            if self.process_binding_results.pop(0)
+            else None
+        )
+
+    def verify_process_binding(
+        self,
+        binding: AppiumProcessBinding,
+        expected_arguments: tuple[str, ...],
+        control: CaptureControl,
     ) -> bool:
-        del appium_server, session_id
+        del binding
         control.checkpoint()
         self.expected_launch_arguments.append(expected_arguments)
         return self.process_binding_results.pop(0)
@@ -673,14 +689,10 @@ def test_codex_appium_prompt_no_longer_demands_every_row_on_screen() -> None:
     assert "visibly contain" not in prompt
 
 
-def test_codex_appium_prompt_does_not_ask_codex_to_retype_the_calendar() -> None:
+def test_codex_appium_prompt_references_both_worker_owned_calendar_namespaces() -> None:
     # When the prompt is built
     prompt = codex_appium_prompt("panels")
 
-    # Then it does not ask for the schedule rows to be created. The worker already wrote
-    # them into the request-owned iOS calendar and Trace draws what that calendar holds, so
-    # authoring them again in the UI is duplicated work on the slowest surface in the job.
-    assert "Do not create the trace_items rows" in prompt
-    assert "Each trace_items entry is an object" not in prompt
-    # And the to-dos are still authored here, because nothing upstream creates reminders.
-    assert "Do create every promotion_material.trace_todos entry" in prompt
+    # Then the machine-readable job fields route each panel to its own prepared Calendar
+    assert "calendar_namespace" in prompt
+    assert "todo_calendar_namespace" in prompt
