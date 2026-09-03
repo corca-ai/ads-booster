@@ -2717,3 +2717,52 @@ textarea:focus-visible {
   font-size: var(--font-small);
   word-break: keep-all;
 }
+
+/* 배경 자산 검수: 이미지가 판단 대상이라 카드가 곧 썸네일이다 */
+.asset-section-title {
+  margin: var(--space-5) 0 var(--space-3);
+}
+
+.asset-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+}
+
+.asset-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+/* 잠금화면 비율로 보여야 "위젯 자리가 조용한가"를 판단할 수 있다 */
+.asset-card__image {
+  width: 100%;
+  aspect-ratio: 9 / 19.5;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+}
+
+.asset-card__meta {
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
+.asset-card__source {
+  font-size: var(--font-small);
+}
+
+.asset-card__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.asset-card__actions .button {
+  flex: 1;
+}

@@ -145,6 +145,7 @@
         <div class="filter-tabs" role="tablist" aria-label="워크스페이스 보기">
           <button class="filter-tab" id="tab-candidates" type="button" role="tab" aria-controls="candidates" aria-selected="true" tabindex="0" data-tab="candidates">후보</button>
           <button class="filter-tab" id="tab-review" type="button" role="tab" aria-controls="reviews" aria-selected="false" tabindex="-1" data-tab="review">검수</button>
+          <button class="filter-tab" id="tab-assets" type="button" role="tab" aria-controls="assets" aria-selected="false" tabindex="-1" data-tab="assets" data-hosted-only hidden>배경 자산</button>
         </div>
 
         <section class="section-card tab-panel" id="candidates" role="tabpanel" tabindex="0" aria-labelledby="tab-candidates" data-panel="candidates">
@@ -200,6 +201,26 @@
               <p>캡션·주제를 승인한 후보가 이곳에서 이미지 생성과 검수를 기다립니다.</p>
             </div>
           </section>
+        </section>
+
+        <section class="section-card tab-panel" id="assets" role="tabpanel" tabindex="0" aria-labelledby="tab-assets" data-panel="assets" data-hosted-only hidden>
+          <div class="section-heading">
+            <h2>배경 자산</h2>
+            <span class="mono" role="status" data-asset-count>입장하면 자산을 불러옵니다</span>
+          </div>
+          <p class="section-note">시드는 보드에 저장한 사람이 이미 고른 것이라 바로 승인으로 들어옵니다. 여기서 거르는 건 연관 수집분이고, 기준은 하나 — 위젯을 얹을 자리가 조용한가.</p>
+          <h3 class="asset-section-title">검수 대기</h3>
+          <div class="asset-grid" data-asset-pending></div>
+          <div class="empty-surface" data-asset-pending-empty>
+            <h3>검수 대기 자산이 없습니다</h3>
+            <p>연관 수집이 적재되면 이곳에 카드로 표시됩니다.</p>
+          </div>
+          <h3 class="asset-section-title">승인됨 · 회전 풀</h3>
+          <div class="asset-grid" data-asset-approved></div>
+          <div class="empty-surface" data-asset-approved-empty>
+            <h3>승인된 자산이 없습니다</h3>
+            <p>시드를 적재하거나 대기 자산을 승인하면 캡처가 이 풀에서 배경을 가져갑니다.</p>
+          </div>
         </section>
         </div>
       </main>

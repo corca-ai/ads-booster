@@ -107,3 +107,23 @@ test("the caption approval card shows the background search query", async () => 
   // a bad query costs a capture before anyone can reject it.
   assert.match(caption, /text\.append\(topicLabel, topic, caption, backgroundQueryNode\(record\)\)/u);
 });
+
+test("the account workspace carries the background asset review tab", async () => {
+  const [markup, source] = await Promise.all([
+    built("index.html"),
+    built("static/workspace-live.js"),
+  ]);
+
+  // The tab is hosted-only: the pool hangs off a hosted persona, and the local surface has
+  // no personas to hang one on.
+  assert.match(markup, /data-tab="assets" data-hosted-only hidden>배경 자산</u);
+  assert.match(markup, /data-panel="assets" data-hosted-only hidden/u);
+  assert.match(markup, /data-asset-pending\b/u);
+  assert.match(markup, /data-asset-approved\b/u);
+
+  // Review actions hit the API this panel exists for, and entering an account loads the
+  // pool alongside the candidates.
+  assert.match(source, /\/api\/background-assets\/\$\{encodeURIComponent\(asset\.asset_id\)\}\/review/u);
+  assert.match(source, /background-assets`,\n\s+\);/u);
+  assert.match(source, /void loadBackgroundAssets\(\);/u);
+});
