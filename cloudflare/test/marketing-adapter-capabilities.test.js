@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   assertCreativeCapabilitySnapshot,
   canonicalJson,
+  creativeFormatsForCapabilities,
   MarketingCapabilityError,
   resolveCreativeCapabilityBindings,
   validateCreativeCapabilitySnapshot,
@@ -48,11 +49,13 @@ function catalogDb(rows) {
   return {
     prepare(sql) {
       return {
-        bind() {
+        bind(_accountId, ...capabilityIds) {
           return {
             async all() {
               assert.match(sql, /hosted_marketing_adapter_capabilities/);
-              return { results: rows };
+              return {
+                results: rows.filter((row) => capabilityIds.includes(row.capability_id)),
+              };
             },
           };
         },
@@ -64,7 +67,11 @@ function catalogDb(rows) {
 async function payloadFor(rows) {
   const bindings = await resolveCreativeCapabilityBindings(catalogDb(rows), "trace_kr");
   return {
+    creative_contract_version: "v2",
     available_capabilities: bindings.map((binding) => binding.capability_id),
+    available_formats: creativeFormatsForCapabilities(
+      bindings.map((binding) => binding.capability_id),
+    ),
     capability_bindings: bindings,
     capability_snapshot_sha256: digest({ capability_bindings: bindings }),
   };
@@ -88,6 +95,45 @@ test("creative planning freezes server-derived descriptor bindings", async () =>
   }));
 });
 
+test("creative formats are derived from executable adapter capabilities", async () => {
+  const payload = await payloadFor(catalogRows());
+  assert.deepEqual(payload.available_formats, ["native_sequence"]);
+  await assert.doesNotReject(validateCreativeCapabilitySnapshot(payload));
+
+  payload.available_formats = ["native_sequence", "screen_recording"];
+  await assert.rejects(
+    validateCreativeCapabilitySnapshot(payload),
+    (error) => error instanceof MarketingCapabilityError && /formats/.test(error.message),
+  );
+});
+
+test("creative planning adapts to the active tool subset instead of requiring optional copy", async () => {
+  const bindings = await resolveCreativeCapabilityBindings(
+    catalogDb(catalogRows({ copyEnabled: 0 })),
+    "trace_kr",
+  );
+  const payload = {
+    creative_contract_version: "v2",
+    available_capabilities: bindings.map((binding) => binding.capability_id),
+    available_formats: creativeFormatsForCapabilities(
+      bindings.map((binding) => binding.capability_id),
+    ),
+    capability_bindings: bindings,
+    capability_snapshot_sha256: digest({ capability_bindings: bindings }),
+  };
+
+  assert.deepEqual(payload.available_capabilities, ["capture.native_png"]);
+  assert.deepEqual(payload.available_formats, ["native_sequence"]);
+  await assert.doesNotReject(validateCreativeCapabilitySnapshot(payload));
+});
+
+test("creative planning stops when active tools cannot complete any format", async () => {
+  await assert.rejects(
+    resolveCreativeCapabilityBindings(catalogDb(catalogRows({ copyEnabled: 0 }).slice(1)), "trace_kr"),
+    (error) => error instanceof MarketingCapabilityError && /no executable/.test(error.message),
+  );
+});
+
 test("creative callback fails closed if a frozen adapter was revoked or changed", async () => {
   const activeRows = catalogRows();
   const payload = await payloadFor(activeRows);
@@ -99,6 +145,35 @@ test("creative callback fails closed if a frozen adapter was revoked or changed"
     assertCreativeCapabilitySnapshot(catalogDb(catalogRows({ copyEnabled: 0 })), "trace_kr", payload),
     (error) => error instanceof MarketingCapabilityError
       && /not active|catalog changed/.test(error.message),
+  );
+});
+
+test("activating an unrelated creative tool does not invalidate a frozen plan", async () => {
+  const originalRows = catalogRows();
+  const payload = await payloadFor(originalRows);
+  const screenDescriptor = {
+    schema_version: "trace.adapter-capability.v1",
+    capability_id: "capture.screen_recording",
+    effect_class: "local_artifact",
+    owner_id: "trace.screen_recording",
+    request_schema_sha256: "c".repeat(64),
+    receipt_schema_sha256: "d".repeat(64),
+    activation_state: "active",
+  };
+  const laterRows = [...originalRows, {
+    capability_id: screenDescriptor.capability_id,
+    descriptor_json: canonicalJson(screenDescriptor),
+    descriptor_sha256: digest(screenDescriptor),
+    effect_class: screenDescriptor.effect_class,
+    request_schema_sha256: screenDescriptor.request_schema_sha256,
+    receipt_schema_sha256: screenDescriptor.receipt_schema_sha256,
+    owner_id: screenDescriptor.owner_id,
+    enabled: 1,
+    activation_state: "active",
+  }];
+
+  await assert.doesNotReject(
+    assertCreativeCapabilitySnapshot(catalogDb(laterRows), "trace_kr", payload),
   );
 });
 

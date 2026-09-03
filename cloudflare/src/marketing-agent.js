@@ -4,6 +4,7 @@ import {
 } from "./marketing-worker-capabilities.js";
 import {
   assertCurrentCapabilityBinding,
+  creativeFormatsForCapabilities,
   MarketingCapabilityError,
   resolveCreativeCapabilityBindings,
 } from "./marketing-adapter-capabilities.js";
@@ -12,6 +13,13 @@ import {
   decideNextExperimentDraft,
   nextExperimentReviewPacket,
 } from "./marketing-next-experiment-review.js";
+import {
+  enqueueMarketingAgentRun,
+  listMarketingAgentRuns,
+  marketingAgentRunStatus,
+  resumeMarketingAgentRun,
+} from "./marketing-agent-runs.js";
+import { marketingAgentRunJourney } from "./marketing-agent-run-journey.js";
 
 export const MARKETING_JUDGMENT_PIPELINE = "hosted_marketing_judgment_v1";
 const MAX_CAMPAIGNS = 100;
@@ -102,6 +110,52 @@ export async function handleHostedMarketingAgent(request, env, account) {
       requireMarketingAuthority(request, env);
       return agentJson(await createMarketingContextSnapshot(env, account, await readJson(request)), 201);
     }
+    if (request.method === "POST" && url.pathname === "/api/marketing-agent/runs") {
+      requireMarketingAuthority(request, env);
+      const launchRequest = await normalizeHostedFeatureLaunchRunRequest(
+        env,
+        account,
+        await readJson(request),
+      );
+      return agentJson(await enqueueMarketingAgentRun(env, account, launchRequest), 202);
+    }
+    if (request.method === "GET" && url.pathname === "/api/marketing-agent/runs") {
+      requireMarketingAuthority(request, env);
+      return agentJson({ runs: await listMarketingAgentRuns(env.DB, account.account_id) });
+    }
+    const agentRunResumeRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/runs\/([^/]+)\/resume$/,
+    );
+    if (request.method === "POST" && agentRunResumeRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await resumeMarketingAgentRun(
+        env,
+        account,
+        decodedRouteId(agentRunResumeRoute[1]),
+        await readJson(request),
+        resolveMarketingContextProjection,
+      ), 202);
+    }
+    const agentRunJourneyRoute = url.pathname.match(
+      /^\/api\/marketing-agent\/runs\/([^/]+)\/journey$/,
+    );
+    if (request.method === "GET" && agentRunJourneyRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await marketingAgentRunJourney(
+        env.DB,
+        account.account_id,
+        decodedRouteId(agentRunJourneyRoute[1]),
+      ));
+    }
+    const agentRunRoute = url.pathname.match(/^\/api\/marketing-agent\/runs\/([^/]+)$/);
+    if (request.method === "GET" && agentRunRoute) {
+      requireMarketingAuthority(request, env);
+      return agentJson(await marketingAgentRunStatus(
+        env.DB,
+        account.account_id,
+        decodedRouteId(agentRunRoute[1]),
+      ));
+    }
     const contextSnapshotRoute = url.pathname.match(
       /^\/api\/marketing-agent\/context-snapshots\/([^/]+)$/,
     );
@@ -119,6 +173,7 @@ export async function handleHostedMarketingAgent(request, env, account) {
       return agentJson(await createShadowCampaign(env, account, input), 202);
     }
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/campaigns") {
+      requireMarketingAuthority(request, env);
       return agentJson({ campaigns: await listCampaigns(env, account.account_id) });
     }
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/review-queue") {
@@ -271,6 +326,7 @@ export async function handleHostedMarketingAgent(request, env, account) {
       ));
     }
     if (request.method === "GET" && campaignRoute) {
+      requireMarketingAuthority(request, env);
       let campaignId;
       try {
         campaignId = decodeURIComponent(campaignRoute[1]);
@@ -291,7 +347,131 @@ export async function handleHostedMarketingAgent(request, env, account) {
   }
 }
 
-export async function createShadowCampaign(env, account, input) {
+async function normalizeHostedFeatureLaunchRunRequest(env, account, input) {
+  assertExactKeys(input, [
+    "schema_version",
+    "agent_run_id",
+    "research",
+    "business_outcome",
+    "current_control",
+    "marketing_context_snapshot_id",
+  ], "feature launch run");
+  if (input?.schema_version !== "trace.feature-launch-run-request.v1") {
+    throw new MarketingAgentHttpError(400, "feature launch run schema가 올바르지 않습니다.");
+  }
+  const businessOutcome = requiredString(input.business_outcome, "business_outcome", 1000);
+  const currentControl = requiredString(input.current_control, "current_control", 4000);
+  const research = requireObject(input.research, "research");
+  assertExactKeys(research, [
+    "schema_version",
+    "session_id",
+    "account_id",
+    "feature_packet",
+    "required_scopes",
+    "marketing_context",
+    "market_context",
+    "max_tool_calls",
+    "max_cost_units",
+  ], "dynamic research request");
+  if (research.schema_version !== "trace.dynamic-evidence-research-request.v1") {
+    throw new MarketingAgentHttpError(400, "dynamic research schema가 올바르지 않습니다.");
+  }
+  if (safeId(research.account_id, "account_id") !== account.account_id) {
+    throw new MarketingAgentHttpError(403, "agent run account가 인증 계정과 일치하지 않습니다.");
+  }
+  const featurePacket = normalizeFeaturePacket(research.feature_packet);
+  if (featurePacket.gate.publication_allowed) {
+    throw new MarketingAgentHttpError(400, "hosted agent run은 shadow packet만 허용합니다.");
+  }
+  const requiredScopes = normalizedStringList(
+    research.required_scopes,
+    "required_scopes",
+    2,
+    3,
+    40,
+  );
+  const allowedScopes = new Set(["product_truth", "customer_intelligence", "market_evidence"]);
+  if (
+    requiredScopes.some((scope) => !allowedScopes.has(scope))
+    || !requiredScopes.includes("product_truth")
+    || !requiredScopes.includes("market_evidence")
+  ) {
+    throw new MarketingAgentHttpError(
+      400,
+      "hosted agent run에는 product_truth와 market_evidence가 필요합니다.",
+    );
+  }
+  const snapshotId = input.marketing_context_snapshot_id == null
+    ? null
+    : safeId(input.marketing_context_snapshot_id, "marketing_context_snapshot_id");
+  const marketingContext = await resolveMarketingContextProjection(
+    env.DB,
+    account.account_id,
+    snapshotId,
+  );
+  if (canonicalJson(research.marketing_context ?? null) !== canonicalJson(marketingContext)) {
+    throw new MarketingAgentHttpError(409, "agent run marketing context binding이 올바르지 않습니다.");
+  }
+  if (marketingContext != null && !requiredScopes.includes("customer_intelligence")) {
+    throw new MarketingAgentHttpError(
+      400,
+      "marketing context에는 customer_intelligence scope가 필요합니다.",
+    );
+  }
+  const marketContext = requireObject(research.market_context, "market_context");
+  assertExactKeys(marketContext, [
+    "schema_version",
+    "country",
+    "language",
+    "business_outcome",
+    "current_control",
+    "query_budget",
+  ], "market context");
+  if (
+    marketContext.schema_version !== "trace.dynamic-market-research-context.v1"
+    || marketContext.country !== account.country
+    || marketContext.language !== account.language
+    || requiredString(marketContext.business_outcome, "market business_outcome", 1000)
+      !== businessOutcome
+    || requiredString(marketContext.current_control, "market current_control", 4000)
+      !== currentControl
+  ) {
+    throw new MarketingAgentHttpError(400, "agent run market context가 계정·목표와 다릅니다.");
+  }
+  const queryBudget = boundedInteger(marketContext.query_budget, "query_budget", 2, 12);
+  const maxToolCalls = boundedInteger(research.max_tool_calls, "max_tool_calls", 2, 6);
+  const maxCostUnits = boundedInteger(research.max_cost_units, "max_cost_units", 1, 24);
+  if (maxToolCalls < requiredScopes.length) {
+    throw new MarketingAgentHttpError(400, "research tool budget가 required scope보다 작습니다.");
+  }
+  return {
+    schema_version: "trace.feature-launch-run-request.v1",
+    agent_run_id: safeId(input.agent_run_id, "agent_run_id"),
+    research: {
+      schema_version: "trace.dynamic-evidence-research-request.v1",
+      session_id: safeId(research.session_id, "session_id"),
+      account_id: account.account_id,
+      feature_packet: featurePacket,
+      required_scopes: requiredScopes,
+      marketing_context: marketingContext,
+      market_context: {
+        schema_version: "trace.dynamic-market-research-context.v1",
+        country: account.country,
+        language: account.language,
+        business_outcome: businessOutcome,
+        current_control: currentControl,
+        query_budget: queryBudget,
+      },
+      max_tool_calls: maxToolCalls,
+      max_cost_units: maxCostUnits,
+    },
+    business_outcome: businessOutcome,
+    current_control: currentControl,
+    marketing_context_snapshot_id: snapshotId,
+  };
+}
+
+export async function createShadowCampaign(env, account, input, internal = {}) {
   const campaignId = safeId(input?.campaign_id, "campaign_id");
   const businessOutcome = requiredString(input?.business_outcome, "business_outcome", 1000);
   const currentControl = requiredString(input?.current_control, "current_control", 4000);
@@ -315,6 +495,13 @@ export async function createShadowCampaign(env, account, input) {
     input?.marketing_context_snapshot_id,
   );
   const researchEnabled = input?.research_enabled !== false;
+  const marketResearchSeed = internal.marketResearchSeed ?? null;
+  if (marketResearchSeed && (!researchEnabled || !agentRunLineage)) {
+    throw new MarketingAgentHttpError(
+      409,
+      "동적 market seed는 research-enabled agent run에서만 사용할 수 있습니다.",
+    );
+  }
   const mode = input?.mode ?? "shadow";
   if (!["shadow", "assisted"].includes(mode)) {
     throw new MarketingAgentHttpError(400, "mode는 shadow 또는 assisted여야 합니다.");
@@ -375,10 +562,12 @@ export async function createShadowCampaign(env, account, input) {
   if (existing) {
     let existingControl = null;
     let existingJudgment = null;
+    let existingMarketSeedSha256 = null;
     try {
       const existingPayload = JSON.parse(existing.task_json)?.payload;
       existingControl = existingPayload?.current_control ?? null;
       existingJudgment = existingPayload?.judgment ?? null;
+      existingMarketSeedSha256 = existingPayload?.market_research_seed_sha256 ?? null;
     } catch {
       throw new MarketingAgentHttpError(409, "기존 campaign task binding이 손상되었습니다.");
     }
@@ -391,6 +580,7 @@ export async function createShadowCampaign(env, account, input) {
       || existing.marketing_context_snapshot_sha256 !== (marketingContext?.snapshot_sha256 ?? null)
       || existingControl !== currentControl
       || existingJudgment !== (researchEnabled ? "market_research" : "shadow_strategy")
+      || existingMarketSeedSha256 !== (marketResearchSeed?.sha256 ?? null)
       || canonicalJson(agentRunLineage) !== canonicalJson(agentRunLineageFromRow(existing))
     ) {
       throw new MarketingAgentHttpError(409, "campaign_id가 다른 agent 요청에 이미 사용됐습니다.");
@@ -454,6 +644,8 @@ export async function createShadowCampaign(env, account, input) {
       capability_snapshot_sha256: capabilitySnapshotSha256,
       query_budget: 6,
       agent_run_lineage: agentRunLineage,
+      market_research_seed: marketResearchSeed?.proposal ?? null,
+      market_research_seed_sha256: marketResearchSeed?.sha256 ?? null,
       requested_by: "hosted_workspace",
     },
     created_at: now,
@@ -502,6 +694,7 @@ export async function createShadowCampaign(env, account, input) {
     marketing_context_snapshot_id: marketingContext?.snapshot_id ?? null,
     marketing_context_snapshot_sha256: marketingContext?.snapshot_sha256 ?? null,
     research_enabled: researchEnabled,
+    market_research_seed_sha256: marketResearchSeed?.sha256 ?? null,
     agent_run_lineage: agentRunLineage,
   };
   const taskJson = JSON.stringify(task);
@@ -797,6 +990,7 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
     const capabilitySnapshotSha256 = await canonicalSha256({
       capability_bindings: capabilityBindings,
     });
+    const availableCapabilities = capabilityBindings.map((binding) => binding.capability_id);
     const task = {
       schema_version: "1",
       task_id: taskId,
@@ -807,6 +1001,7 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
       payload: {
         pipeline: MARKETING_JUDGMENT_PIPELINE,
         judgment: "creative_plan",
+        creative_contract_version: "v2",
         campaign_id: campaignId,
         feature_packet: packet,
         feature_packet_sha256: row.feature_packet_sha256,
@@ -820,7 +1015,8 @@ export async function decideStrategyAndRequestCreative(env, account, campaignId,
         },
         canonical_principles: canonicalPrinciples,
         knowledge_snapshot_sha256: knowledgeSnapshotSha256,
-        available_capabilities: capabilityBindings.map((binding) => binding.capability_id),
+        available_capabilities: availableCapabilities,
+        available_formats: creativeFormatsForCapabilities(availableCapabilities),
         capability_bindings: capabilityBindings,
         capability_snapshot_sha256: capabilitySnapshotSha256,
         requested_by: "hosted_workspace",
@@ -2963,7 +3159,22 @@ async function campaignStatus(env, accountId, campaignId) {
               AS learning_sha256,
             (SELECT state FROM hosted_marketing_learning_candidates
              WHERE campaign_id = campaign.campaign_id ORDER BY created_at DESC LIMIT 1)
-              AS learning_state
+              AS learning_state,
+            (SELECT activation_id FROM hosted_marketing_successor_activations
+             WHERE source_campaign_id = campaign.campaign_id
+             ORDER BY created_at DESC LIMIT 1) AS successor_activation_id,
+            (SELECT successor_campaign_id FROM hosted_marketing_successor_activations
+             WHERE source_campaign_id = campaign.campaign_id
+             ORDER BY created_at DESC LIMIT 1) AS successor_campaign_id,
+            (SELECT strategy_task_id FROM hosted_marketing_successor_activations
+             WHERE source_campaign_id = campaign.campaign_id
+             ORDER BY created_at DESC LIMIT 1) AS successor_strategy_task_id,
+            (SELECT state FROM hosted_marketing_successor_activations
+             WHERE source_campaign_id = campaign.campaign_id
+             ORDER BY created_at DESC LIMIT 1) AS successor_activation_state,
+            (SELECT blocker_code FROM hosted_marketing_successor_activations
+             WHERE source_campaign_id = campaign.campaign_id
+             ORDER BY created_at DESC LIMIT 1) AS successor_blocker_code
      FROM hosted_marketing_campaigns AS campaign
      JOIN hosted_marketing_feature_packets AS packet
        ON packet.packet_id = campaign.feature_packet_id
@@ -3066,6 +3277,13 @@ async function campaignStatus(env, accountId, campaignId) {
       learning_id: row.learning_id,
       sha256: row.learning_sha256,
       state: row.learning_state,
+    } : null,
+    latest_successor_activation: row.successor_activation_id ? {
+      activation_id: row.successor_activation_id,
+      successor_campaign_id: row.successor_campaign_id,
+      strategy_task_id: row.successor_strategy_task_id,
+      state: row.successor_activation_state,
+      blocker_code: row.successor_blocker_code,
     } : null,
     publication_allowed: Number(row.publication_allowed) === 1,
     created_at: row.created_at,
@@ -3351,6 +3569,16 @@ function basisPoints(value, field) {
 function positiveInteger(value, field) {
   if (!Number.isInteger(value) || value < 0) {
     throw new MarketingAgentHttpError(400, `${field}는 0 이상의 정수여야 합니다.`);
+  }
+  return value;
+}
+
+function boundedInteger(value, field, minimum, maximum) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new MarketingAgentHttpError(
+      400,
+      `${field}는 ${minimum}부터 ${maximum} 사이의 정수여야 합니다.`,
+    );
   }
   return value;
 }

@@ -2,6 +2,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 
+const MAX_D1_BOUND_PARAMETERS = 100;
+
 export class D1Adapter {
   constructor() {
     this.sqlite = new DatabaseSync(":memory:");
@@ -30,6 +32,11 @@ export class D1Adapter {
     return {
       ...bound([]),
       bind(...values) {
+        if (values.length > MAX_D1_BOUND_PARAMETERS) {
+          throw new RangeError(
+            `D1 supports at most ${MAX_D1_BOUND_PARAMETERS} bound parameters per query`,
+          );
+        }
         return bound(values);
       },
     };

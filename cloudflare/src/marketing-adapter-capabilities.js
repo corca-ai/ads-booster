@@ -3,10 +3,19 @@
 // proves that the same descriptor is still active.  Capability names alone are
 // intentionally never sufficient authority.
 
-export const CREATIVE_CAPABILITY_IDS = Object.freeze([
-  "capture.native_png",
-  "copy.text",
+export const CREATIVE_FORMAT_REQUIREMENTS = Object.freeze([
+  ["native_sequence", Object.freeze(["capture.native_png"])],
+  ["screen_recording", Object.freeze(["capture.screen_recording"])],
+  ["explanatory_carousel", Object.freeze(["compose.carousel"])],
+  ["designed_static", Object.freeze(["design.static_image"])],
+  ["text_only", Object.freeze(["copy.text", "materialize.text_candidate"])],
 ]);
+
+// This is the set the creative planner knows how to configure, not a list of tools every account
+// must install. Runtime availability is read from the account catalog below.
+export const CREATIVE_CAPABILITY_IDS = Object.freeze([
+  ...new Set(CREATIVE_FORMAT_REQUIREMENTS.flatMap(([, required]) => required)),
+].sort());
 
 const DESCRIPTOR_KEYS = Object.freeze([
   "activation_state",
@@ -31,7 +40,15 @@ const SHA256 = /^[a-f0-9]{64}$/;
 export class MarketingCapabilityError extends Error {}
 
 export async function resolveCreativeCapabilityBindings(db, accountId) {
-  return resolveActiveCapabilityBindings(db, accountId, CREATIVE_CAPABILITY_IDS);
+  const bindings = await resolveAvailableCapabilityBindings(
+    db,
+    accountId,
+    CREATIVE_CAPABILITY_IDS,
+  );
+  if (creativeFormatsForCapabilities(bindings.map((item) => item.capability_id)).length === 0) {
+    throw new MarketingCapabilityError("no executable creative format is currently available");
+  }
+  return bindings;
 }
 
 export async function resolveActiveCapabilityBindings(db, accountId, capabilityIds) {
@@ -50,14 +67,31 @@ export async function resolveActiveCapabilityBindings(db, accountId, capabilityI
   return Promise.all(ids.map((id) => normalizeActiveCatalogRow(byId.get(id), id)));
 }
 
-export async function validateCreativeCapabilitySnapshot(payload) {
-  const frozen = await normalizeCapabilityBindings(
-    payload?.capability_bindings,
-    CREATIVE_CAPABILITY_IDS,
-  );
+export async function validateCreativeCapabilitySnapshot(
+  payload,
+  { allowLegacyCreativeV1 = false } = {},
+) {
+  if (
+    (allowLegacyCreativeV1 && payload?.creative_contract_version != null)
+    || (!allowLegacyCreativeV1 && payload?.creative_contract_version !== "v2")
+  ) {
+    throw new MarketingCapabilityError("creative contract version does not match its task");
+  }
   const advertised = normalizedCapabilityIds(payload?.available_capabilities);
-  if (canonicalJson(advertised) !== canonicalJson(CREATIVE_CAPABILITY_IDS)) {
-    throw new MarketingCapabilityError("creative capability IDs do not match the frozen binding");
+  if (
+    canonicalJson([...advertised].sort()) !== canonicalJson(advertised)
+    || advertised.some((capabilityId) => !CREATIVE_CAPABILITY_IDS.includes(capabilityId))
+  ) {
+    throw new MarketingCapabilityError("creative capability IDs are not a known sorted subset");
+  }
+  const frozen = await normalizeCapabilityBindings(payload?.capability_bindings, advertised);
+  const availableFormats = creativeFormatsForCapabilities(advertised);
+  const legacyFormatProjection = allowLegacyCreativeV1 && payload?.available_formats == null;
+  if (
+    !legacyFormatProjection
+    && canonicalJson(payload?.available_formats) !== canonicalJson(availableFormats)
+  ) {
+    throw new MarketingCapabilityError("creative formats do not match executable capabilities");
   }
   const snapshot = await canonicalSha256({ capability_bindings: frozen });
   if (payload?.capability_snapshot_sha256 !== snapshot) {
@@ -66,13 +100,46 @@ export async function validateCreativeCapabilitySnapshot(payload) {
   return frozen;
 }
 
-export async function assertCreativeCapabilitySnapshot(db, accountId, payload) {
-  const frozen = await validateCreativeCapabilitySnapshot(payload);
-  const active = await resolveCreativeCapabilityBindings(db, accountId);
+export function creativeFormatsForCapabilities(capabilityIds) {
+  const available = new Set(capabilityIds);
+  return CREATIVE_FORMAT_REQUIREMENTS
+    .filter(([, required]) => required.every((capabilityId) => available.has(capabilityId)))
+    .map(([format]) => format);
+}
+
+export function requiredCapabilitiesForCreativeFormat(format) {
+  return CREATIVE_FORMAT_REQUIREMENTS.find(([candidate]) => candidate === format)?.[1] ?? null;
+}
+
+export async function assertCreativeCapabilitySnapshot(db, accountId, payload, options = {}) {
+  const frozen = await validateCreativeCapabilitySnapshot(payload, options);
+  const active = await resolveActiveCapabilityBindings(
+    db,
+    accountId,
+    frozen.map((binding) => binding.capability_id),
+  );
   if (canonicalJson(frozen) !== canonicalJson(active)) {
     throw new MarketingCapabilityError("marketing capability catalog changed after planning");
   }
   return frozen;
+}
+
+async function resolveAvailableCapabilityBindings(db, accountId, capabilityIds) {
+  const ids = normalizedCapabilityIds(capabilityIds);
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = await db.prepare(
+    `SELECT capability_id, descriptor_json, descriptor_sha256, effect_class,
+            request_schema_sha256, receipt_schema_sha256, owner_id, enabled, activation_state
+     FROM hosted_marketing_adapter_capabilities
+     WHERE account_id = ? AND capability_id IN (${placeholders})`,
+  ).bind(accountId, ...ids).all();
+  const byId = new Map((rows.results ?? []).map((row) => [row.capability_id, row]));
+  return Promise.all(ids
+    .filter((id) => {
+      const row = byId.get(id);
+      return row && Number(row.enabled) === 1 && row.activation_state === "active";
+    })
+    .map((id) => normalizeActiveCatalogRow(byId.get(id), id)));
 }
 
 export async function assertCurrentCapabilityBinding(db, accountId, capabilityId, bindingSha256) {

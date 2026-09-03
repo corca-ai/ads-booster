@@ -4,6 +4,7 @@ import { handleHostedWorkspace, runHostedWorkspaceSchedules } from "./hosted-wor
 import { receiveHostedCreativePlanCallback } from "./hosted-creative-plan-callback.js";
 import { receiveHostedCandidateMaterializationCallback } from "./hosted-candidate-materialization-callback.js";
 import { receiveHostedExperimentEvaluationCallback } from "./hosted-experiment-evaluation-callback.js";
+import { receiveHostedFeatureLaunchRunCallback } from "./hosted-feature-launch-run-callback.js";
 import { receiveHostedLearningSynthesisCallback } from "./hosted-learning-synthesis-callback.js";
 import { receiveHostedNextExperimentCallback } from "./hosted-next-experiment-callback.js";
 import { receiveHostedOutcomeReassessmentCallback } from "./hosted-outcome-reassessment-callback.js";
@@ -35,6 +36,7 @@ import { dispatchHostedThreadsPublication } from "./threads/publication.js";
 import { runHostedThreadsPublications } from "./threads/scheduling.js";
 import { threadsConfigurationState } from "./threads/config.js";
 import { runDueMarketingEvaluations } from "./marketing-agent.js";
+import { runDueMarketingAgentDelegations } from "./marketing-agent-delegations.js";
 import { runDueNextExperimentRequests } from "./marketing-next-experiment.js";
 import { runDueSuccessorActivations } from "./marketing-successor-activation.js";
 
@@ -478,6 +480,7 @@ export default {
       startDueRuns(env),
       runHostedWorkspaceSchedules(env, WORKSPACE_CONTEXT, WORKSPACE_CONTEXT_PROFILES),
       runDueMarketingEvaluations(env),
+      runDueMarketingAgentDelegations(env),
       runDueNextExperimentRequests(env),
       runDueSuccessorActivations(env),
       ...threadsTasks,
@@ -710,6 +713,9 @@ export async function receiveCallback(env, callback, worker = null) {
     }
     if (judgment === "market_research") {
       return receiveHostedReferenceResearchCallback(env, hostedTask, callback, worker);
+    }
+    if (judgment === "feature_launch_run") {
+      return receiveHostedFeatureLaunchRunCallback(env, hostedTask, callback, worker);
     }
     return receiveHostedMarketingJudgmentCallback(env, hostedTask, callback, worker);
   }

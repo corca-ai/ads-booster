@@ -186,7 +186,7 @@ function approvalDb({ workers = true } = {}) {
                     ? [{ capabilities_json: JSON.stringify({
                       task_kinds: "capture,generate_candidates,marketing_judgment",
                       marketing_reasoning_ready: true,
-                      creative_plan_v1: true,
+                      creative_plan_v2: true,
                     }), doctor_json: "{}" }]
                   : [],
                 };
@@ -365,7 +365,7 @@ function treatment(hypothesisId) {
   return {
     treatment_id: `treatment-${hypothesisId}`,
     hypothesis_id: hypothesisId,
-    format: "explanatory_carousel",
+    format: "native_sequence",
     hook: `hook ${hypothesisId}`,
     caption_direction: "Explain one product belief.",
     manipulated_component_value: hypothesisId,
@@ -398,6 +398,7 @@ function creativeFixture() {
   const payload = {
     pipeline: MARKETING_JUDGMENT_PIPELINE,
     judgment: "creative_plan",
+    creative_contract_version: "v2",
     campaign_id: "campaign-1",
     feature_packet: packet,
     feature_packet_sha256: digest(packet),
@@ -406,6 +407,7 @@ function creativeFixture() {
     knowledge_snapshot_sha256: "e".repeat(64),
     capability_snapshot_sha256: digest({ capability_bindings: capabilityBindings }),
     available_capabilities: capabilities,
+    available_formats: ["native_sequence"],
     capability_bindings: capabilityBindings,
   };
   const task = {
@@ -496,7 +498,7 @@ test("exact strategy approval queues one proof-first judgment and no tool action
   assert.match(sql, /marketing_judgment/);
   const creativeTask = statements.find((statement) =>
     statement.sql.includes("INSERT INTO hosted_workspace_capture_tasks"));
-  assert.equal(creativeTask.values.at(-3), "creative_plan_v1");
+  assert.equal(creativeTask.values.at(-3), "creative_plan_v2");
   assert.doesNotMatch(sql, /hosted_marketing_tool_actions/);
   assert.doesNotMatch(sql, /hosted_workspace_candidates/);
 });
@@ -553,6 +555,60 @@ test("creative callback persists plan and proof requests without executing them"
   assert.equal(DB.plans.length, 1);
 });
 
+test("a frozen v1 creative callback drains through its legacy validator", async () => {
+  const fixture = creativeFixture();
+  fixture.task.required_capability = "creative_plan_v1";
+  const taskEnvelope = JSON.parse(fixture.task.task_json);
+  delete taskEnvelope.payload.creative_contract_version;
+  delete taskEnvelope.payload.available_formats;
+  fixture.task.task_json = JSON.stringify(taskEnvelope);
+  for (const item of fixture.plan.treatments) item.format = "explanatory_carousel";
+  fixture.result.output.media_plan_sha256 = digest(fixture.plan);
+  const DB = new CreativeCallbackDb(fixture.campaign, fixture.task);
+
+  const accepted = await receiveHostedCreativePlanCallback(
+    { DB },
+    fixture.task,
+    {
+      callback_id: `${fixture.task.task_id}:completed`,
+      task_id: fixture.task.task_id,
+      run_id: fixture.task.run_id,
+      account_id: fixture.task.account_id,
+      kind: "marketing_judgment",
+      result: fixture.result,
+    },
+  );
+
+  assert.equal(accepted.state, "creative_planned");
+  assert.equal(DB.plans.length, 1);
+});
+
+test("a v2 creative task cannot omit its executable format projection", async () => {
+  const fixture = creativeFixture();
+  fixture.task.required_capability = "creative_plan_v2";
+  const taskEnvelope = JSON.parse(fixture.task.task_json);
+  delete taskEnvelope.payload.available_formats;
+  fixture.task.task_json = JSON.stringify(taskEnvelope);
+  const DB = new CreativeCallbackDb(fixture.campaign, fixture.task);
+
+  await assert.rejects(
+    receiveHostedCreativePlanCallback(
+      { DB },
+      fixture.task,
+      {
+        callback_id: `${fixture.task.task_id}:completed`,
+        task_id: fixture.task.task_id,
+        run_id: fixture.task.run_id,
+        account_id: fixture.task.account_id,
+        kind: "marketing_judgment",
+        result: fixture.result,
+      },
+    ),
+    /formats/,
+  );
+  assert.equal(DB.plans.length, 0);
+});
+
 test("creative callback rejects capability escape before canonical writes", async () => {
   const fixture = creativeFixture();
   fixture.plan.treatments[1].artifact_requests[0].capability_id = "publish.threads";
@@ -577,6 +633,29 @@ test("creative callback rejects capability escape before canonical writes", asyn
   assert.equal(fixture.task.callback_id, null);
 });
 
+test("creative callback rejects a format without an executable adapter", async () => {
+  const fixture = creativeFixture();
+  fixture.plan.treatments[1].format = "screen_recording";
+  fixture.result.output.media_plan_sha256 = digest(fixture.plan);
+  const DB = new CreativeCallbackDb(fixture.campaign, fixture.task);
+  await assert.rejects(
+    receiveHostedCreativePlanCallback(
+      { DB },
+      fixture.task,
+      {
+        callback_id: `${fixture.task.task_id}:completed`,
+        task_id: fixture.task.task_id,
+        run_id: fixture.task.run_id,
+        account_id: fixture.task.account_id,
+        kind: "marketing_judgment",
+        result: fixture.result,
+      },
+    ),
+    /unavailable format/,
+  );
+  assert.equal(DB.plans.length, 0);
+});
+
 test("creative callback rejects copy-only workspace treatments before canonical writes", async () => {
   const fixture = creativeFixture();
   for (const item of fixture.plan.treatments) {
@@ -599,7 +678,7 @@ test("creative callback rejects copy-only workspace treatments before canonical 
         result: fixture.result,
       },
     ),
-    /native capture request/,
+    /format capability/,
   );
   assert.equal(DB.plans.length, 0);
   assert.equal(fixture.task.callback_id, null);

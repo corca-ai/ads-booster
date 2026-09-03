@@ -28,6 +28,7 @@ import {
   marketingReviewPacket,
 } from "../src/marketing-review.js";
 import { D1Adapter } from "./d1-fixture.js";
+import { claimWorkerTasks } from "../src/mac-workers.js";
 
 const ACCOUNT = {
   account_id: "trace_kr",
@@ -780,7 +781,7 @@ test("candidate callback rejects another reasoning tool's frozen capability", as
   seedSupervisedCampaign(DB);
 
   await assert.rejects(
-    materializeOne(DB, 4, { taskCapabilityOverride: "creative_plan_v1" }),
+    materializeOne(DB, 4, { taskCapabilityOverride: "creative_plan_v2" }),
     (error) => error?.status === 409,
   );
 
@@ -1355,6 +1356,16 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     winner_hypothesis_id: null,
     interpretation: "Direct-response attribution is tied across active hypotheses.",
   });
+  // Downstream reasoning liveness must not decide whether an already-computed evaluation is true.
+  // The capability-gated reassessment task may wait in the broker until a compatible worker returns.
+  DB.sqlite.prepare(
+    `UPDATE mac_workers SET capabilities_json = ?, last_seen_at = ?
+     WHERE worker_id = 'worker-1'`,
+  ).run(JSON.stringify({
+    task_kinds: "marketing_judgment",
+    marketing_reasoning_ready: true,
+    experiment_evaluation_v1: true,
+  }), new Date().toISOString());
   const accepted = await receiveHostedExperimentEvaluationCallback(
     { DB },
     task,
@@ -1379,7 +1390,47 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
        AND json_extract(task_json, '$.payload.campaign_id') = 'campaign-1'`,
   ).get();
   assert.ok(queuedReassessment);
-  const reassessmentTask = claimTask(DB, queuedReassessment.task_id);
+  assert.deepEqual(await claimWorkerTasks(DB, {
+    worker_id: "worker-1",
+    state: "active",
+  }), []);
+  const workerTwoSeenAt = new Date();
+  DB.sqlite.prepare(
+    `INSERT INTO mac_workers
+      (worker_id, display_name, pool, state, capabilities_json, doctor_json,
+       last_seen_at, created_at, updated_at)
+     VALUES ('worker-2', 'Reasoning Mac', 'appium', 'active', ?, '{"ready":true}', ?, ?, ?)`,
+  ).run(JSON.stringify({
+    task_kinds: "marketing_judgment",
+    marketing_reasoning_ready: true,
+    outcome_reassessment_v1: true,
+  }), workerTwoSeenAt.toISOString(), workerTwoSeenAt.toISOString(), workerTwoSeenAt.toISOString());
+  const laterLease = await claimWorkerTasks(DB, {
+    worker_id: "worker-2",
+    state: "active",
+  }, workerTwoSeenAt);
+  assert.equal(laterLease.length, 1);
+  assert.equal(laterLease[0].message_id, queuedReassessment.task_id);
+  DB.sqlite.prepare(
+    "UPDATE mac_workers SET capabilities_json = ?, last_seen_at = ? WHERE worker_id = 'worker-1'",
+  ).run(JSON.stringify({
+    task_kinds: "capture,marketing_judgment",
+    feedback_context_v1: true,
+    marketing_reasoning_ready: true,
+    shadow_strategy_v1: true,
+    market_research_v1: true,
+    candidate_materialization_v2: true,
+    experiment_evaluation_v1: true,
+    learning_synthesis_v1: true,
+    outcome_reassessment_v1: true,
+  }), workerTwoSeenAt.toISOString());
+  DB.sqlite.prepare(
+    `UPDATE hosted_workspace_capture_tasks SET execution_started_at = ?
+     WHERE task_id = ? AND worker_id = 'worker-2'`,
+  ).run(workerTwoSeenAt.toISOString(), queuedReassessment.task_id);
+  const reassessmentTask = DB.sqlite.prepare(
+    "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).get(queuedReassessment.task_id);
   assert.equal(reassessmentTask.required_capability, "outcome_reassessment_v1");
   const reassessmentPayload = JSON.parse(reassessmentTask.task_json).payload;
   assert.equal(reassessmentPayload.situation, "experiment_result");
@@ -1450,7 +1501,7 @@ test("assisted loop materializes balanced blocks and evaluates attributed outcom
     { DB },
     reassessmentTask,
     reassessmentCallback,
-    { worker_id: "worker-1" },
+    { worker_id: "worker-2" },
   );
   assert.equal(reassessmentAccepted.state, "proposed");
   const storedReassessment = DB.sqlite.prepare(
@@ -2001,6 +2052,18 @@ test("review queue exposes one exact, read-only decision packet without customer
     ACCOUNT,
   );
   assert.equal(unauthorized.status, 401);
+  const unauthorizedCampaigns = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns"),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(unauthorizedCampaigns.status, 401);
+  const unauthorizedCampaign = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1"),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(unauthorizedCampaign.status, 401);
   const unauthorizedPacket = await handleHostedMarketingAgent(
     new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1/review-packet"),
     { DB, CONTROL_PLANE_TOKEN: "secret" },
@@ -2016,6 +2079,44 @@ test("review queue exposes one exact, read-only decision packet without customer
   );
   assert.equal(authorizedQueue.status, 200);
   assert.equal((await authorizedQueue.json()).items[0].review_kind, "creative");
+  const authorizedCampaigns = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(authorizedCampaigns.status, 200);
+  assert.ok((await authorizedCampaigns.json()).campaigns.some(
+    (campaign) => campaign.campaign_id === "campaign-1",
+  ));
+  const authorizedCampaign = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    ACCOUNT,
+  );
+  assert.equal(authorizedCampaign.status, 200);
+  assert.equal((await authorizedCampaign.json()).campaign_id, "campaign-1");
+  const otherAccount = { ...ACCOUNT, account_id: "trace_us" };
+  const isolatedCampaigns = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    otherAccount,
+  );
+  assert.equal(isolatedCampaigns.status, 200);
+  assert.deepEqual((await isolatedCampaigns.json()).campaigns, []);
+  const isolatedCampaign = await handleHostedMarketingAgent(
+    new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1", {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    otherAccount,
+  );
+  assert.equal(isolatedCampaign.status, 404);
   const authorizedPacket = await handleHostedMarketingAgent(
     new Request("https://workspace.example/api/marketing-agent/campaigns/campaign-1/review-packet", {
       headers: { authorization: "Bearer secret" },

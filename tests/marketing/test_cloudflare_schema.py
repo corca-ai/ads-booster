@@ -28,6 +28,27 @@ def test_migration_numeric_prefixes_are_unique() -> None:
     assert len(prefixes) == len(set(prefixes))
 
 
+def test_marketing_run_journey_frontier_indexes_are_installed() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        indexes = {
+            row[0]
+            for row in cast(
+                "list[tuple[str]]",
+                connection.execute(
+                    """SELECT name FROM sqlite_master
+                    WHERE type = 'index' AND name LIKE 'hosted_marketing_%'"""
+                ).fetchall(),
+            )
+        }
+        assert {
+            "hosted_marketing_campaigns_assisted_origin",
+            "hosted_marketing_experiment_evaluations_campaign_latest",
+            "hosted_marketing_learning_candidates_campaign_latest",
+            "hosted_marketing_successor_activations_source_state",
+        } <= indexes
+
+
 def test_existing_hosted_rows_survive_the_legacy_migration_chain() -> None:
     with closing(sqlite3.connect(":memory:")) as connection:
         apply_migrations(connection, through="0014_worker_caption_generation.sql")
@@ -1239,6 +1260,112 @@ def test_feedback_loop_schema_keeps_exact_retry_binding_and_capability_gate() ->
         } <= candidate_columns
         assert {"capture_task_id", "artifact_sha256"} <= feedback_columns
         assert "required_capability" in task_columns
+
+
+def test_hosted_marketing_agent_run_request_is_immutable_and_terminal_once() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30',
+                    1, 'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_capture_tasks
+            (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+             task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
+            VALUES ('task-agent-run', 'agent-task-one', 'trace_kr', '', 1, 'task-key', '{}',
+                    'queued', 'worker_broker', 'marketing_judgment', 'feature_launch_run_v5',
+                    'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_agent_runs
+            (run_id, account_id, schema_version, request_json, request_sha256,
+             idempotency_key, task_id, state, created_at, updated_at)
+            VALUES ('run-one', 'trace_kr', 'trace.feature-launch-run-request.v1', '{}', ?,
+                    'run-key', 'task-agent-run', 'queued', 'now', 'now')""",
+            ("a" * 64,),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="identity is immutable"):
+            _ = connection.execute(
+                "UPDATE hosted_marketing_agent_runs SET request_json = '{\"changed\":true}'"
+            )
+        _ = connection.execute(
+            """UPDATE hosted_marketing_agent_runs
+            SET state = 'failed', failure_code = 'research_failed', updated_at = 'later'
+            WHERE run_id = 'run-one'"""
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="transition is final"):
+            _ = connection.execute(
+                """UPDATE hosted_marketing_agent_runs
+                SET state = 'unknown_side_effect', failure_code = 'unknown'
+                WHERE run_id = 'run-one'"""
+            )
+
+
+def test_hosted_marketing_agent_run_capability_receipts_are_bound_and_append_only() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        apply_migrations(connection)
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_accounts
+            (account_id, display_name, country, language, timezone, morning_time,
+             evening_time, revision, created_at, updated_at)
+            VALUES ('trace_kr', 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30',
+                    1, 'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_workspace_capture_tasks
+            (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+             task_json, state, dispatch_mode, kind, required_capability, created_at, updated_at)
+            VALUES ('task-agent-run', 'agent-task-one', 'trace_kr', '', 1, 'task-key', '{}',
+                    'queued', 'worker_broker', 'marketing_judgment', 'feature_launch_run_v5',
+                    'now', 'now')"""
+        )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_agent_runs
+            (run_id, account_id, schema_version, request_json, request_sha256,
+             idempotency_key, task_id, state, created_at, updated_at,
+             capability_snapshot_json, capability_snapshot_sha256)
+            VALUES ('run-one', 'trace_kr', 'trace.feature-launch-run-request.v1', '{}', ?,
+                    'run-key', 'task-agent-run', 'queued', 'now', 'now',
+                    '{"capabilities":[]}', ?)""",
+            ("a" * 64, "b" * 64),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="snapshot is immutable"):
+            _ = connection.execute(
+                """UPDATE hosted_marketing_agent_runs
+                SET capability_snapshot_sha256 = ? WHERE run_id = 'run-one'""",
+                ("c" * 64,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="receipt binding is invalid"):
+            _ = connection.execute(
+                """INSERT INTO hosted_marketing_agent_run_receipts
+                (run_id, account_id, task_id, sequence, action_id, scope, call_sha256,
+                 request_sha256, receipt_sha256, observation_sha256, actual_cost_units,
+                 entry_json, entry_sha256, created_at)
+                VALUES ('run-one', 'trace_kr', 'task-agent-run', 2, 'observe.market_evidence',
+                        'market_evidence', ?, ?, ?, ?, 3, '{}', ?, 'now')""",
+                ("c" * 64, "d" * 64, "e" * 64, "f" * 64, "1" * 64),
+            )
+        _ = connection.execute(
+            """INSERT INTO hosted_marketing_agent_run_receipts
+            (run_id, account_id, task_id, sequence, action_id, scope, call_sha256,
+             request_sha256, receipt_sha256, observation_sha256, actual_cost_units,
+             entry_json, entry_sha256, created_at)
+            VALUES ('run-one', 'trace_kr', 'task-agent-run', 1, 'observe.market_evidence',
+                    'market_evidence', ?, ?, ?, ?, 3, '{}', ?, 'now')""",
+            ("c" * 64, "d" * 64, "e" * 64, "f" * 64, "1" * 64),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match=r"append-only|immutable"):
+            _ = connection.execute(
+                "UPDATE hosted_marketing_agent_run_receipts SET actual_cost_units = 1"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            _ = connection.execute("DELETE FROM hosted_marketing_agent_run_receipts")
 
 
 def test_knowledge_snapshot_migration_backfills_the_existing_strategy_task() -> None:

@@ -4,9 +4,10 @@
 // permanent queue sink when the marketing agent gains a new reasoning tool.
 
 export const MARKETING_JUDGMENT_CAPABILITIES = Object.freeze({
+  feature_launch_run: "feature_launch_run_v5",
   shadow_strategy: "shadow_strategy_v1",
   market_research: "market_research_v1",
-  creative_plan: "creative_plan_v1",
+  creative_plan: "creative_plan_v2",
   candidate_materialization: "candidate_materialization_v2",
   experiment_evaluation: "experiment_evaluation_v1",
   learning_synthesis: "learning_synthesis_v1",
@@ -20,9 +21,11 @@ export function marketingJudgmentCapability(judgment) {
   return capability;
 }
 
-export function marketingJudgmentCapabilityMatches(task, judgment) {
+export function marketingJudgmentCapabilityMatches(task, judgment, legacyCapabilities = []) {
   const required = task?.required_capability;
-  return required == null || required === marketingJudgmentCapability(judgment);
+  return required == null
+    || required === marketingJudgmentCapability(judgment)
+    || legacyCapabilities.includes(required);
 }
 
 const ONLINE_WINDOW_MS = 45_000;

@@ -693,7 +693,18 @@ async function validateSuccessorStrategy(
             activation.approval_grant_id, activation.successor_campaign_id,
             activation.strategy_task_id, activation.state,
             request.request_json, draft.draft_json,
-            grant.decision AS grant_decision, grant.reviewer_id, grant.reviewed_at
+            grant.decision AS grant_decision, source.state AS source_campaign_state,
+            EXISTS (
+              SELECT 1 FROM hosted_workspace_capture_tasks AS source_task
+              WHERE source_task.account_id = activation.account_id
+                AND source_task.run_id = activation.source_campaign_id
+                AND source_task.state = 'unknown_side_effect'
+            ) AS has_unknown_task_effect,
+            EXISTS (
+              SELECT 1 FROM hosted_marketing_tool_actions AS source_action
+              WHERE source_action.campaign_id = activation.source_campaign_id
+                AND source_action.state = 'unknown_side_effect'
+            ) AS has_unknown_tool_effect
      FROM hosted_marketing_successor_activations AS activation
      JOIN hosted_marketing_next_experiment_requests AS request
        ON request.request_id = activation.request_id
@@ -703,6 +714,16 @@ async function validateSuccessorStrategy(
       AND draft.draft_sha256 = activation.draft_sha256
      JOIN hosted_marketing_approval_grants AS grant
        ON grant.grant_id = activation.approval_grant_id
+      AND grant.campaign_id = activation.source_campaign_id
+      AND grant.scope = 'strategy'
+      AND grant.target_kind = 'next_experiment_draft'
+      AND grant.target_id = activation.draft_id
+      AND grant.target_sha256 = activation.draft_sha256
+      AND grant.reviewer_id = json_extract(activation.activation_json, '$.approved_by')
+      AND grant.reviewed_at = json_extract(activation.activation_json, '$.approved_at')
+     JOIN hosted_marketing_campaigns AS source
+       ON source.campaign_id = activation.source_campaign_id
+      AND source.account_id = activation.account_id
      WHERE activation.activation_id = ? AND activation.account_id = ?`,
   ).bind(seed.activation_id, campaign.account_id).first();
   if (!row) throw new HttpError(409, "successor activation lineage is missing");
@@ -717,6 +738,9 @@ async function validateSuccessorStrategy(
     || row.strategy_task_id !== task.task_id
     || row.successor_campaign_id !== campaign.campaign_id
     || row.grant_decision !== "approved"
+    || !["evaluated", "learning_candidate", "completed"].includes(row.source_campaign_state)
+    || Number(row.has_unknown_task_effect) !== 0
+    || Number(row.has_unknown_tool_effect) !== 0
     || await canonicalSha256(activation) !== row.activation_sha256
     || await canonicalSha256(request) !== row.request_sha256
     || await canonicalSha256(draft) !== row.draft_sha256
@@ -729,9 +753,6 @@ async function validateSuccessorStrategy(
     || priorStrategy.feature_packet_id === campaign.feature_packet_id
     || seed.source_lineage_sha256 !== row.source_lineage_sha256
     || seed.request_sha256 !== row.request_sha256
-    || seed.approval_grant_id !== row.approval_grant_id
-    || seed.approved_by !== row.reviewer_id
-    || seed.approved_at !== row.reviewed_at
     || seed.approved_draft_sha256 !== row.draft_sha256
     || canonicalJson(seed.approved_draft) !== canonicalJson(draft)
     || canonicalJson(seed.prior_strategy) !== canonicalJson(priorStrategy)

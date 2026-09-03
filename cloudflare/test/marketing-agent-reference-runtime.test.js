@@ -64,77 +64,9 @@ function packet() {
   };
 }
 
-function seed(db) {
-  db.sqlite.prepare(
-    `INSERT INTO hosted_workspace_accounts
-      (account_id, display_name, country, language, timezone, morning_time, evening_time,
-       revision, created_at, updated_at)
-     VALUES ('trace_kr', 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 1, 1)`,
-  ).run();
-  db.sqlite.prepare(
-    `INSERT INTO mac_workers
-      (worker_id, display_name, pool, state, capabilities_json, doctor_json,
-       last_seen_at, created_at, updated_at)
-     VALUES ('worker-1', 'Mac', 'appium', 'active', ?, '{}', 'now', 'now', 'now')`,
-  ).run(JSON.stringify({
-    task_kinds: "marketing_judgment",
-    marketing_reasoning_ready: true,
-    market_research_v1: true,
-    shadow_strategy_v1: true,
-  }));
-}
-
-test("market research stays quarantined and deterministically dispatches strategy", async () => {
-  const DB = new D1Adapter();
-  seed(DB);
-  const account = {
-    account_id: "trace_kr",
-    country: "KR",
-    language: "ko",
-    timezone: "Asia/Seoul",
-  };
-  const lineage = {
-    schema_version: "trace.feature-launch-lineage.v1",
-    agent_run_id: "campaign-research-1",
-    research_session_id: "local-research-1",
-    research_input_sha256: "1".repeat(64),
-    research_trace_sha256: "2".repeat(64),
-    research_continuation_sha256: "3".repeat(64),
-  };
-  const created = await createShadowCampaign({ DB }, account, {
-    account_id: account.account_id,
-    campaign_id: "campaign-research-1",
-    business_outcome: "Increase completed lock-screen setups.",
-    current_control: "아이폰 쓰는 유저들...",
-    feature_packet: packet(),
-    agent_run_lineage: lineage,
-  });
-  assert.equal(created.stage, "market_research");
-  const statusResponse = await handleHostedMarketingAgent(
-    new Request(`https://control.example/api/marketing-agent/campaigns/${created.campaign_id}`),
-    { DB },
-    account,
-  );
-  assert.equal(statusResponse.status, 200);
-  const status = await statusResponse.json();
-  assert.equal(status.account_id, account.account_id);
-  assert.deepEqual(status.agent_run_lineage, lineage);
-  assert.equal(status.latest_evaluation, null);
-  assert.equal(status.latest_learning_candidate, null);
-  DB.sqlite.prepare(
-    `UPDATE hosted_workspace_capture_tasks
-     SET worker_id = 'worker-1', lease_id = 'lease-1', execution_started_at = 'now'
-     WHERE task_id = ?`,
-  ).run(created.task_id);
-  const task = DB.sqlite.prepare(
-    "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
-  ).get(created.task_id);
-  assert.equal(task.required_capability, "market_research_v1");
-  const snapshot = {
-    schema_version: "trace.reference-research.v1",
-    snapshot_id: "snapshot-1",
-    campaign_id: created.campaign_id,
-    feature_packet_sha256: created.feature_packet_sha256,
+function marketProposal() {
+  return {
+    schema_version: "trace.reference-research-proposal.v1",
     sources: [
       {
         source_id: "source-1",
@@ -172,9 +104,92 @@ test("market research stays quarantined and deterministically dispatches strateg
       },
     ],
     blind_spots: ["No private conversion data."],
+  };
+}
+
+function seed(db) {
+  db.sqlite.prepare(
+    `INSERT INTO hosted_workspace_accounts
+      (account_id, display_name, country, language, timezone, morning_time, evening_time,
+       revision, created_at, updated_at)
+     VALUES ('trace_kr', 'Trace KR', 'KR', 'ko', 'Asia/Seoul', '07:30', '19:30', 1, 1, 1)`,
+  ).run();
+  db.sqlite.prepare(
+    `INSERT INTO mac_workers
+      (worker_id, display_name, pool, state, capabilities_json, doctor_json,
+       last_seen_at, created_at, updated_at)
+     VALUES ('worker-1', 'Mac', 'appium', 'active', ?, '{}', 'now', 'now', 'now')`,
+  ).run(JSON.stringify({
+    task_kinds: "marketing_judgment",
+    marketing_reasoning_ready: true,
+    market_research_v1: true,
+    shadow_strategy_v1: true,
+  }));
+}
+
+test("market research stays quarantined and deterministically dispatches strategy", async () => {
+  const DB = new D1Adapter();
+  seed(DB);
+  const account = {
+    account_id: "trace_kr",
+    country: "KR",
+    language: "ko",
+    timezone: "Asia/Seoul",
+  };
+  const lineage = {
+    schema_version: "trace.feature-launch-lineage.v1",
+    agent_run_id: "campaign-research-1",
+    research_session_id: "local-research-1",
+    research_input_sha256: "1".repeat(64),
+    research_trace_sha256: "2".repeat(64),
+    research_continuation_sha256: "3".repeat(64),
+  };
+  const proposal = marketProposal();
+  const created = await createShadowCampaign({ DB }, account, {
+    account_id: account.account_id,
+    campaign_id: "campaign-research-1",
+    business_outcome: "Increase completed lock-screen setups.",
+    current_control: "아이폰 쓰는 유저들...",
+    feature_packet: packet(),
+    agent_run_lineage: lineage,
+  }, {
+    marketResearchSeed: { proposal, sha256: digest(proposal) },
+  });
+  assert.equal(created.stage, "market_research");
+  const statusResponse = await handleHostedMarketingAgent(
+    new Request(`https://control.example/api/marketing-agent/campaigns/${created.campaign_id}`, {
+      headers: { authorization: "Bearer secret" },
+    }),
+    { DB, CONTROL_PLANE_TOKEN: "secret" },
+    account,
+  );
+  assert.equal(statusResponse.status, 200);
+  const status = await statusResponse.json();
+  assert.equal(status.account_id, account.account_id);
+  assert.deepEqual(status.agent_run_lineage, lineage);
+  assert.equal(status.latest_evaluation, null);
+  assert.equal(status.latest_learning_candidate, null);
+  DB.sqlite.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET worker_id = 'worker-1', lease_id = 'lease-1', execution_started_at = 'now'
+     WHERE task_id = ?`,
+  ).run(created.task_id);
+  const task = DB.sqlite.prepare(
+    "SELECT * FROM hosted_workspace_capture_tasks WHERE task_id = ?",
+  ).get(created.task_id);
+  assert.equal(task.required_capability, "market_research_v1");
+  const snapshot = {
+    schema_version: "trace.reference-research.v1",
+    snapshot_id: "snapshot-1",
+    campaign_id: created.campaign_id,
+    feature_packet_sha256: created.feature_packet_sha256,
+    sources: proposal.sources,
+    observations: proposal.observations,
+    blind_spots: proposal.blind_spots,
     quarantine: true,
     collected_at: "2026-08-31T00:00:00Z",
   };
+
   const callback = {
     callback_id: `${task.task_id}:completed`,
     task_id: task.task_id,
@@ -194,6 +209,21 @@ test("market research stays quarantined and deterministically dispatches strateg
       },
     },
   };
+
+  const tampered = structuredClone(callback);
+  tampered.result.output.reference_snapshot.sources[0].url = "https://elsewhere.example/one";
+  tampered.result.output.reference_snapshot_sha256 = digest(
+    tampered.result.output.reference_snapshot,
+  );
+  await assert.rejects(
+    () => receiveHostedReferenceResearchCallback(
+      { DB }, task, tampered, { worker_id: "worker-1" }, verifiedSourceFetcher,
+    ),
+    (error) => error.status === 409,
+  );
+  assert.equal(DB.sqlite.prepare(
+    "SELECT COUNT(*) AS count FROM hosted_marketing_reference_source_receipts",
+  ).get().count, 0);
 
   const accepted = await receiveHostedReferenceResearchCallback(
     { DB },
@@ -217,6 +247,10 @@ test("market research stays quarantined and deterministically dispatches strateg
   assert.equal(strategyPayload.reference_snapshot_sha256, digest(snapshot));
   assert.equal(strategyPayload.reference_snapshot.quarantine, true);
   assert.equal(strategyPayload.reference_verification.receipts.length, 2);
+  assert.deepEqual(
+    strategyPayload.reference_verification.receipts.map((item) => item.requested_url).sort(),
+    proposal.sources.map((item) => item.url).sort(),
+  );
   assert.equal(
     strategyPayload.reference_verification_sha256,
     digest(strategyPayload.reference_verification),

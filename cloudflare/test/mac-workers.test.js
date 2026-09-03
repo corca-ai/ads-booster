@@ -57,7 +57,7 @@ function worker(workerId, overrides = {}) {
     display_name: workerId,
     pool: "appium",
     state: "active",
-    capabilities_json: '{"task_kinds":"capture,generate_candidates,marketing_judgment","feedback_context_v1":true,"marketing_judgment_v1":true,"marketing_reasoning_ready":true,"shadow_strategy_v1":true,"market_research_v1":true,"creative_plan_v1":true,"candidate_materialization_v2":true,"experiment_evaluation_v1":true,"learning_synthesis_v1":true,"outcome_reassessment_v1":true}',
+    capabilities_json: '{"task_kinds":"capture,generate_candidates,marketing_judgment","feedback_context_v1":true,"marketing_judgment_v1":true,"marketing_reasoning_ready":true,"shadow_strategy_v1":true,"market_research_v1":true,"creative_plan_v1":true,"creative_plan_v2":true,"candidate_materialization_v2":true,"experiment_evaluation_v1":true,"learning_synthesis_v1":true,"outcome_reassessment_v1":true}',
     doctor_json: '{"ready":true}',
     last_seen_at: "2026-08-26T00:00:00.000Z",
     current_task_id: null,
@@ -1135,6 +1135,42 @@ test("an updated Mac leases either kind, oldest first", async () => {
 
   assert.equal(leases.length, 1);
   assert.equal(leases[0].message_id, "task-1");
+});
+
+test("an updated Mac can drain a queued creative v1 task", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const updated = worker("worker-1");
+  const legacyCreative = task({
+    kind: "marketing_judgment",
+    required_capability: "creative_plan_v1",
+  });
+  const db = new ClaimDb([updated], [legacyCreative]);
+
+  const leases = await claimWorkerTasks(db, updated, now);
+
+  assert.equal(leases.length, 1);
+  assert.equal(db.tasks.get("task-1").worker_id, "worker-1");
+});
+
+test("an updated Mac resumes its still-valid creative v1 lease", async () => {
+  const now = new Date("2026-08-26T00:00:30.000Z");
+  const updated = worker("worker-1", { current_task_id: "task-1" });
+  const legacyCreative = task({
+    kind: "marketing_judgment",
+    required_capability: "creative_plan_v1",
+    worker_id: "worker-1",
+    lease_id: "lease-1",
+    lease_started_at: "2026-08-26T00:00:00.000Z",
+    lease_expires_at: "2026-08-26T00:01:00.000Z",
+    attempt_count: 1,
+  });
+  const db = new ClaimDb([updated], [legacyCreative]);
+
+  const leases = await claimWorkerTasks(db, updated, now);
+
+  assert.equal(leases.length, 1);
+  assert.equal(leases[0].lease_id, "lease-1");
+  assert.equal(db.tasks.get("task-1").attempt_count, 1);
 });
 
 test("only a worker advertising marketing judgment leases a shadow strategy task", async () => {

@@ -97,6 +97,7 @@ export async function receiveHostedReferenceResearchCallback(
   ) {
     throw new HttpError(409, "reference research output binding is invalid");
   }
+  await assertFrozenMarketSeed(payload, snapshot);
   validateSnapshot(snapshot);
   let verificationBundle;
   try {
@@ -287,6 +288,27 @@ export async function receiveHostedReferenceResearchCallback(
     reference_snapshot_id: snapshot.snapshot_id,
     strategy_task_id: strategyTaskId,
   };
+}
+
+async function assertFrozenMarketSeed(payload, snapshot) {
+  const seed = payload.market_research_seed ?? null;
+  const seedSha256 = payload.market_research_seed_sha256 ?? null;
+  if ((seed === null) !== (seedSha256 === null)) {
+    throw new HttpError(409, "market research seed binding is incomplete");
+  }
+  if (seed === null) return;
+  const snapshotProposal = {
+    schema_version: "trace.reference-research-proposal.v1",
+    sources: snapshot.sources,
+    observations: snapshot.observations,
+    blind_spots: snapshot.blind_spots,
+  };
+  if (
+    await canonicalSha256(seed) !== seedSha256
+    || canonicalJson(snapshotProposal) !== canonicalJson(seed)
+  ) {
+    throw new HttpError(409, "reference research output drifted from its frozen market seed");
+  }
 }
 
 function validateSnapshot(snapshot) {

@@ -33,7 +33,7 @@ test("marketing preflight requires an active recent worker with the exact tool v
     capabilities: {
       task_kinds: "marketing_judgment",
       marketing_reasoning_ready: true,
-      creative_plan_v1: true,
+      creative_plan_v2: true,
     },
     doctor: { ready: false },
     lastSeenAt: "2026-09-02T11:00:00.000Z",
@@ -56,7 +56,7 @@ test("marketing preflight requires an active recent worker with the exact tool v
     capabilities: {
       task_kinds: "marketing_judgment",
       marketing_reasoning_ready: true,
-      creative_plan_v1: true,
+      creative_plan_v2: true,
     },
     doctor: { ready: false },
     lastSeenAt: "2026-09-02T11:59:45.000Z",
@@ -84,9 +84,18 @@ test("a globally healthy rolling-upgrade worker remains eligible for exact adver
 test("callbacks accept their frozen tool version and only legacy null bindings", () => {
   assert.equal(marketingJudgmentCapabilityMatches({}, "creative_plan"), true);
   assert.equal(marketingJudgmentCapabilityMatches(
-    { required_capability: "creative_plan_v1" },
+    { required_capability: "creative_plan_v2" },
     "creative_plan",
   ), true);
+  assert.equal(marketingJudgmentCapabilityMatches(
+    { required_capability: "creative_plan_v1" },
+    "creative_plan",
+    ["creative_plan_v1"],
+  ), true);
+  assert.equal(marketingJudgmentCapabilityMatches(
+    { required_capability: "creative_plan_v1" },
+    "creative_plan",
+  ), false);
   assert.equal(marketingJudgmentCapabilityMatches(
     { required_capability: "shadow_strategy_v1" },
     "creative_plan",

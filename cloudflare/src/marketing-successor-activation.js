@@ -126,6 +126,11 @@ export async function runDueSuccessorActivations(
       AND draft.draft_sha256 = activation.draft_sha256
      JOIN hosted_marketing_approval_grants AS grant
        ON grant.grant_id = activation.approval_grant_id
+      AND grant.campaign_id = activation.source_campaign_id
+      AND grant.scope = 'strategy'
+      AND grant.target_kind = 'next_experiment_draft'
+      AND grant.target_id = activation.draft_id
+      AND grant.target_sha256 = activation.draft_sha256
      JOIN hosted_marketing_campaigns AS campaign
        ON campaign.campaign_id = activation.source_campaign_id
       AND campaign.account_id = activation.account_id
@@ -198,9 +203,6 @@ async function materializeOne(db, row, nowDate) {
     successor_feature_packet_sha256: successorPacketSha256,
     source_lineage_sha256: activation.source_lineage_sha256,
     request_sha256: activation.request_sha256,
-    approval_grant_id: activation.approval_grant_id,
-    approved_by: activation.approved_by,
-    approved_at: activation.approved_at,
     prior_strategy: request.prior_strategy,
     prior_strategy_sha256: request.source_lineage.strategy_sha256,
     evaluation: request.evaluation,
@@ -283,14 +285,49 @@ async function materializeOne(db, row, nowDate) {
        SELECT ?, ?, ?, ?, 'agent_v1', 'shadow', NULL, ?, ?, 'strategy_requested', 1, ?,
               NULL, NULL, NULL, NULL, NULL, ?, ?
        WHERE EXISTS (
-         SELECT 1 FROM hosted_marketing_successor_activations
-         WHERE activation_id = ? AND state = 'pending'
+         SELECT 1
+         FROM hosted_marketing_successor_activations AS pending_activation
+         JOIN hosted_marketing_campaigns AS source
+           ON source.campaign_id = pending_activation.source_campaign_id
+          AND source.account_id = pending_activation.account_id
+         JOIN hosted_marketing_feature_packets AS successor_packet
+           ON successor_packet.packet_id = ?
+          AND successor_packet.packet_sha256 = ?
+          AND successor_packet.publication_allowed = 0
+         JOIN hosted_marketing_approval_grants AS current_grant
+           ON current_grant.grant_id = pending_activation.approval_grant_id
+          AND current_grant.campaign_id = pending_activation.source_campaign_id
+          AND current_grant.scope = 'strategy'
+          AND current_grant.target_kind = 'next_experiment_draft'
+          AND current_grant.target_id = pending_activation.draft_id
+          AND current_grant.target_sha256 = pending_activation.draft_sha256
+          AND current_grant.decision = 'approved'
+          AND current_grant.reviewer_id = json_extract(
+            pending_activation.activation_json, '$.approved_by'
+          )
+          AND current_grant.reviewed_at = json_extract(
+            pending_activation.activation_json, '$.approved_at'
+          )
+         WHERE pending_activation.activation_id = ?
+           AND pending_activation.state = 'pending'
+           AND source.state IN ('evaluated', 'learning_candidate', 'completed')
+           AND NOT EXISTS (
+             SELECT 1 FROM hosted_workspace_capture_tasks AS source_task
+             WHERE source_task.account_id = pending_activation.account_id
+               AND source_task.run_id = pending_activation.source_campaign_id
+               AND source_task.state = 'unknown_side_effect'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM hosted_marketing_tool_actions AS source_action
+             WHERE source_action.campaign_id = pending_activation.source_campaign_id
+               AND source_action.state = 'unknown_side_effect'
+           )
        )`,
     ).bind(
       ids.successor_campaign_id, row.account_id, successorPacket.packet_id,
       successorPacketSha256, row.marketing_context_snapshot_id,
       row.marketing_context_snapshot_sha256, row.business_outcome, now, now,
-      row.activation_id,
+      successorPacket.packet_id, successorPacketSha256, row.activation_id,
     ),
     db.prepare(
       `INSERT INTO hosted_marketing_knowledge_snapshots

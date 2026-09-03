@@ -4,6 +4,7 @@ import {
   assertCreativeCapabilitySnapshot,
   capabilityBindingStatements,
   MarketingCapabilityError,
+  requiredCapabilitiesForCreativeFormat,
 } from "./marketing-adapter-capabilities.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
 import { marketingJudgmentCapabilityMatches } from "./marketing-worker-capabilities.js";
@@ -17,7 +18,7 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
   ) {
     throw new HttpError(409, "callback scope does not match hosted creative judgment task");
   }
-  if (!marketingJudgmentCapabilityMatches(task, "creative_plan")) {
+  if (!marketingJudgmentCapabilityMatches(task, "creative_plan", ["creative_plan_v1"])) {
     throw new HttpError(409, "creative callback capability does not match its task");
   }
   if (callback.callback_id !== `${callback.task_id}:completed`) {
@@ -61,8 +62,14 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
     throw new HttpError(409, "campaign is not awaiting a creative plan");
   }
   let capabilityBindings;
+  const legacyCreativeV1 = task.required_capability === "creative_plan_v1";
   try {
-    capabilityBindings = await assertCreativeCapabilitySnapshot(env.DB, task.account_id, payload);
+    capabilityBindings = await assertCreativeCapabilitySnapshot(
+      env.DB,
+      task.account_id,
+      payload,
+      { allowLegacyCreativeV1: legacyCreativeV1 },
+    );
   } catch (error) {
     if (error instanceof MarketingCapabilityError) {
       throw new HttpError(409, error.message);
@@ -125,7 +132,13 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
   ) {
     throw new HttpError(409, "creative media plan scope is invalid");
   }
-  const treatments = validateTreatments(plan, strategy, capabilityBindingsById);
+  const treatments = validateTreatments(
+    plan,
+    strategy,
+    capabilityBindingsById,
+    payload.available_formats,
+    legacyCreativeV1,
+  );
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
       env.DB,
@@ -280,7 +293,13 @@ export async function receiveHostedCreativePlanCallback(env, task, callback, wor
   };
 }
 
-function validateTreatments(plan, strategy, capabilityBindingsById) {
+function validateTreatments(
+  plan,
+  strategy,
+  capabilityBindingsById,
+  availableFormats,
+  legacyCreativeV1,
+) {
   const proofKindByCapability = new Map([
     ["capture.native_png", "installed_native_capture"],
     ["copy.text", "copy_only"],
@@ -294,6 +313,9 @@ function validateTreatments(plan, strategy, capabilityBindingsById) {
   ));
   const hypotheses = new Map(requireArray(strategy.hypotheses, "strategy hypotheses", 2, 8)
     .map((hypothesis) => [safeId(hypothesis.hypothesis_id, "hypothesis_id"), hypothesis]));
+  const payloadFormats = legacyCreativeV1 && availableFormats == null
+    ? null
+    : new Set(requireArray(availableFormats, "available formats", 1, 5));
   const planned = new Set();
   for (const treatment of treatments) {
     const hypothesisId = safeId(treatment?.hypothesis_id, "treatment hypothesis_id");
@@ -307,6 +329,22 @@ function validateTreatments(plan, strategy, capabilityBindingsById) {
       throw new HttpError(409, "creative treatment escaped its strategy claims");
     }
     const requests = requireArray(treatment.artifact_requests, "artifact requests", 1, 8);
+    const requiredFormatCapabilities = requiredCapabilitiesForCreativeFormat(treatment.format);
+    if (
+      !legacyCreativeV1
+      && (!requiredFormatCapabilities || !payloadFormats.has(treatment.format))
+    ) {
+      throw new HttpError(409, "creative treatment selected an unavailable format");
+    }
+    const requestedCapabilities = new Set(requests.map((request) => request?.capability_id));
+    if (
+      !legacyCreativeV1
+      && requiredFormatCapabilities.some(
+        (capabilityId) => !requestedCapabilities.has(capabilityId),
+      )
+    ) {
+      throw new HttpError(409, "creative treatment is missing its format capability");
+    }
     const captureRequests = requests.filter(
       (request) => request?.capability_id === "capture.native_png",
     );

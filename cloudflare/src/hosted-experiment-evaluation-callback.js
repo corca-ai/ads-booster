@@ -2,7 +2,6 @@ import { HttpError } from "./http-error.js";
 import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
 import { MARKETING_JUDGMENT_PIPELINE } from "./marketing-agent.js";
 import {
-  hasOnlineMarketingWorker,
   marketingJudgmentCapability,
   marketingJudgmentCapabilityMatches,
 } from "./marketing-worker-capabilities.js";
@@ -141,12 +140,6 @@ export async function receiveHostedExperimentEvaluationCallback(env, task, callb
     } catch {
       throw new HttpError(409, "outcome reassessment request is invalid");
     }
-  }
-  if (
-    reassessmentTask !== null
-    && !(await hasOnlineMarketingWorker(env.DB, "outcome_reassessment"))
-  ) {
-    throw new HttpError(503, "no online worker can run the outcome reassessment");
   }
   if (worker) {
     const reservation = await reserveWorkerTaskCallback(
