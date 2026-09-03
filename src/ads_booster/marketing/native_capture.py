@@ -300,6 +300,7 @@ class HostedWorkspaceCaptureExecutor:
             locale=bundle.persona.locale,
             time_zone=_TIME_ZONES[bundle.persona.country],
             calendar_namespace=f"trace-{request_id}",
+            todo_calendar_namespace=f"trace-{request_id}-todos",
             export_nonce=secrets.token_hex(32),
         )
         control = CaptureControl.start(self.timeout_seconds)
