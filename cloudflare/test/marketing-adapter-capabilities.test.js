@@ -6,10 +6,30 @@ import {
   assertCreativeCapabilitySnapshot,
   canonicalJson,
   creativeFormatsForCapabilities,
+  installMarketingToolReference,
+  listMarketingToolInstallations,
   MarketingCapabilityError,
   resolveCreativeCapabilityBindings,
   validateCreativeCapabilitySnapshot,
 } from "../src/marketing-adapter-capabilities.js";
+
+function mutationDb(rows = []) {
+  const calls = [];
+  return {
+    calls,
+    prepare(sql) {
+      return {
+        bind(...values) {
+          calls.push({ sql, values });
+          return {
+            async all() { return { results: rows }; },
+            async run() { return { meta: { changes: 1 } }; },
+          };
+        },
+      };
+    },
+  };
+}
 
 function digest(value) {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
@@ -189,4 +209,40 @@ test("descriptor or wire-binding tampering never becomes a valid capability snap
     validateCreativeCapabilitySnapshot(payload),
     (error) => error instanceof MarketingCapabilityError && /binding digest/.test(error.message),
   );
+});
+
+test("agent installs only server-owned tool definitions as non-executable references", async () => {
+  const db = mutationDb();
+  const result = await installMarketingToolReference(
+    db,
+    "trace_kr",
+    "publish.threads",
+    "2026-09-03T00:00:00.000Z",
+  );
+
+  assert.equal(result.activation_state, "registered_reference");
+  assert.equal(result.operator_action_required, "oauth_consent");
+  assert.equal(result.setup_path, "/api/threads/oauth/start");
+  assert.match(db.calls[0].sql, /ON CONFLICT/);
+  assert.equal(db.calls[0].values[1], "publish.threads");
+  assert.match(db.calls[0].values[2], /"activation_state":"registered_reference"/);
+
+  await assert.rejects(
+    installMarketingToolReference(db, "trace_kr", "arbitrary.shell", "now"),
+    (error) => error instanceof MarketingCapabilityError && /supported catalog/.test(error.message),
+  );
+});
+
+test("tool inventory distinguishes available setup from active execution", async () => {
+  const tools = await listMarketingToolInstallations(mutationDb([{
+    capability_id: "publish.threads",
+    enabled: 1,
+    activation_state: "registered_reference",
+    updated_at: "2026-09-03T00:00:00.000Z",
+  }]), "trace_kr");
+
+  assert.deepEqual(tools.map((tool) => [tool.capability_id, tool.activation_state]), [
+    ["publish.threads", "registered_reference"],
+    ["deliver.slack", "not_installed"],
+  ]);
 });

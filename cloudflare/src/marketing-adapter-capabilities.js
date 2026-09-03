@@ -36,8 +36,90 @@ const BINDING_KEYS = Object.freeze([
   "request_schema_sha256",
 ]);
 const SHA256 = /^[a-f0-9]{64}$/;
+const GENERIC_REQUEST_SCHEMA_SHA256 = "fa609647bf7cfc267927f5e42c63ed3ae42d60a1f14962b80a0664107e8f2a80";
+const GENERIC_RECEIPT_SCHEMA_SHA256 = "368888b194fc57a818cf666788ff2e8fe79dab96c17a4c6b79f908e92a9dd91c";
+
+export const MARKETING_TOOL_CATALOG = Object.freeze({
+  "publish.threads": Object.freeze({
+    effect_class: "external", owner_id: "threads.publisher", setup_path: "/api/threads/oauth/start",
+  }),
+  "deliver.slack": Object.freeze({
+    effect_class: "external", owner_id: "slack.delivery", setup_path: null,
+  }),
+});
 
 export class MarketingCapabilityError extends Error {}
+
+export async function listMarketingToolInstallations(db, accountId) {
+  const rows = await db.prepare(
+    `SELECT capability_id, enabled, activation_state, updated_at
+     FROM hosted_marketing_adapter_capabilities WHERE account_id = ? ORDER BY capability_id`,
+  ).bind(accountId).all();
+  const installed = new Map((rows.results ?? []).map((row) => [row.capability_id, row]));
+  return Object.entries(MARKETING_TOOL_CATALOG).map(([capabilityId, definition]) => {
+    const row = installed.get(capabilityId);
+    return {
+      capability_id: capabilityId,
+      owner_id: definition.owner_id,
+      effect_class: definition.effect_class,
+      installed: Boolean(row),
+      enabled: Number(row?.enabled ?? 0) === 1,
+      activation_state: row?.activation_state ?? "not_installed",
+      setup_path: definition.setup_path,
+      updated_at: row?.updated_at ?? null,
+    };
+  });
+}
+
+function catalogDescriptor(capabilityId, activationState) {
+  const definition = MARKETING_TOOL_CATALOG[capabilityId];
+  if (!definition) throw new MarketingCapabilityError("marketing tool is not in the supported catalog");
+  return {
+    activation_state: activationState,
+    capability_id: capabilityId,
+    effect_class: definition.effect_class,
+    owner_id: definition.owner_id,
+    receipt_schema_sha256: GENERIC_RECEIPT_SCHEMA_SHA256,
+    request_schema_sha256: GENERIC_REQUEST_SCHEMA_SHA256,
+    schema_version: "trace.adapter-capability.v1",
+  };
+}
+
+export async function installMarketingToolReference(db, accountId, capabilityId, now) {
+  const descriptor = catalogDescriptor(capabilityId, "registered_reference");
+  const descriptorJson = canonicalJson(descriptor);
+  await db.prepare(
+    `INSERT INTO hosted_marketing_adapter_capabilities
+       (account_id, capability_id, descriptor_json, descriptor_sha256, effect_class,
+        request_schema_sha256, receipt_schema_sha256, owner_id, enabled, activation_state,
+        created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'registered_reference', ?, ?)
+     ON CONFLICT(account_id, capability_id) DO UPDATE SET enabled = 1,
+       activation_state = 'registered_reference', descriptor_json = excluded.descriptor_json,
+       descriptor_sha256 = excluded.descriptor_sha256, updated_at = excluded.updated_at`,
+  ).bind(
+    accountId, capabilityId, descriptorJson, await canonicalSha256(descriptor),
+    descriptor.effect_class, GENERIC_REQUEST_SCHEMA_SHA256, GENERIC_RECEIPT_SCHEMA_SHA256,
+    descriptor.owner_id, now, now,
+  ).run();
+  return {
+    capability_id: capabilityId,
+    activation_state: "registered_reference",
+    setup_path: MARKETING_TOOL_CATALOG[capabilityId].setup_path,
+    operator_action_required: capabilityId === "publish.threads" ? "oauth_consent" : "provider_setup",
+  };
+}
+
+export async function activateMarketingTool(db, accountId, capabilityId, now) {
+  const descriptor = catalogDescriptor(capabilityId, "active");
+  await db.prepare(
+    `UPDATE hosted_marketing_adapter_capabilities SET descriptor_json = ?, descriptor_sha256 = ?,
+       activation_state = 'active', enabled = 1, updated_at = ?
+     WHERE account_id = ? AND capability_id = ?`,
+  ).bind(
+    canonicalJson(descriptor), await canonicalSha256(descriptor), now, accountId, capabilityId,
+  ).run();
+}
 
 export async function resolveCreativeCapabilityBindings(db, accountId) {
   const bindings = await resolveAvailableCapabilityBindings(

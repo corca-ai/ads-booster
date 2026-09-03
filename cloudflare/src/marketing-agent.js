@@ -5,6 +5,8 @@ import {
 import {
   assertCurrentCapabilityBinding,
   creativeFormatsForCapabilities,
+  installMarketingToolReference,
+  listMarketingToolInstallations,
   MarketingCapabilityError,
   resolveCreativeCapabilityBindings,
 } from "./marketing-adapter-capabilities.js";
@@ -93,6 +95,20 @@ export async function handleHostedMarketingAgent(request, env, account) {
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/customer-signals") {
       requireMarketingAuthority(request, env);
       return agentJson({ signals: await listCustomerSignals(env, account.account_id) });
+    }
+    if (request.method === "GET" && url.pathname === "/api/marketing-agent/tools") {
+      requireMarketingAuthority(request, env);
+      return agentJson({ tools: await listMarketingToolInstallations(env.DB, account.account_id) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/marketing-agent/tools/install") {
+      requireMarketingAuthority(request, env);
+      const input = await readJson(request);
+      return agentJson(await installMarketingToolReference(
+        env.DB,
+        account.account_id,
+        safeId(input.capability_id, "capability_id"),
+        new Date().toISOString(),
+      ), 201);
     }
     const signalApprovalRoute = url.pathname.match(
       /^\/api\/marketing-agent\/customer-signals\/([^/]+)\/approval$/,
