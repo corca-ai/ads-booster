@@ -16,6 +16,14 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol
 import typer
 from pydantic import ValidationError
 
+from ads_booster.marketing.agent_service.http_api import (
+    MarketingAgentApi,
+    serve_marketing_agent_api,
+)
+from ads_booster.marketing.agent_service.lifecycle import (
+    InstalledServicePaths,
+    build_installed_marketing_agent_service,
+)
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
@@ -32,6 +40,7 @@ from ads_booster.marketing.feature_launch_run import (
 from ads_booster.marketing.hosted_candidate_judgment import HostedCandidateJudgmentExecutor
 from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
 from ads_booster.marketing.hosted_experiment_evaluation import HostedExperimentEvaluationExecutor
+from ads_booster.marketing.hosted_feature_launch_run import HostedFeatureLaunchRunExecutor
 from ads_booster.marketing.hosted_generation import HostedWorkspaceGenerationExecutor
 from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
 from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
@@ -96,8 +105,13 @@ _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES = 1024 * 1024
 app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
 agent_app = typer.Typer(no_args_is_help=True, help="Run bounded Marketing OS reasoning sessions.")
+service_app = typer.Typer(
+    no_args_is_help=True,
+    help="Operate the canonical on-premises Marketing Agent Service.",
+)
 app.add_typer(worker_app, name="worker")
 app.add_typer(agent_app, name="agent")
+app.add_typer(service_app, name="service")
 
 
 @app.command("version")
@@ -113,6 +127,70 @@ def version_command(
         typer.echo(json.dumps({"version": package_version}))
     else:
         typer.echo(package_version)
+
+
+@service_app.command("doctor")
+def service_doctor(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    """Report service readiness without requiring or inspecting Appium."""
+    executable = resolve_codex_executable()
+    paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    typer.echo(
+        json.dumps(
+            {
+                "schema_version": "trace.marketing-agent-service-doctor.v1",
+                "canonical_run_owner": "on_prem_marketing_agent_service",
+                "state_root": str(paths.root),
+                "reasoning_provider": "official-codex-cli",
+                "reasoning_ready": executable is not None,
+                "appium_required": False,
+                "ready": executable is not None,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@service_app.command("run")
+def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays explicit.
+    model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    host: Annotated[str, typer.Option(help="Loopback bind address.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    tenant: Annotated[str, typer.Option(help="Tenant bound to this service token.")] = "trace",
+    principal: Annotated[
+        str, typer.Option(help="Principal bound to approval decisions from this token.")
+    ] = "local-operator",
+    timeout_seconds: Annotated[
+        float, typer.Option(min=30.0, max=1800.0, help="Per-reasoning-turn timeout.")
+    ] = 300.0,
+) -> None:
+    """Run the always-on canonical Agent API; Appium workers are optional tools."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install Codex CLI and run `codex login`"
+        raise typer.BadParameter(message)
+    token = _required("TRACE_MARKETING_SERVICE_TOKEN")
+    paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    service = build_installed_marketing_agent_service(
+        paths=paths,
+        codex_executable=executable,
+        model_id=model,
+        timeout_seconds=timeout_seconds,
+    )
+    typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
+    serve_marketing_agent_api(
+        MarketingAgentApi(
+            service=service,
+            tenant_id=tenant,
+            principal_id=principal,
+            bearer_token=token,
+        ),
+        host=host,
+        port=port,
+    )
 
 
 @agent_app.command("research")
@@ -821,6 +899,10 @@ def _run_mac_worker(agent_home: Path, *, once: bool) -> None:
                 ),
                 next_experiment=HostedNextExperimentJudgmentExecutor(
                     codex=CodexCli(executable=executable),
+                    output_root=agent_home / "generated",
+                ),
+                feature_launch_run=HostedFeatureLaunchRunExecutor(
+                    codex_executable=executable,
                     output_root=agent_home / "generated",
                 ),
             )

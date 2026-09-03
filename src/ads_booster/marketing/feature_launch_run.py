@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -52,6 +53,7 @@ _HTTP_NOT_FOUND = 404
 _HTTP_CONFLICT = 409
 _HTTP_PROVEN_NO_EFFECT = frozenset({400, 401, 403, 404, 413, 422, 503})
 _MAX_HOSTED_HANDOFF_BYTES = 64 * 1024
+_HOSTED_ACCOUNT_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class FeatureLaunchRunError(ValueError):
@@ -68,6 +70,8 @@ class FeatureLaunchRunRequest(ContractModel):
 
     @model_validator(mode="after")
     def require_shadow_research_contract(self) -> FeatureLaunchRunRequest:
+        if _HOSTED_ACCOUNT_ID.fullmatch(self.research.account_id) is None:
+            raise ValueError("hosted account_id must use lowercase letters, numbers, - or _")
         if self.research.feature_packet.gate.publication_allowed:
             raise ValueError("feature launch bridge currently admits shadow campaigns only")
         required = set(self.research.required_scopes)
@@ -116,7 +120,7 @@ class FeatureLaunchRunResult(ContractModel):
 class HostedCampaignControlPlane(Protocol):
     def execute(self, invocation: BoundToolInvocation) -> ToolReceipt: ...
 
-    def lookup(self, campaign_id: str) -> JsonObject | None: ...
+    def lookup(self, campaign_id: str, account_id: str) -> JsonObject | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,14 +137,14 @@ class HttpHostedCampaignControlPlane:
         response = self.http.post_json(
             f"{self.origin}/api/marketing-agent/campaigns",
             payload,
-            self._headers(),
+            self._headers(handoff.account_id),
         )
         if _HTTP_SUCCESS_MIN <= response.status_code < _HTTP_SUCCESS_MAX:
             status = response.json_object()
             _validate_hosted_status(status, handoff)
             return _receipt(invocation, EffectDisposition.SUCCEEDED, status)
         if response.status_code == _HTTP_CONFLICT:
-            status = self.lookup(handoff.campaign_id)
+            status = self.lookup(handoff.campaign_id, handoff.account_id)
             if status is not None:
                 _validate_hosted_status(status, handoff)
                 return _receipt(invocation, EffectDisposition.SUCCEEDED, status)
@@ -155,10 +159,10 @@ class HttpHostedCampaignControlPlane:
             )
         raise FeatureLaunchRunError("hosted_campaign_create_outcome_ambiguous")
 
-    def lookup(self, campaign_id: str) -> JsonObject | None:
+    def lookup(self, campaign_id: str, account_id: str) -> JsonObject | None:
         response = self.http.get(
             f"{self.origin}/api/marketing-agent/campaigns/{campaign_id}",
-            self._headers(),
+            self._headers(account_id),
         )
         if response.status_code == _HTTP_NOT_FOUND:
             return None
@@ -166,10 +170,11 @@ class HttpHostedCampaignControlPlane:
             raise FeatureLaunchRunError("hosted_campaign_lookup_failed")
         return response.json_object()
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, account_id: str) -> dict[str, str]:
         return {
             "authorization": f"Bearer {self.bearer_token}",
             "content-type": "application/json",
+            "x-trace-account-id": account_id,
         }
 
 
@@ -229,7 +234,7 @@ class FeatureLaunchRunner:
                 "awaiting_reconciliation",
                 pending_status,
             )
-        status = self.control_plane.lookup(request.agent_run_id)
+        status = self.control_plane.lookup(request.agent_run_id, request.research.account_id)
         if session.state is RuntimeState.EXECUTING and session.pending_call is None:
             successful = any(event.event_type == "tool_succeeded" for event in session.events)
             session = runtime.finalize_persisted_session(
@@ -299,7 +304,7 @@ class _HandoffRuntime:
     ) -> tuple[AgentSession, JsonObject | None]:
         if session.state is not RuntimeState.AWAITING_RECONCILIATION:
             return session, None
-        status = self.control_plane.lookup(handoff.campaign_id)
+        status = self.control_plane.lookup(handoff.campaign_id, handoff.account_id)
         if status is None:
             return session, None
         _validate_hosted_status(status, handoff)

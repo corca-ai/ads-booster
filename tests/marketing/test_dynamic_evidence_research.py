@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, override
 
@@ -17,6 +18,7 @@ from ads_booster.contracts.marketing_agent import (
     FeatureEvidencePacket,
     FeatureGate,
     FeatureLifecycle,
+    contract_sha256,
 )
 from ads_booster.contracts.marketing_context import (
     CustomerSignalKind,
@@ -27,9 +29,11 @@ from ads_booster.marketing import dynamic_evidence_research as dynamic_research
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
+    DynamicEvidenceResearchResult,
     DynamicEvidenceResearchRunner,
     DynamicMarketResearchContext,
     build_dynamic_research_registry,
+    build_local_research_capability_snapshot,
 )
 from ads_booster.marketing.evidence_research_operator import (
     PlannerInvocationReceipt,
@@ -163,7 +167,9 @@ class FakeCodex:
         }
 
 
-def test_codex_runner_dynamically_selects_tools_replans_and_resumes(tmp_path: Path) -> None:
+def test_codex_runner_dynamically_selects_tools_replans_and_resumes(  # noqa: PLR0915
+    tmp_path: Path,
+) -> None:
     request = _request(tuple(ResearchScope))
     codex = FakeCodex(
         (
@@ -185,6 +191,26 @@ def test_codex_runner_dynamically_selects_tools_replans_and_resumes(tmp_path: Pa
     assert result.evidence_brief is None
     assert result.tool_calls == 3
     assert result.spent_cost_units == 5
+    assert result.schema_version == "trace.dynamic-evidence-research-result.v4"
+    assert result.registry_snapshot_sha256 == contract_sha256(result.capability_snapshot)
+    assert tuple(item.scope for item in result.capability_snapshot.capabilities) == tuple(
+        scope.value for scope in request.required_scopes
+    )
+    assert tuple(item.scope for item in result.receipt_chain) == tuple(
+        scope.value for scope in codex.decisions
+    )
+    assert tuple(item.sequence for item in result.receipt_chain) == (1, 2, 3)
+    assert len({item.call_sha256 for item in result.receipt_chain}) == 3
+    assert len({item.receipt_sha256 for item in result.receipt_chain}) == 3
+    assert len({item.observation_sha256 for item in result.receipt_chain}) == 3
+    assert sum(item.actual_cost_units for item in result.receipt_chain) == 5
+    assert all(item.invocation.call.digest == item.call_sha256 for item in result.receipt_chain)
+    assert all(item.receipt.receipt_sha256 == item.receipt_sha256 for item in result.receipt_chain)
+    assert all(item.hand_result.digest == item.receipt_sha256 for item in result.receipt_chain)
+    assert all(
+        contract_sha256(item.observation) == item.observation_sha256
+        for item in result.receipt_chain
+    )
     assert {finding.scope for finding in result.findings} == set(ResearchScope)
     assert tuple(finding.scope for finding in result.findings) == codex.decisions
     assert tuple(finding.iteration for finding in result.findings) == (1, 2, 3)
@@ -195,6 +221,8 @@ def test_codex_runner_dynamically_selects_tools_replans_and_resumes(tmp_path: Pa
     assert "trace://secret/source" not in codex.planner_prompts[0]
     assert "Approved users say" not in codex.planner_prompts[0]
     assert "prior_observations" in codex.planner_prompts[1]
+    assert '"claim_ids_max":16' in codex.planner_prompts[0]
+    assert '"question_max_chars":1000' in codex.planner_prompts[0]
     assert "SECRET CLAIM TEXT" in codex.market_prompts[0]
     assert "Demonstration makes the scheduled change legible." in codex.planner_prompts[1]
     assert "example.com" not in codex.planner_prompts[1]
@@ -235,6 +263,60 @@ def test_codex_runner_dynamically_selects_tools_replans_and_resumes(tmp_path: Pa
     assert len(codex.market_prompts) == 1
 
 
+def test_host_snapshot_is_validated_before_planning_and_adapted_in_declared_order(
+    tmp_path: Path,
+) -> None:
+    request = _request((ResearchScope.MARKET_EVIDENCE, ResearchScope.PRODUCT_TRUTH))
+    snapshot = build_local_research_capability_snapshot(request.required_scopes)
+    changed_capability = snapshot.capabilities[0].model_copy(update={"worst_case_cost_units": 2})
+    tampered = snapshot.model_copy(
+        update={"capabilities": (changed_capability, *snapshot.capabilities[1:])}
+    )
+    codex = FakeCodex((ResearchScope.MARKET_EVIDENCE, ResearchScope.PRODUCT_TRUTH))
+
+    with pytest.raises(
+        DynamicEvidenceResearchError,
+        match=r"^dynamic_research_capability_snapshot_invalid$",
+    ):
+        _ = DynamicEvidenceResearchRunner(codex, tmp_path).run(
+            request,
+            now=NOW,
+            capability_snapshot=tampered,
+        )
+
+    assert codex.planner_prompts == []
+    assert tuple(item.scope for item in snapshot.capabilities) == (
+        "market_evidence",
+        "product_truth",
+    )
+
+
+def test_result_rejects_receipt_chain_checkpoint_or_uniqueness_drift(tmp_path: Path) -> None:
+    request = _request((ResearchScope.PRODUCT_TRUTH, ResearchScope.CUSTOMER_INTELLIGENCE))
+    result = DynamicEvidenceResearchRunner(
+        FakeCodex((ResearchScope.PRODUCT_TRUTH, ResearchScope.CUSTOMER_INTELLIGENCE)),
+        tmp_path,
+    ).run(request, now=NOW)
+    payload = result.model_dump(mode="json")
+    replacement = "f" * 64
+    entry = payload["receipt_chain"][1]  # pyright: ignore[reportAny]
+    entry["call_sha256"] = replacement
+    entry["request_sha256"] = replacement
+    entry["receipt_sha256"] = replacement
+    entry["observation_sha256"] = replacement
+    entry["invocation"]["call"]["input_sha256"] = replacement
+    entry["receipt"]["call_sha256"] = replacement
+    entry["receipt"]["receipt_sha256"] = replacement
+    entry["observation"]["call_sha256"] = replacement
+    entry["observation"]["request_sha256"] = replacement
+    entry["observation"]["receipt_sha256"] = replacement
+    entry["hand_result"]["call_sha256"] = replacement
+    entry["hand_result"]["request_sha256"] = replacement
+
+    with pytest.raises(ValueError, match=r"digest mismatch|lineage mismatch"):
+        _ = DynamicEvidenceResearchResult.model_validate(payload)
+
+
 def test_opposite_market_evidence_changes_the_next_planner_context(tmp_path: Path) -> None:
     request = _request((ResearchScope.MARKET_EVIDENCE, ResearchScope.PRODUCT_TRUTH))
     positive = FakeCodex(
@@ -253,6 +335,62 @@ def test_opposite_market_evidence_changes_the_next_planner_context(tmp_path: Pat
     assert "MARKET SIGNAL A" in positive.planner_prompts[1]
     assert "MARKET SIGNAL B" in negative.planner_prompts[1]
     assert "https://example.com/one" not in positive.planner_prompts[1]
+
+
+def test_resumed_customer_projection_counterfactual_changes_research_output_and_replan(
+    tmp_path: Path,
+) -> None:
+    # Given two otherwise identical resumed research requests with different governed snapshots
+    base = _request((ResearchScope.CUSTOMER_INTELLIGENCE, ResearchScope.PRODUCT_TRUTH))
+    first_context = _marketing_context()
+    first_signal = first_context.customer_signals[0]
+    second_context = first_context.model_copy(
+        update={
+            "snapshot_id": "context-counterfactual",
+            "snapshot_sha256": "6" * 64,
+            "customer_signals": (
+                first_signal.model_copy(
+                    update={
+                        "signal_id": "signal-counterfactual",
+                        "signal_sha256": "7" * 64,
+                        "summary": "Approved users prefer a quieter scheduled-change preview.",
+                    }
+                ),
+            ),
+        }
+    )
+    first_request = base.model_copy(update={"marketing_context": first_context})
+    second_request = base.model_copy(update={"marketing_context": second_context})
+    first_codex = FakeCodex((ResearchScope.CUSTOMER_INTELLIGENCE, ResearchScope.PRODUCT_TRUTH))
+    second_codex = FakeCodex((ResearchScope.CUSTOMER_INTELLIGENCE, ResearchScope.PRODUCT_TRUTH))
+
+    # When each resume executes the real customer collector and replans from its observation
+    first_result = DynamicEvidenceResearchRunner(first_codex, tmp_path / "first").run(
+        first_request,
+        now=NOW,
+    )
+    second_result = DynamicEvidenceResearchRunner(second_codex, tmp_path / "second").run(
+        second_request,
+        now=NOW,
+    )
+
+    # Then the fresh projection changes the bound finding and the next planner prompt bytes
+    first_finding = first_result.findings[0]
+    second_finding = second_result.findings[0]
+    assert first_finding.scope is ResearchScope.CUSTOMER_INTELLIGENCE
+    assert second_finding.scope is ResearchScope.CUSTOMER_INTELLIGENCE
+    assert first_finding.summary == first_signal.summary
+    assert second_finding.summary == second_context.customer_signals[0].summary
+    assert first_finding.source_sha256 == first_context.snapshot_sha256
+    assert second_finding.source_sha256 == second_context.snapshot_sha256
+    assert first_result.input_snapshot_sha256 != second_result.input_snapshot_sha256
+    assert first_codex.planner_prompts[1] != second_codex.planner_prompts[1]
+    assert first_finding.summary in first_codex.planner_prompts[1]
+    assert second_finding.summary in second_codex.planner_prompts[1]
+    assert (
+        sha256(first_codex.planner_prompts[1].encode()).hexdigest()
+        != sha256(second_codex.planner_prompts[1].encode()).hexdigest()
+    )
 
 
 def test_market_semantic_projection_redacts_known_raw_boundary_literals(tmp_path: Path) -> None:

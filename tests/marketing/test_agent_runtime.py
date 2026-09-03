@@ -24,6 +24,7 @@ from ads_booster.marketing.runtime import (
     MarketingRuntimeError,
     RuntimeState,
     SessionEvent,
+    SqliteSessionStore,
     ToolAdmission,
     ToolCapability,
     ToolReceipt,
@@ -81,7 +82,7 @@ def test_unknown_effect_class_is_rejected_before_binding() -> None:
     unknown = ToolCapability("unknown", "a" * 64, "b" * 64, "typo_write", 1)
 
     with pytest.raises(MarketingRuntimeError, match="tool_effect_class_invalid"):
-        bind_tool_invocation(
+        _ = bind_tool_invocation(
             unknown,
             call_id="call-unknown",
             idempotency_key="unknown:one",
@@ -150,6 +151,24 @@ def test_serialized_session_reopens_with_exact_event_history_and_cas(tmp_path: P
     assert reopened == dispatched
     with pytest.raises(MarketingRuntimeError, match="compare_and_swap"):
         store.save(dispatched, expected_sequence=0)
+
+
+def test_sqlite_session_store_reuses_the_runtime_replay_contract(tmp_path: Path) -> None:
+    runtime = MarketingAgentRuntime()
+    grant = _grant()
+    dispatched = runtime._request_tool(
+        AgentSession("session-sqlite", Budget(2, 10)),
+        CAPABILITY,
+        INVOCATION,
+        now=NOW,
+        grant=grant,
+    )
+    store = SqliteSessionStore(tmp_path / "agent.sqlite3")
+
+    store.save(dispatched, expected_sequence=0)
+
+    assert SqliteSessionStore(tmp_path / "agent.sqlite3").load("session-sqlite") == dispatched
+    assert (tmp_path / "agent.sqlite3").stat().st_mode & 0o777 == 0o600
 
 
 def test_bound_invocation_uses_one_unicode_safe_canonical_request_digest() -> None:

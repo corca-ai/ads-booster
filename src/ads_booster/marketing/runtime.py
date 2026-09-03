@@ -9,6 +9,8 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -20,7 +22,7 @@ from pydantic import TypeAdapter
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Generator, Mapping
     from pathlib import Path
     from typing import TextIO
 
@@ -330,6 +332,74 @@ def replay_session(events: tuple[SessionEvent, ...]) -> AgentSession:
     )
 
 
+def _session_from_stored_json(payload: bytes | str) -> AgentSession:
+    data = _as_object(_JSON_OBJECT.validate_json(payload))
+    expected_digest = _string(data, "session_sha256")
+    serialized = {key: value for key, value in data.items() if key != "session_sha256"}
+    version_value = data.get("serialization_version")
+    serialization_version = (
+        _LEGACY_SESSION_SERIALIZATION_VERSION
+        if version_value is None
+        else _string(data, "serialization_version")
+    )
+    session_digest = (
+        _legacy_json_digest(serialized)
+        if serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION
+        else _json_digest(serialized)
+    )
+    if serialization_version not in {
+        _LEGACY_SESSION_SERIALIZATION_VERSION,
+        _PREHEADER_SESSION_SERIALIZATION_VERSION,
+        _SESSION_SERIALIZATION_VERSION,
+    }:
+        raise MarketingRuntimeError("session_serialization_version_invalid")
+    if session_digest != expected_digest:
+        raise MarketingRuntimeError("session_json_digest_mismatch")
+    budget = _object(data, "budget")
+    pending_value = data.get("pending_call")
+    if pending_value is not None and serialization_version != _SESSION_SERIALIZATION_VERSION:
+        raise MarketingRuntimeError("legacy_pending_session_unverifiable")
+    pending_invocation_value = data.get("pending_invocation")
+    session = AgentSession(
+        session_id=_string(data, "session_id"),
+        budget=Budget(_integer(budget, "max_tool_calls"), _integer(budget, "max_cost_units")),
+        state=RuntimeState(_string(data, "state")),
+        spent_cost_units=_integer(data, "spent_cost_units"),
+        reserved_cost_units=_integer(data, "reserved_cost_units"),
+        tool_calls=_integer(data, "tool_calls"),
+        pending_call=(
+            None if pending_value is None else _tool_call_from_json(_as_object(pending_value))
+        ),
+        pending_invocation=(
+            None
+            if pending_invocation_value is None
+            else _tool_invocation_from_json(_as_object(pending_invocation_value))
+        ),
+        pending_grant_sha256=_optional_string(data, "pending_grant_sha256"),
+        execution_started=_boolean(data, "execution_started"),
+        dispatched_idempotency_keys=tuple(
+            _string_value(item) for item in _array(data, "dispatched_idempotency_keys")
+        ),
+        consumed_grant_sha256s=tuple(
+            _string_value(item) for item in _array(data, "consumed_grant_sha256s")
+        ),
+        events=tuple(
+            _event_from_json(
+                _as_object(item),
+                legacy_digest=serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION,
+            )
+            for item in _array(data, "events")
+        ),
+        serialization_version=serialization_version,
+    )
+    if serialization_version != _SESSION_SERIALIZATION_VERSION:
+        if session.state not in _TERMINAL_STATES:
+            raise MarketingRuntimeError("legacy_nonterminal_session_unverifiable")
+        return session
+    _validate_loaded_session_checkpoint(session)
+    return session
+
+
 @dataclass(frozen=True, slots=True)
 class JsonSessionStore:
     """Atomic local single-writer store for replayable runtime sessions.
@@ -344,74 +414,7 @@ class JsonSessionStore:
         path = self._path(session_id)
         if not path.exists():
             return None
-        data = _as_object(_JSON_OBJECT.validate_json(path.read_bytes()))
-        expected_digest = _string(data, "session_sha256")
-        serialized = {key: value for key, value in data.items() if key != "session_sha256"}
-        version_value = data.get("serialization_version")
-        serialization_version = (
-            _LEGACY_SESSION_SERIALIZATION_VERSION
-            if version_value is None
-            else _string(data, "serialization_version")
-        )
-        session_digest = (
-            _legacy_json_digest(serialized)
-            if serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION
-            else _json_digest(serialized)
-        )
-        if serialization_version not in {
-            _LEGACY_SESSION_SERIALIZATION_VERSION,
-            _PREHEADER_SESSION_SERIALIZATION_VERSION,
-            _SESSION_SERIALIZATION_VERSION,
-        }:
-            raise MarketingRuntimeError("session_serialization_version_invalid")
-        if session_digest != expected_digest:
-            raise MarketingRuntimeError("session_json_digest_mismatch")
-        budget = _object(data, "budget")
-        event_items = _array(data, "events")
-        pending_value = data.get("pending_call")
-        if pending_value is not None and serialization_version != _SESSION_SERIALIZATION_VERSION:
-            raise MarketingRuntimeError("legacy_pending_session_unverifiable")
-        pending_call = (
-            None if pending_value is None else _tool_call_from_json(_as_object(pending_value))
-        )
-        pending_invocation_value = data.get("pending_invocation")
-        pending_invocation = (
-            None
-            if pending_invocation_value is None
-            else _tool_invocation_from_json(_as_object(pending_invocation_value))
-        )
-        session = AgentSession(
-            session_id=_string(data, "session_id"),
-            budget=Budget(_integer(budget, "max_tool_calls"), _integer(budget, "max_cost_units")),
-            state=RuntimeState(_string(data, "state")),
-            spent_cost_units=_integer(data, "spent_cost_units"),
-            reserved_cost_units=_integer(data, "reserved_cost_units"),
-            tool_calls=_integer(data, "tool_calls"),
-            pending_call=pending_call,
-            pending_invocation=pending_invocation,
-            pending_grant_sha256=_optional_string(data, "pending_grant_sha256"),
-            execution_started=_boolean(data, "execution_started"),
-            dispatched_idempotency_keys=tuple(
-                _string_value(item) for item in _array(data, "dispatched_idempotency_keys")
-            ),
-            consumed_grant_sha256s=tuple(
-                _string_value(item) for item in _array(data, "consumed_grant_sha256s")
-            ),
-            events=tuple(
-                _event_from_json(
-                    _as_object(item),
-                    legacy_digest=serialization_version == _LEGACY_SESSION_SERIALIZATION_VERSION,
-                )
-                for item in event_items
-            ),
-            serialization_version=serialization_version,
-        )
-        if serialization_version != _SESSION_SERIALIZATION_VERSION:
-            if session.state not in _TERMINAL_STATES:
-                raise MarketingRuntimeError("legacy_nonterminal_session_unverifiable")
-            return session
-        _validate_loaded_session_checkpoint(session)
-        return session
+        return _session_from_stored_json(path.read_bytes())
 
     def save(self, session: AgentSession, *, expected_sequence: int) -> None:
         if session.serialization_version != _SESSION_SERIALIZATION_VERSION:
@@ -471,6 +474,93 @@ class _SessionLock:
         if self._handle is not None:
             fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
             self._handle.close()
+
+
+@dataclass(frozen=True, slots=True)
+class SqliteSessionStore:
+    """Replayable runtime sessions stored beside the canonical Agent Run ledger."""
+
+    database_path: Path
+
+    def __post_init__(self) -> None:
+        """Create the runtime table in the service-owned private database."""
+        self.database_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with self._connection() as connection:
+            _ = connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_runtime_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    session_json TEXT NOT NULL,
+                    event_count INTEGER NOT NULL
+                )
+                """
+            )
+        self.database_path.chmod(0o600)
+
+    def load(self, session_id: str) -> AgentSession | None:
+        with self._connection() as connection:
+            row = cast(
+                "tuple[object, ...] | None",
+                connection.execute(
+                    "SELECT session_json FROM agent_runtime_sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone(),
+            )
+        return None if row is None else _session_from_stored_json(_string_value(row[0]))
+
+    def save(self, session: AgentSession, *, expected_sequence: int) -> None:
+        if session.serialization_version != _SESSION_SERIALIZATION_VERSION:
+            raise MarketingRuntimeError("legacy_session_read_only")
+        _validate_loaded_session_checkpoint(session)
+        payload = json.dumps(_stored_session_json(session), sort_keys=True, separators=(",", ":"))
+        with self._connection() as connection:
+            _ = connection.execute("BEGIN IMMEDIATE")
+            current = cast(
+                "tuple[object, ...] | None",
+                connection.execute(
+                    """
+                    SELECT session_json, event_count FROM agent_runtime_sessions
+                    WHERE session_id = ?
+                    """,
+                    (session.session_id,),
+                ).fetchone(),
+            )
+            current_sequence = 0 if current is None else _integer_value(current[1])
+            if current_sequence != expected_sequence:
+                raise MarketingRuntimeError("session_compare_and_swap_conflict")
+            if current is not None:
+                previous = _session_from_stored_json(_string_value(current[0]))
+                if session.events[:current_sequence] != previous.events:
+                    raise MarketingRuntimeError("session_event_history_mismatch")
+                _ = connection.execute(
+                    """
+                    UPDATE agent_runtime_sessions SET session_json = ?, event_count = ?
+                    WHERE session_id = ? AND event_count = ?
+                    """,
+                    (payload, len(session.events), session.session_id, expected_sequence),
+                )
+            else:
+                _ = connection.execute(
+                    """
+                    INSERT INTO agent_runtime_sessions(session_id, session_json, event_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    (session.session_id, payload, len(session.events)),
+                )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.database_path)
+        _ = connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+
+    @contextmanager
+    def _connection(self) -> Generator[sqlite3.Connection]:
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
 
 class MarketingAgentRuntime:
@@ -644,6 +734,24 @@ class MarketingAgentRuntime:
         recovery. It must be resolved through ``reconcile_interrupted_execution``.
         """
         started = self.start_persisted_tool_execution(store, session, now=now)
+        return self.finish_persisted_tool_execution(store, started, backend, now=now)
+
+    def finish_persisted_tool_execution(
+        self,
+        store: SessionStore,
+        started: AgentSession,
+        backend: ToolBackend,
+        *,
+        now: datetime,
+    ) -> AgentSession:
+        """Execute a durably started call; callers must never invoke it during recovery."""
+        self._require_current_session(store, started)
+        if (
+            started.state is not RuntimeState.EXECUTING
+            or started.pending_call is None
+            or not started.execution_started
+        ):
+            raise MarketingRuntimeError("tool_execution_not_durably_started")
         result = self._execute_tool(started, backend, now=now)
         try:
             self._persist_transition(store, started, result)
@@ -1362,7 +1470,7 @@ def _validate_effect_class(effect_class: str) -> None:
 
 def _effect_requires_approval(effect_class: str) -> bool:
     _validate_effect_class(effect_class)
-    return effect_class == "external"
+    return effect_class != "observe"
 
 
 def _is_runtime_reserved_event(event_type: str) -> bool:
@@ -1478,6 +1586,12 @@ def _optional_string(value: dict[str, object], key: str) -> str | None:
 
 def _string_value(value: object) -> str:
     if not isinstance(value, str):
+        raise MarketingRuntimeError("session_json_invalid")
+    return value
+
+
+def _integer_value(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
         raise MarketingRuntimeError("session_json_invalid")
     return value
 

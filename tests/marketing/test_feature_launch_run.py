@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from pydantic import ValidationError
@@ -61,27 +61,32 @@ def test_documented_shadow_launch_matches_the_installed_contract() -> None:
 
 
 def test_launch_rejects_a_packet_the_host_would_trim_before_digesting() -> None:
-    payload = _launch_request().model_dump(mode="json")
-    research = payload["research"]
-    assert isinstance(research, dict)
-    packet = research["feature_packet"]
-    assert isinstance(packet, dict)
+    payload = cast("JsonObject", _launch_request().model_dump(mode="json"))
+    research = cast("JsonObject", payload["research"])
+    packet = cast("JsonObject", research["feature_packet"])
     packet["title"] = " AI Lock Screen Concept "
 
     with pytest.raises(ValidationError, match="hosted canonical string"):
-        FeatureLaunchRunRequest.model_validate(payload)
+        _ = FeatureLaunchRunRequest.model_validate(payload)
 
 
 def test_launch_uses_the_host_utf16_string_limit_for_emoji() -> None:
-    payload = _launch_request().model_dump(mode="json")
-    research = payload["research"]
-    assert isinstance(research, dict)
-    packet = research["feature_packet"]
-    assert isinstance(packet, dict)
+    payload = cast("JsonObject", _launch_request().model_dump(mode="json"))
+    research = cast("JsonObject", payload["research"])
+    packet = cast("JsonObject", research["feature_packet"])
     packet["title"] = "😀" * 200
 
     with pytest.raises(ValidationError, match="hosted canonical string"):
-        FeatureLaunchRunRequest.model_validate(payload)
+        _ = FeatureLaunchRunRequest.model_validate(payload)
+
+
+def test_launch_rejects_an_account_id_the_host_cannot_scope() -> None:
+    payload = cast("JsonObject", _launch_request().model_dump(mode="json"))
+    research = cast("JsonObject", payload["research"])
+    research["account_id"] = "Trace_KR"
+
+    with pytest.raises(ValidationError, match="hosted account_id"):
+        _ = FeatureLaunchRunRequest.model_validate(payload)
 
 
 class LaunchCodex:
@@ -185,9 +190,10 @@ class FakeControlPlane:
             receipt_sha256="a" * 64,
         )
 
-    def lookup(self, campaign_id: str) -> JsonObject | None:
+    def lookup(self, campaign_id: str, account_id: str) -> JsonObject | None:
         self.lookup_calls += 1
         assert campaign_id == "launch-one"
+        assert account_id == "trace-kr"
         return self.status
 
     def publish_status(self) -> None:
@@ -211,6 +217,8 @@ class AmbiguousHttp:
     def __init__(self) -> None:
         self.post_calls: int = 0
         self.get_calls: int = 0
+        self.post_headers: list[dict[str, str]] = []
+        self.get_headers: list[dict[str, str]] = []
 
     def post_json(
         self,
@@ -218,13 +226,15 @@ class AmbiguousHttp:
         payload: JsonObject,
         headers: Mapping[str, str],
     ) -> HttpResponse:
-        _ = url, payload, headers
+        _ = url, payload
         self.post_calls += 1
+        self.post_headers.append(dict(headers))
         return HttpResponse(429, b"rate limited", {})
 
     def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
-        _ = url, headers
+        _ = url
         self.get_calls += 1
+        self.get_headers.append(dict(headers))
         return HttpResponse(404, b"not found", {})
 
     def post_form(
@@ -309,6 +319,14 @@ def test_http_429_is_ambiguous_and_never_reposted(tmp_path: Path) -> None:
     assert second.state == "awaiting_reconciliation"
     assert http.post_calls == 1
     assert http.get_calls == 2
+    assert http.post_headers == [
+        {
+            "authorization": "Bearer secret-token",
+            "content-type": "application/json",
+            "x-trace-account-id": "trace-kr",
+        }
+    ]
+    assert all(headers["x-trace-account-id"] == "trace-kr" for headers in http.get_headers)
     assert "secret-token" not in repr(control)
 
 
@@ -323,7 +341,7 @@ def test_hosted_status_must_match_the_researched_account(tmp_path: Path) -> None
     control.status["account_id"] = "another-account"
 
     with pytest.raises(FeatureLaunchRunError, match="hosted_campaign_handoff_mismatch"):
-        runner.run(_launch_request(), now=NOW + timedelta(minutes=1))
+        _ = runner.run(_launch_request(), now=NOW + timedelta(minutes=1))
 
     assert first.state == "awaiting_reconciliation"
     assert control.execute_calls == 1
@@ -343,7 +361,7 @@ def test_oversized_hosted_handoff_stops_before_research_or_http(tmp_path: Path) 
     control = FakeControlPlane()
 
     with pytest.raises(FeatureLaunchRunError, match="hosted_campaign_handoff_too_large"):
-        _runner(tmp_path, codex, control).run(request, now=NOW)
+        _ = _runner(tmp_path, codex, control).run(request, now=NOW)
 
     assert codex.planner_calls == 0
     assert control.execute_calls == 0

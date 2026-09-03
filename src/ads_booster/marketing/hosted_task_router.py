@@ -17,6 +17,10 @@ from ads_booster.marketing.hosted_experiment_evaluation import (
     HostedExperimentEvaluationExecutor,
     PreparedExperimentEvaluation,
 )
+from ads_booster.marketing.hosted_feature_launch_run import (
+    HostedFeatureLaunchRunExecutor,
+    PreparedHostedFeatureLaunchRun,
+)
 from ads_booster.marketing.hosted_generation import (
     HostedWorkspaceGenerationExecutor,
     PreparedHostedGeneration,
@@ -50,7 +54,8 @@ from ads_booster.marketing.native_capture import (
 from ads_booster.marketing.worker_capabilities import MARKETING_JUDGMENT_CAPABILITIES
 
 type MarketingJudgmentPrepared = (
-    PreparedMarketingJudgment
+    PreparedHostedFeatureLaunchRun
+    | PreparedMarketingJudgment
     | PreparedCreativeJudgment
     | PreparedCandidateJudgment
     | PreparedExperimentEvaluation
@@ -66,6 +71,7 @@ type PlanlessPrepared = (
 _ROUTED_JUDGMENTS: Final = frozenset(
     {
         "shadow_strategy",
+        "feature_launch_run",
         "market_research",
         "creative_plan",
         "candidate_materialization",
@@ -93,6 +99,7 @@ class PlanlessHostedTaskExecutor:
     reference_research: HostedReferenceResearchExecutor
     outcome_reassessment: HostedOutcomeReassessmentExecutor
     next_experiment: HostedNextExperimentJudgmentExecutor
+    feature_launch_run: HostedFeatureLaunchRunExecutor
 
     def prepare(self, task: MarketingTask) -> PlanlessPrepared:
         match task.kind:
@@ -112,6 +119,7 @@ class PlanlessHostedTaskExecutor:
             prepared,
             (
                 PreparedMarketingJudgment,
+                PreparedHostedFeatureLaunchRun,
                 PreparedCreativeJudgment,
                 PreparedCandidateJudgment,
                 PreparedExperimentEvaluation,
@@ -126,7 +134,9 @@ class PlanlessHostedTaskExecutor:
 
     def _prepare_marketing_judgment(self, task: MarketingTask) -> MarketingJudgmentPrepared:
         judgment = task.payload.get("judgment")
-        if judgment == "shadow_strategy":
+        if judgment == "feature_launch_run":
+            prepared = self.feature_launch_run.prepare(task)
+        elif judgment == "shadow_strategy":
             prepared = self.judgment.prepare(task)
         elif judgment == "market_research":
             prepared = self.reference_research.prepare(task)
@@ -147,7 +157,9 @@ class PlanlessHostedTaskExecutor:
         return prepared
 
     def _execute_marketing_judgment(self, prepared: MarketingJudgmentPrepared) -> TaskResult:
-        if isinstance(prepared, PreparedMarketingJudgment):
+        if isinstance(prepared, PreparedHostedFeatureLaunchRun):
+            result = self.feature_launch_run.execute(prepared)
+        elif isinstance(prepared, PreparedMarketingJudgment):
             result = self.judgment.execute(prepared)
         elif isinstance(prepared, PreparedCreativeJudgment):
             result = self.creative_judgment.execute(prepared)

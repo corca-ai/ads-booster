@@ -668,8 +668,10 @@ def test_the_worker_advertises_the_job_kinds_it_can_actually_run() -> None:
     assert capabilities["capture_ready"] is True
     assert capabilities["marketing_reasoning_ready"] is True
     assert capabilities["market_research_v1"] is True
+    assert capabilities["feature_launch_run_v5"] is True
     assert capabilities["shadow_strategy_v1"] is True
     assert capabilities["creative_plan_v1"] is True
+    assert capabilities["creative_plan_v2"] is True
     assert capabilities["experiment_evaluation_v1"] is True
     assert capabilities["learning_synthesis_v1"] is True
     assert capabilities["outcome_reassessment_v1"] is True
@@ -698,3 +700,4 @@ def test_reasoning_readiness_is_independent_from_existing_appium_readiness() -> 
     assert capabilities["marketing_reasoning_ready"] is True
     assert capabilities["shadow_strategy_v1"] is True
     assert capabilities["market_research_v1"] is False
+    assert capabilities["feature_launch_run_v5"] is False

@@ -20,6 +20,17 @@ from ads_booster.contracts.marketing_agent import (
     FeatureEvidencePacket,
     contract_sha256,
 )
+from ads_booster.contracts.marketing_capability import (
+    ResearchActionIdentifier,
+    ResearchBoundInvocationProof,
+    ResearchCapabilityConfigurationBounds,
+    ResearchCapabilityManifest,
+    ResearchCapabilitySnapshot,
+    ResearchHandResultProof,
+    ResearchObservationProof,
+    ResearchProofChainEntry,
+    ResearchToolReceiptProof,
+)
 from ads_booster.contracts.marketing_context import MarketingContextPlanningProjection
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.marketing.evidence_research_operator import (
@@ -56,6 +67,7 @@ from ads_booster.marketing.runtime import (
     ToolReceipt,
     canonical_json_object,
     session_trace_sha256,
+    tool_receipt_from_event,
 )
 from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.transport.json_types import JsonObject
@@ -66,8 +78,7 @@ if TYPE_CHECKING:
 _PLANNER_PROMPT_VERSION = "trace.dynamic-evidence-research-planner.v1"
 _MARKET_PROMPT_VERSION = "trace.dynamic-market-evidence-hand.v1"
 _SKILL_VERSION = "trace.dynamic-evidence-research-skill.v1"
-_REGISTRY_VERSION = "trace.dynamic-evidence-research-registry.v1"
-_RESULT_SCHEMA_VERSION = "trace.dynamic-evidence-research-result.v2"
+_RESULT_SCHEMA_VERSION = "trace.dynamic-evidence-research-result.v4"
 _DEFAULT_TIMEOUT_SECONDS = 300.0
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
@@ -161,7 +172,7 @@ class ResearchContinuation(ContractModel):
 
 
 class DynamicEvidenceResearchResult(ContractModel):
-    schema_version: Literal["trace.dynamic-evidence-research-result.v2"]
+    schema_version: Literal["trace.dynamic-evidence-research-result.v4"]
     session_id: AgentIdentifier
     state: Literal["completed", "inconclusive", "awaiting_reconciliation"]
     input_snapshot_sha256: Sha256Digest
@@ -172,9 +183,12 @@ class DynamicEvidenceResearchResult(ContractModel):
     trace_sha256: Sha256Digest
     tool_calls: Annotated[int, Field(ge=0, le=6)]
     spent_cost_units: Annotated[int, Field(ge=0, le=24)]
+    capability_snapshot: ResearchCapabilitySnapshot
+    receipt_chain: Annotated[tuple[ResearchProofChainEntry, ...], Field(max_length=3)]
     findings: Annotated[tuple[DynamicEvidenceFinding, ...], Field(max_length=3)]
     evidence_brief: FeatureLaunchEvidenceBrief | None = None
     continuation: ResearchContinuation | None = None
+    market_proposal: ReferenceResearchProposal | None = None
 
     @model_validator(mode="after")
     def require_terminal_brief_consistency(self) -> Self:
@@ -184,6 +198,29 @@ class DynamicEvidenceResearchResult(ContractModel):
             raise ValueError("only terminal inconclusive research may expose a continuation")
         if self.evidence_brief is not None and self.continuation is not None:
             raise ValueError("research cannot complete and continue at the same time")
+        if (self.continuation is None) != (self.market_proposal is None):
+            raise ValueError("a continuation must carry its exact quarantined market proposal")
+        if self.market_proposal is not None:
+            proposal_sha256 = contract_sha256(self.market_proposal)
+            market = next(
+                (item for item in self.findings if item.scope is ResearchScope.MARKET_EVIDENCE),
+                None,
+            )
+            if (
+                market is None
+                or market.source_sha256 != proposal_sha256
+                or market.source_ref != f"quarantined-codex-search:{proposal_sha256}"
+            ):
+                raise ValueError("market proposal is not bound to its research finding")
+        if self.registry_snapshot_sha256 != contract_sha256(self.capability_snapshot):
+            raise ValueError("research capability snapshot digest is invalid")
+        if self.planner_protocol_sha256 != self.capability_snapshot.planner_protocol_sha256:
+            raise ValueError("research planner protocol does not match its capability snapshot")
+        _validate_receipt_chain(
+            self.receipt_chain,
+            self.capability_snapshot,
+            result=self,
+        )
         return self
 
 
@@ -422,7 +459,7 @@ class CodexMarketEvidenceCollector:
         if self.market_context is None:
             return _CollectedFinding(
                 disposition=EffectDisposition.SUCCEEDED,
-                actual_cost_units=1,
+                actual_cost_units=3,
                 evidence_status="insufficient",
                 source_ref="missing:market-research-context",
                 source_sha256="0" * 64,
@@ -494,7 +531,7 @@ class CodexMarketEvidenceCollector:
 
 
 class _StoredResearchResult(ContractModel):
-    schema_version: Literal["trace.dynamic-research-hand-result.v1"]
+    schema_version: Literal["trace.dynamic-research-hand-result.v2"]
     goal_id: AgentIdentifier
     call_id: Annotated[str, Field(min_length=1, max_length=512)]
     call_sha256: Sha256Digest
@@ -698,11 +735,18 @@ class DynamicEvidenceResearchRunner:
         request: DynamicEvidenceResearchRequest,
         *,
         now: datetime | None = None,
+        capability_snapshot: ResearchCapabilitySnapshot | None = None,
     ) -> DynamicEvidenceResearchResult:
         current_time = datetime.now(UTC) if now is None else now
         _require_utc(current_time)
         input_snapshot_sha256 = contract_sha256(request)
-        registry = build_dynamic_research_registry(request.required_scopes)
+        snapshot = capability_snapshot or build_local_research_capability_snapshot(
+            request.required_scopes
+        )
+        registry = research_registry_from_capability_snapshot(
+            snapshot,
+            request.required_scopes,
+        )
         goal = EvidenceResearchGoal(
             schema_version="trace.evidence-research-goal.v2",
             goal_id=request.session_id,
@@ -776,8 +820,10 @@ class DynamicEvidenceResearchRunner:
             else None
         )
         state = _result_state(completed.state)
-        findings = tuple(item.finding() for item in result_store.for_goal(goal.goal_id))
+        stored_results = result_store.for_goal(goal.goal_id)
+        findings = tuple(item.finding() for item in stored_results)
         trace_sha256 = session_trace_sha256(completed)
+        receipt_chain = _research_receipt_chain(completed, stored_results)
         continuation = _research_continuation(
             request,
             state=state,
@@ -785,6 +831,7 @@ class DynamicEvidenceResearchRunner:
             trace_sha256=trace_sha256,
             created_at=completed.events[-1].occurred_at,
         )
+        market_proposal = _continuation_market_proposal(stored_results, continuation)
         return DynamicEvidenceResearchResult(
             schema_version=_RESULT_SCHEMA_VERSION,
             session_id=request.session_id,
@@ -797,10 +844,222 @@ class DynamicEvidenceResearchRunner:
             trace_sha256=trace_sha256,
             tool_calls=completed.tool_calls,
             spent_cost_units=completed.spent_cost_units,
+            capability_snapshot=snapshot,
+            receipt_chain=receipt_chain,
             findings=findings,
             evidence_brief=brief,
             continuation=continuation,
+            market_proposal=market_proposal,
         )
+
+
+def _continuation_market_proposal(
+    results: tuple[_StoredResearchResult, ...],
+    continuation: ResearchContinuation | None,
+) -> ReferenceResearchProposal | None:
+    if continuation is None:
+        return None
+    market = next(
+        (item for item in results if item.scope is ResearchScope.MARKET_EVIDENCE),
+        None,
+    )
+    if market is None or market.source_artifact is None:
+        raise DynamicEvidenceResearchError("dynamic_research_market_proposal_missing")
+    try:
+        proposal = ReferenceResearchProposal.model_validate(market.source_artifact)
+    except ValidationError as error:
+        raise DynamicEvidenceResearchError("dynamic_research_market_proposal_invalid") from error
+    if contract_sha256(proposal) != market.source_sha256:
+        raise DynamicEvidenceResearchError("dynamic_research_market_proposal_unbound")
+    return proposal
+
+
+def _research_receipt_chain(  # noqa: C901 - reconstructs three persisted event kinds.
+    session: AgentSession,
+    stored_results: tuple[_StoredResearchResult, ...],
+) -> tuple[ResearchProofChainEntry, ...]:
+    invocations: dict[str, tuple[int, ResearchBoundInvocationProof]] = {}
+    receipts: dict[str, tuple[int, ToolReceipt]] = {}
+    for index, event in enumerate(session.events):
+        if event.event_type == "tool_dispatched":
+            invocation = _invocation_proof(event.payload)
+            call_sha256 = invocation.call.digest
+            if call_sha256 in invocations:
+                raise DynamicEvidenceResearchError("dynamic_research_invocation_chain_duplicate")
+            invocations[call_sha256] = (index, invocation)
+        if event.event_type not in {f"tool_{item}" for item in EffectDisposition}:
+            continue
+        receipt = tool_receipt_from_event(event)
+        if receipt.receipt_sha256 in receipts:
+            raise DynamicEvidenceResearchError("dynamic_research_receipt_chain_duplicate")
+        receipts[receipt.receipt_sha256] = (index, receipt)
+
+    hand_results = {item.receipt_sha256: item for item in stored_results}
+    if len(hand_results) != len(stored_results):
+        raise DynamicEvidenceResearchError("dynamic_research_hand_result_chain_duplicate")
+    chain: list[ResearchProofChainEntry] = []
+    for observation_index, event in enumerate(session.events):
+        if event.event_type != "research_observation_recorded":
+            continue
+        try:
+            observation = ResearchObservation.model_validate(event.payload)
+        except ValidationError as error:
+            raise DynamicEvidenceResearchError(
+                "dynamic_research_receipt_chain_observation_invalid"
+            ) from error
+        receipt_entry = receipts.get(observation.receipt_sha256)
+        if receipt_entry is None or receipt_entry[0] >= observation_index:
+            raise DynamicEvidenceResearchError("dynamic_research_receipt_chain_unbound")
+        receipt = receipt_entry[1]
+        invocation_entry = invocations.get(receipt.call_sha256)
+        hand_result = hand_results.get(receipt.receipt_sha256)
+        if (
+            receipt.disposition is not EffectDisposition.SUCCEEDED
+            or receipt.call_sha256 != observation.call_sha256
+            or invocation_entry is None
+            or invocation_entry[0] >= receipt_entry[0]
+            or hand_result is None
+        ):
+            raise DynamicEvidenceResearchError("dynamic_research_receipt_chain_unbound")
+        invocation = invocation_entry[1]
+        chain.append(
+            ResearchProofChainEntry(
+                sequence=len(chain) + 1,
+                iteration=hand_result.iteration,
+                action_id=_research_action_id(observation.scope),
+                scope=observation.scope.value,
+                call_sha256=observation.call_sha256,
+                request_sha256=observation.request_sha256,
+                receipt_sha256=observation.receipt_sha256,
+                observation_sha256=contract_sha256(observation),
+                actual_cost_units=receipt.actual_cost_units,
+                invocation=invocation,
+                receipt=ResearchToolReceiptProof(
+                    call_id=receipt.call_id,
+                    call_sha256=receipt.call_sha256,
+                    approval_grant_sha256=None,
+                    disposition="succeeded",
+                    actual_cost_units=receipt.actual_cost_units,
+                    receipt_sha256=receipt.receipt_sha256,
+                ),
+                observation=ResearchObservationProof.model_validate(
+                    observation.model_dump(mode="json")
+                ),
+                hand_result=_hand_result_proof(hand_result),
+            )
+        )
+    return tuple(chain)
+
+
+def _invocation_proof(payload: JsonObject) -> ResearchBoundInvocationProof:
+    try:
+        invocation = _JSON_OBJECT.validate_python(payload["invocation"])
+        call = _JSON_OBJECT.validate_python(invocation["call"])
+        call["schema_version"] = "trace.tool-call.v1"
+        return ResearchBoundInvocationProof.model_validate({**invocation, "call": call})
+    except (KeyError, ValidationError) as error:
+        raise DynamicEvidenceResearchError("dynamic_research_invocation_chain_invalid") from error
+
+
+def _hand_result_proof(result: _StoredResearchResult) -> ResearchHandResultProof:
+    if result.disposition not in {EffectDisposition.SUCCEEDED, EffectDisposition.FAILED}:
+        raise DynamicEvidenceResearchError("dynamic_research_hand_result_disposition_invalid")
+    disposition: Literal["succeeded", "failed"] = (
+        "succeeded" if result.disposition is EffectDisposition.SUCCEEDED else "failed"
+    )
+    return ResearchHandResultProof(
+        schema_version="trace.dynamic-research-hand-result-proof.v1",
+        goal_id=result.goal_id,
+        call_id=result.call_id,
+        call_sha256=result.call_sha256,
+        request_sha256=result.request_sha256,
+        feature_packet_sha256=result.feature_packet_sha256,
+        decision_sha256=result.decision_sha256,
+        disposition=disposition,
+        actual_cost_units=result.actual_cost_units,
+        iteration=result.iteration,
+        scope=result.scope.value,
+        evidence_status=result.evidence_status,
+        source_ref=result.source_ref,
+        source_sha256=result.source_sha256,
+        source_artifact_sha256=(
+            None if result.source_artifact is None else _json_sha256(result.source_artifact)
+        ),
+        trust_state=result.trust_state,
+        supported_claim_ids=result.supported_claim_ids,
+        summary=result.summary,
+        caveats=result.caveats,
+        observed_at=result.observed_at,
+    )
+
+
+def _validate_receipt_chain(
+    chain: tuple[ResearchProofChainEntry, ...],
+    snapshot: ResearchCapabilitySnapshot,
+    *,
+    result: DynamicEvidenceResearchResult,
+) -> None:
+    if tuple(item.sequence for item in chain) != tuple(range(1, len(chain) + 1)):
+        raise ValueError("research receipt chain sequence is invalid")
+    if tuple(item.iteration for item in chain) != tuple(range(1, len(chain) + 1)):
+        raise ValueError("research receipt chain iteration is invalid")
+    unique_fields = (
+        tuple(item.action_id for item in chain),
+        tuple(item.scope for item in chain),
+        tuple(item.call_sha256 for item in chain),
+        tuple(item.request_sha256 for item in chain),
+        tuple(item.receipt_sha256 for item in chain),
+        tuple(item.observation_sha256 for item in chain),
+    )
+    if any(len(set(values)) != len(values) for values in unique_fields):
+        raise ValueError("research receipt chain entries must be unique")
+    capabilities = {item.scope: item for item in snapshot.capabilities}
+    goal_ids: set[str] = set()
+    feature_packet_sha256s: set[str] = set()
+    for entry in chain:
+        capability = capabilities.get(entry.scope)
+        try:
+            request = DynamicResearchToolRequest.model_validate(entry.invocation.request)
+        except ValidationError as error:
+            raise ValueError("research receipt chain request is invalid") from error
+        goal_ids.add(request.goal.goal_id)
+        feature_packet_sha256s.add(request.feature_packet_sha256)
+        if (
+            capability is None
+            or entry.action_id != capability.action_id
+            or entry.invocation.call.capability_id != capability.capability_id
+            or entry.invocation.call.descriptor_sha256 != _capability_descriptor_sha256(capability)
+            or entry.invocation.call.request_schema_sha256 != capability.request_schema_sha256
+            or entry.receipt.actual_cost_units != capability.worst_case_cost_units
+            or request.goal.input_snapshot_sha256 != result.input_snapshot_sha256
+            or request.goal.pinned_skill_registry_sha256 != result.registry_snapshot_sha256
+            or request.goal.planner_protocol_sha256 != result.planner_protocol_sha256
+            or request.goal.required_scopes
+            != tuple(ResearchScope(item.scope) for item in snapshot.capabilities)
+            or request.goal.max_iterations != len(snapshot.capabilities)
+            or request.goal.feature_packet_sha256 != request.feature_packet_sha256
+            or request.decision.goal_id != request.goal.goal_id
+            or request.decision.iteration != entry.iteration
+            or request.decision.action_id != entry.action_id
+            or request.decision.scope.value != entry.scope
+            or request.decision.skill_id != snapshot.skill_id
+            or request.decision.skill_sha256 != snapshot.skill_sha256
+            or request.decision.planner_receipt.provider_id != request.goal.planner_provider_id
+            or request.decision.planner_receipt.model_id != request.goal.planner_model_id
+            or request.decision.planner_receipt.planner_protocol_sha256
+            != result.planner_protocol_sha256
+            or entry.hand_result.feature_packet_sha256 != request.feature_packet_sha256
+            or (
+                entry.scope != ResearchScope.MARKET_EVIDENCE.value
+                and entry.hand_result.source_artifact_sha256 is not None
+            )
+        ):
+            raise ValueError("research receipt chain exceeds its capability snapshot")
+    if len(goal_ids) > 1 or len(feature_packet_sha256s) > 1:
+        raise ValueError("research receipt chain lineage must remain stable")
+    actual_cost_units = sum(item.receipt.actual_cost_units for item in chain)
+    if len(chain) > result.tool_calls or actual_cost_units > result.spent_cost_units:
+        raise ValueError("research receipt chain exceeds its runtime checkpoint")
 
 
 def _research_continuation(
@@ -859,10 +1118,10 @@ def _research_continuation(
     )
 
 
-def build_dynamic_research_registry(
+def build_local_research_capability_snapshot(
     scopes: tuple[ResearchScope, ...],
-) -> EvidenceResearchSkillRegistry:
-    """Derive capability and registry digests from canonical manifests, not placeholders."""
+) -> ResearchCapabilitySnapshot:
+    """Derive the local host snapshot used by callers that do not supply one."""
     if not scopes or len(set(scopes)) != len(scopes):
         raise DynamicEvidenceResearchError("dynamic_research_registry_scopes_invalid")
     request_schema_sha256 = _json_sha256(_schema(DynamicResearchToolRequest))
@@ -871,54 +1130,96 @@ def build_dynamic_research_registry(
         ResearchScope.CUSTOMER_INTELLIGENCE: 1,
         ResearchScope.MARKET_EVIDENCE: 3,
     }
+    skill_sha256 = _dynamic_research_skill_sha256()
+    return ResearchCapabilitySnapshot(
+        schema_version="trace.research-capability-snapshot.v1",
+        skill_id="evidence_research.v1",
+        skill_sha256=skill_sha256,
+        planner_protocol_sha256=planner_protocol_sha256(),
+        capabilities=tuple(
+            ResearchCapabilityManifest(
+                action_id=_research_action_id(scope),
+                scope=scope.value,
+                capability_id=_research_action_id(scope),
+                owner_id="trace-marketing.dynamic-evidence-research",
+                effect_class="observe",
+                request_schema_sha256=request_schema_sha256,
+                worst_case_cost_units=costs[scope],
+                approval_policy="none",
+                configuration_bounds=ResearchCapabilityConfigurationBounds(
+                    claim_ids_max=16,
+                    question_max_chars=1000,
+                    counter_evidence_question_max_chars=1000,
+                ),
+            )
+            for scope in scopes
+        ),
+    )
+
+
+def research_registry_from_capability_snapshot(
+    snapshot: ResearchCapabilitySnapshot,
+    scopes: tuple[ResearchScope, ...],
+) -> EvidenceResearchSkillRegistry:
+    """Validate a host snapshot and adapt it into the runtime's executable registry."""
+    expected = build_local_research_capability_snapshot(scopes)
+    if snapshot != expected:
+        raise DynamicEvidenceResearchError("dynamic_research_capability_snapshot_invalid")
     actions = tuple(
         ResearchAction(
-            action_id=f"observe.{scope.value}",
-            scope=scope,
+            action_id=capability.action_id,
+            scope=ResearchScope(capability.scope),
             capability=ToolCapability(
-                capability_id=f"observe.{scope.value}",
-                descriptor_sha256=_json_sha256(
-                    {
-                        "schema_version": "trace.dynamic-research-capability.v1",
-                        "capability_id": f"observe.{scope.value}",
-                        "owner": "trace-marketing.dynamic-evidence-research",
-                        "effect_class": "observe",
-                        "request_schema_sha256": request_schema_sha256,
-                        "worst_case_cost_units": costs[scope],
-                    }
-                ),
-                request_schema_sha256=request_schema_sha256,
-                effect_class="observe",
-                worst_case_cost_units=costs[scope],
+                capability_id=capability.capability_id,
+                descriptor_sha256=_capability_descriptor_sha256(capability),
+                request_schema_sha256=capability.request_schema_sha256,
+                effect_class=capability.effect_class,
+                worst_case_cost_units=capability.worst_case_cost_units,
             ),
+            configuration_bounds=capability.configuration_bounds,
         )
-        for scope in ResearchScope
-        if scope in scopes
+        for capability in snapshot.capabilities
     )
-    skill_sha256 = _json_sha256(
+    return EvidenceResearchSkillRegistry(contract_sha256(snapshot), snapshot.skill_sha256, actions)
+
+
+def build_dynamic_research_registry(
+    scopes: tuple[ResearchScope, ...],
+) -> EvidenceResearchSkillRegistry:
+    """Backward-compatible local registry derived through the snapshot adapter."""
+    snapshot = build_local_research_capability_snapshot(scopes)
+    return research_registry_from_capability_snapshot(snapshot, scopes)
+
+
+def _dynamic_research_skill_sha256() -> str:
+    return _json_sha256(
         {
             "schema_version": _SKILL_VERSION,
             "skill_id": "evidence_research.v1",
             "policy": "choose-one-unobserved-required-scope-and-replan-from-receipts",
         }
     )
-    snapshot_sha256 = _json_sha256(
+
+
+def _research_action_id(scope: ResearchScope) -> ResearchActionIdentifier:
+    if scope is ResearchScope.PRODUCT_TRUTH:
+        return "observe.product_truth"
+    if scope is ResearchScope.CUSTOMER_INTELLIGENCE:
+        return "observe.customer_intelligence"
+    return "observe.market_evidence"
+
+
+def _capability_descriptor_sha256(capability: ResearchCapabilityManifest) -> str:
+    return _json_sha256(
         {
-            "schema_version": _REGISTRY_VERSION,
-            "skill_sha256": skill_sha256,
-            "capabilities": [
-                {
-                    "capability_id": action.capability.capability_id,
-                    "descriptor_sha256": action.capability.descriptor_sha256,
-                    "request_schema_sha256": action.capability.request_schema_sha256,
-                    "effect_class": action.capability.effect_class,
-                    "worst_case_cost_units": action.capability.worst_case_cost_units,
-                }
-                for action in actions
-            ],
+            "schema_version": "trace.dynamic-research-capability.v1",
+            "capability_id": capability.capability_id,
+            "owner": capability.owner_id,
+            "effect_class": capability.effect_class,
+            "request_schema_sha256": capability.request_schema_sha256,
+            "worst_case_cost_units": capability.worst_case_cost_units,
         }
     )
-    return EvidenceResearchSkillRegistry(snapshot_sha256, skill_sha256, actions)
 
 
 def planner_protocol_sha256() -> str:
@@ -938,7 +1239,15 @@ def _planning_context_json(context: ResearchPlanningContext) -> JsonObject:
         "goal": _JSON_OBJECT.validate_python(context.goal.model_dump(mode="json")),
         "product": _JSON_OBJECT.validate_python(context.product.model_dump(mode="json")),
         "available_actions": [
-            {"action_id": action.action_id, "scope": action.scope.value}
+            {
+                "action_id": action.action_id,
+                "scope": action.scope.value,
+                **(
+                    {"configuration_bounds": action.configuration_bounds.model_dump(mode="json")}
+                    if action.configuration_bounds is not None
+                    else {}
+                ),
+            }
             for action in context.available_actions
         ],
         "prior_observations": [
@@ -991,7 +1300,7 @@ def _build_stored_result(
     now: datetime,
 ) -> _StoredResearchResult:
     payload: JsonObject = {
-        "schema_version": "trace.dynamic-research-hand-result.v1",
+        "schema_version": "trace.dynamic-research-hand-result.v2",
         "goal_id": request.goal.goal_id,
         "call_id": invocation.call.call_id,
         "call_sha256": invocation.call.digest,
@@ -1013,14 +1322,21 @@ def _build_stored_result(
         # Match Pydantic's canonical JSON serialization before deriving the immutable receipt.
         "observed_at": now.isoformat().replace("+00:00", "Z"),
     }
-    payload["receipt_sha256"] = _json_sha256(payload)
+    proof_payload = dict(payload)
+    proof_payload["schema_version"] = "trace.dynamic-research-hand-result-proof.v1"
+    source_artifact = proof_payload.pop("source_artifact")
+    proof_payload["source_artifact_sha256"] = (
+        None
+        if source_artifact is None
+        else _json_sha256(_JSON_OBJECT.validate_python(source_artifact))
+    )
+    proof = ResearchHandResultProof.model_validate(proof_payload)
+    payload["receipt_sha256"] = proof.digest
     return _StoredResearchResult.model_validate(payload)
 
 
 def _stored_result_sha256(result: _StoredResearchResult) -> str:
-    payload = result.model_dump(mode="json")
-    del payload["receipt_sha256"]
-    return _json_sha256(_JSON_OBJECT.validate_python(payload))
+    return _hand_result_proof(result).digest
 
 
 def _new_planner_workspace(root: Path, context_sha256: str) -> Path:

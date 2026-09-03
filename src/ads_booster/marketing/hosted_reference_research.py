@@ -17,7 +17,7 @@ from ads_booster.contracts.marketing_agent import (
     contract_sha256,
 )
 from ads_booster.contracts.marketing_context import MarketingContextPlanningProjection
-from ads_booster.contracts.models import ContractModel
+from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 from ads_booster.providers.codex_cli import CodexCliError
@@ -154,6 +154,8 @@ class ReferenceResearchRequest(ResearchModel):
     capability_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     query_budget: Annotated[int, Field(ge=2, le=12)] = 6
     agent_run_lineage: FeatureLaunchLineage | None = None
+    market_research_seed: ReferenceResearchProposal | None = None
+    market_research_seed_sha256: Sha256Digest | None = None
     requested_by: Literal["hosted_workspace"]
 
     @model_validator(mode="after")
@@ -178,6 +180,12 @@ class ReferenceResearchRequest(ResearchModel):
             and self.agent_run_lineage.agent_run_id != self.campaign_id
         ):
             raise ValueError("research-carried agent run does not match the campaign")
+        if (self.market_research_seed is None) != (self.market_research_seed_sha256 is None):
+            raise ValueError("market research seed and digest must be provided together")
+        if self.market_research_seed is not None and (
+            contract_sha256(self.market_research_seed) != self.market_research_seed_sha256
+        ):
+            raise ValueError("market research seed digest does not match its frozen proposal")
         return self
 
 
@@ -249,13 +257,15 @@ class HostedReferenceResearchExecutor:
 
     def execute(self, prepared: PreparedReferenceResearch) -> TaskResult:
         try:
-            raw = self.codex.run_marketing_research_job(
-                prepared.prompt,
-                prepared.schema,
-                workspace=prepared.workspace,
-                timeout_seconds=self.timeout_seconds,
-            )
-            proposal = ReferenceResearchProposal.model_validate(raw)
+            proposal = prepared.request.market_research_seed
+            if proposal is None:
+                raw = self.codex.run_marketing_research_job(
+                    prepared.prompt,
+                    prepared.schema,
+                    workspace=prepared.workspace,
+                    timeout_seconds=self.timeout_seconds,
+                )
+                proposal = ReferenceResearchProposal.model_validate(raw)
             snapshot = ReferenceResearchSnapshot(
                 schema_version="trace.reference-research.v1",
                 snapshot_id=prepared.execution_admission.job_digest,

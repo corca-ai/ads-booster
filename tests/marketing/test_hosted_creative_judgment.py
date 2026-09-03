@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from pydantic import TypeAdapter
 
 from ads_booster.contracts.marketing_agent import (
     ClaimStatus,
@@ -25,13 +28,14 @@ from ads_booster.contracts.marketing_agent import (
     StrategyBrief,
     contract_sha256,
 )
-from ads_booster.marketing.hosted_creative_judgment import HostedCreativeJudgmentExecutor
+from ads_booster.marketing.hosted_creative_judgment import (
+    CREATIVE_FORMAT_REQUIREMENTS,
+    HostedCreativeJudgmentExecutor,
+)
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskStatus
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from ads_booster.transport.json_types import JsonObject
 
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
@@ -134,15 +138,21 @@ def _digest(value: object) -> str:
     ).hexdigest()
 
 
-def _task() -> MarketingTask:
+def _task(
+    *,
+    legacy_v1: bool = False,
+    capability_ids: tuple[str, ...] = ("capture.native_png", "copy.text"),
+) -> MarketingTask:
     packet = _packet()
     brief = _brief(packet)
     principles = ["proof before media"]
     capability_bindings: list[JsonObject] = []
-    for capability_id, owner_id in (
-        ("capture.native_png", "trace.native_capture"),
-        ("copy.text", "trace.marketing_copy"),
-    ):
+    owners = {
+        "capture.native_png": "trace.native_capture",
+        "copy.text": "trace.marketing_copy",
+    }
+    for capability_id in capability_ids:
+        owner_id = owners[capability_id]
         binding = {
             "capability_id": capability_id,
             "descriptor_sha256": ("a" if capability_id == "capture.native_png" else "b") * 64,
@@ -165,6 +175,14 @@ def _task() -> MarketingTask:
             {
                 "pipeline": "hosted_marketing_judgment_v1",
                 "judgment": "creative_plan",
+                **(
+                    {}
+                    if legacy_v1
+                    else {
+                        "creative_contract_version": "v2",
+                        "available_formats": ["native_sequence"],
+                    }
+                ),
                 "campaign_id": "campaign-1",
                 "feature_packet": packet.model_dump(mode="json"),
                 "feature_packet_sha256": contract_sha256(packet),
@@ -193,6 +211,7 @@ def _proposal(
     capability: str = "copy.text",
     claim_id: str = "claim-concept",
     include_capture: bool = True,
+    creative_format: str = "native_sequence",
 ) -> JsonObject:
     def treatment(hypothesis_id: str) -> JsonObject:
         copy_request: JsonObject = {
@@ -214,7 +233,7 @@ def _proposal(
             {
                 "treatment_id": f"treatment-{hypothesis_id}",
                 "hypothesis_id": hypothesis_id,
-                "format": "explanatory_carousel",
+                "format": creative_format,
                 "hook": f"hook {hypothesis_id}",
                 "caption_direction": "Explain one product belief.",
                 "manipulated_component_value": hypothesis_id,
@@ -237,6 +256,17 @@ def _proposal(
 
 def _copy_only_proposal() -> JsonObject:
     return _proposal(include_capture=False)
+
+
+def _capture_only_proposal() -> JsonObject:
+    proposal = _proposal()
+    treatments = cast("list[JsonObject]", proposal["treatments"])
+    for treatment in treatments:
+        requests = cast("list[JsonObject]", treatment["artifact_requests"])
+        treatment["artifact_requests"] = [
+            request for request in requests if request["capability_id"] == "capture.native_png"
+        ]
+    return proposal
 
 
 @dataclass
@@ -276,11 +306,57 @@ def test_creative_judgment_selects_proof_without_creating_tool_actions(tmp_path:
     assert "도구 호출" in codex.calls[0][0]
 
 
+def test_creative_judgment_executes_with_capture_as_the_only_active_tool(
+    tmp_path: Path,
+) -> None:
+    codex = FakeCodex(_capture_only_proposal())
+    executor = HostedCreativeJudgmentExecutor(codex=codex, output_root=tmp_path)
+
+    result = executor.execute(executor.prepare(_task(capability_ids=("capture.native_png",))))
+
+    assert result.status is TaskStatus.SUCCEEDED
+    assert '사용 가능한 capability: ["capture.native_png"]' in codex.calls[0][0]
+    assert result.output["tool_actions_created"] == 0
+
+
+def test_new_worker_can_drain_a_frozen_v1_creative_task(tmp_path: Path) -> None:
+    codex = FakeCodex(_proposal())
+    executor = HostedCreativeJudgmentExecutor(codex=codex, output_root=tmp_path)
+
+    result = executor.execute(executor.prepare(_task(legacy_v1=True)))
+
+    assert result.status is TaskStatus.SUCCEEDED
+    assert '실행 가능한 format: ["native_sequence"]' in codex.calls[0][0]
+
+
+def test_python_and_control_plane_share_all_creative_format_requirements() -> None:
+    source = (
+        Path(__file__).parents[2] / "cloudflare" / "src" / "marketing-adapter-capabilities.js"
+    ).read_text(encoding="utf-8")
+    block = source.split(
+        "export const CREATIVE_FORMAT_REQUIREMENTS = Object.freeze([",
+        maxsplit=1,
+    )[1].split("]);", maxsplit=1)[0]
+    control_plane: dict[str, frozenset[str]] = {}
+    for match in re.finditer(
+        r'\["([a-z_]+)", Object\.freeze\(\[([^]]+)\]\)\]',
+        block,
+    ):
+        parsed = TypeAdapter(list[str]).validate_json(f"[{match.group(2)}]")
+        control_plane[match.group(1)] = frozenset(parsed)
+
+    assert control_plane == {
+        creative_format.value: capabilities
+        for creative_format, capabilities in CREATIVE_FORMAT_REQUIREMENTS.items()
+    }
+
+
 @pytest.mark.parametrize(
     ("proposal", "failure"),
     [
         (_proposal(capability="design.figma"), "creative_judgment_result_invalid"),
         (_proposal(claim_id="claim-invented"), "creative_judgment_result_invalid"),
+        (_proposal(creative_format="screen_recording"), "creative_judgment_result_invalid"),
     ],
 )
 def test_creative_judgment_rejects_capability_and_claim_escape(

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ads_booster.marketing.hosted_experiment_evaluation import (
         HostedExperimentEvaluationExecutor,
     )
+    from ads_booster.marketing.hosted_feature_launch_run import HostedFeatureLaunchRunExecutor
     from ads_booster.marketing.hosted_generation import HostedWorkspaceGenerationExecutor
     from ads_booster.marketing.hosted_judgment import HostedMarketingJudgmentExecutor
     from ads_booster.marketing.hosted_learning_judgment import HostedLearningJudgmentExecutor
@@ -61,6 +62,7 @@ def router() -> tuple[PlanlessHostedTaskExecutor, dict[str, StubExecutor]]:
         "capture": StubExecutor("capture"),
         "generation": StubExecutor("generation"),
         "shadow_strategy": StubExecutor("shadow_strategy"),
+        "feature_launch_run": StubExecutor("feature_launch_run"),
         "creative_plan": StubExecutor("creative_plan"),
         "candidate_materialization": StubExecutor("candidate_materialization"),
         "experiment_evaluation": StubExecutor("experiment_evaluation"),
@@ -102,6 +104,10 @@ def router() -> tuple[PlanlessHostedTaskExecutor, dict[str, StubExecutor]]:
             next_experiment=cast(
                 "HostedNextExperimentJudgmentExecutor",
                 cast("object", executors["next_experiment"]),
+            ),
+            feature_launch_run=cast(
+                "HostedFeatureLaunchRunExecutor",
+                cast("object", executors["feature_launch_run"]),
             ),
         ),
         executors,

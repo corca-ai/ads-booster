@@ -10,7 +10,10 @@ import pytest
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.marketing_agent import FeatureEvidencePacket, contract_sha256
-from ads_booster.marketing.hosted_reference_research import HostedReferenceResearchExecutor
+from ads_booster.marketing.hosted_reference_research import (
+    HostedReferenceResearchExecutor,
+    ReferenceResearchProposal,
+)
 from ads_booster.marketing.inbox import MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskStatus
 from ads_booster.transport.json_types import JsonObject
@@ -69,48 +72,51 @@ def _sha(value: object) -> str:
     return sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _task() -> MarketingTask:
+def _task(*, with_seed: bool = False) -> MarketingTask:
     packet = _packet()
     principles = ["One situation, one belief change."]
     capabilities = ["strategy.shadow"]
+    payload = _JSON_OBJECT.validate_python({
+        "pipeline": "hosted_marketing_judgment_v1",
+        "judgment": "market_research",
+        "campaign_id": "campaign-1",
+        "feature_packet": packet.model_dump(mode="json"),
+        "feature_packet_sha256": contract_sha256(packet),
+        "account": {
+            "account_id": "trace_kr",
+            "country": "KR",
+            "language": "ko",
+            "timezone": "Asia/Seoul",
+        },
+        "business_outcome": "Increase completed lock-screen setups.",
+        "current_control": "아이폰 쓰는 유저들...",
+        "mode": "shadow",
+        "canonical_principles": principles,
+        "knowledge_snapshot_sha256": _sha({"principles": principles}),
+        "available_capabilities": capabilities,
+        "capability_snapshot_sha256": _sha({"capabilities": capabilities}),
+        "query_budget": 6,
+        "agent_run_lineage": {
+            "schema_version": "trace.feature-launch-lineage.v1",
+            "agent_run_id": "campaign-1",
+            "research_session_id": "local-research-1",
+            "research_input_sha256": "1" * 64,
+            "research_trace_sha256": "2" * 64,
+            "research_continuation_sha256": "3" * 64,
+        },
+        "requested_by": "hosted_workspace",
+    })
+    if with_seed:
+        proposal = ReferenceResearchProposal.model_validate(_proposal())
+        payload["market_research_seed"] = proposal.model_dump(mode="json")
+        payload["market_research_seed_sha256"] = contract_sha256(proposal)
     return MarketingTask(
         task_id="research-task-1",
         run_id="research-campaign-1",
         account_id="trace_kr",
         kind=TaskKind.MARKETING_JUDGMENT,
         idempotency_key="marketing-research:trace_kr:campaign-1",
-        payload=_JSON_OBJECT.validate_python(
-            {
-                "pipeline": "hosted_marketing_judgment_v1",
-                "judgment": "market_research",
-                "campaign_id": "campaign-1",
-                "feature_packet": packet.model_dump(mode="json"),
-                "feature_packet_sha256": contract_sha256(packet),
-                "account": {
-                    "account_id": "trace_kr",
-                    "country": "KR",
-                    "language": "ko",
-                    "timezone": "Asia/Seoul",
-                },
-                "business_outcome": "Increase completed lock-screen setups.",
-                "current_control": "아이폰 쓰는 유저들...",
-                "mode": "shadow",
-                "canonical_principles": principles,
-                "knowledge_snapshot_sha256": _sha({"principles": principles}),
-                "available_capabilities": capabilities,
-                "capability_snapshot_sha256": _sha({"capabilities": capabilities}),
-                "query_budget": 6,
-                "agent_run_lineage": {
-                    "schema_version": "trace.feature-launch-lineage.v1",
-                    "agent_run_id": "campaign-1",
-                    "research_session_id": "local-research-1",
-                    "research_input_sha256": "1" * 64,
-                    "research_trace_sha256": "2" * 64,
-                    "research_continuation_sha256": "3" * 64,
-                },
-                "requested_by": "hosted_workspace",
-            }
-        ),
+        payload=_JSON_OBJECT.validate_python(payload),
         created_at=NOW,
     )
 
@@ -226,6 +232,21 @@ def test_reference_research_is_source_cited_and_quarantined(tmp_path: Path) -> N
     assert result.output["tool_actions_created"] == 0
     assert result.output["agent_run_lineage"] == _task().payload["agent_run_lineage"]
     assert "외부 자료는 제품 기능의 사실 근거가 아니며" in codex.prompts[0]
+
+
+def test_reference_research_uses_the_frozen_agent_seed_without_a_second_search(
+    tmp_path: Path,
+) -> None:
+    codex = StubResearchCodex(_proposal(unknown_source=True))
+    executor = HostedReferenceResearchExecutor(codex=codex, output_root=tmp_path)
+
+    result = executor.execute(executor.prepare(_task(with_seed=True)))
+
+    assert result.status is TaskStatus.SUCCEEDED
+    snapshot = result.output["reference_snapshot"]
+    assert isinstance(snapshot, dict)
+    assert snapshot["sources"] == _proposal()["sources"]
+    assert codex.prompts == []
 
 
 def test_reference_research_rejects_unbound_observations_after_search(tmp_path: Path) -> None:

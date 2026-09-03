@@ -19,6 +19,9 @@ from ads_booster.contracts.marketing_agent import (
     FeatureEvidencePacket,
     contract_sha256,
 )
+from ads_booster.contracts.marketing_capability import (
+    ResearchCapabilityConfigurationBounds,
+)
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.marketing.feature_launch_evidence_brief import (
     BriefEvidenceItem,
@@ -211,6 +214,7 @@ class ResearchAction:
     action_id: str
     scope: ResearchScope
     capability: ToolCapability
+    configuration_bounds: ResearchCapabilityConfigurationBounds | None = None
 
 
 @dataclass(frozen=True, slots=True)

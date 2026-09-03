@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 
 from ads_booster.contracts.marketing_agent import (
     ContextReceipt,
+    CreativeFormat,
     CreativeTreatment,
     FeatureEvidencePacket,
     MediaPlan,
@@ -38,6 +39,13 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _CAPABILITY_PROOF_KIND: Final = {
     "capture.native_png": "installed_native_capture",
     "copy.text": "copy_only",
+}
+CREATIVE_FORMAT_REQUIREMENTS: Final = {
+    CreativeFormat.NATIVE_SEQUENCE: frozenset({"capture.native_png"}),
+    CreativeFormat.SCREEN_RECORDING: frozenset({"capture.screen_recording"}),
+    CreativeFormat.EXPLANATORY_CAROUSEL: frozenset({"compose.carousel"}),
+    CreativeFormat.DESIGNED_STATIC: frozenset({"design.static_image"}),
+    CreativeFormat.TEXT_ONLY: frozenset({"copy.text", "materialize.text_candidate"}),
 }
 
 
@@ -78,6 +86,7 @@ class CreativeCapabilityBinding(CreativeJudgmentModel):
 class CreativePlanningRequest(CreativeJudgmentModel):
     pipeline: Literal["hosted_marketing_judgment_v1"]
     judgment: Literal["creative_plan"]
+    creative_contract_version: Literal["v2"] | None = None
     campaign_id: Annotated[str, Field(min_length=1, max_length=128)]
     feature_packet: FeatureEvidencePacket
     feature_packet_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -87,6 +96,9 @@ class CreativePlanningRequest(CreativeJudgmentModel):
     canonical_principles: Annotated[tuple[str, ...], Field(min_length=1, max_length=32)]
     knowledge_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     available_capabilities: Annotated[tuple[str, ...], Field(min_length=1, max_length=32)]
+    available_formats: (
+        Annotated[tuple[CreativeFormat, ...], Field(min_length=1, max_length=5)] | None
+    ) = None
     capability_bindings: Annotated[
         tuple[CreativeCapabilityBinding, ...],
         Field(min_length=1, max_length=32),
@@ -115,6 +127,11 @@ class CreativePlanningRequest(CreativeJudgmentModel):
             raise ValueError("capability bindings must use unique sorted IDs")
         if self.available_capabilities != binding_ids:
             raise ValueError("available capabilities do not match bound capabilities")
+        _require_available_formats(
+            self.available_formats,
+            binding_ids,
+            contract_version=self.creative_contract_version,
+        )
         binding_snapshot = _JSON_OBJECT.validate_python(
             {
                 "capability_bindings": [
@@ -129,6 +146,11 @@ class CreativePlanningRequest(CreativeJudgmentModel):
     @property
     def available_capability_ids(self) -> tuple[str, ...]:
         return tuple(binding.capability_id for binding in self.capability_bindings)
+
+    @property
+    def executable_formats(self) -> tuple[CreativeFormat, ...]:
+        """Use the host projection for v2 and derive the same closed set for draining v1."""
+        return self.available_formats or _available_formats(self.available_capability_ids)
 
 
 class CreativePlanProposal(CreativeJudgmentModel):
@@ -283,6 +305,11 @@ def _validate_treatment(
     if not set(treatment.claim_ids).issubset(hypothesis.claim_ids):
         raise ValueError("creative treatment escaped its strategy hypothesis claims")
     available = set(request.available_capability_ids)
+    if treatment.format not in request.executable_formats:
+        raise ValueError("creative treatment selected an unavailable format")
+    requested = {item.capability_id for item in treatment.artifact_requests}
+    if not CREATIVE_FORMAT_REQUIREMENTS[treatment.format].issubset(requested):
+        raise ValueError("creative treatment is missing its format capability")
     if any(item.capability_id not in available for item in treatment.artifact_requests):
         raise ValueError("creative treatment requested an unavailable capability")
     if any(
@@ -302,6 +329,11 @@ def _validate_treatment(
 def _creative_prompt(request: CreativePlanningRequest) -> str:
     capabilities = json.dumps(
         list(request.available_capability_ids),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    formats = json.dumps(
+        [item.value for item in request.executable_formats],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -326,8 +358,8 @@ def _creative_prompt(request: CreativePlanningRequest) -> str:
         "2. treatment는 가설의 claim_ids 밖으로 나가지 않는다.\n"
         "3. source-only claim을 설치된 동작처럼 표현하지 않는다. 필요한 installed proof는 "
         "artifact request로 명시할 뿐 존재한다고 말하지 않는다.\n"
-        "4. native sequence, bound screen recording, explanatory carousel, designed static, "
-        "text-only 중 belief change를 가장 잘 증명하는 형식을 고른다.\n"
+        "4. 제공된 실행 가능 format 중 belief change를 가장 잘 증명하는 형식을 고른다. "
+        "목록 밖 format을 제안하지 않는다.\n"
         "5. artifact request는 제공된 capability ID만 사용한다.\n"
         "6. 이 계획의 모든 treatment는 workspace 이미지 후보로 materialize되므로 "
         "capture.native_png request를 정확히 하나 포함한다. copy.text만으로 끝나는 "
@@ -336,9 +368,31 @@ def _creative_prompt(request: CreativePlanningRequest) -> str:
         "동일하게 유지한다.\n"
         "8. 모든 결과는 사람 검수 전제이며 publication_allowed를 임의로 바꾸지 않는다.\n\n"
         f"사용 가능한 capability: {capabilities}\n"
+        f"실행 가능한 format: {formats}\n"
         f"strategy brief: {strategy}\n"
         f"feature packet: {packet}\n"
     )
+
+
+def _available_formats(capability_ids: tuple[str, ...]) -> tuple[CreativeFormat, ...]:
+    available = set(capability_ids)
+    return tuple(
+        creative_format
+        for creative_format, required in CREATIVE_FORMAT_REQUIREMENTS.items()
+        if required.issubset(available)
+    )
+
+
+def _require_available_formats(
+    available_formats: tuple[CreativeFormat, ...] | None,
+    capability_ids: tuple[str, ...],
+    *,
+    contract_version: Literal["v2"] | None,
+) -> None:
+    if contract_version == "v2" and available_formats != _available_formats(capability_ids):
+        raise ValueError("available formats do not match executable capabilities")
+    if contract_version is None and available_formats is not None:
+        raise ValueError("legacy creative request cannot add a format projection")
 
 
 def _json_sha256(value: JsonObject) -> str:
