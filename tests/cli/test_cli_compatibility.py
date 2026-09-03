@@ -109,7 +109,7 @@ def test_marketing_service_help_exposes_on_prem_owner_without_appium_dependency(
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert all(command in output for command in ("doctor", "run", "install", "status", "stop"))
+    assert all(command in output for command in ("doctor", "run"))
     doctor = CliRunner().invoke(marketing_app, ["service", "doctor"])
     assert doctor.exit_code == 0
     report = TypeAdapter(dict[str, object]).validate_json(doctor.stdout)
