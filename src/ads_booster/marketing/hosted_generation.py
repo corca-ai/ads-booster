@@ -113,6 +113,24 @@ class HostedGenerationRequest(GenerationModel):
 
 
 _LEGACY_CLOCK: Final = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+# What "wallpaper" is called in each language a screen is written in. The query is searched
+# verbatim, so the word has to be the one people in that market actually tag a phone
+# background with - an English "wallpaper" appended to a Korean phrase finds nothing.
+_WALLPAPER_WORD: Final = {
+    "ko": "배경화면",
+    "ja": "壁紙",
+    "zh": "桌布",
+    "en": "wallpaper",
+    "de": "Hintergrundbild",
+    "fr": "fond d'écran",
+    "pt": "papel de parede",
+}
+_WALLPAPER_FALLBACK: Final = "wallpaper"
+# A name plus the wallpaper word, not a sentence. Forty characters holds "KIA 타이거즈
+# 배경화면" several times over and still refuses a paragraph.
+_QUERY_MAX: Final = 40
+# A colour and a tone. See the field for why this is not forty.
+_MOOD_MAX: Final = 12
 # The lock screen shows one week, so a row sits on one of seven days and a bar spans at
 # most the rest of them.
 _WEEK_DAYS: Final = 7
@@ -170,6 +188,22 @@ class GeneratedScheduleEntry(GenerationModel):
         return self.model_copy(update={"days": self.days - overflow})
 
 
+# The subjects generation may state. `family_photo` is absent on purpose: nobody can search
+# for a stranger's family, so its query always came back as a scene sentence, and the KR
+# corpus tags it zero times across forty-one records. The workspace vocabulary keeps it so
+# records already holding it still read.
+OfferedBackgroundSubject = Literal[
+    "scenery",
+    "character_kitty",
+    "character_other",
+    "person",
+    "pet",
+    "minimal",
+    "sports_team",
+    "none",
+]
+
+
 class GeneratedImageInputs(GenerationModel):
     trace_items: tuple[GeneratedScheduleEntry, ...] = Field(
         min_length=5,
@@ -184,17 +218,7 @@ class GeneratedImageInputs(GenerationModel):
         max_length=20,
     )
     device_time: Annotated[str, Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")]
-    background_subject: Literal[
-        "scenery",
-        "character_kitty",
-        "character_other",
-        "family_photo",
-        "person",
-        "pet",
-        "minimal",
-        "sports_team",
-        "none",
-    ]
+    background_subject: OfferedBackgroundSubject
     # The query comes before the mood on purpose. Written the other way round, the model
     # produced the mood first and then reworded it into the query - three stored rows in a
     # row did exactly that, down to "해질녘 캠핑장, 아이 둘의 뒷모습" becoming "해질녘
@@ -208,9 +232,56 @@ class GeneratedImageInputs(GenerationModel):
     # image search ran "sports_team: 밤 경기 외야석 너머 환한 전광판", an English token
     # followed by the scene sentence rule 8 exists to forbid. Ordering the fields cannot
     # help when the field is not asked for at all.
-    background_search_query: Annotated[str | None, Field(max_length=200)]
-    background_mood: Annotated[str, Field(min_length=1, max_length=40)]
+    background_search_query: Annotated[str | None, Field(max_length=_QUERY_MAX)]
+    # Twelve characters, down from forty. The query kept coming back as this field reworded,
+    # and forty characters is room for a whole scene to be reworded from: "해 질 무렵 그네
+    # 옆을 뛰어가는 남매". A colour and a tone is all the wallpaper needs described, and a
+    # field that cannot hold a scene is one the query cannot copy a scene out of. The limit
+    # is in the schema, so the model is told it while writing rather than corrected after.
+    background_mood: Annotated[str, Field(min_length=1, max_length=_MOOD_MAX)]
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")]
+
+    @model_validator(mode="before")
+    @classmethod
+    def keep_the_background_fields_short(cls, value: JsonValue) -> JsonValue:
+        """Trim an over-long background field instead of losing the turn it arrived in.
+
+        The ceilings above are what the model is asked for; this is what happens when an
+        answer runs past one anyway. Neither field is worth eight captions: the mood is read
+        by people and by nothing else, and a query trimmed back to its opening words still
+        searches, where a rejected turn searches nothing.
+        """
+        if not isinstance(value, dict):
+            return value
+        trimmed = dict(value)
+        ceilings = (("background_mood", _MOOD_MAX), ("background_search_query", _QUERY_MAX))
+        for field, ceiling in ceilings:
+            written = trimmed.get(field)
+            if isinstance(written, str) and len(written.strip()) > ceiling:
+                trimmed[field] = written.strip()[:ceiling].rstrip()
+        return trimmed
+
+    @model_validator(mode="after")
+    def name_the_query_as_a_wallpaper(self) -> GeneratedImageInputs:
+        """Make the query ask for a wallpaper, in the language the screen is written in.
+
+        Without the word, the same phrase searches the whole web: "김도영" returns news
+        photography of a player, wide and small, and the resolution gate then throws every
+        one of them away. With it, the query lands on the phone-wallpaper corner of the
+        index, where the images are already portrait. It is the cheapest thing that moves
+        the aspect ratio, and the instruction has asked for it all along - this only makes
+        an answer that forgot it still usable instead of wasting the capture behind it.
+        """
+        query = self.background_search_query
+        if query is None or not query.strip():
+            return self
+        word = _WALLPAPER_WORD.get(self.language.split("-", maxsplit=1)[0], _WALLPAPER_FALLBACK)
+        stripped = query.strip()
+        if word.casefold() in stripped.casefold():
+            if stripped == query:
+                return self
+            return self.model_copy(update={"background_search_query": stripped})
+        return self.model_copy(update={"background_search_query": f"{stripped} {word}"[:200]})
 
 
 class GeneratedCandidate(GenerationModel):
@@ -529,6 +600,19 @@ def _candidates_match_request(
     )
 
 
+def _offered_subject(subject: CandidateBackgroundSubject) -> OfferedBackgroundSubject:
+    """The subject as generation is allowed to state it.
+
+    `family_photo` is no longer offered, but the workspace vocabulary keeps it so records
+    already holding it still read. A draft that carries it anyway - an older one, or an
+    answer that reached past the schema - is worth a nearer token rather than a lost turn,
+    and `person` is what a family photo is a picture of.
+    """
+    if subject is CandidateBackgroundSubject.FAMILY_PHOTO:
+        return "person"
+    return subject.value
+
+
 def _generated_candidate(drafted: DraftedCandidate) -> GeneratedCandidate:
     """Carry one validated draft across into the callback's own candidate shape."""
     draft = drafted.draft
@@ -556,7 +640,7 @@ def _generated_candidate(drafted: DraftedCandidate) -> GeneratedCandidate:
             ),
             trace_todos=image_inputs.trace_todos,
             device_time=image_inputs.device_time,
-            background_subject=image_inputs.background_subject.value,
+            background_subject=_offered_subject(image_inputs.background_subject),
             background_mood=image_inputs.background_mood,
             background_search_query=image_inputs.background_search_query,
             language=image_inputs.language,

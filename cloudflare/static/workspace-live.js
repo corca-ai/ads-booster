@@ -1627,7 +1627,11 @@
     topic.textContent = record.topic || "(주제 없음)";
     const caption = document.createElement("p"); caption.className = "approval-card__caption";
     caption.textContent = record.caption;
-    text.append(topicLabel, topic, caption);
+    // The query is shown here, not only on the image card. It is written during generation
+    // and decides which wallpaper the search returns, so it is a caption-stage fact: a
+    // reviewer who has to approve the caption and then wait for a capture to see the query
+    // cannot reject a bad one before it costs a capture.
+    text.append(topicLabel, topic, caption, backgroundQueryNode(record));
     body.append(text, approvalVisual(record));
     const facts = document.createElement("div"); facts.className = "approval-card__facts";
     facts.append(
