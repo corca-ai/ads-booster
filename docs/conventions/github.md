@@ -8,7 +8,7 @@ for code changes and inspect the current branch and remote state before starting
 - Use a work branch and Pull Request for normal changes; do not commit directly to `main`.
 - Use full branch-type names such as `feature/`, `fix/`, and `hotfix/`. Do not use `feat/` as a
   branch prefix.
-- Use `<type>: <message>` for commit messages.
+- Use `<type>: <specific-responsibility> (#<issue-number>)` for commit messages.
 - Create every Pull Request as Draft, then mark it `Ready for review` when review preparation is
   complete.
 - Squash Merge approved Pull Requests.
@@ -53,9 +53,9 @@ multiple issue numbers in one commit message; split the work into separate logic
 Examples:
 
 ```text
-feat: add campaign health check (#123)
-fix: handle missing database url (#123)
-refactor: simplify database options (#123)
+feat: add campaign status enum (#123)
+fix: reject missing database url in config parser (#123)
+refactor: extract database options builder (#123)
 docs: add GitHub conventions (#123)
 test: cover health endpoint failure (#123)
 chore: update development dependencies (#123)
@@ -70,8 +70,52 @@ chore: update development dependencies (#123)
 - `test`: add or update tests
 - `chore`: maintain build tooling, dependencies, or repository configuration
 
-Make each commit a meaningful unit with one intent. Before committing, inspect the changed files and
-diff, and ensure no passwords, tokens, `.env` files, or other secrets are included.
+### Commit boundaries
+
+Split commits by the smallest responsibility that a reviewer can understand, verify, and revert on its
+own. An Issue or feature is a delivery scope, not a commit boundary. Subjects such as `develop image
+generation feature` or `support candidate deletion` are too broad when the change contains separable
+parts.
+
+Separate these responsibilities by default, even when they belong to the same feature or Issue:
+
+- enum, constant, or shared type additions;
+- request, response, event, or persistence contracts;
+- controller, route, command, or entry-point wiring;
+- service or domain behavior;
+- repository, migration, or external-adapter behavior;
+- test-only changes for one behavior boundary;
+- documentation and repository policy.
+
+For example, do not commit an entire candidate-deletion feature as one `feat` commit. Prefer a sequence
+like this, using the same owning Issue when appropriate:
+
+```text
+feat: add candidate deletion status enum (#123)
+feat: define candidate deletion request contract (#123)
+feat: implement candidate deletion service (#123)
+feat: add candidate deletion controller route (#123)
+test: cover candidate deletion authorization (#123)
+docs: document candidate deletion API (#123)
+```
+
+A file boundary alone does not make a commit atomic. One responsibility may require several files, and
+one file may contain several independently committable hunks. Keep multiple files together only when
+splitting them would leave an invalid build, an incomplete single responsibility, or an implementation
+without the direct regression test needed to prove it. This exception overrides the category split.
+Order dependent commits from foundation to consumer so every commit builds and retains its focused
+verification; for example, enum, contract, implementation, then controller wiring.
+
+Before every commit:
+
+1. State the exact responsibility in the commit subject. Name the enum, contract, controller, behavior,
+   test boundary, or document instead of the whole feature.
+2. Stage only that responsibility with explicit paths or `git add -p`. Do not use `git add .` or
+   `git add -A` to assemble a commit.
+3. Read the complete staged diff with `git diff --cached` and run `git diff --cached --check`.
+4. Split again if the staged diff contains another independently reviewable or revertible change.
+5. Confirm no passwords, tokens, `.env` files, generated runtime state, or unrelated user changes are
+   staged.
 
 ## Workflow
 
@@ -95,13 +139,15 @@ git switch -c feature/<short-description>
 
 If the worktree already contains changes, inspect them first. Do not overwrite or mix other work.
 
-### 2. Commit meaningful units and push the branch
+### 2. Commit fine-grained responsibilities and push the branch
 
 ```bash
 git diff --check
 git diff --stat
-git add <intended-files>
-git commit -m "<type>: <message>"
+git add <intended-paths> # or: git add -p
+git diff --cached --check
+git diff --cached
+git commit -m "<type>: <specific-responsibility> (#<issue-number>)"
 git push -u origin <branch-name>
 ```
 
