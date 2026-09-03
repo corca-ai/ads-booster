@@ -20,6 +20,10 @@ from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
+from ads_booster.marketing.agent_service.launchd import (
+    MarketingAgentLaunchd,
+    default_service_plist_path,
+)
 from ads_booster.marketing.agent_service.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
@@ -191,6 +195,104 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
         host=host,
         port=port,
     )
+
+
+@service_app.command("daemon", hidden=True)
+def service_daemon(
+    model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    tenant: Annotated[str, typer.Option()] = "trace",
+    principal: Annotated[str, typer.Option()] = "local-operator",
+) -> None:
+    """Launchd entrypoint that reads the bearer token from its protected file."""
+    root = _home(home)
+    token_path = root / "marketing-agent" / "service-token"
+    try:
+        token = token_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        message = "marketing agent service token is missing"
+        raise typer.BadParameter(message) from error
+    if not token:
+        message = "marketing agent service token is empty"
+        raise typer.BadParameter(message)
+    os.environ["TRACE_MARKETING_SERVICE_TOKEN"] = token
+    service_run(model=model, home=root, port=port, tenant=tenant, principal=principal)
+
+
+@service_app.command("install")
+def service_install(
+    model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    tenant: Annotated[str, typer.Option()] = "trace",
+    principal: Annotated[str, typer.Option()] = "local-operator",
+) -> None:
+    """Install and start the canonical service as a per-user LaunchAgent."""
+    executable = resolve_codex_executable()
+    if executable is None:
+        message = "codex is not installed on PATH; install it and run `codex login`"
+        raise typer.BadParameter(message)
+    launchd = MarketingAgentLaunchd(
+        executable=Path(sys.argv[0]).resolve(),
+        agent_home=_home(home),
+        plist_path=default_service_plist_path(),
+        codex_executable=executable,
+        model=model,
+        port=port,
+        tenant=tenant,
+        principal=principal,
+    )
+    _ = launchd.stop()
+    _ = launchd.install()
+    result = launchd.start()
+    if result.returncode != 0:
+        typer.echo(result.stderr.strip() or "marketing agent service failed to start", err=True)
+        raise typer.Exit(code=2)
+    typer.echo(f"installed: {launchd.plist_path}")
+    typer.echo(f"listening: http://127.0.0.1:{port}")
+    typer.echo(f"token: {launchd.token_path} (mode 0600; value not printed)")
+
+
+@service_app.command("status")
+def service_status(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    """Report whether the owned canonical service LaunchAgent is loaded."""
+    executable = resolve_codex_executable() or Path("codex")
+    launchd = MarketingAgentLaunchd(
+        executable=Path(sys.argv[0]).resolve(),
+        agent_home=_home(home),
+        plist_path=default_service_plist_path(),
+        codex_executable=executable,
+        model="unused",
+    )
+    result = launchd.status()
+    typer.echo(
+        json.dumps({"installed": launchd.owns_installed_plist(), "running": result.returncode == 0})
+    )
+    if result.returncode != 0:
+        raise typer.Exit(code=1)
+
+
+@service_app.command("stop")
+def service_stop(
+    home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
+) -> None:
+    """Stop the canonical service without deleting its state or token."""
+    executable = resolve_codex_executable() or Path("codex")
+    launchd = MarketingAgentLaunchd(
+        executable=Path(sys.argv[0]).resolve(),
+        agent_home=_home(home),
+        plist_path=default_service_plist_path(),
+        codex_executable=executable,
+        model="unused",
+    )
+    result = launchd.stop()
+    if result.returncode != 0 and "Could not find service" not in result.stderr:
+        typer.echo(result.stderr.strip(), err=True)
+        raise typer.Exit(code=2)
+    typer.echo("stopped")
 
 
 @agent_app.command("research")
