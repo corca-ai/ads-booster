@@ -2677,10 +2677,205 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
+.agent-console {
+  margin-block-end: var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.agent-console > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  cursor: pointer;
+}
+
+.agent-console > summary > span:first-child {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.agent-console > summary small,
+.agent-console__body > section > p,
+.agent-start > p,
+.agent-toolbar > p {
+  color: var(--color-text-muted);
+}
+
+.agent-console__body {
+  display: grid;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.agent-unlock__form,
+.agent-toolbar,
+.agent-review-actions {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.agent-unlock__form label,
+.agent-review-detail label,
+.agent-start__fields label {
+  display: grid;
+  gap: var(--space-1);
+  flex: 1 1 16rem;
+}
+
+.agent-panel,
+.agent-start,
+.agent-run-submit,
+.agent-review-detail {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.agent-panel[hidden],
+.agent-review-detail[hidden] {
+  display: none;
+}
+
+.agent-start,
+.agent-review-detail {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.agent-start__fields,
+.agent-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.agent-start__feature {
+  grid-column: 1 / -1;
+}
+
+.agent-run-submit label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.agent-run-submit textarea {
+  min-block-size: 12rem;
+  resize: vertical;
+}
+
+.agent-start pre,
+.agent-review-detail pre {
+  max-block-size: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.agent-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.agent-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: start;
+  width: 100%;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: start;
+}
+
+.agent-card small,
+.agent-card p {
+  grid-column: 1 / -1;
+}
+
+.agent-column-note {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.agent-resume {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: end;
+  margin-block-start: var(--space-2);
+  padding-block-start: var(--space-3);
+  border-block-start: var(--border-width) solid var(--color-border);
+}
+
+.agent-resume label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.agent-resume .candidate-feedback {
+  grid-column: 1 / -1;
+}
+
+.agent-run-journey {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+}
+
+.agent-run-journey[hidden] { display: none; }
+
+.agent-journey-node {
+  display: grid;
+  gap: var(--space-1);
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--border-width) solid var(--color-border);
+}
+
+@media (max-width: 42rem) {
+  .agent-resume {
+    grid-template-columns: 1fr;
+  }
+}
+
+.agent-card--button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.agent-card--button:hover,
+.agent-card--button:focus-visible {
+  border-color: var(--color-text);
+}
+
+.agent-review-detail > label {
+  max-inline-size: 24rem;
+}
+
 @media (max-width: 40rem) {
   .account-workspace__bar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .agent-start__fields,
+  .agent-columns {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

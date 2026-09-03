@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/static/workspace.css">
     <script src="/static/workspace-navigation.js" defer></script>
     <script src="/static/workspace-live.js" defer></script>
+    <script src="/static/workspace-agent.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#entry-title">워크스페이스 입장으로 건너뛰기</a>
@@ -141,6 +142,86 @@
               <span class="mono" data-account-current-concept></span>
             </div>
           </div>
+
+          <details class="agent-console" data-marketing-agent data-hosted-only hidden>
+            <summary>
+              <span><strong>마케팅 에이전트</strong><small>실험을 시작하고 근거를 검수합니다.</small></span>
+              <span class="mono" data-agent-state>잠김</span>
+            </summary>
+            <div class="agent-console__body">
+              <section class="agent-unlock" data-agent-locked>
+                <p>운영 토큰은 이 탭의 메모리에만 보관됩니다. 계정을 바꾸거나 탭을 닫으면 다시 입력해야 합니다.</p>
+                <form class="agent-unlock__form" data-agent-unlock-form>
+                  <label>Control-plane token<input name="control-token" type="password" autocomplete="off" required></label>
+                  <button class="button button-secondary" type="submit">검수 열기</button>
+                </form>
+                <p class="candidate-feedback" data-agent-feedback role="alert" hidden></p>
+              </section>
+
+              <section class="agent-panel" data-agent-panel hidden>
+                <div class="agent-toolbar">
+                  <p data-agent-account-note></p>
+                  <div>
+                    <button class="button button-quiet" type="button" data-agent-refresh>새로고침</button>
+                    <button class="button button-quiet" type="button" data-agent-lock>잠그기</button>
+                  </div>
+                </div>
+
+                <section class="agent-start">
+                  <p class="eyebrow">새 실험 시작</p>
+                  <h3>Codex 에이전트에게 목표를 맡기세요</h3>
+                  <p>브라우저가 로컬 Codex 세션을 대신 실행하지 않습니다. 아래 요청문을 복사해 Codex에 보내면 선택 계정에 맞는 feature packet과 shadow campaign을 만듭니다.</p>
+                  <div class="agent-start__fields">
+                    <label>제품 소스<input data-agent-product-source value="https://github.com/corca-ai/trace" placeholder="저장소 URL 또는 로컬 절대 경로"></label>
+                    <label>제품 ref<input data-agent-product-ref value="develop" placeholder="예: develop, PR #123, commit SHA"></label>
+                    <label class="agent-start__feature">홍보할 기능<textarea data-agent-feature rows="2" placeholder="예: 원하는 캐릭터가 시간대에 맞춰 바뀌는 AI 잠금화면"></textarea></label>
+                    <label>원하는 사업 결과<input data-agent-outcome placeholder="예: 한국 iPhone 사용자 설치 의향 검증"></label>
+                    <label>현재 비교 기준<input data-agent-control placeholder="예: 기존 ‘아이폰 쓰는 유저들’ 이미지 포맷"></label>
+                  </div>
+                  <pre data-agent-start-prompt></pre>
+                  <button class="button button-secondary" type="button" data-agent-copy-prompt>Codex에 준비 요청 복사</button>
+                  <form class="agent-run-submit" data-agent-run-form>
+                    <label>검증된 실행 요청 JSON<textarea data-agent-run-input rows="8" placeholder="Codex가 준비한 trace.feature-launch-run-request.v1 JSON을 붙여 넣으세요." required></textarea></label>
+                    <button class="button button-primary" type="submit">에이전트 실행 접수</button>
+                    <p class="candidate-feedback" data-agent-run-feedback role="alert" hidden></p>
+                  </form>
+                  <details>
+                    <summary>기존 로컬 CLI로 직접 실행할 때</summary>
+                    <code data-agent-launch-command>trace-marketing agent launch</code>
+                  </details>
+                </section>
+
+                <div class="agent-columns">
+                  <section>
+                    <h3>최근 에이전트 실행</h3>
+                    <p class="agent-column-note">추가 customer intelligence가 필요한 실행은 검증된 context snapshot ID로 한 번 재개할 수 있습니다.</p>
+                    <div class="agent-list" data-agent-run-list></div>
+                    <p class="empty-surface" data-agent-run-empty hidden>접수된 실행이 없습니다.</p>
+                  </section>
+                  <section>
+                    <h3>최근 캠페인</h3>
+                    <div class="agent-list" data-agent-campaign-list></div>
+                    <p class="empty-surface" data-agent-campaign-empty hidden>캠페인이 없습니다.</p>
+                  </section>
+                  <section>
+                    <h3>사람의 판단이 필요한 일</h3>
+                    <div class="agent-list" data-agent-review-list></div>
+                    <p class="empty-surface" data-agent-review-empty hidden>대기 중인 검수가 없습니다.</p>
+                  </section>
+                </div>
+
+                <section class="agent-review-detail" data-agent-review-detail hidden>
+                  <div data-agent-review-content></div>
+                  <label>검수자 ID<input data-agent-reviewer-id autocomplete="off" placeholder="예: koleuka"></label>
+                  <div class="agent-review-actions">
+                    <button class="button button-secondary" type="button" data-agent-reject>반려</button>
+                    <button class="button button-primary" type="button" data-agent-approve>승인</button>
+                  </div>
+                  <p class="candidate-feedback" data-agent-review-feedback role="alert" hidden></p>
+                </section>
+              </section>
+            </div>
+          </details>
 
         <div class="filter-tabs" role="tablist" aria-label="워크스페이스 보기">
           <button class="filter-tab" id="tab-candidates" type="button" role="tab" aria-controls="candidates" aria-selected="true" tabindex="0" data-tab="candidates">후보</button>

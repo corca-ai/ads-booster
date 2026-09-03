@@ -55,6 +55,83 @@ test("built workspace exposes an account-scoped worker execution timeline", asyn
   assert.match(styles, /\.worker-events > summary:focus-visible/u);
 });
 
+test("built workspace exposes a separate governed marketing-agent review surface", async () => {
+  const [markup, source, styles] = await Promise.all([
+    built("index.html"),
+    built("static/workspace-agent.js"),
+    built("static/workspace.css"),
+  ]);
+  assert.match(markup, /data-marketing-agent/u);
+  assert.match(markup, /data-agent-unlock-form/u);
+  assert.match(markup, /data-agent-campaign-list/u);
+  assert.match(markup, /data-agent-run-form/u);
+  assert.match(markup, /data-agent-run-list/u);
+  assert.match(markup, /검증된 context snapshot ID로 한 번 재개/u);
+  assert.match(markup, /data-agent-review-list/u);
+  assert.match(markup, /data-agent-review-detail/u);
+  assert.match(markup, /최근 캠페인/u);
+  assert.match(markup, /trace-marketing agent launch/u);
+  assert.match(markup, /data-agent-product-source/u);
+  assert.match(markup, /data-agent-product-ref/u);
+  assert.match(source, /let agentControlToken = ""/u);
+  assert.match(source, /headers\.set\("Authorization", `Bearer \$\{agentControlToken\}`\)/u);
+  assert.match(source, /headers\.set\("X-Trace-Account-ID", expectedAccount\)/u);
+  assert.match(source, /"\/api\/marketing-agent\/review-queue"/u);
+  assert.match(source, /"\/api\/marketing-agent\/campaigns"/u);
+  assert.match(source, /"\/api\/marketing-agent\/runs"/u);
+  assert.match(source, /run\.loop\?\.state === "needs_input"/u);
+  assert.match(source, /run\.next_intent\?\.requested_scope === "customer_intelligence"/u);
+  assert.match(source, /const resumeDrafts = new Map\(\)/u);
+  assert.match(source, /draft\.resumeId \|\|= crypto\.randomUUID\(\)/u);
+  assert.match(source, /`\/api\/marketing-agent\/runs\/\$\{encodeURIComponent\(run\.run_id\)\}\/resume`/u);
+  assert.match(source, /`\/api\/marketing-agent\/runs\/\$\{encodeURIComponent\(run\.run_id\)\}\/journey`/u);
+  assert.match(source, /성과 루프 보기/u);
+  assert.match(source, /node\.mode === "shadow"[\s\S]*그림자 전략 · 외부 효과 없음/u);
+  assert.match(source, /node\.state === "published" \|\| node\.state === "observing"/u);
+  assert.match(source, /성과 관찰 중/u);
+  assert.match(source, /실행·검수 준비 중/u);
+  assert.match(source, /계보 무결성 확인 필요/u);
+  assert.match(source, /journey\.integrity_state !== "verified"/u);
+  assert.match(source, /journey\.integrity_state === "launch_pending"/u);
+  assert.match(source, /제품 근거 조사·전략 준비 중/u);
+  assert.match(source, /outcome\.reassessment_state/u);
+  assert.match(source, /outcome\.learning_state/u);
+  assert.match(source, /성과 재평가 완료/u);
+  assert.match(source, /학습 후보 검수 대기/u);
+  assert.doesNotMatch(source, /성과 관찰 대기/u);
+  assert.doesNotMatch(source, /reassessment_ready/u);
+  assert.match(source, /renderedAccount !== accountId\(\)/u);
+  assert.match(source, /schema_version: "trace\.marketing-agent-resume-request\.v1"/u);
+  assert.match(source, /resume_id: draft\.resumeId/u);
+  assert.match(source, /expected_head_step_sha256: run\.loop\.head_step_sha256/u);
+  assert.match(source, /marketing_context_snapshot_id: snapshotId/u);
+  assert.match(source, /renderedAccount !== accountId\(\)/u);
+  assert.match(source, /renderedAccount,/u);
+  assert.match(source, /resumeDrafts\.clear\(\)/u);
+  assert.doesNotMatch(source, /raw[_ -]?evidence/iu);
+  assert.match(styles, /\.agent-resume/u);
+  assert.match(styles, /\.agent-run-journey/u);
+  assert.match(source, /method: "POST", body: JSON\.stringify\(requestBody\)/u);
+  assert.match(source, /requestBody\?\.research\?\.account_id !== submittedAccount/u);
+  assert.match(source, /실행은 하지 말고 JSON만 반환해/u);
+  assert.match(source, /item\.review_packet_path/u);
+  assert.match(source, /approval\.action\.body/u);
+  assert.match(source, /SHA-256 \$\{item\.target\.sha256\}/u);
+  assert.match(source, /"검증된 원본", packet\.source/u);
+  assert.match(source, /"관찰 결과", packet\.outcomes/u);
+  assert.match(source, /제품 소스와 정확한 ref를 읽고 digest로 고정할 수 없으면/u);
+  assert.match(source, /action\.method !== "POST"/u);
+  assert.match(source, /action\.path\.startsWith\("\/api\/marketing-agent\/"\)/u);
+  assert.match(source, /window\.addEventListener\("beforeunload"[\s\S]*agentControlToken = ""/u);
+  assert.match(source, /pre\.textContent = compactValue\(value\)/u);
+  assert.match(source, /selectedReview\.accountId !== accountId\(\)/u);
+  assert.match(source, /generation !== reviewGeneration/u);
+  assert.match(source, /agentControlToken = new FormData[\s\S]*unlockForm\.reset\(\)/u);
+  assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|document\.write/u);
+  assert.doesNotMatch(source, /localStorage\.(?:setItem|getItem)\([^\n]*(?:token|secret)/iu);
+  assert.doesNotMatch(source, /\/materializations|\/assignments|\/api\/threads/iu);
+});
+
 test("control token remains memory-only and popup completion is origin and source checked", async () => {
   const source = await built("static/workspace-live.js");
   assert.match(source, /let controlPlaneToken = ""/u);
