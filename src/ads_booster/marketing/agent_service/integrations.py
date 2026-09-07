@@ -13,6 +13,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import ToolInvocation
 from ads_booster.contracts.tool_capability import ToolDescriptor
+from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
     DynamicEvidenceResearchResult,
@@ -80,9 +81,10 @@ class ConfiguredAgentTools:
 
     def adapters(self) -> Mapping[str, ToolAdapter]:
         adapters: dict[str, ToolAdapter] = {
+            "research.search": _delegating("research.search", "public_search", WebSearch().execute),
             "research.web": _delegating(
                 "research.web", "trace.dynamic_evidence_research", self._research
-            )
+            ),
         }
         if self.config.hosted_origin and self.config.hosted_token:
             adapters["catalog.hosted.install"] = _delegating(
@@ -103,9 +105,10 @@ class ConfiguredAgentTools:
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
         result = [
+            search_descriptor(now=now),
             research_descriptor(
                 installation_id="installed:research.web", observed_at=now, ready=True
-            )
+            ),
         ]
         if self.config.hosted_origin and self.config.hosted_token:
             result.append(
