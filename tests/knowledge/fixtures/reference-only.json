@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.reference-only.1",
+  "event_kind": "attachment_received",
+  "request_text": "접근성 검토 때 필요하면 찾아볼 참고자료로만 보관해 주세요. 팀 결정으로 승격하지 마세요.",
+  "timestamp": "2026-09-07T04:00:00Z",
+  "conversation": {"conversation_ref": "conversation.team-a.research", "message_ref": "message.reference-only", "revision": 1},
+  "attachments": [{"ordinal": 0, "logical_source_ref": "source.public.reference", "logical_revision_ref": "source.public.reference.rev1", "mime_type": "text/html"}]
+}
