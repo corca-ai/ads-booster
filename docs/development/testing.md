@@ -1,11 +1,46 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-07
 
 ## Focused checks
 
 Choose the boundary that changed. Source tests are not installed-worker or hosted-runtime proof.
+
+## Team knowledge checks
+
+The knowledge implementation is covered by focused `tests/knowledge` contracts, repository/filesystem,
+ingress, Slack-scope, retrieval, curation, transfer, and deletion tests. Use the smallest relevant
+selection while the implementation is changing; a useful source-level sweep is:
+
+```bash
+uv run pytest -q tests/knowledge
+```
+
+The configuration seam must also be checked directly with synthetic absolute paths: all three
+`TRACE_MARKETING_KNOWLEDGE_ROOT`, `TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and
+`TRACE_MARKETING_KNOWLEDGE_POLICY` values absent means disabled; any partial set must fail; relative
+paths must fail; root/control permissions are `0700`; policy and `identity.json` are `0600`.
+The service composition check covers `trace-marketing service run --help` and source inspection of
+the enabled runtime, but a source checkout or local test does not prove a fresh installed service,
+Codex entitlement, Slack delivery, hosted validation, remote purge, or deployment.
+
+The context-transfer checks must cover both required and disabled policies, exact SHA-256 binding,
+workspace/account/run/task/action/brand matching, expiry, stale head/grant/tombstone rejection,
+pre-dispatch and callback validation, and the callback use receipt. Slack checks must cover shared
+workspace scope, private member/conversation scope, read-only DM capability filtering, pending edit/
+delete/correction fences, and replayed outbox delivery. Deletion checks must assert the erase-ledger
+sequence, local tombstones and reverse dependency blocks, clean restore, and remote replica
+`purge_pending` until an acknowledgement is recorded.
+
+The registered `trace-marketing knowledge` reference surface requires `--root`, `--control-root`,
+and `--policy` on every command. Focused CLI checks should cover `init`, `doctor`, `ingest --envelope`,
+`run --once`/`--until-idle --flush-batches`, `search --query`, `get --id`, `context --request`,
+`backup --destination`, `restore --backup`, `retract --source`, `purge --request`,
+`questions --pending`/`--answer --text`, and the memory/brand/task subgroups. `run` and
+`memory consolidate` require Codex availability when they execute curation. These are source-level
+reference operations until the installed `knowledge --help` and a fresh installation are checked;
+do not claim operator usability or deployment proof from source alone.
 
 | Change | Command |
 | --- | --- |
