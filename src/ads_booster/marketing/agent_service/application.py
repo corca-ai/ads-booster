@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import TYPE_CHECKING
@@ -49,6 +50,10 @@ from ads_booster.marketing.runtime import (
     bind_tool_invocation,
 )
 from ads_booster.transport.json_types import JsonObject
+
+_CONTEXT_SELECTION_SCHEMA = "trace.reasoning-context-selection.v1"
+_MAX_CONTEXT_RECORDS = 32
+_MAX_CONTEXT_BYTES = 48 * 1024
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -367,6 +372,9 @@ class MarketingAgentService:
         evidence: tuple[JsonObject, ...],
         now: datetime,
     ) -> AgentRun:
+        # All callers, including restart recovery, project the same canonical history.
+        # The caller's last observation is only a trigger, never the whole context.
+        evidence, context_selection = self._select_context(run)
         snapshot = self.registry.snapshot_for_plan(
             snapshot_id=f"{run.run_id}:capabilities:{run.revision}",
             run_id=run.run_id,
@@ -397,7 +405,16 @@ class MarketingAgentService:
             ),
             state=AgentRunState.RUNNING,
             expected_revision=run.revision,
-            records=(snapshot_record,),
+            records=(
+                snapshot_record,
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:context:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=context_selection,
+                    now=now,
+                ),
+            ),
         )
         reasoning_request = ReasoningRequest(
             schema_version="trace.reasoning-request.v1",
@@ -475,6 +492,66 @@ class MarketingAgentService:
             snapshot=snapshot,
             now=now,
         )
+
+    def _select_context(self, run: AgentRun) -> tuple[tuple[JsonObject, ...], JsonObject]:
+        """Bound the provider projection; retain source records and selection provenance."""
+        sources = [
+            record
+            for record in self.repository.records(run.tenant_id, run.run_id)
+            if record.kind is AgentRecordKind.EVIDENCE
+            and record.payload_schema_version != _CONTEXT_SELECTION_SCHEMA
+        ]
+        # Keep the latest observation first, then recent human constraints ahead of
+        # tool output. Restore chronological order so corrections stay after originals.
+        order = sorted(
+            range(len(sources)),
+            key=lambda index: (
+                index == len(sources) - 1,
+                sources[index].payload_schema_version
+                in {
+                    "trace.agent-input-evidence.v1",
+                    "trace.work-continuation.v1",
+                    "trace.work-interruption.v1",
+                },
+                index,
+            ),
+            reverse=True,
+        )
+        selected: list[int] = []
+        selected_bytes = 0
+        for index in order:
+            size = len(
+                json.dumps(
+                    sources[index].payload, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
+            )
+            if len(selected) < _MAX_CONTEXT_RECORDS and selected_bytes + size <= _MAX_CONTEXT_BYTES:
+                selected.append(index)
+                selected_bytes += size
+        selected.sort()
+        evidence = tuple(sources[index].payload for index in selected)
+        omitted_count = len(sources) - len(selected)
+        selection: JsonObject = {
+            "schema_version": _CONTEXT_SELECTION_SCHEMA,
+            "selected_sha256s": [sources[index].payload_sha256 for index in selected],
+            "selected_bytes": selected_bytes,
+            "omitted_count": omitted_count,
+            "max_records": _MAX_CONTEXT_RECORDS,
+            "max_bytes": _MAX_CONTEXT_BYTES,
+            "policy": "latest_observation_then_recent_human_inputs_then_recent_evidence",
+        }
+        if omitted_count:
+            notice: JsonObject = {
+                "schema_version": "trace.reasoning-context-omission.v1",
+                "omitted_count": omitted_count,
+                "notice": (
+                    "Earlier or oversized evidence is omitted from this bounded projection, "
+                    "not deleted. Do not assume omitted constraints or sources are absent. "
+                    "Request the needed scope before claiming preservation or verification."
+                ),
+            }
+            evidence = (*evidence, notice)
+        return evidence, selection
 
     def _execute_tool(  # noqa: PLR0913 - explicit immutable bindings define the admission edge.
         self,
