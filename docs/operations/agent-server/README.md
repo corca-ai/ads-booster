@@ -66,8 +66,53 @@ TRACE_MARKETING_TENANT와 Slack 권한 파일의 tenant_id는 같아야 한다.
 일단 등록한 동일 사용자의 ID/승인 권한을 변경하면 충돌 시 시작이 거절된다.
 제거는 파일에서 빼고 서비스를 재시작하면 새 요청·대기 작업에 반영된다.
 
+## Team knowledge configuration (source wiring; verification deferred)
+
+The on-premises service can enable the server-owned knowledge store by setting all three absolute
+paths together:
+
+```bash
+export TRACE_MARKETING_KNOWLEDGE_ROOT='/absolute/path/to/knowledge'
+export TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT='/absolute/path/to/knowledge-control'
+export TRACE_MARKETING_KNOWLEDGE_POLICY='/absolute/path/to/knowledge-control/policy.json'
+```
+
+Leave all three unset to keep knowledge disabled. A partial set is rejected. The service user must
+own the root and control directories with mode `0700`; the policy file and control `identity.json`
+must be mode `0600`. `service run` starts the knowledge owner, ingress outbox, curation jobs, index
+worker, and memory-view worker in the same process as the canonical Agent Service. The owner lock
+rejects a second process using the same root.
+
+Authenticated Slack shared threads enter workspace scope. Private DMs retain member and conversation
+scope and expose read-only knowledge search/get, memory get/explain, and source read capabilities;
+they cannot write shared memory, schedule jobs, purge data, or send external effects. Corrections and
+message edits/deletes create a pending fence before the affected Run is prepared again.
+
+The service assembles a bounded, revision- and digest-bound context transfer for hosted/Mac work.
+The remote task must validate the transfer before dispatch and the callback must return the matching
+receipt. Remote replica deletion remains pending until its purge acknowledgement is recorded; local
+success is not global deletion proof. This source wiring has not been verified by a fresh installed
+Linux service, live Slack/Codex account, hosted deployment, or remote purge.
+
+The `trace-marketing knowledge` command group is registered as a local admin surface. Every command
+requires `--root`, `--control-root`, and `--policy`. The current commands are `init --workspace`,
+`doctor`, `ingest --envelope FILE [--attachment ORDINAL=/absolute/path]`,
+`run [--model MODEL] [--service-database PATH] [--once|--until-idle [--flush-batches]]`,
+`search --query TEXT [--limit N]`, `get --id ID [--revision REVISION]`,
+`context --request FILE [--brand ID]`, `schedule --request FILE`, `backup --destination PATH`,
+`restore --backup PATH`, `retract --source ID`, `purge --request ID`, and
+`questions --pending|--answer ID --text TEXT`. Subgroups are `memory get|explain|correct|consolidate`,
+`brand register|list`, and `task open|close`. `memory consolidate` requires `--until-idle`, and
+`--flush-batches` requires `--until-idle`.
+
+This is a source-implemented reference surface for one private store. Installed help, fresh Linux
+installation, live Slack/Codex, hosted validation, remote purge, and deployment verification remain
+deferred.
+
 Codex/uv/gh가 npm/nvm 등 별도 경로에 있다면 **service와 update.service 양쪽 PATH**에
 실제 bin 경로를 추가한다. 모델명은 해당 Codex 계정에서 실제 사용할 수 있는 값으로 지정한다.
+이 문서의 실행 예시는 `gpt-6-astra`를 사용한다. 서버 Codex 계정에서 사용할 수 있는 모델을
+확인하고 `--model`을 명시한다.
 서버 Codex가 같은 사용자에서 `codex login status`와 실제 모델 호출을 확인해야 한다.
 
 ```bash
