@@ -34,6 +34,7 @@ from ads_booster.contracts.native_export import (
     TraceSuppliedBackgroundProvenance,
 )
 from ads_booster.contracts.tool_capability import ToolDescriptor
+from ads_booster.marketing.agent_service.creative_asset_links import link_asset
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.tool_adapters.compatibility import DelegatedToolResult
@@ -159,6 +160,15 @@ class CreativeCaptureTool:
         # A committed claim precedes all worker preparation; any interruption stays uncertain.
         result = self._capture(run, scope, request, source, key)
         self.assets.add(result.asset, actor_scope=scope)
+        link_asset(
+            self.repository.database_path,
+            tenant_id=run.tenant_id,
+            run_id=run.run_id,
+            asset_id=result.asset.asset_id,
+            revision=result.asset.revision,
+            request_sha256=contract_sha256(invocation),
+            actor_id="local-mac-codex-appium",
+        )
         with closing(sqlite3.connect(self.repository.database_path)) as db, db:
             _ = db.execute(
                 "UPDATE creative_capture_invocations SET output=? WHERE key=?",

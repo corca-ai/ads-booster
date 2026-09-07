@@ -6,7 +6,7 @@ import io
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from PIL import Image
@@ -20,6 +20,7 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.creative_work import AssetParent, CreativeAsset, CreativeScope
 from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
+from ads_booster.marketing.agent_service.creative_asset_links import asset_links
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.creative_capture import (
     CreativeCaptureInput,
@@ -282,3 +283,18 @@ def test_long_canonical_run_keeps_explicit_lineage_without_worker_identifier_fai
     result = tool.execute(invocation, creative_capture_descriptor(now=NOW, ready=True))
     assert result.output["canonical_run_id"] == canonical_id
     assert worker.calls == 1
+
+
+def test_capture_result_is_linked_to_its_run_for_web_readback(tmp_path: Path) -> None:
+    tool, _, invocation = setup_tool(tmp_path)
+    result = tool.execute(invocation, creative_capture_descriptor(now=NOW, ready=True))
+    asset = CreativeAsset.model_validate(result.output["asset"])
+    with asset_links(tool.repository.database_path) as connection:
+        row = cast(
+            "tuple[str, int] | None",
+            connection.execute(
+                "SELECT asset_id,revision FROM creative_run_assets WHERE tenant_id=? AND run_id=?",
+                ("tenant-a", "run-a"),
+            ).fetchone(),
+        )
+    assert row == (asset.asset_id, asset.revision)
