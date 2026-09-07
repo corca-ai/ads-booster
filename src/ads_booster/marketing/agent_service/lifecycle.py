@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from ads_booster.contracts.agent_run import AgentRecordKind, ToolInvocation
 from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.application import MarketingAgentService
+from ads_booster.marketing.agent_service.capture_setup import connect_local_capture
 from ads_booster.marketing.agent_service.creative_asset_verifier import CreativeAssetVerifier
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
@@ -44,13 +45,14 @@ class InstalledServicePaths:
         self.root.chmod(0o700)
 
 
-def build_installed_marketing_agent_service(
+def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit installed composition inputs.
     *,
     paths: InstalledServicePaths,
     codex_executable: Path,
     model_id: str,
     timeout_seconds: float,
     integrations: AgentServiceIntegrationConfig | None = None,
+    capture_config: Path | None = None,
 ) -> MarketingAgentService:
     """Build the canonical service independently from every Mac/Appium lifecycle."""
     paths.prepare()
@@ -92,6 +94,10 @@ def build_installed_marketing_agent_service(
     configured.creative_capabilities = lambda invocation, now: _creative_capabilities(
         service, invocation, now
     )
+    if capture_config is not None:
+        connect_local_capture(
+            service, config_path=capture_config, codex=codex, now=datetime.now(UTC)
+        )
     return service
 
 

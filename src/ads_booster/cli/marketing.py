@@ -227,6 +227,11 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             notion_token=os.environ.get("TRACE_MARKETING_NOTION_TOKEN"),
             notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
         ),
+        capture_config=(
+            Path(os.environ["TRACE_MARKETING_CAPTURE_CONFIG"])
+            if os.environ.get("TRACE_MARKETING_CAPTURE_CONFIG")
+            else None
+        ),
     )
     browser_login = browser_from_env(os.environ, oauth)
     slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
