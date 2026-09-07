@@ -274,6 +274,19 @@ def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Pat
         tools={"capture.appium": adapter},
         runtime_store=SqliteSessionStore(database),
     )
+    with pytest.raises(ValueError, match="agent_approval_invocation_changed"):
+        _ = restarted.decide_approval(
+            "trace",
+            waiting.run_id,
+            approver_id="member-one",
+            granted=True,
+            expected_invocation_sha256="f" * 64,
+            now=NOW,
+            expires_at=NOW + timedelta(minutes=5),
+        )
+    assert adapter.inputs == []
+    assert restarted.repository.get("trace", waiting.run_id) == waiting
+
     completed = restarted.decide_approval(
         "trace",
         waiting.run_id,

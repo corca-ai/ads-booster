@@ -133,6 +133,7 @@ class ChannelApplicationAdapter:
                 approver_id=identity.member_id,
                 granted=request.decision == "granted",
                 expires_at=request.expires_at,
+                expected_invocation_sha256=request.invocation_sha256,
                 now=now,
             )
         elif not self._approval_already_applied(identity, request):
