@@ -17,6 +17,7 @@ import {
   MarketingCapabilityError,
 } from "./marketing-adapter-capabilities.js";
 import { handleHostedMarketingAgent } from "./marketing-agent.js";
+import { trustedKnowledgeForMarketingRun } from "./marketing-agent-runs.js";
 import { handleBackgroundAssetRequest } from "./background-assets.js";
 import { handleThreadsMediaRequest } from "./threads/media-capability.js";
 import { handleHostedThreadsProfiles } from "./threads/profiles-api.js";
@@ -30,6 +31,7 @@ export const WORKSPACE_GENERATION_PROMPT_VERSION = "trace.workspace-generation.v
 export const WORKER_GENERATION_PROMPT_VERSION = "trace.worker-generation.v1";
 export const HOSTED_GENERATION_PIPELINE = "hosted_workspace_generation_v1";
 export const FEEDBACK_CONTEXT_CAPABILITY = "feedback_context_v1";
+export const KNOWLEDGE_CONTEXT_CAPABILITY = "knowledge_context_v1";
 const DEFAULT_AI_MAX_TOKENS = 4096;
 const DEFAULT_GENERATION_COOLDOWN_SECONDS = 60;
 const DEFAULT_GENERATION_COUNT = 4;
@@ -1575,7 +1577,9 @@ async function recentCandidateTopics(env, personaId) {
     .filter((topic) => topic);
 }
 
-async function publishCandidateGeneration(env, contextRegistry, profile, persona, body = null) {
+export async function publishCandidateGeneration(
+  env, contextRegistry, profile, persona, body = null, trustedKnowledge = null,
+) {
   const account = await requireHostedAccount(env);
   const country = persona?.country ?? account.country;
   assertConfiguredContextCountry(contextRegistry, country);
@@ -1616,8 +1620,16 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
     profile?.profile_id ?? null,
   );
   const feedbackContextSha256 = await canonicalSha256(feedbackContext);
-  const taskId = crypto.randomUUID();
-  const runId = crypto.randomUUID();
+  const storedKnowledge = trustedKnowledge ?? (
+    typeof body?.agent_run_id === "string"
+      ? await trustedKnowledgeForMarketingRun(env.DB, accountId(env), body.agent_run_id)
+      : null
+  );
+  const taskId = storedKnowledge?.binding?.task_ref ?? crypto.randomUUID();
+  const runId = storedKnowledge?.binding?.run_ref ?? crypto.randomUUID();
+  const knowledge = await boundKnowledgeContext(
+    storedKnowledge, accountId(env), taskId, runId,
+  );
   const now = new Date().toISOString();
   const task = {
     schema_version: "1",
@@ -1642,10 +1654,16 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
       recent_topics: recentTopics,
       feedback_context: feedbackContext,
       feedback_context_sha256: feedbackContextSha256,
+      ...(knowledge.policy === "required" ? {
+        knowledge_context: knowledge.envelope,
+        knowledge_context_sha256: knowledge.sha256,
+      } : {}),
       requested_by: "hosted_workspace",
     },
     created_at: now,
     credential_ref: null,
+    knowledge_context_policy: knowledge.policy,
+    ...(knowledge.policy === "required" ? { knowledge_context_binding: knowledge.binding } : {}),
   };
   // The gate races the check above, and it stays "some worker exists" on purpose: a batch
   // published in the instant the last capable Mac went away waits for the next one rather
@@ -1665,7 +1683,7 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
       task.idempotency_key,
       JSON.stringify(task),
       personaId,
-      FEEDBACK_CONTEXT_CAPABILITY,
+      knowledge.policy === "required" ? KNOWLEDGE_CONTEXT_CAPABILITY : FEEDBACK_CONTEXT_CAPABILITY,
       now,
       now,
     )
@@ -1676,7 +1694,7 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
       "Mac 워커가 없어 후보를 만들 수 없습니다. Mac 연결 관리에서 worker를 먼저 등록해 주세요.",
     );
   }
-  return {
+  const response = {
     task_id: taskId,
     persona_id: personaId,
     state: "queued",
@@ -1685,6 +1703,48 @@ async function publishCandidateGeneration(env, contextRegistry, profile, persona
     feedback_context_sha256: feedbackContextSha256,
     created_at: now,
   };
+  if (knowledge.policy === "required") {
+    response.knowledge_context_transfer_id = knowledge.envelope.transfer_id;
+    response.knowledge_context_replicas = [
+      { system_id: "cloudflare", replica_id: `cloudflare-task:${accountId(env)}:${taskId}` },
+      { system_id: "mac", replica_id: `mac-inbox:${accountId(env)}:${taskId}` },
+    ];
+  }
+  return response;
+}
+
+async function boundKnowledgeContext(value, account, taskId, runId) {
+  if (value === null) {
+    return { policy: "disabled", binding: null, envelope: null, sha256: null };
+  }
+  const binding = value?.binding;
+  const envelope = value?.knowledge_context;
+  const sha256 = value?.knowledge_context_sha256;
+  if (
+    !binding || !envelope || typeof sha256 !== "string"
+    || binding.account_id !== account || binding.task_ref !== taskId || binding.run_ref !== runId
+    || envelope.account_id !== account || envelope.task_ref !== taskId || envelope.run_ref !== runId
+    || envelope.workspace_id !== binding.workspace_id
+    || envelope.scoped_actor_ref !== binding.scoped_actor_ref
+    || envelope.brand_ref !== binding.brand_ref
+    || envelope.action_kind !== binding.action_kind
+    || envelope.invocation_ref !== binding.invocation_ref
+    || await canonicalSha256Portable(envelope) !== sha256
+  ) throw new WorkspaceHttpError(409, "knowledge context binding is invalid");
+  return { policy: "required", binding, envelope, sha256 };
+}
+
+async function canonicalSha256Portable(value) {
+  rejectNonPortableNumbers(value);
+  return canonicalSha256(value);
+}
+
+function rejectNonPortableNumbers(value) {
+  if (typeof value === "number" && (!Number.isSafeInteger(value) || !Number.isInteger(value))) {
+    throw new WorkspaceHttpError(409, "knowledge context contains a non-portable number");
+  }
+  if (Array.isArray(value)) value.forEach(rejectNonPortableNumbers);
+  else if (value && typeof value === "object") Object.values(value).forEach(rejectNonPortableNumbers);
 }
 
 /**
