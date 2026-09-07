@@ -5,6 +5,22 @@ service owns canonical Agent Runs; Codex, Cloudflare, Mac/Appium, Threads, resea
 systems are replaceable provider or tool adapters. The only installed command remains
 `trace-marketing`; no separate custom-agent executable is introduced.
 
+## Web login and Slack onboarding (candidate change)
+
+The on-prem service now has authorization-code/PKCE browser login, durable asynchronous web
+requests, signed Slack mentions/thread replies/DMs and /trace commands, exact approval and input
+handling, and a Notion-independent
+research.daily_slack_only schedule. The installed service uses one configured tenant and one
+default Slack channel, an explicit conversation-channel allowlist, and isolated member DMs.
+research.search accepts a plain query and returns attributed,
+explicitly unverified public search snippets; immutable product research remains research.web.
+
+Use the [server setup packet](docs/operations/agent-server/README.md) for the Slack app manifest,
+OAuth callback configuration, operator identity mapping, environment template, and systemd user
+service. These additions require a wheel built from this change or a subsequent release; the
+previously published v0.4.21 does not include them. Live Tunnel, Linux service and Slack
+verification are still required after installation; IdP is required only for optional web login.
+
 ## On-premises Agent Service (implemented foundation)
 
 The current PR adds the installed service boundary and portable Run/Step/Intent/CapabilitySnapshot/
@@ -522,3 +538,30 @@ never kills a running updater.
 See [system architecture](docs/architecture/system.md),
 [code architecture](docs/architecture/code.md), [dynamic workers](docs/contracts/dynamic-mac-workers.md),
 and [testing](docs/development/testing.md).
+
+### On-premises Slack agent with automatic main updates
+
+For a company without OAuth, use `TRACE_MARKETING_SLACK_ONLY=1`: signed `/trace` commands,
+results, paginated exact invocation review, approvals and daily Slack research work without a web
+login; web UI and bearer API routes are closed. Bind to loopback behind the configured Tunnel.
+See the [server installation and operator handoff](docs/operations/agent-server/README.md).
+
+The Linux user service runs a managed installation in `~/.local/share/trace-marketing-server/current`.
+The supplied updater timer checks main every five minutes, requires the exact commit's successful
+`Verify on-prem agent` check and completed passing checks, stages a locked installation, waits for
+active work to finish, backs up state, switches releases and verifies passive startup before resuming.
+Failed startup restores the previous code and state; interrupted transactions recover on the next
+check. Settings, secrets and canonical records remain outside release directories. GitHub read access
+and a one-time timer installation are required; these files do not deploy themselves to a server.
+Candidate packages and worktree tests are not proof of a live main update, Slack send or Linux reboot.
+
+Slack conversation setup: enable `TRACE_MARKETING_SLACK_BOT_USER_ID`, set optional comma-separated
+`TRACE_MARKETING_SLACK_ALLOWED_CHANNEL_IDS` (defaults to the primary channel), and use
+`TRACE_MARKETING_SLACK_ALLOW_DM=1` for allowed members' DMs. The signed
+`/channels/slack/events` route acknowledges durable admission before reasoning. Mentions start
+threads; ordinary replies continue them with scoped persisted context. DM runs use a derived
+workspace/member/session tenant and search-only capability policy; they cannot mutate shared
+workspace state or invoke delivery tools. `상태`, `검토 1`, `승인 해시`, `거절 해시`, `종료`,
+`다시 시작` work within the conversation. File contents and Slack-wide history search are not supported.
+Use the [merge-to-Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md), creating
+from the bootstrap manifest first and activating the full Events manifest after server startup.

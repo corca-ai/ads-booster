@@ -55,6 +55,35 @@ The daily scheduler creates one stable Run per tenant, skill, and local date. It
 principal may approve only exact `deliver.slack` and `store.notion.daily` invocations; image and
 publication approval remain human checkpoints in the hosted workflow.
 
+## Browser and Slack admission (candidate implementation)
+
+The installed service accepts one configured tenant; OAuth identities for other tenants cannot use
+that instance's shared integration credentials. Browser /auth/login uses authorization code with
+PKCE and a one-use, browser-bound state; /auth/callback exchanges the code at pinned HTTPS
+endpoints without redirects and introspects the access token. Provider tokens remain in bounded,
+expiring server memory. Secure HttpOnly cookies plus same-origin/CSRF checks authorize browser
+mutations. Restart invalidates browser sessions, not Run history.
+
+The browser submits durable /v1/jobs and polls status, so long reasoning turns do not hold the
+Tunnel HTTP request open. A single service execution lock serializes web, scheduler, and channel
+mutations. This is a single-process service, not active-active execution.
+
+The /channels/slack/commands route verifies real Slack form bytes/signatures and timestamp, app,
+team, configured shared channel and operator-bound user before writing durable command admission.
+It acknowledges without reasoning, and a background worker invokes the same canonical service.
+The operator file binds Slack users to stable member identities, with separate reviewer grants.
+Exact invocation hashes and input revisions reject stale mutations. Removing a configured user
+revokes new and queued command access after restart.
+
+Slack response notifications have a persisted dispatch marker; unknown delivery is not repeated.
+Interrupted create jobs can reconcile through canonical Run replay; uncertain input/approval jobs
+remain blocked for status readback. Notifications are channel responses to user commands, not
+planner-granted publishing authority. The daily Slack-only skill grants only its declared Slack
+delivery invocations and never hosted publication or capture.
+
+The [server packet](../operations/agent-server/README.md) defines deployment and live acceptance.
+No live OAuth/Slack/Tunnel or Linux systemd success is implied by local tests.
+
 ## Runtime boundary
 
 Cloudflare owns hosted candidates, D1 leases/callback acceptance, R2 storage, review state, Threads
@@ -678,3 +707,48 @@ schedule remains the fallback.
 service instructions. Native manifest validation does not prove visual semantics. Human review is
 mandatory. Only the default-OFF hosted Threads path can publish; the Mac worker, generic `/v1`
 simulation path, and every other marketing channel cannot.
+
+## Linux main tracking and Slack-only operation
+
+`TRACE_MARKETING_SLACK_ONLY=1` is an explicit public-ingress mode for operators without an IdP.
+Only health and signed Slack commands/events are exposed, on loopback behind the Tunnel; web UI,
+OAuth/session routes and bearer API access return 404. App/team/channel/member binding still applies.
+Slack review pages project the full pending invocation and its exact approval hash. No browser
+login or company OAuth is required in this mode; Cloudflare email-login integration remains unimplemented.
+
+The systemd user agent and five-minute updater are separate processes. The updater has GitHub read
+access and no agent secret EnvironmentFile. It fetches main and verifies the exact SHA's dedicated
+on-prem check and other returned CI outcomes, installs a non-editable locked candidate, and verifies
+its update protocol and installed doctor before requesting maintenance. One MaintenanceGate accounts
+for HTTP admission, queue recovery/dispatch/delivery and scheduler work. No new work enters while its
+file exists; active work drains without interruption. If it cannot drain in five minutes, the update
+is deferred and admission reopens. On quiescence, stop -> offline state backup -> atomic current
+symlink switch -> passive startup with SHA health readback -> activation. A failed passive startup
+restores code and canonical state before reopening admission. A persisted transaction recovers an
+interrupted switch; after activation is committed it never rewinds records. Failed SHAs are quarantined.
+State and configuration live outside releases. Backups and failed state are retained for operator
+reconciliation. Existing cloudflared services are independent and must not be replaced by this updater.
+
+## Slack conversation Events boundary
+
+HTTP `/channels/slack/events` verifies raw-body signature, timestamp, app/team, configured members
+and allowed channels before durably admitting text. Signed URL verification does not call reasoning.
+app_mention starts a thread; ordinary message events only join an admitted thread. Bot/subtype,
+unrelated channel chatter and external shared-channel envelopes are ignored. Message identity binds
+team/channel/timestamp, preventing duplicate retries from creating new work.
+
+The same maintenance-gated Slack worker drains commands and conversation jobs. Plans are frozen
+under the canonical service lock; follow-ups bind to the latest thread Run only when dequeued.
+Awaiting-input replies resume that Run at its saved revision. Terminal Runs remain immutable history;
+a follow-up creates a new Run with a bounded prior dialogue projection. Full inbox/results stay stored.
+Private DM tenant IDs derive from workspace, member, channel and thread; unthreaded messages use the
+member's ongoing DM session. Private services share the canonical lock/ledger but expose only
+research.search, with no shared-context mutation, hosted-context access or delivery tool authority.
+
+Conversation acknowledgements/results target only the admitted original conversation. Each send has
+a durable marker; ambiguous sending state becomes unknown on restart and is never blindly retried.
+Authorization is checked again before execution and notification. Saved create plans use canonical
+Run idempotency/reconciliation; interrupted input/approval/resume plans are blocked for inspection.
+Approval is an explicit reviewer action bound to the exact current invocation hash, never inferred
+from free text or inherited dialogue. Closing a thread stops later responses, not in-flight effects.
+Slack settings and Ubuntu live acceptance are documented in the server launch guide.
