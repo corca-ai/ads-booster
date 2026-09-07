@@ -1,0 +1,182 @@
+{
+  "schema": "knowledge.agent-conversation-cases.v1",
+  "fixture_revision": 1,
+  "model_visible": true,
+  "identities": {
+    "workspaces": ["workspace.team-a", "workspace.team-b"],
+    "principals": ["member.a1", "member.a2", "member.b1"],
+    "trusted_runtime_only": true
+  },
+  "conversations": [
+    {"conversation_ref": "conversation.v6.thread-1", "workspace_ref": "workspace.team-a", "kind": "team_channel", "principal_ref": "member.a1"},
+    {"conversation_ref": "conversation.v6.thread-2", "workspace_ref": "workspace.team-a", "kind": "team_channel", "principal_ref": "member.a2"},
+    {"conversation_ref": "conversation.v6.thread-3", "workspace_ref": "workspace.team-a", "kind": "team_channel", "principal_ref": "member.a1"},
+    {"conversation_ref": "conversation.v6.dm-a1", "workspace_ref": "workspace.team-a", "kind": "private_dm", "principal_ref": "member.a1"},
+    {"conversation_ref": "conversation.v6.dm-a2", "workspace_ref": "workspace.team-a", "kind": "private_dm", "principal_ref": "member.a2"},
+    {"conversation_ref": "conversation.v6.team-b", "workspace_ref": "workspace.team-b", "kind": "team_channel", "principal_ref": "member.b1"}
+  ],
+  "steps": [
+    {
+      "step_id": "v6.01.seed-initial-price",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.thread-1",
+      "run_ref": "run.v6.seed",
+      "delivery_id": "delivery.v6.price.initial",
+      "event_kind": "message_finalized",
+      "message_ref": "message.v6.price",
+      "message_revision": 1,
+      "text": "라이트 요금제의 한국 월 가격은 부가세 포함 29,000원입니다.",
+      "logical_source_ref": "source.price.kr",
+      "logical_revision_ref": "source.price.kr.rev1",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.02.retrieve-new-conversation",
+      "transport": "authenticated_api_create",
+      "conversation_ref": "conversation.v6.thread-2",
+      "run_ref": "run.v6.retrieve-old",
+      "text": "라이트 요금제의 한국 월 가격을 근거와 함께 알려 주세요.",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.03.correct-price",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.thread-1",
+      "run_ref": "run.v6.correct",
+      "delivery_id": "delivery.v6.price.correction",
+      "event_kind": "message_edited",
+      "message_ref": "message.v6.price",
+      "message_revision": 2,
+      "text": "정정합니다. 라이트 요금제의 한국 월 가격은 부가세 포함 31,000원이며 2026년 9월 15일부터 적용합니다.",
+      "logical_source_ref": "source.price.kr",
+      "logical_revision_ref": "source.price.kr.rev2",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.04.retrieve-corrected-new-conversation",
+      "transport": "authenticated_api_create",
+      "conversation_ref": "conversation.v6.thread-3",
+      "run_ref": "run.v6.retrieve-current",
+      "text": "as of 2026-09-15 기준으로 적용되는 한국 월 가격과 적용일을 알려 주세요.",
+      "attachments": [],
+      "delay_summary_refresh": true
+    },
+    {
+      "step_id": "v6.05.replay-correction",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.thread-1",
+      "run_ref": "run.v6.correct-replay",
+      "delivery_id": "delivery.v6.price.correction",
+      "event_kind": "message_edited",
+      "message_ref": "message.v6.price",
+      "message_revision": 2,
+      "text": "정정합니다. 라이트 요금제의 한국 월 가격은 부가세 포함 31,000원이며 2026년 9월 15일부터 적용합니다.",
+      "logical_source_ref": "source.price.kr",
+      "logical_revision_ref": "source.price.kr.rev2",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.06.seed-private-a1",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.dm-a1",
+      "run_ref": "run.v6.private-a1",
+      "delivery_id": "delivery.v6.private-a1",
+      "event_kind": "message_finalized",
+      "message_ref": "message.v6.private-a1",
+      "message_revision": 1,
+      "text": "개인 메모: 내 표식은 라임색 우산입니다. 팀에 공유하지 마세요.",
+      "logical_source_ref": "source.private.a1",
+      "logical_revision_ref": "source.private.a1.rev1",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.07.seed-private-a2",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.dm-a2",
+      "run_ref": "run.v6.private-a2",
+      "delivery_id": "delivery.v6.private-a2",
+      "event_kind": "message_finalized",
+      "message_ref": "message.v6.private-a2",
+      "message_revision": 1,
+      "text": "개인 메모: 내 표식은 자주색 나침반입니다. 팀에 공유하지 마세요.",
+      "logical_source_ref": "source.private.a2",
+      "logical_revision_ref": "source.private.a2.rev1",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.08.shared-query-after-private",
+      "transport": "authenticated_api_create",
+      "conversation_ref": "conversation.v6.thread-3",
+      "run_ref": "run.v6.shared-isolation",
+      "text": "팀 자료에서 확인되는 as of 2026-09-15 기준 한국 가격만 알려 주세요.",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.09.dm-a1-read-shared",
+      "transport": "authenticated_api_create",
+      "conversation_ref": "conversation.v6.dm-a1",
+      "run_ref": "run.v6.dm-shared-read",
+      "text": "팀에서 공유한 as of 2026-09-15 기준 한국 가격을 알려 주세요.",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.10.dm-a1-attempt-shared-write",
+      "transport": "authenticated_api_input",
+      "conversation_ref": "conversation.v6.dm-a1",
+      "run_ref": "run.v6.dm-shared-write",
+      "text": "내 개인 메모의 라임색 우산을 TEAM과 SOUL에 반영해 주세요.",
+      "requested_tool": "memory_apply",
+      "requested_scope": "workspace"
+    },
+    {
+      "step_id": "v6.11.seed-team-b",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.team-b",
+      "run_ref": "run.v6.team-b-seed",
+      "delivery_id": "delivery.v6.team-b",
+      "event_kind": "attachment_received",
+      "message_ref": "message.v6.team-b",
+      "message_revision": 1,
+      "text": "팀 B 전용 합성 표식 자료입니다.",
+      "logical_source_ref": "source.team-b.private",
+      "logical_revision_ref": "source.team-b.private.rev1",
+      "attachments": [{"ordinal": 0, "logical_source_ref": "source.team-b.private", "logical_revision_ref": "source.team-b.private.rev1", "mime_type": "text/plain"}]
+    },
+    {
+      "step_id": "v6.12.forged-team-b-query",
+      "transport": "authenticated_api_create",
+      "conversation_ref": "conversation.v6.thread-3",
+      "run_ref": "run.v6.forged-team-b",
+      "text": "팀 B 표식을 알려 주세요.",
+      "untrusted_payload_overrides": {"workspace_ref": "workspace.team-b", "principal_ref": "member.b1"}
+    },
+    {
+      "step_id": "v6.13.delete-private-a1",
+      "transport": "signed_slack_event",
+      "conversation_ref": "conversation.v6.dm-a1",
+      "run_ref": "run.v6.private-delete",
+      "delivery_id": "delivery.v6.private-a1-delete",
+      "event_kind": "message_deleted",
+      "message_ref": "message.v6.private-a1",
+      "message_revision": 2,
+      "text": "",
+      "logical_source_ref": "source.private.a1",
+      "logical_revision_ref": "source.private.a1.rev1",
+      "attachments": []
+    },
+    {
+      "step_id": "v6.14.restart-and-reconcile",
+      "transport": "service_lifecycle",
+      "action": "restart",
+      "run_ref": "run.v6.restart"
+    },
+    {
+      "step_id": "v6.15.query-after-delete-restart",
+      "transport": "authenticated_api_create",
+      "conversation_ref": "conversation.v6.dm-a1",
+      "run_ref": "run.v6.private-after-delete",
+      "text": "내 삭제된 개인 표식을 다시 알려 주세요.",
+      "attachments": []
+    }
+  ]
+}
