@@ -206,3 +206,46 @@ def test_noninteractive_setup_refuses_before_reading_or_printing_secrets(
     assert result.exit_code == 1
     assert "setup_requires_interactive_terminal" in result.output
     assert not server.CONFIG.exists()
+
+
+def test_interrupted_setup_resumes_without_reentering_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_inputs(monkeypatch)
+    write = server.private_write
+
+    def interrupted(path: Path, text: str) -> None:
+        if path.name == "agent.env":
+            raise OSError
+        write(path, text)
+
+    monkeypatch.setattr(server, "private_write", interrupted)
+    failed = CliRunner().invoke(app, ["server", "setup"])
+    assert failed.exit_code == 1
+    assert (server.CONFIG / "setup-pending.json").is_file()
+    monkeypatch.setattr(server, "private_write", write)
+    resumed = CliRunner().invoke(app, ["server", "setup"])
+    assert resumed.exit_code == 0, resumed.output
+    assert not (server.CONFIG / "setup-pending.json").exists()
+    assert (server.CONFIG / "agent.env").is_file()
+    assert "fixture-secret" not in resumed.output
+    assert CliRunner().invoke(app, ["server", "setup"]).exit_code == 0
+
+
+def test_resume_preserves_operator_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_inputs(monkeypatch)
+    write = server.private_write
+
+    def interrupted(path: Path, text: str) -> None:
+        if path.name == "agent.env":
+            raise OSError
+        write(path, text)
+
+    monkeypatch.setattr(server, "private_write", interrupted)
+    assert CliRunner().invoke(app, ["server", "setup"]).exit_code == 1
+    write(server.CONFIG / "slack-installation.json", "operator edit")
+    monkeypatch.setattr(server, "private_write", write)
+    result = CliRunner().invoke(app, ["server", "setup"])
+    assert result.exit_code == 1
+    assert "setup_resume_preserves_operator_edit" in result.output
+    assert (server.CONFIG / "slack-installation.json").read_text() == "operator edit"

@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
 from urllib.parse import urlsplit
@@ -41,9 +42,9 @@ def private_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.is_symlink():
         raise RuntimeError("refusing_symlink")
-    temp = path.with_suffix(".new")
-    # Exclusive creation avoids following a pre-existing temporary symlink.
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # Unique exclusive files allow recovery after a process dies during a write.
+    fd, name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    temp = Path(name)
     try:
         with os.fdopen(fd, "w") as stream:
             _ = stream.write(text)
@@ -106,9 +107,7 @@ def resources() -> Path:
 
 def render_units(tunnel: bool) -> dict[str, str]:
     source = resources()
-    paths = list(
-        dict.fromkeys(str(Path(executable(n)).parent) for n in ["uv", "git", "codex"])
-    )
+    paths = list(dict.fromkeys(str(Path(executable(n)).parent) for n in ["uv", "git", "codex"]))
     path_line = "Environment=" + env_value(
         "PATH=" + ":".join([*paths, "/usr/local/bin", "/usr/bin", "/bin"])
     )
@@ -175,10 +174,16 @@ def setup_preflight() -> None:
 
 
 def setup_config() -> None:
+    if (CONFIG / "setup-pending.json").is_file():
+        finish_setup()
+        return
+    if (CONFIG / "server.json").is_file():
+        typer.echo("이미 설정되어 있습니다. 다음: trace-marketing server doctor / server start")
+        return
     setup_preflight()
-    origin = origin_value(prompt("공개 HTTPS 주소 (예: https://marketing-agent.borca.ai)"))
+    origin = origin_value(prompt("공개 HTTPS 주소 (예: https://agent.example.com)"))
     model = prompt("이 서버 Codex에서 사용할 모델명")
-    tenant = prompt("워크스페이스 이름", default="corca-marketing")
+    tenant = prompt("워크스페이스 이름", default="marketing")
     app_id = prompt("Slack App ID")
     channel = prompt("기본/허용 Slack Channel ID")
     members = [v.strip() for v in prompt("허용 Slack 사용자 ID (쉼표 구분)").split(",")]
@@ -231,16 +236,55 @@ def setup_config() -> None:
             for v in dict.fromkeys(members)
         ],
     }
-    private_write(CONFIG / "slack-installation.json", json.dumps(installation, indent=2))
-    private_write(CONFIG / "agent.env", environment)
-    if tunnel:
-        private_write(CONFIG / "tunnel.token", tunnel_token)
-    for name, content in units.items():
-        private_write(UNITS / name, content)
-    private_write(CONFIG / "server.json", json.dumps({"origin": origin, "tunnel": tunnel}))
+    files = {
+        "slack-installation.json": json.dumps(installation, indent=2),
+        "agent.env": environment,
+        **({"tunnel.token": tunnel_token} if tunnel else {}),
+        **units,
+        "server.json": json.dumps({"origin": origin, "tunnel": tunnel}),
+    }
     for name in ["slack-app-bootstrap-manifest.json", "slack-app-manifest.json"]:
-        value = (resources() / name).read_text().replace("https://marketing-agent.borca.ai", origin)
-        private_write(CONFIG / name, value)
+        files[name] = (
+            (resources() / name).read_text().replace("https://marketing-agent.borca.ai", origin)
+        )
+    previous = {
+        name: setup_target(name).read_text() if setup_target(name).exists() else None
+        for name in files
+    }
+    private_write(CONFIG / "setup-pending.json", json.dumps({"files": files, "previous": previous}))
+    finish_setup()
+
+
+def setup_target(name: str) -> Path:
+    if name in {SERVICE, TIMER, TUNNEL, "trace-marketing-update.service"}:
+        return UNITS / name
+    if name in {
+        "agent.env",
+        "slack-installation.json",
+        "tunnel.token",
+        "server.json",
+        "slack-app-bootstrap-manifest.json",
+        "slack-app-manifest.json",
+    }:
+        return CONFIG / name
+    raise RuntimeError("invalid_setup_checkpoint")
+
+
+def finish_setup() -> None:
+    """Replay only this setup's exact writes; preserve intervening operator edits."""
+    pending = CONFIG / "setup-pending.json"
+    value = cast("dict[str, dict[str, str | None]]", json.loads(pending.read_text()))
+    for name, content in value["files"].items():
+        target = setup_target(name)
+        if not isinstance(content, str) or target.is_symlink():
+            raise RuntimeError("invalid_setup_checkpoint")
+        current = target.read_text() if target.exists() else None
+        if current == content:
+            continue
+        if current != value["previous"][name]:
+            raise RuntimeError(f"setup_resume_preserves_operator_edit:{name}")
+        private_write(target, content)
+    pending.unlink()
     typer.echo("설정 완료. 다음: trace-marketing server start")
     typer.echo(f"Slack 최종 App Manifest: {CONFIG / 'slack-app-manifest.json'}")
 
@@ -272,6 +316,9 @@ def manifest(
 
 
 def operator_settings() -> dict[str, object]:
+    if (CONFIG / "setup-pending.json").exists() or not (CONFIG / "server.json").is_file():
+        typer.echo("설정을 먼저 완료하세요: trace-marketing server setup", err=True)
+        raise typer.Exit(1)
     return cast("dict[str, object]", json.loads((CONFIG / "server.json").read_text()))
 
 
