@@ -52,6 +52,7 @@ class MessagePlan(ContractModel):
         "pause",
         "memory",
         "delivery",
+        "observation",
     ]
     run_id: str = ""
     goal: AgentGoal | None = None
@@ -216,6 +217,7 @@ class SlackConversationStore:
                     "close",
                     "revise",
                     "pause",
+                    "observation",
                 }
                 _ = db.execute(
                     "UPDATE slack_message_jobs SET state=?,result=? WHERE message_id=?",

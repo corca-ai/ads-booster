@@ -39,6 +39,7 @@ from ads_booster.marketing.channels.slack_conversations import (
 from ads_booster.marketing.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.marketing.channels.slack_delivery import delivery_command
 from ads_booster.marketing.channels.slack_memory import memory_command
+from ads_booster.marketing.channels.slack_work_observations import work_observation_command
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -59,6 +60,7 @@ DM에서도 텍스트로 대화할 수 있습니다. DM은 공개 검색과 답�
 상태 / 어디까지 됐어? — 현재 작업 확인
 잠깐 멈춰줘 — 다음 작업을 멈추고 사람 입력 대기
 수정·사람 작업 결과는 같은 업무에서 이어받습니다.
+작업 기록 제작 12분 설명 / 작업 요약 — 사람이 들인 시간을 업무에 기록
 검토 1 — 승인할 전체 내용 확인 (페이지 번호 변경 가능)
 승인 승인해시 / 거절 승인해시 — 정확한 실행 승인 또는 거절
 계속 — 중단된 실행의 안전한 재개 시도
@@ -139,7 +141,7 @@ class SlackEvents:
             if (
                 message.text.rstrip("?!. ") in _STATUS_TEXTS
                 or command
-                in {"검토", "review", "승인", "approve", "거절", "reject", "기억", "실행안"}
+                in {"검토", "review", "승인", "approve", "거절", "reject", "기억", "실행안", "작업"}
                 or message.text
                 in {"도움말", "help", "종료", "close", "계속", "resume", "다시 시작", "reopen"}
             ):
@@ -352,6 +354,8 @@ class SlackEvents:
             return MessagePlan(action="reply", reply="")
         if action == "실행안":
             return MessagePlan(action="delivery", run_id=conversation.current_run)
+        if action == "작업":
+            return MessagePlan(action="observation", run_id=conversation.current_run)
         if action == "기억":
             return MessagePlan(action="memory", run_id=conversation.current_run)
         if text in {"종료", "close"}:
@@ -423,7 +427,7 @@ class SlackEvents:
             ),
         )
 
-    def _execute(  # noqa: C901,PLR0912 - one canonical mutation per frozen action.
+    def _execute(  # noqa: C901,PLR0911,PLR0912 - one canonical mutation per frozen action.
         self,
         conversation: Conversation,
         message: Message,
@@ -439,6 +443,10 @@ class SlackEvents:
             return delivery_command(
                 self.store.database_path, conversation, message, identity, now=now
             )
+        if plan.action == "observation":
+            if conversation.current_run != plan.run_id:
+                return "기록 대상 업무가 바뀌었습니다. 원래 업무에서 작업 기록을 다시 요청하세요."
+            return work_observation_command(service, conversation, message, identity, now=now)
         if plan.action == "memory":
             return memory_command(
                 self.store.database_path, conversation, message, identity, now=now
