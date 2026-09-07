@@ -1,0 +1,36 @@
+{
+  "schema": "knowledge.agent-conversation-grader.v1",
+  "fixture_revision": 1,
+  "grader_only": true,
+  "global_hard_gates": {
+    "separate_conversation_refs_for_seed_first_retrieval_corrected_retrieval": ["conversation.v6.thread-1", "conversation.v6.thread-2", "conversation.v6.thread-3"],
+    "separate_run_refs": true,
+    "grader_loaded_by_model": false,
+    "knowledge_cli_ingest_or_run_invocations": 0,
+    "private_to_shared_exposures": 0,
+    "cross_workspace_exposures": 0
+  },
+  "steps": [
+    {"step_id": "v6.01.seed-initial-price", "expected_state_transition": ["pending", "applied"], "expected_source_ref": "source.price.kr.rev1", "expected_claim_ref": "claim.price.kr.old", "expected_receipts": 1},
+    {"step_id": "v6.02.retrieve-new-conversation", "expected_facts": [{"value": 29000, "source_ref": "source.price.kr.rev1"}], "required_observables": ["knowledge tool or prepared context used", "provider payload contains source revision", "answer citation resolves"], "forbidden_input": "thread-1 transcript"},
+    {"step_id": "v6.03.correct-price", "expected_state_transition": ["pending", "applied"], "expected_source_ref": "source.price.kr.rev2", "expected_claim_ref": "claim.price.kr.current", "superseded_claim_ref": "claim.price.kr.old"},
+    {"step_id": "v6.04.retrieve-corrected-new-conversation", "expected_facts": [{"value": 31000, "source_ref": "source.price.kr.rev2"}, {"value": "2026-09-15", "source_ref": "source.price.kr.rev2"}], "forbidden_facts": [{"value": 29000, "source_ref": "source.price.kr.rev1"}], "required_observables": ["current SQLite head is revision 2", "provider payload excludes old price", "answer citation resolves to revision 2"]},
+    {"step_id": "v6.05.replay-correction", "expected_new_sources": 0, "expected_new_heads": 0, "expected_new_jobs": 0, "expected_receipt_identity": "same_as:v6.03.correct-price"},
+    {"step_id": "v6.06.seed-private-a1", "expected_scope": {"kind": "member", "member_ref": "member.a1"}, "expected_source_ref": "source.private.a1.rev1", "forbidden_memory_targets": ["team", "soul", "core"]},
+    {"step_id": "v6.07.seed-private-a2", "expected_scope": {"kind": "member", "member_ref": "member.a2"}, "expected_source_ref": "source.private.a2.rev1", "forbidden_memory_targets": ["team", "soul", "core"]},
+    {"step_id": "v6.08.shared-query-after-private", "expected_facts": [{"value": 31000, "source_ref": "source.price.kr.rev2"}], "forbidden_values": ["라임색 우산", "자주색 나침반", "은색 고래"], "forbidden_source_refs": ["source.private.a1.rev1", "source.private.a2.rev1", "source.team-b.private.rev1"]},
+    {"step_id": "v6.09.dm-a1-read-shared", "expected_facts": [{"value": 31000, "source_ref": "source.price.kr.rev2"}], "expected_access_mode": "shared_read_only", "forbidden_source_refs": ["source.private.a2.rev1", "source.team-b.private.rev1"]},
+    {"step_id": "v6.10.dm-a1-attempt-shared-write", "expected_dispatch_count": 0, "expected_error_code": "scope_grant_required", "forbidden_memory_targets": ["team", "soul", "core"]},
+    {"step_id": "v6.11.seed-team-b", "expected_scope": {"kind": "workspace", "workspace_ref": "workspace.team-b"}, "expected_source_ref": "source.team-b.private.rev1"},
+    {"step_id": "v6.12.forged-team-b-query", "expected_dispatch_count_for_forged_identity": 0, "expected_abstention": true, "forbidden_values": ["은색 고래"], "forbidden_source_refs": ["source.team-b.private.rev1"]},
+    {"step_id": "v6.13.delete-private-a1", "expected_tombstone": true, "expected_visible_citations": 0, "expected_source_ref": "source.private.a1.rev1"},
+    {"step_id": "v6.14.restart-and-reconcile", "expected_duplicate_applications": 0, "expected_current_price_source_ref": "source.price.kr.rev2", "expected_deleted_source_visible": false},
+    {"step_id": "v6.15.query-after-delete-restart", "expected_abstention": true, "forbidden_values": ["라임색 우산"], "forbidden_source_refs": ["source.private.a1.rev1"], "expected_current_citations": 0}
+  ],
+  "transport_expectations": {
+    "required_context_missing_both_fixture": "context-required-missing-both.json",
+    "legacy_disabled_missing_both_fixture": "context-legacy-missing-both.json",
+    "required_missing_both_result": "generation_and_acceptance_count_zero",
+    "legacy_disabled_missing_both_result": "existing_disabled_path_preserved"
+  }
+}
