@@ -39,7 +39,10 @@ from ads_booster.marketing.channels.slack_conversations import (
 from ads_booster.marketing.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.marketing.channels.slack_delivery import delivery_command
 from ads_booster.marketing.channels.slack_memory import memory_command
-from ads_booster.marketing.channels.slack_work_observations import work_observation_command
+from ads_booster.marketing.channels.slack_work_observations import (
+    is_work_observation_command,
+    work_observation_command,
+)
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -141,7 +144,8 @@ class SlackEvents:
             if (
                 message.text.rstrip("?!. ") in _STATUS_TEXTS
                 or command
-                in {"검토", "review", "승인", "approve", "거절", "reject", "기억", "실행안", "작업"}
+                in {"검토", "review", "승인", "approve", "거절", "reject", "기억", "실행안"}
+                or is_work_observation_command(message.text)
                 or message.text
                 in {"도움말", "help", "종료", "close", "계속", "resume", "다시 시작", "reopen"}
             ):
@@ -354,7 +358,7 @@ class SlackEvents:
             return MessagePlan(action="reply", reply="")
         if action == "실행안":
             return MessagePlan(action="delivery", run_id=conversation.current_run)
-        if action == "작업":
+        if is_work_observation_command(text):
             return MessagePlan(action="observation", run_id=conversation.current_run)
         if action == "기억":
             return MessagePlan(action="memory", run_id=conversation.current_run)

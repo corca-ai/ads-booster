@@ -43,6 +43,12 @@ _MAX_MINUTES = 1440
 _LEARNING_FIELDS = 3
 
 
+def is_work_observation_command(text: str) -> bool:
+    prefix, _, remainder = text.partition(" ")
+    action, _, _ = remainder.partition(" ")
+    return prefix == "작업" and action in {"기록", "정정", "요약", "학습"}
+
+
 def work_observation_command(  # noqa: PLR0911 - scoped command responses.
     service: MarketingAgentService,
     conversation: Conversation,

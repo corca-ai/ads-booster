@@ -59,6 +59,15 @@ def test_human_effort_commands_continue_work_without_model_or_double_count(tmp_p
     assert summary.observations[0].window_kind == "report_time"
     assert summary.observations[0].window_start == summary.observations[0].window_end
     assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+    receive(
+        owner,
+        type="message",
+        text="작업 방향을 학생 타깃으로 바꿔줘",
+        ts="100.005",
+        thread_ts="100.001",
+    )
+    assert owner.work_once(now=NOW)
+    assert len(provider.requests) == 2
 
 
 def test_corrected_learning_excluded_from_retrieval_and_cannot_be_approved(tmp_path: Path) -> None:
