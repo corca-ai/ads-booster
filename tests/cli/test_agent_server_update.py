@@ -175,13 +175,25 @@ def test_committed_recovery_never_rewinds_new_work(
     assert not (root / "maintenance").exists()
 
 
-@pytest.mark.parametrize("conclusion", [None, "failure", "cancelled"])
+@pytest.mark.parametrize(
+    "check",
+    [
+        (None, "in_progress", "github-actions", "Verify on-prem agent"),
+        ("failure", "completed", "github-actions", "Verify on-prem agent"),
+        ("cancelled", "completed", "github-actions", "Verify on-prem agent"),
+        ("skipped", "completed", "github-actions", "Verify on-prem agent"),
+        ("success", "in_progress", "github-actions", "Verify on-prem agent"),
+        ("success", "completed", "untrusted-app", "Verify on-prem agent"),
+        ("success", "completed", "github-actions", "Some other check"),
+    ],
+)
 def test_main_with_pending_or_failed_ci_is_not_installed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     manager: Manager,
-    conclusion: str | None,
+    check: tuple[str | None, str, str, str],
 ) -> None:
+    conclusion, status, app, name = check
     root = tmp_path / "install"
     previous, _candidate = setup(root, manager)
     _ = (root / "update.json").write_text(
@@ -194,7 +206,20 @@ def test_main_with_pending_or_failed_ci_is_not_installed(
         if "rev-parse" in args:
             return "a" * 40
         if args[0] == "gh":
-            return json.dumps([{"check_runs": [{"status": "completed", "conclusion": conclusion}]}])
+            return json.dumps(
+                [
+                    {
+                        "check_runs": [
+                            {
+                                "name": name,
+                                "app": {"slug": app},
+                                "status": status,
+                                "conclusion": conclusion,
+                            }
+                        ]
+                    }
+                ]
+            )
         return ""
 
     monkeypatch.setattr(manager, "command", fake)
@@ -203,10 +228,12 @@ def test_main_with_pending_or_failed_ci_is_not_installed(
     assert not any(args[0] in {"uv", "systemctl"} for args in calls)
 
 
-def test_old_main_missing_update_protocol_is_quarantined_before_stopping_service(
+@pytest.mark.parametrize("other_status", ["completed", "in_progress"])
+def test_unrelated_mac_check_does_not_block_agent_protocol_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     manager: Manager,
+    other_status: str,
 ) -> None:
     root = tmp_path / "install"
     previous, _candidate = setup(root, manager)
@@ -229,7 +256,13 @@ def test_old_main_missing_update_protocol_is_quarantined_before_stopping_service
                                 "conclusion": "success",
                                 "name": "Verify on-prem agent",
                                 "app": {"slug": "github-actions"},
-                            }
+                            },
+                            {
+                                "status": other_status,
+                                "conclusion": "failure" if other_status == "completed" else None,
+                                "name": "Check verified Mac release",
+                                "app": {"slug": "github-actions"},
+                            },
                         ]
                     }
                 ]

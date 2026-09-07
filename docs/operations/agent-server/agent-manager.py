@@ -124,7 +124,7 @@ def probe(release: Path) -> None:
         raise RuntimeError("candidate_doctor_not_ready")
 
 
-def stage(root: Path) -> Path | None:  # noqa: C901 - ordered update admission gates.
+def stage(root: Path) -> Path | None:
     config = read_json(root / "update.json")
     # Operator-selected, credential-free repository URL; no URLs containing embedded tokens.
     repo = config["repository"]
@@ -164,17 +164,15 @@ def stage(root: Path) -> Path | None:  # noqa: C901 - ordered update admission g
         )
     )
     runs = [run for page in checks for run in page.get("check_runs", [])]
-    if not any(
-        run.get("name") == "Verify on-prem agent"
+    required = [
+        run
+        for run in runs
+        if run.get("name") == "Verify on-prem agent"
         and run.get("app", {}).get("slug") == "github-actions"
-        and run.get("conclusion") == "success"
-        for run in runs
-    ):
-        return None
-    if any(
-        run.get("status") != "completed"
-        or run.get("conclusion") not in {"success", "neutral", "skipped"}
-        for run in runs
+    ]
+    # This check owns server and tool-adapter compatibility. Mac publishing is independent.
+    if not required or any(
+        run.get("status") != "completed" or run.get("conclusion") != "success" for run in required
     ):
         return None
     failed = root / "last-failure.json"
