@@ -2,25 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
-import io
 import json
-import os
 import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Protocol, Self, cast
-from urllib.parse import urlencode, urlsplit
-from urllib.request import Request
+from typing import TYPE_CHECKING, Annotated, Self
 
-from PIL import Image
 from pydantic import Field, TypeAdapter, model_validator
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.agent_service.image_review import review_images
-from ads_booster.marketing.agent_service.oauth import open_auth_request
+from ads_booster.marketing.agent_service.slack_image_files import (
+    ReadResponse,
+    SlackImageFiles,
+    open_slack_image_request,
+)
 from ads_booster.marketing.tool_adapters.compatibility import DelegatedToolResult
 from ads_booster.marketing.tool_adapters.descriptors import research_descriptor
 from ads_booster.providers.codex_cli import CodexCli
@@ -33,10 +31,6 @@ if TYPE_CHECKING:
 
     from ads_booster.contracts.tool_capability import ToolDescriptor
 
-_MAX_IMAGE_BYTES = 10 * 1024 * 1024
-_MAX_PIXELS = 20_000_000
-_MAX_INFO_BYTES = 512 * 1024
-_MAX_URL = 4096
 _FILE = re.compile(r"F[A-Z0-9]{1,79}")
 _MAX_BINDINGS = 8
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -133,16 +127,6 @@ def slack_image_review_descriptor(*, now: datetime, ready: bool) -> ToolDescript
     )
 
 
-class ReadResponse(Protocol):
-    def read(self, size: int = -1) -> bytes: ...
-    def geturl(self) -> str: ...
-    def close(self) -> None: ...
-
-
-def _open(request: Request, *, timeout: float) -> ReadResponse:
-    return cast("ReadResponse", open_auth_request(request, timeout=timeout))
-
-
 @dataclass(slots=True)
 class SlackImageReviewTool:
     database_path: Path
@@ -151,7 +135,7 @@ class SlackImageReviewTool:
     token: str = field(repr=False)
     codex: CodexCli
     expected_team_id: str = ""
-    opener: Callable[..., ReadResponse] = field(default=_open, repr=False)
+    opener: Callable[..., ReadResponse] = field(default=open_slack_image_request, repr=False)
 
     def execute(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor
@@ -209,32 +193,24 @@ class SlackImageReviewTool:
             paths: list[Path] = []
             sources: list[JsonValue] = []
             root = self.artifact_root.resolve()
-            root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            directory = root / contract_sha256({"tenant": self.tenant_id, "run": invocation.run_id})
-            directory.mkdir(mode=0o700, exist_ok=True)
-            if directory.is_symlink() or directory.resolve().parent != root:
-                raise ValueError("slack_image_artifact_scope_invalid")  # noqa: TRY301 - sanitized outer boundary.
             for file_id in request.file_ids:
-                data = self._download(file_id)
-                digest, suffix = _decode(data)
-                path = directory / f"{digest}.{suffix}"
-                _save(path, data)
-                paths.append(path)
+                source = self._files().fetch(invocation.run_id, file_id)
+                paths.append(source.path)
                 sources.append(
                     {
-                        "file_id": file_id,
-                        "channel_id": bindings[file_id],
-                        "sha256": digest,
-                        "artifact_relative_path": str(path.relative_to(root)),
+                        "file_id": source.file_id,
+                        "channel_id": source.channel_id,
+                        "sha256": source.sha256,
+                        "artifact_relative_path": str(source.path.relative_to(root)),
                         "source_kind": "slack_signed_event_file",
-                        "bytes": len(data),
+                        "bytes": source.byte_size,
                     }
                 )
             review = review_images(
                 self.codex,
                 images=tuple(paths),
                 request=request.request,
-                workspace_root=directory,
+                workspace_root=paths[0].parent,
                 timeout_seconds=120,
             )
             output: JsonObject = {
@@ -253,67 +229,12 @@ class SlackImageReviewTool:
             )
         return DelegatedToolResult(disposition="no_effect", actual_cost_units=4, output=output)
 
-    def _read(self, url: str, *, max_bytes: int) -> bytes:
-        response = self.opener(
-            Request(url, headers={"Authorization": f"Bearer {self.token}"}),  # noqa: S310 - fixed API or validated HTTPS Slack host.
-            timeout=15,
+    def _files(self) -> SlackImageFiles:
+        return SlackImageFiles(
+            self.database_path,
+            self.artifact_root,
+            self.tenant_id,
+            self.token,
+            self.expected_team_id,
+            self.opener,
         )
-        try:
-            if response.geturl() != url:
-                raise ValueError("slack_image_redirect_rejected")
-            data = response.read(max_bytes + 1)
-            if len(data) > max_bytes:
-                raise ValueError("slack_image_response_too_large")
-            return data
-        finally:
-            response.close()
-
-    def _download(self, file_id: str) -> bytes:
-        info = _JSON.validate_json(
-            self._read(
-                "https://slack.com/api/files.info?" + urlencode({"file": file_id}),
-                max_bytes=_MAX_INFO_BYTES,
-            )
-        )
-        raw_file = info.get("file")
-        if (
-            info.get("ok") is not True
-            or not isinstance(raw_file, dict)
-            or raw_file.get("id") != file_id
-        ):
-            raise ValueError("slack_image_metadata_invalid")
-        if self.expected_team_id and raw_file.get("team_id") not in {None, self.expected_team_id}:
-            raise ValueError("slack_image_team_rejected")
-        url = raw_file.get("url_private_download") or raw_file.get("url_private")
-        if not isinstance(url, str) or len(url) > _MAX_URL:
-            raise ValueError("slack_image_url_invalid")
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme != "https"
-            or parsed.hostname != "files.slack.com"
-            or parsed.port not in {None, 443}
-            or parsed.username
-            or parsed.password
-            or parsed.fragment
-        ):
-            raise ValueError("slack_image_url_rejected")
-        return self._read(url, max_bytes=_MAX_IMAGE_BYTES)
-
-
-def _decode(data: bytes) -> tuple[str, str]:
-    with Image.open(io.BytesIO(data)) as image:
-        if image.format not in {"PNG", "JPEG"} or image.width * image.height > _MAX_PIXELS:
-            raise ValueError("slack_image_format_or_dimensions_invalid")
-        _ = image.load()
-        return hashlib.sha256(data).hexdigest(), "png" if image.format == "PNG" else "jpg"
-
-
-def _save(path: Path, data: bytes) -> None:
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    except FileExistsError:
-        if path.is_symlink() or path.read_bytes() != data:
-            raise ValueError("slack_image_existing_artifact_invalid") from None
-    else:
-        with os.fdopen(descriptor, "wb") as output:
-            _ = output.write(data)
