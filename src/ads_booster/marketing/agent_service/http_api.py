@@ -90,6 +90,12 @@ class MarketingAgentApi:
     allowed_tenant_id: str | None = None
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
+    approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
+
+    def __post_init__(self) -> None:
+        """Use the same current reviewer policy at admission and queued execution."""
+        if self.jobs is not None:
+            self.jobs.approval_authorizer = self._can_approve
 
     def dispatch(  # noqa: PLR0913 - preserve the HTTP boundary call contract.
         self,
@@ -201,6 +207,8 @@ class MarketingAgentApi:
         try:
             if self.jobs is not None and method == "POST" and path == "/v1/jobs":
                 job = WebJob.model_validate(_body_json(body))
+                if job.action == "approval" and not self._can_approve(identity):
+                    return ApiResponse(403, {"error": "agent_approval_permission_required"})
                 return ApiResponse(
                     202, self.jobs.enqueue(identity.tenant_id, identity.principal_id, job)
                 )
@@ -286,6 +294,8 @@ class MarketingAgentApi:
                 )
                 return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/approval":
+                if not self._can_approve(identity):
+                    return ApiResponse(403, {"error": "agent_approval_permission_required"})
                 request = ApiApprovalRequest.model_validate(_body_json(body))
                 _ = self.service.decide_approval(
                     identity.tenant_id,
@@ -305,6 +315,22 @@ class MarketingAgentApi:
                 {"error": "reasoning_provider_unavailable", "retryable": True},
             )
         return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "route_not_found"})
+
+    def _can_approve(self, identity: OAuthIdentity) -> bool:
+        """Authentication is not reviewer membership; only server policy can grant it."""
+        if self.approval_authorizer is not None:
+            try:
+                return self.approval_authorizer(identity) is True
+            except Exception:  # noqa: BLE001 - role lookup failure cannot grant execution authority.
+                return False
+        # A deliberately configured loopback token is the local operator surface.
+        # OAuth/browser subjects need an explicit trusted reviewer mapping instead.
+        return (
+            self.oauth_authenticator is None
+            and self.browser_login is None
+            and bool(self.bearer_token)
+            and identity == OAuthIdentity(self.tenant_id, self.principal_id)
+        )
 
     def _identity(self, authorization: str | None) -> OAuthIdentity | None:
         if self.oauth_authenticator is not None:
