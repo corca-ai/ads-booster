@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import shutil
 import stat
 import sys
 from pathlib import Path
@@ -249,3 +250,16 @@ def test_resume_preserves_operator_edit(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.exit_code == 1
     assert "setup_resume_preserves_operator_edit" in result.output
     assert (server.CONFIG / "slack-installation.json").read_text() == "operator edit"
+
+
+def test_doctor_reports_missing_setup_as_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    def which(_name: str) -> str:
+        return "/usr/bin/fixture"
+
+    monkeypatch.setattr(shutil, "which", which)
+    result = CliRunner().invoke(app, ["server", "doctor"])
+    assert result.exit_code == 1
+    value = cast("dict[str, object]", json.loads(result.output))
+    assert value["ready"] is False
+    assert "gh" not in value
+    assert "cloudflared" not in value

@@ -367,6 +367,15 @@ def status() -> None:
             checks[unit] = execute("systemctl", "--user", "is-active", unit)
         except RuntimeError:
             checks[unit] = "inactive"
+    for name in [
+        "current/release.json",
+        "last-check.json",
+        "last-success.json",
+        "last-failure.json",
+        "transaction.json",
+    ]:
+        path = ROOT / name
+        checks[name] = json.loads(path.read_text()) if path.is_file() else None
     checks["linger"] = execute(
         "loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"
     )
@@ -380,10 +389,26 @@ def doctor() -> None:
         "linux": sys.platform == "linux",
         "managed_main": (ROOT / "current/source").is_dir(),
     }
-    for name in ["python3", "uv", "git", "gh", "codex", "systemctl", "cloudflared"]:
+    for name in ["python3", "uv", "git", "codex", "systemctl"]:
         checks[name] = shutil.which(name) is not None
     checks["configured"] = (CONFIG / "server.json").is_file()
+    checks["setup_complete"] = not (CONFIG / "setup-pending.json").exists()
+    if checks["configured"] and checks["setup_complete"] and operator_settings().get("tunnel"):
+        checks["cloudflared"] = shutil.which("cloudflared") is not None
+    try:
+        _ = execute("codex", "login", "status")
+        checks["codex_login"] = True
+    except OSError, RuntimeError, subprocess.TimeoutExpired:
+        checks["codex_login"] = False
+    checks["ready"] = all(checks.values())
+    checks["next"] = (
+        "trace-marketing server start"
+        if checks["ready"]
+        else "Run installer, codex login --device-auth, then trace-marketing server setup."
+    )
     typer.echo(json.dumps(checks, indent=2))
+    if not checks["ready"]:
+        raise typer.Exit(1)
 
 
 @app.command("update")
