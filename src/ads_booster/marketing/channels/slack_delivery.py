@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from pydantic import TypeAdapter
+
 from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.marketing.agent_service.creative_asset_verifier import CreativeAssetVerifier
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
+from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -22,8 +25,75 @@ if TYPE_CHECKING:
 _REVIEW_FIELDS = 3
 _APPROVE_FIELDS = 5
 _STATE_FIELDS = 4
-_PAGE_CHARS = 5000
+_PAGE_CHARS = 3500
 _MAX_PAGE_DIGITS = 6
+_BRIEF_CHARS = 1200
+_FIELD_CHARS = 180
+_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+_KINDS = {
+    "production": "제작 준비안",
+    "publication": "최종 게시 준비안",
+    "paid_budget": "광고 예산 준비안",
+    "paid_execution": "광고 집행 준비안",
+    "format_promotion": "포맷 채택 준비안",
+    "format_deactivation": "포맷 비활성화 준비안",
+    "code_improvement": "코드 개선 제안",
+    "post_publication_change": "게시 후 변경 준비안",
+}
+_DECISION_FIELDS = {
+    "instructions": "작업",
+    "preserve": "유지",
+    "change": "변경",
+    "max_cost_units": "비용 한도(도구 단위)",
+    "account_id": "계정",
+    "channel": "채널",
+    "text": "문구",
+    "schedule_at": "게시 시각(UTC)",
+    "conditions": "게시 조건",
+    "qa_summary": "제안자가 제공한 검수 요약",
+    "currency": "통화",
+    "max_minor_units": "예산 한도(통화 최소 단위)",
+    "spend_minor_units": "집행액(통화 최소 단위)",
+    "purpose": "목적",
+    "audience": "대상",
+    "execution_conditions": "집행 조건",
+    "format_id": "포맷",
+    "applicability": "적용 범위",
+    "recommendation": "추천",
+    "counterexamples": "반례",
+    "problem": "문제",
+    "reproduction": "재현",
+    "impact": "영향",
+    "human_review_path": "사람 리뷰 경로",
+    "action": "변경 행동",
+    "draft": "변경 초안",
+    "alternatives": "대안",
+}
+
+
+def _decision_brief(packet: DeliveryReviewPacket) -> str:
+    proposal = packet.proposal
+    lines = [
+        _KINDS[proposal.target.kind],
+        f"이유: {proposal.rationale[:_FIELD_CHARS]}",
+    ]
+    target = _OBJECT.validate_python(proposal.target.model_dump(mode="json"))
+    for key, label in _DECISION_FIELDS.items():
+        if key not in target:
+            continue
+        value = target[key]
+        rendered = (
+            " / ".join(str(item) for item in value) if isinstance(value, list) else str(value)
+        )
+        if value is None:
+            rendered = "미지정"
+        if len(rendered) > _FIELD_CHARS:
+            rendered = rendered[:_FIELD_CHARS] + "…"
+        lines.append(f"{label}: {rendered}")
+    summary = "\n".join(lines)
+    if len(summary) > _BRIEF_CHARS:
+        summary = summary[:_BRIEF_CHARS] + "…"
+    return summary + "\n검토 안내용 요약입니다. 승인 전 아래 본문 전체의 대상·조건을 확인하세요.\n"
 
 
 def delivery_command(  # noqa: PLR0911 - explicit reviewer commands.
@@ -106,4 +176,5 @@ def _review_page(packet: DeliveryReviewPacket, page_text: str) -> str:
                 f"실행안 승인 {proposal_id} {packet.revision} {packet.proposal.target_sha256}",
             )
         )
-    return f"{header}\n본문:\n{chunk}\n\n{footer}"
+    brief = _decision_brief(packet) if page == 1 else ""
+    return f"{header}\n{brief}본문:\n{chunk}\n\n{footer}"

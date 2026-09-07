@@ -82,6 +82,34 @@ def test_review_never_exceeds_slack_message_bound(tmp_path: Path) -> None:
     assert len(text) <= 6000
 
 
+def test_review_leads_with_decision_and_keeps_exact_target(tmp_path: Path) -> None:
+    database = tmp_path / "review.db"
+    proposal = DeliveryProposal(
+        proposal_id="p",
+        scope=CreativeScope(workspace_id="trace", product_id="trace"),
+        run_id="r",
+        rationale="달력 위쪽 글자가 잘 보이도록 여백 확보",
+        target=ProductionTarget(
+            input_sha256="a" * 64,
+            instructions="위쪽 배경만 확장",
+            preserve=("캐릭터와 달력",),
+            change=("위쪽 여백",),
+            max_cost_units=4,
+        ),
+    )
+    packet = DeliveryReviewStore(database).prepare(proposal, actor_scope=proposal.scope)
+    text = _command(database, "실행안 검토 p")
+    brief, body = text.split("본문:\n", 1)
+    assert "제작 준비안" in brief
+    assert "이유: 달력 위쪽 글자가 잘 보이도록 여백 확보" in brief
+    assert "유지: 캐릭터와 달력" in brief
+    assert "변경: 위쪽 여백" in brief
+    assert "비용 한도(도구 단위): 4" in brief
+    assert packet.model_dump_json() in body
+    assert packet.proposal.target_sha256 in body
+    assert "본문 전체" in brief
+
+
 def test_pages_preserve_complete_target_and_approval_only_on_last(tmp_path: Path) -> None:
     database = tmp_path / "review.db"
     original = _prepare(database)
