@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 import typer
 from pydantic import ValidationError
 
+from ads_booster.cli.server import app as server_app
 from ads_booster.marketing.agent_service.channel_setup import (
     browser_from_env,
     run_slack_worker,
@@ -130,6 +131,7 @@ service_app = typer.Typer(
 app.add_typer(worker_app, name="worker")
 app.add_typer(agent_app, name="agent")
 app.add_typer(service_app, name="service")
+app.add_typer(server_app, name="server")
 
 
 @app.command("version")

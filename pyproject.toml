@@ -32,6 +32,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ads_booster"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs/operations/agent-server/slack-app-bootstrap-manifest.json" = "ads_booster/server_assets/slack-app-bootstrap-manifest.json"
+"docs/operations/agent-server/slack-app-manifest.json" = "ads_booster/server_assets/slack-app-manifest.json"
+"docs/operations/agent-server/trace-marketing.service" = "ads_booster/server_assets/trace-marketing.service"
+"docs/operations/agent-server/trace-marketing-update.service" = "ads_booster/server_assets/trace-marketing-update.service"
+"docs/operations/agent-server/trace-marketing-update.timer" = "ads_booster/server_assets/trace-marketing-update.timer"
+
 [tool.basedpyright]
 typeCheckingMode = "all"
 pythonVersion = "3.14"

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, TypedDict
 
 from click import unstyle
 from pydantic import TypeAdapter
+from typer.core import TyperGroup
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from ads_booster.cli.marketing import app as marketing_app
@@ -69,9 +71,13 @@ def test_marketing_worker_help_exposes_the_replaceable_mac_lifecycle() -> None:
         )
     )
     root = unstyle(CliRunner().invoke(marketing_app, ["--help"]).stdout)
-    assert all(command in root for command in ("version", "worker", "agent", "service"))
+    assert all(command in root for command in ("version", "worker", "agent", "service", "server"))
+    # Match command names, not substrings: the supported "server" includes retired "serve".
+    command_group = get_command(marketing_app)
+    assert isinstance(command_group, TyperGroup)
+    commands = command_group.commands
     assert all(
-        command not in root
+        command not in commands
         for command in (
             "bridge",
             "simulate",
