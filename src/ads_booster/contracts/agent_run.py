@@ -241,6 +241,15 @@ class ToolInvocation(ContractModel):
         return self
 
 
+class ToolExecutionDeferred(ContractModel):
+    """Accepted asynchronous work; neither a terminal result nor an execution receipt."""
+
+    schema_version: Literal["trace.tool-deferred.v1"]
+    invocation_sha256: Sha256Digest
+    operation_id: BoundedId
+    executor_id: BoundedId
+
+
 class ToolApproval(ContractModel):
     schema_version: Literal["trace.tool-approval.v1"]
     approval_id: BoundedId
@@ -343,6 +352,7 @@ __all__ = [
     "AgentStepKind",
     "CapabilitySnapshot",
     "ToolApproval",
+    "ToolExecutionDeferred",
     "ToolInvocation",
     "ToolReceiptRecord",
     "contract_sha256",
