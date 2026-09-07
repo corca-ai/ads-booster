@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
@@ -11,8 +12,17 @@ from urllib.request import Request, urlopen
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import ToolInvocation
+from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import ToolDescriptor
+from ads_booster.marketing.agent_service.creative_procedures import (
+    CreativeBrief,
+    CreativeBriefRequest,
+    build_creative_brief,
+)
+from ads_booster.marketing.agent_service.delivery_tools import (
+    DeliveryPreparationTool,
+    delivery_prepare_descriptor,
+)
 from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
@@ -34,7 +44,6 @@ from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from datetime import datetime
 
     from ads_booster.marketing.agent_core.ports import ToolAdapter
 
@@ -78,14 +87,23 @@ class ConfiguredAgentTools:
     config: AgentServiceIntegrationConfig
     research_runner: ResearchRunner
     opener: Callable[..., HttpResponse] = urlopen
+    delivery_tool: DeliveryPreparationTool | None = None
+    creative_capabilities: Callable[[ToolInvocation, datetime], frozenset[str]] | None = None
 
     def adapters(self) -> Mapping[str, ToolAdapter]:
         adapters: dict[str, ToolAdapter] = {
+            "creative.prepare": _delegating(
+                "creative.prepare", "trace.creative_procedures", self._creative
+            ),
             "research.search": _delegating("research.search", "public_search", WebSearch().execute),
             "research.web": _delegating(
                 "research.web", "trace.dynamic_evidence_research", self._research
             ),
         }
+        if self.delivery_tool is not None:
+            adapters["delivery.prepare"] = _delegating(
+                "delivery.prepare", "trace.delivery_preparation", self.delivery_tool.execute
+            )
         if self.config.hosted_origin and self.config.hosted_token:
             adapters["catalog.hosted.install"] = _delegating(
                 "catalog.hosted.install", "trace.hosted_tool_catalog", self._hosted_install
@@ -105,11 +123,14 @@ class ConfiguredAgentTools:
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
         result = [
+            creative_prepare_descriptor(now=now),
             search_descriptor(now=now),
             research_descriptor(
                 installation_id="installed:research.web", observed_at=now, ready=True
             ),
         ]
+        if self.delivery_tool is not None:
+            result.append(delivery_prepare_descriptor(now=now))
         if self.config.hosted_origin and self.config.hosted_token:
             result.append(
                 hosted_tool_install_descriptor(
@@ -134,6 +155,40 @@ class ConfiguredAgentTools:
                 )
             )
         return tuple(result)
+
+    def _creative(
+        self, invocation: ToolInvocation, descriptor: ToolDescriptor
+    ) -> DelegatedToolResult:
+        _ = descriptor
+        request = CreativeBriefRequest.model_validate(invocation.input)
+        now = datetime.now(UTC)
+        # Only installed, enabled descriptors with current readiness enter the packet.
+        ready = (
+            self.creative_capabilities(invocation, now)
+            if self.creative_capabilities
+            else frozenset(
+                item.capability_id
+                for item in self.descriptors(now=now)
+                if item.enabled
+                and item.readiness.ready
+                and 0
+                <= (now - item.readiness.observed_at).total_seconds()
+                <= item.readiness.max_age_seconds
+            )
+        )
+        brief = build_creative_brief(
+            request.task,
+            request.inputs,
+            preserve=request.preserve,
+            change=request.change,
+            locales=request.locales,
+            ready_capabilities=ready,
+        )
+        return DelegatedToolResult(
+            disposition="no_effect",
+            actual_cost_units=0,
+            output=_JSON_OBJECT.validate_python(brief.model_dump(mode="json")),
+        )
 
     def _research(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor
@@ -234,6 +289,28 @@ class ConfiguredAgentTools:
             return _JSON_OBJECT.validate_python(raw)
         except HTTPError as error:
             raise ValueError(f"tool_endpoint_http_{error.code}") from error
+
+
+def creative_prepare_descriptor(*, now: datetime) -> ToolDescriptor:
+    template = research_descriptor(
+        installation_id="installed:creative.prepare",
+        observed_at=now,
+        ready=True,
+    )
+    input_schema = _JSON_OBJECT.validate_python(CreativeBriefRequest.model_json_schema())
+    output_schema = _JSON_OBJECT.validate_python(CreativeBrief.model_json_schema())
+    return template.model_copy(
+        update={
+            "capability_id": "creative.prepare",
+            "owner": "ads_booster.marketing.agent_service.creative_procedures",
+            "input_schema": input_schema,
+            "input_schema_sha256": contract_sha256(input_schema),
+            "output_schema": output_schema,
+            "output_schema_sha256": contract_sha256(output_schema),
+            "cost": template.cost.model_copy(update={"worst_case_units": 0, "unit": "brief"}),
+            "credential_boundary": "none",
+        }
+    )
 
 
 def _delegating(
