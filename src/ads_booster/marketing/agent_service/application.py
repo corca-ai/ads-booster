@@ -495,6 +495,7 @@ class MarketingAgentService:
         _validate_json_schema(tool_input, descriptor.input_schema, "tool_input_schema_invalid")
         input_sha256 = contract_sha256(tool_input)
         invocation = ToolInvocation(
+            tenant_id=run.tenant_id,
             schema_version="trace.tool-invocation.v1",
             invocation_id=f"{run.run_id}:invocation:{run.revision}",
             run_id=run.run_id,
