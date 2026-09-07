@@ -66,7 +66,7 @@ def test_release_builder_rejects_version_not_matching_project_wheel(tmp_path: Pa
     assert "one exact project wheel" in completed.stderr
 
 
-def test_release_workflow_checks_pr_then_publishes_merged_main_automatically() -> None:
+def test_release_workflow_checks_compatibility_and_only_publishes_requested_releases() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     assert "pull_request:" in workflow
