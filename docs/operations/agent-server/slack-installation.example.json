@@ -1,0 +1,12 @@
+{
+  "app_id": "REPLACE_SLACK_APP_ID",
+  "team_id": "REPLACE_SLACK_TEAM_ID",
+  "tenant_id": "corca-marketing",
+  "members": [
+    {
+      "slack_user_id": "REPLACE_YOUR_SLACK_USER_ID",
+      "member_id": "REPLACE_YOUR_SLACK_USER_ID",
+      "can_approve": true
+    }
+  ]
+}
