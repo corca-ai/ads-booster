@@ -55,6 +55,23 @@ SKILLS = (
         ),
     ),
     MarketingSkill(
+        skill_id="research.daily_slack_only",
+        version="1",
+        purpose="오늘의 마케팅 주제를 조사하고 출처가 있는 브리프를 Slack으로 전달한다.",
+        required_capabilities=("research.search", "deliver.slack"),
+        success_criteria=(
+            "검색 출처와 불확실성을 포함한 브리프가 만들어진다.",
+            "Slack 전달 receipt가 확인된다.",
+        ),
+        procedure=(
+            "1. input.query를 시작점으로 research.search를 사용해 조사한다.\n"
+            "2. 검색 요약은 원문 검증이나 제품 출시 증거가 아니다. "
+            "출처 URL과 불확실성을 명시한다.\n"
+            "3. 확인한 근거로 브리프를 작성하고 deliver.slack의 text로 전달한다.\n"
+            "4. Slack 전달 receipt를 확인한 뒤 완료한다."
+        ),
+    ),
+    MarketingSkill(
         skill_id="threads.validated_format_replication",
         version="1",
         purpose="검증된 이미지 또는 URL 포맷을 국가별 Trace 콘텐츠 실험으로 복제한다.",
