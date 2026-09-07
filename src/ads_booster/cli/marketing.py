@@ -17,20 +17,30 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 import typer
 from pydantic import ValidationError
 
+from ads_booster.marketing.agent_service.channel_setup import (
+    browser_from_env,
+    run_slack_worker,
+    run_web_jobs,
+    slack_from_env,
+)
 from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
 from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
+from ads_booster.marketing.agent_service.jobs import AgentJobs
 from ads_booster.marketing.agent_service.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )
+from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
 from ads_booster.marketing.agent_service.scheduler import (
     AgentSkillScheduler,
     DailySkillSchedule,
 )
+from ads_booster.marketing.agent_service.web_search import SearchInput
+from ads_booster.marketing.channels.slack_events import events_from_env
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
@@ -162,7 +172,7 @@ def service_doctor(
 
 
 @service_app.command("run")
-def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays explicit.
+def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator configuration.
     model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     host: Annotated[
@@ -182,6 +192,12 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
     if executable is None:
         message = "codex is not installed on PATH; install Codex CLI and run `codex login`"
         raise typer.BadParameter(message)
+    slack_only = os.environ.get("TRACE_MARKETING_SLACK_ONLY") == "1"
+    gate_path = os.environ.get("TRACE_MARKETING_MAINTENANCE_FILE")
+    gate = MaintenanceGate(
+        Path(gate_path) if gate_path else None,
+        os.environ.get("TRACE_MARKETING_RELEASE", "unmanaged"),
+    )
     introspection_url = os.environ.get("TRACE_MARKETING_OAUTH_INTROSPECTION_URL")
     oauth = None
     if introspection_url:
@@ -193,7 +209,7 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
             tenant_claim=os.environ.get("TRACE_MARKETING_OAUTH_TENANT_CLAIM", "workspace_id"),
         )
     token = os.environ.get("TRACE_MARKETING_SERVICE_TOKEN", "")
-    if oauth is None and not token:
+    if oauth is None and not token and not slack_only:
         token = _required("TRACE_MARKETING_SERVICE_TOKEN")
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
     service = build_installed_marketing_agent_service(
@@ -210,16 +226,50 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
             notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
         ),
     )
+    browser_login = browser_from_env(os.environ, oauth)
+    slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
+    slack_events = events_from_env(os.environ, slack_commands)
+    if slack_only and slack_commands is None:
+        message = "Slack-only mode requires a configured Slack installation"
+        raise typer.BadParameter(message)
+    if os.environ.get("TRACE_MARKETING_PUBLIC_ORIGIN") and oauth is None and not slack_only:
+        message = "Public service origin requires OAuth authentication"
+        raise typer.BadParameter(message)
     scheduler = _configured_daily_scheduler(service, tenant=tenant, principal=principal)
     scheduler_stop = Event()
     scheduler_thread = None
     if scheduler is not None:
         scheduler_thread = Thread(
             target=_run_skill_scheduler,
-            args=(scheduler, scheduler_stop),
+            args=(scheduler, scheduler_stop, gate),
             name="trace-marketing-skill-scheduler",
             daemon=True,
         )
+    jobs = AgentJobs(service)
+    jobs_thread = Thread(
+        target=run_web_jobs,
+        args=(jobs, scheduler_stop, gate),
+        name="trace-marketing-web-jobs",
+        daemon=True,
+    )
+    slack_thread = (
+        None
+        if slack_commands is None
+        else Thread(
+            target=run_slack_worker,
+            args=(slack_commands, scheduler_stop, gate, slack_events),
+            name="trace-marketing-slack",
+            daemon=True,
+        )
+    )
+
+    def start_background() -> None:
+        jobs_thread.start()
+        if scheduler_thread is not None:
+            scheduler_thread.start()
+        if slack_thread is not None:
+            slack_thread.start()
+
     typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
     try:
         serve_marketing_agent_api(
@@ -229,15 +279,26 @@ def service_run(  # noqa: PLR0913,PLR0917 - operator-visible configuration stays
                 principal_id=principal,
                 bearer_token=token,
                 oauth_authenticator=oauth,
+                browser_login=browser_login,
+                slack_commands=slack_commands,
+                slack_events=slack_events,
+                jobs=jobs,
+                allowed_tenant_id=tenant,
+                slack_only=slack_only,
+                maintenance=gate,
             ),
             host=host,
             port=port,
-            on_started=None if scheduler_thread is None else scheduler_thread.start,
+            on_started=start_background,
         )
     finally:
         scheduler_stop.set()
-        if scheduler_thread is not None:
+        if jobs_thread.is_alive():
+            jobs_thread.join(timeout=5)
+        if scheduler_thread is not None and scheduler_thread.is_alive():
             scheduler_thread.join(timeout=5)
+        if slack_thread is not None and slack_thread.is_alive():
+            slack_thread.join(timeout=5)
 
 
 @agent_app.command("research")
@@ -366,7 +427,11 @@ def _configured_daily_scheduler(
     if not input_path.is_file() or input_path.stat().st_size > _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES:
         message = "TRACE_MARKETING_DAILY_RESEARCH_INPUT must be a bounded JSON file"
         raise typer.BadParameter(message)
-    context = {"research_request": json.loads(input_path.read_text(encoding="utf-8"))}
+    skill_id = os.environ.get("TRACE_MARKETING_DAILY_SKILL", "research.daily_slack")
+    payload = cast("JsonObject", json.loads(input_path.read_text(encoding="utf-8")))
+    context = payload if skill_id == "research.daily_slack_only" else {"research_request": payload}
+    if skill_id == "research.daily_slack_only":
+        context = SearchInput.model_validate(context).model_dump(mode="json")
     schedule_at = os.environ.get("TRACE_MARKETING_DAILY_AT", "08:00")
     try:
         hour_text, minute_text = schedule_at.split(":", maxsplit=1)
@@ -378,7 +443,7 @@ def _configured_daily_scheduler(
         service,
         (
             DailySkillSchedule(
-                skill_id="research.daily_slack",
+                skill_id=skill_id,
                 tenant_id=os.environ.get("TRACE_MARKETING_DAILY_TENANT", tenant),
                 principal_id=os.environ.get("TRACE_MARKETING_DAILY_PRINCIPAL", principal),
                 timezone=os.environ.get("TRACE_MARKETING_DAILY_TIMEZONE", "Asia/Seoul"),
@@ -390,10 +455,15 @@ def _configured_daily_scheduler(
     )
 
 
-def _run_skill_scheduler(scheduler: AgentSkillScheduler, stop: Event) -> None:
+def _run_skill_scheduler(
+    scheduler: AgentSkillScheduler, stop: Event, gate: MaintenanceGate | None = None
+) -> None:
+    gate = gate or MaintenanceGate()
     while not stop.is_set():
         try:
-            _ = scheduler.tick(now=datetime.now(UTC))
+            with gate.work() as admitted:
+                if admitted:
+                    _ = scheduler.tick(now=datetime.now(UTC))
         except Exception as error:  # noqa: BLE001 - scheduler survives one bounded run failure.
             typer.echo(f"scheduled skill deferred: {type(error).__name__}", err=True)
         _ = stop.wait(30)
