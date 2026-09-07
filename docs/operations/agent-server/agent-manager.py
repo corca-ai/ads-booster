@@ -122,6 +122,17 @@ def probe(release: Path) -> None:
     value = json.loads(command([str(release / ".venv/bin/trace-marketing"), "service", "doctor"]))
     if value.get("ready") is not True:
         raise RuntimeError("candidate_doctor_not_ready")
+    # A verified but older main must not remove the installed operator command/assets.
+    _ = command(
+        [
+            str(release / ".venv/bin/trace-marketing"),
+            "server",
+            "manifest",
+            "--origin",
+            "https://agent.example.com",
+            "--bootstrap",
+        ]
+    )
 
 
 def stage(root: Path) -> Path | None:

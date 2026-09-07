@@ -27,6 +27,7 @@ class Manager(Protocol):
     def github_checks(self, sha: str) -> list[dict[str, object]]: ...
     def bootstrap(self, root: Path) -> None: ...
     def select(self, root: Path, release: Path) -> None: ...
+    def probe(self, release: Path) -> None: ...
 
 
 @pytest.fixture
@@ -359,3 +360,19 @@ def test_public_ci_lookup_paginates_without_credentials(
     assert len(pages) == 2
     assert requests[1].full_url.endswith("page=2")
     assert all(request.get_header("Authorization") is None for request in requests)
+
+
+def test_candidate_cannot_remove_the_installed_operator_surface(
+    manager: Manager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def old_candidate(args: list[str], **_kwargs: object) -> str:
+        if "server" in args:
+            message = "command_failed:trace-marketing"
+            raise RuntimeError(message)
+        return '{"ready": true}'
+
+    monkeypatch.setattr(manager, "command", old_candidate)
+    with pytest.raises(RuntimeError, match="command_failed:trace-marketing"):
+        manager.probe(tmp_path)
