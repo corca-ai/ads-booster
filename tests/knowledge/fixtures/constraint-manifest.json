@@ -1,0 +1,11 @@
+{
+  "schema": "knowledge.constraint-manifest.v1",
+  "manifest_id": "constraint-manifest.fixture.standard",
+  "workspace_ref": "workspace.team-a",
+  "constraints": [
+    {"constraint_id": "constraint.truth.no-fabrication", "authority_class": "runtime_policy", "applies_to": ["content_write", "content_rewrite", "content_evaluate", "research", "team_chat"], "text": "확인되지 않은 가격, 효능, 할인, 고객 경험을 사실처럼 만들지 않는다."},
+    {"constraint_id": "constraint.acl.scope", "authority_class": "runtime_policy", "applies_to": ["content_write", "content_rewrite", "content_evaluate", "research", "team_chat"], "text": "현재 principal과 workspace에 허용된 자료만 사용한다."},
+    {"constraint_id": "constraint.citation.current", "authority_class": "delegated_team_rule", "applies_to": ["content_write", "content_rewrite", "content_evaluate", "research"], "text": "수치와 확정 결정은 현재 revision의 근거를 인용한다.", "authority_ref": "source.team.reporting.rev1"}
+  ],
+  "brand_core_refs": {"brand.a": "source.soul.a.decision.rev1", "brand.b": "source.soul.b.decision.rev1"}
+}
