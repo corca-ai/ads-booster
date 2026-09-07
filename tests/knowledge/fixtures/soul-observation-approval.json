@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.question-answer.v1",
+  "answer_id": "answer.fixture.soul-observation.1",
+  "question_ref": "question.logical.soul-observation",
+  "brand_ref": "brand.a",
+  "expected_soul_revision_ref": "soul.brand-a.head-after-decision",
+  "text": "브랜드 A의 voice 원칙에 ‘느낌표를 문단당 최대 한 번 사용한다’를 추가하는 변경안을 명시적으로 승인합니다.",
+  "trusted_capability_ref": "grant.brand-a.voice-edit"
+}
