@@ -143,6 +143,8 @@ def test_setup_preserves_existing_unit_and_settings(monkeypatch: pytest.MonkeyPa
         "http://example.com",
         "https://user:secret@example.com",
         "https://example.com/path",
+        'https://example.com"injected',
+        "https://bad..example.com",
         "https://example.com\nEVIL=1",
     ],
 )

@@ -78,6 +78,11 @@ def origin_value(value: str) -> str:
         or any(c.isspace() for c in value)
     ):
         raise RuntimeError("public_origin_requires_https_hostname")
+    labels = parsed.hostname.split(".")
+    if not all(
+        re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) for label in labels
+    ):
+        raise RuntimeError("public_origin_requires_dns_hostname")
     return value.rstrip("/")
 
 
