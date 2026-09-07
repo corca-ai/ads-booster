@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## On-premises Marketing Agent transition
 
@@ -84,6 +84,39 @@ cli/marketing
      -> marketing/hosted_experiment_evaluation
                                       deterministic, no-model outcome evaluation
 ```
+
+## Knowledge ownership and dependency direction
+
+`knowledge/` is the server-owned domain. It owns contracts, scope and grant policy, immutable source
+and Wiki/memory files, SQLite catalog migrations, ingestion, retrieval/index outbox, curation jobs,
+backup/restore, tombstones, the control-root erase ledger, and transfer dependency records. It does
+not import Slack, HTTP, Mac, Cloudflare, or UI modules.
+
+`marketing/agent_service/lifecycle.py` is the composition root for the enabled runtime. It injects
+the configured `KnowledgeSettings`, local actor, `SqliteKnowledgeRepository`, canonical ingress,
+`KnowledgeServiceAdapter`, `KnowledgeContextAssembler`, `CodexKnowledgeProvider`, `BoundedJobRunner`,
+`KnowledgeIndexWorker`, `MemoryViewDispatcher`, and `CurationBatchRuntime`. The batch runtime groups
+scope- and policy-compatible jobs, honors collection deadlines and urgent interruption, and drives
+one shared provider call per bounded round. `knowledge/curation.py` executes each job-bound decision
+through the trusted tool host, feeds its actual observation into the next shared round, and returns
+one receipt per original event revision. `cli/marketing.py` starts and stops the continuous runtime
+with `service run`; the existing Agent Service still owns Runs, approvals, and execution records.
+
+`marketing/agent_service/knowledge_ingress.py` owns the service-database outbox and trusted Run
+binding. `marketing/channels/knowledge_ingress_slack.py` translates authenticated Slack identity to
+workspace or member/conversation scope. `marketing/agent_service/knowledge.py` owns context
+preparation, read-only DM capability filtering, tool adapters, receipt freshness checks, and the
+server-to-hosted transfer boundary. `contracts/knowledge_context.py`,
+`contracts/knowledge_preparation.py`, and `contracts/knowledge_selection.py` own the typed transfer,
+preparation, action, and receipt contracts. `cloudflare/src/hosted-workspace.js` and
+`cloudflare/src/mac-workers.js` validate and carry the transfer; they do not become the canonical
+knowledge store.
+
+The deletion path is split by ownership: `knowledge/erase_ledger.py` owns the chained control-root
+record, `schema_deletion.py` and repository deletion code own local manifest/block/purge state, and
+the hosted/Mac replica routes own remote acknowledgement. A pending remote receipt keeps the global
+purge state pending. No module may infer actor, workspace, member, brand, or sharing authority from
+model tool input or a request JSON field.
 
 ## Responsibility boundaries
 
