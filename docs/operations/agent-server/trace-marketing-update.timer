@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Trace Marketing Agent main every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=trace-marketing-update.service
+
+[Install]
+WantedBy=timers.target
