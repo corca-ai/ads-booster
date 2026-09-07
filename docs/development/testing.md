@@ -183,3 +183,10 @@ Mac candidate vision was exercised with a synthetic low-contrast calendar (gpt-6
 model findings are not human final approval, actual Trace capture, editing, or marketing lift.
 Live Slack requires optional files:read grant/reinstallation and permission probe; no test
 may infer this from fake HTTP. Existing deployed app manifests are not edited by these tests.
+
+Human-effort changes use `test_work_observations.py`, `test_slack_work_observations.py`,
+memory/API and Slack continuation/event tests. Cover correction/restart totals, author/reviewer
+scope, source-derived learning invalidation before approval and receipt selection, and report
+time versus measured duration. Supplied-background contracts use
+`tests/capture/test_supplied_background_provenance.py` plus affected native capture validation
+tests; exact legacy digests and byte tamper checks do not establish live capture success.

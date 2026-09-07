@@ -67,6 +67,12 @@ Measure baseline team task/revision/review time, first approval rate, approved-a
 and added locale work before setting targets. Preserve account/country/window when comparing
 views, likes, comments and attributable installs; correlation alone does not establish lift.
 
+The candidate now records work-scoped human effort from Slack (phase, locale, minutes and
+revision reports), with attributed corrections and separate receipt cost units. An explicit
+observation/counterexample/applicability brief creates a learning hypothesis for human review;
+corrected sources leave active retrieval. This is a baseline collection path, not measured
+time savings, first-approval rate, live channel metrics or automatic cross-campaign learning.
+
 ## Earlier baseline (historical; September 7 decision takes precedence)
 
 Implemented provider-neutral foundations:

@@ -96,6 +96,16 @@ conversations cannot create or alter shared notes. Review displays the scope and
 Candidates do not enter future context until review; expiry and corrected/deleted notes
 leave current retrieval. Private chat cannot change shared memories.
 
+Record human effort in the current Slack work with `작업 기록 제작 12분 설명` (also
+`수정`, `검수`, `현지화`); add `언어=ja` before the description for a locale.
+`작업 정정 <ID> 현지화 9분 언어=ja 설명` replaces an earlier report in totals while
+preserving history. `작업 요약` separates reported minutes/revisions from recorded tool
+cost units. It does not infer start times, currency costs or unreported effort. A report
+can be corrected by its author or an authenticated reviewer; at most 1000 records per work.
+`작업 학습 <ID> 관찰 | 반례 | 적용범위` creates a work-scoped hypothesis for the existing
+memory review flow. Correcting its source excludes that learning from current retrieval
+and blocks further approval. No automatic promotion or causal claim is made.
+
 The installed reasoning tool `delivery.prepare` can persist a draft on the current Run.
 `POST /v1/runs/:id/delivery` also prepares a typed production/publication/Paid/format/code/change
 review packet; `GET /v1/runs/:id/delivery/:proposal-id` reads it. In the same Slack work,

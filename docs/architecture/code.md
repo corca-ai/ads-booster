@@ -575,3 +575,10 @@ is a real no-effect local adapter; its output says prepared, never executed.
 approval. Neither owns external effects. `AgentJobs` rechecks the API's trusted reviewer
 policy immediately before queued approvals. `ToolInvocation.tenant_id` binds new local tool
 mutations without rewriting legacy invocation digests.
+
+`work_observations.py` owns immutable human effort records and scoped learning snapshots;
+`slack_work_observations.py` translates authenticated report/summary/correction commands.
+`work_observation_validity.py` validates sources without importing the memory repository,
+so memory selection/review can reuse its connection and preserve transactional currentness.
+`contracts/native_export.py` owns both searched and supplied background provenance; existing
+worker request digest/path validation handles either variant without fabricated search fields.

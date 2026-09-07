@@ -835,3 +835,15 @@ Asset-bearing approval and scheduling use the current creative asset owner to re
 revision and ancestors; prepared Paid reservations share one SQLite transaction.
 Slack memory defaults to the current work; explicit `기억 공용` in shared channels creates
 reviewed product-scoped learning. Private chat cannot widen that scope.
+
+Human effort reports use the same Run identity and workspace/member/session scope. Slack
+records phase, locale, reported minutes/revisions and the report time, without deriving an
+execution interval. Append-only corrections replace earlier reports in totals. Learning
+candidates bind exact report snapshots; memory review and selection validate those sources
+on the same SQLite connection before writing approval or selection receipts. Tool receipt
+cost units are shown separately and are not currency or human time.
+
+Native export contracts also accept an explicitly supplied background provenance variant.
+Existing search provenance serialization is unchanged. This permits truthful source/use-term
+metadata for future Figma/capture handoff; canonical capture adapter registration and remote
+Mac transport remain unimplemented. Device-booting readiness functions are not read-only probes.

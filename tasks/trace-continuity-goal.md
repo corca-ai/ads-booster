@@ -160,6 +160,29 @@ Next local implementation priorities from independent live-source audit:
    then prepare scoped learning observations for review. Existing hosted campaign learning
    requires independent campaign evidence; do not promote one image's preference through it.
 
+Latest continuation classified previous turn as progress. Added immutable WorkObservation,
+same-work Slack report/correction/summary/learning commands, author-or-reviewer correction,
+report-time semantics (no invented execution interval), and no-double-count totals. Learning
+remains a hypothesis candidate with observation/counterexample/applicability and exact source
+snapshot. Memory review/selection check source currentness on the same SQLite connection;
+corrected source notes cannot enter selection receipts. Human minutes and tool cost units
+remain separate. Focused affected owners: 54 passed; changed Python lint/type passed.
+
+Supplied-background provenance is now accepted by the existing native capture contract with
+unchanged legacy search serialization and worker digest. Related native tests: 28 passed.
+This is only the prerequisite: canonical capture adapter registration and remote Mac transport
+still need implementation. No devices, service setup, existing installs or logins were changed.
+
+Fresh installed observation-owner proof: `/private/tmp/trace-work-observation-proof/evidence.json`,
+wheel SHA256 `f441295bb5b4fd040f60f17f6419ebc6ca3c9aa2f5a077503b8f20dffc2be3b6`.
+Real SQLite report12→correction9/restart→reviewed learning→correction8 excluded the note and
+selection receipt; scoped replay and supplied-background schema passed. This wheel predates
+the final Slack routing fix, so it proves unchanged observation owners, not that routing.
+The routing regression (ordinary “작업 방향을 ...” misclassified) failed first and was fixed
+with a shared exact command predicate; 25 affected Slack tests and scoped checks then passed.
+Next independent work is actual canonical capture adapter/worker integration, followed by
+broader work-result/learning surface. Existing external verification limits remain unchanged.
+
 External acceptance requires the separately operated server to finish its existing setup,
 authenticated Slack membership/test channel and optional files:read image grant, an available
 Appium phone or approved human captures, and a selected image-edit provider with verified
