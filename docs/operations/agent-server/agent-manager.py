@@ -200,6 +200,7 @@ def stage(root: Path) -> Path | None:
         # Staging cannot affect the running agent. Network/dependency failures may be
         # retried by the next check; only failed activation quarantines a release.
         atomic_json(root / "last-check.json", {"release": sha, "result": "staging_failed"})
+        shutil.rmtree(release)
         raise
 
 

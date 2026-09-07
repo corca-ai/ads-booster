@@ -288,6 +288,7 @@ def test_unrelated_mac_check_does_not_block_agent_protocol_validation(
         _ = manager.stage(root)
     assert (root / "current").resolve() == previous
     assert not (root / "last-failure.json").exists()
+    assert sorted(path.name for path in (root / "releases").iterdir()) == ["new", "old"]
     with pytest.raises(RuntimeError, match="main_missing_agent_updater"):
         _ = manager.stage(root)
     assert not any(args[0] == "systemctl" for args in calls)
