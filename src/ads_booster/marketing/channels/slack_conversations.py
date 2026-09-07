@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import AgentGoal
 from ads_booster.contracts.models import ContractModel
+from ads_booster.marketing.channels.slack_attachments import SlackAttachment
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -35,10 +36,23 @@ class Message(ContractModel):
     user_id: str
     text: str
     reopens: bool = False
+    attachments: tuple[SlackAttachment, ...] = ()
 
 
 class MessagePlan(ContractModel):
-    action: Literal["create", "input", "approve", "reject", "resume", "reply", "close"]
+    action: Literal[
+        "create",
+        "input",
+        "approve",
+        "reject",
+        "resume",
+        "reply",
+        "close",
+        "revise",
+        "pause",
+        "memory",
+        "delivery",
+    ]
     run_id: str = ""
     goal: AgentGoal | None = None
     evidence: JsonObject | None = None
@@ -133,6 +147,31 @@ class SlackConversationStore:
                 (conversation.model_dump_json(), conversation.conversation_id),
             )
 
+    def conversation_for_run(self, tenant_id: str, run_id: str) -> Conversation | None:
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT data_json FROM slack_conversations
+                WHERE json_extract(data_json,'$.tenant_id')=?
+                AND json_extract(data_json,'$.current_run')=? LIMIT 1""",
+                    (tenant_id, run_id),
+                ).fetchone()
+            )
+        return None if row is None else Conversation.model_validate_json(row[0])
+
+    def pending_for_run(self, tenant_id: str, run_id: str) -> tuple[Message, ...]:
+        with self.connect() as db:
+            rows = _ROWS.validate_python(
+                db.execute(
+                    """SELECT j.message_json FROM slack_message_jobs j
+                JOIN slack_conversations c ON c.conversation_id=j.conversation_id
+                WHERE j.state='pending' AND json_extract(c.data_json,'$.tenant_id')=?
+                AND json_extract(c.data_json,'$.current_run')=? ORDER BY j.rowid LIMIT 1000""",
+                    (tenant_id, run_id),
+                ).fetchall()
+            )
+        return tuple(Message.model_validate_json(row[0]) for row in rows)
+
     def claim(self) -> tuple[Message, MessagePlan | None] | None:
         with self.connect() as db:
             _ = db.execute("BEGIN IMMEDIATE")
@@ -171,7 +210,13 @@ class SlackConversationStore:
                 ).fetchall()
             ):
                 plan = MessagePlan.model_validate_json(raw) if raw else None
-                replayable = plan is None or plan.action in {"create", "reply", "close"}
+                replayable = plan is None or plan.action in {
+                    "create",
+                    "reply",
+                    "close",
+                    "revise",
+                    "pause",
+                }
                 _ = db.execute(
                     "UPDATE slack_message_jobs SET state=?,result=? WHERE message_id=?",
                     (
@@ -203,7 +248,14 @@ class SlackConversationStore:
             if size + len(message.text) + len(reply) > _MAX_CONTEXT_CHARS:
                 break
             size += len(message.text) + len(reply)
-            messages.append({"user_id": message.user_id, "user": message.text, "assistant": reply})
+            messages.append(
+                {
+                    "user_id": message.user_id,
+                    "user": message.text,
+                    "assistant": reply,
+                    "attachments": [a.model_dump(mode="json") for a in message.attachments],
+                }
+            )
         return {
             "messages": list(reversed(messages)),
             "projection_truncated": len(messages) < len(rows),
