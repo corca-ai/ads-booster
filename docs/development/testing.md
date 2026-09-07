@@ -92,6 +92,16 @@ evidence only; the task row and callback remain completion evidence.
 
 ## Main agent web and Slack onboarding
 
+For Linux CLI onboarding, run `tests/cli/test_server_onboarding.py`,
+`tests/cli/test_agent_server_update.py` and `tests/cli/test_cli_compatibility.py`. Cover token validation
+before writes, member/approver mapping, secret file permissions, preserved configuration/unowned units,
+dedicated Tunnel token-file use, domain-specific manifest export, and bootstrap CI rejection.
+Build and install a fresh wheel, then execute `server --help` and `server manifest` from that installed
+CLI to prove data files ship. The Ubuntu job performs this installed manifest check. Mock systemctl
+and Slack authentication do not establish live service startup or Slack acceptance. Public installer
+success requires running the actual merged URL/ref on a fresh Linux environment; local candidate
+bootstrap proof alone does not establish that claim.
+
 Focused owners: tests/marketing/agent_service, tests/marketing/channels,
 tests/providers/test_codex_reasoning.py, and tests/cli/test_cli_compatibility.py.
 Run these tests together for login/channel/service composition changes, with scoped Ruff,
@@ -131,3 +141,17 @@ selection in `Verify on-prem agent`. Fresh installed HTTP must verify the Events
 maintenance rejection in Slack-only mode. Fixture provider/sender tests do not prove real Slack:
 operator acceptance requires mention → thread follow-up, DM isolation, approval, restart, and a live
 main SHA transition on Ubuntu as described in the server launch guide.
+
+## Portable Ubuntu installation acceptance
+
+Run focused `tests/cli/test_server_onboarding.py` and `tests/cli/test_agent_server_update.py` for
+setup replay, preserved operator edits, doctor readiness, anonymous paginated CI reads and rollback.
+`Verify on-prem agent` additionally builds `tests/operations/ubuntu-server.Dockerfile` for Ubuntu
+22.04 and 24.04 on x86_64 and runs the real installer twice under a new unprivileged user.
+`tests/operations/installed_server_lifecycle.py` runs using the installed interpreter outside the
+checkout: real systemd start/restart, signed Slack URL challenge, fixture upstream main advance,
+locked candidate installation, state backup, activation health and enabled update timer/linger.
+Only Slack auth identity and upstream GitHub trust are fixtures; no Slack message or Codex inference
+is sent. This is candidate/source installation proof. ARM assets are pinned but require separate
+ARM host acceptance. The deployed default main URL and a real Slack conversation remain post-merge
+acceptance, not inferred from source or mocked providers.

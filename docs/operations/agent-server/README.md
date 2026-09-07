@@ -1,5 +1,8 @@
 # 온프레미스 마케팅 에이전트: Slack + main 자동 업데이트
 
+신규 설치는 [CLI 설치 안내](slack-launch-guide.md)를 따른다. 아래 ZIP/wheel 수동 절차는
+이전 후보 설치와 복구 참고용이며 새 사용자의 기본 설치 경로가 아니다.
+
 Status: Candidate implementation — 실제 Ubuntu 서비스·Slack 왕복·main 자동 배포 검증 전.
 
 이 디렉터리와 전달한 wheel은 아직 공개 v0.4.21과 다른 수정 후보다. 회사 OAuth 서비스가

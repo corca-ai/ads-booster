@@ -499,6 +499,14 @@ IDs and receipts rather than generalized or reimplemented.
 
 ### Linux update ownership
 
+- `cli/server.py` owns the installed Linux setup and lifecycle command presentation under
+  `trace-marketing server`. It validates operator input/Slack identity, writes configuration and user
+  units, and delegates updates to the existing manager via systemd. It never owns Agent Runs.
+- `install-server.sh` prepares missing Ubuntu dependencies and bootstraps CI-verified public main through
+  `agent-manager.py bootstrap`. It preserves existing CLI/installations. Wheel force-includes export
+  the canonical Slack manifests and unit templates from `docs/operations/agent-server` into
+  `ads_booster/server_assets`; runtime reads these installed bytes, not a development checkout.
+
 - `agent_service/maintenance.py` owns admission accounting shared by the HTTP dispatcher, background
   queues (including recovery and outbound notification) and scheduled skill execution.
 - `docs/operations/agent-server/agent-manager.py` is the standalone Python 3.10+ Linux operator CLI:
@@ -526,3 +534,18 @@ It delegates Run/input/approval mutations to `MarketingAgentService`; it does no
 existing maintenance-gated worker. `cli/marketing.py` composes this optional surface from env.
 Private DM composition narrows CapabilityPolicy while sharing the service lock and canonical stores.
 Operator manifests and merge-to-operation guidance live in `docs/operations/agent-server`.
+
+### Portable server onboarding and recovery
+
+The Linux installer supports Ubuntu 22.04/24.04 x86_64/aarch64. It preserves existing tools,
+uses pinned official binary checksums for missing tools, enables the service user's linger, and
+supports committed source candidates separately from CI-verified public main. The anonymous
+GitHub check adapter paginates and fails closed; unchanged main does not consume check API requests.
+Staging failures are retryable without stopping the current agent; activation failures remain
+quarantined. `last-check.json` records update decisions separately from activation receipts.
+
+The installed server CLI owns a private `setup-pending.json` write journal. Replay is limited to
+allowlisted configuration/unit paths and exact previous/desired contents, so interrupted setup can
+resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
+missing configuration and Codex login from readiness; status includes update provenance. No company
+IdP or repository authentication is required for the default public Slack-only server.

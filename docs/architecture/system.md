@@ -710,6 +710,22 @@ simulation path, and every other marketing channel cannot.
 
 ## Linux main tracking and Slack-only operation
 
+The Linux operator entrypoint is `install-server.sh` plus `trace-marketing server`. Bootstrap fetches
+public main over HTTPS, applies the same exact-SHA CI/protocol admission as updates, installs locked
+dependencies and selects current before exposing the CLI. A completed install is preserved on rerun;
+a conflicting CLI is rejected. The bootstrap prepares missing system packages and pinned tools.
+GitHub checks use anonymous HTTPS, without gh or an account. Root bootstrap drops to a named
+unprivileged user; user services use linger. Explicit source installs retain source provenance.
+`server setup` validates Slack auth.test and member/approver bindings, writes private configuration,
+and generates systemd user units using discovered executable paths. It exports domain-specific Slack
+manifests from wheel-packaged assets. Existing configuration and unowned units are never overwritten.
+An optional `trace-marketing-tunnel.service` runs an already-created Cloudflare tunnel with a private
+token file. DNS and hostname routes remain existing Cloudflare configuration; no account changes are
+made. `server start` enables the agent/tunnel/update timer and reports a missing linger setting.
+`server status` reads local/public health and unit status; `doctor` reports prerequisites. `update`
+requests the existing update service asynchronously. `stop` stops owned units without disabling them.
+The former ZIP/wheel packet remains a recovery/development path, not the standard onboarding flow.
+
 `TRACE_MARKETING_SLACK_ONLY=1` is an explicit public-ingress mode for operators without an IdP.
 Only health and signed Slack commands/events are exposed, on loopback behind the Tunnel; web UI,
 OAuth/session routes and bearer API access return 404. App/team/channel/member binding still applies.
@@ -760,3 +776,18 @@ Run idempotency/reconciliation; interrupted input/approval/resume plans are bloc
 Approval is an explicit reviewer action bound to the exact current invocation hash, never inferred
 from free text or inherited dialogue. Closing a thread stops later responses, not in-flight effects.
 Slack settings and Ubuntu live acceptance are documented in the server launch guide.
+
+### Portable server onboarding and recovery
+
+The Linux installer supports Ubuntu 22.04/24.04 x86_64/aarch64. It preserves existing tools,
+uses pinned official binary checksums for missing tools, enables the service user's linger, and
+supports committed source candidates separately from CI-verified public main. The anonymous
+GitHub check adapter paginates and fails closed; unchanged main does not consume check API requests.
+Staging failures are retryable without stopping the current agent; activation failures remain
+quarantined. `last-check.json` records update decisions separately from activation receipts.
+
+The installed server CLI owns a private `setup-pending.json` write journal. Replay is limited to
+allowlisted configuration/unit paths and exact previous/desired contents, so interrupted setup can
+resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
+missing configuration and Codex login from readiness; status includes update provenance. No company
+IdP or repository authentication is required for the default public Slack-only server.

@@ -14,17 +14,22 @@ jobs:
   verify:
     name: Verify on-prem agent
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uv sync --locked --python 3.14
+      - run: bash -n install-server.sh
       - name: Verify service, channels and update recovery
         run: >-
           uv run --no-sync pytest tests/marketing/agent_service tests/marketing/channels
           tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py
           tests/cli/test_agent_server_update.py -q
           tests/marketing/tool_adapters/test_compatibility.py
+          tests/cli/test_server_onboarding.py
       - name: Install the built wheel in a fresh environment
         shell: bash
         run: |
@@ -36,4 +41,21 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/agent-installed/bin/trace-marketing" version --json
           "$RUNNER_TEMP/agent-installed/bin/trace-marketing" service doctor
+          "$RUNNER_TEMP/agent-installed/bin/trace-marketing" server --help
+          "$RUNNER_TEMP/agent-installed/bin/trace-marketing" server manifest --origin https://agent.example.com --bootstrap > "$RUNNER_TEMP/bootstrap-manifest.json"
+          "$RUNNER_TEMP/agent-installed/bin/python" -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["features"]["slash_commands"][0]["url"] == "https://agent.example.com/channels/slack/commands"; assert "event_subscriptions" not in m["settings"]' "$RUNNER_TEMP/bootstrap-manifest.json"
           "$RUNNER_TEMP/agent-installed/bin/python" -c 'from ads_booster.marketing.agent_service.maintenance import UPDATE_PROTOCOL; assert UPDATE_PROTOCOL == 1'
+      - name: Fresh Ubuntu installer and installed systemd lifecycle
+        shell: bash
+        run: |
+          for ubuntu_version in 22.04 24.04; do
+            docker build --build-arg UBUNTU_VERSION="$ubuntu_version" -f tests/operations/ubuntu-server.Dockerfile -t trace-server-proof tests/operations
+            container_id="$(docker run -d --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock -v "$PWD:/fixture:ro" trace-server-proof)"
+            trap 'docker logs "$container_id"; docker rm -f "$container_id"' EXIT
+            docker exec "$container_id" bash -c 'useradd -m -s /bin/bash agent; cp -a /fixture /srv/source; chown -R agent:agent /srv/source'
+            docker exec "$container_id" bash /srv/source/install-server.sh --user agent --source /srv/source
+            docker exec "$container_id" bash /srv/source/install-server.sh --user agent --source /srv/source
+            docker exec "$container_id" bash -c 'agent_uid="$(id -u agent)"; runuser -u agent -- env PATH="/home/agent/.local/bin:$PATH" XDG_RUNTIME_DIR="/run/user/$agent_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$agent_uid/bus" /home/agent/.local/share/trace-marketing-server/current/.venv/bin/python /srv/source/tests/operations/installed_server_lifecycle.py'
+            docker rm -f "$container_id"
+            trap - EXIT
+          done

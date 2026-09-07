@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, NoReturn, cast
 from urllib.error import URLError
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 PROTOCOL = 1
 ROOT = Path.home() / ".local/share/trace-marketing-server"
@@ -122,6 +122,17 @@ def probe(release: Path) -> None:
     value = json.loads(command([str(release / ".venv/bin/trace-marketing"), "service", "doctor"]))
     if value.get("ready") is not True:
         raise RuntimeError("candidate_doctor_not_ready")
+    # A verified but older main must not remove the installed operator command/assets.
+    _ = command(
+        [
+            str(release / ".venv/bin/trace-marketing"),
+            "server",
+            "manifest",
+            "--origin",
+            "https://agent.example.com",
+            "--bootstrap",
+        ]
+    )
 
 
 def stage(root: Path) -> Path | None:
@@ -147,22 +158,17 @@ def stage(root: Path) -> Path | None:
     sha = command(["git", "--git-dir", str(mirror), "rev-parse", "refs/heads/main"])
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("invalid_main_sha")
-    current = read_json(root / "current/release.json")["release"]
+    current = (
+        read_json(root / "current/release.json")["release"]
+        if (root / "current/release.json").exists()
+        else "uninstalled"
+    )
     if sha == current:
+        atomic_json(root / "last-check.json", {"release": sha, "result": "up_to_date"})
         return None
     if re.fullmatch(r"[0-9a-f]{40}", current):
         _ = command(["git", "--git-dir", str(mirror), "merge-base", "--is-ancestor", current, sha])
-    checks = json.loads(
-        command(
-            [
-                "gh",
-                "api",
-                "--paginate",
-                "--slurp",
-                f"repos/corca-ai/ads-booster/commits/{sha}/check-runs?per_page=100&filter=latest",
-            ]
-        )
-    )
+    checks = github_checks(sha)
     runs = [run for page in checks for run in page.get("check_runs", [])]
     required = [
         run
@@ -174,9 +180,11 @@ def stage(root: Path) -> Path | None:
     if not required or any(
         run.get("status") != "completed" or run.get("conclusion") != "success" for run in required
     ):
+        atomic_json(root / "last-check.json", {"release": sha, "result": "waiting_for_ci"})
         return None
     failed = root / "last-failure.json"
     if failed.exists() and read_json(failed).get("release") == sha:
+        atomic_json(root / "last-check.json", {"release": sha, "result": "quarantined"})
         return None  # Quarantine a failing SHA until a new main commit or explicit operator retry.
     release = root / "releases" / (sha + "-" + uuid.uuid4().hex[:8])
     release.mkdir(parents=True)
@@ -197,10 +205,37 @@ def stage(root: Path) -> Path | None:
         _ = shutil.copy2(manager, release / "agent-manager.py")
         atomic_json(release / "release.json", {"release": sha})
         probe(release)
+        atomic_json(root / "last-check.json", {"release": sha, "result": "candidate_ready"})
         return release
     except Exception:
-        atomic_json(failed, {"release": sha, "error": "candidate_staging_failed"})
+        # Staging cannot affect the running agent. Network/dependency failures may be
+        # retried by the next check; only failed activation quarantines a release.
+        atomic_json(root / "last-check.json", {"release": sha, "result": "staging_failed"})
+        shutil.rmtree(release)
         raise
+
+
+def github_checks(sha: str) -> list[dict[str, Any]]:
+    """Read public checks without gh or a GitHub login; fail closed on API errors."""
+    page_size = 100
+    pages: list[dict[str, Any]] = []
+    endpoint = f"https://api.github.com/repos/corca-ai/ads-booster/commits/{sha}"
+    for page in range(1, 101):
+        request = Request(  # noqa: S310 - fixed GitHub origin.
+            endpoint + f"/check-runs?per_page=100&filter=latest&page={page}",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "trace-marketing"},
+        )
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub origin.
+            value = json.load(response)
+        if not isinstance(value, dict):
+            raise TypeError("github_checks_invalid_response")
+        value = cast("dict[str, Any]", value)
+        if not isinstance(value.get("check_runs"), list):
+            raise TypeError("github_checks_invalid_response")
+        pages.append(value)
+        if len(value["check_runs"]) < page_size:
+            return pages
+    raise RuntimeError("github_checks_pagination_limit")
 
 
 def restore_state(backup: Path) -> None:
@@ -318,6 +353,42 @@ def install(root: Path, wheel: Path, requirements: Path) -> None:
     select(root, release)
 
 
+def bootstrap(root: Path) -> None:
+    """Install verified main directly, without a locally delivered wheel or ZIP."""
+    if (root / "current").exists() or (root / "current").is_symlink():
+        raise RuntimeError("managed_install_exists:use_trace-marketing_server_update")
+    atomic_json(root / "update.json", {"repository": "https://github.com/corca-ai/ads-booster.git"})
+    release = stage(root)
+    if release is None:
+        raise RuntimeError("main_not_ready:wait_for_Verify_on-prem_agent")
+    select(root, release)
+
+
+def install_source(root: Path, checkout: Path) -> None:
+    """Install a committed developer checkout, explicitly outside the verified channel."""
+    if (root / "current").exists() or (root / "current").is_symlink():
+        raise RuntimeError("managed_install_exists")
+    sha = command(["git", "rev-parse", "HEAD"], cwd=checkout)
+    release = root / "releases" / ("source-" + sha + "-" + uuid.uuid4().hex[:8])
+    source = release / "source"
+    release.mkdir(parents=True)
+    _ = command(["git", "clone", "--no-local", str(checkout), str(source)])
+    _ = command(["git", "checkout", "--detach", sha], cwd=source)
+    _ = command(
+        ["uv", "sync", "--locked", "--no-dev", "--no-editable", "--python", "3.14"],
+        cwd=source,
+        timeout=1200,
+    )
+    (release / ".venv").symlink_to(source / ".venv", target_is_directory=True)
+    _ = shutil.copy2(
+        source / "docs/operations/agent-server/agent-manager.py", release / "agent-manager.py"
+    )
+    atomic_json(release / "release.json", {"release": release.name})
+    probe(release)
+    atomic_json(root / "update.json", {"repository": "https://github.com/corca-ai/ads-booster.git"})
+    select(root, release)
+
+
 def run(root: Path) -> NoReturn:
     release = (root / "current").resolve(strict=True)
     env = dict(
@@ -347,9 +418,12 @@ def run(root: Path) -> NoReturn:
     )
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901 - standalone action dispatch under one process lock.
     parser = argparse.ArgumentParser(description=__doc__)
-    _ = parser.add_argument("action", choices=["install", "run", "update", "status"])
+    _ = parser.add_argument(
+        "action", choices=["install", "source", "bootstrap", "run", "update", "status"]
+    )
+    _ = parser.add_argument("--source", type=Path)
     _ = parser.add_argument("--root", type=Path, default=ROOT)
     _ = parser.add_argument("--wheel", type=Path)
     _ = parser.add_argument("--requirements", type=Path)
@@ -380,7 +454,13 @@ def main() -> None:
         except BlockingIOError:
             print("update_already_running")
             return
-        if args.action == "install":
+        if args.action == "bootstrap":
+            bootstrap(root)
+        elif args.action == "source":
+            if args.source is None:
+                parser.error("source requires --source DIRECTORY")
+            install_source(root, args.source.resolve())
+        elif args.action == "install":
             if args.wheel is None or args.requirements is None:
                 parser.error("install requires --wheel and --requirements")
             install(root, args.wheel.resolve(), args.requirements.resolve())

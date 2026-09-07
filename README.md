@@ -15,11 +15,47 @@ default Slack channel, an explicit conversation-channel allowlist, and isolated 
 research.search accepts a plain query and returns attributed,
 explicitly unverified public search snippets; immutable product research remains research.web.
 
-Use the [server setup packet](docs/operations/agent-server/README.md) for the Slack app manifest,
-OAuth callback configuration, operator identity mapping, environment template, and systemd user
-service. These additions require a wheel built from this change or a subsequent release; the
-previously published v0.4.21 does not include them. Live Tunnel, Linux service and Slack
-verification are still required after installation; IdP is required only for optional web login.
+The standard Linux installation path is now `install-server.sh` followed by
+`trace-marketing server setup`, using your existing on-premises server and Cloudflare Tunnel/domain.
+No ZIP transfer is required. The wizard validates Slack bot credentials, discovers team/bot IDs,
+writes private settings, and prepares the agent, dedicated tunnel and five-minute updater services.
+See the [installation and Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md).
+
+```bash
+# After this installer change is merged and main CI succeeds:
+curl -fsSL https://raw.githubusercontent.com/corca-ai/ads-booster/main/install-server.sh -o /tmp/trace-install.sh
+bash /tmp/trace-install.sh
+export PATH="$HOME/.local/bin:$PATH"
+codex login --device-auth
+trace-marketing server manifest --origin https://your-agent.example.com --bootstrap
+# Create/install the Slack app using that manifest, then:
+trace-marketing server setup
+trace-marketing server doctor
+trace-marketing server start
+trace-marketing server status
+```
+
+Supported servers are Ubuntu 22.04/24.04 on x86_64/aarch64 with systemd. The installer prepares
+missing system packages (sudo), checksum-pinned uv, native Codex and cloudflared; uv installs Python
+3.14 and locked application dependencies. Existing tools and tunnel services are preserved. GitHub
+login and Node.js are unnecessary. If logged in as root, use `bash /tmp/trace-install.sh --user
+trace-marketing`, then `sudo -iu trace-marketing` for Codex login and setup. Credentials stay with
+that user. Installer enables linger for operation after logout and reboot.
+
+Rerun the installer after an interrupted download; rerun `server setup` after an interrupted config
+write. Setup resumes its own writes, preserves intervening edits and never imports an unrelated
+manual configuration. `server doctor` exits nonzero until local prerequisites, Codex login and setup
+are ready. `server status` shows health, installed SHA and the last update result. Every five minutes,
+the enabled timer fetches main; only a changed SHA requires an anonymous GitHub CI lookup. A failed
+API lookup or pending CI never replaces the running version. Activation drains work, backs up state,
+and rolls back a failed start. Company OAuth is unnecessary for Slack-only operation.
+
+`server manifest` exports the final Events-enabled manifest after the public health URL is ready.
+For contributors, `bash install-server.sh --source /absolute/checkout` installs that checkout's
+**committed HEAD**, labels it `source-…`, and subsequently follows verified public main. This is an
+explicit candidate installation, not proof of the published default URL. CI exercises isolated Ubuntu
+installation and systemd activation with fixture Slack identity/upstream CI; real Slack delivery and
+post-merge public-URL installation require deployment acceptance.
 
 ## On-premises Agent Service (implemented foundation)
 
