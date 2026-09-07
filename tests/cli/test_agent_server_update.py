@@ -22,6 +22,7 @@ class Manager(Protocol):
     def activate(self, root: Path, candidate: Path) -> None: ...
     def recover(self, root: Path) -> None: ...
     def stage(self, root: Path) -> Path | None: ...
+    def bootstrap(self, root: Path) -> None: ...
     def select(self, root: Path, release: Path) -> None: ...
 
 
@@ -280,3 +281,40 @@ def test_unrelated_mac_check_does_not_block_agent_protocol_validation(
 
 def test_operator_manager_parses_on_ubuntu_system_python() -> None:
     _ = ast.parse(MANAGER.read_text(), feature_version=(3, 10))
+
+
+def test_bootstrap_waits_for_ci_and_does_not_create_a_current_install(
+    tmp_path: Path,
+    manager: Manager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_checks(args: list[str], **_kwargs: object) -> str:
+        if "rev-parse" in args:
+            return "a" * 40
+        if args[0] == "gh":
+            return '[{"check_runs": []}]'
+        return ""
+
+    monkeypatch.setattr(manager, "command", no_checks)
+    with pytest.raises(RuntimeError, match="main_not_ready"):
+        manager.bootstrap(tmp_path)
+    assert not (tmp_path / "current").exists()
+
+
+def test_bootstrap_selects_verified_candidate_and_preserves_existing_install(
+    tmp_path: Path,
+    manager: Manager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = tmp_path / "releases/verified"
+    candidate.mkdir(parents=True)
+
+    def staged(_root: Path) -> Path:
+        return candidate
+
+    monkeypatch.setattr(manager, "stage", staged)
+    manager.bootstrap(tmp_path)
+    assert (tmp_path / "current").resolve() == candidate
+    with pytest.raises(RuntimeError, match="managed_install_exists"):
+        manager.bootstrap(tmp_path)
+    assert (tmp_path / "current").resolve() == candidate

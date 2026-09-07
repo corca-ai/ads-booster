@@ -147,7 +147,11 @@ def stage(root: Path) -> Path | None:
     sha = command(["git", "--git-dir", str(mirror), "rev-parse", "refs/heads/main"])
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("invalid_main_sha")
-    current = read_json(root / "current/release.json")["release"]
+    current = (
+        read_json(root / "current/release.json")["release"]
+        if (root / "current/release.json").exists()
+        else "uninstalled"
+    )
     if sha == current:
         return None
     if re.fullmatch(r"[0-9a-f]{40}", current):
@@ -318,6 +322,17 @@ def install(root: Path, wheel: Path, requirements: Path) -> None:
     select(root, release)
 
 
+def bootstrap(root: Path) -> None:
+    """Install verified main directly, without a locally delivered wheel or ZIP."""
+    if (root / "current").exists() or (root / "current").is_symlink():
+        raise RuntimeError("managed_install_exists:use_trace-marketing_server_update")
+    atomic_json(root / "update.json", {"repository": "https://github.com/corca-ai/ads-booster.git"})
+    release = stage(root)
+    if release is None:
+        raise RuntimeError("main_not_ready:wait_for_Verify_on-prem_agent")
+    select(root, release)
+
+
 def run(root: Path) -> NoReturn:
     release = (root / "current").resolve(strict=True)
     env = dict(
@@ -349,7 +364,7 @@ def run(root: Path) -> NoReturn:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    _ = parser.add_argument("action", choices=["install", "run", "update", "status"])
+    _ = parser.add_argument("action", choices=["install", "bootstrap", "run", "update", "status"])
     _ = parser.add_argument("--root", type=Path, default=ROOT)
     _ = parser.add_argument("--wheel", type=Path)
     _ = parser.add_argument("--requirements", type=Path)
@@ -380,7 +395,9 @@ def main() -> None:
         except BlockingIOError:
             print("update_already_running")
             return
-        if args.action == "install":
+        if args.action == "bootstrap":
+            bootstrap(root)
+        elif args.action == "install":
             if args.wheel is None or args.requirements is None:
                 parser.error("install requires --wheel and --requirements")
             install(root, args.wheel.resolve(), args.requirements.resolve())
