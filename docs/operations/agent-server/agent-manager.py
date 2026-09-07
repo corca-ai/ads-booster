@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, NoReturn, cast
 from urllib.error import URLError
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 PROTOCOL = 1
 ROOT = Path.home() / ".local/share/trace-marketing-server"
@@ -153,20 +153,11 @@ def stage(root: Path) -> Path | None:
         else "uninstalled"
     )
     if sha == current:
+        atomic_json(root / "last-check.json", {"release": sha, "result": "up_to_date"})
         return None
     if re.fullmatch(r"[0-9a-f]{40}", current):
         _ = command(["git", "--git-dir", str(mirror), "merge-base", "--is-ancestor", current, sha])
-    checks = json.loads(
-        command(
-            [
-                "gh",
-                "api",
-                "--paginate",
-                "--slurp",
-                f"repos/corca-ai/ads-booster/commits/{sha}/check-runs?per_page=100&filter=latest",
-            ]
-        )
-    )
+    checks = github_checks(sha)
     runs = [run for page in checks for run in page.get("check_runs", [])]
     required = [
         run
@@ -178,9 +169,11 @@ def stage(root: Path) -> Path | None:
     if not required or any(
         run.get("status") != "completed" or run.get("conclusion") != "success" for run in required
     ):
+        atomic_json(root / "last-check.json", {"release": sha, "result": "waiting_for_ci"})
         return None
     failed = root / "last-failure.json"
     if failed.exists() and read_json(failed).get("release") == sha:
+        atomic_json(root / "last-check.json", {"release": sha, "result": "quarantined"})
         return None  # Quarantine a failing SHA until a new main commit or explicit operator retry.
     release = root / "releases" / (sha + "-" + uuid.uuid4().hex[:8])
     release.mkdir(parents=True)
@@ -201,10 +194,36 @@ def stage(root: Path) -> Path | None:
         _ = shutil.copy2(manager, release / "agent-manager.py")
         atomic_json(release / "release.json", {"release": sha})
         probe(release)
+        atomic_json(root / "last-check.json", {"release": sha, "result": "candidate_ready"})
         return release
     except Exception:
-        atomic_json(failed, {"release": sha, "error": "candidate_staging_failed"})
+        # Staging cannot affect the running agent. Network/dependency failures may be
+        # retried by the next check; only failed activation quarantines a release.
+        atomic_json(root / "last-check.json", {"release": sha, "result": "staging_failed"})
         raise
+
+
+def github_checks(sha: str) -> list[dict[str, Any]]:
+    """Read public checks without gh or a GitHub login; fail closed on API errors."""
+    page_size = 100
+    pages: list[dict[str, Any]] = []
+    endpoint = f"https://api.github.com/repos/corca-ai/ads-booster/commits/{sha}"
+    for page in range(1, 101):
+        request = Request(  # noqa: S310 - fixed GitHub origin.
+            endpoint + f"/check-runs?per_page=100&filter=latest&page={page}",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "trace-marketing"},
+        )
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub origin.
+            value = json.load(response)
+        if not isinstance(value, dict):
+            raise TypeError("github_checks_invalid_response")
+        value = cast("dict[str, Any]", value)
+        if not isinstance(value.get("check_runs"), list):
+            raise TypeError("github_checks_invalid_response")
+        pages.append(value)
+        if len(value["check_runs"]) < page_size:
+            return pages
+    raise RuntimeError("github_checks_pagination_limit")
 
 
 def restore_state(backup: Path) -> None:

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import sqlite3
 from contextlib import closing
+from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -12,6 +13,7 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from urllib.request import Request
 
 MANAGER = Path(__file__).resolve().parents[2] / "docs/operations/agent-server/agent-manager.py"
 
@@ -22,6 +24,7 @@ class Manager(Protocol):
     def activate(self, root: Path, candidate: Path) -> None: ...
     def recover(self, root: Path) -> None: ...
     def stage(self, root: Path) -> Path | None: ...
+    def github_checks(self, sha: str) -> list[dict[str, object]]: ...
     def bootstrap(self, root: Path) -> None: ...
     def select(self, root: Path, release: Path) -> None: ...
 
@@ -224,6 +227,11 @@ def test_main_with_pending_or_failed_ci_is_not_installed(
         return ""
 
     monkeypatch.setattr(manager, "command", fake)
+
+    def checks(_sha: str) -> list[dict[str, object]]:
+        return cast("list[dict[str, object]]", json.loads(fake(["gh"])))
+
+    monkeypatch.setattr(manager, "github_checks", checks)
     assert manager.stage(root) is None
     assert (root / "current").resolve() == previous
     assert not any(args[0] in {"uv", "systemctl"} for args in calls)
@@ -271,11 +279,17 @@ def test_unrelated_mac_check_does_not_block_agent_protocol_validation(
         return ""
 
     monkeypatch.setattr(manager, "command", fake)
+
+    def checks(_sha: str) -> list[dict[str, object]]:
+        return cast("list[dict[str, object]]", json.loads(fake(["gh"])))
+
+    monkeypatch.setattr(manager, "github_checks", checks)
     with pytest.raises(RuntimeError, match="main_missing_agent_updater"):
         _ = manager.stage(root)
     assert (root / "current").resolve() == previous
-    assert (root / "last-failure.json").exists()
-    assert manager.stage(root) is None
+    assert not (root / "last-failure.json").exists()
+    with pytest.raises(RuntimeError, match="main_missing_agent_updater"):
+        _ = manager.stage(root)
     assert not any(args[0] == "systemctl" for args in calls)
 
 
@@ -296,6 +310,11 @@ def test_bootstrap_waits_for_ci_and_does_not_create_a_current_install(
         return ""
 
     monkeypatch.setattr(manager, "command", no_checks)
+
+    def checks(_sha: str) -> list[dict[str, object]]:
+        return [{"check_runs": []}]
+
+    monkeypatch.setattr(manager, "github_checks", checks)
     with pytest.raises(RuntimeError, match="main_not_ready"):
         manager.bootstrap(tmp_path)
     assert not (tmp_path / "current").exists()
@@ -318,3 +337,24 @@ def test_bootstrap_selects_verified_candidate_and_preserves_existing_install(
     with pytest.raises(RuntimeError, match="managed_install_exists"):
         manager.bootstrap(tmp_path)
     assert (tmp_path / "current").resolve() == candidate
+
+
+def test_public_ci_lookup_paginates_without_credentials(
+    manager: Manager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[Request] = []
+
+    def response(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        requests.append(request)
+        runs: list[dict[str, object]] = (
+            [{}] * 100 if len(requests) == 1 else [{"name": "Verify on-prem agent"}]
+        )
+        return BytesIO(json.dumps({"check_runs": runs}).encode())
+
+    monkeypatch.setattr(manager, "urlopen", response)
+    pages = manager.github_checks("a" * 40)
+    assert len(pages) == 2
+    assert requests[1].full_url.endswith("page=2")
+    assert all(request.get_header("Authorization") is None for request in requests)
