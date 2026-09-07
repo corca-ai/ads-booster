@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
+from ads_booster.contracts.knowledge_context import EditorialContextBlock
+from ads_booster.contracts.knowledge_selection import VoiceStatus
 from ads_booster.workspace import (
     CandidateCaption,
     CandidateCountry,
@@ -55,3 +58,20 @@ class CandidateDocument(GenerationModel):
 class CandidateContextBundle(GenerationModel):
     directory: str
     documents: tuple[CandidateDocument, ...]
+
+
+class CandidateEditorialContext(GenerationModel):
+    mode: Literal["knowledge_context_v1"] = "knowledge_context_v1"
+    voice_status: VoiceStatus
+    blocks: Annotated[tuple[EditorialContextBlock, ...], Field(max_length=32)] = ()
+
+    @model_validator(mode="after")
+    def require_voice_shape(self) -> Self:
+        if self.voice_status not in {VoiceStatus.CONFIGURED, VoiceStatus.VOICE_UNCONFIGURED} or (
+            (self.voice_status is VoiceStatus.CONFIGURED) != bool(self.blocks)
+        ):
+            raise PydanticCustomError(
+                "candidate_editorial_context_invalid",
+                "configured voice carries blocks and unconfigured voice carries none",
+            )
+        return self
