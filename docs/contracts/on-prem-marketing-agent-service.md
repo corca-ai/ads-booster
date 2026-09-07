@@ -180,3 +180,9 @@ Implemented candidate surfaces and evidence are tracked in the existing product/
 plans and testing document. Live editing/capture, external publishing/readback/metrics,
 community actions, Paid execution and model-quality generalization remain unverified or Draft;
 prepared packets and fake adapters must not be described as those integrations completing.
+
+Slack asset intake is an optional small-work tool pair: inspect authenticated file bytes, then
+import the exact digest with human-confirmed source/use terms under runtime approval. It does
+not grant downstream production/publication approval. Register before linking for Web readback;
+failed registration cannot attach an existing different asset to that Run. Returned image bytes
+are bounded separately from inline upload size; provenance and reported status remain explicit.

@@ -205,11 +205,40 @@ with a copied fake worker registers a synthetic native derivative requiring huma
 retains product_support_verified=false; replay calls worker once. This is not approval UI,
 actual native image quality, live Slack/provider, public installer or remote server proof.
 
-Next independent implementation: connect signed Slack file evidence to permission-attributed
-background assets without inferring ownership from upload; preserve the same work and human
-handoff. Linux-to-Mac transport, operational image editing/localization and campaign outcome
-integration remain code gaps. Do not label them only missing credentials. Existing external
-verification limits remain unchanged. Goal stays active; no full-goal completion claim.
+Current continuation classifies the previous turn as progress (capture implementation, fresh
+installed proof and PR update). Signed Slack file evidence now connects to permission-attributed
+assets using model-independent inspection and exact existing invocation approval. Original
+metadata proposals and the approver/digest are retained; use-rights, visual quality and product
+support are explicitly unverified. No nested continuation occurs inside intake: the canonical
+tool receipt informs the next same-Run decision. File grant loss applies to inspect/import/review.
+
+Ownership: baseline extracted shared file fetching and independently reviewed/fixed failed-import
+linkage; patterns owns intake schemas/registration; requirements authored independent canonical
+approval/restart flow; main owns shared Run links, capture/Web fixes, setup, docs and integration.
+The capture missing-link and >512KiB registered readback failures were reproduced before fixing.
+Independent review also reproduced failed import GET200 instead of404; registering immutable
+assets before linking fixes that boundary and interrupted local linkage remains replayable.
+
+Focused changed/affected owners: 73 tests passed, plus the separate failed-import GET regression
+passed. Fourteen changed Python files pass scoped Ruff/format/BasedPyright (0 errors/warnings).
+These fixtures prove canonical processing from the trusted file-binding seam, not live signed
+Slack transport, actual model selection, real phone or visual quality. Existing server checkout,
+installed command, credentials, login and tunnel are unchanged.
+
+Fresh installed intake proof: `/private/tmp/trace-slack-asset-installed-proof/evidence.json`
+and standalone `prove.py`; wheel SHA256
+`8615bd3e8bf12b800a199f2d78877c5793bc60113fe0564b25b9b50a5111d4c5`.
+Installed module path confirms site-packages outside checkout, version0.4.21. Actual canonical
+Run/SQLite with fake HTTP/reasoning exercised inspect → awaiting approval/restart → exact import
+approval → same-Run Web GET of a 1,081,525-byte synthetic PNG with matching digest; unrelated Run
+returned404. Final source is c717bc7. Main read evidence. No live Slack/model/device/public
+installer or image-quality claim follows from this proof; prior lifecycle proof is separate.
+
+Next independent implementation: inspect existing worker admission/transport and connect canonical
+Run/approval/artifacts to remote Mac execution without giving D1 ownership of new Runs. Preserve
+no-Appium human handoff. Operational image editing/localization and campaign outcome integration
+also remain code gaps, not just credentials. External verification limits remain unchanged.
+Goal stays active; this is not full-goal completion.
 
 External acceptance requires the separately operated server to finish its existing setup,
 authenticated Slack membership/test channel and optional files:read image grant, an available

@@ -94,13 +94,24 @@ When ready, `capture.appium` accepts a registered background's ID/revision/diges
 It requires exact runtime approval before device preparation. The result remains subject
 to human visual review. Its 20 cost units are conservative fixed accounting, not measured
 time or currency. An uncertain capture requires reconciliation and is not automatically
-repeated. Slack file references alone are not yet registered backgrounds: use the asset
-upload API with source/use terms first. Automatic Slack-file-to-background registration and
-remote Mac transport remain unimplemented.
+repeated. Slack file references become registered assets only through the optional file intake
+below or the existing asset upload API. Remote Mac transport remains unimplemented.
+
+The same optional Slack image configuration also exposes `creative.file.inspect` and
+`creative.asset.import`. Inspection downloads a signed, same-work PNG/JPEG (up to 10 MiB)
+without invoking image reasoning. The agent can then propose that exact file digest with
+source/use terms, data permission and preserve/change metadata for the existing approval
+review. Import records the approver's confirmation as `human_reported`; neither upload nor
+approval proves licensing, visual quality or native product support. Changed file bytes or
+use terms require a new exact review. Import feeds a receipt to the same Run and links the
+asset for Web readback. It does not approve subsequent capture, editing or publication.
+DM file intake remains disabled. Missing `files:read` keeps these tools unavailable and the
+agent can request an asset through the existing human handoff.
 
 Web/API users can `POST /v1/runs/:id/continuation` with `event_id`, `action` (`revise`/`pause`)
 and `note`; `POST /v1/runs/:id/assets` accepts a base64 PNG/JPEG (512 KiB maximum), asset ID,
-kind, source/use terms/data permission, preserve/change and locale/parent metadata. Uploads
+kind, source/use terms/data permission, preserve/change and locale/parent metadata. Registered
+Slack/worker image GET readback has a separate 10 MiB limit. Uploads
 resume the same work by default; `resume:false` retains a wait. Authenticated
 `GET /v1/runs/:id/assets/:asset-id` returns a preview and stale state. Byte validation never
 implies visual QA. Run details remain available in the existing Web view.

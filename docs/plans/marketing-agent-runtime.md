@@ -22,8 +22,9 @@ requires it. Production requests do not authorize publication.
 The canonical service now has an opt-in local Mac capture adapter using the existing approved
 worker and native export verification. Installed fake-worker checks prove source/result
 binding and no-repeat recovery; the current host lacks Appium, so native device quality and
-end-to-end capture remain unverified. Slack source-asset intake and Linux-to-Mac transport
-still need implementation. Default server onboarding does not enable this adapter.
+end-to-end capture remain unverified. Optional Slack source-asset intake now uses read-only
+inspection followed by digest-bound import approval and canonical receipts. Linux-to-Mac
+transport still needs implementation. Default server onboarding does not enable this adapter.
 
 Unimplemented paths remain Draft until scenario evidence exists: operational image editing,
 remote native capture, publication scheduling/readback, live metrics/community and Paid actions.

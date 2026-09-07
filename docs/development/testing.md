@@ -196,3 +196,12 @@ Canonical capture changes select `test_creative_capture.py`, `test_capture_readi
 workers prove nonce/digest/byte checks, source/cached-result invalidation and no replay after
 failure. Fake readiness proves that no boot/start command is used. Real native output and
 phone-size visual QA still require an available Mac/Trace Debug/Appium environment.
+
+Slack asset intake changes select `test_slack_image_files.py`, `test_slack_image_review.py`,
+`test_slack_asset_intake.py`, `test_slack_asset_intake_flow.py`, `test_slack_asset_link_failure.py`
+and `test_slack_creative_setup.py`.
+The flow uses actual service/SQLite/approval owners with fake HTTP/reasoning, from trusted
+signed-file binding through inspection, approval wait/restart, exact import and same-Run output.
+It is not signed live Slack transport or image quality proof. Asset projection changes also
+select `test_creative_api.py` and `test_creative_capture.py` for registration/link failure and
+bounded Web readback of registered files above the inline upload limit.

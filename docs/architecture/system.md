@@ -854,5 +854,14 @@ dependencies; worker `ensure_ready` runs only after admission. The adapter binds
 Run and source revision/digest, persists a started claim before worker preparation, and verifies
 native export provenance plus actual result bytes before registering a derived asset. Replay
 revalidates source and cached result; uncertain worker outcomes require reconciliation.
-DM capture remains disabled. This is local Mac execution; Linux-to-Mac transport and automatic
-registration of Slack file references as permission-attributed backgrounds remain unimplemented.
+DM capture remains disabled. This is local Mac execution; Linux-to-Mac transport remains
+unimplemented. Capture results now also enter the existing Run-to-asset Web projection.
+
+Optional Slack file intake reuses the signed tenant/Run/file binding and bounded downloader.
+`creative.file.inspect` observes bytes without model inference; `creative.asset.import` binds
+an exact digest and proposed source/use metadata to the existing canonical approval. A current
+approval and matching bytes are required before registration. The receipt records human
+confirmation, not independent rights/visual/product verification. Registration feeds the
+current Run through its tool receipt, avoiding nested continuation/planning. Only registered
+assets enter the shared Run-to-asset projection; a crash before linkage can replay local
+registration without exposing another asset. DM intake remains disabled.

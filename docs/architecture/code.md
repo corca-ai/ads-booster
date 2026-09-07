@@ -588,3 +588,9 @@ worker request digest/path validation handles either variant without fabricated 
 Mac config/catalog/adapter. `lifecycle.py` accepts the optional config path from the installed
 CLI. Source assets remain in the creative repository and actual execution admission remains
 in the existing canonical runtime. The adapter's local ledger prevents uncertain worker replay.
+
+`slack_image_files.py` owns signed file resolution, bounded download/decode and immutable cache
+for both review and intake. `slack_asset_intake.py` owns the inspect/import schemas, current
+approval attribution and registration. `slack_creative_setup.py` composes all three optional
+file capabilities under the same observed Slack grant. `creative_asset_links.py` owns the
+Run-to-asset projection used by HTTP uploads, Slack imports and native capture results.
