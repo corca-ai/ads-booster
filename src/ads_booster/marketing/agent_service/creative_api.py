@@ -8,9 +8,7 @@ import hashlib
 import io
 import os
 import re
-import sqlite3
 import tempfile
-from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 from urllib.parse import urlsplit
@@ -21,12 +19,12 @@ from pydantic import Field, TypeAdapter, ValidationError
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.creative_work import AssetParent, CreativeAsset, CreativeScope
 from ads_booster.contracts.models import ContractModel, Identifier
+from ads_booster.marketing.agent_service.creative_asset_links import asset_links as _links
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.work_continuation import continue_work
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from datetime import datetime
 
     from ads_booster.marketing.agent_service.application import MarketingAgentService
@@ -56,20 +54,6 @@ class UploadCreativeAsset(ContractModel):
     change: Annotated[tuple[Text, ...], Field(max_length=32)] = ()
     locale: Annotated[str, Field(min_length=2, max_length=35)] | None = None
     parents: Annotated[tuple[AssetParent, ...], Field(max_length=16)] = ()
-
-
-@contextmanager
-def _links(database: Path) -> Generator[sqlite3.Connection]:
-    connection = sqlite3.connect(database)
-    try:
-        with connection:
-            _ = connection.execute("""CREATE TABLE IF NOT EXISTS creative_run_assets (
-                tenant_id TEXT NOT NULL,run_id TEXT NOT NULL,asset_id TEXT NOT NULL,
-                revision INTEGER NOT NULL,request_sha256 TEXT NOT NULL,actor_id TEXT NOT NULL,
-                PRIMARY KEY(tenant_id,run_id,asset_id,revision))""")
-            yield connection
-    finally:
-        connection.close()
 
 
 def dispatch_creative(  # noqa: PLR0913, PLR0911 - authenticated HTTP routing boundaries.
