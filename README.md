@@ -23,22 +23,39 @@ See the [installation and Slack walkthrough](docs/operations/agent-server/slack-
 
 ```bash
 # After this installer change is merged and main CI succeeds:
-curl -fsSL https://raw.githubusercontent.com/corca-ai/ads-booster/main/install-server.sh | bash
+curl -fsSL https://raw.githubusercontent.com/corca-ai/ads-booster/main/install-server.sh -o /tmp/trace-install.sh
+bash /tmp/trace-install.sh
 export PATH="$HOME/.local/bin:$PATH"
+codex login --device-auth
 trace-marketing server manifest --origin https://your-agent.example.com --bootstrap
 # Create/install the Slack app using that manifest, then:
 trace-marketing server setup
+trace-marketing server doctor
 trace-marketing server start
 trace-marketing server status
 ```
 
-The Linux installer requires Python 3.10+, git, authenticated gh, uv, Codex CLI and systemd; uv
-provisions application Python 3.14. Run as the service-owning Linux user, without sudo. Setup needs
-cloudflared with token-file support when managing a dedicated connector. Existing EAR tunnels and
-existing configurations are preserved. Company OAuth is unnecessary for Slack-only operation.
+Supported servers are Ubuntu 22.04/24.04 on x86_64/aarch64 with systemd. The installer prepares
+missing system packages (sudo), checksum-pinned uv, native Codex and cloudflared; uv installs Python
+3.14 and locked application dependencies. Existing tools and tunnel services are preserved. GitHub
+login and Node.js are unnecessary. If logged in as root, use `bash /tmp/trace-install.sh --user
+trace-marketing`, then `sudo -iu trace-marketing` for Codex login and setup. Credentials stay with
+that user. Installer enables linger for operation after logout and reboot.
+
+Rerun the installer after an interrupted download; rerun `server setup` after an interrupted config
+write. Setup resumes its own writes, preserves intervening edits and never imports an unrelated
+manual configuration. `server doctor` exits nonzero until local prerequisites, Codex login and setup
+are ready. `server status` shows health, installed SHA and the last update result. Every five minutes,
+the enabled timer fetches main; only a changed SHA requires an anonymous GitHub CI lookup. A failed
+API lookup or pending CI never replaces the running version. Activation drains work, backs up state,
+and rolls back a failed start. Company OAuth is unnecessary for Slack-only operation.
+
 `server manifest` exports the final Events-enabled manifest after the public health URL is ready.
-`server doctor` checks prerequisites; `server update` requests a main check. Local candidate evidence
-is not a claim that the new remote installer URL or a real Slack/Ubuntu deployment has been verified.
+For contributors, `bash install-server.sh --source /absolute/checkout` installs that checkout's
+**committed HEAD**, labels it `source-…`, and subsequently follows verified public main. This is an
+explicit candidate installation, not proof of the published default URL. CI exercises isolated Ubuntu
+installation and systemd activation with fixture Slack identity/upstream CI; real Slack delivery and
+post-merge public-URL installation require deployment acceptance.
 
 ## On-premises Agent Service (implemented foundation)
 

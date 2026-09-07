@@ -141,3 +141,17 @@ selection in `Verify on-prem agent`. Fresh installed HTTP must verify the Events
 maintenance rejection in Slack-only mode. Fixture provider/sender tests do not prove real Slack:
 operator acceptance requires mention → thread follow-up, DM isolation, approval, restart, and a live
 main SHA transition on Ubuntu as described in the server launch guide.
+
+## Portable Ubuntu installation acceptance
+
+Run focused `tests/cli/test_server_onboarding.py` and `tests/cli/test_agent_server_update.py` for
+setup replay, preserved operator edits, doctor readiness, anonymous paginated CI reads and rollback.
+`Verify on-prem agent` additionally builds `tests/operations/ubuntu-server.Dockerfile` for Ubuntu
+22.04 and 24.04 on x86_64 and runs the real installer twice under a new unprivileged user.
+`tests/operations/installed_server_lifecycle.py` runs using the installed interpreter outside the
+checkout: real systemd start/restart, signed Slack URL challenge, fixture upstream main advance,
+locked candidate installation, state backup, activation health and enabled update timer/linger.
+Only Slack auth identity and upstream GitHub trust are fixtures; no Slack message or Codex inference
+is sent. This is candidate/source installation proof. ARM assets are pinned but require separate
+ARM host acceptance. The deployed default main URL and a real Slack conversation remain post-merge
+acceptance, not inferred from source or mocked providers.

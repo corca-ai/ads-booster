@@ -111,3 +111,19 @@ implemented by this candidate. Private DM tools are deliberately limited to publ
   Corca Slack roundtrips and live main SHA transitions remain operator acceptance work.
 - Mac direct on-prem enrollment/lifecycle migration is outside this installer change and remains
   unimplemented. Existing Mac worker commands and compatibility workflow remain in place.
+
+## Portable Ubuntu bootstrap candidate (2026-09-07)
+
+Focused local verification: 135 tests passed across agent_service, channels, Codex reasoning,
+CLI compatibility, updater and onboarding. Scoped Ruff, formatter and BasedPyright passed for
+`cli/server.py`, the standalone manager and their tests, plus the installed lifecycle fixture.
+The installer passes `bash -n`. Official pinned Linux binary downloads are checksum-verified by
+bootstrap; existing installed tools are preserved.
+
+The Ubuntu CI acceptance uses fresh 22.04/24.04 containers and actual systemd user services.
+It installs committed candidate source, reruns installation, validates a signed Slack URL challenge,
+then advances a fixture main and uses real Git/uv, drain, state backup, activation and restart.
+Slack auth identity and GitHub CI responses are fixtures. This does not establish live company Slack
+messaging, real Codex inference, ARM runtime acceptance or post-merge public installer URL success.
+See the current PR check result for the completed container run, rather than treating these test
+instructions as proof of a pass.
