@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import sys
 import time
@@ -18,6 +19,9 @@ import typer
 from pydantic import ValidationError
 
 from ads_booster.cli.server import app as server_app
+from ads_booster.cli.knowledge import app as knowledge_app
+from ads_booster.knowledge.configuration import KnowledgeSettings, validate_settings
+from ads_booster.knowledge.maintenance import inspect_owner
 from ads_booster.marketing.agent_service.channel_setup import (
     browser_from_env,
     run_slack_worker,
@@ -32,6 +36,7 @@ from ads_booster.marketing.agent_service.integrations import AgentServiceIntegra
 from ads_booster.marketing.agent_service.jobs import AgentJobs
 from ads_booster.marketing.agent_service.lifecycle import (
     InstalledServicePaths,
+    build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
@@ -132,6 +137,7 @@ app.add_typer(worker_app, name="worker")
 app.add_typer(agent_app, name="agent")
 app.add_typer(service_app, name="service")
 app.add_typer(server_app, name="server")
+app.add_typer(knowledge_app, name="knowledge")
 
 
 @app.command("version")
@@ -156,6 +162,18 @@ def service_doctor(
     """Report service readiness without requiring or inspecting Appium."""
     executable = resolve_codex_executable()
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    paths.prepare()
+    try:
+        knowledge_settings = KnowledgeSettings.from_env(os.environ)
+        if knowledge_settings.enabled:
+            validate_settings(knowledge_settings)
+            root, _, _ = knowledge_settings.require_enabled()
+            owner = inspect_owner(root)
+            knowledge_state = f"configured:{owner.state}"
+        else:
+            knowledge_state = "disabled"
+    except ValueError as error:
+        knowledge_state = str(error)
     typer.echo(
         json.dumps(
             {
@@ -165,6 +183,7 @@ def service_doctor(
                 "reasoning_provider": "official-codex-cli",
                 "reasoning_ready": executable is not None,
                 "appium_required": False,
+                "knowledge": knowledge_state,
                 "ready": executable is not None,
             },
             ensure_ascii=False,
@@ -214,6 +233,16 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
     if oauth is None and not token and not slack_only:
         token = _required("TRACE_MARKETING_SERVICE_TOKEN")
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    paths.prepare()
+    knowledge_settings = KnowledgeSettings.from_env(os.environ)
+    knowledge_runtime = None
+    if knowledge_settings.enabled:
+        knowledge_runtime = build_installed_knowledge_runtime(
+            settings=knowledge_settings,
+            service_database=paths.database,
+            codex=CodexCli(executable=executable, model=model),
+            model_id=model,
+        )
     service = build_installed_marketing_agent_service(
         paths=paths,
         codex_executable=executable,
@@ -227,6 +256,7 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             notion_token=os.environ.get("TRACE_MARKETING_NOTION_TOKEN"),
             notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
         ),
+        knowledge=None if knowledge_runtime is None else knowledge_runtime.adapter,
     )
     browser_login = browser_from_env(os.environ, oauth)
     slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
@@ -264,6 +294,15 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             daemon=True,
         )
     )
+    knowledge_thread = (
+        None
+        if knowledge_runtime is None
+        else Thread(
+            target=knowledge_runtime.runtime.run_continuous,
+            name="trace-marketing-knowledge",
+            daemon=True,
+        )
+    )
 
     def start_background() -> None:
         jobs_thread.start()
@@ -271,6 +310,18 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             scheduler_thread.start()
         if slack_thread is not None:
             slack_thread.start()
+        if knowledge_thread is not None:
+            knowledge_thread.start()
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def stop_service(_signum: int, _frame: object) -> None:
+        scheduler_stop.set()
+        if knowledge_runtime is not None:
+            knowledge_runtime.runtime.request_stop()
+        raise KeyboardInterrupt
+
+    _ = signal.signal(signal.SIGTERM, stop_service)
 
     typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
     try:
@@ -288,19 +339,32 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
                 allowed_tenant_id=tenant,
                 slack_only=slack_only,
                 maintenance=gate,
+                knowledge_ingress=None
+                if knowledge_runtime is None
+                else knowledge_runtime.adapter.ingress,
+                knowledge_transfers=None
+                if knowledge_runtime is None
+                else knowledge_runtime.adapter,
             ),
             host=host,
             port=port,
             on_started=start_background,
         )
     finally:
+        _ = signal.signal(signal.SIGTERM, previous_sigterm)
         scheduler_stop.set()
+        if knowledge_runtime is not None:
+            knowledge_runtime.runtime.request_stop()
         if jobs_thread.is_alive():
             jobs_thread.join(timeout=5)
         if scheduler_thread is not None and scheduler_thread.is_alive():
             scheduler_thread.join(timeout=5)
         if slack_thread is not None and slack_thread.is_alive():
             slack_thread.join(timeout=5)
+        if knowledge_thread is not None and knowledge_thread.is_alive():
+            knowledge_thread.join(timeout=15)
+        if knowledge_runtime is not None:
+            knowledge_runtime.runtime.close()
 
 
 @agent_app.command("research")
