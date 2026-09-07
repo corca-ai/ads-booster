@@ -61,18 +61,23 @@ class AgentSkillScheduler:
                 continue
             skill_slug = schedule.skill_id.replace(".", "-").replace("_", "-")
             run_id = f"scheduled-{skill_slug}-{local.date().isoformat()}"
-            skill = MarketingSkillCatalog(self.service.registry).require_ready(
-                schedule.skill_id, now=now.astimezone(UTC)
-            )
-            run = self.service.create(
-                CreateAgentRunRequest(
-                    run_id=run_id,
-                    tenant_id=schedule.tenant_id,
-                    goal=skill.goal(schedule.context),
-                    budget=schedule.budget,
-                ),
-                now=now.astimezone(UTC),
-            )
+            # Date identity survives skill upgrades: never rewrite a started Run's frozen goal.
+            run = self.service.repository.get(schedule.tenant_id, run_id)
+            if run is None:
+                skill = MarketingSkillCatalog(self.service.registry).require_ready(
+                    schedule.skill_id, now=now.astimezone(UTC)
+                )
+                run = self.service.create(
+                    CreateAgentRunRequest(
+                        run_id=run_id,
+                        tenant_id=schedule.tenant_id,
+                        goal=skill.goal(schedule.context),
+                        budget=schedule.budget,
+                    ),
+                    now=now.astimezone(UTC),
+                )
+            else:
+                run = self.service.drive(schedule.tenant_id, run_id, now=now.astimezone(UTC))
             run = self._approve_scheduled_deliveries(schedule, run_id, run, now=now)
             started.append(run.run_id)
         return tuple(started)
@@ -86,6 +91,9 @@ class AgentSkillScheduler:
         now: datetime,
     ) -> AgentRun:
         current = run
+        frozen_capabilities = run.goal.context.get("required_capabilities", [])
+        if not isinstance(frozen_capabilities, list):
+            return current
         for _ in range(3):
             if current.state is not AgentRunState.AWAITING_APPROVAL:
                 return current
@@ -101,6 +109,7 @@ class AgentSkillScheduler:
                     in MarketingSkillCatalog(self.service.registry)
                     .get(schedule.skill_id)
                     .required_capabilities
+                    and item.capability_id in frozen_capabilities
                     and item.capability_id == self._capability_for(invocation, schedule.tenant_id)
                 ),
                 None,

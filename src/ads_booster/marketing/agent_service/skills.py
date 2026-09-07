@@ -39,8 +39,24 @@ class MarketingSkill:
 SKILLS = (
     MarketingSkill(
         skill_id="research.daily_slack",
+        version="2",
+        purpose="오늘의 근거 기반 Trace 마케팅 기회를 조사해 Slack으로 전달한다.",
+        required_capabilities=("research.web", "deliver.slack"),
+        success_criteria=(
+            "출처와 반증 질문을 포함한 오늘의 마케팅 브리프가 완성된다.",
+            "Slack 전달 receipt가 확인된다. Notion은 별도 명시 요청이 있을 때만 정리한다.",
+        ),
+        procedure=(
+            "1. input의 immutable research_request를 research.web에 그대로 전달한다.\n"
+            "2. 확인한 조사 receipt로 출처·불확실성·반증 질문을 포함한 브리프를 작성한다.\n"
+            "3. deliver.slack으로 전달하고 receipt 확인 뒤 완료한다.\n"
+            "4. Notion 기록은 이 스킬의 필수 단계나 승인 범위가 아니다."
+        ),
+    ),
+    MarketingSkill(
+        skill_id="research.daily_slack_and_notion",
         version="1",
-        purpose="오늘의 근거 기반 Trace 마케팅 기회를 조사해 팀에 전달하고 일별 기록을 남긴다.",
+        purpose="명시적으로 요청한 Slack 전달과 Notion 일별 기록을 함께 준비한다.",
         required_capabilities=("research.web", "deliver.slack", "store.notion.daily"),
         success_criteria=(
             "출처와 반증 질문을 포함한 오늘의 마케팅 브리프가 완성된다.",
