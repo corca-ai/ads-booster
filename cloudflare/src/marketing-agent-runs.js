@@ -13,7 +13,10 @@ export { canonicalJson, canonicalSha256 } from "./marketing-run-capabilities.js"
 export const HOSTED_AGENT_RUN_PIPELINE = "hosted_marketing_agent_run_v5";
 const MAX_TASK_BYTES = 64 * 1024;
 
-export async function enqueueMarketingAgentRun(env, account, launchRequest) {
+export async function enqueueMarketingAgentRun(
+  env, account, launchRequest, trustedKnowledge = null,
+) {
+  const knowledge = await normalizeTrustedKnowledge(trustedKnowledge, account.account_id);
   const runId = launchRequest.agent_run_id;
   const requestSha256 = await canonicalSha256(launchRequest);
   let capability;
@@ -27,7 +30,11 @@ export async function enqueueMarketingAgentRun(env, account, launchRequest) {
   const idempotencyKey = `marketing-agent-run:${account.account_id}:${runId}`;
   const existing = await findRunByIdentity(env.DB, account.account_id, runId, idempotencyKey);
   if (existing) {
-    if (existing.request_sha256 !== requestSha256) {
+    if (
+      existing.request_sha256 !== requestSha256
+      || (existing.knowledge_context_sha256 ?? null)
+        !== (knowledge?.knowledge_context_sha256 ?? null)
+    ) {
       throw new MarketingAgentRunError(409, "run ID가 다른 요청에 이미 사용됐습니다.");
     }
     return marketingAgentRunStatus(env.DB, account.account_id, runId);
@@ -99,9 +106,10 @@ export async function enqueueMarketingAgentRun(env, account, launchRequest) {
           (run_id, account_id, schema_version, request_json, request_sha256,
            idempotency_key, task_id, state, created_at, updated_at,
            capability_snapshot_json, capability_snapshot_sha256, active_task_id,
-           loop_state, loop_revision, cumulative_cost_units, completed_steps)
+           loop_state, loop_revision, cumulative_cost_units, completed_steps,
+           trusted_knowledge_json, knowledge_context_sha256)
          VALUES (?, ?, 'trace.feature-launch-run-request.v1', ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?,
-                 'running', 1, 0, 0)`,
+                 'running', 1, 0, 0, ?, ?)`,
       ).bind(
         runId,
         account.account_id,
@@ -114,13 +122,16 @@ export async function enqueueMarketingAgentRun(env, account, launchRequest) {
         canonicalJson(capability.snapshot),
         capability.sha256,
         taskId,
+        knowledge === null ? null : canonicalJson(knowledge),
+        knowledge?.knowledge_context_sha256 ?? null,
       ),
       env.DB.prepare(
         `INSERT INTO hosted_marketing_agent_run_tasks
           (task_id, run_id, account_id, sequence, phase, parent_step_sha256,
            root_request_sha256, request_json, request_sha256, capability_snapshot_json,
-           capability_snapshot_sha256, resumable_scopes_json, created_at)
-         VALUES (?, ?, ?, 1, 'initial', NULL, ?, ?, ?, ?, ?, ?, ?)`,
+           capability_snapshot_sha256, resumable_scopes_json, created_at,
+           trusted_knowledge_json, knowledge_context_sha256)
+         VALUES (?, ?, ?, 1, 'initial', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         taskId,
         runId,
@@ -132,12 +143,18 @@ export async function enqueueMarketingAgentRun(env, account, launchRequest) {
         capability.sha256,
         canonicalJson(resumableScopes),
         now,
+        knowledge === null ? null : canonicalJson(knowledge),
+        knowledge?.knowledge_context_sha256 ?? null,
       ),
     ]);
   } catch (error) {
     const winner = await findRunByIdentity(env.DB, account.account_id, runId, idempotencyKey);
     if (!winner) throw error;
-    if (winner.request_sha256 !== requestSha256) {
+    if (
+      winner.request_sha256 !== requestSha256
+      || (winner.knowledge_context_sha256 ?? null)
+        !== (knowledge?.knowledge_context_sha256 ?? null)
+    ) {
       throw new MarketingAgentRunError(409, "run ID가 다른 요청에 이미 사용됐습니다.");
     }
   }
@@ -254,11 +271,13 @@ export async function resumeMarketingAgentRun(env, account, runId, input, resolv
           (task_id, run_id, account_id, sequence, phase, parent_step_sha256,
            root_request_sha256, request_json, request_sha256, capability_snapshot_json,
            capability_snapshot_sha256, resumable_scopes_json, resume_id,
-           resume_request_json, resume_request_sha256, created_at)
-         VALUES (?, ?, ?, 2, 'resume', ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+           resume_request_json, resume_request_sha256, created_at,
+           trusted_knowledge_json, knowledge_context_sha256)
+         VALUES (?, ?, ?, 2, 'resume', ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)`,
       ).bind(taskId, runId, account.account_id, expectedHead, run.request_sha256,
         canonicalJson(launchRequest), requestSha256, canonicalJson(capability.snapshot),
-        capability.sha256, resumeId, canonicalJson(resumeRequest), resumeRequestSha256, now),
+        capability.sha256, resumeId, canonicalJson(resumeRequest), resumeRequestSha256, now,
+        run.trusted_knowledge_json, run.knowledge_context_sha256),
       env.DB.prepare(
         `UPDATE hosted_marketing_agent_runs
          SET state = 'queued', research_result_json = NULL, research_result_sha256 = NULL,
@@ -304,7 +323,8 @@ export async function marketingAgentRunStatus(database, accountId, runId) {
             run.research_result_sha256, run.campaign_id, run.failure_code,
             run.capability_snapshot_sha256, run.next_intent_json, run.next_intent_sha256,
             run.head_step_sha256, run.active_task_id, run.loop_state, run.loop_revision,
-            run.cumulative_cost_units, run.completed_steps,
+            run.cumulative_cost_units, run.completed_steps, run.trusted_knowledge_json,
+            run.knowledge_context_sha256,
             (SELECT delegation.state FROM hosted_marketing_agent_run_delegations AS delegation
              WHERE delegation.run_id = run.run_id) AS delegation_state,
             ((SELECT COUNT(*) FROM hosted_marketing_agent_run_receipts AS receipt
@@ -335,7 +355,8 @@ export async function listMarketingAgentRuns(database, accountId) {
             run.research_result_sha256, run.campaign_id, run.failure_code,
             run.capability_snapshot_sha256, run.next_intent_json, run.next_intent_sha256,
             run.head_step_sha256, run.active_task_id, run.loop_state, run.loop_revision,
-            run.cumulative_cost_units, run.completed_steps,
+            run.cumulative_cost_units, run.completed_steps, run.trusted_knowledge_json,
+            run.knowledge_context_sha256,
             (SELECT delegation.state FROM hosted_marketing_agent_run_delegations AS delegation
              WHERE delegation.run_id = run.run_id) AS delegation_state,
             ((SELECT COUNT(*) FROM hosted_marketing_agent_run_receipts AS receipt
@@ -363,7 +384,7 @@ function publicRunStatus(row) {
   const state = row.delegation_state === "pending"
     ? "delegation_pending"
     : (row.state === "queued" && row.execution_started_at ? "running" : row.state);
-  return {
+  const result = {
     schema_version: "trace.marketing-agent-run-status.v1",
     run_id: row.run_id,
     account_id: row.account_id,
@@ -403,6 +424,15 @@ function publicRunStatus(row) {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+  if (row.trusted_knowledge_json) {
+    const knowledge = JSON.parse(row.trusted_knowledge_json);
+    result.knowledge_context_transfer_id = knowledge.knowledge_context.transfer_id;
+    result.knowledge_context_replicas = [
+      { system_id: "cloudflare", replica_id: `cloudflare-task:${row.account_id}:${knowledge.binding.task_ref}` },
+      { system_id: "mac", replica_id: `mac-inbox:${row.account_id}:${knowledge.binding.task_ref}` },
+    ];
+  }
+  return result;
 }
 
 export async function storedMarketingAgentRun(database, taskId) {
@@ -413,18 +443,76 @@ export async function storedMarketingAgentRun(database, taskId) {
             mapping.capability_snapshot_sha256, mapping.sequence AS step_sequence,
             mapping.phase, mapping.parent_step_sha256, mapping.root_request_sha256,
             mapping.resumable_scopes_json, run.head_step_sha256, run.active_task_id,
-            run.loop_state, run.loop_revision, run.cumulative_cost_units, run.completed_steps
+            run.loop_state, run.loop_revision, run.cumulative_cost_units, run.completed_steps,
+            mapping.trusted_knowledge_json, mapping.knowledge_context_sha256
      FROM hosted_marketing_agent_runs AS run
      JOIN hosted_marketing_agent_run_tasks AS mapping ON mapping.run_id = run.run_id
      WHERE mapping.task_id = ?`,
   ).bind(taskId).first();
 }
 
+async function normalizeTrustedKnowledge(value, accountId) {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new MarketingAgentRunError(400, "trusted knowledge binding is invalid");
+  }
+  const keys = Object.keys(value).sort();
+  if (canonicalJson(keys) !== canonicalJson([
+    "binding", "knowledge_context", "knowledge_context_sha256",
+  ].sort())) throw new MarketingAgentRunError(400, "trusted knowledge shape is invalid");
+  const binding = value.binding;
+  const context = value.knowledge_context;
+  if (
+    !binding || !context || typeof value.knowledge_context_sha256 !== "string"
+    || binding.account_id !== accountId || context.account_id !== accountId
+    || context.workspace_id !== binding.workspace_id
+    || context.scoped_actor_ref !== binding.scoped_actor_ref
+    || context.brand_ref !== binding.brand_ref
+    || context.action_kind !== binding.action_kind
+    || context.run_ref !== binding.run_ref || context.task_ref !== binding.task_ref
+    || context.invocation_ref !== binding.invocation_ref
+  ) throw new MarketingAgentRunError(409, "trusted knowledge binding does not match account");
+  rejectNonPortableKnowledgeNumbers(context);
+  if (await canonicalSha256(context) !== value.knowledge_context_sha256) {
+    throw new MarketingAgentRunError(409, "trusted knowledge digest does not match context");
+  }
+  return value;
+}
+
+function rejectNonPortableKnowledgeNumbers(value) {
+  if (typeof value === "number" && (!Number.isInteger(value) || !Number.isSafeInteger(value))) {
+    throw new MarketingAgentRunError(409, "trusted knowledge contains a non-portable number");
+  }
+  if (Array.isArray(value)) value.forEach(rejectNonPortableKnowledgeNumbers);
+  else if (value && typeof value === "object") {
+    Object.values(value).forEach(rejectNonPortableKnowledgeNumbers);
+  }
+}
+
 async function findRunByIdentity(database, accountId, runId, idempotencyKey) {
   return database.prepare(
-    `SELECT run_id, request_sha256 FROM hosted_marketing_agent_runs
+    `SELECT run_id, request_sha256, knowledge_context_sha256
+     FROM hosted_marketing_agent_runs
      WHERE account_id = ? AND (run_id = ? OR idempotency_key = ?)`,
   ).bind(accountId, runId, idempotencyKey).first();
+}
+
+export async function trustedKnowledgeForMarketingRun(database, accountId, runId) {
+  const row = await database.prepare(
+    `SELECT trusted_knowledge_json, knowledge_context_sha256
+     FROM hosted_marketing_agent_runs WHERE account_id = ? AND run_id = ?`,
+  ).bind(accountId, runId).first();
+  if (!row?.trusted_knowledge_json) return null;
+  let knowledge;
+  try {
+    knowledge = JSON.parse(row.trusted_knowledge_json);
+  } catch {
+    throw new MarketingAgentRunError(409, "stored trusted knowledge is invalid");
+  }
+  if (knowledge.knowledge_context_sha256 !== row.knowledge_context_sha256) {
+    throw new MarketingAgentRunError(409, "stored trusted knowledge digest changed");
+  }
+  return normalizeTrustedKnowledge(knowledge, accountId);
 }
 
 function requiredModelId(value) {
