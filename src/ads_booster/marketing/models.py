@@ -7,6 +7,7 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
+from ads_booster.contracts.knowledge_context_validation import TrustedKnowledgeContextBinding
 from ads_booster.transport.json_types import JsonObject
 
 
@@ -68,6 +69,8 @@ class MarketingTask(MarketingModel):
     payload: JsonObject
     created_at: datetime
     credential_ref: Annotated[str | None, Field(max_length=256)] = None
+    knowledge_context_policy: Literal["disabled", "required"] = "disabled"
+    knowledge_context_binding: TrustedKnowledgeContextBinding | None = None
 
     @model_validator(mode="after")
     def require_utc_created_at(self) -> MarketingTask:
@@ -75,6 +78,13 @@ class MarketingTask(MarketingModel):
             self.created_at
         ):
             raise PydanticCustomError("non_utc_created_at", "task created_at must be UTC")
+        if (self.knowledge_context_policy == "required") != (
+            self.knowledge_context_binding is not None
+        ):
+            raise PydanticCustomError(
+                "knowledge_context_policy_binding_mismatch",
+                "required tasks carry a trusted knowledge context binding",
+            )
         return self
 
 
