@@ -20,6 +20,7 @@ from ads_booster.contracts.agent_run import (
     ToolInvocation,
     contract_sha256,
 )
+from ads_booster.contracts.knowledge_context import ContextTransferValidationRequest
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
@@ -27,9 +28,19 @@ from ads_booster.marketing.agent_service.application import (
 )
 from ads_booster.marketing.agent_service.browser_login import BrowserLogin
 from ads_booster.marketing.agent_service.jobs import AgentJobs, WebJob
+from ads_booster.marketing.agent_service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    PendingKnowledgeIngress,
+)
+from ads_booster.marketing.agent_service.knowledge_ingress_api import (
+    ApiIngressRequest,
+    build_api_ingress,
+)
+from ads_booster.marketing.agent_service.knowledge_transfer import KnowledgeTransferProvider
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
 from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
+from ads_booster.marketing.agent_service.sqlite_repository import RepositoryAdmission
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
 from ads_booster.marketing.channels.slack_commands import SlackCommands
 from ads_booster.marketing.channels.slack_conversations import SlackInboxFullError
@@ -38,6 +49,7 @@ from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Callable
 
 _MAX_BODY_BYTES = 1024 * 1024
@@ -45,12 +57,15 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class ApiCreateRunRequest(ContractModel):
+    request_id: str | None = None
     run_id: str
     goal: AgentGoal
     budget: AgentBudget
 
 
 class ApiInputRequest(ContractModel):
+    request_id: str | None = None
+    corrects_revision_ref: str | None = None
     evidence: JsonObject
 
 
@@ -90,6 +105,29 @@ class MarketingAgentApi:
     allowed_tenant_id: str | None = None
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
+    knowledge_ingress: CanonicalKnowledgeIngress | None = None
+    knowledge_transfers: KnowledgeTransferProvider | None = None
+
+    def __post_init__(self) -> None:
+        """Install canonical ingress beside the existing Run ledger."""
+        if self.knowledge_ingress is None:
+            object.__setattr__(
+                self,
+                "knowledge_ingress",
+                CanonicalKnowledgeIngress(self.service.repository.database_path),
+            )
+
+    def _knowledge_admission(
+        self, ingress: PendingKnowledgeIngress | None
+    ) -> RepositoryAdmission | None:
+        owner = self.knowledge_ingress
+        if owner is None or ingress is None:
+            return None
+
+        def admit(connection: sqlite3.Connection) -> None:
+            _ = owner.admit(connection, ingress.binding, ingress.event, ingress.envelope)
+
+        return admit
 
     def dispatch(  # noqa: PLR0913 - preserve the HTTP boundary call contract.
         self,
@@ -199,10 +237,29 @@ class MarketingAgentApi:
             )
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            transfer_id = _context_transfer_validation_target(path)
+            if method == "POST" and transfer_id is not None:
+                if self.knowledge_transfers is None:
+                    return ApiResponse(503, {"error": "knowledge_transfer_owner_unavailable"})
+                request = ContextTransferValidationRequest.model_validate(_body_json(body))
+                if request.transfer_id != transfer_id:
+                    return ApiResponse(409, {"error": "knowledge_transfer_route_mismatch"})
+                result = self.knowledge_transfers.validate_transfer(
+                    request,
+                    authenticated_tenant_id=identity.tenant_id,
+                    authenticated_principal_id=identity.principal_id,
+                )
+                return ApiResponse(200, result.model_dump(mode="json", by_alias=True))
             if self.jobs is not None and method == "POST" and path == "/v1/jobs":
                 job = WebJob.model_validate(_body_json(body))
                 return ApiResponse(
-                    202, self.jobs.enqueue(identity.tenant_id, identity.principal_id, job)
+                    202,
+                    self.jobs.enqueue(
+                        identity.tenant_id,
+                        identity.principal_id,
+                        job,
+                        now=occurred_at,
+                    ),
                 )
             if self.jobs is not None and method == "GET" and path.startswith("/v1/jobs/"):
                 return ApiResponse(
@@ -250,6 +307,22 @@ class MarketingAgentApi:
                 )
             if method == "POST" and path == "/v1/runs":
                 request = ApiCreateRunRequest.model_validate(_body_json(body))
+                request_id = request.request_id or "api-request-" + contract_sha256(request)[:40]
+                ingress = (
+                    None
+                    if self.knowledge_ingress is None
+                    else build_api_ingress(
+                        ApiIngressRequest(
+                            request_id=request_id,
+                            run_id=request.run_id,
+                            action="create",
+                            text=request.goal.objective,
+                            identity=identity,
+                            revision=1,
+                            occurred_at=occurred_at,
+                        )
+                    )
+                )
                 run = self.service.create(
                     CreateAgentRunRequest(
                         run_id=request.run_id,
@@ -258,6 +331,7 @@ class MarketingAgentApi:
                         budget=request.budget,
                     ),
                     now=occurred_at,
+                    admission=self._knowledge_admission(ingress),
                 )
                 return ApiResponse(
                     HTTPStatus.ACCEPTED,
@@ -281,8 +355,45 @@ class MarketingAgentApi:
                 return ApiResponse(HTTPStatus.OK, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/input":
                 request = ApiInputRequest.model_validate(_body_json(body))
+                request_id = (
+                    request.request_id
+                    or "api-request-"
+                    + contract_sha256(
+                        {
+                            "tenant": identity.tenant_id,
+                            "run": run_id,
+                            "revision": run.revision,
+                            "evidence": request.evidence,
+                        }
+                    )[:40]
+                )
+                ingress = (
+                    None
+                    if self.knowledge_ingress is None
+                    else build_api_ingress(
+                        ApiIngressRequest(
+                            request_id=request_id,
+                            run_id=run_id,
+                            action="input",
+                            text=json.dumps(
+                                request.evidence,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            identity=identity,
+                            revision=1,
+                            occurred_at=occurred_at,
+                            corrects_revision_ref=request.corrects_revision_ref,
+                        )
+                    )
+                )
                 _ = self.service.submit_input(
-                    identity.tenant_id, run_id, request.evidence, now=occurred_at
+                    identity.tenant_id,
+                    run_id,
+                    request.evidence,
+                    now=occurred_at,
+                    admission=self._knowledge_admission(ingress),
                 )
                 return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/approval":
@@ -444,6 +555,17 @@ def _skill_run_target(path: str) -> str | None:
     if not skill_id or "/" in skill_id:
         return None
     return skill_id
+
+
+def _context_transfer_validation_target(path: str) -> str | None:
+    prefix = "/v1/knowledge/context-transfers/"
+    suffix = "/validate"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return None
+    transfer_id = path[len(prefix) : -len(suffix)]
+    if not transfer_id or "/" in transfer_id:
+        return None
+    return transfer_id
 
 
 def _content_length(value: str | None) -> int:
