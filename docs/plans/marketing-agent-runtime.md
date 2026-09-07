@@ -19,8 +19,14 @@ its receipt/reconciliation ownership. A pause cannot assert that it undid an eff
 input invalidates the old pending proposal and requires a new exact grant where policy
 requires it. Production requests do not authorize publication.
 
-Unimplemented paths remain Draft until scenario evidence exists: operational image editing
-and native capture, publication scheduling/readback, live metrics/community and Paid actions.
+The canonical service now has an opt-in local Mac capture adapter using the existing approved
+worker and native export verification. Installed fake-worker checks prove source/result
+binding and no-repeat recovery; the current host lacks Appium, so native device quality and
+end-to-end capture remain unverified. Slack source-asset intake and Linux-to-Mac transport
+still need implementation. Default server onboarding does not enable this adapter.
+
+Unimplemented paths remain Draft until scenario evidence exists: operational image editing,
+remote native capture, publication scheduling/readback, live metrics/community and Paid actions.
 No new publisher or automatic self-modification is enabled by this plan.
 
 ## Problem

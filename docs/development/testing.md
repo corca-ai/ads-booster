@@ -190,3 +190,9 @@ scope, source-derived learning invalidation before approval and receipt selectio
 time versus measured duration. Supplied-background contracts use
 `tests/capture/test_supplied_background_provenance.py` plus affected native capture validation
 tests; exact legacy digests and byte tamper checks do not establish live capture success.
+
+Canonical capture changes select `test_creative_capture.py`, `test_capture_readiness.py`,
+`test_capture_setup.py`, affected lifecycle/integration tests and CLI compatibility. Fake
+workers prove nonce/digest/byte checks, source/cached-result invalidation and no replay after
+failure. Fake readiness proves that no boot/start command is used. Real native output and
+phone-size visual QA still require an available Mac/Trace Debug/Appium environment.

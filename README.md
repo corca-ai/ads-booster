@@ -80,6 +80,24 @@ handoff is available. With access, up to four bound PNG/JPEG files are visually 
 through official Codex; no image generation/editing or native app proof is claimed. DM
 image execution is not enabled.
 
+Local Mac capture can be enabled separately with `TRACE_MARKETING_CAPTURE_CONFIG` pointing
+to a JSON file containing `device` (`kind: "simulator"`, real `udid`, `platform_version`,
+`device_name`), optional loopback `appium_server` and `timeout_seconds` (30–3600).
+Start the existing `trace-marketing service run` with that environment variable. This is
+local Mac composition, not a remote Mac connection from the Linux server. Defaults and
+server onboarding are unchanged. Readiness checks only inspect the already-booted configured
+Simulator, installed Trace app and Appium status; they never boot a device or start Appium.
+Native export/Debug support is verified only by the approved capture result.
+
+When ready, `capture.appium` accepts a registered background's ID/revision/digest, country
+(`KR`, `JP`, `US`), reference date, synthetic schedule and preserve/change instructions.
+It requires exact runtime approval before device preparation. The result remains subject
+to human visual review. Its 20 cost units are conservative fixed accounting, not measured
+time or currency. An uncertain capture requires reconciliation and is not automatically
+repeated. Slack file references alone are not yet registered backgrounds: use the asset
+upload API with source/use terms first. Automatic Slack-file-to-background registration and
+remote Mac transport remain unimplemented.
+
 Web/API users can `POST /v1/runs/:id/continuation` with `event_id`, `action` (`revise`/`pause`)
 and `note`; `POST /v1/runs/:id/assets` accepts a base64 PNG/JPEG (512 KiB maximum), asset ID,
 kind, source/use terms/data permission, preserve/change and locale/parent metadata. Uploads

@@ -845,5 +845,14 @@ cost units are shown separately and are not currency or human time.
 
 Native export contracts also accept an explicitly supplied background provenance variant.
 Existing search provenance serialization is unchanged. This permits truthful source/use-term
-metadata for future Figma/capture handoff; canonical capture adapter registration and remote
-Mac transport remain unimplemented. Device-booting readiness functions are not read-only probes.
+metadata for Figma/capture handoff. Remote Mac transport remains separate work.
+Device-booting readiness functions are not read-only probes.
+
+Opt-in local Mac composition now exposes `capture.appium` through the canonical registry and
+existing approval/runtime admission. Its read-only preflight checks already available local
+dependencies; worker `ensure_ready` runs only after admission. The adapter binds the current
+Run and source revision/digest, persists a started claim before worker preparation, and verifies
+native export provenance plus actual result bytes before registering a derived asset. Replay
+revalidates source and cached result; uncertain worker outcomes require reconciliation.
+DM capture remains disabled. This is local Mac execution; Linux-to-Mac transport and automatic
+registration of Slack file references as permission-attributed backgrounds remain unimplemented.

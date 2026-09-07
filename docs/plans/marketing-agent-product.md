@@ -73,6 +73,13 @@ observation/counterexample/applicability brief creates a learning hypothesis for
 corrected sources leave active retrieval. This is a baseline collection path, not measured
 time savings, first-approval rate, live channel metrics or automatic cross-campaign learning.
 
+An explicitly configured local Mac can now route a small approved capture request through
+the existing Appium worker without campaign setup. It requires a registered background with
+source/use terms, binds its revision and digest, and records a native derivative only after
+export verification. Unavailable capture still supports human handoff. Installed fake-worker
+evidence does not establish actual phone quality; Slack attachment-to-asset intake and remote
+Mac transport are remaining integration work.
+
 ## Earlier baseline (historical; September 7 decision takes precedence)
 
 Implemented provider-neutral foundations:

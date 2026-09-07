@@ -582,3 +582,9 @@ mutations without rewriting legacy invocation digests.
 so memory selection/review can reuse its connection and preserve transactional currentness.
 `contracts/native_export.py` owns both searched and supplied background provenance; existing
 worker request digest/path validation handles either variant without fabricated search fields.
+
+`creative_capture.py` implements the canonical capture executor using `CodexAppiumJobAdapter`;
+`capture_readiness.py` owns read-only preflight, while `capture_setup.py` composes the optional
+Mac config/catalog/adapter. `lifecycle.py` accepts the optional config path from the installed
+CLI. Source assets remain in the creative repository and actual execution admission remains
+in the existing canonical runtime. The adapter's local ledger prevents uncertain worker replay.

@@ -180,8 +180,36 @@ selection receipt; scoped replay and supplied-background schema passed. This whe
 the final Slack routing fix, so it proves unchanged observation owners, not that routing.
 The routing regression (ordinary “작업 방향을 ...” misclassified) failed first and was fixed
 with a shared exact command predicate; 25 affected Slack tests and scoped checks then passed.
-Next independent work is actual canonical capture adapter/worker integration, followed by
-broader work-result/learning surface. Existing external verification limits remain unchanged.
+That prerequisite was followed by the local canonical capture integration below.
+
+Latest continuation: local capture is now implemented behind the explicit
+`TRACE_MARKETING_CAPTURE_CONFIG` opt-in. `creative_capture.py` owns the canonical Run/source
+binding, started-before-worker claim, actual existing Mac worker contract and native result
+registration. `capture_readiness.py` only observes already available dependencies; the initial
+OpenStep/listapps parser regression failed before replacement with get_app_container.
+`capture_setup.py` composes the adapter at the installed service boundary. Default server
+composition never probes or registers capture. Fixed 20 cost units are conservative device
+session accounting, not measured currency or elapsed time. Private capture remains disabled.
+
+Ownership: baseline authored capture executor/tests; requirements authored read-only probe/tests;
+main owns composition/docs/integration; patterns independently reviewed and verified the fresh
+wheel. No simultaneous file edits. Main read all final changes and installed evidence.
+Focused capture/readiness/composition: 31 passed; affected integration/readiness/CLI: 11 passed.
+Eight changed Python files pass Ruff, format and BasedPyright (0 errors/warnings).
+
+Fresh installed proof: `/private/tmp/trace-capture-canonical-proof/evidence.json` and `proof.py`.
+Wheel SHA256 `b67834c0c89b50d9e8ddbb16ac995473ef1ee8e3ff7932430099b5be96eed00d`.
+Default registration absent; opt-in adapter present but actual host readiness false
+(`capture_commands_unavailable`). Device commands: zero. Installed canonical Run/assets/adapter
+with a copied fake worker registers a synthetic native derivative requiring human review and
+retains product_support_verified=false; replay calls worker once. This is not approval UI,
+actual native image quality, live Slack/provider, public installer or remote server proof.
+
+Next independent implementation: connect signed Slack file evidence to permission-attributed
+background assets without inferring ownership from upload; preserve the same work and human
+handoff. Linux-to-Mac transport, operational image editing/localization and campaign outcome
+integration remain code gaps. Do not label them only missing credentials. Existing external
+verification limits remain unchanged. Goal stays active; no full-goal completion claim.
 
 External acceptance requires the separately operated server to finish its existing setup,
 authenticated Slack membership/test channel and optional files:read image grant, an available
@@ -190,6 +218,7 @@ input/output support. Ceal comparison requires a replacement permitted session. 
 send secrets in chat or activate publishing/Paid; those need a separate user decision.
 
 Resume with git status in both checkouts, get_goal, this record and the existing product/runtime
-plans. Focused command is in testing.md; latest candidate code has 233 passing tests and
-56 changed Python files passing Ruff/format/BasedPyright. Keep the Goal active; Draft PR
+plans. Focused commands are in testing.md; the initial composition had 233 passing tests and
+56 changed Python files passing Ruff/format/BasedPyright; later owner checks are recorded above.
+Keep the Goal active; Draft PR
 delivery is not full-goal completion.
