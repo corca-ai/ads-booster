@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.memory-correction-request.v1",
+  "request_id": "memory-correct.fixture.task-only.1",
+  "task_ref": "task.logical.t1",
+  "brand_ref": "brand.a",
+  "instruction": "이번 글에서만 제목을 질문형으로 쓰고 본문은 평소 브랜드 A 원칙을 유지해 주세요.",
+  "scope": "task_only",
+  "expires_on_task_close": true,
+  "must_not_write_targets": ["team", "soul", "core", "daily", "wiki"]
+}
