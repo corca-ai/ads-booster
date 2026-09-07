@@ -100,6 +100,8 @@ The installed reasoning tool `delivery.prepare` can persist a draft on the curre
 `POST /v1/runs/:id/delivery` also prepares a typed production/publication/Paid/format/code/change
 review packet; `GET /v1/runs/:id/delivery/:proposal-id` reads it. In the same Slack work,
 `실행안 검토 <ID> [페이지]` shows its full versioned scope in bounded pages;
+the first page leads with a brief of the reason, requested change and relevant costs/conditions.
+That brief is navigation only; the complete target below remains the approval reference.
 review every page before using the exact approval command shown on the last page.
 Membership-authorized reviewers can approve its
 version/hash, prepare a reservation or cancel the preparation. **These are preparation

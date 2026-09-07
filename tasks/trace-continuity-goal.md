@@ -142,8 +142,23 @@ No framework/vector DB/Ceal dependency, production publisher or server config wa
 
 Local follow-on work remains: integrate operational image editing/capture/localization with
 an actually available worker; connect full campaign outcome collection and reviewed learning
-generation to existing owners; improve human-readable prepared-target review beyond raw
-paged JSON. These are implementation gaps, not merely missing credentials.
+generation to existing owners. These are implementation gaps, not merely missing credentials.
+
+Continuation after PR creation: previous turn classified as progress (implementation, fresh
+proof and PR). CI for b523efb passed both on-prem and Mac checks; publish job was skipped.
+Prepared Slack review now leads with a bounded Korean decision brief while preserving every
+byte of the full review packet and its exact approval command. The readability regression
+failed first, then all four direct review tests and scoped lint/type checks passed. This
+presentation-only addition does not extend the earlier installed-wheel proof.
+
+Next local implementation priorities from independent live-source audit:
+1. Bind an approved capture handoff to Run/asset revision/digest; reuse existing Appium job,
+   control and provenance contracts, register verified results and resume the same Run.
+   Do not use DefaultCaptureReadiness.ensure or HostedWorkspaceCaptureExecutor.prepare as
+   read-only readiness probes: they can boot Simulator or prepare backgrounds before approval.
+2. Collect human-reported task/review/localization time separately from receipt-derived costs,
+   then prepare scoped learning observations for review. Existing hosted campaign learning
+   requires independent campaign evidence; do not promote one image's preference through it.
 
 External acceptance requires the separately operated server to finish its existing setup,
 authenticated Slack membership/test channel and optional files:read image grant, an available
