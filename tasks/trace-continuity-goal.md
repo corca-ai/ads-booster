@@ -1,6 +1,6 @@
 # Trace work continuity Goal
 
-Status: Active — candidate implemented; 233 focused tests passed; Draft PR in progress. 2026-09-07.
+Status: Active — local continuity slice delivered in [Draft PR #134](https://github.com/corca-ai/ads-booster/pull/134); 233 focused tests passed. 2026-09-07.
 
 ## Identity and boundaries
 
@@ -68,8 +68,8 @@ temporary root. No agent has made commits or touched the server.
 1. Completed final composition checks: 233 tests; scoped lint/format/type checks passed.
 2. Completed latest fresh-wheel acceptance, real loopback CLI lifecycle and installed
    tenant rejection. Original checkout still has only its original untracked directories.
-3. Stage/review minimal responsibility commits for issue #93, push only improvement branch,
-   create Draft PR; no merge, main update, release or server activation.
+3. Responsibility commits are pushed only to feature/trace-work-continuity; Draft PR #134
+   targets main. No merge, main update, release or server activation occurred.
 4. Keep full Goal active while external acceptance/remaining implemented-vs-Draft gaps exist.
 
 ## External verification still unavailable
