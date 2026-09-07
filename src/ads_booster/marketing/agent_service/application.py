@@ -54,6 +54,9 @@ from ads_booster.transport.json_types import JsonObject
 _CONTEXT_SELECTION_SCHEMA = "trace.reasoning-context-selection.v1"
 _MAX_CONTEXT_RECORDS = 32
 _MAX_CONTEXT_BYTES = 48 * 1024
+_MAX_STEERING_EVENT_ID = 512
+_MAX_STEERING_ACTOR_ID = 160
+_MAX_STEERING_NOTE = 20_000
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -81,6 +84,7 @@ class MarketingAgentService:
     fault_hook: Callable[[str], None] | None = None
     capability_policy: CapabilityPolicy = field(default_factory=CapabilityPolicy)
     runtime: MarketingAgentRuntime = field(default_factory=MarketingAgentRuntime)
+    boundary_signal: Callable[[str, str], JsonObject | None] | None = None
 
     def __post_init__(self) -> None:
         """Fail closed when a selectable descriptor has no execution adapter."""
@@ -372,6 +376,9 @@ class MarketingAgentService:
         evidence: tuple[JsonObject, ...],
         now: datetime,
     ) -> AgentRun:
+        interrupted = self._pause_for_signal(run, now=now)
+        if interrupted is not None:
+            return interrupted
         # All callers, including restart recovery, project the same canonical history.
         # The caller's last observation is only a trigger, never the whole context.
         evidence, context_selection = self._select_context(run)
@@ -553,6 +560,78 @@ class MarketingAgentService:
             evidence = (*evidence, notice)
         return evidence, selection
 
+    def _pause_for_signal(self, run: AgentRun, *, now: datetime) -> AgentRun | None:
+        """Observe admitted steering without replacing an in-flight runtime decision.
+
+        The callback must authenticate its channel input and read its durable inbox
+        without waiting for execution_lock. This method runs under that lock at a
+        boundary before planning or before a fresh invocation is admitted.
+        """
+        if self.boundary_signal is None:
+            return None
+        signal = self.boundary_signal(run.tenant_id, run.run_id)
+        if signal is None:
+            return None
+        event_id, actor_id, note = (signal.get(key) for key in ("event_id", "actor_id", "note"))
+        if (
+            not isinstance(event_id, str)
+            or not 0 < len(event_id) <= _MAX_STEERING_EVENT_ID
+            or not isinstance(actor_id, str)
+            or not 0 < len(actor_id) <= _MAX_STEERING_ACTOR_ID
+            or not isinstance(note, str)
+            or not note.strip()
+            or len(note) > _MAX_STEERING_NOTE
+        ):
+            raise ValueError("work_boundary_signal_invalid")
+        payload: JsonObject = {
+            "schema_version": "trace.work-interruption.v1",
+            "event_id": event_id,
+            "actor_id": actor_id,
+            "note": note,
+            "verification": "human_reported",
+            "authority": "task_input_only",
+        }
+        record_id = "interruption-" + contract_sha256({"run_id": run.run_id, "event_id": event_id})
+        digest = contract_sha256(payload)
+        existing = next(
+            (
+                item
+                for item in self.repository.records(run.tenant_id, run.run_id)
+                if item.record_id == record_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.payload_sha256 != digest:
+                raise ValueError("work_boundary_signal_idempotency_conflict")
+            return None
+        session = self.runtime_store.load(run.run_id)
+        if session is not None and session.pending_invocation is not None:
+            # Once admitted, the runtime must finish or reconcile its existing call.
+            # A channel signal cannot clear that write-ahead execution ownership.
+            return None
+        return self.repository.append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.OBSERVE,
+                input_sha256=digest,
+                output_sha256=digest,
+                now=now,
+            ),
+            state=AgentRunState.AWAITING_INPUT,
+            expected_revision=run.revision,
+            records=(
+                _record(
+                    run,
+                    record_id=record_id,
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=payload,
+                    now=now,
+                ),
+            ),
+        )
+
     def _execute_tool(  # noqa: PLR0913 - explicit immutable bindings define the admission edge.
         self,
         run: AgentRun,
@@ -619,7 +698,7 @@ class MarketingAgentService:
             persist_invocation=True,
         )
 
-    def _dispatch_tool(  # noqa: PLR0913 - every execution authority binding is explicit.
+    def _dispatch_tool(  # noqa: PLR0913,C901 - keep steering and execution admission guards explicit.
         self,
         run: AgentRun,
         *,
@@ -630,6 +709,9 @@ class MarketingAgentService:
         persist_invocation: bool,
         admitted_already: bool = False,
     ) -> AgentRun:
+        interrupted = self._pause_for_signal(run, now=now)
+        if interrupted is not None:
+            return interrupted
         _ = self.registry.require_current_dispatch(
             descriptor, policy=self.capability_policy, now=now
         )
