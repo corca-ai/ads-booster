@@ -1,9 +1,9 @@
 # On-premises Marketing Agent Service
 
-Status: Transition contract — the portable domain and service are being implemented in PR #99.
+Status: Active transition contract — portable service foundation is implemented; broader live integration remains unverified.
 The current Cloudflare-hosted run remains operational during migration, but is not the target owner.
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## Product invariant
 
@@ -16,7 +16,7 @@ The service must still create, reason about, persist, and resume a run when no A
 installed or ready. A Mac worker may execute only an invocation admitted and persisted by this
 service. Codex CLI is one `ReasoningProvider`; it is not the process owner or durable memory.
 
-## Current, transition, and target states
+## Historical migration baseline and target states
 
 | State | Canonical owner | Cloudflare/D1 | Mac/Appium | User surface |
 | --- | --- | --- | --- | --- |
@@ -161,3 +161,22 @@ readback, or human-review gates. Existing automatic publishing remains off.
 - Distributed active-active run ownership; the first service is a durable single canonical writer.
 - Causal marketing lift from descriptive channel metrics.
 - Completion merely because the old Cloudflare workspace can display hosted tasks.
+
+## September 7 small-work extension
+
+The product may enter at any useful point in the responsibility graph. Existing images,
+questions, Figma output and human captures are valid initial inputs; campaign identity is
+optional. A task records original/derived assets, requested preservation/change, locale,
+human reports and independent verification. Production, final publication, post-publication
+changes, community actions, Paid budget/execute and format promotion/deactivation remain
+different review targets. Explicit preparation approval never enables external execution.
+
+Canonical Run history, runtime invocation receipts and scoped shared knowledge have separate
+owners. Private requests cannot promote or mutate shared context. Memory corrections/expiry
+remove notes from current selection while original audit history remains. Tombstone deletion
+is retrieval deletion, not physical erasure of historical evidence.
+
+Implemented candidate surfaces and evidence are tracked in the existing product/runtime
+plans and testing document. Live editing/capture, external publishing/readback/metrics,
+community actions, Paid execution and model-quality generalization remain unverified or Draft;
+prepared packets and fake adapters must not be described as those integrations completing.

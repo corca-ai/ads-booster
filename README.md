@@ -57,6 +57,65 @@ explicit candidate installation, not proof of the published default URL. CI exer
 installation and systemd activation with fixture Slack identity/upstream CI; real Slack delivery and
 post-merge public-URL installation require deployment acceptance.
 
+## Small tasks, human work and image review
+
+In an authorized Slack thread, follow-ups keep the same work and budget: ask a question,
+provide a correction, or send a human-made result. `어디까지 됐어?` reads status,
+`잠깐 멈춰줘` waits at the next safe boundary, and `계속` resumes an input wait.
+`새 작업 <request>` starts independent work. A stopped external action is never claimed
+undone. Existing `/trace` commands and server onboarding continue to work.
+
+Creative skills can prepare mood/reference/font/color, background review/partial-edit,
+capture/localization/mockup/QA instructions without a campaign. If Appium or editing is
+unavailable, the answer specifies what to do and what to return. A preparation receipt
+is not a produced image. Source/derivative kind, preserved areas, locale and human vs
+system verification remain separate.
+
+Slack image review is **optional and off by default**. In a separately approved app update,
+add `files:read` to the app's bot OAuth scopes and reinstall it, then set
+`TRACE_MARKETING_SLACK_IMAGE_REVIEW=1` in the service environment. Token identity and actual
+scope are probed before readiness. This PR does not change an existing app, token, login,
+server unit or tunnel. Without that setup, attachments remain task references and human
+handoff is available. With access, up to four bound PNG/JPEG files are visually reviewed
+through official Codex; no image generation/editing or native app proof is claimed. DM
+image execution is not enabled.
+
+Web/API users can `POST /v1/runs/:id/continuation` with `event_id`, `action` (`revise`/`pause`)
+and `note`; `POST /v1/runs/:id/assets` accepts a base64 PNG/JPEG (512 KiB maximum), asset ID,
+kind, source/use terms/data permission, preserve/change and locale/parent metadata. Uploads
+resume the same work by default; `resume:false` retains a wait. Authenticated
+`GET /v1/runs/:id/assets/:asset-id` returns a preview and stale state. Byte validation never
+implies visual QA. Run details remain available in the existing Web view.
+
+`/v1/memories` provides scoped candidate drafts/read/selection. HTTP identity alone cannot
+adopt a shared rule. Authorized Slack reviewers use `기억 제안 <내용>`, `기억 목록`,
+`기억 검토 <ID>`, then `기억 채택 <ID> <해시>` or `기억 폐기 <ID> <해시>`.
+These default to the current work. For explicitly shared product learning, use
+`기억 공용 제안`, `기억 공용 검토`, and `기억 공용 채택` in a team channel; private
+conversations cannot create or alter shared notes. Review displays the scope and expiry.
+Candidates do not enter future context until review; expiry and corrected/deleted notes
+leave current retrieval. Private chat cannot change shared memories.
+
+The installed reasoning tool `delivery.prepare` can persist a draft on the current Run.
+`POST /v1/runs/:id/delivery` also prepares a typed production/publication/Paid/format/code/change
+review packet; `GET /v1/runs/:id/delivery/:proposal-id` reads it. In the same Slack work,
+`실행안 검토 <ID> [페이지]` shows its full versioned scope in bounded pages;
+review every page before using the exact approval command shown on the last page.
+Membership-authorized reviewers can approve its
+version/hash, prepare a reservation or cancel the preparation. **These are preparation
+records: no post, reservation, ad spend or GitHub mutation is executed.** Existing external
+owners retain their own approval and readback contracts. Asset-bearing approvals and
+prepared reservations recheck current revisions, parent lineage, digests and actual bytes;
+Paid preparation reserves against the exact approved budget in one local transaction.
+OAuth/browser login alone grants no Run approval authority: deployments must supply a trusted
+reviewer mapping. Queued approvals recheck it at execution; the configured local operator
+token retains its existing loopback authority. Slack uses authenticated membership.
+
+`research.daily_slack` v2 requires only research and Slack. Explicit combined delivery uses
+`research.daily_slack_and_notion`; `research.daily_slack_only` remains available. Already-created
+v1 scheduled Runs retain their frozen procedure; updating does not silently grant new
+Notion permissions or recreate them.
+
 ## On-premises Agent Service (implemented foundation)
 
 The current PR adds the installed service boundary and portable Run/Step/Intent/CapabilitySnapshot/

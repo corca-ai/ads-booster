@@ -1,8 +1,27 @@
 # Marketing Agent Runtime
 
-Status: Draft — the first dynamic-research-to-hosted-shadow bridge is implemented; broader skill
-selection and autonomous next-experiment planning remain future work. This high-level agent uses the
+Status: Draft — the first dynamic-research-to-hosted-shadow bridge and small-work preparation are implemented;
+autonomous campaign execution and next-experiment planning remain future work. This high-level agent uses the
 existing Trace control plane and does not replace or directly reorganize its execution automation.
+
+## Continuing work contract — 2026-09-07
+
+The current product decision is [one continuing Trace teammate](marketing-agent-product.md).
+Small work carries only useful inputs; a campaign link may be added later. A human result
+is canonical evidence with author/source and human-reported status. Partial edits preserve
+explicit regions/content and only invalidate affected descendants. Localized promotional
+images and phone mockups never establish native product support.
+
+Canonical history remains append-only; compaction and selective memory retrieval only
+change provider projection. Record selected evidence/memory digests. Work interruption
+occurs at safe decision/dispatch boundaries; a started or ambiguous external effect retains
+its receipt/reconciliation ownership. A pause cannot assert that it undid an effect. New
+input invalidates the old pending proposal and requires a new exact grant where policy
+requires it. Production requests do not authorize publication.
+
+Unimplemented paths remain Draft until scenario evidence exists: operational image editing
+and native capture, publication scheduling/readback, live metrics/community and Paid actions.
+No new publisher or automatic self-modification is enabled by this plan.
 
 ## Problem
 

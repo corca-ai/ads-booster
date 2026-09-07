@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-07
 
 ## Focused checks
 
@@ -155,3 +155,31 @@ Only Slack auth identity and upstream GitHub trust are fixtures; no Slack messag
 is sent. This is candidate/source installation proof. ARM assets are pinned but require separate
 ARM host acceptance. The deployed default main URL and a real Slack conversation remain post-merge
 acceptance, not inferred from source or mocked providers.
+
+## Continuing small work acceptance (2026-09-07)
+
+For this composition change, run the affected `tests/marketing/agent_service` and
+`tests/marketing/channels` owners, `tests/providers/test_codex_reasoning.py`,
+`tests/providers/test_codex_image_review.py`, existing Codex generation compatibility and
+`tests/cli/test_cli_compatibility.py` and `tests/agent_core/test_contracts.py`; scoped
+Ruff/format/BasedPyright and diff check. The candidate composition passed 233 focused tests.
+Do not run the repository-wide suite. Focused new regression owners cover canonical context,
+work continuation/interruption, creative asset/upload, memory/API, prepared delivery and
+Slack image access.
+
+Build a wheel and install it into a fresh isolated venv. From outside the checkout with
+PYTHONPATH unset run `tests/operations/installed_work_continuity.py --checkout <checkout>
+--output-dir <new-private-directory>` using that venv interpreter. It rejects editable/source
+imports, exercises real installed HTTP/SQLite and signed events with fixture provider/sender,
+reconstructs a waiting service, and writes an evidence packet plus synthetic image. A/B/C
+prove input/locale/constraint continuity, not actual image edit or localization quality.
+
+Separately run installed CLI help/version and a real `service run --home <isolated-root>`
+loopback start/health/stop/restart. This does not establish Ubuntu systemd/linger/timer or
+public installer acceptance. Preserve the existing installation and server onboarding.
+
+Visual evidence must name the actual viewed image and actual provider response. Current
+Mac candidate vision was exercised with a synthetic low-contrast calendar (gpt-6-astra);
+model findings are not human final approval, actual Trace capture, editing, or marketing lift.
+Live Slack requires optional files:read grant/reinstallation and permission probe; no test
+may infer this from fake HTTP. Existing deployed app manifests are not edited by these tests.

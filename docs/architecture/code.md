@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## On-premises Marketing Agent transition
 
@@ -549,3 +549,29 @@ allowlisted configuration/unit paths and exact previous/desired contents, so int
 resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
 missing configuration and Codex login from readiness; status includes update provenance. No company
 IdP or repository authentication is required for the default public Slack-only server.
+
+## Continuing-work owners (2026-09-07 candidate)
+
+| Owner | Responsibility |
+| --- | --- |
+| `agent_service/work_continuation.py` | canonical human input/pause admission, exact event replay at safe boundaries |
+| `application.py` | bounded evidence projection, signal boundary, current-memory callback, unchanged runtime dispatch owner |
+| `contracts/creative_work.py`, `agent_service/creative_assets.py` | small scoped assets, byte provenance, parent revisions and stale descendants |
+| `agent_service/creative_api.py` | authenticated PNG/JPEG upload/preview and same-Run continuation |
+| `contracts/agent_memory.py`, `agent_service/memory.py`, `memory_api.py` | attributed reviewed notes, scope-before-query, corrections/expiry/tombstones and selected-memory receipts |
+| `agent_service/creative_procedures.py` | ten composable procedures and honest ready-tool/human return briefs |
+| `agent_service/slack_image_review.py`, `image_review.py` | authorized file binding/download and actual read-only image assessment, no editing |
+| `channels/slack_creative_setup.py` | optional permission-probed tool catalog composition; no service lifecycle ownership |
+| `channels/slack_memory.py`, `slack_delivery.py` | authenticated exact review command translation |
+| `contracts/marketing_delivery.py`, `agent_service/delivery_review.py`, `delivery_api.py` | prepared review packets only; no duplicate channel execution ledger |
+
+`CodexCli.run_marketing_image_review_job` adds validated image arguments to the existing
+no-tools/read-only structured runner. Ordinary judgment calls keep their existing signature.
+No provider framework/vector database/custom agent entrypoint is introduced. `creative.prepare`
+is a real no-effect local adapter; its output says prepared, never executed.
+
+`delivery_tools.py` owns reasoning-callable preparation and is wired by `lifecycle.py` through
+`ConfiguredAgentTools`; `creative_asset_verifier.py` bridges immutable assets to preparation
+approval. Neither owns external effects. `AgentJobs` rechecks the API's trusted reviewer
+policy immediately before queued approvals. `ToolInvocation.tenant_id` binds new local tool
+mutations without rewriting legacy invocation digests.

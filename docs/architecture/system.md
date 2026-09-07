@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## Canonical product direction and transition
 
@@ -791,3 +791,47 @@ allowlisted configuration/unit paths and exact previous/desired contents, so int
 resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
 missing configuration and Codex login from readiness; status includes update provenance. No company
 IdP or repository authentication is required for the default public Slack-only server.
+
+## Continuing small work (candidate, 2026-09-07)
+
+Agent Service remains the sole new Run/decision owner. Slack's signed durable inbox admits
+text and bounded file references. Ordinary thread follow-ups resume the same safe Run with
+cumulative budget; `새 작업 ...` starts independent work. Pending input signals are read
+without waiting on the execution lock, then committed to an input wait before the next
+plan/fresh dispatch. Started effects retain receipt/reconciliation ownership. Closing
+conversation replies and pausing work remain distinct.
+
+Same-event human continuation is idempotent across the admission/input/provider boundaries.
+Every replan selects bounded canonical evidence with selected hashes/omission accounting;
+raw events remain intact. Current approved memory is separately retrieved by trusted
+workspace/product/member/session scope before relevance, with a persisted selection receipt.
+Prior user/model text is not a current approval or reusable rule. HTTP memory drafts derive
+workspace/author from OAuth identity; adoption currently uses authenticated Slack reviewers.
+
+Creative uploads store real PNG/JPEG bytes below a tenant/digest artifact root, immutable
+source/revision/locale/preserve/change metadata and same-Run human input. Pixel decoding is
+not visual QA. Source revisions mark only dependent assets stale. Optional Slack image review
+binds signed file IDs to tenant/Run before fixed-origin file lookup; actual official Codex
+image input yields model assessment and human-review-required status. It never edits images
+or verifies native app capabilities. DM tool scope remains public search only.
+
+The optional image tool requires `TRACE_MARKETING_SLACK_IMAGE_REVIEW=1`, a `files:read`-capable
+Slack token and a confirmed identity/scope probe. Existing manifests, tokens, login, tunnels,
+installers and service units are unchanged. Missing permission never makes startup fail.
+
+Delivery review is a local preparation projection, separate from actual D1 effect facts.
+Production/publication/Paid/format/code/public-amendment targets have independent digest/CAS
+reviews. `scheduled_prepared` is not a provider reservation or scheduled public post. Every
+packet declares external execution disabled; user reports and injected owner readback are
+distinct. Existing effect owners and their approvals still govern any future activation.
+
+The installed composition registers `delivery.prepare` as a local no-effect tool. New
+ToolInvocations bind the trusted tenant; legacy invocations omit that optional field from
+serialization so existing approval digests remain valid. The preparation adapter requires
+the tenant and exact Run lookup and rejects caller-supplied scope/approval fields.
+HTTP direct and queued approvals require a trusted reviewer policy in addition to OAuth;
+queued execution rechecks it. Legacy/unmapped queued approvals become blocked records.
+Asset-bearing approval and scheduling use the current creative asset owner to recheck bytes,
+revision and ancestors; prepared Paid reservations share one SQLite transaction.
+Slack memory defaults to the current work; explicit `기억 공용` in shared channels creates
+reviewed product-scoped learning. Private chat cannot widen that scope.
