@@ -1,3 +1,5 @@
+import { canonicalSha256 } from "./marketing-run-capabilities.js";
+
 const ONLINE_WINDOW_MS = 45_000;
 const DEFAULT_ENROLLMENT_TTL_SECONDS = 600;
 const MAX_ENROLLMENT_TTL_SECONDS = 3_600;
@@ -33,9 +35,13 @@ const SERVER_OWNED_TASK_EVENTS = new Set(["execution_started", "callback_applied
 export async function handleMacWorkerRequest(request, env, receiveTaskCallback) {
   const url = new URL(request.url);
   const isWorkerRoute = url.pathname.startsWith("/v1/workers/");
+  const purgeControlRoute = url.pathname.match(
+    /^\/v1\/knowledge\/context-transfers\/([^/]+)\/replicas\/([^/]+)$/,
+  );
   if (url.pathname !== "/api/workers/status" &&
       url.pathname !== "/v1/workers" &&
       url.pathname !== "/v1/worker-enrollments" &&
+      !purgeControlRoute &&
       !isWorkerRoute) {
     return null;
   }
@@ -59,11 +65,13 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       const body = await readJson(request);
       await heartbeatWorker(env.DB, worker, body);
       if (body.doctor?.ready === true) {
-        return Response.json({ leases: await claimWorkerTasks(env.DB, worker, new Date()) });
+        return Response.json({ leases: await claimWorkerTasks(env.DB, worker, new Date(), null, env) });
       }
       if (body.capabilities?.marketing_reasoning_ready === true) {
         return Response.json({
-          leases: await claimWorkerTasks(env.DB, worker, new Date(), ["marketing_judgment"]),
+          leases: await claimWorkerTasks(
+            env.DB, worker, new Date(), ["marketing_judgment"], env,
+          ),
         });
       }
       return Response.json({ leases: [] });
@@ -104,8 +112,32 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       ]);
       return Response.json(result, { status: 202 });
     }
+    if (request.method === "GET" && url.pathname === "/v1/workers/knowledge-replica-purges") {
+      const worker = await requireWorker(request, env.DB);
+      return Response.json({ directives: await knowledgeReplicaPurgeDirectives(env.DB, worker) });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/workers/knowledge-replica-purges") {
+      const worker = await requireWorker(request, env.DB);
+      return Response.json(
+        await acknowledgeKnowledgeReplicaPurge(env.DB, worker, await readJson(request)),
+      );
+    }
 
     authorizeAdmin(request, env.CONTROL_PLANE_TOKEN);
+    if (request.method === "DELETE" && purgeControlRoute) {
+      return Response.json(await requestKnowledgeReplicaPurge(
+        env.DB,
+        decodeURIComponent(purgeControlRoute[1]),
+        decodeURIComponent(purgeControlRoute[2]),
+      ), { status: 202 });
+    }
+    if (request.method === "GET" && purgeControlRoute) {
+      return Response.json(await knowledgeReplicaPurgeStatus(
+        env.DB,
+        decodeURIComponent(purgeControlRoute[1]),
+        decodeURIComponent(purgeControlRoute[2]),
+      ));
+    }
     if (request.method === "POST" && url.pathname === "/v1/worker-enrollments") {
       return Response.json(await createEnrollment(request, env.DB), { status: 201 });
     }
@@ -130,6 +162,191 @@ export async function handleMacWorkerRequest(request, env, receiveTaskCallback) 
       { status },
     );
   }
+}
+
+async function requestKnowledgeReplicaPurge(db, transferId, replicaId) {
+  const prefix = "cloudflare-task:";
+  if (!replicaId.startsWith(prefix)) {
+    throw new WorkerHttpError(400, "cloudflare replica id is invalid");
+  }
+  const parts = replicaId.slice(prefix.length).split(":");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new WorkerHttpError(400, "cloudflare replica id is invalid");
+  }
+  const [accountId, taskId] = parts;
+  const prior = await db.prepare(
+    `SELECT cloudflare_purged_at, mac_purged_at, worker_id
+     FROM knowledge_context_replica_purges
+     WHERE transfer_id = ? AND cloudflare_replica_id = ?`,
+  ).bind(transferId, replicaId).first();
+  if (prior) {
+    return {
+      receipt_id: `replica-purge:cloudflare:${taskId}`,
+      transfer_id: transferId,
+      replica_id: replicaId,
+      state: prior.cloudflare_purged_at ? "purged" : "purge_pending",
+      checked_at: new Date().toISOString(),
+    };
+  }
+  const row = await db.prepare(
+    `SELECT task_json, worker_id, execution_started_at FROM hosted_workspace_capture_tasks
+     WHERE task_id = ? AND account_id = ?`,
+  ).bind(taskId, accountId).first();
+  if (!row) {
+    const stored = await db.prepare(
+      `SELECT run_id FROM hosted_marketing_agent_runs
+       WHERE account_id = ?
+         AND json_extract(trusted_knowledge_json, '$.binding.task_ref') = ?
+         AND json_extract(trusted_knowledge_json, '$.knowledge_context.transfer_id') = ?`,
+    ).bind(accountId, taskId, transferId).first();
+    if (!stored) throw new WorkerHttpError(404, "knowledge context replica was not found");
+    const now = new Date().toISOString();
+    const macReplicaId = `mac-inbox:${accountId}:${taskId}`;
+    await db.batch([
+      db.prepare(
+        `INSERT INTO knowledge_context_replica_purges(
+           transfer_id, account_id, task_id, worker_id, cloudflare_replica_id,
+           mac_replica_id, requested_at, mac_purged_at, cloudflare_purged_at
+         ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+      ).bind(transferId, accountId, taskId, replicaId, macReplicaId, now, now, now),
+      db.prepare(
+        `UPDATE hosted_marketing_agent_runs
+         SET trusted_knowledge_json = NULL, knowledge_context_sha256 = NULL, updated_at = ?
+         WHERE account_id = ? AND run_id = ?`,
+      ).bind(now, accountId, stored.run_id),
+      db.prepare(
+        `UPDATE hosted_marketing_agent_run_tasks
+         SET trusted_knowledge_json = NULL, knowledge_context_sha256 = NULL
+         WHERE account_id = ? AND run_id = ?`,
+      ).bind(accountId, stored.run_id),
+    ]);
+    return {
+      receipt_id: `replica-purge:cloudflare:${taskId}`,
+      transfer_id: transferId,
+      replica_id: replicaId,
+      state: "purged",
+      checked_at: now,
+    };
+  }
+  let task;
+  try {
+    task = JSON.parse(row.task_json);
+  } catch {
+    throw new WorkerHttpError(409, "knowledge context replica is invalid");
+  }
+  if (task.payload?.knowledge_context?.transfer_id !== transferId) {
+    throw new WorkerHttpError(409, "knowledge context transfer does not own replica");
+  }
+  const now = new Date().toISOString();
+  const macReplicaId = `mac-inbox:${accountId}:${taskId}`;
+  await db.prepare(
+    `INSERT INTO knowledge_context_replica_purges(
+       transfer_id, account_id, task_id, worker_id, cloudflare_replica_id,
+       mac_replica_id, requested_at, mac_purged_at, cloudflare_purged_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(transfer_id, task_id) DO NOTHING`,
+  ).bind(
+    transferId,
+    accountId,
+    taskId,
+    row.worker_id,
+    replicaId,
+    macReplicaId,
+    now,
+    row.worker_id ? null : now,
+    now,
+  ).run();
+  task.payload = { ...task.payload };
+  delete task.payload.knowledge_context;
+  const state = row.execution_started_at ? null : "failed";
+  await db.prepare(
+    `UPDATE hosted_workspace_capture_tasks
+     SET task_json = ?, result_json = NULL, state = COALESCE(?, state), updated_at = ?
+     WHERE task_id = ? AND account_id = ?`,
+  ).bind(JSON.stringify(task), state, now, taskId, accountId).run();
+  await db.batch([
+    db.prepare(
+      `UPDATE hosted_marketing_agent_runs
+       SET trusted_knowledge_json = NULL, knowledge_context_sha256 = NULL, updated_at = ?
+       WHERE account_id = ?
+         AND json_extract(trusted_knowledge_json, '$.knowledge_context.transfer_id') = ?`,
+    ).bind(now, accountId, transferId),
+    db.prepare(
+      `UPDATE hosted_marketing_agent_run_tasks
+       SET trusted_knowledge_json = NULL, knowledge_context_sha256 = NULL
+       WHERE account_id = ?
+         AND json_extract(trusted_knowledge_json, '$.knowledge_context.transfer_id') = ?`,
+    ).bind(accountId, transferId),
+  ]);
+  return {
+    receipt_id: `replica-purge:cloudflare:${taskId}`,
+    transfer_id: transferId,
+    replica_id: replicaId,
+    state: row.worker_id ? "purge_pending" : "purged",
+    checked_at: now,
+  };
+}
+
+async function knowledgeReplicaPurgeDirectives(db, worker) {
+  const rows = await db.prepare(
+    `SELECT transfer_id, account_id, task_id, mac_replica_id
+     FROM knowledge_context_replica_purges
+     WHERE worker_id = ? AND mac_purged_at IS NULL ORDER BY requested_at LIMIT 20`,
+  ).bind(worker.worker_id).all();
+  return rows.results.map((row) => ({
+    transfer_id: row.transfer_id,
+    account_id: row.account_id,
+    task_id: row.task_id,
+    replica_id: row.mac_replica_id,
+  }));
+}
+
+async function knowledgeReplicaPurgeStatus(db, transferId, replicaId) {
+  const row = await db.prepare(
+    `SELECT task_id, cloudflare_replica_id, mac_replica_id,
+            cloudflare_purged_at, mac_purged_at
+     FROM knowledge_context_replica_purges
+     WHERE transfer_id = ? AND (cloudflare_replica_id = ? OR mac_replica_id = ?)`,
+  ).bind(transferId, replicaId, replicaId).first();
+  if (!row) throw new WorkerHttpError(404, "knowledge context replica purge was not found");
+  const purgedAt = replicaId === row.cloudflare_replica_id
+    ? row.cloudflare_purged_at
+    : row.mac_purged_at;
+  return {
+    receipt_id: `replica-purge:${replicaId === row.cloudflare_replica_id ? "cloudflare" : "mac"}:${row.task_id}`,
+    transfer_id: transferId,
+    replica_id: replicaId,
+    state: purgedAt ? "purged" : "purge_pending",
+    checked_at: new Date().toISOString(),
+    purged_at: purgedAt ?? null,
+  };
+}
+
+async function acknowledgeKnowledgeReplicaPurge(db, worker, body) {
+  const replicaId = requiredName(body.replica_id, "replica_id", 320);
+  const transferId = requiredName(body.transfer_id, "transfer_id", 160);
+  const now = new Date().toISOString();
+  const updated = await db.prepare(
+    `UPDATE knowledge_context_replica_purges SET mac_purged_at = ?
+     WHERE worker_id = ? AND transfer_id = ? AND mac_replica_id = ?
+       AND mac_purged_at IS NULL`,
+  ).bind(now, worker.worker_id, transferId, replicaId).run();
+  if (updated.meta.changes !== 1) {
+    const existing = await db.prepare(
+      `SELECT mac_purged_at FROM knowledge_context_replica_purges
+       WHERE worker_id = ? AND transfer_id = ? AND mac_replica_id = ?`,
+    ).bind(worker.worker_id, transferId, replicaId).first();
+    if (!existing?.mac_purged_at) {
+      throw new WorkerHttpError(409, "knowledge replica purge acknowledgement is invalid");
+    }
+  }
+  return {
+    receipt_id: `replica-purge:mac:${replicaId.split(":").at(-1)}`,
+    transfer_id: transferId,
+    replica_id: replicaId,
+    state: "purged",
+    checked_at: now,
+  };
 }
 
 export async function hasRegisteredBrokerWorker(db) {
@@ -222,7 +439,9 @@ export function workerOperationalStatus(row, now = new Date()) {
   return row.current_task_id ? "busy" : "ready";
 }
 
-export async function claimWorkerTasks(db, worker, now = new Date(), allowedKinds = null) {
+export async function claimWorkerTasks(
+  db, worker, now = new Date(), allowedKinds = null, authorityEnvironment = null,
+) {
   if (worker.state !== "active") return [];
   await clearStaleWorkerAssignment(db, worker.worker_id, now);
   // What this Mac says it can run, read back from the row the heartbeat just wrote rather
@@ -235,7 +454,7 @@ export async function claimWorkerTasks(db, worker, now = new Date(), allowedKind
   const advertisedCapabilitiesJson = JSON.stringify(advertised.capabilities);
   const kindPlaceholders = kinds.map(() => "?").join(", ");
   const current = await db.prepare(
-    `SELECT task_id, task_json, lease_id, attempt_count
+    `SELECT task_id, task_json, lease_id, attempt_count, account_id, required_capability
      FROM hosted_workspace_capture_tasks
      WHERE worker_id = ? AND dispatch_mode = 'worker_broker' AND state = 'queued'
        AND callback_id IS NULL AND callback_reservation_id IS NULL
@@ -245,7 +464,10 @@ export async function claimWorkerTasks(db, worker, now = new Date(), allowedKind
             OR json_extract(?, '$.' || required_capability) = 1)
      ORDER BY created_at LIMIT 1`,
   ).bind(worker.worker_id, now.toISOString(), ...kinds, advertisedCapabilitiesJson).first();
-  if (current) return [leaseResponse(current)];
+  if (current) {
+    await validateTaskKnowledgeContextAuthority(authorityEnvironment, current, "pre_dispatch");
+    return [leaseResponse(current)];
+  }
 
   const reservation = `claim:${crypto.randomUUID()}`;
   const reserved = await db.prepare(
@@ -256,7 +478,8 @@ export async function claimWorkerTasks(db, worker, now = new Date(), allowedKind
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const task = await db.prepare(
-      `SELECT task_id FROM hosted_workspace_capture_tasks
+      `SELECT task_id, task_json, account_id, required_capability
+       FROM hosted_workspace_capture_tasks
        WHERE dispatch_mode = 'worker_broker' AND state = 'queued' AND callback_id IS NULL
          AND callback_reservation_id IS NULL AND execution_started_at IS NULL
          AND (worker_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
@@ -268,6 +491,12 @@ export async function claimWorkerTasks(db, worker, now = new Date(), allowedKind
     if (!task) {
       await clearWorkerReservation(db, worker.worker_id, reservation, now);
       return [];
+    }
+    try {
+      await validateTaskKnowledgeContextAuthority(authorityEnvironment, task, "pre_dispatch");
+    } catch (error) {
+      await clearWorkerReservation(db, worker.worker_id, reservation, now);
+      throw error;
     }
     const leaseId = crypto.randomUUID();
     const expiresAt = new Date(now.getTime() + INITIAL_LEASE_SECONDS * 1000).toISOString();
@@ -320,6 +549,99 @@ export async function claimWorkerTasks(db, worker, now = new Date(), allowedKind
   }
   await clearWorkerReservation(db, worker.worker_id, reservation, now);
   return [];
+}
+
+export async function validateTaskKnowledgeContextAuthority(env, task, stage) {
+  let wire;
+  try {
+    wire = typeof task.task_json === "string" ? JSON.parse(task.task_json) : task;
+  } catch {
+    throw new WorkerHttpError(409, "knowledge context task is invalid");
+  }
+  const policy = wire?.knowledge_context_policy ?? "disabled";
+  const envelope = wire?.payload?.knowledge_context ?? null;
+  const digest = wire?.payload?.knowledge_context_sha256 ?? null;
+  const binding = wire?.knowledge_context_binding ?? null;
+  if (policy === "disabled") {
+    if (envelope !== null || digest !== null || binding !== null) {
+      throw new WorkerHttpError(409, "disabled task carries knowledge context");
+    }
+    return null;
+  }
+  if (
+    policy !== "required" || !envelope || !binding || typeof digest !== "string"
+    || task.required_capability !== "knowledge_context_v1"
+    || wire.task_id !== task.task_id || wire.account_id !== task.account_id
+    || binding.task_ref !== wire.task_id || binding.run_ref !== wire.run_id
+    || binding.account_id !== wire.account_id
+    || envelope.transfer_id === undefined
+    || envelope.task_ref !== binding.task_ref || envelope.run_ref !== binding.run_ref
+    || envelope.account_id !== binding.account_id
+    || envelope.workspace_id !== binding.workspace_id
+    || envelope.scoped_actor_ref !== binding.scoped_actor_ref
+    || envelope.brand_ref !== binding.brand_ref
+    || envelope.action_kind !== binding.action_kind
+    || envelope.invocation_ref !== binding.invocation_ref
+  ) throw new WorkerHttpError(409, "required knowledge context binding is invalid");
+  rejectKnowledgeContextNumbers(envelope);
+  if (await canonicalSha256(envelope) !== digest) {
+    throw new WorkerHttpError(409, "knowledge context digest does not match task");
+  }
+  if (!env?.KNOWLEDGE_SERVICE_URL || !env?.KNOWLEDGE_SERVICE_TOKEN
+      || !env?.KNOWLEDGE_SERVICE_PRINCIPAL_ID) {
+    throw new WorkerHttpError(503, "knowledge context owner is unavailable");
+  }
+  const request = {
+    schema: "trace.knowledge-context-validation-request.v1",
+    request_id: `validation-${stage}-${crypto.randomUUID()}`,
+    principal_id: env.KNOWLEDGE_SERVICE_PRINCIPAL_ID,
+    stage,
+    transfer_id: envelope.transfer_id,
+    workspace_id: envelope.workspace_id,
+    account_id: wire.account_id,
+    knowledge_context_sha256: digest,
+  };
+  let response;
+  try {
+    response = await fetch(
+      `${env.KNOWLEDGE_SERVICE_URL}/v1/knowledge/context-transfers/${encodeURIComponent(envelope.transfer_id)}/validate`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.KNOWLEDGE_SERVICE_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(request),
+      },
+    );
+  } catch {
+    throw new WorkerHttpError(503, "knowledge context owner is unavailable");
+  }
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new WorkerHttpError(503, "knowledge context owner returned an invalid result");
+  }
+  if (
+    !response.ok || result?.status !== "accepted"
+    || result.request_id !== request.request_id || result.principal_id !== request.principal_id
+    || result.stage !== stage || result.transfer_id !== request.transfer_id
+    || result.workspace_id !== request.workspace_id || result.account_id !== request.account_id
+    || result.knowledge_context_sha256 !== digest
+    || Date.parse(result.valid_until ?? "") <= Date.now()
+  ) throw new WorkerHttpError(409, "knowledge context authority rejected task");
+  return result;
+}
+
+function rejectKnowledgeContextNumbers(value) {
+  if (typeof value === "number" && (!Number.isInteger(value) || !Number.isSafeInteger(value))) {
+    throw new WorkerHttpError(409, "knowledge context contains a non-portable number");
+  }
+  if (Array.isArray(value)) value.forEach(rejectKnowledgeContextNumbers);
+  else if (value && typeof value === "object") {
+    Object.values(value).forEach(rejectKnowledgeContextNumbers);
+  }
 }
 
 /**
