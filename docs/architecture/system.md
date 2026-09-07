@@ -710,6 +710,20 @@ simulation path, and every other marketing channel cannot.
 
 ## Linux main tracking and Slack-only operation
 
+The Linux operator entrypoint is `install-server.sh` plus `trace-marketing server`. Bootstrap fetches
+public main over HTTPS, applies the same exact-SHA CI/protocol admission as updates, installs locked
+dependencies and selects current before exposing the CLI. It refuses to overwrite an existing install
+or another CLI. Python/uv/git/gh/Codex/systemd are prerequisites; gh reads GitHub check results.
+`server setup` validates Slack auth.test and member/approver bindings, writes private configuration,
+and generates systemd user units using discovered executable paths. It exports domain-specific Slack
+manifests from wheel-packaged assets. Existing configuration and unowned units are never overwritten.
+An optional `trace-marketing-tunnel.service` runs an already-created Cloudflare tunnel with a private
+token file. DNS and hostname routes remain existing Cloudflare configuration; no account changes are
+made. `server start` enables the agent/tunnel/update timer and reports a missing linger setting.
+`server status` reads local/public health and unit status; `doctor` reports prerequisites. `update`
+requests the existing update service asynchronously. `stop` stops owned units without disabling them.
+The former ZIP/wheel packet remains a recovery/development path, not the standard onboarding flow.
+
 `TRACE_MARKETING_SLACK_ONLY=1` is an explicit public-ingress mode for operators without an IdP.
 Only health and signed Slack commands/events are exposed, on loopback behind the Tunnel; web UI,
 OAuth/session routes and bearer API access return 404. App/team/channel/member binding still applies.

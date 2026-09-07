@@ -90,3 +90,24 @@ implemented by this candidate. Private DM tools are deliberately limited to publ
   manager already uses the independent server CI gate. The older ZIP contains the old gate.
 - Remote checks for the final PR head are recorded in GitHub, not inferred from local results.
   Actual Ubuntu lifecycle, Slack acceptance and a live main SHA transition still require operator QA.
+
+## Repository installer and installed server CLI candidate
+
+- Linux `install-server.sh` replaces manual ZIP transfer for new installations after merge.
+  `agent-manager.py bootstrap` uses the exact-main CI and installed-protocol gate before selecting
+  current. It refuses an existing managed installation; CLI collisions are preserved.
+- `trace-marketing server` provides manifest, setup, start, stop, status, doctor and update.
+  Setup requires an interactive terminal before reading secrets, validates Slack auth.test,
+  writes 600-permission configuration, discovers tool PATHs and creates a dedicated optional
+  token-file Cloudflare connector. It preserves existing settings and unrelated/unowned services.
+- 128 selected server/channel/provider/CLI/updater/tool-adapter tests passed locally.
+  Six changed Python files passed Ruff, formatter and BasedPyright; installer bash syntax passed.
+- The final wheel installed into `/private/tmp/trace-server-onboarding-final-installed`.
+  Installed CLI manifest export used wheel-packaged resources. A proof importing that installed
+  package exercised setup, domain substitution, private permissions and dedicated token-file units
+  with fixture Slack identity/systemd; no real credentials, Slack sends or service activation.
+- The public URL is not a verified install path until this change is merged and executed from the
+  actual remote ref in a fresh Linux environment. Actual Ubuntu systemd/linger, Cloudflare route,
+  Corca Slack roundtrips and live main SHA transitions remain operator acceptance work.
+- Mac direct on-prem enrollment/lifecycle migration is outside this installer change and remains
+  unimplemented. Existing Mac worker commands and compatibility workflow remain in place.

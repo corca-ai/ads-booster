@@ -499,6 +499,14 @@ IDs and receipts rather than generalized or reimplemented.
 
 ### Linux update ownership
 
+- `cli/server.py` owns the installed Linux setup and lifecycle command presentation under
+  `trace-marketing server`. It validates operator input/Slack identity, writes configuration and user
+  units, and delegates updates to the existing manager via systemd. It never owns Agent Runs.
+- `install-server.sh` checks host prerequisites and bootstraps CI-verified public main through
+  `agent-manager.py bootstrap`. It preserves existing CLI/installations. Wheel force-includes export
+  the canonical Slack manifests and unit templates from `docs/operations/agent-server` into
+  `ads_booster/server_assets`; runtime reads these installed bytes, not a development checkout.
+
 - `agent_service/maintenance.py` owns admission accounting shared by the HTTP dispatcher, background
   queues (including recovery and outbound notification) and scheduled skill execution.
 - `docs/operations/agent-server/agent-manager.py` is the standalone Python 3.10+ Linux operator CLI:

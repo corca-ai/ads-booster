@@ -15,11 +15,30 @@ default Slack channel, an explicit conversation-channel allowlist, and isolated 
 research.search accepts a plain query and returns attributed,
 explicitly unverified public search snippets; immutable product research remains research.web.
 
-Use the [server setup packet](docs/operations/agent-server/README.md) for the Slack app manifest,
-OAuth callback configuration, operator identity mapping, environment template, and systemd user
-service. These additions require a wheel built from this change or a subsequent release; the
-previously published v0.4.21 does not include them. Live Tunnel, Linux service and Slack
-verification are still required after installation; IdP is required only for optional web login.
+The standard Linux installation path is now `install-server.sh` followed by
+`trace-marketing server setup`, using your existing on-premises server and Cloudflare Tunnel/domain.
+No ZIP transfer is required. The wizard validates Slack bot credentials, discovers team/bot IDs,
+writes private settings, and prepares the agent, dedicated tunnel and five-minute updater services.
+See the [installation and Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md).
+
+```bash
+# After this installer change is merged and main CI succeeds:
+curl -fsSL https://raw.githubusercontent.com/corca-ai/ads-booster/main/install-server.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+trace-marketing server manifest --origin https://your-agent.example.com --bootstrap
+# Create/install the Slack app using that manifest, then:
+trace-marketing server setup
+trace-marketing server start
+trace-marketing server status
+```
+
+The Linux installer requires Python 3.10+, git, authenticated gh, uv, Codex CLI and systemd; uv
+provisions application Python 3.14. Run as the service-owning Linux user, without sudo. Setup needs
+cloudflared with token-file support when managing a dedicated connector. Existing EAR tunnels and
+existing configurations are preserved. Company OAuth is unnecessary for Slack-only operation.
+`server manifest` exports the final Events-enabled manifest after the public health URL is ready.
+`server doctor` checks prerequisites; `server update` requests a main check. Local candidate evidence
+is not a claim that the new remote installer URL or a real Slack/Ubuntu deployment has been verified.
 
 ## On-premises Agent Service (implemented foundation)
 

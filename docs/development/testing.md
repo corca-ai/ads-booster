@@ -92,6 +92,16 @@ evidence only; the task row and callback remain completion evidence.
 
 ## Main agent web and Slack onboarding
 
+For Linux CLI onboarding, run `tests/cli/test_server_onboarding.py`,
+`tests/cli/test_agent_server_update.py` and `tests/cli/test_cli_compatibility.py`. Cover token validation
+before writes, member/approver mapping, secret file permissions, preserved configuration/unowned units,
+dedicated Tunnel token-file use, domain-specific manifest export, and bootstrap CI rejection.
+Build and install a fresh wheel, then execute `server --help` and `server manifest` from that installed
+CLI to prove data files ship. The Ubuntu job performs this installed manifest check. Mock systemctl
+and Slack authentication do not establish live service startup or Slack acceptance. Public installer
+success requires running the actual merged URL/ref on a fresh Linux environment; local candidate
+bootstrap proof alone does not establish that claim.
+
 Focused owners: tests/marketing/agent_service, tests/marketing/channels,
 tests/providers/test_codex_reasoning.py, and tests/cli/test_cli_compatibility.py.
 Run these tests together for login/channel/service composition changes, with scoped Ruff,
