@@ -84,7 +84,11 @@ def test_connect_requires_observed_bot_scope_before_exposing_image_tool(tmp_path
         opener=http.open,
     )
     assert status["ready"] is True
-    assert "creative.image.review" in service.tools
+    assert {
+        "creative.image.review",
+        "creative.file.inspect",
+        "creative.asset.import",
+    } <= service.tools.keys()
     assert len(http.responses) == 1
     assert all(response.closed for response in http.responses)
     current = next(
@@ -135,15 +139,18 @@ def test_optional_probe_failure_preserves_onboarding_and_hides_tool(
     assert all(response.closed for response in http.responses)
 
 
-def test_catalog_retains_observation_time_and_revokes_dispatch_after_scope_loss() -> None:
+@pytest.mark.parametrize("tool_index", [0, 1, 2])
+def test_catalog_retains_observation_time_and_revokes_dispatch_after_scope_loss(
+    tool_index: int,
+) -> None:
     http = AuthHTTP()
     catalog = SlackCreativeCatalog(
         ToolRegistry(()), SlackImagePermissionProbe("T123", "synthetic-token", http.open)
     )
-    frozen = catalog.descriptors(now=NOW)[0]
+    frozen = catalog.descriptors(now=NOW)[tool_index]
     assert frozen.readiness.observed_at == NOW
     http.scopes = "chat:write"
-    cached = catalog.descriptors(now=NOW + timedelta(seconds=10))[0]
+    cached = catalog.descriptors(now=NOW + timedelta(seconds=10))[tool_index]
     assert cached.readiness.observed_at == NOW
     assert len(http.responses) == 1
     registry = ToolRegistry((frozen,), provider=catalog)
@@ -152,7 +159,7 @@ def test_catalog_retains_observation_time_and_revokes_dispatch_after_scope_loss(
             frozen, policy=CapabilityPolicy(), now=NOW + timedelta(seconds=61)
         )
     assert len(http.responses) == 2
-    current = catalog.descriptors(now=NOW + timedelta(seconds=61))[0]
+    current = catalog.descriptors(now=NOW + timedelta(seconds=61))[tool_index]
     assert current.readiness.ready is False
     assert current.readiness.reason_code == "slack_image_files_read_missing"
 

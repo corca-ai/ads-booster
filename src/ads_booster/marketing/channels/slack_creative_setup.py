@@ -11,7 +11,14 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.tool_capability import ToolReadiness
 from ads_booster.marketing.agent_core.registry import ToolRegistry
+from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.oauth import open_auth_request
+from ads_booster.marketing.agent_service.slack_asset_intake import (
+    SlackAssetIntakeTool,
+    slack_asset_import_descriptor,
+    slack_file_inspect_descriptor,
+)
+from ads_booster.marketing.agent_service.slack_image_files import SlackImageFiles
 from ads_booster.marketing.agent_service.slack_image_review import (
     SlackImageReviewTool,
     slack_image_review_descriptor,
@@ -132,6 +139,12 @@ class SlackCreativeCatalog:
         return (
             *self.base.current_descriptors(now=now),
             descriptor,
+            slack_file_inspect_descriptor(
+                now=readiness.observed_at, ready=readiness.ready
+            ).model_copy(update={"readiness": readiness}),
+            slack_asset_import_descriptor(
+                now=readiness.observed_at, ready=readiness.ready
+            ).model_copy(update={"readiness": readiness}),
         )
 
 
@@ -179,8 +192,31 @@ def connect_slack_creative(  # noqa: PLR0913 - identity, opt-in credentials and 
         tenant_id=tenant_id,
         expected_team_id=team_id,
     )
+    intake = SlackAssetIntakeTool(
+        repository=service.repository,
+        assets=SqliteCreativeAssetRepository(service.repository.database_path, root),
+        files=SlackImageFiles(
+            database_path=service.repository.database_path,
+            artifact_root=root,
+            tenant_id=tenant_id,
+            token=token,
+            expected_team_id=team_id,
+        ),
+    )
     service.tools = {
         **service.tools,
+        "creative.file.inspect": DelegatingToolAdapter(
+            capability_id="creative.file.inspect",
+            version="1",
+            executor_id="slack-bound-file-inspect",
+            executor=intake.inspect,
+        ),
+        "creative.asset.import": DelegatingToolAdapter(
+            capability_id="creative.asset.import",
+            version="1",
+            executor_id="slack-approved-asset-import",
+            executor=intake.import_asset,
+        ),
         "creative.image.review": DelegatingToolAdapter(
             capability_id="creative.image.review",
             version="1",
