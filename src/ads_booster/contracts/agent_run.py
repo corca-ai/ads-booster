@@ -33,6 +33,7 @@ class AgentRunState(StrEnum):
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
     AWAITING_INPUT = "awaiting_input"
+    AWAITING_TOOL = "awaiting_tool"
     AWAITING_RECONCILIATION = "awaiting_reconciliation"
     BLOCKED = "blocked"
     COMPLETED = "completed"
