@@ -352,6 +352,31 @@ def bootstrap(root: Path) -> None:
     select(root, release)
 
 
+def install_source(root: Path, checkout: Path) -> None:
+    """Install a committed developer checkout, explicitly outside the verified channel."""
+    if (root / "current").exists() or (root / "current").is_symlink():
+        raise RuntimeError("managed_install_exists")
+    sha = command(["git", "rev-parse", "HEAD"], cwd=checkout)
+    release = root / "releases" / ("source-" + sha + "-" + uuid.uuid4().hex[:8])
+    source = release / "source"
+    release.mkdir(parents=True)
+    _ = command(["git", "clone", "--no-local", str(checkout), str(source)])
+    _ = command(["git", "checkout", "--detach", sha], cwd=source)
+    _ = command(
+        ["uv", "sync", "--locked", "--no-dev", "--no-editable", "--python", "3.14"],
+        cwd=source,
+        timeout=1200,
+    )
+    (release / ".venv").symlink_to(source / ".venv", target_is_directory=True)
+    _ = shutil.copy2(
+        source / "docs/operations/agent-server/agent-manager.py", release / "agent-manager.py"
+    )
+    atomic_json(release / "release.json", {"release": release.name})
+    probe(release)
+    atomic_json(root / "update.json", {"repository": "https://github.com/corca-ai/ads-booster.git"})
+    select(root, release)
+
+
 def run(root: Path) -> NoReturn:
     release = (root / "current").resolve(strict=True)
     env = dict(
@@ -381,9 +406,12 @@ def run(root: Path) -> NoReturn:
     )
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901 - standalone action dispatch under one process lock.
     parser = argparse.ArgumentParser(description=__doc__)
-    _ = parser.add_argument("action", choices=["install", "bootstrap", "run", "update", "status"])
+    _ = parser.add_argument(
+        "action", choices=["install", "source", "bootstrap", "run", "update", "status"]
+    )
+    _ = parser.add_argument("--source", type=Path)
     _ = parser.add_argument("--root", type=Path, default=ROOT)
     _ = parser.add_argument("--wheel", type=Path)
     _ = parser.add_argument("--requirements", type=Path)
@@ -416,6 +444,10 @@ def main() -> None:
             return
         if args.action == "bootstrap":
             bootstrap(root)
+        elif args.action == "source":
+            if args.source is None:
+                parser.error("source requires --source DIRECTORY")
+            install_source(root, args.source.resolve())
         elif args.action == "install":
             if args.wheel is None or args.requirements is None:
                 parser.error("install requires --wheel and --requirements")

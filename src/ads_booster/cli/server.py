@@ -107,7 +107,7 @@ def resources() -> Path:
 def render_units(tunnel: bool) -> dict[str, str]:
     source = resources()
     paths = list(
-        dict.fromkeys(str(Path(executable(n)).parent) for n in ["uv", "git", "gh", "codex"])
+        dict.fromkeys(str(Path(executable(n)).parent) for n in ["uv", "git", "codex"])
     )
     path_line = "Environment=" + env_value(
         "PATH=" + ":".join([*paths, "/usr/local/bin", "/usr/bin", "/bin"])
