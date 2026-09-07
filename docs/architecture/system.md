@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## Canonical product direction and transition
 
@@ -83,6 +83,55 @@ delivery invocations and never hosted publication or capture.
 
 The [server packet](../operations/agent-server/README.md) defines deployment and live acceptance.
 No live OAuth/Slack/Tunnel or Linux systemd success is implied by local tests.
+
+## Server-owned knowledge context
+
+The on-premises `MarketingAgentService` is the integration owner for team knowledge. The knowledge
+domain owns its own absolute `knowledge_root` and SQLite catalog, while the existing Agent Service
+database remains the owner of Runs, Slack admission, and Run bindings. `KnowledgeSettings.from_env`
+requires all three values together: `TRACE_MARKETING_KNOWLEDGE_ROOT`,
+`TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and `TRACE_MARKETING_KNOWLEDGE_POLICY`. All paths must be
+absolute. With all three absent the feature is disabled; a partial set raises a configuration error.
+The service user owns root/control directories at mode `0700`; policy and `control_root/identity.json`
+are private mode `0600` files.
+
+When enabled, `cli/marketing.py` builds `InstalledKnowledgeRuntime` beside the canonical service.
+It registers the local actor, creates the SQLite knowledge repository, canonical ingress, ingestion,
+retrieval and tool host, Codex curation provider, owner lock, bounded job runner, index worker, and
+memory-view dispatcher. `CurationBatchRuntime` collects compatible jobs until their batch deadline,
+claims urgent work immediately, and runs one shared bounded model round at a time for every active
+job. Each later round receives the actual guarded tool observations from earlier rounds; terminal
+job decisions become receipts bound to their original event and revision. The runtime starts as a
+daemon loop with the service and stops before the service releases its owner lock. Standalone
+knowledge CLI ownership is separate from the service owner and must not share a live root. The
+registered local-admin surface covers `init`, `doctor`,
+`ingest`, `run`, `search`, `get`, `context`, `schedule`, `backup`, `restore`, `retract`, `purge`,
+`questions`, plus memory, brand, and task subgroups. Every operation takes the absolute `--root`,
+`--control-root`, and `--policy` paths; `run` and `memory consolidate` take optional `--model` and
+bounded `--once`/`--until-idle` controls. This is source wiring; installed help and fresh-install
+verification remain deferred.
+
+Ingress remains authenticated at the existing service/channel boundary. A shared Slack thread maps
+to workspace scope. A Slack DM maps to member plus conversation scope and is projected through a
+read-only capability set. The DM projection permits knowledge search/get, memory get/explain, and
+source read; it excludes knowledge or memory writes, scheduling, purge, and external delivery. The
+canonical ingress stores the binding, conversation event, and durable outbox before dispatch. Edited,
+deleted, or correcting events create a pending fence; context preparation blocks the affected Run
+until the new source state is admitted.
+
+Before reasoning, the service adapter assembles a bounded context receipt from current revisions,
+constraints, grants, and task/brand binding. It stores the selected immutable revision references and
+rechecks that receipt immediately before tool dispatch. Hosted generation receives only a strict,
+digest-bound `trace.knowledge-context.v1` transfer with selected editorial blocks and evidence
+excerpts. The hosted broker validates tenant/account/task/run/action binding before dispatch and the
+callback must return the matching transfer, digest, and receipt. Missing or mismatched required
+context fails closed; it does not silently fall back to legacy context.
+
+Deletion records a manifest and chained erase-ledger entry in the control root before blocking live
+reads. Tombstones and reverse dependencies cover source, Wiki, memory, claims, context receipts, and
+transfer replicas. A remote replica is tracked separately and remains pending until its purge receipt
+is verified; restore applies the current erase ledger before rebuilding indexes. No external deletion
+or deployment success is implied by this source wiring.
 
 ## Runtime boundary
 
