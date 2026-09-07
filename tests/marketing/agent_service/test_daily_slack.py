@@ -215,6 +215,21 @@ def test_same_day_upgrade_reuses_frozen_v1_goal_without_reexecution(tmp_path: Pa
     assert provider.calls == 3
 
 
+def test_combined_delivery_and_creative_work_have_explicit_separate_skills() -> None:
+    catalog = MarketingSkillCatalog(ToolRegistry(()))
+    assert (
+        "store.notion.daily" in catalog.get("research.daily_slack_and_notion").required_capabilities
+    )
+    creative = catalog.get("creative.partial_edit")
+    assert creative.required_capabilities == ("creative.prepare",)
+    assert creative.goal({"preserve": ["character"], "change": ["top margin"]}).context[
+        "input"
+    ] == {
+        "preserve": ["character"],
+        "change": ["top margin"],
+    }
+
+
 def test_schedule_upgrade_cannot_add_automatic_approval_to_frozen_run(tmp_path: Path) -> None:
     provider = ResearchThenDeliver()
     provider.calls = 1  # Ask for Slack delivery before completion.

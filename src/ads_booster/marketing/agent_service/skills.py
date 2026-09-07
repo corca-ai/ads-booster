@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from ads_booster.contracts.agent_run import AgentGoal
+from ads_booster.marketing.agent_service.creative_procedures import PROCEDURES
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -36,7 +37,7 @@ class MarketingSkill:
         )
 
 
-SKILLS = (
+_BASE_SKILLS = (
     MarketingSkill(
         skill_id="research.daily_slack",
         version="2",
@@ -106,6 +107,27 @@ SKILLS = (
         ),
     ),
 )
+
+CREATIVE_SKILLS = tuple(
+    MarketingSkill(
+        skill_id=f"creative.{procedure.task}",
+        version="1",
+        purpose=procedure.purpose,
+        required_capabilities=("creative.prepare",),
+        success_criteria=(
+            "작은 요청에 필요한 절차·보존 조건·검수·반환물을 준비한다.",
+            "도구가 없으면 구체적인 사람 작업과 같은 업무 재개에 필요한 입력을 안내한다.",
+        ),
+        procedure=(
+            f"1. creative.prepare에 task={procedure.task}와 이미 확인된 input 정보를 전달한다.\n"
+            "2. inputs, preserve, change, locales를 전달한다. 캠페인 전체 설정은 불필요하다.\n"
+            "3. brief는 제작·검수 완료가 아니다. 도구와 정확한 승인을 확인한다.\n"
+            "4. 사람에게 절차·보존 조건·반환물을 request_input으로 안내하고 같은 업무에서 재개한다."
+        ),
+    )
+    for procedure in PROCEDURES
+)
+SKILLS = (*_BASE_SKILLS, *CREATIVE_SKILLS)
 
 
 class MarketingSkillCatalog:
