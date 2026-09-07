@@ -5,44 +5,34 @@ AGENT_RUN_UI = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Trace Marketing Agent</title>
 <style>
-:root{font:15px/1.5 system-ui,sans-serif;color:#18181b;background:#f4f4f5}
-body{margin:0} header,main{max-width:1180px;margin:auto;padding:20px} header{display:flex;gap:12px;align-items:center}
-h1{font-size:22px;margin-right:auto}.card{background:white;border:1px solid #ddd;border-radius:14px;padding:18px;margin-bottom:16px}
-input,textarea,button{font:inherit}input,textarea{box-sizing:border-box;width:100%;padding:9px;border:1px solid #bbb;border-radius:8px}
-textarea{min-height:80px}button{padding:9px 13px;border:0;border-radius:8px;background:#18181b;color:white;cursor:pointer}
-.grid{display:grid;grid-template-columns:340px 1fr;gap:16px}.fields{display:grid;gap:10px}.muted{color:#71717a}.run{padding:10px;border-bottom:1px solid #eee;cursor:pointer}.run:hover{background:#fafafa}
-.phase{display:inline-block;margin:3px;padding:4px 8px;border-radius:999px;background:#e4e4e7}.records{max-height:420px;overflow:auto}
-pre{white-space:pre-wrap;word-break:break-word;background:#f4f4f5;padding:10px;border-radius:8px}.actions{display:flex;gap:8px;flex-wrap:wrap}
-@media(max-width:760px){.grid{grid-template-columns:1fr}header{flex-wrap:wrap}}
+:root{font:15px/1.6 system-ui,sans-serif;color:#18181b;background:#f4f4f5}body{margin:0}header,main{max-width:1180px;margin:auto;padding:20px}header{display:flex;gap:12px;align-items:center}h1{font-size:22px;margin-right:auto}.card{background:white;border:1px solid #ddd;border-radius:14px;padding:18px;margin-bottom:16px}input,textarea,button{font:inherit}input,textarea{box-sizing:border-box;width:100%;padding:9px;border:1px solid #bbb;border-radius:8px}textarea{min-height:100px}button,.button{padding:9px 13px;border:0;border-radius:8px;background:#18181b;color:white;cursor:pointer;text-decoration:none}button:disabled{opacity:.5;cursor:wait}.grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px}.fields{display:grid;gap:10px}.muted{color:#71717a}.run{display:block;width:100%;text-align:left;padding:10px;margin-bottom:8px;background:#f4f4f5;color:#18181b}.records{max-height:420px;overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f5;padding:10px;border-radius:8px}.actions{display:flex;gap:8px;flex-wrap:wrap}[hidden]{display:none!important}#message{min-height:1.6em;overflow-wrap:anywhere}@media(max-width:760px){.grid{grid-template-columns:1fr}header{flex-wrap:wrap}}
 </style></head><body>
-<header><h1>Trace Marketing Agent</h1><span class="muted">canonical on-prem Agent Runs</span></header>
-<main>
-<section class="card fields"><label>서비스 토큰 <input id="token" type="password" autocomplete="off"></label>
-<label>마케팅 목표 <textarea id="goal" placeholder="AI 잠금화면 기능의 터지는 Threads 포맷을 발굴한다"></textarea></label>
-<label>성공 기준 <input id="criteria" value="근거가 연결된 다음 실험을 만든다"></label>
-<div class="actions"><button id="create">Run 만들기</button><button id="refresh">새로고침</button></div><div id="message"></div></section>
-<div class="grid"><section class="card"><h2>Runs</h2><div id="runs"></div></section>
-<section class="card"><h2>Run journey</h2><div id="detail" class="muted">Run을 선택하세요.</div></section></div>
+<header><h1>Trace Marketing Agent</h1><a class="button" id="login" href="/auth/login" hidden>회사 계정으로 로그인</a><button id="logout" hidden>로그아웃</button></header>
+<main><section class="card fields"><div id="identity" class="muted"></div><label id="tokenField">로컬 서비스 토큰 <input id="token" type="password" autocomplete="off"></label>
+<label>마케팅 목표 <textarea id="goal" placeholder="일본의 생산성 앱 마케팅 사례를 조사하고 다음에 시도할 콘텐츠를 제안해줘"></textarea></label>
+<label>성공 기준 <input id="criteria" value="출처와 불확실성을 포함해 실행할 다음 행동을 제안한다"></label>
+<div class="actions"><button id="create">조사 시작</button><button id="refresh">새로고침</button></div><div id="message" role="status" aria-live="polite"></div></section>
+<div class="grid"><section class="card"><h2>실행 목록</h2><div id="runs"></div></section><section class="card"><h2>실행 내용</h2><div id="detail" class="muted">실행을 선택하세요.</div></section></div>
 </main><script>
-const $=id=>document.getElementById(id); const pathRun=location.pathname.match(/^\/runs\/([^/]+)$/); let selected=pathRun?decodeURIComponent(pathRun[1]):null;
-async function api(path,options={}){const token=$('token').value;if(!token)throw Error('서비스 토큰을 입력하세요.');
- const response=await fetch(path,{...options,headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...(options.headers||{})}});
- const body=await response.json();if(!response.ok)throw Error(body.error||`HTTP ${response.status}`);return body}
-function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function list(){try{const body=await api('/v1/runs');$('runs').innerHTML=body.runs.map(run=>`<div class="run" data-id="${esc(run.run_id)}"><b>${esc(run.goal.objective)}</b><br><span class="muted">${esc(run.state)} · rev ${run.revision}</span></div>`).join('')||'<span class="muted">아직 Run이 없습니다.</span>';
- document.querySelectorAll('.run').forEach(el=>el.onclick=()=>load(el.dataset.id))}catch(e){$('message').textContent=e.message}}
-async function load(id){selected=id;try{const body=await api(`/v1/runs/${encodeURIComponent(id)}`);const run=body.run;
- const phases=body.steps.map(step=>`<span class="phase">${esc(step.kind)} · ${esc(step.state)}</span>`).join('');
- const records=body.records.map(record=>`<details><summary>${esc(record.kind)} · ${esc(record.payload_schema_version)}</summary><pre>${esc(JSON.stringify(record.payload,null,2))}</pre></details>`).join('');
- const approve=run.state==='awaiting_approval'?'<button id="approve">승인</button><button id="reject">거절</button>':'';
- const input=run.state==='awaiting_input'?'<textarea id="evidence" placeholder="추가 근거 JSON 또는 메모"></textarea><button id="submitInput">근거로 재개</button>':'';
- $('detail').innerHTML=`<h3>${esc(run.goal.objective)}</h3><p><b>${esc(run.state)}</b>${run.blocked_reason?' · '+esc(run.blocked_reason):''}</p><div>${phases}</div><h3>목표와 예산</h3><pre>${esc(JSON.stringify({goal:run.goal,budget:run.budget},null,2))}</pre><div class="actions">${approve}</div>${input}<h3>근거·전략·산출물·성과·학습</h3><div class="records">${records}</div>`;
- if($('approve'))$('approve').onclick=()=>approval('granted');if($('reject'))$('reject').onclick=()=>approval('rejected');if($('submitInput'))$('submitInput').onclick=submitInput;
- }catch(e){$('message').textContent=e.message}}
-async function createRun(){try{const id=`run-${Date.now()}`;await api('/v1/runs',{method:'POST',body:JSON.stringify({run_id:id,goal:{objective:$('goal').value,success_criteria:[$('criteria').value],context:{}},budget:{max_tool_calls:8,max_cost_units:50}})});await list();await load(id)}catch(e){$('message').textContent=e.message}}
-async function approval(decision){try{const expires_at=decision==='granted'?new Date(Date.now()+300000).toISOString():null;await api(`/v1/runs/${encodeURIComponent(selected)}/approval`,{method:'POST',body:JSON.stringify({decision,expires_at})});await load(selected);await list()}catch(e){$('message').textContent=e.message}}
-async function submitInput(){try{let value=$('evidence').value;let evidence;try{evidence=JSON.parse(value)}catch{evidence={note:value}}await api(`/v1/runs/${encodeURIComponent(selected)}/input`,{method:'POST',body:JSON.stringify({evidence})});await load(selected);await list()}catch(e){$('message').textContent=e.message}}
-$('create').onclick=createRun;$('refresh').onclick=list;list().then(()=>{if(selected)load(selected)});
+const $=id=>document.getElementById(id);const pathRun=location.pathname.match(/^\/runs\/([^/]+)$/);let selected=pathRun?decodeURIComponent(pathRun[1]):null,csrf='',browserMode=false,pendingDigest=null,selectedRevision=null,busy=false,retryJob=null,sessionOwner='local';
+const states={created:'접수',running:'조사 중',awaiting_input:'추가 근거 필요',awaiting_approval:'승인 필요',completed:'완료',stopped:'종료',blocked:'확인 필요',failed:'실패',awaiting_reconciliation:'실행 결과 확인 필요'};
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function api(path,options={}){const headers={'content-type':'application/json'};if(browserMode){if(csrf)headers['x-trace-csrf']=csrf}else{if(!$('token').value)throw Error('로컬 서비스 토큰을 입력하세요.');headers.authorization=`Bearer ${$('token').value}`}
+ const response=await fetch(path,{...options,headers,credentials:'same-origin'});const body=await response.json();if(!response.ok){if(response.status===401)throw Error('로그인이 필요하거나 만료됐습니다. 다시 로그인하세요.');const e=Error(body.error||`HTTP ${response.status}`);e.status=response.status;throw e}return body}
+async function list(){const body=await api('/v1/runs');$('runs').innerHTML=body.runs.map(r=>`<button class="run" data-id="${esc(r.run_id)}"><b>${esc(r.goal.objective.slice(0,150))}</b><br>${esc(states[r.state]||r.state)}</button>`).join('')||'<span class="muted">아직 실행이 없습니다.</span>';document.querySelectorAll('.run').forEach(el=>el.onclick=()=>load(el.dataset.id).catch(showError))}
+async function load(id){selected=id;const body=await api(`/v1/runs/${encodeURIComponent(id)}`);const r=body.run;pendingDigest=body.pending_invocation_sha256;selectedRevision=r.revision;const reasoning=[...body.records].reverse().find(x=>x.kind==='reasoning');const summary=reasoning?.payload?.decision?.reasoning_summary||'';
+ const invocation=[...body.records].reverse().find(x=>x.kind==='invocation');const approval=r.state==='awaiting_approval'?`<h3>실행 승인</h3><p>아래 내용으로 외부 도구를 실행합니다.</p><pre>${esc(JSON.stringify(invocation?.payload?.input,null,2))}</pre><div class="actions"><button id="approve">이 내용 승인</button><button id="reject">거절</button></div>`:'';
+ const input=r.state==='awaiting_input'?'<label>추가 근거 또는 답변<textarea id="evidence"></textarea></label><button id="submitInput">이어서 실행</button>':'';
+ $('detail').innerHTML=`<h3>${esc(r.goal.objective)}</h3><p><b>${esc(states[r.state]||r.state)}</b></p><pre>${esc(summary)}</pre>${approval}${input}<button id="resume">중단된 조사 이어서 확인</button><details><summary>실행 기록 · Run journey</summary><div class="records">${body.records.map(x=>`<details><summary>${esc(x.kind)}</summary><pre>${esc(JSON.stringify(x.payload,null,2))}</pre></details>`).join('')}</div></details>`;
+ if($('approve'))$('approve').onclick=()=>approvalJob('granted');if($('reject'))$('reject').onclick=()=>approvalJob('rejected');if($('submitInput'))$('submitInput').onclick=()=>submit({action:'input',run_id:selected,expected_revision:selectedRevision,evidence:{note:$('evidence').value}});$('resume').onclick=()=>submit({action:'resume',run_id:selected});}
+function showError(e){$('message').textContent=e.message}
+async function watch(job){for(;;){const status=await api(`/v1/jobs/${encodeURIComponent(job.job_id)}`);if(status.state==='done'||status.state==='blocked'){sessionStorage.removeItem('trace.pendingJob');retryJob=null;await list();await load(status.run_id);$('message').textContent=status.state==='done'?'실행 상태를 갱신했습니다.':'실행이 중단됐습니다. 기록을 확인하고 조사를 이어서 확인하세요.';return} $('message').textContent='요청을 접수했습니다. 조사 중입니다. 이 화면을 닫아도 서버에서 계속 진행합니다.';await new Promise(r=>setTimeout(r,1500))}}
+async function submit(fields){if(busy)return;busy=true;$('create').disabled=true;try{const stored=sessionStorage.getItem('trace.pendingJob');if(stored){const saved=JSON.parse(stored);if(saved.owner===sessionOwner){await watch(saved);return}sessionStorage.removeItem('trace.pendingJob')}const job=retryJob||{job_id:crypto.randomUUID(),...fields};retryJob=job;await api('/v1/jobs',{method:'POST',body:JSON.stringify(job)});sessionStorage.setItem('trace.pendingJob',JSON.stringify({job_id:job.job_id,run_id:job.run_id,owner:sessionOwner}));await watch(job)}catch(e){if(e.status>=400&&e.status<500&&e.status!==401){retryJob=null;sessionStorage.removeItem('trace.pendingJob')}showError(e)}finally{busy=false;$('create').disabled=false}}
+function approvalJob(decision){submit({action:'approval',run_id:selected,decision,invocation_sha256:pendingDigest,expires_at:decision==='granted'?new Date(Date.now()+300000).toISOString():null})}
+$('create').onclick=()=>submit({action:'create',run_id:`run-${crypto.randomUUID()}`,goal:{objective:$('goal').value,success_criteria:[$('criteria').value],context:{}},budget:{max_tool_calls:8,max_cost_units:50}});
+$('refresh').onclick=async()=>{try{const pending=sessionStorage.getItem('trace.pendingJob');if(pending)await submit(JSON.parse(pending));else{await list();if(selected)await load(selected)}}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});sessionStorage.removeItem('trace.pendingJob');location.reload()}catch(e){showError(e)}};
+async function init(){try{const config=await fetch('/auth/config').then(r=>r.json());browserMode=config.browser_login;$('login').hidden=!browserMode;$('tokenField').hidden=browserMode;if(browserMode){const session=await api('/auth/session');csrf=session.csrf;sessionOwner=`${session.tenant_id}:${session.principal_id}`;$('identity').textContent=`${session.tenant_id} · ${session.principal_id}`;$('logout').hidden=false;$('login').hidden=true}if(browserMode||$('token').value){await list();if(selected)await load(selected);const pending=sessionStorage.getItem('trace.pendingJob');if(pending)await submit(JSON.parse(pending))}}catch(e){showError(e)}}init();
 </script></body></html>"""
 
 __all__ = ["AGENT_RUN_UI"]
