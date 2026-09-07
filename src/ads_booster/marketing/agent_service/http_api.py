@@ -26,11 +26,16 @@ from ads_booster.marketing.agent_service.application import (
     MarketingAgentService,
 )
 from ads_booster.marketing.agent_service.browser_login import BrowserLogin
+from ads_booster.marketing.agent_service.creative_api import dispatch_creative
+from ads_booster.marketing.agent_service.delivery_api import dispatch_delivery
 from ads_booster.marketing.agent_service.jobs import AgentJobs, WebJob
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
+from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from ads_booster.marketing.agent_service.memory_api import dispatch_memory
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
 from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
+from ads_booster.marketing.agent_service.work_continuation import continue_work
 from ads_booster.marketing.channels.slack_commands import SlackCommands
 from ads_booster.marketing.channels.slack_conversations import SlackInboxFullError
 from ads_booster.marketing.channels.slack_events import SlackEvents
@@ -48,6 +53,12 @@ class ApiCreateRunRequest(ContractModel):
     run_id: str
     goal: AgentGoal
     budget: AgentBudget
+
+
+class ApiContinuationRequest(ContractModel):
+    event_id: str
+    note: str
+    action: Literal["revise", "pause"]
 
 
 class ApiInputRequest(ContractModel):
@@ -205,6 +216,32 @@ class MarketingAgentApi:
             )
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            creative_response = dispatch_creative(
+                method,
+                path,
+                body,
+                identity=identity,
+                service=self.service,
+                artifact_root=self.service.repository.database_path.parent / "artifacts",
+                now=occurred_at,
+            )
+            if creative_response is not None:
+                return ApiResponse(*creative_response)
+            delivery_response = dispatch_delivery(
+                method, path, body, identity=identity, service=self.service
+            )
+            if delivery_response is not None:
+                return ApiResponse(*delivery_response)
+            memory_response = dispatch_memory(
+                method,
+                target,
+                body,
+                identity=identity,
+                store=SQLiteMemoryStore(self.service.repository.database_path),
+                now=occurred_at,
+            )
+            if memory_response is not None:
+                return ApiResponse(*memory_response)
             if self.jobs is not None and method == "POST" and path == "/v1/jobs":
                 job = WebJob.model_validate(_body_json(body))
                 if job.action == "approval" and not self._can_approve(identity):
@@ -285,6 +322,19 @@ class MarketingAgentApi:
             run = self.service.repository.get(identity.tenant_id, run_id)
             if run is None:
                 return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "agent_run_not_found"})
+            if method == "POST" and suffix == "/continuation":
+                continuation = ApiContinuationRequest.model_validate(_body_json(body))
+                _ = continue_work(
+                    self.service,
+                    identity.tenant_id,
+                    run_id,
+                    event_id=continuation.event_id,
+                    actor_id=identity.principal_id,
+                    note=continuation.note,
+                    action=continuation.action,
+                    now=occurred_at,
+                )
+                return ApiResponse(200, self._run_view(identity.tenant_id, run_id))
             if method == "GET" and suffix == "":
                 return ApiResponse(HTTPStatus.OK, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/input":
