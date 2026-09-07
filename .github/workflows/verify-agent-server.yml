@@ -19,12 +19,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uv sync --locked --python 3.14
+      - run: bash -n install-server.sh
       - name: Verify service, channels and update recovery
         run: >-
           uv run --no-sync pytest tests/marketing/agent_service tests/marketing/channels
           tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py
           tests/cli/test_agent_server_update.py -q
           tests/marketing/tool_adapters/test_compatibility.py
+          tests/cli/test_server_onboarding.py
       - name: Install the built wheel in a fresh environment
         shell: bash
         run: |
@@ -36,4 +38,7 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/agent-installed/bin/trace-marketing" version --json
           "$RUNNER_TEMP/agent-installed/bin/trace-marketing" service doctor
+          "$RUNNER_TEMP/agent-installed/bin/trace-marketing" server --help
+          "$RUNNER_TEMP/agent-installed/bin/trace-marketing" server manifest --origin https://agent.example.com --bootstrap > "$RUNNER_TEMP/bootstrap-manifest.json"
+          "$RUNNER_TEMP/agent-installed/bin/python" -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["features"]["slash_commands"][0]["url"] == "https://agent.example.com/channels/slack/commands"; assert "event_subscriptions" not in m["settings"]' "$RUNNER_TEMP/bootstrap-manifest.json"
           "$RUNNER_TEMP/agent-installed/bin/python" -c 'from ads_booster.marketing.agent_service.maintenance import UPDATE_PROTOCOL; assert UPDATE_PROTOCOL == 1'
