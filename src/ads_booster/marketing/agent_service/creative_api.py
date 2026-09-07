@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ads_booster.marketing.agent_service.oauth import OAuthIdentity
 
 _MAX_IMAGE = 512 * 1024
+_MAX_READBACK_IMAGE = 10 * 1024 * 1024
 _MAX_BODY = 1024 * 1024
 _MAX_PIXELS = 16_000_000
 _ROUTE = re.compile(
@@ -237,8 +238,11 @@ def _get(
     asset = repository.get(scope, asset_id, row[0])
     if asset is None:
         return 404, {"error": "creative_asset_not_found"}
-    data = (root / asset.relative_path).read_bytes()
-    if len(data) > _MAX_IMAGE or hashlib.sha256(data).hexdigest() != asset.sha256:
+    with (root / asset.relative_path).open("rb") as stream:
+        data = stream.read(_MAX_READBACK_IMAGE + 1)
+    if len(data) > _MAX_READBACK_IMAGE:
+        raise ValueError("creative_readback_image_too_large")
+    if hashlib.sha256(data).hexdigest() != asset.sha256:
         raise ValueError("creative_artifact_digest_mismatch")
     return 200, {
         "asset": _metadata(asset),

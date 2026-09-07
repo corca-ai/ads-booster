@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ import pytest
 from PIL import Image
 
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, contract_sha256
+from ads_booster.contracts.creative_work import CreativeAsset, CreativeScope
 from ads_booster.contracts.reasoning import (
     ReasoningDecision,
     ReasoningProviderReceipt,
@@ -24,6 +26,8 @@ from ads_booster.marketing.agent_service.application import (
     MarketingAgentService,
 )
 from ads_booster.marketing.agent_service.creative_api import dispatch_creative
+from ads_booster.marketing.agent_service.creative_asset_links import link_asset
+from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.oauth import OAuthIdentity
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.runtime import SqliteSessionStore
@@ -315,3 +319,51 @@ def test_registered_asset_retry_after_interrupted_continuation_is_safe(
     assert recovered[0] == 201
     assert provider.calls == 2
     assert len(list(root.rglob("*.png"))) == 1
+
+
+def test_web_reads_registered_worker_image_larger_than_inline_upload_limit(tmp_path: Path) -> None:
+    service, _ = _service(tmp_path)
+    root = tmp_path / "assets"
+    repository = SqliteCreativeAssetRepository(service.repository.database_path, root)
+    stream = io.BytesIO()
+    Image.new("RGB", (512, 512), "white").save(stream, format="PNG", compress_level=0)
+    data = stream.getvalue()
+    assert len(data) > 512 * 1024
+    _ = (root / "capture.png").write_bytes(data)
+    asset = CreativeAsset(
+        asset_id="capture",
+        revision=1,
+        scope=CreativeScope(workspace_id="trace", product_id="trace"),
+        kind="native_trace_capture",
+        relative_path="capture.png",
+        sha256=hashlib.sha256(data).hexdigest(),
+        source="Synthetic worker fixture",
+        use_terms="Test only",
+        data_permission="synthetic",
+        permission_evidence="Generated fixture",
+        origin="worker_receipt",
+        receipt_sha256="a" * 64,
+    )
+    repository.add(asset, actor_scope=asset.scope)
+    link_asset(
+        service.repository.database_path,
+        tenant_id="trace",
+        run_id="work",
+        asset_id="capture",
+        revision=1,
+        request_sha256="b" * 64,
+        actor_id="fixture-worker",
+    )
+    result = dispatch_creative(
+        "GET",
+        "/v1/runs/work/assets/capture",
+        b"",
+        identity=IDENTITY,
+        service=service,
+        artifact_root=root,
+        now=NOW,
+    )
+    assert result is not None
+    assert result[0] == 200
+    assert result[1]["image_base64"] == base64.b64encode(data).decode()
+    assert result[1]["product_proof_verified"] is False
