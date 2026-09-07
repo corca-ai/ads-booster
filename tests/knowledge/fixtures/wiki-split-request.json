@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.wiki.split.1",
+  "event_kind": "message_finalized",
+  "request_text": "‘라이트 요금제’ 페이지에서 고객 지원 운영 시간 내용을 ‘고객 지원’ 페이지로 분리해 주세요. 가격 claim은 원래 페이지에 두고 지원 시간 claim만 새 페이지로 옮기며 과거 인용은 유지해 주세요.",
+  "timestamp": "2026-09-07T08:10:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.wiki", "message_ref": "message.wiki.split", "revision": 1},
+  "attachments": [],
+  "logical_page_refs": {"source": "page.light-plan", "new_page": "page.customer-support"}
+}
