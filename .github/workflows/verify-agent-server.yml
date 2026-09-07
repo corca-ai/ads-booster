@@ -1,0 +1,39 @@
+name: Verify on-prem agent
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify on-prem agent
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv sync --locked --python 3.14
+      - name: Verify service, channels and update recovery
+        run: >-
+          uv run --no-sync pytest tests/marketing/agent_service tests/marketing/channels
+          tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py
+          tests/cli/test_agent_server_update.py -q
+          tests/marketing/tool_adapters/test_compatibility.py
+      - name: Install the built wheel in a fresh environment
+        shell: bash
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/agent-dist"
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/agent-requirements.txt"
+          uv venv --python 3.14 "$RUNNER_TEMP/agent-installed"
+          uv pip install --python "$RUNNER_TEMP/agent-installed/bin/python" -r "$RUNNER_TEMP/agent-requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/agent-installed/bin/python" --no-deps "$RUNNER_TEMP"/agent-dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/agent-installed/bin/trace-marketing" version --json
+          "$RUNNER_TEMP/agent-installed/bin/trace-marketing" service doctor
+          "$RUNNER_TEMP/agent-installed/bin/python" -c 'from ads_booster.marketing.agent_service.maintenance import UPDATE_PROTOCOL; assert UPDATE_PROTOCOL == 1'

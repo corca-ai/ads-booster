@@ -5,12 +5,17 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import IO, TYPE_CHECKING, Protocol, cast, override
 from urllib.parse import urlencode, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from pydantic import TypeAdapter
+
+from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from email.message import Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +26,18 @@ class OAuthIdentity:
 
 class AccessTokenAuthenticator(Protocol):
     def authenticate(self, authorization: str | None) -> OAuthIdentity | None: ...
+
+
+class NoRedirect(HTTPRedirectHandler):
+    @override
+    def redirect_request(
+        self, req: Request, fp: IO[bytes], code: int, msg: str, headers: Message, newurl: str
+    ) -> None:
+        _ = req, fp, code, msg, headers, newurl
+
+
+def open_auth_request(request: Request, *, timeout: float) -> IntrospectionResponse:
+    return cast("IntrospectionResponse", build_opener(NoRedirect()).open(request, timeout=timeout))
 
 
 class IntrospectionResponse(Protocol):
@@ -35,15 +52,13 @@ class OAuthTokenIntrospector:
     audience: str
     tenant_claim: str = "workspace_id"
     timeout_seconds: float = 5.0
-    opener: Callable[..., IntrospectionResponse] = urlopen
+    opener: Callable[..., IntrospectionResponse] = open_auth_request
 
     def authenticate(self, authorization: str | None) -> OAuthIdentity | None:
         token = _bearer_token(authorization)
         if token is None or urlsplit(self.introspection_url).scheme != "https":
             return None
-        credentials = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode()
-        ).decode()
+        credentials = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
         request = Request(  # noqa: S310 - URL is operator configuration and HTTPS is required.
             self.introspection_url,
             data=urlencode({"token": token, "token_type_hint": "access_token"}).encode(),
@@ -56,9 +71,12 @@ class OAuthTokenIntrospector:
         )
         try:
             response = self.opener(request, timeout=self.timeout_seconds)
-            payload = cast("dict[str, object]", json.loads(response.read()))
-        except (OSError, ValueError, AttributeError, TypeError):
+            payload = cast("object", json.loads(response.read()))
+        except OSError, ValueError, AttributeError, TypeError:
             return None
+        if not isinstance(payload, dict):
+            return None
+        payload = cast("dict[str, object]", payload)
         subject = payload.get("sub")
         tenant = payload.get(self.tenant_claim)
         audience = payload.get("aud")
@@ -94,3 +112,28 @@ def _bearer_token(authorization: str | None) -> str | None:
 
 
 __all__ = ["AccessTokenAuthenticator", "OAuthIdentity", "OAuthTokenIntrospector"]
+
+
+def exchange_authorization_code(
+    url: str, form: dict[str, str], client_id: str, client_secret: str
+) -> JsonObject:
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    if urlsplit(url).scheme != "https":
+        raise ValueError("agent_login_endpoint_invalid")
+    request = Request(  # noqa: S310 - configured HTTPS endpoint, redirects disabled.
+        url,
+        data=urlencode(form).encode(),
+        headers={
+            "authorization": f"Basic {credentials}",
+            "content-type": "application/x-www-form-urlencoded",
+            "accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        response = open_auth_request(request, timeout=10)
+        payload = TypeAdapter[JsonObject](JsonObject).validate_json(response.read())
+    except (OSError, ValueError) as error:
+        raise ValueError("agent_login_exchange_failed") from error
+    else:
+        return payload

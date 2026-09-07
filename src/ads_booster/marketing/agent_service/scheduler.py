@@ -97,6 +97,10 @@ class AgentSkillScheduler:
                     item
                     for item in self.service.registry.current_descriptors(now=now.astimezone(UTC))
                     if item.capability_id in _SCHEDULE_PREAUTHORIZED_CAPABILITIES
+                    and item.capability_id
+                    in MarketingSkillCatalog(self.service.registry)
+                    .get(schedule.skill_id)
+                    .required_capabilities
                     and item.capability_id == self._capability_for(invocation, schedule.tenant_id)
                 ),
                 None,

@@ -50,7 +50,7 @@ class StructuredRunner:
             "schema_version": "trace.reasoning-decision.v1",
             "action": "stop",
             "capability_id": None,
-            "tool_input": None,
+            "tool_input_json": None,
             "expected_outcome": "The bounded planning question is answered",
             "reasoning_summary": "No further tool is justified",
         }
@@ -145,3 +145,29 @@ def _request() -> ReasoningRequest:
         remaining_tool_calls=2,
         remaining_cost_units=4,
     )
+
+
+class ToolInputRunner:
+    def run_marketing_judgment_job(
+        self, prompt: str, schema: JsonObject, *, workspace: Path, timeout_seconds: float
+    ) -> JsonObject:
+        _ = prompt, workspace, timeout_seconds
+        properties = schema["properties"]
+        assert isinstance(properties, dict)
+        assert "tool_input_json" in properties
+        assert "$defs" not in schema
+        return {
+            "schema_version": "trace.reasoning-decision.v1",
+            "action": "invoke_tool",
+            "capability_id": "research.web",
+            "tool_input_json": '{"query":"app marketing","nested":{"limit":5}}',
+            "expected_outcome": "Find attributed evidence",
+            "reasoning_summary": "Search is needed",
+        }
+
+
+def test_provider_wire_preserves_open_tool_input_without_open_schema_objects(
+    tmp_path: Path,
+) -> None:
+    result = CodexReasoningProvider(ToolInputRunner(), tmp_path, model_id="fake").plan(_request())
+    assert result.decision.tool_input == {"query": "app marketing", "nested": {"limit": 5}}

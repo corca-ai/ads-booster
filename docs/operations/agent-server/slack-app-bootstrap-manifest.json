@@ -1,0 +1,42 @@
+{
+  "display_information": {
+    "name": "Trace Marketing Agent",
+    "description": "마케팅 조사와 실행 승인을 같은 에이전트에서 처리합니다."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Trace Marketing Agent",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/trace",
+        "url": "https://marketing-agent.borca.ai/channels/slack/commands",
+        "description": "마케팅 조사, 상태 확인, 추가 근거와 승인",
+        "usage_hint": "조사할 목표 | status 실행ID | input 실행ID 근거 | approve 실행ID 해시",
+        "should_escape": false
+      }
+    ],
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "app_mentions:read",
+        "channels:history",
+        "groups:history",
+        "im:history"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false
+  }
+}

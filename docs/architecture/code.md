@@ -34,6 +34,26 @@ implemented and verified. New portable records must not be dual-written as indep
 authorities. See [`on-prem-marketing-agent-service.md`](../contracts/on-prem-marketing-agent-service.md)
 for current, transition, and target boundaries.
 
+Codex reasoning uses a strict provider projection: arbitrary tool input is encoded as
+JSON text in tool_input_json, decoded immediately back into the portable ReasoningDecision,
+and validated against the selected ToolDescriptor by the service. The receipt binds the actual
+provider output schema digest. This avoids sending recursive open-object schemas that the live
+structured-output provider rejects; canonical invocation input and history remain structured JSON.
+
+## Web and Slack onboarding owners
+
+- agent_service/browser_login.py owns browser-bound PKCE, short-lived server sessions and CSRF;
+  oauth.py owns token exchange/introspection transport with redirects disabled.
+- agent_service/jobs.py owns durable web request admission, background dispatch and scoped status.
+  It never creates a separate Run ledger or plans outside MarketingAgentService.
+- channels/slack_commands.py owns real Slack form translation, command admission and response
+  dispatch markers. It uses the existing ChannelApplicationAdapter for identity and exact approval.
+- agent_service/channel_setup.py composes installed environment configuration and operator-managed
+  Slack member bindings; cli/marketing.py starts and stops background owners.
+- agent_service/web_search.py owns bounded query-to-search-result observation, separately from the
+  immutable installed-product evidence owner. skills.py retains the original daily skill and adds
+  the Slack-only versioned procedure.
+
 ## Composition
 
 `ads_booster.cli.marketing` exports the sole CLI, `trace-marketing`. `worker run` composes a
@@ -476,3 +496,33 @@ The legacy `MarketingWorkflow` / `MarketingAccountAgent` tables and Durable Obje
 the owner of new strategy state. Existing `hosted-workspace.js`, native capture modules, and
 `threads/*` modules keep their present responsibilities and will be referenced through immutable
 IDs and receipts rather than generalized or reimplemented.
+
+### Linux update ownership
+
+- `agent_service/maintenance.py` owns admission accounting shared by the HTTP dispatcher, background
+  queues (including recovery and outbound notification) and scheduled skill execution.
+- `docs/operations/agent-server/agent-manager.py` is the standalone Python 3.10+ Linux operator CLI:
+  bootstrap wheel installation, main fetch/CI gates, locked candidate install, systemd switching,
+  offline state backup, transaction recovery, and installed process launch. The timer executes the
+  manager from current, so updater changes follow main. It does not plan or own channel effects.
+- The supplied systemd service/timer are the Linux process composition. The actual service process
+  receives the release identity and maintenance path from the launcher, not from request parameters.
+- `.github/workflows/verify-agent-server.yml` owns the dedicated exact-commit CI gate and fresh-wheel
+  CLI smoke on Ubuntu, including `tool_adapters` compatibility. The manager requires only this named
+  GitHub Actions check, completed successfully. `tests/cli/test_agent_server_update.py` exercises
+  admission, rollback and crash boundaries.
+- `scripts/mac-release-policy.py` compares the package version against the event base commit.
+  `.github/workflows/release-mac-worker.yml` always verifies relevant Mac package changes, but uses
+  this policy output to guard release identity checks and publication. Explicit main dispatch can
+  resume an owned release. The signer workflow path and existing provenance checks remain stable.
+
+## Slack conversation ownership
+
+`marketing/channels/slack_conversations.py` owns typed conversation/message/plan records and the
+additive SQLite inbox/outbox beside the canonical Run ledger. `slack_events.py` owns signed Events
+admission, scope derivation, dialogue projection, action planning and original-conversation replies.
+It delegates Run/input/approval mutations to `MarketingAgentService`; it does not duplicate the engine.
+`agent_service/http_api.py` exposes the Events ingress and `channel_setup.py` drains it within the
+existing maintenance-gated worker. `cli/marketing.py` composes this optional surface from env.
+Private DM composition narrows CapabilityPolicy while sharing the service lock and canonical stores.
+Operator manifests and merge-to-operation guidance live in `docs/operations/agent-server`.

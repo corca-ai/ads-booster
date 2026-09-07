@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import TYPE_CHECKING
 
 from jsonschema import Draft202012Validator
@@ -66,6 +67,7 @@ class CreateAgentRunRequest(ContractModel):
 
 @dataclass(slots=True)
 class MarketingAgentService:
+    execution_lock: RLock = field(default_factory=RLock, init=False, repr=False)
     repository: SqliteAgentRunRepository
     registry: ToolRegistry
     reasoning: ReasoningProvider
@@ -88,50 +90,52 @@ class MarketingAgentService:
             raise ValueError("ready_tool_adapter_missing")
 
     def create(self, request: CreateAgentRunRequest, *, now: datetime) -> AgentRun:
-        current = self.repository.get(request.tenant_id, request.run_id)
-        if current is not None:
-            if (
-                current.tenant_id != request.tenant_id
-                or current.goal != request.goal
-                or current.budget != request.budget
-            ):
-                raise ValueError("agent_run_idempotency_conflict")
-            return self.drive(current.tenant_id, current.run_id, now=now)
-        run = self.repository.create(
-            AgentRun(
-                schema_version="trace.agent-run.v1",
-                run_id=request.run_id,
-                tenant_id=request.tenant_id,
-                goal=request.goal,
-                budget=request.budget,
-                state=AgentRunState.CREATED,
-                created_at=now,
-                updated_at=now,
-            ),
-            request_sha256=contract_sha256(request),
-        )
-        return self._plan(run, evidence=(), now=now)
+        with self.execution_lock:
+            current = self.repository.get(request.tenant_id, request.run_id)
+            if current is not None:
+                if (
+                    current.tenant_id != request.tenant_id
+                    or current.goal != request.goal
+                    or current.budget != request.budget
+                ):
+                    raise ValueError("agent_run_idempotency_conflict")
+                return self.drive(current.tenant_id, current.run_id, now=now)
+            run = self.repository.create(
+                AgentRun(
+                    schema_version="trace.agent-run.v1",
+                    run_id=request.run_id,
+                    tenant_id=request.tenant_id,
+                    goal=request.goal,
+                    budget=request.budget,
+                    state=AgentRunState.CREATED,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                request_sha256=contract_sha256(request),
+            )
+            return self._plan(run, evidence=(), now=now)
 
     def drive(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun:
         """Continue a recoverable reasoning boundary without repeating a claimed effect."""
-        run = self._required_run(tenant_id, run_id)
-        if run.state is not AgentRunState.RUNNING and run.state is not AgentRunState.CREATED:
-            return run
-        steps = self.repository.steps(tenant_id, run_id)
-        if steps and steps[-1].kind is AgentStepKind.EXECUTE:
-            return self._resume_execution(run, now=now)
-        if steps and steps[-1].kind is AgentStepKind.VERIFY:
-            return self._resume_verified_tool(run, now=now)
-        if steps and steps[-1].kind is AgentStepKind.APPROVE:
-            return self._resume_approved_invocation(run, now=now)
-        if steps and steps[-1].kind in {AgentStepKind.PLAN, AgentStepKind.REPLAN}:
-            return self._resume_planned_decision(run, now=now)
-        evidence = tuple(
-            record.payload
-            for record in self.repository.records(tenant_id, run_id)
-            if record.kind is AgentRecordKind.EVIDENCE
-        )
-        return self._plan(run, evidence=evidence[-1:], now=now)
+        with self.execution_lock:
+            run = self._required_run(tenant_id, run_id)
+            if run.state is not AgentRunState.RUNNING and run.state is not AgentRunState.CREATED:
+                return run
+            steps = self.repository.steps(tenant_id, run_id)
+            if steps and steps[-1].kind is AgentStepKind.EXECUTE:
+                return self._resume_execution(run, now=now)
+            if steps and steps[-1].kind is AgentStepKind.VERIFY:
+                return self._resume_verified_tool(run, now=now)
+            if steps and steps[-1].kind is AgentStepKind.APPROVE:
+                return self._resume_approved_invocation(run, now=now)
+            if steps and steps[-1].kind in {AgentStepKind.PLAN, AgentStepKind.REPLAN}:
+                return self._resume_planned_decision(run, now=now)
+            evidence = tuple(
+                record.payload
+                for record in self.repository.records(tenant_id, run_id)
+                if record.kind is AgentRecordKind.EVIDENCE
+            )
+            return self._plan(run, evidence=evidence[-1:], now=now)
 
     def _resume_planned_decision(self, run: AgentRun, *, now: datetime) -> AgentRun:
         records = self.repository.records(run.tenant_id, run.run_id)
@@ -251,35 +255,36 @@ class MarketingAgentService:
         *,
         now: datetime,
     ) -> AgentRun:
-        run = self._required_run(tenant_id, run_id)
-        if run.state is not AgentRunState.AWAITING_INPUT:
-            raise ValueError("agent_run_not_awaiting_input")
-        evidence_payload: JsonObject = {
-            "schema_version": "trace.agent-input-evidence.v1",
-            "evidence": evidence,
-        }
-        evidence_sha256 = contract_sha256(evidence_payload)
-        record = _record(
-            run,
-            record_id=f"{run.run_id}:input:{run.revision}",
-            kind=AgentRecordKind.EVIDENCE,
-            payload=evidence_payload,
-            now=now,
-        )
-        resumed = self.repository.append_step(
-            run,
-            _step(
+        with self.execution_lock:
+            run = self._required_run(tenant_id, run_id)
+            if run.state is not AgentRunState.AWAITING_INPUT:
+                raise ValueError("agent_run_not_awaiting_input")
+            evidence_payload: JsonObject = {
+                "schema_version": "trace.agent-input-evidence.v1",
+                "evidence": evidence,
+            }
+            evidence_sha256 = contract_sha256(evidence_payload)
+            record = _record(
                 run,
-                kind=AgentStepKind.OBSERVE,
-                input_sha256=evidence_sha256,
-                output_sha256=evidence_sha256,
+                record_id=f"{run.run_id}:input:{run.revision}",
+                kind=AgentRecordKind.EVIDENCE,
+                payload=evidence_payload,
                 now=now,
-            ),
-            state=AgentRunState.RUNNING,
-            expected_revision=run.revision,
-            records=(record,),
-        )
-        return self._plan(resumed, evidence=(evidence_payload,), now=now)
+            )
+            resumed = self.repository.append_step(
+                run,
+                _step(
+                    run,
+                    kind=AgentStepKind.OBSERVE,
+                    input_sha256=evidence_sha256,
+                    output_sha256=evidence_sha256,
+                    now=now,
+                ),
+                state=AgentRunState.RUNNING,
+                expected_revision=run.revision,
+                records=(record,),
+            )
+            return self._plan(resumed, evidence=(evidence_payload,), now=now)
 
     def decide_approval(  # noqa: PLR0913 - exact approval identity and expiry stay explicit.
         self,
@@ -290,63 +295,70 @@ class MarketingAgentService:
         granted: bool,
         now: datetime,
         expires_at: datetime | None = None,
+        expected_invocation_sha256: str | None = None,
     ) -> AgentRun:
         """Resolve one exact pending invocation and dispatch only a valid grant."""
-        run = self._required_run(tenant_id, run_id)
-        if run.state is not AgentRunState.AWAITING_APPROVAL:
-            raise ValueError("agent_run_not_awaiting_approval")
-        invocation = self._latest_invocation(tenant_id, run_id)
-        if granted and expires_at is None:
-            raise ValueError("approval_expiry_required")
-        descriptor = self._descriptor_for_invocation(tenant_id, run_id, invocation)
-        if granted:
-            _ = self.registry.require_current_dispatch(
-                descriptor, policy=self.capability_policy, now=now
+        with self.execution_lock:
+            run = self._required_run(tenant_id, run_id)
+            if run.state is not AgentRunState.AWAITING_APPROVAL:
+                raise ValueError("agent_run_not_awaiting_approval")
+            invocation = self._latest_invocation(tenant_id, run_id)
+            if (
+                expected_invocation_sha256 is not None
+                and contract_sha256(invocation) != expected_invocation_sha256
+            ):
+                raise ValueError("agent_approval_invocation_changed")
+            if granted and expires_at is None:
+                raise ValueError("approval_expiry_required")
+            descriptor = self._descriptor_for_invocation(tenant_id, run_id, invocation)
+            if granted:
+                _ = self.registry.require_current_dispatch(
+                    descriptor, policy=self.capability_policy, now=now
+                )
+                if descriptor.capability_id not in self.tools:
+                    raise ValueError("tool_dispatch_adapter_unavailable")
+            approval = ToolApproval(
+                schema_version="trace.tool-approval.v1",
+                approval_id=f"{run_id}:approval:{run.revision}",
+                invocation_sha256=contract_sha256(invocation),
+                approver_id=approver_id,
+                decision="granted" if granted else "rejected",
+                expires_at=expires_at,
+                decided_at=now,
             )
-            if descriptor.capability_id not in self.tools:
-                raise ValueError("tool_dispatch_adapter_unavailable")
-        approval = ToolApproval(
-            schema_version="trace.tool-approval.v1",
-            approval_id=f"{run_id}:approval:{run.revision}",
-            invocation_sha256=contract_sha256(invocation),
-            approver_id=approver_id,
-            decision="granted" if granted else "rejected",
-            expires_at=expires_at,
-            decided_at=now,
-        )
-        approval_sha256 = contract_sha256(approval)
-        decided = self.repository.append_step(
-            run,
-            _step(
+            approval_sha256 = contract_sha256(approval)
+            decided = self.repository.append_step(
                 run,
-                kind=AgentStepKind.APPROVE,
-                input_sha256=contract_sha256(invocation),
-                output_sha256=approval_sha256,
-                now=now,
-            ),
-            state=AgentRunState.RUNNING if granted else AgentRunState.STOPPED,
-            expected_revision=run.revision,
-            records=(
-                _record(
+                _step(
                     run,
-                    record_id=approval.approval_id,
-                    kind=AgentRecordKind.APPROVAL,
-                    payload=approval.model_dump(mode="json"),
+                    kind=AgentStepKind.APPROVE,
+                    input_sha256=contract_sha256(invocation),
+                    output_sha256=approval_sha256,
                     now=now,
                 ),
-            ),
-        )
-        if not granted:
-            return decided
-        self._fault("approval_committed")
-        return self._dispatch_tool(
-            decided,
-            invocation=invocation,
-            descriptor=descriptor,
-            approval=approval,
-            now=now,
-            persist_invocation=False,
-        )
+                state=AgentRunState.RUNNING if granted else AgentRunState.STOPPED,
+                expected_revision=run.revision,
+                records=(
+                    _record(
+                        run,
+                        record_id=approval.approval_id,
+                        kind=AgentRecordKind.APPROVAL,
+                        payload=approval.model_dump(mode="json"),
+                        now=now,
+                    ),
+                ),
+            )
+            if not granted:
+                return decided
+            self._fault("approval_committed")
+            return self._dispatch_tool(
+                decided,
+                invocation=invocation,
+                descriptor=descriptor,
+                approval=approval,
+                now=now,
+                persist_invocation=False,
+            )
 
     def _plan(
         self,

@@ -88,3 +88,46 @@ and account switching, and checks that preparation, execution, failure, and call
 Inspect the rendered DOM and network payload to confirm there is no prompt, raw provider/callback
 output, credential, enrollment code, exception message, or local path. A visible event is diagnostic
 evidence only; the task row and callback remain completion evidence.
+
+
+## Main agent web and Slack onboarding
+
+Focused owners: tests/marketing/agent_service, tests/marketing/channels,
+tests/providers/test_codex_reasoning.py, and tests/cli/test_cli_compatibility.py.
+Run these tests together for login/channel/service composition changes, with scoped Ruff,
+format checks and BasedPyright on changed source and tests. Do not run the repository-wide suite.
+
+Prove browser-bound OAuth state, PKCE and CSRF rejection; signed real Slack form admission before
+reasoning; app/team/channel/member denial; durable restart/dedupe and no notification retry after
+an ambiguous send; one canonical asynchronous web Run; and Slack-only scheduled delivery without
+Notion. Use an isolated installed candidate wheel for HTTP/browser QA. Fake provider/channel
+success is not live OAuth, Codex, Slack, Cloudflare Tunnel, or Linux service evidence.
+The operator's live completion checklist is in docs/operations/agent-server/README.md.
+
+For Linux main updates also run `tests/cli/test_agent_server_update.py` together with the main-agent
+onboarding owners above. Verify busy-work deferral without a stop, passive candidate failure with real
+SQLite backup/restore, interrupted switch recovery, no rewind after activation, failed/pending CI
+rejection, and old-main protocol rejection. `test_maintenance.py` covers concurrent drain accounting,
+new-request refusal and signed Slack-only admission with web/API denial. Scoped Ruff and BasedPyright
+include the standalone `docs/operations/agent-server/agent-manager.py`. Build a fresh wheel and install
+it via the candidate manager; source success alone is not installed-product evidence. The Ubuntu CI
+check `Verify on-prem agent` runs on every main push and is required by the updater. Faked systemctl
+and health calls prove transaction behavior, not live Linux lifecycle or live GitHub automatic rollout.
+
+That Ubuntu check also runs `tests/marketing/tool_adapters/test_compatibility.py`; unrelated Mac release
+checks are not server admission requirements. The updater tests cover unrelated failed/pending checks
+alongside rejection of missing, wrong-app, failed, skipped or incomplete required checks.
+For Mac release-policy changes run `tests/cli/test_mac_release_policy.py`,
+`tests/cli/test_release_builder.py` and `tests/cli/test_github_release_state.py`. Policy tests execute
+the workflow identity shell against a Git fixture and conflicting release fixture: unchanged versions
+skip publication identity checks, version changes and explicit dispatch retain them. The macOS job
+still builds and fresh-installs the compatibility candidate; PRs cannot publish.
+
+Slack conversations: `tests/marketing/channels/test_slack_events.py` proves signed challenge and
+app/team admission, pre-reasoning ack, mention/message dedupe, thread continuation, same-Run input,
+private context/tool/member separation, explicit hash/reviewer approval, close/reopen, removal before
+work, unknown send no-retry and interruption recovery. Include it through the existing channels
+selection in `Verify on-prem agent`. Fresh installed HTTP must verify the Events challenge and
+maintenance rejection in Slack-only mode. Fixture provider/sender tests do not prove real Slack:
+operator acceptance requires mention → thread follow-up, DM isolation, approval, restart, and a live
+main SHA transition on Ubuntu as described in the server launch guide.

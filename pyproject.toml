@@ -53,6 +53,9 @@ line-length = 100
 src = ["src", "tests"]
 exclude = [".omo"]
 
+[tool.ruff.per-file-target-version]
+"docs/operations/agent-server/agent-manager.py" = "py310"
+
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
