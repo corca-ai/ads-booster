@@ -33,10 +33,11 @@ PR 브랜치의 성공 표시만으로는 부족하다. Actions에서 정확한 
 
 ## 2. 최신 설치 ZIP을 서버로 옮기기 — 본인
 
-Mac 다운로드 폴더의 `trace-agent-server-setup-20260907-slack-agent.zip`을 사용한다.
-이전 `autoupdate.zip`은 멘션·DM이 없는 이전 후보이므로 새 설치에는 사용하지 않는다.
+Mac 다운로드 폴더의 `trace-agent-server-setup-20260907-ci-separated.zip`을 사용한다.
+이전 `slack-agent.zip`과 `autoupdate.zip` 대신 이 파일을 사용한다. 이번 파일에 Mac 릴리스와
+분리된 서버 업데이트 관리자가 포함되어 있다.
 Termius에서 설치할 Ubuntu 세션의 SFTP를 열고 ZIP을 서버의 로그인 사용자 홈으로 업로드한다.
-업로드 후 서버 Codex에 **실제 절대 경로**를 알려준다. 예: `/home/실제계정/trace-agent-server-setup-20260907-slack-agent.zip`.
+업로드 후 서버 Codex에 **실제 절대 경로**를 알려준다. 예: `/home/실제계정/trace-agent-server-setup-20260907-ci-separated.zip`.
 계정 이름은 예시를 그대로 쓰지 않는다.
 
 서버 Codex에게 이 문서 마지막의 지시문을 전달하면 된다. 압축 해제, 의존성 설치와 파일 배치는
@@ -169,9 +170,13 @@ curl -fsS http://127.0.0.1:8765/health
 ```
 
 부팅 후 2분, 이후 검사 종료 기준 약 5분마다 main을 확인한다. 새 SHA가 없으면 설치하지 않는다.
-새 SHA의 전용 CI 및 다른 체크가 성공해야 별도 환경에 설치하고, 실행 중인 작업이 끝난 뒤
+새 SHA의 `Verify on-prem agent`가 완료·성공해야 별도 환경에 설치하고, 실행 중인 작업이 끝난 뒤
 백업·교체·건강 확인한다. 시작 실패 시 이전 코드와 상태로 복구한다. 설정·로그인·기록은 유지한다.
 바쁜 상태가 계속되면 교체를 미루므로 **main 병합 후 반드시 5분 안에 적용된다는 뜻은 아니다**.
+이 전용 검사에 서버와 도구 어댑터의 연결 계약 검증이 포함된다. 별도 Mac 릴리스 검사의
+실패·대기는 서버 자동 업데이트 조건이 아니다. Mac 호환성 CI는 계속 실행되지만 버전이
+바뀌지 않으면 Mac 릴리스 게시를 시도하지 않는다. Slack 기동에 Mac 설치가 선행 조건은 아니다.
+Mac을 온프레미스 에이전트에 직접 등록하고 수명주기까지 관리하는 기능은 아직 미구현이다.
 
 완료 기준: 첫 수동 검사 뒤 `/health`의 `release`가 main SHA와 같고 timer가 활성화됨.
 이후 실제 다음 main 변경 때 SHA가 바뀌는 것을 관찰해야 자동 적용까지 검증한 것이다.
@@ -204,7 +209,7 @@ curl -fsS http://127.0.0.1:8765/health
 ## 서버 Codex에 그대로 전달할 지시문
 
 ```text
-서버에 올린 trace-agent-server-setup-20260907-slack-agent.zip을 찾아 README.md,
+서버에 올린 trace-agent-server-setup-20260907-ci-separated.zip을 찾아 README.md,
 slack-launch-guide.md와 verification.md를 읽고 Trace Slack 에이전트를 설치해줘.
 ZIP의 실제 절대 경로는 내가 전달한 업로드 위치를 사용해줘.
 Ubuntu 22.04.5 x86_64이며 Codex는 ChatGPT 로그인 상태야.

@@ -114,6 +114,15 @@ it via the candidate manager; source success alone is not installed-product evid
 check `Verify on-prem agent` runs on every main push and is required by the updater. Faked systemctl
 and health calls prove transaction behavior, not live Linux lifecycle or live GitHub automatic rollout.
 
+That Ubuntu check also runs `tests/marketing/tool_adapters/test_compatibility.py`; unrelated Mac release
+checks are not server admission requirements. The updater tests cover unrelated failed/pending checks
+alongside rejection of missing, wrong-app, failed, skipped or incomplete required checks.
+For Mac release-policy changes run `tests/cli/test_mac_release_policy.py`,
+`tests/cli/test_release_builder.py` and `tests/cli/test_github_release_state.py`. Policy tests execute
+the workflow identity shell against a Git fixture and conflicting release fixture: unchanged versions
+skip publication identity checks, version changes and explicit dispatch retain them. The macOS job
+still builds and fresh-installs the compatibility candidate; PRs cannot publish.
+
 Slack conversations: `tests/marketing/channels/test_slack_events.py` proves signed challenge and
 app/team admission, pre-reasoning ack, mention/message dedupe, thread continuation, same-Run input,
 private context/tool/member separation, explicit hash/reviewer approval, close/reopen, removal before

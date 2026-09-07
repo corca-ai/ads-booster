@@ -86,8 +86,9 @@ Slack Events와 명령 URL에는 Cloudflare Access 로그인 리디렉션을 적
 
 - 부팅 후 2분, 이후 이전 검사 종료 기준 5분마다 `main`을 fetch한다. 브랜치명뿐 아니라
   정확한 commit SHA를 기록한다. README만 바뀌어도 main 변경이면 검사한다.
-- 그 SHA의 `Verify on-prem agent` GitHub Actions 검사가 성공하고, 반환된 다른 체크도
-  완료/성공·중립·스킵이어야 설치한다. 미완료·실패·권한 오류이면 기존 버전을 유지한다.
+- 그 SHA의 `Verify on-prem agent` GitHub Actions 검사가 완료·성공해야 설치한다.
+  이 검사에는 서버와 도구 어댑터 계약 검증이 포함된다. 검사 없음·미완료·실패·권한 오류이면
+  기존 버전을 유지한다. 별도 Mac 릴리스나 리뷰 체크 결과는 서버 설치를 막지 않는다.
 - 이미 적용한 SHA면 작업하지 않는다. 기존 SHA의 후손만 허용한다. main 강제 되돌리기는
   자동 적용하지 않고 운영자가 검토한다.
 - 별도 릴리스 디렉터리에 checkout 후 `uv sync --locked --no-dev --no-editable`로 설치한다.

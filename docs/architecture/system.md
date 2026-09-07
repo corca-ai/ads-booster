@@ -718,7 +718,9 @@ login or company OAuth is required in this mode; Cloudflare email-login integrat
 
 The systemd user agent and five-minute updater are separate processes. The updater has GitHub read
 access and no agent secret EnvironmentFile. It fetches main and verifies the exact SHA's dedicated
-on-prem check and other returned CI outcomes, installs a non-editable locked candidate, and verifies
+on-prem check (`Verify on-prem agent`, GitHub Actions, completed/success). That check includes tool
+adapter contracts; unrelated Mac release or review checks do not govern server installation.
+It installs a non-editable locked candidate and verifies
 its update protocol and installed doctor before requesting maintenance. One MaintenanceGate accounts
 for HTTP admission, queue recovery/dispatch/delivery and scheduler work. No new work enters while its
 file exists; active work drains without interruption. If it cannot drain in five minutes, the update
@@ -728,6 +730,12 @@ restores code and canonical state before reopening admission. A persisted transa
 interrupted switch; after activation is committed it never rewinds records. Failed SHAs are quarantined.
 State and configuration live outside releases. Backups and failed state are retained for operator
 reconciliation. Existing cloudflared services are independent and must not be replaced by this updater.
+
+Mac worker compatibility remains a separate macOS CI job for shared package changes. It builds and
+fresh-installs the candidate even when its version is unchanged. Release identity collision checks,
+attestation/publication and the Cloudflare Mac update signal apply only to version-changing releases
+or an explicit main workflow dispatch. PRs never publish. This separates release authority from
+runtime tool delegation; direct Mac enrollment/lifecycle ownership by the on-prem agent is still pending.
 
 ## Slack conversation Events boundary
 

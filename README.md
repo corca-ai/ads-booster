@@ -418,6 +418,13 @@ cannot block or retry the underlying job; D1 task state and callbacks remain aut
 
 ## Bootstrap a verified Mac worker release
 
+Mac compatibility CI still tests shared package changes and a fresh offline installation. An unchanged
+package version does not require a new Mac release. Version changes on main trigger the verified
+release pipeline; an explicit main workflow dispatch can release or resume with the existing ownership
+guards. PRs never publish. Mac release checks do not gate the on-prem server updater: it requires the
+exact main SHA's successful `Verify on-prem agent` check, including tool-adapter compatibility.
+The Mac remains a separately enrolled tool; direct on-prem enrollment/lifecycle management is pending.
+
 ```bash
 bash -euo pipefail <<'TRACE_MAC_BOOTSTRAP'
 repository="corca-ai/ads-booster"

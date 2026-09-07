@@ -44,7 +44,7 @@ installation/request/approval/result roundtrip and daily delivery; this branch m
 successful dedicated CI; a live change of installed SHA observed through the timer; reboot behavior.
 Local tests substitute systemctl and health for update recovery and are not live Linux rollout proof.
 The supplied manager source and wheel are unreleased candidates. The public v0.4.21 does not contain
-these changes. The new dedicated CI workflow has not run remotely yet.
+these changes. At that checkpoint the dedicated CI workflow had not run remotely yet; see the later results below.
 Company OAuth is not required for Slack-only deployment. Optional Cloudflare email-login web
 integration remains unimplemented and is not a requirement for the Slack-only completion claim.
 
@@ -67,7 +67,26 @@ integration remains unimplemented and is not a requirement for the Slack-only co
   authorized commit/push and PR creation. Consult the branch PR for publication and current CI status.
 
 Still unverified: a real Corca Slack mention/thread/DM/reviewer roundtrip, actual Ubuntu systemd and
-Cloudflare connector health, Linux reboot, GitHub CI for this branch, and a real main SHA transition.
+Cloudflare connector health, Linux reboot, and a real main SHA transition.
 The earlier real Codex/search evidence above predates the conversation adapter and does not establish
 live Slack completion. Ceal's file access, workspace search, buttons, streaming and AI sidebar are not
 implemented by this candidate. Private DM tools are deliberately limited to public search.
+
+## Independent server admission and Mac release policy
+
+- PR #132's first Ubuntu run passed 96 tests and fresh-wheel installation. Its Mac job failed
+  before functional tests because unchanged v0.4.21 collided with an existing release.
+- Added failing regressions before changing admission: unrelated failed/pending Mac checks must
+  not stop server candidate protocol validation. The required agent check still rejects missing,
+  wrong-app, failed, skipped and incomplete results. Tool-adapter contracts now run in the server CI.
+- The expanded server CI selection passed 115 tests locally. Mac policy/builder/release-state
+  selection passed 20 tests. Policy tests execute the workflow identity shell: an unchanged version
+  bypasses a conflicting release fixture; version changes and explicit dispatch retain the guard.
+- All five changed Python files passed scoped Ruff, formatter and BasedPyright (zero errors/warnings).
+- The updated manager installed the previously validated conversation wheel into a new isolated root
+  `/private/tmp/trace-agent-ci-separated-installed`; installed version and service doctor passed.
+  Application source and wheel are unchanged; manager/CI/operating guidance changed.
+- Use `trace-agent-server-setup-20260907-ci-separated.zip` for initial installation so the bootstrap
+  manager already uses the independent server CI gate. The older ZIP contains the old gate.
+- Remote checks for the final PR head are recorded in GitHub, not inferred from local results.
+  Actual Ubuntu lifecycle, Slack acceptance and a live main SHA transition still require operator QA.

@@ -508,7 +508,13 @@ IDs and receipts rather than generalized or reimplemented.
 - The supplied systemd service/timer are the Linux process composition. The actual service process
   receives the release identity and maintenance path from the launcher, not from request parameters.
 - `.github/workflows/verify-agent-server.yml` owns the dedicated exact-commit CI gate and fresh-wheel
-  CLI smoke on Ubuntu. `tests/cli/test_agent_server_update.py` exercises rollback and crash boundaries.
+  CLI smoke on Ubuntu, including `tool_adapters` compatibility. The manager requires only this named
+  GitHub Actions check, completed successfully. `tests/cli/test_agent_server_update.py` exercises
+  admission, rollback and crash boundaries.
+- `scripts/mac-release-policy.py` compares the package version against the event base commit.
+  `.github/workflows/release-mac-worker.yml` always verifies relevant Mac package changes, but uses
+  this policy output to guard release identity checks and publication. Explicit main dispatch can
+  resume an owned release. The signer workflow path and existing provenance checks remain stable.
 
 ## Slack conversation ownership
 
