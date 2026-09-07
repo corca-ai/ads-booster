@@ -86,6 +86,8 @@ class MarketingAgentService:
     runtime: MarketingAgentRuntime = field(default_factory=MarketingAgentRuntime)
     boundary_signal: Callable[[str, str], JsonObject | None] | None = None
 
+    current_context: Callable[[AgentRun, datetime], JsonObject | None] | None = None
+
     def __post_init__(self) -> None:
         """Fail closed when a selectable descriptor has no execution adapter."""
         if self.runtime_store.database_path != self.repository.database_path:
@@ -423,6 +425,9 @@ class MarketingAgentService:
                 ),
             ),
         )
+        current_context = None if self.current_context is None else self.current_context(run, now)
+        if current_context is not None:
+            evidence = (*evidence, current_context)
         reasoning_request = ReasoningRequest(
             schema_version="trace.reasoning-request.v1",
             run_id=run.run_id,
