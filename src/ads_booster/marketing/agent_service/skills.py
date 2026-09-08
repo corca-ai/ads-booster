@@ -196,7 +196,7 @@ _MARKETING_SKILLS = (
 CREATIVE_SKILLS = tuple(
     MarketingSkill(
         skill_id=f"creative.{procedure.task}",
-        version="1",
+        version="2",
         purpose=procedure.purpose,
         required_capabilities=("creative.prepare",),
         success_criteria=(
@@ -207,7 +207,14 @@ CREATIVE_SKILLS = tuple(
             f"1. creative.prepare에 task={procedure.task}와 이미 확인된 input 정보를 전달한다.\n"
             "2. inputs, preserve, change, locales를 전달한다. 캠페인 전체 설정은 불필요하다.\n"
             "3. brief는 제작·검수 완료가 아니다. 도구와 정확한 승인을 확인한다.\n"
-            "4. 사람에게 절차·보존 조건·반환물을 request_input으로 안내하고 같은 업무에서 재개한다."
+            "4. 반환된 route가 automatic이면 현재 스냅샷의 실행 도구·입력 스키마를 확인하고 "
+            "그 도구를 호출한다. 준비만 하고 멈추거나 같은 준비를 반복하지 않는다. "
+            "실행 승인은 서비스가 집행한다. 결과 receipt를 확인하고 필요한 검수를 이어간다.\n"
+            "5. awaiting_input이면 먼저 현재 도구로 자산·메타데이터를 조회해 빈칸을 채운다. "
+            "사용자에게 내부 ID·digest를 직접 찾게 하지 않는다. 조회할 수 없는 정보만 묻는다.\n"
+            "6. human_assisted이면 직접 할 수 있는 제안·문구·검토 설명을 먼저 제공한다. "
+            "도구 실행이 필요한 나머지만 구체적인 사람 작업과 반환물로 안내한다. "
+            "이미 충분한 요청이면 별도 준비 없이 실행 도구나 직접 답변으로 처리할 수 있다."
         ),
     )
     for procedure in PROCEDURES
