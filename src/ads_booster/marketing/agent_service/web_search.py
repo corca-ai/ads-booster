@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Protocol, cast
+from typing import TYPE_CHECKING, Annotated
 from urllib.parse import urlsplit
 
-from ddgs import (
-    DDGS,  # pyright: ignore[reportUnknownVariableType] - optional package uses a lazy facade.
-)
 from pydantic import Field, TypeAdapter
 
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.tool_adapters.compatibility import DelegatedToolResult
 from ads_booster.marketing.tool_adapters.descriptors import research_descriptor
+from ads_booster.providers.public_search import public_search
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -45,16 +43,6 @@ def search_descriptor(*, now: datetime) -> ToolDescriptor:
             "cost": template.cost.model_copy(update={"worst_case_units": 1, "unit": "search"}),
             "credential_boundary": "none",
         }
-    )
-
-
-class SearchClient(Protocol):
-    def text(self, query: str, *, max_results: int) -> object: ...
-
-
-def public_search(query: str) -> list[dict[str, str]]:
-    return TypeAdapter[list[dict[str, str]]](list[dict[str, str]]).validate_python(
-        cast("SearchClient", DDGS(timeout=15)).text(query, max_results=5)
     )
 
 
