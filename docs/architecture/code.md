@@ -617,3 +617,33 @@ and bounds; `http_api.py` dispatches them under the existing maintenance gate.
 HTTP client. `cli/remote_capture.py` composes existing Codex/Appium ports; `cli/marketing.py` exposes
 the two worker commands and optional server configuration. Existing D1 owners and worker services
 are unchanged. No additional reasoning provider or framework is introduced.
+
+`contracts/performance_observation.py` owns attributed performance snapshots and comparison
+contracts. `performance_observations.py` owns immutable scoped reports, corrections and
+learning-candidate construction; `performance_observation_validity.py` validates current
+source digests using the memory owner's transaction without a circular store dependency.
+`slack_performance.py` translates signed conversation commands; `performance_api.py` exposes
+the authenticated, read-only same-Run projection. Neither adapter owns approval or external
+metric collection. D1's execution records are not duplicated as verified canonical facts.
+
+`creative_image_edit_contract.py` owns bounded source/region/locale requests and deterministic
+composition that restores and checks unchanged pixels. `providers/codex_image_edit.py` owns
+the official app-server protocol, restricted tool inventory, immutable input files, generation
+start marker and verified output readback. `creative_image_edit.py` owns exact admission,
+durable asynchronous job state, source currentness, asset provenance and canonical settlement.
+`image_edit_setup.py` composes the explicit configuration and readiness catalog; the existing
+service CLI starts its polling thread under the maintenance gate. These owners do not infer
+native product support or final visual approval from generated output.
+
+`managed_image_review.py` authorizes exact Run links and current source bytes, delegates to
+the existing read-only visual helper, and stores bounded no-replay inference receipts. Its
+catalog is composed by `lifecycle.py`; `creative_procedures.py` chooses it for registered inputs.
+`creative_assets.describe` exposes stored metadata only for collection discovery; existing
+`get` remains the byte-verifying owner. `creative_api.py` bounds same-Run collection discovery,
+and `web_ui.py` renders authenticated selected images and human outcome snapshots without
+creating another execution owner. Slack's review-page owner also supplies the natural assent
+boundary; rendered pages and authorization must not maintain independent pagination contracts.
+
+`image_edit_api.py` exposes exact operation status and reviewer abandonment through the
+existing authenticated API. The image queue owner records human abandonment and settles the
+canonical deferred operation; HTTP neither invents worker evidence nor calls the provider.

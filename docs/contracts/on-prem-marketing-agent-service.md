@@ -181,6 +181,13 @@ plans and testing document. Live editing/capture, external publishing/readback/m
 community actions, Paid execution and model-quality generalization remain unverified or Draft;
 prepared packets and fake adapters must not be described as those integrations completing.
 
+Performance reports enter as attributed human observations scoped to the current work, retaining
+source, account/country and observation window. Corrections preserve originals and invalidate
+derived memory before approval or retrieval. Shared Web readback cannot promote private reports.
+Optional image editing uses the existing exact production approval and asynchronous completion
+boundary; it checks unchanged pixels and records promotional/background provenance with pending
+visual/human review. It does not grant final publication authority or verify native product support.
+
 Slack asset intake is an optional small-work tool pair: inspect authenticated file bytes, then
 import the exact digest with human-confirmed source/use terms under runtime approval. It does
 not grant downstream production/publication approval. Register before linking for Web readback;

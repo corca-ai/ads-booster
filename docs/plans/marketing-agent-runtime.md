@@ -26,8 +26,17 @@ end-to-end capture remain unverified. Optional Slack source-asset intake now use
 inspection followed by digest-bound import approval and canonical receipts. A separate optional
 Linux-to-Mac transport now connects this work without changing default server onboarding.
 
-Unimplemented paths remain Draft until scenario evidence exists: operational image editing,
-live native capture acceptance, publication scheduling/readback, live metrics/community and Paid actions.
+The optional image edit/localize executor now binds source/region/locale to exact approval,
+queues work durably, and restores unchanged original pixels. It completes through the existing
+same-Run receipt and asset owners, with independent visual and human QA pending. An uncertain
+generation is not replayed; interrupted uncertainty projection is repaired locally. Optional
+CLI composition uses the existing maintenance gate and leaves server onboarding unchanged.
+Selected-provider image I/O remains a separate acceptance check from fixture tests.
+
+Paths remain Draft until scenario evidence exists: live native capture acceptance, external
+publication scheduling/readback, live metric collection/community and Paid actions.
+Human-reported performance now has same-work Slack intake, correction, bounded comparison,
+authenticated readback and reviewed learning; it does not claim platform verification or lift.
 No new publisher or automatic self-modification is enabled by this plan.
 
 Remote capture requires an explicit asynchronous boundary before transport wiring. Existing
@@ -60,6 +69,16 @@ general partial-edit/localization adapter. Before activation, bind source/region
 validate a generated-image event and managed output bytes, retain start/response-loss evidence,
 and check preserved pixels plus separate visual/human QA. Generated raster and edited promotional
 screenshots must retain their existing non-product-proof classification.
+
+Subsequent actual adapter check: installed0.153.4 rejects `workspaceWrite.readOnlyAccess` in
+`turn/start`. The adapter uses the [official named permission profile](https://developers.openai.com/codex/permissions)
+instead and readiness
+now checks restricted ephemeral-thread setup plus global/thread MCP inventories before any
+turn. This host rejects its sandbox helper execution, so readiness is false with sanitized
+thread-start error32603. No broader read grant, second generation attempt or login mutation
+was used. The fixture-tested executor is implemented; operational editing and text/visual
+quality are not proven on this host. A compatible restricted provider installation and actual
+rendered input/output acceptance are required before activation.
 
 ## Problem
 

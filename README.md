@@ -71,6 +71,24 @@ unavailable, the answer specifies what to do and what to return. A preparation r
 is not a produced image. Source/derivative kind, preserved areas, locale and human vs
 system verification remain separate.
 
+In an existing Slack work thread, `성과 도움말` shows the bounded reporting commands.
+`성과 기록 {JSON}` records the account, country, publication reference, UTC observation
+window and views/likes/comments; clicks and installs stay unknown when omitted. Use
+`성과 목록` for the six latest reports, `성과 비교 ID ID` to compare two snapshots, and
+`성과 정정 ID {JSON}` to correct a report without erasing its source. These are attributed
+human reports, not automatically collected platform metrics. `성과 학습 ID[,ID] 관찰 | 반례 |
+적용범위` prepares a memory candidate for the existing review/approval flow. Correcting a
+source excludes its earlier learning from future context selection. Authenticated clients
+can read the same Run's current reports at `GET /v1/runs/{run_id}/performance`; private-chat
+reports are not projected into the shared Web workspace.
+
+When Web access is configured, shared Slack summaries link to the same work page. The page
+shows up to six recent performance reports and six linked images; selecting an image uses
+authenticated byte readback. Source, locale, human-report/worker origin, stale lineage and QA
+remain visible. A preview is not a quality approval. Private conversations do not receive a
+shared-workspace link. `creative.asset.review` can assess registered same-work images directly,
+without uploading a generated result back to Slack; its model findings still require human review.
+
 Slack image review is **optional and off by default**. In a separately approved app update,
 add `files:read` to the app's bot OAuth scopes and reinstall it, then set
 `TRACE_MARKETING_SLACK_IMAGE_REVIEW=1` in the service environment. Token identity and actual
@@ -79,6 +97,45 @@ server unit or tunnel. Without that setup, attachments remain task references an
 handoff is available. With access, up to four bound PNG/JPEG files are visually reviewed
 through official Codex; no image generation/editing or native app proof is claimed. DM
 image execution is not enabled.
+
+Bounded raster editing is separately opt-in: `TRACE_MARKETING_IMAGE_EDIT_CONFIG` points to
+a JSON file with an absolute `executable` path to the existing user's official Codex CLI,
+an explicit `model_id`, and optional `timeout_seconds` (1–1800, default 300). The service
+does not install a provider, change its login or enable this configuration automatically.
+Provider capability readiness alone does not prove a successful image edit; validate the
+selected installation's actual input/output before team use.
+
+When available, `creative.image.edit` extends the top of a registered image or replaces
+explicit rectangular regions; `creative.image.localize` additionally binds the target
+locale and exact replacement text. An exact production approval is required. Original
+pixels outside the requested region are copied back and checked, including the complete
+shifted original for top extension. Typography, meaning, seams and phone-size readability
+still require visual and human review. Results are raster assets or edited promotional
+images, never evidence of native Trace font/language support. Unknown generation outcomes
+are retained for reconciliation and are not automatically regenerated. Without readiness,
+the existing preparation and human-handoff paths remain available.
+Each admitted edit reserves 20 conservative accounting units; these are not a measured
+provider price. A rejected preflight costs zero units, while a started generation retains
+its reservation until a validated terminal result or explicit reconciliation.
+
+For a currently pending local capture/edit/localization proposal, an authorized reviewer who
+has received every `검토` page for that exact proposal can say `이대로 만들어줘` or
+`이대로 제작해줘`. This reuses the exact production review context. Changed targets, another
+member's review, publication and remote external effects retain their explicit approval path.
+
+For an uncertain edit, authenticated clients can inspect
+`GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop
+tracking it with `POST` to the same path plus `/abandon`, supplying only
+`{"invocation_sha256":"<exact digest>","note":"<reason>"}`. This records a human-reported
+abandonment, consumes the reserved 20 units and preserves `outcome_unknown: true`; it does
+not assert provider failure, refund cost, publish anything or authorize regeneration.
+Repeated identical decisions repair only local completion projection. Keep the database and
+artifact directory for readback even after abandonment.
+
+Local acceptance on September 8: Codex 0.153.4 advertised image generation, but restricted
+ephemeral-thread setup failed on this host (`codex_image_edit_thread_start_rpc_error_32603`).
+The optional edit tool therefore reports unavailable here. Automatic editing/localization
+quality remains unverified; do not activate it for the team based solely on fixture tests.
 
 Local Mac capture can be enabled separately with `TRACE_MARKETING_CAPTURE_CONFIG` pointing
 to a JSON file containing `device` (`kind: "simulator"`, real `udid`, `platform_version`,
@@ -125,7 +182,8 @@ It requires exact runtime approval before device preparation. The result remains
 to human visual review. Its 20 cost units are conservative fixed accounting, not measured
 time or currency. An uncertain capture requires reconciliation and is not automatically
 repeated. Slack file references become registered assets only through the optional file intake
-below or the existing asset upload API. Remote Mac transport remains unimplemented.
+below or the existing asset upload API. Remote Mac transport is described above; live device
+acceptance remains separate from its local contract verification.
 
 The same optional Slack image configuration also exposes `creative.file.inspect` and
 `creative.asset.import`. Inspection downloads a signed, same-work PNG/JPEG (up to 10 MiB)

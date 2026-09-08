@@ -86,6 +86,20 @@ to registered same-work assets. Registration retains human-report status and doe
 usage rights. Missing permission information is collected in the existing review/handoff path,
 not a required campaign setup or separate user-selected operating mode.
 
+The current outcome path adds bounded, attributed human reports of views/likes/comments and
+optional clicks/installs to the same work. Comparisons retain account, country and observation
+window, and expose mismatches. Source corrections invalidate derived learning before review
+or retrieval. This extends the existing effort baseline; actual marketing lift and automatic
+account collection remain unverified.
+
+Bounded image production now has an optional asynchronous owner and a compositor for top
+extension or explicit rectangular changes. The preserved original is checked pixel by pixel;
+locale requests carry exact text and remain subject to separate visual/human QA. Provider
+capability metadata and fixture execution are not operational image-edit proof. Actual selected
+provider I/O and visual evidence must be recorded before claiming that path ready for team use.
+This keeps the September 7 decision intact: partial help is useful, but a generated promotion
+does not become product truth and a preparation receipt does not become a finished image.
+
 ## Earlier baseline (historical; September 7 decision takes precedence)
 
 Implemented provider-neutral foundations:

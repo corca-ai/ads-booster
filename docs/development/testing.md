@@ -240,3 +240,78 @@ signed-file binding through inspection, approval wait/restart, exact import and 
 It is not signed live Slack transport or image quality proof. Asset projection changes also
 select `test_creative_api.py` and `test_creative_capture.py` for registration/link failure and
 bounded Web readback of registered files above the inline upload limit.
+
+Performance reporting selects `test_performance_observations.py`, `test_performance_memory.py`,
+`test_performance_api.py` and `tests/marketing/channels/test_slack_performance.py`. These exercise
+actual scoped SQLite owners, signed-event intake, authenticated readback, correction/restart,
+latest-report ordering, mismatched observation windows and source invalidation before memory
+review/selection. They use human-reported fixture metrics; no live analytics or causal effect
+is established. Run only directly affected memory/Slack/API checks after subsequent changes.
+
+Bounded image production selects `tests/providers/test_codex_image_edit.py`,
+`test_creative_image_edit_contract.py`, `test_creative_image_edit.py`, `test_image_edit_setup.py`
+in the service test directory, and `tests/cli/test_image_edit_lifecycle.py`. Cover exact preserved
+pixels, changed source/approval/readiness, no regeneration after unknown execution, interrupted
+uncertainty and completion projection, source/output root containment, private production denial,
+provider protocol/tool-inventory rejection and maintenance/shutdown behavior. Fake image pixels
+do not establish translation or visual quality. A live proof must open the original and final
+image and retain generation/provenance evidence; capability discovery is insufficient.
+
+Managed review selects `test_managed_image_review.py`, affected `test_creative_procedures.py`
+and lifecycle tests. Same-Run generated PNG review exercises actual source copying/decoding
+with fixture inference, preserving pending human QA. Asset discovery/readback and Web changes
+select `test_creative_asset_listing.py`, `test_creative_api.py` and `test_web_performance.py`;
+the Node harness fences delayed Run/image/metric responses and untrusted markup. Browser fixture
+rendering is separate from live service/provider evidence. Slack result navigation and natural
+assent select `test_slack_result_link.py`, `test_slack_production_approval.py` and affected
+event/command tests, including full-page delivery, current membership and stale targets.
+
+`test_image_edit_api.py` and the coordinator's abandonment regression verify current reviewer
+authority, exact uncertain target, durable human-reported abandonment, cost retention and
+projection-only retry. They do not confirm what the external provider executed. September8
+actual Codex0.153.4 readiness fails restricted thread setup (error32603), so no live edit output
+or localization quality is claimed. The initial failed generation attempt is not retried.
+
+September 8 final continuation selection: 142 passed across the 18 files below. Run from the
+worktree with `.venv/bin/python -m pytest -q <selected files> -p no:cacheprovider --tb=short`;
+`PYTHONPATH=src` is source evidence only. Do not expand to the whole suite.
+
+```text
+tests/cli/test_image_edit_lifecycle.py
+tests/marketing/agent_service/test_creative_image_edit_contract.py
+tests/providers/test_codex_image_edit.py
+tests/marketing/agent_service/test_creative_image_edit.py
+tests/marketing/agent_service/test_image_edit_setup.py
+tests/marketing/agent_service/test_image_edit_api.py
+tests/marketing/agent_service/test_managed_image_review.py
+tests/marketing/agent_service/test_creative_procedures.py
+tests/marketing/agent_service/test_performance_observations.py
+tests/marketing/agent_service/test_performance_memory.py
+tests/marketing/agent_service/test_performance_api.py
+tests/marketing/channels/test_slack_performance.py
+tests/marketing/channels/test_slack_production_approval.py
+tests/marketing/channels/test_slack_result_link.py
+tests/marketing/channels/test_slack_events.py
+tests/marketing/channels/test_slack_commands.py
+tests/marketing/agent_service/test_creative_asset_listing.py
+tests/marketing/agent_service/test_web_performance.py
+```
+
+Ruff check/format and BasedPyright passed for the 37 Python files changed in this continuation
+(relative to f3de492, including newly added files). Two final formatting/unused-result findings
+were corrected and their two files rechecked without repeating unrelated tests.
+
+Fresh installed evidence: local wheel 0.4.21, SHA256
+`8fd386e3ab32a2d74cfafc285b95401b446bd7c4ba8869f44bcb777b9a5b9092`, installed in a separate
+venv and run outside the checkout with PYTHONPATH unset. All 21 changed production file hashes
+match installed bytes. Installed `version` and `--help`, real loopback `service run` health,
+default-disabled/explicit-enabled image catalog, SIGINT listener shutdown and three starts
+with the same Run/performance state passed. Standalone installed owners exercised real SQLite,
+PNG composition and managed source copying with explicit fake reasoning/image assessment:
+2,048 original pixels preserved, one generation and one review call after replay, 2,204 pixels
+preserved outside a localized rectangle, and corrected performance learning excluded. The opened
+composed fixture is a tiny white synthetic image, not a translation or visual-quality result.
+Evidence and reproducible standalone harness are retained locally under
+`/private/tmp/trace-image-performance-installed-proof/` (`proof.py`, `evidence.json`,
+`installed-source-manifest.json`). This is a local wheel proof, not public installer,
+service-manager, real device, real Slack or operational image-generation acceptance.

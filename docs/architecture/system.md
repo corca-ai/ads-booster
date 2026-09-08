@@ -916,3 +916,71 @@ do not become user input; delivery checks current membership and retains unknown
 
 No remote capture service is activated by this PR. Real Mac export quality, live Slack delivery
 of remote results and unattended device reconciliation still require separate acceptance.
+
+### Human-reported marketing outcomes
+
+The canonical service stores attributed performance snapshots alongside a Run, independently
+of D1's external execution facts. Signed Slack commands derive workspace/member/session/work
+scope from authenticated membership and the conversation; payloads cannot supply authority or
+declare metrics verified. Each snapshot retains account, country, publication reference, UTC
+window, source digest and author. Missing clicks/installs remain unknown. Corrections are
+immutable successors restricted to the author or an authenticated reviewer. Listing returns
+the latest bounded set; comparison preserves separate snapshots and mismatched conditions
+without aggregation or causal attribution.
+
+Learning candidates freeze their source digests, observation, counterexample and applicability.
+Memory review and context selection recheck current sources in the same database transaction;
+a correction prevents adoption or selection of the stale candidate. The existing memory
+review/approval lifecycle remains mandatory. `GET /v1/runs/{run_id}/performance` is a bounded,
+authenticated read projection, with no private-chat promotion or write authority. Collection
+from live marketing accounts, attribution to installs and measurement of actual lift remain
+separate integrations; reported numbers do not establish them.
+
+### Optional bounded raster production
+
+`TRACE_MARKETING_IMAGE_EDIT_CONFIG` enrolls an explicit official Codex executable/model in
+the shared service. No login, server unit, publishing setting or private-chat production
+authority is changed. Planning readiness retains its observed timestamp for at most 60
+seconds; execution checks readiness again. Missing readiness leaves preparation and human
+continuation usable.
+
+An admitted invocation freezes source revision/digest, requested regions or top extension,
+locale/text, configuration and exact production approval. The SQLite queue waits for canonical
+acknowledgement before recording start. Provider execution runs outside the service lock, so
+other work can continue. A durable start without a terminal receipt is uncertain and cannot
+trigger regeneration. Known preflight failures settle without effect; verified output failures
+retain the generation cost and fail without presenting an asset as successful.
+
+The compositor restores unchanged original pixels and verifies their equality. Asset provenance
+retains original/generated/composed digests and whether generated pixels were resized. This
+deterministic check does not validate translation, fonts, seams or visual taste; model visual
+review and human review remain pending. Same-Run asset linking and the existing Slack outbox
+receive the validated result. Pending pause/revision and changed source state retain their
+canonical meaning. Edited promotions do not prove actual Trace language or font support.
+
+Managed visual review authorizes exact same-Run asset links before reading source bytes or
+cached inference. It rechecks lineage before and after the existing Codex visual helper and
+retains an unresolved start record after response loss. Source changes invalidate cached review;
+model findings cannot update human approval or native-product facts. Preparation selects this
+capability when managed inputs and readiness exist, independently of Slack file permissions.
+
+The Web Run projection lists only linked asset metadata, bounded separately from byte readback.
+It loads a selected PNG/JPEG through the authenticated single-asset route and displays origin,
+locale, QA and stale state. Metadata listing does not read or verify every image. Delayed asset
+and performance responses cannot overwrite another selected Run. Shared Slack summaries link
+to the configured Web origin only when public links are enabled; private history is not promoted.
+
+Natural production assent binds the current exact local-artifact invocation only after all
+review pages were successfully delivered to that same authenticated user. Its frozen action
+retains the invocation digest and current approval membership is checked before dispatch.
+Initial broad requests, missing review pages, changed targets and external publication do not
+inherit a production grant. The explicit hash approval path remains available.
+
+Unknown edit operations expose a scoped status and explicit reviewer abandonment endpoint.
+The API derives authority from current authenticated membership, never the request body.
+Abandonment binds the pending operation/invocation, reviewer, note and time to a durable
+human-reported terminal failure with reserved cost consumed. External outcome remains unknown;
+this is not a no-effect or verified provider failure receipt. Identical requests repair
+completion/outbox projection without re-entering generation. The original start ledger and
+artifacts remain available. Queued, unrelated or changed operations cannot be abandoned by
+that decision. No automatic timeout abandonment is introduced.

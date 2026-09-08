@@ -371,3 +371,131 @@ plans. Focused commands are in testing.md; the initial composition had 233 passi
 56 changed Python files passing Ruff/format/BasedPyright; later owner checks are recorded above.
 Keep the existing Goal record; its environment status is usageLimited. Draft PR delivery is not
 full-goal completion, and no duplicate Goal or completion/blocked transition was created.
+
+## Active continuation — image production and outcome learning
+
+User confirmed work stays in PR134 and explicitly requested remaining work. Same isolated
+branch, same Goal (environment usageLimited), no server setup/login changes. Original checkout
+at this pickup is fix/server-port-8090 with only .agents/, .charness/, charness-artifacts/
+untracked; preserve them. No new Goal or completion transition.
+
+Performance contract/store, Slack report/correction/comparison/learning commands, memory source
+invalidation and authenticated same-Run GET are implemented. Main reviewed source and direct
+tests;30 focused tests passed. Independent review found latest reports hidden by lexical ID
+listing; fail-first regression now proves latest UTC/microsecond ordering with stable ties,
+restart and unchanged comparison digest order. Human reports remain distinct from provider
+metrics; private reports never project into shared Web context. Responsibility commits through
+d35b142 exist locally, not yet pushed at this checkpoint.
+
+Image contract/compositor restores exact unchanged pixels, provider adapter uses official
+app-server, and optional service composition now polls a durable queue. Current owners:
+patterns owns creative_image_edit.py + direct tests (path escape, private tenant, uncertainty
+projection crash and output schema); baseline owns codex_image_edit.py + provider tests (actual
+protocol failure); requirements owns temporary installed-proof preparation, no wheel freeze yet;
+main owns integration, documents, remaining review, visual proof and Git.
+
+Actual synthetic source `/private/tmp/trace-image-edit-live-proof/synthetic-calendar.png` was
+opened. One live provider attempt returned codex_image_edit_unexpected_request_or_error in0.2s;
+no output image was produced and that operation is not retried. Evidence in the adjacent
+evidence.json, source contains only a synthetic calendar and character, not Trace app or personal
+data. Read-only RPC/schema investigation identifies unsupported workspaceWrite.readOnlyAccess;
+agent is checking supported restricted permissions rather than silently broadening read access.
+Capability readiness still does not establish image I/O. Main must inspect actual generated
+result if a corrected, separately identified verification succeeds.
+
+Next: finish provider protocol and queue recovery, focused tests/static; freeze source and run
+fresh wheel proof (prepared under /private/tmp/trace-image-performance-installed-proof), actual
+CLI loopback lifecycle/state retention; sync runtime/testing evidence; finish atomic commits and
+push same PR134. Continue independent implementation; external server/Slack/Appium acceptance
+and public installer remain separately unverified and unactivated.
+
+Later integration findings and disposition: image coordinator had locale=None deterministic QA,
+so localized assets always failed. Fixed with effective source/request locale across all QA;
+same-Run ja/en→ja-only edit test now proves English unchanged and Japanese-only stale lineage.
+Uncertain canonical projection crash now repairs locally; exact canonical terminal readback
+releases a previously uncertain queue slot without regenerating. Known image decode failures
+settle no_effect before start or failed after generation. Output schemas now bind actual asset,
+typed provenance and explicit pending human review; old pending schema approvals become stale.
+
+Provider root cause was actual0.153.4 turn parser rejecting workspaceWrite.readOnlyAccess.
+Adapter now uses official named permissions (rootdeny,minimalread,jobwrite,exactexecutable read,
+networkfalse) and probes restricted ephemeral thread setup before readiness. Actual host rejects
+sandbox helper execution; readiness=false / codex_image_edit_thread_start_rpc_error_32603.
+Evidence `/private/tmp/trace-image-edit-live-proof/restricted-readiness.json`, main read it.
+21 provider tests pass. No corrected generation attempt, no original operation replay, no broader
+filesystem grant. This host cannot currently prove operational automatic image editing.
+
+Final usability review found managed output review and result discovery dead ends. Added
+creative.asset.review with same-Run exact asset/revision/digest and currentness before/after
+existing visual helper, durable no-replay inference ledger, narrow lifecycle/catalog wiring.
+Preparation now selects managed review without Slack reupload when assets/readiness exist.
+24 affected tests pass. Main added authenticated GET asset collection (latest100 linked metadata,
+no file reads/quality claim; individual delivery still validates bytes) and shared-only Slack
+Web Run link respecting public_links. Link regression RED→GREEN,22 affected tests pass.
+Web now displays latest6 human performance reports and user-selected authenticated image preview,
+origin/kind/locale/QA/stale status; late responses cannot switch the selected Run. Requirements
+actually rendered syntheticmetrics+180x320PNG inChrome; later origin/microsecondordering changes
+passed Node harness. No live Slack delivery or actual app capture is implied.
+
+Active remaining owners: baseline slack_events.py +natural-production-approval regression;
+patterns creative_image_edit.py/tests +image_edit_api.py/directtests +narrowhttp_api.py for
+reviewer-authorized abandonment preserving unknown-outcome evidence (not no_effect/provider
+success), and read-only exact review target. Requirements prepares isolatedwheel proof/lifecycle
+with current readonlyfakeappserver protocol, awaiting source freeze. Main owns API collection,
+docs/static/integration/Git. Current additional local commits end43a80d0; later code not yet
+committed/pushed. Finish these scoped gaps, fresh install and samePR134sync before reporting.
+
+
+## Final local integration checkpoint — September 8
+
+This section supersedes the active-owner/next-build checkpoints above; those remain historical
+records, not pending delegation. All three agents released their file ownership. Same Goal,
+same feature/trace-work-continuity branch and Draft PR134; no server setup/login mutation.
+
+Implemented and independently reviewed remaining local paths: exact bounded raster execution,
+reviewer abandonment retaining unknown outcome and charged reservation, registered-image visual
+review without Slack reupload, same-Run Web image/outcome readback, exact delivered-review natural
+production assent, attributed performance/correction and reviewed learning invalidation.
+Coordinator20 and final composition142 focused tests passed. Final37 changed Python files pass
+Ruff/check-format/BasedPyright after two nonbehavioral cleanups. Complete staged diffs reviewed,
+changes committed by responsibility; no whole suite, no external marketing writes.
+
+Fresh0.4.21 wheel SHA256 8fd386e3ab32a2d74cfafc285b95401b446bd7c4ba8869f44bcb777b9a5b9092.
+Main rechecked wheel and21 production file hashes against current source. Standalone installed
+proof outside checkout uses actual HTTP/SQLite/Pillow but explicitly fake image/reasoning ports:
+three service starts (default-off/enabled/restart), health and graceful stop, retained Run and
+human report, one generation/review on replay, unchanged-region pixels, learning correction.
+Main opened the32x72 white composed fixture; it is not evidence of attractive or translated
+creative. Evidence/proof and older preserved evidence live under
+/private/tmp/trace-image-performance-installed-proof/. Exact selected tests and limitations
+are in docs/development/testing.md. Earlier actual Codex synthetic image assessment remains
+separate from the failed image-generation probe.
+
+Scenario status: A/B retain same-work review, source and human continuation; optional edit/capture
+adapters are contract/fresh-fixture verified, actual image edit and native phone quality pending.
+C selective ja/en derivative and ja-only stale tests pass; real translated rendering is unverified.
+D planning/exact two-stage review packets and attributed outcome→reviewed learning work locally;
+actual campaign delivery/metrics/Paid are Draft, inactive contracts. E status/revision/pause,
+restart, exact approval and unknown-execution recovery are focused-test verified; live Slack pending.
+
+Remaining acceptance inputs (not permission to deploy):
+- Finish the separately managed server onboarding, then supply nonsecret doctor/status outcomes
+  and an approved test workspace/channel/member; credentials stay in the operator terminal.
+  Live signed Slack/thread/DM/public health/systemd/linger/timer and public installer need that host.
+- Image generation requires an official Codex installation whose restricted named permission
+  profile can start (current host sandbox helper fails32603), an explicitly selected capable
+  model and a separately identified synthetic input/output acceptance. Do not replay the failed
+  generation operation, weaken filesystem restrictions or describe capability metadata as I/O.
+- Native capture requires configured Mac/Appium/device and an approved synthetic background;
+  inspect actual phone-size output and locale/font rendering with the team before quality claims.
+- Team baseline timing, visual preferences and approved account/window observations are needed
+  to establish savings or lift. The inaccessible Notion example needs a readable authorized copy;
+  Ceal deeper behavior needs a valid permitted session. Existing verified source scope is preserved.
+- Real publishing/readback/community/Paid activation and live analytics integration remain Draft
+  and require separate exact scope/account/budget authority; no automatic activation or self-edit.
+
+Do not claim full Goal completion from this PR or fixture evidence. Environment still reports
+usageLimited; no duplicate Goal, budget change or unsupported complete/blocked transition.
+Independent local implementation/verification and review packet are finished for this increment;
+remaining operational acceptance and Draft integrations are explicitly not claimed complete.
+Resume by reading this checkpoint, git status in both checkouts and PR134 head before acting.
