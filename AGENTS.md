@@ -6,7 +6,7 @@
 ## 프로젝트 개요
 
 `ads-booster`는 Trace 마케팅 에이전트, 팀 워크스페이스와 Appium 이미지 파이프라인을
-제공합니다. 진입점은 `trace-marketing`, `trace-capture`, `trace-compose`, `trace-run`입니다.
+제공합니다. 설치된 CLI 진입점은 `trace-marketing`입니다.
 
 ## 제품 기준 환경
 

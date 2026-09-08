@@ -46,6 +46,10 @@ root로 접속했다면 설치 명령에 `--user trace-marketing`을 추가한�
 수동 PATH 명령은 현재 셸용이며, 이후 셸에도 쓰려면 사용자 shell 설정에 같은 경로를 반영한다.
 서버 서비스의 PATH는 setup이 실제 도구 경로로 생성한다.
 
+`server` 명령이 없으면 [설치된 CLI 확인 절차](../../../README.md#check-which-cli-installation-is-running)로
+현재 셸이 이전 uv 설치본을 선택했는지 확인한다. checkout 갱신만으로 설치본은 바뀌지 않으며,
+기존 CLI 충돌을 해결하려고 링크나 상태 디렉터리를 임의로 덮어쓰지 않는다.
+
 ## 2. Slack 앱 만들기 — 본인
 
 서버에서 다음 명령을 실행해 나온 JSON 전체를 복사한다. 비밀값은 없다.

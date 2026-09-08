@@ -5,6 +5,29 @@ service owns canonical Agent Runs; Codex, Cloudflare, Mac/Appium, Threads, resea
 systems are replaceable provider or tool adapters. The only installed command remains
 `trace-marketing`; no separate custom-agent executable is introduced.
 
+## Check which CLI installation is running
+
+Updating a checkout does not update an installed command. Before following a command below, inspect
+the executable selected by the current shell and the commands that installation actually provides:
+
+```bash
+command -v trace-marketing
+ls -l "$(command -v trace-marketing)"
+trace-marketing --help
+```
+
+An older uv-tool installation may still resolve through `~/.local/bin/trace-marketing` to
+`~/.local/share/uv/tools/trace-appium-capture/bin/trace-marketing`. A help screen containing only
+`simulate`, `bridge`, `bridge-configure` and `worker` does not provide the newer `agent`, `service`
+or `server` groups. Source-based `uv run` success does not prove those commands are installed.
+
+For a managed Mac installation, inspect `~/.local/share/trace-marketing/current/bin/trace-marketing`
+and follow the [verified Mac bootstrap](#bootstrap-a-verified-mac-worker-release) for the intended
+release. For Linux, follow the [server installation guide](docs/operations/agent-server/slack-launch-guide.md);
+its installed command lives under `~/.local/share/trace-marketing-server/current/.venv/bin/trace-marketing`.
+Confirm that installation's help before selecting it in PATH. Preserve unrelated installations and
+state directories; do not replace a CLI symlink merely to make a documented command appear.
+
 ## Web login and Slack onboarding (candidate change)
 
 The on-prem service now has authorization-code/PKCE browser login, durable asynchronous web
