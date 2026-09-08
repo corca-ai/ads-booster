@@ -92,22 +92,6 @@ test selection, authoring gate, focused command와 실제 표면 QA는
 
 ## Git과 GitHub
 
-Git 작업을 시작하기 전에 `docs/conventions/github.md` 전체를 읽고 적용합니다.
-
-- 커밋은 사용자가 요청할 때만 합니다.
-- 푸시는 사용자가 명시적으로 요청할 때만 합니다.
-- Pull Request 생성, 병합과 GitHub 상태 변경은 사용자가 요청할 때만 합니다.
-- Issue나 기능 전체를 하나의 커밋 단위로 삼지 않습니다. enum·공유 type, contract, controller·
-  route, service 동작, repository·migration·adapter, test-only 변경, 문서를 독립적으로 리뷰하고
-  되돌릴 수 있는 최소 책임 단위로 나눕니다.
-- 커밋 메시지는 `기능 개발`처럼 전체 작업을 요약하지 않고 추가한 enum, 정의한 contract,
-  연결한 controller 또는 구현한 동작을 구체적으로 적습니다.
-- 서로 분리해도 build와 focused verification이 유효하면 같은 Issue와 기능에 속해도 별도
-  커밋합니다. 분리하면 build가 깨지거나 구현을 증명하는 직접 회귀 테스트가 빠질 때만 함께
-  둡니다. 의존성이 있으면 enum → contract → implementation → controller wiring처럼 기반에서
-  소비자 순으로 커밋합니다.
-- stage할 때 요청 범위의 파일이나 hunk만 포함합니다. 커밋을 구성할 때 `git add .`와
-  `git add -A`를 사용하지 않습니다.
-- 매 커밋 전에 `git diff --cached` 전체와 `git diff --cached --check`를 확인하고, staged diff에
-  두 개 이상의 독립 책임이 있으면 다시 나눕니다.
-- 기존 dirty worktree와 `tasks/` 변경을 임의로 stash, restore, 삭제하지 않습니다.
+Git 작업 전에 [GitHub 컨벤션](./docs/conventions/github.md) 전체를 읽고 적용합니다.
+사용자가 요청한 범위에서만 실행하며, 독립적으로 리뷰·되돌릴 수 있는 개별 커밋을 보존합니다.
+승인 범위, 커밋 분리·staging, 병합 방식과 릴리스 절차의 기준은 해당 문서입니다.

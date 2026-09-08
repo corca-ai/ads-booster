@@ -16,6 +16,15 @@ for code changes and inspect the current branch and remote state before starting
   user explicitly requests it for that Pull Request.
 - After a change lands on `main`, update the tag and GitHub Release for that commit.
 
+## Authorization and existing work
+
+Commit only when the user requests it. Push, create or merge Pull Requests, and change GitHub state
+only within the user's explicit request. Reading an existing Issue is preparation; creating or closing
+one changes GitHub state. A request to edit local files does not authorize publication.
+
+Preserve existing dirty files, untracked files and `tasks/` records. Do not stash, restore, delete or
+mix them into the requested change without authorization. Stage only the requested paths or hunks.
+
 ## Branches
 
 ### Default branch
