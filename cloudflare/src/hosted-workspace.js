@@ -1594,11 +1594,23 @@ export async function publishCandidateGeneration(
   if (pending) {
     throw new WorkspaceHttpError(409, "이미 Mac 워커가 이 후보 묶음을 만들고 있습니다.");
   }
+  const storedKnowledge = trustedKnowledge ?? (
+    typeof body?.agent_run_id === "string"
+      ? await trustedKnowledgeForMarketingRun(env.DB, accountId(env), body.agent_run_id)
+      : null
+  );
+  const taskId = storedKnowledge?.binding?.task_ref ?? crypto.randomUUID();
+  const runId = storedKnowledge?.binding?.run_ref ?? crypto.randomUUID();
+  const knowledge = await boundKnowledgeContext(
+    storedKnowledge, accountId(env), taskId, runId,
+  );
+  const requiredCapability = knowledge.policy === "required"
+    ? KNOWLEDGE_CONTEXT_CAPABILITY : FEEDBACK_CONTEXT_CAPABILITY;
   // Two different problems, two different sentences. No Mac at all is an enrolment the team
   // has not done; a Mac that cannot run this job is a worker that has not updated itself yet,
   // and it would otherwise sit online while the batch waited for a lease nobody could take.
   if (!(await hasWorkerForTaskKind(
-    env.DB, "generate_candidates", FEEDBACK_CONTEXT_CAPABILITY,
+    env.DB, "generate_candidates", requiredCapability,
   ))) {
     throw new WorkspaceHttpError(
       503,
@@ -1620,16 +1632,6 @@ export async function publishCandidateGeneration(
     profile?.profile_id ?? null,
   );
   const feedbackContextSha256 = await canonicalSha256(feedbackContext);
-  const storedKnowledge = trustedKnowledge ?? (
-    typeof body?.agent_run_id === "string"
-      ? await trustedKnowledgeForMarketingRun(env.DB, accountId(env), body.agent_run_id)
-      : null
-  );
-  const taskId = storedKnowledge?.binding?.task_ref ?? crypto.randomUUID();
-  const runId = storedKnowledge?.binding?.run_ref ?? crypto.randomUUID();
-  const knowledge = await boundKnowledgeContext(
-    storedKnowledge, accountId(env), taskId, runId,
-  );
   const now = new Date().toISOString();
   const task = {
     schema_version: "1",
@@ -1683,7 +1685,7 @@ export async function publishCandidateGeneration(
       task.idempotency_key,
       JSON.stringify(task),
       personaId,
-      knowledge.policy === "required" ? KNOWLEDGE_CONTEXT_CAPABILITY : FEEDBACK_CONTEXT_CAPABILITY,
+      requiredCapability,
       now,
       now,
     )
