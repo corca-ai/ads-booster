@@ -304,6 +304,14 @@ def clean_mixed_memory_revisions(
     actor: ActorContext,
     request_id: str,
 ) -> tuple[str, ...]:
+    return _clean_workspace_memory_revisions(repository, actor.workspace_id, request_id)
+
+
+def _clean_workspace_memory_revisions(
+    repository: KnowledgeRepository,
+    workspace_id: str,
+    request_id: str,
+) -> tuple[str, ...]:
     with repository.connection() as connection:
         rows = connection.execute(
             """
@@ -323,7 +331,7 @@ def clean_mixed_memory_revisions(
         previous_revision_id = str(row[1])
         clean_id = _publish_clean_memory_revision(
             repository,
-            actor.workspace_id,
+            workspace_id,
             request_id,
             document_id,
             previous_revision_id,
@@ -526,6 +534,8 @@ def apply_erase_entries(
                     "purged",
                 )
                 applied += 1
+            _record_memory_history_redactions(connection, entry.request_id, entry.workspace_id)
+        _ = _clean_workspace_memory_revisions(repository, entry.workspace_id, entry.request_id)
         for artifact in entry.artifacts:
             if artifact.relative_path is not None:
                 _purge_exact_file(
