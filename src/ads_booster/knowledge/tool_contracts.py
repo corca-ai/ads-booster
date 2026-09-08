@@ -21,7 +21,7 @@ from ads_booster.knowledge.contract_types import (
     SourceDisposition,
     UtcDatetime,
 )
-from ads_booster.knowledge.evidence_contracts import AuthenticatedEvent
+from ads_booster.knowledge.evidence_contracts import AuthenticatedEvent, EvidenceRef
 from ads_booster.knowledge.governance_contracts import ConstraintBinding, TaskOverlay
 from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryEntry, MemoryRevision
 from ads_booster.knowledge.operation_contracts import (
@@ -460,6 +460,8 @@ class CorrectionData(KnowledgeContractModel):
 
 
 class SourceExcerpt(KnowledgeContractModel):
+    evidence_ref: EvidenceRef | None = None
+    quote_sha256: Sha256Digest
     segment: SourceSegment | None = None
     start: Annotated[int, Field(ge=0)]
     end: Annotated[int, Field(ge=0)]

@@ -5,7 +5,8 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, assert_never
 
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.knowledge.contract_types import SourceDisposition
+from ads_booster.knowledge.contract_types import EvidenceKind, SourceDisposition
+from ads_booster.knowledge.evidence_contracts import EvidenceRef
 from ads_booster.knowledge.source_contracts import (
     AttachmentCapability,
     IngestEnvelope,
@@ -28,6 +29,7 @@ from ads_booster.knowledge.tool_support import KnowledgeToolError, error_result,
 from ads_booster.knowledge.web_search import SourceSearchRequest, SourceSearchStatus
 
 if TYPE_CHECKING:
+    from ads_booster.knowledge.scope_contracts import AccessScope
     from ads_booster.knowledge.tool_dependencies import ToolDependencies
 
 
@@ -59,7 +61,8 @@ def source_read(
         if any(segment_id not in segments for segment_id in request.segment_ids):
             raise KnowledgeToolError("source_segment_not_found")
         excerpts = tuple(
-            segment_excerpt(body, segments[segment_id]) for segment_id in request.segment_ids
+            segment_excerpt(body, segments[segment_id], stored.source.scope)
+            for segment_id in request.segment_ids
         )
     else:
         text_range = request.text_range
@@ -72,6 +75,7 @@ def source_read(
                 start=text_range.start,
                 end=text_range.end,
                 text=body[text_range.start : text_range.end],
+                quote_sha256=sha256(body[text_range.start : text_range.end].encode()).hexdigest(),
             ),
         )
     return success(
@@ -238,11 +242,20 @@ def require_source_capability(
         raise KnowledgeToolError("source_capability_scope_mismatch")
 
 
-def segment_excerpt(body: str, segment: SourceSegment) -> SourceExcerpt:
+def segment_excerpt(body: str, segment: SourceSegment, scope: AccessScope) -> SourceExcerpt:
     text = body[segment.quote_range.start : segment.quote_range.end]
     if sha256(text.encode()).hexdigest() != segment.content_sha256:
         raise KnowledgeToolError("source_segment_digest_mismatch")
     return SourceExcerpt(
+        evidence_ref=EvidenceRef(
+            evidence_kind=EvidenceKind.SOURCE_SEGMENT,
+            evidence_id=segment.segment_id,
+            revision_id=segment.revision_id,
+            segment_id=segment.segment_id,
+            quote_sha256=segment.content_sha256,
+            scope=scope,
+        ),
+        quote_sha256=segment.content_sha256,
         segment=segment,
         start=segment.quote_range.start,
         end=segment.quote_range.end,
