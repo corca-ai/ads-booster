@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
-from ads_booster.marketing.channels.slack_creative_setup import (
+from ads_booster.contracts.agent_run import ToolExecutionDeferred, ToolInvocation
+from ads_booster.contracts.tool_capability import ToolDescriptor, ToolExecutionResult
+from ads_booster.agent.core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.channels.slack_creative_setup import (
     SlackCreativeCatalog,
     SlackImagePermissionProbe,
     connect_slack_creative,
@@ -67,8 +70,31 @@ class AuthHTTP:
         return response
 
 
+class UnusedAdapter:
+    def execute(
+        self,
+        invocation: ToolInvocation,
+        descriptor: ToolDescriptor,
+    ) -> ToolExecutionResult | ToolExecutionDeferred:
+        _ = invocation, descriptor
+        raise AssertionError("adapter execution was not expected")
+
+
+def make_catalog(http: AuthHTTP, *, tick: list[float] | None = None) -> SlackCreativeCatalog:
+    adapter = UnusedAdapter()
+    return SlackCreativeCatalog(
+        SlackImagePermissionProbe("T123", "synthetic-token", http.open),
+        adapter,
+        adapter,
+        adapter,
+        monotonic=(lambda: tick[0]) if tick is not None else monotonic,
+    )
+
+
 def test_connect_requires_observed_bot_scope_before_exposing_image_tool(tmp_path: Path) -> None:
     service = _service(tmp_path / "state.db", AskThenStopReasoning())
+    service.registry = ToolRegistry.from_registrations((), now=NOW)
+    service.tools = service.registry.adapters
     service.reasoning = CodexReasoningProvider(
         CodexCli(Path("/synthetic/codex"), model="fixture-model"),
         tmp_path / "reasoning",
@@ -106,6 +132,8 @@ def test_optional_probe_failure_preserves_onboarding_and_hides_tool(
     failure: str,
 ) -> None:
     service = _service(tmp_path / "state.db", AskThenStopReasoning())
+    service.registry = ToolRegistry.from_registrations((), now=NOW)
+    service.tools = service.registry.adapters
     service.reasoning = CodexReasoningProvider(
         CodexCli(Path("/synthetic/codex"), model="fixture-model"),
         tmp_path / "reasoning",
@@ -144,9 +172,7 @@ def test_catalog_retains_observation_time_and_revokes_dispatch_after_scope_loss(
     tool_index: int,
 ) -> None:
     http = AuthHTTP()
-    catalog = SlackCreativeCatalog(
-        ToolRegistry(()), SlackImagePermissionProbe("T123", "synthetic-token", http.open)
-    )
+    catalog = make_catalog(http)
     frozen = catalog.descriptors(now=NOW)[tool_index]
     assert frozen.readiness.observed_at == NOW
     http.scopes = "chat:write"
@@ -167,11 +193,7 @@ def test_catalog_retains_observation_time_and_revokes_dispatch_after_scope_loss(
 def test_monotonic_ttl_refreshes_even_when_caller_reuses_run_start_time() -> None:
     http = AuthHTTP()
     tick = [0.0]
-    catalog = SlackCreativeCatalog(
-        ToolRegistry(()),
-        SlackImagePermissionProbe("T123", "synthetic-token", http.open),
-        monotonic=lambda: tick[0],
-    )
+    catalog = make_catalog(http, tick=tick)
     assert catalog.descriptors(now=NOW)[0].readiness.ready
     http.ok = False
     tick[0] = 61

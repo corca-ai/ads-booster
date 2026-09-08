@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 from ads_booster.contracts.agent_run import AgentRunState
 from ads_booster.contracts.reasoning import ReasoningDecision
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service import integrations
-from ads_booster.marketing.agent_service.github_issues import CAPABILITY, GitHubIssues
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.bootstrap import integrations
+from ads_booster.tools.github_issues import CAPABILITY, GitHubIssues
+from ads_booster.channels.slack_events import SlackEvents
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )

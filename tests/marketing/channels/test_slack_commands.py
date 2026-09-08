@@ -9,12 +9,12 @@ import pytest
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.channel_setup import slack_from_env
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.channels.slack import slack_signature
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.bootstrap.channel_setup import slack_from_env
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.channels.slack import slack_signature
+from ads_booster.agent.runtime import SqliteSessionStore
 from tests.marketing.agent_service.test_application import (
     NOW as APP_NOW,
 )
@@ -29,7 +29,7 @@ from tests.marketing.agent_service.test_http_api import StopReasoning
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.channels.slack_commands import SlackCommands
+    from ads_booster.channels.slack_commands import SlackCommands
     from ads_booster.transport.json_types import JsonObject
 
 NOW = datetime(2026, 9, 7, tzinfo=UTC)

@@ -45,7 +45,7 @@ jobs:
           "$RUNNER_TEMP/agent-installed/bin/trace-marketing" server --help
           "$RUNNER_TEMP/agent-installed/bin/trace-marketing" server manifest --origin https://agent.example.com --bootstrap > "$RUNNER_TEMP/bootstrap-manifest.json"
           "$RUNNER_TEMP/agent-installed/bin/python" -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["features"]["slash_commands"][0]["url"] == "https://agent.example.com/channels/slack/commands"; assert "event_subscriptions" not in m["settings"]' "$RUNNER_TEMP/bootstrap-manifest.json"
-          "$RUNNER_TEMP/agent-installed/bin/python" -c 'from ads_booster.marketing.agent_service.maintenance import UPDATE_PROTOCOL; assert UPDATE_PROTOCOL == 1'
+          "$RUNNER_TEMP/agent-installed/bin/python" -c 'from ads_booster.agent.service.maintenance import UPDATE_PROTOCOL; assert UPDATE_PROTOCOL == 1'
       - name: Fresh Ubuntu installer and installed systemd lifecycle
         shell: bash
         run: |

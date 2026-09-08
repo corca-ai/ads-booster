@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.agent_service.slack_image_files import SlackImageFiles
-from ads_booster.marketing.agent_service.slack_image_review import bind_files
+from ads_booster.channels.slack_image_files import SlackImageFiles
+from ads_booster.channels.slack_image_review import bind_files
 
 from .test_slack_image_review import HTTP, png
 

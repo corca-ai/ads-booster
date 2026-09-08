@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.contracts.marketing_delivery import DeliveryProposal, ProductionTarget
-from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
-from ads_booster.marketing.channels.contracts import ChannelIdentityBinding
-from ads_booster.marketing.channels.slack_conversations import Conversation, Message
-from ads_booster.marketing.channels.slack_delivery import delivery_command
+from ads_booster.delivery.delivery_review import DeliveryReviewStore
+from ads_booster.channels.contracts import ChannelIdentityBinding
+from ads_booster.channels.slack_conversations import Conversation, Message
+from ads_booster.channels.slack_delivery import delivery_command
 
 if TYPE_CHECKING:
     from pathlib import Path

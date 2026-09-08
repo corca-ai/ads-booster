@@ -11,7 +11,7 @@ from ads_booster.contracts.marketing_agent import (
     OutcomeDefinition,
     OutcomeScope,
 )
-from ads_booster.marketing.experiment_evaluation import (
+from ads_booster.evaluation.experiment_evaluation import (
     AssignmentObservation,
     ExperimentEvaluationRequest,
     LearningProposalRequest,

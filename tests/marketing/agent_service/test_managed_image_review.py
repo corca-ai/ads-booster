@@ -12,13 +12,13 @@ import pytest
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.creative_work import CreativeScope
-from ads_booster.marketing.agent_service.creative_asset_links import link_asset
-from ads_booster.marketing.agent_service.creative_image_edit import ImageEditJob
-from ads_booster.marketing.agent_service.lifecycle import (
+from ads_booster.creative.creative_asset_links import link_asset
+from ads_booster.agent.service.creative_image_edit import ImageEditJob
+from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )
-from ads_booster.marketing.agent_service.managed_image_review import (
+from ads_booster.creative.managed_image_review import (
     ManagedImageReviewTool,
     managed_image_review_descriptor,
 )

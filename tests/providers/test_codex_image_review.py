@@ -11,7 +11,7 @@ from PIL import Image
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.marketing.agent_service.image_review import review_images
+from ads_booster.tools.image_review import review_images
 from ads_booster.providers.codex_cli import CodexCli, CodexCliError, read_review_images
 from ads_booster.transport.json_types import JsonObject
 

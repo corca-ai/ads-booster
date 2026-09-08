@@ -14,29 +14,29 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.creative_procedures import (
+from ads_booster.creative.creative_procedures import (
     PROCEDURES,
     CreativeBriefRequest,
     CreativeInputs,
     Task,
     build_creative_brief,
 )
-from ads_booster.marketing.agent_service.integrations import (
+from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.runtime import SqliteSessionStore
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.dynamic_evidence_research import (
+    from ads_booster.research.dynamic_evidence_research import (
         DynamicEvidenceResearchRequest,
         DynamicEvidenceResearchResult,
     )

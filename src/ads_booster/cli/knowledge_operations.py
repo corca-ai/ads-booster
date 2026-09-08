@@ -53,8 +53,8 @@ from ads_booster.knowledge.tool_contracts import (
     QuestionStatus,
     TrustedQuestionAnswer,
 )
-from ads_booster.marketing.agent_service.knowledge import knowledge_descriptors
-from ads_booster.marketing.agent_service.lifecycle import (
+from ads_booster.agent.service.knowledge import knowledge_descriptors
+from ads_booster.bootstrap.lifecycle import (
     InstalledKnowledgeRuntime,
     build_installed_knowledge_runtime,
 )

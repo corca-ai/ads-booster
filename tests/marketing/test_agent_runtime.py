@@ -13,7 +13,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from ads_booster.marketing.runtime import (
+from ads_booster.agent.runtime import (
     AgentSession,
     ApprovalGrant,
     BoundToolInvocation,

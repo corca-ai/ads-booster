@@ -18,7 +18,7 @@ from ads_booster.contracts.marketing_agent import (
     OutcomeScope,
     contract_sha256,
 )
-from ads_booster.marketing.evidence_research_operator import (
+from ads_booster.research.evidence_research_operator import (
     EvidenceResearchDependencies,
     EvidenceResearchEvaluator,
     EvidenceResearchGoal,
@@ -36,7 +36,7 @@ from ads_booster.marketing.evidence_research_operator import (
     ValidatedResearchEvidenceBriefVerifier,
     build_feature_launch_evidence_brief,
 )
-from ads_booster.marketing.feature_launch_operator import (
+from ads_booster.workflows.feature_launch_operator import (
     AvailableAction,
     DecisionProposal,
     FeatureLaunchDependencies,
@@ -50,13 +50,13 @@ from ads_booster.marketing.feature_launch_operator import (
     FeatureLaunchTask,
     MarketingGoal,
 )
-from ads_booster.marketing.marketing_os_scorecard import (
+from ads_booster.evaluation.marketing_os_scorecard import (
     MarketingOsEvalInput,
     MarketingOsEvalObservation,
     MarketingOsSessionTrace,
     scorecard_trace_from_session,
 )
-from ads_booster.marketing.runtime import (
+from ads_booster.agent.runtime import (
     AgentSession,
     BoundToolInvocation,
     Budget,
@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from ads_booster.marketing.feature_launch_evidence_brief import FeatureLaunchEvidenceBrief
+    from ads_booster.contracts.feature_launch_evidence_brief import FeatureLaunchEvidenceBrief
 
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 _RESEARCH_REGISTRY_SHA256 = "a" * 64

@@ -11,8 +11,8 @@ import pytest
 
 from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.work_continuation import continue_work
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.work_continuation import continue_work
 from tests.marketing.agent_service.test_application import (
     EffectThenStopReasoning,
     ResearchAdapter,

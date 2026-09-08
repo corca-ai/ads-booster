@@ -7,8 +7,8 @@ import pytest
 from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
 from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.contracts.tool_capability import ToolExecutionResult
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
-from ads_booster.marketing.agent_service.integrations import (
+from ads_booster.agent.core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )

@@ -14,7 +14,7 @@ from PIL import Image
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
-from ads_booster.marketing.agent_service.slack_image_review import (
+from ads_booster.channels.slack_image_review import (
     SlackImageReviewTool,
     bind_files,
     slack_image_review_descriptor,

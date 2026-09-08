@@ -8,7 +8,7 @@ import pytest
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.marketing.agent_service.work_observations import WorkObservationStore
+from ads_booster.learning.work_observations import WorkObservationStore
 from tests.marketing.agent_service.test_work_observations import access, measurement
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import RecordingReasoning, receive, setup_events

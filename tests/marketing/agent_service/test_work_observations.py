@@ -10,7 +10,7 @@ import pytest
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.work_observation import WorkObservation
-from ads_booster.marketing.agent_service.work_observations import WorkObservationStore
+from ads_booster.learning.work_observations import WorkObservationStore
 
 if TYPE_CHECKING:
     from pathlib import Path

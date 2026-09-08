@@ -11,7 +11,7 @@ from urllib.request import Request
 
 import pytest
 
-from ads_booster.marketing.agent_service.github_issues import (
+from ads_booster.tools.github_issues import (
     API,
     CAPABILITY,
     REPOSITORY,
@@ -20,7 +20,7 @@ from ads_booster.marketing.agent_service.github_issues import (
     open_github,
     token_from_env,
 )
-from ads_booster.marketing.agent_service.integrations import (
+from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )

@@ -17,7 +17,7 @@ from ads_booster.knowledge.contracts import KnowledgeJob
 from ads_booster.knowledge.maintenance import KnowledgeOwner
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
 from ads_booster.knowledge.repository import JobRegistration, SqliteKnowledgeRepository
-from ads_booster.marketing.agent_service.lifecycle import build_installed_knowledge_runtime
+from ads_booster.bootstrap.lifecycle import build_installed_knowledge_runtime
 from ads_booster.providers.codex_cli import CodexCli
 
 if TYPE_CHECKING:

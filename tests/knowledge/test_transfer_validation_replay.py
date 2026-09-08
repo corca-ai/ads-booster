@@ -24,19 +24,19 @@ from ads_booster.knowledge.contracts import SourceDisposition, TaskBinding, Task
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.repository import MembershipRole
 from ads_booster.knowledge.repository_types import IndexOutboxItem, SourceAdmissionChange
-from ads_booster.marketing.agent_service.knowledge_ingress_api import (
+from ads_booster.channels.http.knowledge_ingress_api import (
     ApiIngressRequest,
     build_api_ingress,
 )
-from ads_booster.marketing.agent_service.knowledge_transfer import TransferContextMaterial
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
+from ads_booster.agent.service.knowledge_transfer import TransferContextMaterial
+from ads_booster.channels.http.oauth import OAuthIdentity
 from tests.knowledge.test_transfer_material import transfer_adapter
 from tests.knowledge.transfer_contract_fixtures import transfer_fixture
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.agent_service.knowledge import KnowledgeServiceAdapter
+    from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
 
 
 def _accepted(
@@ -192,7 +192,7 @@ def test_cached_acceptance_does_not_bypass_current_fence(
                 _ = tz
                 return accepted.valid_until + timedelta(seconds=1)
 
-        monkeypatch.setattr("ads_booster.marketing.agent_service.knowledge.datetime", ExpiredClock)
+        monkeypatch.setattr("ads_booster.agent.service.knowledge.datetime", ExpiredClock)
     # When: the worker retries the same validation request ID after state changed.
     result = adapter.validate_transfer(
         request, authenticated_tenant_id="trace", authenticated_principal_id=request.principal_id

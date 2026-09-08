@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.runtime import (
+from ads_booster.agent.runtime import (
     AgentSession,
     Budget,
     DeferredToolExecution,
@@ -28,7 +28,7 @@ from tests.marketing.test_agent_runtime import CAPABILITY, INVOCATION, NOW, _gra
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.runtime import BoundToolInvocation
+    from ads_booster.agent.runtime import BoundToolInvocation
     from ads_booster.transport.json_types import JsonObject
 
 

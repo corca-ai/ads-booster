@@ -7,7 +7,7 @@ import pytest
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass, ToolDescriptor
-from ads_booster.marketing.tool_adapters import (
+from ads_booster.tools import (
     DelegatedToolResult,
     DelegatingToolAdapter,
     ToolDelegationError,

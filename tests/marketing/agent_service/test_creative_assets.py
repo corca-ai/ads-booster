@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ads_booster.contracts.creative_work import AssetParent, CreativeAsset, CreativeScope
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 
 if TYPE_CHECKING:
     from pathlib import Path

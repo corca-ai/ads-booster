@@ -20,8 +20,8 @@ from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.retrieval import KnowledgeRetriever
 from ads_booster.knowledge.tools import ToolHost
-from ads_booster.marketing.agent_service.knowledge import KnowledgeServiceAdapter
-from ads_booster.marketing.agent_service.knowledge_ingress import CanonicalKnowledgeIngress
+from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
+from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
 from tests.knowledge.transfer_contract_fixtures import transfer_fixture
 
 

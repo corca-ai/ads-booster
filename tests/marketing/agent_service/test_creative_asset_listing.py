@@ -6,9 +6,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ads_booster.contracts.creative_work import CreativeScope
-from ads_booster.marketing.agent_service.creative_api import dispatch_creative
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
+from ads_booster.channels.http.creative_api import dispatch_creative
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.channels.http.oauth import OAuthIdentity
 from tests.marketing.agent_service.test_creative_api import IDENTITY, NOW, _body, _service
 
 if TYPE_CHECKING:

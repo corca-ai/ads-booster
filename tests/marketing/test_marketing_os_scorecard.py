@@ -11,17 +11,17 @@ import pytest
 
 from ads_booster.contracts.marketing_agent import contract_sha256
 from ads_booster.contracts.models import ContractModel
-from ads_booster.marketing.evidence_research_operator import (
+from ads_booster.research.evidence_research_operator import (
     ResearchObservation,
     ResearchScope,
     ResearchState,
     ResearchStepEvaluation,
 )
-from ads_booster.marketing.feature_launch_operator import (
+from ads_booster.workflows.feature_launch_operator import (
     FeatureLaunchEvaluation,
     FeatureLaunchObservation,
 )
-from ads_booster.marketing.marketing_os_scorecard import (
+from ads_booster.evaluation.marketing_os_scorecard import (
     MarketingOsEvalCase,
     MarketingOsEvalExpectation,
     MarketingOsEvalInput,
@@ -33,7 +33,7 @@ from ads_booster.marketing.marketing_os_scorecard import (
     MarketingOsTraceEvent,
     compare_marketing_os_scorecards,
 )
-from ads_booster.marketing.runtime import canonical_json_object
+from ads_booster.agent.runtime import canonical_json_object
 from tests.marketing.marketing_os_scorecard_runner import (
     FixtureEnvironment,
     FixtureReceiptAuthority,

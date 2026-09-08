@@ -11,18 +11,18 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import AgentRunState
 from ads_booster.contracts.reasoning import ReasoningDecision
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.image_generation import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.tools.image_generation import (
     CAPABILITY,
     CodexImages,
     read_artifact,
 )
-from ads_booster.marketing.agent_service.integrations import (
+from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
-from ads_booster.marketing.channels.slack_events import SlackEvents
-from ads_booster.marketing.channels.slack_images import SlackImageDelivery
+from ads_booster.channels.slack_events import SlackEvents
+from ads_booster.channels.slack_images import SlackImageDelivery
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )

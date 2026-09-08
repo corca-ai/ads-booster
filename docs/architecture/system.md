@@ -34,6 +34,10 @@ declared exact Slack/Notion delivery invocations.
 
 The service is a single process with one execution lock. Durable asynchronous jobs and image-edit
 operations release that lock while waiting. No distributed active-active Run ownership is claimed.
+Its composition is assembled in `bootstrap/lifecycle.py`: `agent/service/` owns canonical Run
+application flow, `agent/runtime.py` owns execution safety, `channels/http/` owns authenticated Web
+ingress, and `tools/` supplies configured adapters. This package placement does not change the
+public CLI, HTTP, SQLite, approval or recovery contracts.
 A source checkout, fake adapter or candidate wheel does not establish live provider, Slack, OAuth,
 Tunnel or Linux deployment acceptance. See the [server guide](../operations/agent-server/README.md).
 

@@ -11,13 +11,13 @@ import pytest
 
 from ads_booster.contracts.agent_run import AgentRunState
 from ads_booster.execution_control import checkpoint
-from ads_booster.marketing.agent_service import integrations
-from ads_booster.marketing.agent_service.github_issues import GitHubIssues
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
-from ads_booster.marketing.channels import slack_events
-from ads_booster.marketing.channels.slack import slack_signature
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.bootstrap import integrations
+from ads_booster.tools.github_issues import GitHubIssues
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.channels import slack_events
+from ads_booster.channels.slack import slack_signature
+from ads_booster.channels.slack_events import SlackEvents
 from tests.marketing.agent_service.test_github_issues import PAYLOAD, URL, Response
 from tests.marketing.agent_service.test_http_api import StopReasoning
 from tests.marketing.agent_service.test_integrations import UnusedResearchRunner

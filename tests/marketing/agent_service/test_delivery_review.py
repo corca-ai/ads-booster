@@ -22,9 +22,9 @@ from ads_booster.contracts.marketing_delivery import (
     PublicationTarget,
     ReviewAsset,
 )
-from ads_booster.marketing.agent_service.creative_asset_verifier import CreativeAssetVerifier
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
+from ads_booster.creative.creative_asset_verifier import CreativeAssetVerifier
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.delivery.delivery_review import DeliveryReviewStore
 
 if TYPE_CHECKING:
     from pathlib import Path

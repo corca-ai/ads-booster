@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.agent_service.channel_setup import slack_from_env
-from ads_booster.marketing.channels.slack_conversations import Conversation, Message
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.bootstrap.channel_setup import slack_from_env
+from ads_booster.channels.slack_conversations import Conversation, Message
+from ads_booster.channels.slack_events import SlackEvents
 from tests.marketing.agent_service.test_creative_image_edit import approve, setup
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events

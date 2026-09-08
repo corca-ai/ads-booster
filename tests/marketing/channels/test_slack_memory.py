@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from ads_booster.marketing.channels.contracts import ChannelIdentityBinding
-from ads_booster.marketing.channels.slack_conversations import Conversation, Message
-from ads_booster.marketing.channels.slack_memory import memory_command
+from ads_booster.channels.contracts import ChannelIdentityBinding
+from ads_booster.channels.slack_conversations import Conversation, Message
+from ads_booster.channels.slack_memory import memory_command
 
 if TYPE_CHECKING:
     from pathlib import Path

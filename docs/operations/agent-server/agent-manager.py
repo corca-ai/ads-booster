@@ -121,13 +121,46 @@ def systemctl(*args: str) -> str:
 def probe(release: Path) -> None:
     executable = release / ".venv/bin/python"
     # Fails before touching the running service if main predates the updater/slack-only contract.
-    code = (
-        "from ads_booster.marketing.agent_service.maintenance import UPDATE_PROTOCOL; "
-        "from ads_booster.marketing.agent_service.http_api import MarketingAgentApi; "
-        "assert UPDATE_PROTOCOL == 1; "
-        "assert 'slack_only' in MarketingAgentApi.__dataclass_fields__; "
-        "assert 'slack_events' in MarketingAgentApi.__dataclass_fields__"
+    code = """
+import importlib
+import importlib.util
+
+candidates = (
+    (
+        "ads_booster.marketing.agent_service.maintenance",
+        "ads_booster.marketing.agent_service.http_api",
+    ),
+    (
+        "ads_booster.agent.service.maintenance",
+        "ads_booster.channels.http.http_api",
+    ),
+)
+
+
+def module_present(candidate):
+    prefixes = tuple(
+        ".".join(candidate.split(".")[:index])
+        for index in range(1, len(candidate.split(".")) + 1)
     )
+    try:
+        return importlib.util.find_spec(candidate) is not None
+    except ModuleNotFoundError as error:
+        if error.name in prefixes:
+            return False
+        raise
+
+
+maintenance_module, http_api_module = next(
+    candidate
+    for candidate in candidates
+    if module_present(candidate[0]) and module_present(candidate[1])
+)
+maintenance = importlib.import_module(maintenance_module)
+http_api = importlib.import_module(http_api_module)
+assert maintenance.UPDATE_PROTOCOL == 1
+assert "slack_only" in http_api.MarketingAgentApi.__dataclass_fields__
+assert "slack_events" in http_api.MarketingAgentApi.__dataclass_fields__
+"""
     _ = command([str(executable), "-c", code])
     value = json.loads(command([str(release / ".venv/bin/trace-marketing"), "service", "doctor"]))
     if value.get("ready") is not True:

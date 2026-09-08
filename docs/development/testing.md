@@ -7,6 +7,21 @@ Last reviewed: 2026-09-08
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+### Package-boundary migration
+
+Source owners move to `agent/{core,service,runtime.py}`, `channels/http`, `tools`, `bootstrap` and
+the named domain packages. Test directories remain `tests/agent_core` and `tests/marketing`; their
+historical directory names do not authorize imports from `ads_booster.marketing`.
+
+This package-only relocation does not require product QA. If a later behavior change needs boundary
+verification, select the package-boundary scanner with the affected registry, service, channel and CLI
+compatibility owners. The scanner should reject forbidden `agent.core` or `knowledge` dependencies and
+stale executable imports while allowing the documented contract dependencies. An optional fresh-wheel
+check can then verify that `ads_booster.agent.runtime` imports while `ads_booster.marketing` is absent.
+Classify descriptor digest and persisted-ID strings separately from executable imports; legacy
+`marketing` identifiers are not a failure by themselves. Preserve recorded historical test counts as
+historical evidence rather than treating them as verification of this migration.
+
 ### Discoverable marketing procedures and Slack follow-ups
 
 Select these tests for `skill_tools.py`, the skill catalog, discovery wiring, generic reasoning

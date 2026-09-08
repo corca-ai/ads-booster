@@ -18,11 +18,11 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import EffectClass, ToolDescriptor, ToolExecutionResult
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.agent_service.work_continuation import continue_work
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.agent.runtime import SqliteSessionStore
 
 from .test_application import NOW, _descriptor, _reasoning_result, _request
 

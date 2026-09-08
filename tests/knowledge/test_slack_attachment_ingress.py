@@ -15,13 +15,13 @@ from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.repository_types import MembershipRole
 from ads_booster.knowledge.source_fetch import SourceFetchRequest
-from ads_booster.marketing.agent_service.knowledge_ingress import TrustedRunBinding
-from ads_booster.marketing.channels.slack_attachments import (
+from ads_booster.agent.service.knowledge_ingress import TrustedRunBinding
+from ads_booster.channels.slack_attachments import (
     SlackAttachmentFetcher,
     SlackAttachmentFetchError,
     SlackScopedSourceFetcher,
 )
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.channels.slack_events import SlackEvents
 from tests.marketing.agent_service.test_http_api import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 

@@ -27,28 +27,28 @@ from ads_booster.knowledge.ingest_receipts import (
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.repository_types import MembershipRole
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.knowledge_ingress import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
     PendingKnowledgeIngress,
     TrustedRunBinding,
 )
-from ads_booster.marketing.agent_service.knowledge_ingress_api import (
+from ads_booster.channels.http.knowledge_ingress_api import (
     ApiIngressRequest,
     build_api_ingress,
 )
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.channels.http.oauth import OAuthIdentity
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.runtime import SqliteSessionStore
 from tests.marketing.agent_service.test_application import AskThenStopReasoning
 from tests.marketing.agent_service.test_http_api import NOW, StopReasoning
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.agent_core.ports import ReasoningProvider
+    from ads_booster.agent.core.ports import ReasoningProvider
 
 _INTEGER_ROW: TypeAdapter[tuple[int]] = TypeAdapter(tuple[int])
 _FIVE_INTEGER_ROW: TypeAdapter[tuple[int, int, int, int, int]] = TypeAdapter(

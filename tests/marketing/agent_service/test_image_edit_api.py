@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.marketing.agent_service.creative_image_edit import ImageEditJob
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
+from ads_booster.agent.service.creative_image_edit import ImageEditJob
+from ads_booster.channels.http.http_api import MarketingAgentApi
 from tests.marketing.agent_service.test_creative_image_edit import approve, setup
 
 if TYPE_CHECKING:

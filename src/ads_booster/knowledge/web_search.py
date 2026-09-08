@@ -18,7 +18,7 @@ from pydantic import (
 from ads_booster.contracts.agent_run import BoundedId  # noqa: TC001
 from ads_booster.contracts.models import ContractModel, Locale
 from ads_booster.knowledge.contract_types import UtcDatetime  # noqa: TC001
-from ads_booster.marketing.agent_service.web_search import public_search
+from ads_booster.providers.public_search import public_search
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -21,21 +21,21 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.delivery_api import PrepareDelivery
-from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
-from ads_booster.marketing.agent_service.delivery_tools import (
+from ads_booster.channels.http.delivery_api import PrepareDelivery
+from ads_booster.delivery.delivery_review import DeliveryReviewStore
+from ads_booster.delivery.delivery_tools import (
     DeliveryPreparationTool,
     DeliveryPrepareRequest,
     delivery_prepare_descriptor,
 )
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.runtime import SqliteSessionStore
-from ads_booster.marketing.tool_adapters.compatibility import DelegatingToolAdapter
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.tools.compatibility import DelegatingToolAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

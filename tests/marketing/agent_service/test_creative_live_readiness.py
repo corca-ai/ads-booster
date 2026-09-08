@@ -15,8 +15,8 @@ from ads_booster.contracts.agent_run import (
     ToolInvocation,
     contract_sha256,
 )
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
-from ads_booster.marketing.agent_service.lifecycle import (
+from ads_booster.agent.core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )

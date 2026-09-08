@@ -18,7 +18,7 @@ from ads_booster.contracts.agent_run import (
     AgentStepKind,
     contract_sha256,
 )
-from ads_booster.marketing.agent_service.sqlite_repository import (
+from ads_booster.agent.service.sqlite_repository import (
     AgentRunConflictError,
     SqliteAgentRunRepository,
 )

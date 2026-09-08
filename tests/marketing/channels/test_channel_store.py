@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.channels.contracts import (
+from ads_booster.channels.contracts import (
     ChannelInstallation,
     ChannelKind,
     ChannelNotification,
 )
-from ads_booster.marketing.channels.store import SqliteChannelStore
+from ads_booster.channels.store import SqliteChannelStore
 
 if TYPE_CHECKING:
     from pathlib import Path

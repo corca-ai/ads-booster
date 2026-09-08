@@ -27,23 +27,23 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.marketing.agent_service.slack_asset_intake import (
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.channels.slack_asset_intake import (
     SlackAssetIntakeTool,
     slack_asset_import_descriptor,
     slack_file_inspect_descriptor,
 )
-from ads_booster.marketing.agent_service.slack_image_files import SlackImageFiles
-from ads_booster.marketing.agent_service.slack_image_review import bind_files
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.agent_service.work_continuation import continue_work
-from ads_booster.marketing.runtime import SqliteSessionStore
-from ads_booster.marketing.tool_adapters.compatibility import DelegatingToolAdapter
+from ads_booster.channels.slack_image_files import SlackImageFiles
+from ads_booster.channels.slack_image_review import bind_files
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.tools.compatibility import DelegatingToolAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

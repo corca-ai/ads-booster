@@ -25,25 +25,25 @@ from urllib.request import Request, urlopen
 from PIL import Image, ImageDraw
 from pydantic import TypeAdapter
 
-import ads_booster.marketing.agent_service.http_api as http_module
+import ads_booster.channels.http.http_api as http_module
 from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
 from ads_booster.contracts.reasoning import (
     ReasoningDecision,
     ReasoningProviderReceipt,
     ReasoningResult,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.channel_setup import slack_from_env
-from ads_booster.marketing.agent_service.http_api import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.bootstrap.channel_setup import slack_from_env
+from ads_booster.channels.http.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
-from ads_booster.marketing.agent_service.image_review import review_images
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.channels.slack import slack_signature
-from ads_booster.marketing.channels.slack_events import SlackEvents
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.tools.image_review import review_images
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.channels.slack import slack_signature
+from ads_booster.channels.slack_events import SlackEvents
+from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.transport.json_types import JsonObject
 

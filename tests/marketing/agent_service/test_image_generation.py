@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from ads_booster.marketing.agent_service.image_generation import generated_image, read_artifact
+from ads_booster.tools.image_generation import generated_image, read_artifact
 
 if TYPE_CHECKING:
     from pathlib import Path

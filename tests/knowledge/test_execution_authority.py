@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
-from ads_booster.marketing.agent_service.knowledge import KnowledgeServiceAdapter
-from ads_booster.marketing.agent_service.knowledge_ingress_authority import (
+from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
+from ads_booster.agent.service.knowledge_ingress_authority import (
     KnowledgeIngressAuthority,
 )
 from tests.knowledge.change_test_fixtures import NOW, actor
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ads_booster.contracts.knowledge_preparation import PreparedKnowledgeContext
     from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
     from ads_booster.knowledge.tools import ToolHost
-    from ads_booster.marketing.agent_service.knowledge_ingress import CanonicalKnowledgeIngress
+    from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
 
 
 @pytest.mark.parametrize(
@@ -60,7 +60,7 @@ def test_execution_checks_pending_correction_and_current_grant(
     )
     prepared = cast("PreparedKnowledgeContext", cast("object", SimpleNamespace(receipt=object())))
     monkeypatch.setattr(
-        "ads_booster.marketing.agent_service.knowledge.context_receipt_is_current",
+        "ads_booster.agent.service.knowledge.context_receipt_is_current",
         current_receipt,
     )
     with repository.connection() as db:

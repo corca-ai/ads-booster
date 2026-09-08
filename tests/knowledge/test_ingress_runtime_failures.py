@@ -24,12 +24,12 @@ from ads_booster.knowledge.jobs import BoundedJobRunner, JobProcessResult
 from ads_booster.knowledge.maintenance import KnowledgeOwner
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.runtime import KnowledgeRuntime
-from ads_booster.marketing.agent_service.knowledge_ingress import CanonicalKnowledgeIngress
-from ads_booster.marketing.agent_service.knowledge_ingress_api import (
+from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
+from ads_booster.channels.http.knowledge_ingress_api import (
     ApiIngressRequest,
     build_api_ingress,
 )
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
+from ads_booster.channels.http.oauth import OAuthIdentity
 from tests.marketing.agent_service.test_http_api import NOW
 
 if TYPE_CHECKING:

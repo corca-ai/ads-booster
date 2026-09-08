@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.agent_service.knowledge_ingress_schema import (
+from ads_booster.agent.service.knowledge_ingress_schema import (
     KnowledgeIngressConflictError,
 )
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.channels.slack_events import SlackEvents
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 
