@@ -49,6 +49,18 @@ must not be reassigned on timeout. The implementation follows these boundaries w
 worker token, canonical queue and local upload ledger; neither existing server nor worker service
 is activated by the change. True unknown device execution still requires explicit reconciliation.
 
+Image-edit provider investigation (2026-09-08): the local macOS Codex0.153.4 advertises
+`image_generation` as stable/enabled. A read-only app-server initialization and
+`modelProvider/capabilities/read` returned `imageGeneration:true` for the current provider.
+No thread, turn or generation was started; login/configuration were preserved. The separate
+mun-jeong-min server environment was not queried. This is capability
+metadata, not verified image-edit I/O or quality. The existing `codex_imagegen_ui.py` only builds
+a date/time overlay from a UI reference and ignores generation events; it cannot establish a
+general partial-edit/localization adapter. Before activation, bind source/region/locale digests,
+validate a generated-image event and managed output bytes, retain start/response-loss evidence,
+and check preserved pixels plus separate visual/human QA. Generated raster and edited promotional
+screenshots must retain their existing non-product-proof classification.
+
 ## Problem
 
 Small software teams need more than a content generator. They need an operator that can turn a

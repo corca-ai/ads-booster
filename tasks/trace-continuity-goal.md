@@ -349,6 +349,17 @@ Next independent gaps: operational image editing/localization provider verificat
 campaign outcome integration. Those remain implementation work, not merely missing credentials.
 The optional remote transport is locally implemented; live acceptance remains separately blocked.
 
+Next-gap evidence: patterns inspected installed Codex0.153.4 help/features and generated local
+protocol schemas. Read-only initialize→modelProvider/capabilities/read on the existing provider
+returned namespaceTools/imageGeneration/webSearch=true. Sandbox first rejected runtime SQLite
+initialization; the exact read was rerun with approved escalation, without login/config changes
+or thread/turn/generation calls. Evidence `/private/tmp/trace-image-capability-evidence.json` and
+schemas `/private/tmp/trace-image-capability-metadata/`; main read the saved evidence.
+This proves advertised capability only. Existing codex_imagegen_ui.py has only a reference-based
+date/time overlay and fake runner validation; canonical edit/localize still need bounded source/
+region/locale input, image-generation event and managed-file verification, start/no-retry state,
+and actual visual I/O. Do not label the provider operational solely from this capability response.
+
 External acceptance requires the separately operated server to finish its existing setup,
 authenticated Slack membership/test channel and optional files:read image grant, an available
 Appium phone or approved human captures, and a selected image-edit provider with verified
