@@ -155,3 +155,10 @@ Only Slack auth identity and upstream GitHub trust are fixtures; no Slack messag
 is sent. This is candidate/source installation proof. ARM assets are pinned but require separate
 ARM host acceptance. The deployed default main URL and a real Slack conversation remain post-merge
 acceptance, not inferred from source or mocked providers.
+
+
+Port selection uses `tests/cli/test_agent_server_update.py`: default/missing port, explicit 8090,
+custom port, invalid values, and agreement across actual launch argv, update health and CLI status.
+The installed Ubuntu lifecycle fixture occupies 8765 with an unrelated HTTP service, starts the
+agent on 8090, performs real systemd update/restart and verifies the unrelated service and persistent
+port survive. This does not prove the live on-prem port migration or Cloudflare route change.
