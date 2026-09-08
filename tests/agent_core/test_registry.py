@@ -5,17 +5,27 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.contracts.agent_run import contract_sha256
+from ads_booster.contracts.agent_run import (
+    ToolExecutionDeferred,
+    ToolInvocation,
+    contract_sha256,
+)
 from ads_booster.contracts.tool_capability import (
     EffectClass,
     ToolApprovalPolicy,
     ToolCost,
     ToolDescriptor,
+    ToolExecutionResult,
     ToolIdempotencyPolicy,
     ToolReadiness,
     ToolReconciliationPolicy,
 )
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.marketing.agent_core.registry import (
+    CapabilityPolicy,
+    ToolDescriptorFactory,
+    ToolRegistration,
+    ToolRegistry,
+)
 
 if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject
@@ -69,6 +79,93 @@ def test_registry_rejects_duplicate_capability_versions() -> None:
 
     with pytest.raises(ValueError, match="duplicate_tool_descriptor"):
         _ = ToolRegistry((descriptor, descriptor))
+
+
+def test_registration_catalog_derives_matching_descriptor_and_adapter_projections() -> None:
+    adapter = RecordingAdapter()
+    registration = ToolRegistration(
+        capability_id="research.web",
+        version="1",
+        adapter=adapter,
+        descriptor_factory=_factory("research.web", EffectClass.OBSERVE, ready=True, cost=1),
+    )
+
+    registry = ToolRegistry.from_registrations((registration,), now=NOW)
+
+    assert registry.adapters == {"research.web": adapter}
+    assert tuple(item.capability_id for item in registry.descriptors) == ("research.web",)
+
+
+def test_registration_catalog_rejects_invalid_bundle_before_extension() -> None:
+    adapter = RecordingAdapter()
+    valid = ToolRegistration(
+        capability_id="research.web",
+        version="1",
+        adapter=adapter,
+        descriptor_factory=_factory("research.web", EffectClass.OBSERVE, ready=True, cost=1),
+    )
+    registry = ToolRegistry.from_registrations((valid,), now=NOW)
+    original_descriptors = registry.descriptors
+    original_adapters = registry.adapters
+    mismatch = ToolRegistration(
+        capability_id="creative.image",
+        version="1",
+        adapter=RecordingAdapter(),
+        descriptor_factory=_factory(
+            "capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True, cost=1
+        ),
+    )
+
+    with pytest.raises(ValueError, match="tool_registration_descriptor_identity_mismatch"):
+        _ = registry.with_registrations((mismatch,), now=NOW)
+
+    assert registry.descriptors == original_descriptors
+    assert registry.adapters == original_adapters
+
+
+def test_registration_catalog_rejects_duplicate_missing_and_executor_conflicts() -> None:
+    adapter = RecordingAdapter()
+    registration = ToolRegistration(
+        capability_id="research.web",
+        version="1",
+        adapter=adapter,
+        descriptor_factory=_factory("research.web", EffectClass.OBSERVE, ready=True, cost=1),
+    )
+    with pytest.raises(ValueError, match="duplicate_tool_registration"):
+        _ = ToolRegistry.from_registrations((registration, registration), now=NOW)
+    with pytest.raises(ValueError, match="tool_registration_adapter_missing"):
+        _ = ToolRegistry.from_registrations(
+            (
+                ToolRegistration(
+                    capability_id="research.web",
+                    version="1",
+                    adapter=None,
+                    descriptor_factory=_factory(
+                        "research.web", EffectClass.OBSERVE, ready=True, cost=1
+                    ),
+                ),
+            ),
+            now=NOW,
+        )
+    with pytest.raises(ValueError, match="tool_registration_executor_conflict"):
+        _ = ToolRegistry.from_registrations(
+            (
+                registration,
+                ToolRegistration(
+                    capability_id="research.web",
+                    version="2",
+                    adapter=RecordingAdapter(),
+                    descriptor_factory=_factory(
+                        "research.web",
+                        EffectClass.OBSERVE,
+                        ready=True,
+                        cost=1,
+                        version="2",
+                    ),
+                ),
+            ),
+            now=NOW,
+        )
 
 
 def test_snapshot_excludes_stale_readiness_and_zero_call_budget() -> None:
@@ -160,3 +257,33 @@ def _descriptor(
             terminal_dispositions=("succeeded", "failed"),
         ),
     )
+
+
+class RecordingAdapter:
+    def execute(
+        self,
+        invocation: ToolInvocation,
+        descriptor: ToolDescriptor,
+    ) -> ToolExecutionResult | ToolExecutionDeferred:
+        _ = invocation, descriptor
+        raise AssertionError("adapter execution was not expected")
+
+
+def _factory(
+    capability_id: str,
+    effect_class: EffectClass,
+    *,
+    ready: bool,
+    cost: int,
+    version: str = "1",
+) -> ToolDescriptorFactory:
+    def build(*, now: datetime) -> ToolDescriptor:
+        descriptor = _descriptor(capability_id, effect_class, ready=ready, cost=cost)
+        return descriptor.model_copy(
+            update={
+                "version": version,
+                "readiness": descriptor.readiness.model_copy(update={"observed_at": now}),
+            }
+        )
+
+    return build
