@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from pydantic import TypeAdapter
 
@@ -576,7 +577,11 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        return f"{answer}\n\n상태: {run.state.value}\n실행: {run.run_id}"
+        result = f"{answer}\n\n상태: {run.state.value}\n실행: {run.run_id}"
+        if self.commands.public_links and not conversation.private:
+            origin = self.commands.application.result_base_url.rstrip("/")
+            result += f"\n업무·산출물 보기: {origin}/runs/{quote(run.run_id, safe='')}"
+        return result
 
     def _send(self, conversation: Conversation, text: str) -> str:
         if not text:
