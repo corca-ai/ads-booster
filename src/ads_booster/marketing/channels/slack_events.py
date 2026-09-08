@@ -82,7 +82,13 @@ class SlackEvents:
         if not re.fullmatch(r"[UW][A-Z0-9]+", self.bot_user_id):
             raise ValueError("slack_bot_user_id_invalid")
         self.store = SlackConversationStore(
-            self.commands.application.store.database_path, knowledge_sink=self.knowledge_sink
+            self.commands.application.store.database_path,
+            knowledge_sink=self.knowledge_sink,
+            installed_knowledge_ingress=(
+                None
+                if self.commands.application.service.knowledge is None
+                else self.commands.application.service.knowledge.ingress
+            ),
         )
         self.private_service = replace(
             self.commands.application.service,
