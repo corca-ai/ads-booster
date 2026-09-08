@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Protocol
 
 from pydantic import Field, model_validator
 
 from ads_booster.capture.appium_endpoint import validate_appium_server_url
 from ads_booster.capture.codex_appium_job import CodexAppiumJobContract, CodexAppiumJobIdentity
-from ads_booster.contracts.agent_run import AgentRun, contract_sha256
+from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.creative_work import AssetParent, CreativeAsset
 from ads_booster.contracts.generation import (
     MarketingContextBundle,
@@ -63,9 +63,17 @@ class CreativeCaptureResult(ContractModel):
     product_support_verified: Literal[False] = False
 
 
+class CaptureRunIdentity(Protocol):
+    @property
+    def tenant_id(self) -> str: ...
+
+    @property
+    def run_id(self) -> str: ...
+
+
 def build_creative_capture_contract(  # noqa: PLR0913 - explicit worker and source bindings.
     *,
-    run: AgentRun,
+    run: CaptureRunIdentity,
     request: CreativeCaptureInput,
     source: CreativeAsset,
     key: str,
