@@ -20,6 +20,8 @@ from ads_booster.marketing.agent_service.github_issues import (
 from ads_booster.marketing.agent_service.github_issues import (
     descriptor as github_descriptor,
 )
+from ads_booster.marketing.agent_service.image_generation import CodexImages
+from ads_booster.marketing.agent_service.image_generation import descriptor as image_descriptor
 from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
@@ -87,6 +89,8 @@ class ConfiguredAgentTools:
     research_runner: ResearchRunner
     opener: Callable[..., HttpResponse] = urlopen
 
+    images: CodexImages | None = None
+
     def adapters(self) -> Mapping[str, ToolAdapter]:
         adapters: dict[str, ToolAdapter] = {
             "research.search": _delegating("research.search", "public_search", WebSearch().execute),
@@ -112,6 +116,10 @@ class ConfiguredAgentTools:
         if self.config.github_token:
             adapters[CAPABILITY] = _delegating(
                 CAPABILITY, "github.issues", GitHubIssues(self.config.github_token).execute
+            )
+        if self.images is not None:
+            adapters["creative.image.generate"] = _delegating(
+                "creative.image.generate", "codex.image_generation", self.images.execute
             )
         return adapters
 
@@ -147,6 +155,8 @@ class ConfiguredAgentTools:
             )
         if self.config.github_token:
             result.append(github_descriptor(now=now))
+        if self.images is not None:
+            result.append(image_descriptor(now=now))
         return tuple(result)
 
     def _research(

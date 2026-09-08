@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.application import MarketingAgentService
+from ads_booster.marketing.agent_service.image_generation import CodexImages
 from ads_booster.marketing.agent_service.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -53,6 +54,7 @@ def build_installed_marketing_agent_service(
     codex = CodexCli(executable=codex_executable, model=model_id)
     configured = ConfiguredAgentTools(
         config=integrations or AgentServiceIntegrationConfig(),
+        images=CodexImages(codex_executable, paths.root / "images", model_id),
         research_runner=DynamicEvidenceResearchRunner(
             codex=codex,
             state_root=paths.root / "research",
