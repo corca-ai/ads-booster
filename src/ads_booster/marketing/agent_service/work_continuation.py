@@ -56,7 +56,6 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
         "authority": "task_input_only",
         "inputs": inputs or {},
     }
-    digest = contract_sha256(payload)
     record_id = f"{run_id}:continuation:{contract_sha256({'event_id': event_id})[:32]}"
     with service.execution_lock:
         run = service.repository.get(tenant_id, run_id)
@@ -66,6 +65,12 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
             (r for r in service.repository.records(tenant_id, run_id) if r.record_id == record_id),
             None,
         )
+        deferred_input = run.state is AgentRunState.AWAITING_TOOL or (
+            existing is not None and existing.payload.get("deferred_input") is True
+        )
+        if deferred_input:
+            payload["deferred_input"] = True
+        digest = contract_sha256(payload)
         if existing is not None:
             if existing.payload_sha256 != digest:
                 raise ValueError("work_continuation_idempotency_conflict")
@@ -92,7 +97,7 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
                 parent_step_sha256=run.head_step_sha256,
                 occurred_at=now,
             ),
-            state=AgentRunState.AWAITING_INPUT,
+            state=AgentRunState.AWAITING_TOOL if deferred_input else AgentRunState.AWAITING_INPUT,
             expected_revision=run.revision,
             records=(
                 AgentRecord(
@@ -109,7 +114,7 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
         )
         if service.fault_hook is not None:
             service.fault_hook("work_continuation_committed")
-        if action == "pause":
+        if action == "pause" or deferred_input:
             return updated
         return service.submit_input(tenant_id, run_id, payload, now=now)
 
@@ -126,7 +131,7 @@ def _resume_continuation(
     Canonical input and continuation records identify the owning human event.
     drive retains the runtime's dispatch/reconciliation behavior for RUNNING work.
     """
-    if payload["action"] != "revise":
+    if payload["action"] != "revise" or payload.get("deferred_input") is True:
         return run
     records = service.repository.records(run.tenant_id, run.run_id)
     latest_input = next(
