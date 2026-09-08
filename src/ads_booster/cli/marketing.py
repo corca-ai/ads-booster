@@ -37,6 +37,7 @@ from ads_booster.marketing.agent_service.lifecycle import (
 )
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
+from ads_booster.marketing.agent_service.remote_capture import connect_remote_capture
 from ads_booster.marketing.agent_service.scheduler import (
     AgentSkillScheduler,
     DailySkillSchedule,
@@ -239,6 +240,22 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
     browser_login = browser_from_env(os.environ, oauth)
     slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
     slack_events = events_from_env(os.environ, slack_commands)
+
+    def notify_remote_completion(tenant_id: str, run_id: str, event_id: str) -> None:
+        if slack_events is not None:
+            _ = slack_events.enqueue_run_update(tenant_id, run_id, event_id=event_id)
+
+    remote_path = os.environ.get("TRACE_MARKETING_REMOTE_CAPTURE_CONFIG")
+    remote_capture = (
+        None
+        if remote_path is None
+        else connect_remote_capture(
+            service,
+            config_path=Path(remote_path),
+            now=datetime.now(UTC),
+            on_completed=notify_remote_completion,
+        )
+    )
     if slack_only and slack_commands is None:
         message = "Slack-only mode requires a configured Slack installation"
         raise typer.BadParameter(message)
@@ -296,6 +313,7 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
                 allowed_tenant_id=tenant,
                 slack_only=slack_only,
                 maintenance=gate,
+                remote_capture=remote_capture,
             ),
             host=host,
             port=port,
