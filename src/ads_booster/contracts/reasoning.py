@@ -12,8 +12,8 @@ from ads_booster.contracts.agent_run import (
     CapabilitySnapshot,
     contract_sha256,
 )
-from ads_booster.contracts.knowledge_preparation import PreparedKnowledgeContext
-from ads_booster.contracts.knowledge_selection import KnowledgeActionKind
+from ads_booster.contracts.knowledge_preparation import PreparedKnowledgeContext  # noqa: TC001
+from ads_booster.contracts.knowledge_selection import KnowledgeActionKind  # noqa: TC001
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.transport.json_types import JsonObject  # noqa: TC001
 
@@ -23,6 +23,8 @@ class ReasoningRequest(ContractModel):
     run_id: Annotated[str, Field(min_length=1, max_length=160)]
     phase: Literal["plan", "replan"]
     goal: AgentGoal
+    # Host-admitted task input, separate from untrusted observations and the original goal.
+    current_user_message: Annotated[str, Field(min_length=1, max_length=20_000)] | None = None
     capability_snapshot: CapabilitySnapshot
     evidence: Annotated[tuple[JsonObject, ...], Field(max_length=128)] = ()
     remaining_tool_calls: Annotated[int, Field(ge=0, le=10_000)]

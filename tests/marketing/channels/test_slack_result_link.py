@@ -14,6 +14,20 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def test_normal_answer_keeps_run_diagnostics_out_of_body_but_status_exposes_them(
+    tmp_path: Path,
+) -> None:
+    events, messages = setup_events(tmp_path)
+    receive(events)
+    assert events.work_once(now=NOW)
+    assert "상태:" not in str(messages[-1]["text"])
+    assert "실행:" not in str(messages[-1]["text"])
+    assert "/runs/" not in str(messages[-1]["text"])
+    receive(events, type="message", text="상태", ts="100.002", thread_ts="100.001")
+    assert events.work_once(now=NOW)
+    assert "상태: completed" in str(messages[-1]["text"])
+
+
 @pytest.mark.parametrize("public_links", [True, False])
 def test_shared_summary_links_same_run_only_when_web_is_enabled(
     tmp_path: Path, public_links: bool

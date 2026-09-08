@@ -24,6 +24,26 @@ not move their effect logic into Agent Core. `skills.py` owns versioned procedur
 `ToolRegistry` accepts a live catalog provider so readiness is refreshed at plan and dispatch time
 rather than frozen at process startup.
 
+`skill_tools.py` exposes the versioned `skills.py` catalog through read-only `skills.list` and
+`skills.read` adapters, registered by `integrations.py`. Discovery returns compact metadata;
+reading returns one exact server-owned procedure, criteria and required capabilities. Neither
+loads arbitrary files/URLs nor creates another Run. The canonical runtime owns invocation,
+receipt and budget accounting. `codex_reasoning.py` owns generic discover/act/inspect guidance;
+marketing procedure bodies remain in the skill catalog rather than the initial prompt.
+
+`agent_service/task_input.py` projects the latest direct, host-admitted continuation into
+`ReasoningRequest.current_user_message`; `application.py` supplies it independently of evidence
+compaction and uses it for retrieval. The original goal and canonical history remain unchanged.
+Nested tool/source data cannot become task input, and task intent grants no effect authority.
+`knowledge.py` owns the shared read-only DM tool set, also used by the Slack composition so its
+outer policy does not accidentally remove the inner knowledge owner's supported reads.
+
+`SlackEvents._current_context` reprojects the authorized conversation through
+`SlackConversationStore.transcript` and the existing scoped memory selector at every planning
+boundary. This includes prior assistant replies for same-Run follow-ups. It does not write a
+second transcript into continuation evidence. Existing transcript bounds, source edit/deletion
+handling, conversation identity and private member/session isolation remain the authority.
+
 `marketing/runtime.py` remains the execution-safety kernel for write-ahead invocation, exact-call
 approval, receipt validation, restart recovery, and reconciliation. The service composes it; it does
 not fork those guarantees. The previous deleted `agent/` connector-specific product is not restored,
