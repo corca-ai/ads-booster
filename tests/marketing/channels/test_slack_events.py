@@ -113,8 +113,10 @@ def test_ack_dedupe_restart_and_thread_followup_preserve_context(tmp_path: Path)
     restarted.recover()
     assert restarted.work_once(now=NOW)
     assert len(reasoning.requests) == 1
-    assert len(messages) == 2  # accepted + answer, both in the original thread
-    assert all(m["thread_ts"] == "100.001" and m["channel"] == "C1" for m in messages)
+    assert len(messages) == 2  # Initial status, then update that same Slack message.
+    assert messages[0]["thread_ts"] == "100.001"
+    assert messages[1]["ts"] == "123.456"
+    assert all(m["channel"] == "C1" for m in messages)
     assert not restarted.work_once(now=NOW)
     receive(restarted, type="message", text="둘째 질문", ts="100.002", thread_ts="100.001")
     assert restarted.work_once(now=NOW)
