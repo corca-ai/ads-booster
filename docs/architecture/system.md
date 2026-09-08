@@ -9,19 +9,22 @@ The target product is one always-on, on-premises Marketing Agent Service. It is 
 of Agent Runs and the observe, plan, approve, execute, verify, evaluate, and replan loop. Cloudflare,
 Codex, Mac/Appium, Threads, research, creative generation, and Web/Slack/KakaoTalk are adapters.
 
-PR #99 is a transition, so the two truths must not be confused:
+The source implements an on-prem service alongside the existing hosted path. Their ownership and
+the remaining cutover work must be distinguished:
 
-- **Current production:** the hosted Cloudflare/D1 flow described below still owns existing hosted
-  campaign and publication facts and remains operational.
+- **Existing hosted path:** the hosted Cloudflare/D1 flow described below still owns its campaign
+  and publication facts. Source descriptions do not establish a deployment's current health.
 - **Implemented transition foundation:** `contracts/agent_run.py`, `contracts/tool_capability.py`,
   `marketing/agent_core/`, and `marketing/agent_service/` define a provider-neutral run domain,
   planner-visible registry, append-only local run repository, and the first Appium-independent
   decision loop. The loopback API includes exact effect approval and a Run-oriented browser
-  projection; `/runs/<run-id>` is the shared result-link surface for browser and channel adapters.
+  projection; `/runs/<run-id>` is the result-link surface when web access is enabled. Slack-only
+  operation closes the web routes and omits these result links.
   A reasoning-provider failure is sanitized into retryable HTTP `503`, while the admitted Run stays
   durable so an identical request can resume it after provider recovery.
-- **Implemented server authentication boundary:** the canonical agent can bind on an on-premises or
-  cloud server only when OAuth 2.0 token introspection is configured. The ingress terminates HTTPS;
+- **Implemented server authentication boundary:** public web/bearer API access requires OAuth 2.0
+  token introspection. Slack-only operation instead uses signed Slack ingress with web/bearer routes
+  closed, as described below. The ingress terminates HTTPS;
   introspected audience, subject, and workspace claim scope every request. Static bearer auth is
   restricted to loopback development. Macs remain separately enrolled Appium workers.
 - **Implemented hosted registration seam:** the hosted agent can list and install server-owned tool

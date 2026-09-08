@@ -1,11 +1,17 @@
 # On-premises Marketing Agent Service
 
-Status: Transition contract — the portable domain and service are being implemented in PR #99.
-The current Cloudflare-hosted run remains operational during migration, but is not the target owner.
+Status: Draft — target architecture and remaining migration gates. The portable service and Slack
+integration are implemented in source; full hosted ownership cutover is not complete.
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-08
 
-## Product invariant
+The current source boundaries below do not establish fresh-install or live channel acceptance.
+Direct Mac enrollment against the on-premises API, Cloudflare projection-only cutover, KakaoTalk
+delivery, and removal of hosted canonical campaign ownership remain unimplemented. Current runtime
+details belong in [System Architecture](../architecture/system.md); this contract defines the target
+constraints and the evidence required to complete that migration.
+
+## Target product invariant
 
 One always-on, on-premises Marketing Agent Service owns every canonical Agent Run. It observes
 evidence, plans, requests approval, invokes connected tools, verifies receipts, evaluates outcomes,
@@ -16,17 +22,23 @@ The service must still create, reason about, persist, and resume a run when no A
 installed or ready. A Mac worker may execute only an invocation admitted and persisted by this
 service. Codex CLI is one `ReasoningProvider`; it is not the process owner or durable memory.
 
-## Current, transition, and target states
+## Current source and target states
 
 | State | Canonical owner | Cloudflare/D1 | Mac/Appium | User surface |
 | --- | --- | --- | --- | --- |
-| Current | Cloudflare hosted run plus narrow local JSON sessions | hosted workflow and campaign ledger | mixed reasoning and tool worker capabilities | Cloudflare workspace |
-| Transition in PR #99 | on-prem service owns new portable runs; existing hosted automation is reached through compatibility adapters | ingress, webhook, projection, and remote tool backend | independent tool worker; existing capture implementation unchanged | run API and run-oriented web projection, with fake channel adapters |
-| Target | on-prem service is the only canonical run and decision owner | optional remote adapters and projections only | one of many replaceable effect workers | Web, Slack, and KakaoTalk use the same Agent API |
+| Current hosted compatibility path | Cloudflare/D1 owns hosted runs, campaign facts, and publication effects | hosted workflow and campaign ledger | separately enrolled worker for hosted tasks | Cloudflare workspace |
+| Implemented on-premises path | MarketingAgentService owns portable runs in an append-only SQLite repository; configured adapters reach local research, hosted workflow, Slack, and Notion | remote hosted workflow/catalog backend; retains its existing effect ownership | reached through the hosted workflow; no direct on-premises enrollment | Run API and browser view when enabled; signed Slack Commands/Events and original-conversation replies |
+| Remaining target | on-prem service is the only canonical run and decision owner | optional remote adapters and projections only | one of many replaceable effect workers admitted by the on-premises service | Web, Slack, and KakaoTalk share the service and its run identity |
 
 During transition, existing D1 records remain authoritative for the effects and campaign facts they
 already own. They are imported as receipts or observations into the on-prem run; they cannot advance
-the canonical run by themselves. No migration may silently reinterpret an existing external effect.
+the on-premises run by themselves. No migration may silently reinterpret an existing external effect.
+
+The implemented service is in `marketing/agent_service/application.py`, with configured tools in
+`integrations.py` and channel wiring in `channel_setup.py`. Slack has real form and Events ingress
+in `marketing/channels/slack_commands.py` and `slack_events.py`; it is not limited to fake adapters.
+KakaoTalk has a provisioned ingress contract, but no configured delivery path. Package ownership is
+defined in [Code Architecture](../architecture/code.md).
 
 ## Portable domain
 
@@ -46,9 +58,9 @@ canonical-JSON digestible.
 | `Outcome` | measured result with source, window, uncertainty, and causal classification |
 | `Learning` | reviewed conclusion with applicability and counter-evidence; never raw model memory |
 
-The existing local capability snapshot, receipt ledger, intent/resume, delegation outbox, approval,
-and reconciliation behavior are promoted into these records. Compatibility serializers may project
-them to existing Cloudflare schemas; the portable domain must not depend on those schemas.
+These records are defined in `contracts/agent_run.py`; the service composes the existing runtime's
+approval, receipt, and reconciliation guarantees. Compatibility serializers may project records to
+existing Cloudflare schemas; the portable domain must not depend on those schemas.
 
 ## Unified tool contract
 
@@ -67,8 +79,9 @@ Every selectable tool is registered once as a `ToolDescriptor`. A descriptor con
 The registry separates definition, installation/configuration, and live readiness. The planner sees
 only installed, enabled, ready, policy-eligible descriptors whose cost fits the remaining budget.
 An unavailable Appium tool therefore disappears from planner input while research or strategy tools
-remain selectable. Worker heartbeat, research, creative, and hosted capability maps are projections
-of this registry, not independent registries.
+remain selectable. In the target, worker heartbeat, research, creative, and hosted capability maps
+are projections of this registry. The current hosted workflow retains its capability maps behind
+the compatibility adapter until cutover.
 
 ## Canonical run loop
 
@@ -103,43 +116,59 @@ reconciliation and is not executed again.
 - `RemoteToolAdapter`: reaches Cloudflare or another remote effect owner and reconciles by readback.
 - `ChannelAdapter`: translates identity-bound user commands, approvals, and notifications to the
   same Agent API. It never owns a run or creates channel-specific planning logic.
-- `ProjectionAdapter`: publishes safe, account-scoped run views to Cloudflare/UI without becoming
-  an authority.
+- `ProjectionAdapter`: the remaining cutover must publish safe, account-scoped run views to
+  Cloudflare/UI without making the projection an authority.
 
 ## Agent API and channel contract
 
-All clients use the same versioned API to create/list/read/resume runs, submit input, grant or revoke
-approval, inspect steps/artifacts/outcomes/learnings, and subscribe to progress. Channel bindings map
+The service API supports creating/listing/reading/resuming runs, submitting input, exact approval,
+and inspecting run records. Browser jobs and Slack channels invoke the same service; progress is
+read through job/run status or delivered as channel replies. Channel bindings map
 an external workspace/user/conversation to an internal tenant/member and record the adapter instance.
 Inbound webhook event IDs and outbound notification intents are idempotent.
 
-Web is the reference channel. Slack and KakaoTalk adapters must cover install/connect, identity
-binding, run request, exact approval, progress notification, and result link. Contract tests use fake
-adapters and signed fake webhook requests. Live verification additionally requires real credentials,
-public callback endpoints, platform configuration or review, and an explicitly authorized test
-workspace/channel. Passing fake tests must never be described as live platform support.
+Slack Commands and Events verify signatures and configured identities, admit work durably, and send
+responses through the configured Slack API transport. Approvals require an explicit reviewer action
+bound to the exact invocation; free text does not grant approval. `TRACE_MARKETING_SLACK_ONLY=1`
+disables the browser, OAuth routes, and bearer API access, and suppresses public Run links.
+
+The remaining KakaoTalk target must cover install/connect, identity binding, run request, exact
+approval, progress notification, and result access through the same service. Its provisioned ingress
+contract redirects approval to Web re-authentication; this is not live KakaoTalk delivery. Contract
+tests use fake transports and signed fixtures. Live verification requires real credentials, public
+callback endpoints, platform configuration or review, and an explicitly authorized test
+workspace/channel. Follow the [server launch guide](../operations/agent-server/slack-launch-guide.md)
+for installation and acceptance; passing fake tests must never be described as live platform support.
 
 ## Product UI contract
 
-The primary page is an Agent Run, not an Appium task. One run shows goal, evidence and research,
+The target primary page is an Agent Run, not an Appium task. One run shows goal, evidence and research,
 strategy and alternatives, artifacts, pending approvals, tool executions and receipts, outcomes,
 learnings, next experiment, and a bounded blocked reason. Appium details appear only inside the
-relevant tool step. The same run URL is returned to Web, Slack, and KakaoTalk.
+relevant tool step. The implemented browser view uses `/runs/<run-id>` when Web is enabled. Slack-only
+operation presents Run status and approval details inside Slack; it does not expose that Web URL.
+Cross-channel result access remains subject to each deployment's authentication and channel support.
 
 ## Compatibility and migration
 
-1. Add portable contracts and an on-prem store without changing existing effect implementations.
-2. Make the on-prem service create and resume an observe-only run without Appium.
-3. Wrap existing local research and hosted campaign handoff as registered adapters.
-4. Split reasoning readiness from Mac/Appium readiness and enroll the Mac against the on-prem API.
-5. Project on-prem runs to Cloudflare and make new web/channel ingress call the on-prem API.
-6. Migrate or link existing hosted run lineage explicitly; retain D1 data as remote receipts and
+1. Implemented in source: portable contracts, an on-prem store, and an Appium-independent run loop.
+2. Implemented in source: configured research/hosted handoff adapters and browser/Slack admission
+   into the same service.
+3. Remaining: enroll the Mac directly against the on-prem API while preserving independent
+   reasoning and Appium readiness and lifecycle.
+4. Remaining: project on-prem runs to Cloudflare and switch hosted ingress to the on-prem API.
+5. Remaining: migrate or link existing hosted run lineage explicitly; retain D1 data as remote receipts and
    projections. Remove hosted canonical ownership only after parity and recovery tests pass.
 
 No compatibility step may bypass current approval, receipt, artifact validation, publish-once,
-readback, or human-review gates. Existing automatic publishing remains off.
+readback, or human-review gates. Mac workers do not publish. The existing hosted Threads path is
+disabled by default and may publish only after profile connection, operator activation, and human
+image approval, as defined in
+[System Architecture](../architecture/system.md#threads-publication-and-observation).
 
-## Acceptance evidence
+## Migration acceptance gates
+
+These are required proofs of the completed target, not a report of checks passed by this document.
 
 - A fresh-installed on-prem service creates, reasons about, and resumes a run with Appium absent.
 - A separate Mac worker receives only a persisted, approved invocation and reasoning readiness is
@@ -148,8 +177,9 @@ readback, or human-review gates. Existing automatic publishing remains off.
   different executable plan.
 - Restart after execution-start does not duplicate an external effect and follows reconciliation.
 - Web traces one run from goal through outcome and next action.
-- Fake Slack and KakaoTalk adapters round-trip the same run and exact approval; live status remains
-  explicitly unverified until external prerequisites exist.
+- Slack Commands/Events and KakaoTalk contract fixtures round-trip the same service and exact
+  approval boundary. Web result links are checked only in Web-enabled mode; Slack-only status and
+  approval are checked inside Slack. Live delivery requires a separately recorded platform canary.
 - Focused Appium, candidate, Threads, capture, reasoning, resume, delegation, migration, and channel
   tests pass after integrating current `main`.
 - A fresh installed service and separately installed Mac worker complete the documented user path.
@@ -157,7 +187,8 @@ readback, or human-review gates. Existing automatic publishing remains off.
 ## Deliberately not claimed in this transition contract
 
 - Live Slack or KakaoTalk installation without credentials and platform configuration.
-- Autonomous ad spend or automatic external publishing.
+- Autonomous ad spend or new publishing authority from the on-premises migration. Existing hosted
+  Threads publication remains governed by its independent approval and activation gates.
 - Distributed active-active run ownership; the first service is a durable single canonical writer.
 - Causal marketing lift from descriptive channel metrics.
 - Completion merely because the old Cloudflare workspace can display hosted tasks.

@@ -82,7 +82,7 @@ post-merge public-URL installation require deployment acceptance.
 
 ## On-premises Agent Service (implemented foundation)
 
-The current PR adds the installed service boundary and portable Run/Step/Intent/CapabilitySnapshot/
+The source implements the service boundary and portable Run/Step/Intent/CapabilitySnapshot/
 Invocation/Approval/Receipt/Outcome/Learning contracts, a unified tool descriptor registry, a
 replaceable Codex reasoning provider, append-only SQLite recovery, exact effect approval, and a
 tenant-scoped HTTP API. Start it with the same macOS user's official Codex CLI login:
