@@ -59,7 +59,7 @@ def build_api_ingress(request: ApiIngressRequest) -> PendingKnowledgeIngress:
         member_id=request.identity.principal_id,
         session_id=conversation_id,
         conversation_scope=scope,
-        grants=(
+        grants=tuple(
             ScopeGrant(
                 grant_id="api-ingress-grant-"
                 + contract_sha256(
@@ -68,14 +68,16 @@ def build_api_ingress(request: ApiIngressRequest) -> PendingKnowledgeIngress:
                         "principal": request.identity.principal_id,
                         "scope": scope.model_dump(mode="json"),
                         "epoch": 1,
+                        "capability": capability.value,
                     }
                 )[:40],
-                capability=GrantCapability.WRITE,
+                capability=capability,
                 workspace_id=request.identity.tenant_id,
                 scope=scope,
                 policy_epoch=1,
                 effective_at=request.occurred_at,
-            ),
+            )
+            for capability in (GrantCapability.READ, GrantCapability.WRITE)
         ),
         policy_epoch=1,
         authenticated_at=request.occurred_at,
