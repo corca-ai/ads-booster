@@ -33,6 +33,7 @@ from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
 from ads_booster.marketing.agent_service.memory_api import dispatch_memory
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
+from ads_booster.marketing.agent_service.performance_api import dispatch_performance
 from ads_booster.marketing.agent_service.remote_capture_api import (
     CaptureApiOwner,
     capture_body_limit,
@@ -232,6 +233,11 @@ class MarketingAgentApi:
             )
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            performance_response = dispatch_performance(
+                method, target, identity=identity, service=self.service
+            )
+            if performance_response is not None:
+                return ApiResponse(*performance_response)
             creative_response = dispatch_creative(
                 method,
                 path,
