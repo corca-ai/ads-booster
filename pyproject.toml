@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.11,<3",
     "pypdf>=6.17,<7",
     "typer>=0.16,<1",
+    "tzdata>=2026.3",
 ]
 
 [project.scripts]

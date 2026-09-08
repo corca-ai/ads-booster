@@ -5,6 +5,7 @@ import json
 import shutil
 import stat
 import sys
+import zoneinfo
 from pathlib import Path
 from typing import cast
 
@@ -283,3 +284,21 @@ def test_setup_creates_private_knowledge_root_before_actor_loading(
     assert (knowledge_root / "index.sqlite").is_file()
     assert (server.CONFIG / "knowledge-control/identity.json").is_file()
     assert (server.CONFIG / "knowledge-policy.json").is_file()
+
+
+def test_setup_initializes_knowledge_without_system_timezone_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_inputs(monkeypatch)
+    original_path = zoneinfo.TZPATH
+    zoneinfo.reset_tzpath(())
+    zoneinfo.ZoneInfo.clear_cache()
+    try:
+        result = CliRunner().invoke(app, ["server", "setup"])
+
+        assert result.exit_code == 0, result.output
+        assert (server.ROOT / "knowledge").is_dir()
+        assert not (server.CONFIG / "setup-pending.json").exists()
+    finally:
+        zoneinfo.reset_tzpath(original_path)
+        zoneinfo.ZoneInfo.clear_cache()
