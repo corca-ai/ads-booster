@@ -22,6 +22,7 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.knowledge_context import ContextTransferValidationRequest
 from ads_booster.contracts.models import ContractModel
+from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
@@ -114,7 +115,9 @@ class MarketingAgentApi:
             object.__setattr__(
                 self,
                 "knowledge_ingress",
-                CanonicalKnowledgeIngress(self.service.repository.database_path),
+                CanonicalKnowledgeIngress(self.service.repository.database_path)
+                if self.service.knowledge is None
+                else self.service.knowledge.ingress,
             )
 
     def _knowledge_admission(
@@ -408,6 +411,8 @@ class MarketingAgentApi:
                     now=occurred_at,
                 )
                 return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
+        except KnowledgePolicyError:
+            return ApiResponse(HTTPStatus.FORBIDDEN, {"error": "knowledge_access_denied"})
         except (ValidationError, ValueError) as error:
             return ApiResponse(HTTPStatus.CONFLICT, {"error": _safe_error(error)})
         except CodexReasoningError:
