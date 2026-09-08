@@ -326,6 +326,11 @@ test("0039 backfills legacy lineage and explicitly fails an unleaseable queued v
     },
     completed_at: "2026-09-03T00:01:00Z",
   };
+  for (const filename of readdirSync(migrations)
+    .filter((name) => name.endsWith(".sql") && name > "0039_marketing_agent_resume_loop.sql")
+    .sort()) {
+    sqlite.exec(readFileSync(resolve(migrations, filename), "utf8"));
+  }
   const database = sqliteDatabaseAdapter(sqlite);
   registerHooks({
     resolve(specifier, context, nextResolve) {
