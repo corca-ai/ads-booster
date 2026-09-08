@@ -871,8 +871,8 @@ acknowledgement and runtime events preserve the accepted work across restarts wi
 the adapter again. The Run waits in `awaiting_tool`, releasing the service execution lock for
 other Runs. Cost remains reserved until an exact terminal receipt is validated and persisted.
 The completion boundary is internal; no unauthenticated or operator HTTP callback is introduced.
-A remote capture worker still needs scoped enrollment, lease/start control and validated artifact
-transfer. Existing installed tool adapters remain synchronous until that transport is connected.
+The optional remote capture adapter supplies scoped worker identity, lease/start control and
+validated artifact transfer; synchronous adapters retain their existing behavior.
 The owner records explicit worker uncertainty separately in `awaiting_reconciliation`, retaining
 the reservation until validated readback. Waiting alone does not imply uncertainty or retry.
 Human follow-ups remain canonical task input; a pending pause stops subsequent planning after
@@ -889,3 +889,30 @@ Capture contract construction and native provenance comparison are pure shared f
 local caller explicitly supplies its Python executable and nonce. Native request digests retain
 their existing visual-request semantics and exclude host execution configuration; a remote
 transport must separately bind the full worker profile and job envelope before execution.
+
+The installed CLI now composes a remote coordinator only when
+`TRACE_MARKETING_REMOTE_CAPTURE_CONFIG` is supplied. A separate worker token hash authorizes
+only `/workers/capture/*`, including in Slack-only mode; Slack, browser and operator tokens
+do not grant worker authority. Configuration pins one tenant and Mac profile. Readiness comes
+from a bounded, expiring worker heartbeat; it neither starts Appium nor changes server setup.
+
+The canonical SQLite queue is unarmed until its acknowledgement is durable. A worker pulls a
+60-second lease, validates the source bytes/profile/job, persists local start intent and obtains
+server start permission before `ensure_ready`. Only unstarted work can be re-leased; possible
+device effects are never reassigned. Expired approval, changed source or queued human changes
+produce `no_effect` before device permission. Expiry fences new execution; a terminal no-effect
+cleanup may still settle the exact, unreassigned lease because no start was granted.
+
+Worker uploads are durable before transmission. Server verification checks state/lease before
+artifact mutation, then image bytes, native nonce/device/provenance and source currentness.
+Current native results become same-Run assets requiring human review. A source changed or lost
+during capture produces a terminal failure with source/provenance digests, without a current
+asset. Completed queue receipts precede canonical settlement; heartbeat/claim repair interrupted
+receipt projection. Exact job status readback releases a worker whose terminal response was lost.
+Actual unresolved device execution remains waiting; there is no automatic replay or deletion.
+Canonical completion queues a stable event in the existing Slack outbox before settlement is
+acknowledged. A crash between those writes repeats only the idempotent projection. Notifications
+do not become user input; delivery checks current membership and retains unknown send outcomes.
+
+No remote capture service is activated by this PR. Real Mac export quality, live Slack delivery
+of remote results and unattended device reconciliation still require separate acceptance.

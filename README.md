@@ -89,6 +89,36 @@ server onboarding are unchanged. Readiness checks only inspect the already-boote
 Simulator, installed Trace app and Appium status; they never boot a device or start Appium.
 Native export/Debug support is verified only by the approved capture result.
 
+For a separate Mac, the service also supports an **optional remote capture worker**. Configure
+`TRACE_MARKETING_REMOTE_CAPTURE_CONFIG` with a private JSON file containing `profile` and
+`token_sha256` (SHA-256 of a separate random worker token, at least 32 characters). The profile
+contains `worker_id`, the service's exact `tenant_id`, simulator `device`, the Mac's installed
+`python_executable` absolute path, loopback `appium_server`, and integer `timeout_seconds`.
+Use either local capture configuration or remote capture configuration, not both. No worker
+enrollment, existing service mutation or automatic activation occurs during installation.
+
+On that Mac, prepare a separate JSON configuration containing the identical `profile`, HTTPS
+service `origin`, `token_env` (name of the environment variable containing the worker token),
+and an absolute private `state_root`. Enter the token in the Mac terminal or secret manager;
+the server configuration stores its hash. Preserve both state directories on restart.
+
+```bash
+trace-marketing worker capture-remote-doctor --config /absolute/path/worker.json
+trace-marketing worker capture-remote-run --config /absolute/path/worker.json --once
+```
+
+Doctor is local and read-only: it does not send a heartbeat, create worker state or start a
+device. Run checks the pinned profile, reports actual readiness and processes approved work;
+omit `--once` to remain in the foreground. The Mac must already have the configured Simulator,
+Trace app, Appium and the same macOS user's official Codex login ready. An unavailable worker
+leaves capture out of the usable catalog; human capture handoff remains available.
+
+Worker credentials grant only the configured capture queue and source/result routes. A job
+binds its Run, exact approval, source and complete Mac profile. Local and server start records
+precede device preparation. Response loss after a recorded result retries only that result;
+unknown device execution stays pending for explicit reconciliation. The new commands do not
+install a LaunchAgent, alter the existing D1 worker service or start the marketing server.
+
 When ready, `capture.appium` accepts a registered background's ID/revision/digest, country
 (`KR`, `JP`, `US`), reference date, synthetic schedule and preserve/change instructions.
 It requires exact runtime approval before device preparation. The result remains subject
@@ -117,8 +147,9 @@ resume the same work by default; `resume:false` retains a wait. Authenticated
 implies visual QA. Run details remain available in the existing Web view.
 `awaiting_tool` means an asynchronous tool accepted the task and its result is still pending.
 It is distinct from completion or an unknown execution result. Follow-up requests are retained
-without cancelling an already-started effect. This is a runtime capability for the pending
-remote-worker integration; it does not enable remote Mac capture by itself.
+without cancelling an already-started effect. Remote capture uses this capability only when
+enabled by the separate configuration above. Its completion queues one update in the existing
+Slack thread; delivery rechecks current membership and preserves unknown send outcomes.
 
 `/v1/memories` provides scoped candidate drafts/read/selection. HTTP identity alone cannot
 adopt a shared rule. Authorized Slack reviewers use `기억 제안 <내용>`, `기억 목록`,

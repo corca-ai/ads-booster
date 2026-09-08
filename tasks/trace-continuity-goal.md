@@ -294,7 +294,60 @@ Next independent implementation: connect canonical
 Run/approval/artifacts to remote Mac execution without giving D1 ownership of new Runs. Preserve
 no-Appium human handoff. Operational image editing/localization and campaign outcome integration
 also remain code gaps, not just credentials. External verification limits remain unchanged.
-Goal stays active; this is not full-goal completion.
+The Goal remains unfinished (`usageLimited` as reported above); this is not full-goal completion.
+
+Remote transport implementation (after pushed9f33b9d; now locally verified):
+patterns owns remote_capture_contract.py/store.py and their tests; main owns remote_capture.py
+coordinator; baseline owns marketing/canonical_capture_worker.py and worker tests; requirements
+owns remote_capture_api.py, http_api.py, cli/remote_capture.py and cli/marketing.py wiring/tests.
+Shared contract freezes complete profile/job (native request digest alone omits host fields).
+Queue is unarmed until canonical acknowledgement is durable; exact scoped worker leases for60s;
+only unstarted leases can expire/reassign; local start intent and server start must precede
+ensure_ready. Worker upload is persisted before callback so response loss retries bytes only.
+Worker authentication uses its own server-configured token hash, never Slack/operator authority.
+Server config opt-in is TRACE_MARKETING_REMOTE_CAPTURE_CONFIG; no activation performed.
+
+Fail-first regressions fixed ordering boundaries: reject leased-but-notstarted success before
+asset writes; contain server temporary and worker input/output paths before creation; settle
+stale-source/expired-approval/unstarted human changes as no_effect before device permission.
+An independent review found lease expiry during preparation; exact unreassigned expired leases
+now settle no_effect at the authoritative start boundary. Changed/lost/corrupted sources after
+capture become terminal failed receipts without current assets. Completed queue receipts recover
+canonical settlement through heartbeat/claim, with exact terminal status readback for the worker.
+
+Remote completion now projects to the existing Slack outbox before settlement acknowledgement.
+The stable completion key prevents duplicate enqueue, current membership is checked at delivery,
+and synthetic notifications are excluded from user transcripts. A failed callback leaves the
+queue unsettled for replay. The integrated coordinator/SQLite/Slack test drops the callback
+response after enqueue, restarts and proves one same-thread fake delivery; actual Slack not sent.
+
+Verification: 89 selected remote/shared-capture tests passed before the last two coordinator
+regressions. The final16 coordinator tests plus2 signed Slack tests then passed; notification/
+existing events/deferred selection25 passed including the real owner/outbox integration.
+All18 changed Python files pass Ruff/format/BasedPyright; the later test-only integration also
+passes those checks. API/CLI and affected HTTP/CLI selection30 passed during integration.
+No entire repository suite ran. Main reviewed all staged production/tests by responsibility.
+
+Fresh installed remote proof: `/private/tmp/trace-remote-capture-installed-proof/evidence.json`
+and standalone `proof.py`, wheel SHA256
+`f648c6fa68db3efc84618aef6d02bd4510a23c44fd131b4e0a9dcbb9c9625b5e`.
+Version0.4.21; all11 changed production modules in isolated site-packages match frozen source.
+Actual loopback HTTP/SQLite with fake reasoning/native worker: exact approval→queue→source→start→
+native asset→same-Run authenticated GET200. Dropping completion response after server commit and
+restarting repeats only upload; native calls1/receipt1. Wrong token401/default-off404. Installed
+CLI help/version pass, actual local readonly doctor reports capture_commands_unavailable and
+creates no state or token. Main read evidence. This is not live Appium/image quality/Slack or
+public installer/systemd/linger evidence. Previous lifecycle proof remains separately recorded.
+
+Ownership completed: patterns contracts/store; baseline Mac worker and fresh proof plus independent
+authorization/recovery review; requirements HTTP/CLI and Slack outbox integration; main canonical
+coordinator, integration fixes and docs. Production source matches installed proof after atomic
+commits; no activation occurred. Original checkout now has additional concurrent server-onboarding
+edits (README/architecture/testing/operations/CLI/lifecycle test); none were staged or changed here.
+
+Next independent gaps: operational image editing/localization provider verification and canonical
+campaign outcome integration. Those remain implementation work, not merely missing credentials.
+The optional remote transport is locally implemented; live acceptance remains separately blocked.
 
 External acceptance requires the separately operated server to finish its existing setup,
 authenticated Slack membership/test channel and optional files:read image grant, an available
@@ -305,5 +358,5 @@ send secrets in chat or activate publishing/Paid; those need a separate user dec
 Resume with git status in both checkouts, get_goal, this record and the existing product/runtime
 plans. Focused commands are in testing.md; the initial composition had 233 passing tests and
 56 changed Python files passing Ruff/format/BasedPyright; later owner checks are recorded above.
-Keep the Goal active; Draft PR
-delivery is not full-goal completion.
+Keep the existing Goal record; its environment status is usageLimited. Draft PR delivery is not
+full-goal completion, and no duplicate Goal or completion/blocked transition was created.

@@ -190,5 +190,13 @@ are bounded separately from inline upload size; provenance and reported status r
 An asynchronous tool acknowledgement binds the original invocation and executor to one operation.
 It does not claim success, verified artifacts or final cost. The canonical owner retains the
 pending work and resolves only the matching terminal result. Restart and duplicate completion
-must not redispatch work or charge twice. Later worker transport must authenticate that result
-and verify native artifacts before invoking the internal completion boundary.
+must not redispatch work or charge twice. The opt-in remote transport authenticates the configured
+worker and verifies native artifacts before invoking the internal completion boundary.
+
+Remote capture uses a complete profile/job digest in addition to the native visual request digest.
+The profile pins tenant, worker, simulator and execution paths. Queue admission records the exact
+production approval, synthetic schedule and background revision. Worker-token authority is scoped
+to profile/heartbeat/claim/source/start/status/complete/uncertain routes, with a 16 KiB control
+request bound and a 14 MiB authenticated completion wire bound (decoded image at most10 MiB).
+User API limits remain separate. Started work cannot be reassigned. Receipt projection may be
+repaired from durable completion; missing execution evidence is not permission to repeat a job.

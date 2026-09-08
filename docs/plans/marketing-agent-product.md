@@ -77,7 +77,10 @@ An explicitly configured local Mac can now route a small approved capture reques
 the existing Appium worker without campaign setup. It requires a registered background with
 source/use terms, binds its revision and digest, and records a native derivative only after
 export verification. Unavailable capture still supports human handoff. Installed fake-worker
-evidence does not establish actual phone quality; remote Mac transport remains integration work.
+evidence does not establish actual phone quality. Optional remote Mac transport now binds the
+same approval/source to a leased job and returns validated native assets to the same Run and
+Slack outbox. Worker absence still selects human handoff; real device/Slack acceptance remains
+unverified. Response loss never authorizes repeating device execution.
 Slack file inspection and exact-use-condition approval now connect a supplied Figma/phone image
 to registered same-work assets. Registration retains human-report status and does not invent
 usage rights. Missing permission information is collected in the existing review/handoff path,

@@ -607,3 +607,13 @@ job builder and output metadata/provenance comparison. `creative_capture.py` re-
 type names and owns local source reads, nonce creation, host execution configuration, worker
 calls and asset registration. The builder receives worker configuration explicitly; it performs
 no host lookup or device action. This keeps future remote execution from inheriting Linux paths.
+
+`remote_capture_contract.py` freezes the canonical invocation/approval/source and complete worker
+profile into the native job envelope. `remote_capture_store.py` owns fenced SQLite queue/start/
+completion transitions; `remote_capture.py` owns admission, readiness, artifact validation and
+canonical result integration. `remote_capture_api.py` owns dedicated worker authentication routes
+and bounds; `http_api.py` dispatches them under the existing maintenance gate.
+`marketing/canonical_capture_worker.py` owns the Mac's local start and upload ledger and fixed-origin
+HTTP client. `cli/remote_capture.py` composes existing Codex/Appium ports; `cli/marketing.py` exposes
+the two worker commands and optional server configuration. Existing D1 owners and worker services
+are unchanged. No additional reasoning provider or framework is introduced.

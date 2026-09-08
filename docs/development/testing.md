@@ -22,6 +22,26 @@ with existing `test_creative_capture.py` and `test_capture_setup.py`. Validate e
 configuration, source revision/digest and nonce/device/image metadata rejection. A pure builder
 test does not prove remote transport or image quality; preserve installed local capture proof.
 
+For remote capture, run `uv run pytest -q
+tests/marketing/agent_service/test_remote_capture_contract.py
+tests/marketing/agent_service/test_remote_capture_store.py
+tests/marketing/agent_service/test_remote_capture.py
+tests/marketing/agent_service/test_remote_capture_api.py
+tests/marketing/test_canonical_capture_worker.py tests/cli/test_remote_capture.py`.
+Include `test_creative_capture_contract.py` and `test_creative_capture.py` when changing the
+shared builder, and channel `test_slack_run_notifications.py`/`test_slack_deferred.py` when
+changing completion projection. These tests cover exact worker authority, profile/job/lease
+fencing, source changes, approval/lease expiry, readiness loss, output containment, start and
+upload crash windows, canonical cost settlement and duplicate-safe Slack outbox projection.
+Run affected HTTP/CLI compatibility tests for composition or request-limit changes.
+
+Fresh isolated wheel verification must exercise the installed worker commands and real loopback
+HTTP with a fake native worker: approved queue → source → start → upload → same-Run asset/readback;
+drop the completion response after server commit, restart the worker and prove upload-only replay.
+Check wrong-token/default-off routes, local read-only doctor, module hashes and one device call.
+This establishes transport behavior, not real Appium quality, live Slack delivery, systemd/linger
+or the public installer. Preserve existing installed lifecycle evidence separately.
+
 | Change | Command |
 | --- | --- |
 | on-prem canonical Agent Service contracts, live tool catalog, versioned skill runs, daily scheduling, installed research plus hosted/Slack/Notion adapters, OAuth-introspected tenant API and direct Run result URL, tool admission/approval, and crash recovery | `uv run pytest -q tests/agent_core tests/marketing/agent_service tests/marketing/tool_adapters/test_compatibility.py tests/marketing/test_agent_runtime.py tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py`; matching scoped Ruff and BasedPyright; fresh wheel install: `trace-marketing service doctor`, `trace-marketing service run --help`, then authenticated `GET /v1/tools`, `GET /v1/skills`, and one skill Run. Remote binding must require HTTPS token introspection. A scheduled run must be date-idempotent and may auto-approve only exact Slack/Notion delivery, never image or publication. Fake HTTP adapters do not prove a live OAuth, Slack, Notion, Meta, or Codex provider. |
