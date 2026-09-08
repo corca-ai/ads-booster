@@ -92,7 +92,9 @@ def create_backup(
             files=tuple(copied),
         )
         manifest_path = target / "manifest.json"
-        manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        manifest_path.write_text(
+            manifest.model_dump_json(indent=2, by_alias=True), encoding="utf-8"
+        )
         manifest_path.chmod(0o600)
         return KnowledgeBackup(backup_id, target, manifest)
     finally:
@@ -129,7 +131,9 @@ def _committed_files(
         byte_length = int(str(length))
         if byte_length == 0 and file_path.exists():
             byte_length = file_path.stat().st_size
-        result.append(BackupFile(relative_path=relative_path, sha256=str(digest), byte_length=byte_length))
+        result.append(
+            BackupFile(relative_path=relative_path, sha256=str(digest), byte_length=byte_length)
+        )
     return tuple(result)
 
 
