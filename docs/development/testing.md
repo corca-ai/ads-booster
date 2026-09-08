@@ -18,9 +18,18 @@ with `uv run pytest -q <test-file>`; the focused owners are:
 | Canonical API/Slack identity, session isolation and context preparation | `test_installed_service_context.py` |
 | Extracted text, source evidence and authenticated user authority | `test_curation_inputs.py`, `test_source_memory_evidence.py`, `test_curation_user_authority.py` |
 | First-event collection window, flush, receipts, cancellation and restart | `test_batch_runtime.py` |
+| Private batch identity, current grants and exclusive-owner crash recovery | `test_batch_recovery.py`, `test_batch_startup.py`, `test_batch_policy_failures.py`, `test_private_batch_ingress.py` |
+| Continuous processing after durable item failure without automatic replay | `test_ingress_runtime_failures.py` |
+| Source HTTP success, redirect, 304 and retryable/terminal error classification | `test_source_fetch.py` |
 | Brand registration replay, current authority and failed-session cleanup | `test_brand_cli.py` |
 | Backup integrity, current erase-ledger restore and purge | `test_backup_restore.py`, `test_deletion.py` |
 | Constraint transfer and current checks on validation replay | `test_transfer_material.py`, `test_transfer_validation_replay.py` |
+
+Hosted required-knowledge generation uses `node --test cloudflare/test/hosted-generation-knowledge.test.js`.
+It covers capability preflight before cooldown/task creation and identical callback retries with
+current authority, receipt and result validation. `hosted-generation.test.js`, `hosted-workspace.test.js`
+and `mac-workers.test.js` cover the surrounding generation and worker paths. Local HTTP/SQLite checks
+are candidate evidence; deployed Worker and actual provider results require separate verification.
 
 The configuration seam must also be checked directly with synthetic absolute paths: all three
 `TRACE_MARKETING_KNOWLEDGE_ROOT`, `TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and
