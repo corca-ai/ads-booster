@@ -28,6 +28,7 @@
       "bot": [
         "commands",
         "chat:write",
+        "files:write",
         "app_mentions:read",
         "channels:history",
         "groups:history",
