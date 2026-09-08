@@ -16,6 +16,7 @@ from ads_booster.knowledge.operation_enums import (
 from ads_booster.knowledge.repository_batch import (
     collect_curation_item,
     collecting_curation_batch,
+    curation_batch_generation,
     finish_curation_batch,
     ready_curation_batch,
 )
@@ -103,7 +104,8 @@ class BatchCurationCoordinator:
             write_capability_sha256,
         )
         if existing is None:
-            batch_id = stable_id("curation-batch", isolation_key, item.event_id)
+            generation = curation_batch_generation(self.repository, item.actor, item.event_id)
+            batch_id = stable_id("curation-batch", isolation_key, item.event_id, str(generation))
             deadline = (
                 item.occurred_at
                 if item.priority is JobPriority.URGENT
