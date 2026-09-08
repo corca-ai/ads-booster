@@ -616,3 +616,43 @@ workspace state or invoke delivery tools. `상태`, `검토 1`, `승인 해시`,
 `다시 시작` work within the conversation. File contents and Slack-wide history search are not supported.
 Use the [merge-to-Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md), creating
 from the bootstrap manifest first and activating the full Events manifest after server startup.
+
+### Create ads-booster issues from Slack
+
+The optional `github.issue.create` tool creates issues only in `corca-ai/ads-booster`.
+In an allowed shared Slack channel, mention the agent with the issue details. It proposes the
+repository, title and body for review; use `검토 1` (and subsequent pages), then send the exact
+`승인 <hash>` reply as a configured approver. `/trace` uses its existing review/approve commands.
+After creation and GitHub readback, the reply includes the actual issue URL. Private DMs do not
+have repository write authority. Labels, assignees, PRs and other repositories are not supported.
+
+After the update reaches your server, run as the service user:
+
+```bash
+trace-marketing server github-setup
+```
+
+Enter a GitHub fine-grained personal access token in the hidden terminal prompt. Select resource
+owner `corca-ai`, only repository `ads-booster`, and repository **Issues: Read and write** permission.
+See [GitHub's create-issue permission contract](https://docs.github.com/en/rest/issues/issues#create-an-issue).
+If the organization requires token approval, wait for it before testing. Never paste the token into
+Slack or a chat. The command checks repository access without creating an issue, then stores the
+credential in `~/.config/trace-marketing/github.token` with mode 0600; this check alone does not prove
+write permission. Existing Slack settings and credentials are preserved.
+
+Once no agent work/update is in progress, restart only the agent:
+
+```bash
+systemctl --user restart trace-marketing.service
+trace-marketing server status
+```
+
+The service reads that private file on startup. For a custom path, set
+`TRACE_MARKETING_GITHUB_TOKEN_FILE` in the service environment; it must name a private regular file.
+The default token file is outside the release directory and survives main updates. Rotate it with
+`server github-setup` and restart the idle service. Remove the credential file and restart to disable
+the tool. GitHub authentication for automatic main updates does not grant this write capability.
+
+A timeout, malformed creation response or failed readback leaves the run awaiting reconciliation;
+creation is never blindly retried. Check the repository's recent issues before making another request.
+Explicit GitHub rejection (for example 401/403) returns a sanitized failure instead of an issue URL.

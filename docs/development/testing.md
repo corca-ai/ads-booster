@@ -162,3 +162,17 @@ custom port, invalid values, and agreement across actual launch argv, update hea
 The installed Ubuntu lifecycle fixture occupies 8765 with an unrelated HTTP service, starts the
 agent on 8090, performs real systemd update/restart and verifies the unrelated service and persistent
 port survive. This does not prove the live on-prem port migration or Cloudflare route change.
+
+## GitHub issues from Slack
+
+Focused owners: `tests/marketing/agent_service/test_github_issues.py`,
+`tests/marketing/channels/test_slack_github_issues.py`, and `tests/cli/test_github_setup.py`.
+For composition changes include the existing service/channels/provider/CLI selections above.
+The server CI includes these owners. Assert fixed repository and exact approved payload, no calls
+before approval, creation plus readback, receipt-backed URL rendering, duplicate Slack delivery,
+uncertain write no-retry after restart, private-DM denial, safe credential storage and secret-free
+failure output. Reuse existing member/approver/hash/recovery tests instead of duplicating those rules.
+Run the focused owners against a newly built non-editable installed wheel outside the checkout with
+pytest's source pythonpath disabled. This proves installed composition with fixture GitHub/Slack and
+reasoning transports, not a live GitHub write or on-prem credential configuration. Operator acceptance
+requires one authorized real issue, readback URL and Slack reply after configuring the server token.

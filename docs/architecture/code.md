@@ -556,3 +556,11 @@ status. The dependency-free Linux manager independently validates and reads the 
 for process launch and health checks; both default to 8090. Cross-boundary regression coverage binds
 launch argv, update health and status to the same configured port. The standalone manager remains
 Python 3.10 compatible and does not import the Python 3.14 application to discover its port.
+
+`marketing/agent_service/github_issues.py` owns fixed-repository issue input validation, private token
+loading and GitHub HTTP execution/readback. `tool_adapters/descriptors.py` supplies its external-effect
+approval descriptor; `ConfiguredAgentTools` registers it only with a configured credential.
+`cli/marketing.py` loads the token at service composition, while `cli/server.py` owns hidden operator
+setup and atomic secret storage. `channels/github_results.py` projects successful receipt-bound issue
+URLs for both Slack entry points. Canonical run admission, execution checkpoints and reconciliation
+remain in Agent Core/service/runtime, with no separate retry or issue state store.

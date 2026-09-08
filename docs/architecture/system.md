@@ -803,3 +803,19 @@ Slack callback URLs retain HTTPS without an internal port suffix. The updater ne
 secrets to learn the port. The standalone `service run --port` remains an independent explicit CLI.
 Older fixed-8765 managers require an idle/offline reinstall with preserved configuration/state/current
 link backup before the new channel can take over; ordinary self-update cannot bridge that change.
+
+### Slack GitHub issue creation
+
+The optional `github.issue.create` integration writes only to `corca-ai/ads-booster`. A private
+operator token file is loaded at service startup, outside release state; `server github-setup`
+checks repository access and writes it atomically without rewriting Slack setup. Tokens never enter
+catalogs, reasoning requests or receipts. The GitHub REST adapter rejects redirects, POSTs only the
+approved title/body, GETs the created issue number and verifies its URL and exact text before returning
+a minimal receipt. Known HTTP rejections return sanitized failure; uncertain mutation or readback
+results use the canonical awaiting-reconciliation boundary with no blind retry.
+
+Slack's existing signature/member/channel scope and exact invocation-hash approval remain mandatory.
+The public repository is explicit in the frozen input reviewed by the approver. Private DM policy
+still exposes only public search. Both Slack message and slash-command summaries project issue URLs
+from matching successful receipt/output digests, independently of model-generated prose. No new
+posting scheduler, GitHub shell authority or repository-wide token access is introduced.

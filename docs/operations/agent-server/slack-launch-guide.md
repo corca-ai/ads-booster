@@ -217,3 +217,25 @@ Corca의 기존 환경에서는 이 문서의 `agent.example.com`을 `marketing-
 
 새 버전은 실행·업데이트·상태 확인 모두 같은 `server.json.port`를 사용하므로 이후 main
 업데이트에도 포트 설정이 유지된다. 이 파일이 없거나 port가 없으면 기본값은 8090이다.
+
+## 선택 기능: Slack에서 ads-booster 이슈 생성
+
+기능이 포함된 main 업데이트 적용 후, 서비스 사용자로 `trace-marketing server github-setup`을
+실행한다. GitHub fine-grained token의 resource owner는 `corca-ai`, 대상은 `ads-booster` 하나,
+권한은 Issues: Read and write로 설정한다. 조직 승인이 필요하면 승인 후 사용한다.
+토큰은 일반 터미널의 숨김 입력에만 넣는다. 명령은 저장소 접근을 확인한 뒤 0600 권한의
+`~/.config/trace-marketing/github.token`에 저장한다. 접근 확인은 이슈 쓰기 성공의 증거가 아니다.
+Slack 설정·기존 백업·터널은 변경하지 않는다.
+
+진행 중인 작업/업데이트가 없을 때 `systemctl --user restart trace-marketing.service`를 실행한다.
+이 토큰 파일은 릴리스 바깥에 있어 이후 5분 main 업데이트에도 유지된다.
+별도 경로를 사용할 때만 서비스 환경의 `TRACE_MARKETING_GITHUB_TOKEN_FILE`을 지정한다.
+
+허용된 공유 채널에서 `@Trace Marketing Agent ads-booster에 다음 내용으로 이슈 올려줘: ...`를
+보낸다. `검토 1`부터 모든 페이지에서 저장소·제목·본문을 확인하고, 승인 담당자가
+`승인 <봇이 제공한 해시>`로 승인한다. 공개 저장소에 게시될 내용만 포함해야 한다.
+봇이 실제 생성 및 재조회한 이슈 링크를 반환하는지 확인한다. DM은 쓰기 권한이 없다.
+manifest 변경이나 Slack 앱 재설치는 필요 없다.
+
+`awaiting_reconciliation`이면 결과가 불확실하므로 같은 요청을 다시 보내지 말고 GitHub에서
+실제 생성 여부부터 확인한다. 이슈 생성 응답을 잃거나 재조회에 실패해도 자동 재생성하지 않는다.
