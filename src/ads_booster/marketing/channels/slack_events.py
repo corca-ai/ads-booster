@@ -704,7 +704,9 @@ class SlackEvents:
         service = self._service(conversation)
         run = service.repository.get(conversation.tenant_id, conversation.current_run)
         if text.rstrip("?!. ") in _STATUS_TEXTS:
-            return MessagePlan(action="reply", reply=self.summary(conversation))
+            return MessagePlan(
+                action="reply", reply=self.summary(conversation, include_status=True)
+            )
         if text.rstrip(".! ") in {"멈춰", "멈춰줘", "잠깐 멈춰줘", "중지", "pause", "stop"}:
             if run is None:
                 return MessagePlan(action="reply", reply="아직 시작한 작업이 없습니다.")
@@ -935,10 +937,10 @@ class SlackEvents:
                 tenant_id,
                 run_id,
                 event_id=event_id,
-                result=self.summary(conversation)[:12000],
+                result=self.summary(conversation, include_status=True)[:12000],
             )
 
-    def summary(self, conversation: Conversation) -> str:
+    def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
         service = self._service(conversation)
         run = service.repository.get(conversation.tenant_id, conversation.current_run)
         if run is None:
@@ -958,25 +960,40 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        result = (
-            f"{answer}\n{issue_results(records)}\n\n상태: {run.state.value}\n실행: {run.run_id}"
-        )
-        if self.commands.public_links and not conversation.private:
-            origin = self.commands.application.result_base_url.rstrip("/")
-            result += f"\n업무·산출물 보기: {origin}/runs/{quote(run.run_id, safe='')}"
+        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
+        if include_status or run.state not in {
+            AgentRunState.COMPLETED,
+            AgentRunState.AWAITING_INPUT,
+        }:
+            result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
         return result
 
     def _payload(self, conversation: Conversation, text: str) -> JsonObject:
+        blocks: list[JsonValue] = [
+            {"type": "section", "text": {"type": "plain_text", "text": text[i : i + 2500]}}
+            for i in range(0, len(text), 2500)
+        ]
+        if self.commands.public_links and not conversation.private and conversation.current_run:
+            origin = self.commands.application.result_base_url.rstrip("/")
+            result_url = f"{origin}/runs/{quote(conversation.current_run, safe='')}"
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"<{result_url}|업무·산출물 보기>",
+                        }
+                    ],
+                }
+            )
         payload: JsonObject = {
             "channel": conversation.channel_id,
             "text": text,
             "mrkdwn": False,
             "unfurl_links": False,
             "unfurl_media": False,
-            "blocks": [
-                {"type": "section", "text": {"type": "plain_text", "text": text[i : i + 2500]}}
-                for i in range(0, len(text), 2500)
-            ],
+            "blocks": blocks,
         }
         if conversation.thread_ts:
             payload["thread_ts"] = conversation.thread_ts
