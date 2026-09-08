@@ -268,6 +268,23 @@ def notion_daily_descriptor(
     )
 
 
+def image_generation_descriptor(*, observed_at: datetime) -> ToolDescriptor:
+    return _descriptor(
+        _DescriptorSpec(
+            capability_id="creative.image.generate",
+            owner="codex.image_generation",
+            effect_class=EffectClass.LOCAL_ARTIFACT,
+            worst_case_units=1,
+            cost_unit="image_generation_turn",
+            credential_boundary="adapter_owner",
+            reconciliation_mode="manual",
+        ),
+        _InstallationState(
+            "installed:codex-image", observed_at, ready=True, reason_code=None, version="1"
+        ),
+    )
+
+
 def github_issue_descriptor(
     *, installation_id: str, observed_at: datetime, ready: bool, reason_code: str | None = None
 ) -> ToolDescriptor:
