@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from ads_booster.marketing.agent_service.knowledge_ingress import CanonicalKnowledgeIngress
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
-_READ_ONLY_DM_TOOLS = frozenset(
+READ_ONLY_DM_TOOLS = frozenset(
     {
         KnowledgeToolName.KNOWLEDGE_SEARCH.value,
         KnowledgeToolName.KNOWLEDGE_GET.value,
@@ -193,7 +193,7 @@ class KnowledgeServiceAdapter:
                     descriptor
                     for descriptor in snapshot.descriptors
                     if not descriptor.capability_id.startswith(("knowledge_", "memory_", "source_"))
-                    or descriptor.capability_id in _READ_ONLY_DM_TOOLS
+                    or descriptor.capability_id in READ_ONLY_DM_TOOLS
                 )
             }
         )
@@ -666,6 +666,7 @@ def _unresolved(
 
 
 __all__ = [
+    "READ_ONLY_DM_TOOLS",
     "KnowledgeServiceAdapter",
     "KnowledgeToolAdapter",
     "PreparationResult",

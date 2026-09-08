@@ -116,7 +116,7 @@ def test_knowledge_prepare_uses_current_canonical_followup_query(tmp_path: Path)
             action="revise",
             now=NOW,
         )
-    assert queries == [run.goal.objective + "\n학생 타깃으로 바꿔줘"]
+    assert queries == ["학생 타깃으로 바꿔줘\n" + run.goal.objective]
 
 
 def test_current_knowledge_check_is_bound_to_existing_canonical_tenant(tmp_path: Path) -> None:

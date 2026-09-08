@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryNote, MemoryScope
 from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
+from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.contracts.tool_capability import EffectClass
+from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from tests.marketing.agent_service.test_application import (
+    _descriptor,  # pyright: ignore[reportPrivateUsage]
+    _reasoning_result,  # pyright: ignore[reportPrivateUsage]
+)
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import (
     RecordingReasoning,
@@ -15,6 +22,80 @@ from tests.marketing.channels.test_slack_events import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+
+
+class AlternativesReasoning(RecordingReasoning):
+    @override
+    def plan(self, request: ReasoningRequest) -> ReasoningResult:
+        self.requests.append(request)
+        return _reasoning_result(
+            request,
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="stop",
+                expected_outcome="Compare two copy directions",
+                reasoning_summary="1안: 아침 일정 확인. 2안: 퇴근 후 내 시간 찾기.",
+            ),
+        )
+
+
+def test_followup_can_resolve_the_agents_previous_alternatives(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    provider = AlternativesReasoning()
+    owner.commands.application.service.reasoning = provider
+    receive(owner, text="<@UBOT> 홍보 문구 두 안을 제안해줘")
+    assert owner.work_once(now=NOW)
+    # A new channel/service instance must recover the same dialogue from SQLite.
+    owner, _ = setup_events(tmp_path)
+    owner.commands.application.service.reasoning = provider
+    receive(owner, type="message", text="2안으로 짧게 써줘", ts="100.002", thread_ts="100.001")
+    assert owner.work_once(now=NOW)
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+    assert "퇴근 후 내 시간 찾기" in provider.requests[-1].model_dump_json()
+    receive(owner, text="<@UBOT> 별도 질문", ts="200.001")
+    assert owner.work_once(now=NOW)
+    assert "퇴근 후 내 시간 찾기" not in provider.requests[-1].model_dump_json()
+
+
+def test_latest_question_is_task_input_not_buried_in_old_goal(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    provider = RecordingReasoning()
+    owner.commands.application.service.reasoning = provider
+    receive(owner, text="<@UBOT> 지원하는 기능을 설명해줘")
+    assert owner.work_once(now=NOW)
+    for index, question in enumerate(("검색도 돼?", "한 문장으로만 답해줘"), start=2):
+        # Restart must retain the latest admitted request without replacing the original goal.
+        owner, _ = setup_events(tmp_path)
+        owner.commands.application.service.reasoning = provider
+        receive(owner, type="message", text=question, ts=f"100.00{index}", thread_ts="100.001")
+        assert owner.work_once(now=NOW)
+        request = provider.requests[-1]
+        assert request.model_dump().get("current_user_message") == question
+        assert request.goal.objective == "지원하는 기능을 설명해줘"
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+
+def test_private_chat_exposes_registered_knowledge_reads_without_writes(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    provider = RecordingReasoning()
+    owner.private_service.reasoning = provider
+    owner.private_service.registry = ToolRegistry(
+        d.model_copy(update={"readiness": d.readiness.model_copy(update={"observed_at": NOW})})
+        for d in (
+            _descriptor("knowledge_search", EffectClass.OBSERVE, ready=True),
+            _descriptor("memory_get", EffectClass.OBSERVE, ready=True),
+            _descriptor("knowledge_apply", EffectClass.CONTROL_PLANE_WRITE, ready=True),
+            _descriptor("source_fetch", EffectClass.OBSERVE, ready=True),
+        )
+    )
+    receive(owner, type="message", channel="D1", channel_type="im", text="팀 자료 찾아줘")
+    assert owner.work_once(now=NOW)
+    assert {d.capability_id for d in provider.requests[-1].capability_snapshot.descriptors} == {
+        "knowledge_search",
+        "memory_get",
+    }
 
 
 def test_natural_status_and_pause_do_not_create_new_work(tmp_path: Path) -> None:

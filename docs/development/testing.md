@@ -7,6 +7,64 @@ Last reviewed: 2026-09-08
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+### Discoverable marketing procedures and Slack follow-ups
+
+Select these tests for `skill_tools.py`, the skill catalog, discovery wiring, generic reasoning
+guidance or current Slack dialogue projection:
+
+```bash
+python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/marketing/agent_service/test_skill_tools.py \
+  tests/marketing/agent_service/test_integrations.py \
+  tests/marketing/agent_service/test_creative_procedures.py \
+  tests/marketing/agent_service/test_daily_slack.py \
+  tests/marketing/agent_service/test_http_api.py \
+  tests/marketing/channels/test_slack_continuation.py \
+  tests/marketing/channels/test_slack_events.py \
+  tests/providers/test_codex_reasoning.py
+```
+
+Use a dependency-complete development environment. The September 8 candidate passed 66 tests in
+an isolated `uv sync --frozen` environment. The new signed Slack regression failed before the
+dialogue fix, then passed with service restart and cross-thread exclusion. Skill tests cover
+canonical list/read receipts, exact versions, recoverable unknown IDs and unchanged action policy.
+Run scoped Ruff and BasedPyright for modified Python files; no full-suite run is required.
+
+For actual model behavior, install a fresh wheel outside the checkout, confirm its import path,
+and invoke the opt-in harness with that installed interpreter:
+
+```bash
+/absolute/fresh-venv/bin/trace-marketing service run --help
+/absolute/fresh-venv/bin/python -I \
+  /absolute/repo/tests/marketing/agent_service/colleague_canary.py \
+  --output-root /absolute/new-rehearsal-directory \
+  --codex /absolute/path/to/codex --model gpt-6-astra
+```
+
+The output directory must not exist. This runs four real-model scenarios with synthetic search
+and only skill discovery, creative preparation and search adapters. It does not use real Slack,
+image generation, Appium or publication. Review the emitted decisions against each scenario's
+recorded criteria: concrete copy, attributed opportunity analysis, confound-aware performance
+comparison and search execution after creative procedure loading. `completed` is a runtime state,
+not a quality grade. Retain actual provider receipts and disclose model/trial count and fixture
+limitations. Do not turn prompt-substring assertions into claims of model competence.
+
+For latest-request projection, include `test_work_continuation.py`, `test_application.py`,
+`test_application_deferred.py` and `test_knowledge_context_continuity.py` in the service directory.
+For DM read wiring, include `tests/knowledge/test_installed_service_context.py` and
+`test_slack_continuity_binding.py`; existing actor/session authorization remains the owner.
+For conversational output, select channel `test_slack_result_link.py`, `test_slack_events.py`,
+`test_slack_progress.py` and `test_slack_run_notifications.py`. Verify ordinary body brevity,
+explicit status readback, asynchronous completion and private-link exclusion separately.
+
+Run the opt-in `tests/marketing/agent_service/slack_colleague_canary.py` with the same installed
+interpreter and `--output-root`, `--codex`, `--model` arguments shown above. It sends six synthetic
+signed events through one persistent thread, rebuilds the installed composition between turns,
+captures Slack sends locally and uses synthetic search. Review the saved dialogue and actual tool
+intents, including subject changes and the one-sentence request. This is not production Slack QA.
+The earlier PR candidate already avoided repeating its first answer in one comparison; do not
+claim the supplied deployed failure was reproduced or statistically eliminated by this rehearsal.
+
 For acknowledged asynchronous tool work, select `tests/marketing/test_runtime_deferred.py`,
 `tests/marketing/agent_service/test_application_deferred.py` and
 `tests/marketing/channels/test_slack_deferred.py`. Include existing `test_agent_runtime.py`,

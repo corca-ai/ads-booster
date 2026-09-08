@@ -39,6 +39,27 @@ Tunnel or Linux deployment acceptance. See the [server guide](../operations/agen
 
 ## Browser and Slack admission
 
+The installed service exposes read-only `skills.list` / `skills.read` tools alongside action
+tools. The planner discovers purpose/version metadata, reads a selected procedure, then chooses
+each subsequent action against its current capability snapshot and observed receipts. Procedure
+loading neither executes a skill Run nor grants production/publication authority. Reads cost zero
+operation units but consume the existing tool-call budget. Skills cover opportunity research,
+strategy, copy and experiments as well as creative procedures. Creative v2 guidance follows
+available execution tools after preparation; human assistance is conditional on an actual blocker.
+Existing persisted goals keep their recorded procedure; new creative skill Runs use version 2.
+
+Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
+completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after
+restart. This projection is reference data, not verified product knowledge or approval. It is
+re-read from the authorized inbox rather than persisted as another reusable knowledge record.
+Private DMs may read the server-owned skill catalog; their action allowlist remains read-only.
+The host additionally projects the latest admitted continuation as `current_user_message`, outside
+bounded reference evidence. Only direct continuation records qualify; nested source/tool text does
+not set the task. This separates immediate user intent from the immutable original goal without
+conferring approval. Knowledge retrieval uses the same current input. `marketing.context` supplies
+the on-demand procedure for scoped wiki, memory and source reads. Missing tools, no search hits
+and an actually empty corpus are different observations.
+
 The installed service accepts one configured tenant; OAuth identities for other tenants cannot use
 that instance's shared integration credentials. Browser /auth/login uses authorization code with
 PKCE and a one-use, browser-bound state; /auth/callback exchanges the code at pinned HTTPS
@@ -289,11 +310,16 @@ team/channel/timestamp, preventing duplicate retries from creating new work.
 
 The same maintenance-gated Slack worker drains commands and conversation jobs. Plans are frozen
 under the canonical service lock; follow-ups bind to the latest thread Run only when dequeued.
-Awaiting-input replies resume that Run at its saved revision. Terminal Runs remain immutable history;
-a follow-up creates a new Run with a bounded prior dialogue projection. Full inbox/results stay stored.
+Awaiting-input replies and ordinary completed-work follow-ups continue that Run at its saved revision.
+The original goal and full ledger remain stored; explicit new-work requests start a new Run.
 Private DM tenant IDs derive from workspace, member, channel and thread; unthreaded messages use the
 member's ongoing DM session. Private services share the canonical lock/ledger but expose only
-research.search, with no shared-context mutation, other-scope context access or delivery tool authority.
+public search, skill discovery and registered scoped knowledge/memory/source reads, with no
+shared-context mutation or delivery tool authority. Knowledge must be configured for those reads
+to appear; current actor/session grants are still checked by the knowledge owner.
+Ordinary completed/input-wait answers omit diagnostic footers. Explicit status requests and
+exceptional runtime states retain diagnostics. Enabled shared work links use a separate Slack
+context block; private conversations never receive that shared Web projection.
 
 Conversation acknowledgements/results target only the admitted original conversation. Each send has
 a durable marker; ambiguous sending state becomes unknown on restart and is never blindly retried.
@@ -339,7 +365,7 @@ source/revision/locale/preserve/change metadata and same-Run human input. Pixel 
 not visual QA. Source revisions mark only dependent assets stale. Optional Slack image review
 binds signed file IDs to tenant/Run before fixed-origin file lookup; actual official Codex
 image input yields model assessment and human-review-required status. It never edits images
-or verifies native app capabilities. DM tool scope remains public search only.
+or verifies native app capabilities. DM tool scope remains read-only; image review is unavailable.
 
 The optional image tool requires `TRACE_MARKETING_SLACK_IMAGE_REVIEW=1`, a `files:read`-capable
 Slack token and a confirmed identity/scope probe. Existing manifests, tokens, login, tunnels,

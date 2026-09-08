@@ -54,12 +54,16 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
     descriptors = configured.descriptors(now=NOW)
 
     assert [item.capability_id for item in descriptors] == [
+        "skills.list",
+        "skills.read",
         "creative.prepare",
         "research.search",
         "research.web",
         "deliver.slack",
     ]
     assert set(configured.adapters()) == {
+        "skills.list",
+        "skills.read",
         "creative.prepare",
         "research.search",
         "research.web",

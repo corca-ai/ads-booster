@@ -459,7 +459,7 @@ def test_interrupted_continuation_replays_through_canonical_idempotency(tmp_path
     owner.store.save_plan(message, plan)
     owner.recover()
     assert owner.work_once(now=NOW)
-    assert "completed" in str(messages[-1]["text"])
+    assert messages[-1]["text"] == "Enough"
     assert (
         owner.commands.application.service.repository.list_runs("team")[0].state
         is AgentRunState.COMPLETED
