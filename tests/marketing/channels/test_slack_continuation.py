@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryNote, MemoryScope
 from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
+from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from tests.marketing.agent_service.test_application import (
+    _reasoning_result,  # pyright: ignore[reportPrivateUsage]
+)
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import (
     RecordingReasoning,
@@ -15,6 +19,41 @@ from tests.marketing.channels.test_slack_events import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+
+
+class AlternativesReasoning(RecordingReasoning):
+    @override
+    def plan(self, request: ReasoningRequest) -> ReasoningResult:
+        self.requests.append(request)
+        return _reasoning_result(
+            request,
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="stop",
+                expected_outcome="Compare two copy directions",
+                reasoning_summary="1안: 아침 일정 확인. 2안: 퇴근 후 내 시간 찾기.",
+            ),
+        )
+
+
+def test_followup_can_resolve_the_agents_previous_alternatives(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    provider = AlternativesReasoning()
+    owner.commands.application.service.reasoning = provider
+    receive(owner, text="<@UBOT> 홍보 문구 두 안을 제안해줘")
+    assert owner.work_once(now=NOW)
+    # A new channel/service instance must recover the same dialogue from SQLite.
+    owner, _ = setup_events(tmp_path)
+    owner.commands.application.service.reasoning = provider
+    receive(owner, type="message", text="2안으로 짧게 써줘", ts="100.002", thread_ts="100.001")
+    assert owner.work_once(now=NOW)
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+    assert "퇴근 후 내 시간 찾기" in provider.requests[-1].model_dump_json()
+    receive(owner, text="<@UBOT> 별도 질문", ts="200.001")
+    assert owner.work_once(now=NOW)
+    assert "퇴근 후 내 시간 찾기" not in provider.requests[-1].model_dump_json()
 
 
 def test_natural_status_and_pause_do_not_create_new_work(tmp_path: Path) -> None:

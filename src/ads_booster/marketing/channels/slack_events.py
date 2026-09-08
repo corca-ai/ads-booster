@@ -140,8 +140,29 @@ class SlackEvents:
         self.private_service.execution_lock = self.commands.application.service.execution_lock
         self.commands.application.service.boundary_signal = self._pending_steering
         self.private_service.boundary_signal = self._pending_steering
-        self.commands.application.service.current_context = self._current_memory
-        self.private_service.current_context = self._current_memory
+        self.commands.application.service.current_context = self._current_context
+        self.private_service.current_context = self._current_context
+
+    def _current_context(self, run: AgentRun, now: datetime) -> JsonObject | None:
+        """Reproject scoped dialogue at each turn, including our own previous answers.
+
+        Same-Run continuations do not rebuild AgentGoal. Read current inbox history
+        here rather than storing another stale copy in continuation evidence.
+        """
+        conversation = self.store.conversation_for_run(run.tenant_id, run.run_id)
+        if conversation is None:
+            return None
+        dialogue = self.store.transcript(conversation.conversation_id)
+        memory = self._current_memory(run, now)
+        if not dialogue["messages"] and memory is None:
+            return None
+        return {
+            "schema_version": "trace.current-slack-context.v1",
+            "role": "data",
+            "dialogue": dialogue,
+            "memory": memory,
+            "authority": "conversation_only_not_verification_or_approval",
+        }
 
     def _current_memory(self, run: AgentRun, now: datetime) -> JsonObject | None:
         conversation = self.store.conversation_for_run(run.tenant_id, run.run_id)
