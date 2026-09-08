@@ -125,8 +125,16 @@ def slack_from_env(
     token = required(env, "TRACE_MARKETING_SLACK_BOT_TOKEN")
 
     def send(payload: JsonObject) -> JsonObject:
-        request = Request(
-            "https://slack.com/api/chat.postMessage",
+        if "ts" in payload:
+            payload = {
+                key: value
+                for key, value in payload.items()
+                if key in {"channel", "ts", "text", "blocks"}
+            }
+        request = Request(  # noqa: S310 - fixed Slack API endpoints.
+            "https://slack.com/api/chat.update"
+            if "ts" in payload
+            else "https://slack.com/api/chat.postMessage",
             data=json.dumps(payload).encode(),
             headers={"authorization": f"Bearer {token}", "content-type": "application/json"},
             method="POST",

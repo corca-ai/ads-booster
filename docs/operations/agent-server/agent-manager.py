@@ -26,7 +26,9 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 PROTOCOL = 1
+MAX_PORT = 65535
 ROOT = Path.home() / ".local/share/trace-marketing-server"
+CONFIG = Path.home() / ".config/trace-marketing/server.json"
 STATE = Path.home() / ".local/state/trace-marketing"
 UNIT = "trace-marketing.service"
 REPO = "git@github.com:corca-ai/ads-booster.git"
@@ -76,11 +78,19 @@ def read_json(path: Path) -> dict[str, Any]:
     return cast("dict[str, Any]", value)
 
 
+def server_port() -> int:
+    settings = read_json(CONFIG) if CONFIG.exists() else {}
+    port = settings.get("port", 8090)
+    if type(port) is not int or not 1 <= port <= MAX_PORT:
+        raise RuntimeError("server_port_requires_integer_1_to_65535")
+    return port
+
+
 def health() -> dict[str, Any]:
     try:
         # Deliberately fixed loopback URL; never honor proxy environment variables.
         with build_opener(ProxyHandler({})).open(
-            "http://127.0.0.1:8765/health", timeout=3
+            f"http://127.0.0.1:{server_port()}/health", timeout=3
         ) as response:
             value = json.load(response)
             return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
@@ -248,6 +258,78 @@ def restore_state(backup: Path) -> None:
     sync_directory(STATE.parent)
 
 
+def knowledge_paths() -> tuple[Path, Path, Path] | None:
+    values = tuple(
+        os.environ.get(name, "").strip()
+        for name in (
+            "TRACE_MARKETING_KNOWLEDGE_ROOT",
+            "TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT",
+            "TRACE_MARKETING_KNOWLEDGE_POLICY",
+        )
+    )
+    if not any(values):
+        return None
+    if not all(values):
+        raise RuntimeError("knowledge_configuration_partial")
+    paths = tuple(Path(value) for value in values)
+    if not all(path.is_absolute() for path in paths):
+        raise RuntimeError("knowledge_configuration_requires_absolute_paths")
+    return cast("tuple[Path, Path, Path]", paths)
+
+
+def backup_knowledge(executable: Path, destination: Path) -> Path | None:
+    paths = knowledge_paths()
+    if paths is None:
+        return None
+    root, control, policy = paths
+    output = command(
+        [
+            str(executable),
+            "knowledge",
+            "backup",
+            "--root",
+            str(root),
+            "--control-root",
+            str(control),
+            "--policy",
+            str(policy),
+            "--destination",
+            str(destination),
+        ]
+    )
+    receipt = json.loads(output)
+    if not isinstance(receipt, dict) or not isinstance(receipt.get("path"), str):
+        raise RuntimeError("knowledge_backup_receipt_invalid")
+    return Path(receipt["path"])
+
+
+def restore_knowledge(executable: Path, backup: Path) -> None:
+    paths = knowledge_paths()
+    if paths is None:
+        raise RuntimeError("knowledge_restore_configuration_missing")
+    root, control, policy = paths
+    restored = root.with_name(root.name + ".restored-" + uuid.uuid4().hex)
+    _ = command(
+        [
+            str(executable),
+            "knowledge",
+            "restore",
+            "--root",
+            str(restored),
+            "--control-root",
+            str(control),
+            "--policy",
+            str(policy),
+            "--backup",
+            str(backup),
+        ]
+    )
+    if root.exists():
+        _ = root.rename(root.with_name(root.name + ".quarantine-" + uuid.uuid4().hex))
+    _ = restored.rename(root)
+    sync_directory(root.parent)
+
+
 def recover(root: Path) -> None:
     journal_path = root / "transaction.json"
     if not journal_path.exists():
@@ -264,6 +346,8 @@ def recover(root: Path) -> None:
     if journal["phase"] == "switching":
         _ = systemctl("stop", UNIT)
         restore_state(Path(journal["backup"]))
+        if journal.get("knowledge_backup"):
+            restore_knowledge(previous / ".venv/bin/trace-marketing", Path(journal["knowledge_backup"]))
         select(root, previous)
     # During draining/prepared the pointer and canonical state were never changed.
     _ = systemctl("start", UNIT)
@@ -301,7 +385,15 @@ def activate(root: Path, candidate: Path) -> None:
         backup = root / "backups" / uuid.uuid4().hex
         STATE.mkdir(parents=True, exist_ok=True)
         _ = shutil.copytree(STATE, backup)
-        journal.update(phase="switching", backup=str(backup))
+        knowledge_backup = backup_knowledge(
+            previous / ".venv/bin/trace-marketing",
+            root / "knowledge-backups",
+        )
+        journal.update(
+            phase="switching",
+            backup=str(backup),
+            knowledge_backup="" if knowledge_backup is None else str(knowledge_backup),
+        )
         atomic_json(journal_path, journal)
         select(root, candidate)
         _ = systemctl("start", UNIT)
@@ -412,7 +504,7 @@ def run(root: Path) -> NoReturn:
             "--host",
             "127.0.0.1",
             "--port",
-            "8765",
+            str(server_port()),
         ],
         env,
     )

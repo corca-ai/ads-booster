@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import sys
 import time
 from contextlib import suppress
@@ -17,25 +18,36 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 import typer
 from pydantic import ValidationError
 
+from ads_booster.cli.knowledge import app as knowledge_app
+from ads_booster.cli.remote_capture import capture_remote_doctor, capture_remote_run
 from ads_booster.cli.server import app as server_app
+from ads_booster.knowledge.configuration import KnowledgeSettings, validate_settings
+from ads_booster.knowledge.maintenance import inspect_owner
 from ads_booster.marketing.agent_service.channel_setup import (
     browser_from_env,
     run_slack_worker,
     run_web_jobs,
     slack_from_env,
 )
+from ads_booster.marketing.agent_service.github_issues import token_from_env
 from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
+)
+from ads_booster.marketing.agent_service.image_edit_setup import (
+    connect_image_edit,
+    run_image_edit_worker,
 )
 from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
 from ads_booster.marketing.agent_service.jobs import AgentJobs
 from ads_booster.marketing.agent_service.lifecycle import (
     InstalledServicePaths,
+    build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
+from ads_booster.marketing.agent_service.remote_capture import connect_remote_capture
 from ads_booster.marketing.agent_service.scheduler import (
     AgentSkillScheduler,
     DailySkillSchedule,
@@ -121,17 +133,24 @@ _HTTP_SUCCESS_MIN = 200
 _HTTP_SUCCESS_MAX = 300
 _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES = 1024 * 1024
 
-app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Operate the dynamic marketing account loop.",
+    pretty_exceptions_show_locals=False,
+)
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
 agent_app = typer.Typer(no_args_is_help=True, help="Run bounded Marketing OS reasoning sessions.")
 service_app = typer.Typer(
     no_args_is_help=True,
     help="Operate the canonical on-premises Marketing Agent Service.",
 )
+_ = worker_app.command("capture-remote-run")(capture_remote_run)
+_ = worker_app.command("capture-remote-doctor")(capture_remote_doctor)
 app.add_typer(worker_app, name="worker")
 app.add_typer(agent_app, name="agent")
 app.add_typer(service_app, name="service")
 app.add_typer(server_app, name="server")
+app.add_typer(knowledge_app, name="knowledge")
 
 
 @app.command("version")
@@ -156,6 +175,17 @@ def service_doctor(
     """Report service readiness without requiring or inspecting Appium."""
     executable = resolve_codex_executable()
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    try:
+        knowledge_settings = KnowledgeSettings.from_env(os.environ)
+        if knowledge_settings.enabled:
+            validate_settings(knowledge_settings)
+            root, _, _ = knowledge_settings.require_enabled()
+            owner = inspect_owner(root)
+            knowledge_state = f"configured:{owner.state}"
+        else:
+            knowledge_state = "disabled"
+    except ValueError as error:
+        knowledge_state = str(error)
     typer.echo(
         json.dumps(
             {
@@ -165,6 +195,7 @@ def service_doctor(
                 "reasoning_provider": "official-codex-cli",
                 "reasoning_ready": executable is not None,
                 "appium_required": False,
+                "knowledge": knowledge_state,
                 "ready": executable is not None,
             },
             ensure_ascii=False,
@@ -174,13 +205,13 @@ def service_doctor(
 
 
 @service_app.command("run")
-def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator configuration.
+def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit optional worker lifecycle.
     model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     host: Annotated[
         str, typer.Option(help="Bind address; remote binds require OAuth.")
     ] = "127.0.0.1",
-    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8090,
     tenant: Annotated[str, typer.Option(help="Tenant bound to this service token.")] = "trace",
     principal: Annotated[
         str, typer.Option(help="Principal bound to approval decisions from this token.")
@@ -214,12 +245,23 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
     if oauth is None and not token and not slack_only:
         token = _required("TRACE_MARKETING_SERVICE_TOKEN")
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
+    paths.prepare()
+    knowledge_settings = KnowledgeSettings.from_env(os.environ)
+    knowledge_runtime = None
+    if knowledge_settings.enabled:
+        knowledge_runtime = build_installed_knowledge_runtime(
+            settings=knowledge_settings,
+            service_database=paths.database,
+            codex=CodexCli(executable=executable, model=model),
+            model_id=model,
+        )
     service = build_installed_marketing_agent_service(
         paths=paths,
         codex_executable=executable,
         model_id=model,
         timeout_seconds=timeout_seconds,
         integrations=AgentServiceIntegrationConfig(
+            github_token=token_from_env(os.environ),
             hosted_origin=os.environ.get("TRACE_MARKETING_HOSTED_ORIGIN"),
             hosted_token=os.environ.get("TRACE_MARKETING_CONTROL_TOKEN"),
             slack_bot_token=os.environ.get("TRACE_MARKETING_SLACK_BOT_TOKEN"),
@@ -227,10 +269,43 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             notion_token=os.environ.get("TRACE_MARKETING_NOTION_TOKEN"),
             notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
         ),
+        capture_config=(
+            Path(os.environ["TRACE_MARKETING_CAPTURE_CONFIG"])
+            if os.environ.get("TRACE_MARKETING_CAPTURE_CONFIG")
+            else None
+        ),
+        knowledge=None if knowledge_runtime is None else knowledge_runtime.adapter,
     )
     browser_login = browser_from_env(os.environ, oauth)
     slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
     slack_events = events_from_env(os.environ, slack_commands)
+
+    def notify_remote_completion(tenant_id: str, run_id: str, event_id: str) -> None:
+        if slack_events is not None:
+            _ = slack_events.enqueue_run_update(tenant_id, run_id, event_id=event_id)
+
+    remote_path = os.environ.get("TRACE_MARKETING_REMOTE_CAPTURE_CONFIG")
+    remote_capture = (
+        None
+        if remote_path is None
+        else connect_remote_capture(
+            service,
+            config_path=Path(remote_path),
+            now=datetime.now(UTC),
+            on_completed=notify_remote_completion,
+        )
+    )
+    image_edit_path = os.environ.get("TRACE_MARKETING_IMAGE_EDIT_CONFIG")
+    image_edit = (
+        None
+        if image_edit_path is None
+        else connect_image_edit(
+            service,
+            config_path=Path(image_edit_path),
+            now=datetime.now(UTC),
+            on_completed=notify_remote_completion,
+        )
+    )
     if slack_only and slack_commands is None:
         message = "Slack-only mode requires a configured Slack installation"
         raise typer.BadParameter(message)
@@ -264,13 +339,47 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             daemon=True,
         )
     )
+    knowledge_thread = (
+        None
+        if knowledge_runtime is None
+        else Thread(
+            target=knowledge_runtime.runtime.run_continuous,
+            name="trace-marketing-knowledge",
+            daemon=True,
+        )
+    )
+
+    image_edit_thread = (
+        None
+        if image_edit is None
+        else Thread(
+            target=run_image_edit_worker,
+            args=(image_edit, scheduler_stop, gate),
+            name="trace-marketing-image-edit",
+            daemon=True,
+        )
+    )
 
     def start_background() -> None:
+        if image_edit_thread is not None:
+            image_edit_thread.start()
         jobs_thread.start()
         if scheduler_thread is not None:
             scheduler_thread.start()
         if slack_thread is not None:
             slack_thread.start()
+        if knowledge_thread is not None:
+            knowledge_thread.start()
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def stop_service(_signum: int, _frame: object) -> None:
+        scheduler_stop.set()
+        if knowledge_runtime is not None:
+            knowledge_runtime.runtime.request_stop()
+        raise KeyboardInterrupt
+
+    _ = signal.signal(signal.SIGTERM, stop_service)
 
     typer.echo(f"Marketing Agent Service listening on http://{host}:{port}")
     try:
@@ -288,19 +397,35 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
                 allowed_tenant_id=tenant,
                 slack_only=slack_only,
                 maintenance=gate,
+                remote_capture=remote_capture,
+                knowledge_ingress=None
+                if knowledge_runtime is None
+                else knowledge_runtime.adapter.ingress,
+                knowledge_transfers=None
+                if knowledge_runtime is None
+                else knowledge_runtime.adapter,
             ),
             host=host,
             port=port,
             on_started=start_background,
         )
     finally:
+        _ = signal.signal(signal.SIGTERM, previous_sigterm)
         scheduler_stop.set()
+        if image_edit_thread is not None and image_edit_thread.is_alive():
+            image_edit_thread.join(timeout=5)
+        if knowledge_runtime is not None:
+            knowledge_runtime.runtime.request_stop()
         if jobs_thread.is_alive():
             jobs_thread.join(timeout=5)
         if scheduler_thread is not None and scheduler_thread.is_alive():
             scheduler_thread.join(timeout=5)
         if slack_thread is not None and slack_thread.is_alive():
             slack_thread.join(timeout=5)
+        if knowledge_thread is not None and knowledge_thread.is_alive():
+            knowledge_thread.join(timeout=15)
+        if knowledge_runtime is not None:
+            knowledge_runtime.runtime.close()
 
 
 @agent_app.command("research")

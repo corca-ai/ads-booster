@@ -139,6 +139,35 @@ class SqliteChannelStore:
                 return
             raise ValueError("channel identity binding conflict") from error
 
+    def bind_workspace_member(
+        self, installation: ChannelInstallation, external_user_id: str
+    ) -> ChannelIdentityBinding:
+        """Admit a verified workspace actor without replacing existing authority."""
+        binding = ChannelIdentityBinding(
+            schema_version="trace.channel-identity-binding.v1",
+            binding_id=f"{installation.installation_id}-{external_user_id}",
+            installation_id=installation.installation_id,
+            external_user_id=external_user_id,
+            tenant_id=installation.tenant_id,
+            member_id=f"slack-{installation.external_workspace_id}-{external_user_id}",
+            can_approve=False,
+            created_at=installation.created_at,
+        )
+        with self._connection() as connection:
+            _ = connection.execute(
+                """INSERT OR IGNORE INTO channel_identity_bindings
+                (binding_id,installation_id,external_user_id,tenant_id,binding_json)
+                VALUES (?,?,?,?,?)""",
+                (
+                    binding.binding_id,
+                    binding.installation_id,
+                    binding.external_user_id,
+                    binding.tenant_id,
+                    binding.model_dump_json(),
+                ),
+            )
+        return self.resolve_identity(installation.installation_id, external_user_id)
+
     def installation(self, installation_id: str) -> ChannelInstallation | None:
         with self._connection() as connection:
             row = cast(

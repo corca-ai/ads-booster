@@ -1,8 +1,84 @@
 # Marketing Agent Runtime
 
-Status: Draft — the first dynamic-research-to-hosted-shadow bridge is implemented; broader skill
-selection and autonomous next-experiment planning remain future work. This high-level agent uses the
+Status: Draft — the first dynamic-research-to-hosted-shadow bridge and small-work preparation are implemented;
+autonomous campaign execution and next-experiment planning remain future work. This high-level agent uses the
 existing Trace control plane and does not replace or directly reorganize its execution automation.
+
+## Continuing work contract — 2026-09-07
+
+The current product decision is [one continuing Trace teammate](marketing-agent-product.md).
+Small work carries only useful inputs; a campaign link may be added later. A human result
+is canonical evidence with author/source and human-reported status. Partial edits preserve
+explicit regions/content and only invalidate affected descendants. Localized promotional
+images and phone mockups never establish native product support.
+
+Canonical history remains append-only; compaction and selective memory retrieval only
+change provider projection. Record selected evidence/memory digests. Work interruption
+occurs at safe decision/dispatch boundaries; a started or ambiguous external effect retains
+its receipt/reconciliation ownership. A pause cannot assert that it undid an effect. New
+input invalidates the old pending proposal and requires a new exact grant where policy
+requires it. Production requests do not authorize publication.
+
+The canonical service now has an opt-in local Mac capture adapter using the existing approved
+worker and native export verification. Installed fake-worker checks prove source/result
+binding and no-repeat recovery; the current host lacks Appium, so native device quality and
+end-to-end capture remain unverified. Optional Slack source-asset intake now uses read-only
+inspection followed by digest-bound import approval and canonical receipts. A separate optional
+Linux-to-Mac transport now connects this work without changing default server onboarding.
+
+The optional image edit/localize executor now binds source/region/locale to exact approval,
+queues work durably, and restores unchanged original pixels. It completes through the existing
+same-Run receipt and asset owners, with independent visual and human QA pending. An uncertain
+generation is not replayed; interrupted uncertainty projection is repaired locally. Optional
+CLI composition uses the existing maintenance gate and leaves server onboarding unchanged.
+Selected-provider image I/O remains a separate acceptance check from fixture tests.
+
+Paths remain Draft until scenario evidence exists: live native capture acceptance, external
+publication scheduling/readback, live metric collection/community and Paid actions.
+Human-reported performance now has same-work Slack intake, correction, bounded comparison,
+authenticated readback and reviewed learning; it does not claim platform verification or lift.
+No new publisher or automatic self-modification is enabled by this plan.
+
+Remote capture requires an explicit asynchronous boundary before transport wiring. Existing
+D1 worker tasks require an account and hosted candidate fields; manufacturing those fields
+would enlarge a small image request and confuse ownership. A synchronous remote poll would
+hold the canonical execution lock. Therefore accepted tool operations now have a distinct
+acknowledgement and `awaiting_tool` Run state; they retain cost reservations and do not count
+as completed captures. Exact terminal results settle the existing runtime and feed the same
+Run. The optional remote worker lease/start/upload/authentication transport passed focused and
+fresh installed loopback HTTP verification with a fake native worker; actual Mac/Slack acceptance
+remains Draft.
+
+The remote transport uses a scoped pull queue with a frozen Mac worker profile. The existing
+native preparer invokes `ensure_ready` before its worker loop records execution start, so its
+preparation cannot be reused unchanged. Canonical remote preparation validates bytes and
+contracts only; device preparation follows local and server start records. The contract must
+use the Mac profile's executable and bind source/nonce/invocation/approval digests. Started work
+must not be reassigned on timeout. The implementation follows these boundaries with a dedicated
+worker token, canonical queue and local upload ledger; neither existing server nor worker service
+is activated by the change. True unknown device execution still requires explicit reconciliation.
+
+Image-edit provider investigation (2026-09-08): the local macOS Codex0.153.4 advertises
+`image_generation` as stable/enabled. A read-only app-server initialization and
+`modelProvider/capabilities/read` returned `imageGeneration:true` for the current provider.
+No thread, turn or generation was started; login/configuration were preserved. The separate
+mun-jeong-min server environment was not queried. This is capability
+metadata, not verified image-edit I/O or quality. The existing `codex_imagegen_ui.py` only builds
+a date/time overlay from a UI reference and ignores generation events; it cannot establish a
+general partial-edit/localization adapter. Before activation, bind source/region/locale digests,
+validate a generated-image event and managed output bytes, retain start/response-loss evidence,
+and check preserved pixels plus separate visual/human QA. Generated raster and edited promotional
+screenshots must retain their existing non-product-proof classification.
+
+Subsequent actual adapter check: installed0.153.4 rejects `workspaceWrite.readOnlyAccess` in
+`turn/start`. The adapter uses the [official named permission profile](https://developers.openai.com/codex/permissions)
+instead and readiness
+now checks restricted ephemeral-thread setup plus global/thread MCP inventories before any
+turn. This host rejects its sandbox helper execution, so readiness is false with sanitized
+thread-start error32603. No broader read grant, second generation attempt or login mutation
+was used. The fixture-tested executor is implemented; operational editing and text/visual
+quality are not proven on this host. A compatible restricted provider installation and actual
+rendered input/output acceptance are required before activation.
 
 ## Problem
 

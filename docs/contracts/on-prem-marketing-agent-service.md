@@ -6,7 +6,7 @@ integration are implemented in source; full hosted ownership cutover is not comp
 Last reviewed: 2026-09-08
 
 The current source boundaries below do not establish fresh-install or live channel acceptance.
-Direct Mac enrollment against the on-premises API, Cloudflare projection-only cutover, KakaoTalk
+Automated Mac enrollment/lifecycle management, Cloudflare projection-only cutover, KakaoTalk
 delivery, and removal of hosted canonical campaign ownership remain unimplemented. Current runtime
 details belong in [System Architecture](../architecture/system.md); this contract defines the target
 constraints and the evidence required to complete that migration.
@@ -27,7 +27,7 @@ service. Codex CLI is one `ReasoningProvider`; it is not the process owner or du
 | State | Canonical owner | Cloudflare/D1 | Mac/Appium | User surface |
 | --- | --- | --- | --- | --- |
 | Current hosted compatibility path | Cloudflare/D1 owns hosted runs, campaign facts, and publication effects | hosted workflow and campaign ledger | separately enrolled worker for hosted tasks | Cloudflare workspace |
-| Implemented on-premises path | MarketingAgentService owns portable runs in an append-only SQLite repository; configured adapters reach local research, hosted workflow, Slack, and Notion | remote hosted workflow/catalog backend; retains its existing effect ownership | reached through the hosted workflow; no direct on-premises enrollment | Run API and browser view when enabled; signed Slack Commands/Events and original-conversation replies |
+| Implemented on-premises path | MarketingAgentService owns portable runs in an append-only SQLite repository; configured adapters reach local research, hosted workflow, Slack, and Notion | remote hosted workflow/catalog backend; retains its existing effect ownership | hosted workflow, opt-in local capture, or explicitly configured remote capture; automated enrollment/lifecycle is pending | Run API and browser view when enabled; signed Slack Commands/Events and original-conversation replies |
 | Remaining target | on-prem service is the only canonical run and decision owner | optional remote adapters and projections only | one of many replaceable effect workers admitted by the on-premises service | Web, Slack, and KakaoTalk share the service and its run identity |
 
 During transition, existing D1 records remain authoritative for the effects and campaign facts they
@@ -154,8 +154,8 @@ Cross-channel result access remains subject to each deployment's authentication 
 1. Implemented in source: portable contracts, an on-prem store, and an Appium-independent run loop.
 2. Implemented in source: configured research/hosted handoff adapters and browser/Slack admission
    into the same service.
-3. Remaining: enroll the Mac directly against the on-prem API while preserving independent
-   reasoning and Appium readiness and lifecycle.
+3. Remaining: automate Mac enrollment and lifecycle while preserving independent reasoning and
+   Appium readiness. Explicitly configured local and remote capture adapters already exist.
 4. Remaining: project on-prem runs to Cloudflare and switch hosted ingress to the on-prem API.
 5. Remaining: migrate or link existing hosted run lineage explicitly; retain D1 data as remote receipts and
    projections. Remove hosted canonical ownership only after parity and recovery tests pass.
@@ -192,3 +192,49 @@ These are required proofs of the completed target, not a report of checks passed
 - Distributed active-active run ownership; the first service is a durable single canonical writer.
 - Causal marketing lift from descriptive channel metrics.
 - Completion merely because the old Cloudflare workspace can display hosted tasks.
+
+## September 7 small-work extension
+
+The product may enter at any useful point in the responsibility graph. Existing images,
+questions, Figma output and human captures are valid initial inputs; campaign identity is
+optional. A task records original/derived assets, requested preservation/change, locale,
+human reports and independent verification. Production, final publication, post-publication
+changes, community actions, Paid budget/execute and format promotion/deactivation remain
+different review targets. Explicit preparation approval never enables external execution.
+
+Canonical Run history, runtime invocation receipts and scoped shared knowledge have separate
+owners. Private requests cannot promote or mutate shared context. Memory corrections/expiry
+remove notes from current selection while original audit history remains. Tombstone deletion
+is retrieval deletion, not physical erasure of historical evidence.
+
+Implemented candidate surfaces and evidence are tracked in the existing product/runtime
+plans and testing document. Live editing/capture, external publishing/readback/metrics,
+community actions, Paid execution and model-quality generalization remain unverified or Draft;
+prepared packets and fake adapters must not be described as those integrations completing.
+
+Performance reports enter as attributed human observations scoped to the current work, retaining
+source, account/country and observation window. Corrections preserve originals and invalidate
+derived memory before approval or retrieval. Shared Web readback cannot promote private reports.
+Optional image editing uses the existing exact production approval and asynchronous completion
+boundary; it checks unchanged pixels and records promotional/background provenance with pending
+visual/human review. It does not grant final publication authority or verify native product support.
+
+Slack asset intake is an optional small-work tool pair: inspect authenticated file bytes, then
+import the exact digest with human-confirmed source/use terms under runtime approval. It does
+not grant downstream production/publication approval. Register before linking for Web readback;
+failed registration cannot attach an existing different asset to that Run. Returned image bytes
+are bounded separately from inline upload size; provenance and reported status remain explicit.
+
+An asynchronous tool acknowledgement binds the original invocation and executor to one operation.
+It does not claim success, verified artifacts or final cost. The canonical owner retains the
+pending work and resolves only the matching terminal result. Restart and duplicate completion
+must not redispatch work or charge twice. The opt-in remote transport authenticates the configured
+worker and verifies native artifacts before invoking the internal completion boundary.
+
+Remote capture uses a complete profile/job digest in addition to the native visual request digest.
+The profile pins tenant, worker, simulator and execution paths. Queue admission records the exact
+production approval, synthetic schedule and background revision. Worker-token authority is scoped
+to profile/heartbeat/claim/source/start/status/complete/uncertain routes, with a 16 KiB control
+request bound and a 14 MiB authenticated completion wire bound (decoded image at most10 MiB).
+User API limits remain separate. Started work cannot be reassigned. Receipt projection may be
+repaired from durable completion; missing execution evidence is not permission to repeat a job.

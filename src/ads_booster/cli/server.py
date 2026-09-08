@@ -18,10 +18,22 @@ from urllib.request import Request, urlopen
 
 import typer
 
+from ads_booster.knowledge.configuration import (
+    KnowledgeSettings,
+    initialize_knowledge_store,
+)
+from ads_booster.knowledge.erase_ledger import EraseLedger
+from ads_booster.marketing.agent_service.github_issues import (
+    GitHubIssues,
+    GitHubRejectedError,
+    validate_token,
+)
+
 if TYPE_CHECKING:
     from http.client import HTTPResponse
 
 app = typer.Typer(no_args_is_help=True, help="Install settings and operate the Linux Slack agent.")
+MAX_PORT = 65535
 ROOT = Path.home() / ".local/share/trace-marketing-server"
 CONFIG = Path.home() / ".config/trace-marketing"
 UNITS = Path.home() / ".config/systemd/user"
@@ -40,6 +52,7 @@ def execute(*args: str) -> str:
 
 def private_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
     if path.is_symlink():
         raise RuntimeError("refusing_symlink")
     # Unique exclusive files allow recovery after a process dies during a write.
@@ -51,6 +64,7 @@ def private_write(path: Path, text: str) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         _ = temp.replace(path)
+        path.chmod(0o600)
     finally:
         temp.unlink(missing_ok=True)
 
@@ -230,6 +244,9 @@ def setup_config() -> None:
         "TRACE_MARKETING_SLACK_ALLOWED_CHANNEL_IDS": channel,
         "TRACE_MARKETING_SLACK_ALLOW_DM": "1",
         "TRACE_MARKETING_SLACK_INSTALLATION": str(CONFIG / "slack-installation.json"),
+        "TRACE_MARKETING_KNOWLEDGE_ROOT": str(ROOT / "knowledge"),
+        "TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT": str(CONFIG / "knowledge-control"),
+        "TRACE_MARKETING_KNOWLEDGE_POLICY": str(CONFIG / "knowledge-policy.json"),
     }
     environment = "\n".join(f"{k}={env_value(v)}" for k, v in settings.items()) + "\n"
     installation = {
@@ -246,7 +263,25 @@ def setup_config() -> None:
         "agent.env": environment,
         **({"tunnel.token": tunnel_token} if tunnel else {}),
         **units,
-        "server.json": json.dumps({"origin": origin, "tunnel": tunnel}),
+        "server.json": json.dumps({"origin": origin, "tunnel": tunnel, "port": 8090}),
+        "knowledge-policy.json": json.dumps(
+            {
+                "schema": "trace.knowledge-local-policy.v1",
+                "workspace_id": tenant,
+                "policy_epoch": 1,
+                "capabilities": ["read", "write", "schedule", "share", "purge"],
+                "brand_voice_brand_ids": [],
+            }
+        ),
+        "knowledge-control/identity.json": json.dumps(
+            {
+                "schema": "trace.knowledge-local-identity.v1",
+                "actor_id": f"local-owner-{os.getuid()}",
+                "workspace_id": tenant,
+                "member_id": f"local-member-{os.getuid()}",
+                "session_id": "local-admin-session",
+            }
+        ),
     }
     for name in ["slack-app-bootstrap-manifest.json", "slack-app-manifest.json"]:
         files[name] = (
@@ -270,6 +305,8 @@ def setup_target(name: str) -> Path:
         "server.json",
         "slack-app-bootstrap-manifest.json",
         "slack-app-manifest.json",
+        "knowledge-policy.json",
+        "knowledge-control/identity.json",
     }:
         return CONFIG / name
     raise RuntimeError("invalid_setup_checkpoint")
@@ -289,6 +326,15 @@ def finish_setup() -> None:
         if current != value["previous"][name]:
             raise RuntimeError(f"setup_resume_preserves_operator_edit:{name}")
         private_write(target, content)
+    (ROOT / "knowledge").mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ = initialize_knowledge_store(
+        KnowledgeSettings(
+            root=ROOT / "knowledge",
+            control_root=CONFIG / "knowledge-control",
+            policy_path=CONFIG / "knowledge-policy.json",
+        )
+    )
+    _ = EraseLedger(CONFIG / "knowledge-control").initialize()
     pending.unlink()
     typer.echo("설정 완료. 다음: trace-marketing server start")
     typer.echo(f"Slack 최종 App Manifest: {CONFIG / 'slack-app-manifest.json'}")
@@ -351,13 +397,43 @@ def stop() -> None:
     _ = execute("systemctl", "--user", "stop", SERVICE, *([TUNNEL] if settings["tunnel"] else []))
 
 
+@app.command("github-setup")
+def github_setup() -> None:
+    """Store an issue-only GitHub credential without changing Slack configuration."""
+    try:
+        token = validate_token(getpass.getpass("GitHub 토큰 (ads-booster Issues: write): ").strip())
+        GitHubIssues(token).check_access()
+        private_write(CONFIG / "github.token", token + "\n")
+    except GitHubRejectedError as error:
+        typer.echo(
+            f"GitHub credential rejected (HTTP {error.code}); previous token preserved.", err=True
+        )
+        raise typer.Exit(1) from None
+    except Exception:  # noqa: BLE001 - credential entry must never render traceback locals.
+        typer.echo(
+            "GitHub setup failed; check token, repository access and file permissions.", err=True
+        )
+        raise typer.Exit(1) from None
+    typer.echo(
+        "Token saved; repository accessible. Issues: write permission is required for creation."
+    )
+    typer.echo("Restart the idle agent: systemctl --user restart trace-marketing.service")
+
+
+def server_port(settings: dict[str, object]) -> int:
+    port = settings.get("port", 8090)
+    if type(port) is not int or not 1 <= port <= MAX_PORT:
+        raise RuntimeError("server_port_requires_integer_1_to_65535")
+    return port
+
+
 @app.command("status")
 def status() -> None:
     """Report local/public health, service and linger status without reading secrets."""
     settings = operator_settings()
     checks: dict[str, object] = {}
     for label, url in [
-        ("local", "http://127.0.0.1:8765/health"),
+        ("local", f"http://127.0.0.1:{server_port(settings)}/health"),
         ("public", str(settings["origin"]) + "/health"),
     ]:
         try:

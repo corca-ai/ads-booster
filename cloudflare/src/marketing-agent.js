@@ -133,12 +133,14 @@ export async function handleHostedMarketingAgent(request, env, account) {
     }
     if (request.method === "POST" && url.pathname === "/api/marketing-agent/runs") {
       requireMarketingAuthority(request, env);
-      const launchRequest = await normalizeHostedFeatureLaunchRunRequest(
+      const normalized = await normalizeHostedFeatureLaunchRunRequest(
         env,
         account,
         await readJson(request),
       );
-      return agentJson(await enqueueMarketingAgentRun(env, account, launchRequest), 202);
+      return agentJson(await enqueueMarketingAgentRun(
+        env, account, normalized.launch_request, normalized.trusted_knowledge,
+      ), 202);
     }
     if (request.method === "GET" && url.pathname === "/api/marketing-agent/runs") {
       requireMarketingAuthority(request, env);
@@ -369,14 +371,16 @@ export async function handleHostedMarketingAgent(request, env, account) {
 }
 
 async function normalizeHostedFeatureLaunchRunRequest(env, account, input) {
-  assertExactKeys(input, [
+  const expectedKeys = [
     "schema_version",
     "agent_run_id",
     "research",
     "business_outcome",
     "current_control",
     "marketing_context_snapshot_id",
-  ], "feature launch run");
+  ];
+  if (Object.hasOwn(input, "trusted_knowledge")) expectedKeys.push("trusted_knowledge");
+  assertExactKeys(input, expectedKeys, "feature launch run");
   if (input?.schema_version !== "trace.feature-launch-run-request.v1") {
     throw new MarketingAgentHttpError(400, "feature launch run schema가 올바르지 않습니다.");
   }
@@ -466,9 +470,11 @@ async function normalizeHostedFeatureLaunchRunRequest(env, account, input) {
     throw new MarketingAgentHttpError(400, "research tool budget가 required scope보다 작습니다.");
   }
   return {
-    schema_version: "trace.feature-launch-run-request.v1",
-    agent_run_id: safeId(input.agent_run_id, "agent_run_id"),
-    research: {
+    trusted_knowledge: input.trusted_knowledge ?? null,
+    launch_request: {
+      schema_version: "trace.feature-launch-run-request.v1",
+      agent_run_id: safeId(input.agent_run_id, "agent_run_id"),
+      research: {
       schema_version: "trace.dynamic-evidence-research-request.v1",
       session_id: safeId(research.session_id, "session_id"),
       account_id: account.account_id,
@@ -485,10 +491,11 @@ async function normalizeHostedFeatureLaunchRunRequest(env, account, input) {
       },
       max_tool_calls: maxToolCalls,
       max_cost_units: maxCostUnits,
+      },
+      business_outcome: businessOutcome,
+      current_control: currentControl,
+      marketing_context_snapshot_id: snapshotId,
     },
-    business_outcome: businessOutcome,
-    current_control: currentControl,
-    marketing_context_snapshot_id: snapshotId,
   };
 }
 

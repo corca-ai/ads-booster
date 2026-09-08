@@ -52,6 +52,7 @@ if TYPE_CHECKING:
         CandidateContextBundle,
         CandidateDocument,
         CandidateDraft,
+        CandidateEditorialContext,
     )
     from ads_booster.transport.json_types import JsonValue
     from ads_booster.workspace import CandidateAccountBrief
@@ -190,6 +191,7 @@ class CandidateDraftEngine:
         interests: Sequence[str] = (),
         history: tuple[CandidateHistoryEntry, ...] = (),
         learned_feedback: tuple[str, ...] = (),
+        editorial_context: CandidateEditorialContext | None = None,
     ) -> CandidateDraftBatch:
         """Write the requested candidates, one provider call per batch of `max_batch`.
 
@@ -218,6 +220,7 @@ class CandidateDraftEngine:
                     language=language,
                     history=written.entries(),
                     learned_feedback=learned_feedback,
+                    editorial_context=editorial_context,
                 )
             except CandidateGenerationError as error:
                 failures += len(chunk)
@@ -260,6 +263,7 @@ class CandidateDraftEngine:
         language: str,
         history: tuple[CandidateHistoryEntry, ...],
         learned_feedback: tuple[str, ...],
+        editorial_context: CandidateEditorialContext | None,
     ) -> tuple[DraftedCandidate, ...]:
         """Write one batch: size the sample to fit, ask once, record what the call read."""
         sampled, instruction = self._instruction(
@@ -271,6 +275,7 @@ class CandidateDraftEngine:
             language=language,
             history=history,
             learned_feedback=learned_feedback,
+            editorial_context=editorial_context,
         )
         provenance = self._provenance(bundle, instruction, assignments, sampled)
         drafts = self._draft(f"{index:02d}", instruction, assignments, country)
@@ -295,6 +300,7 @@ class CandidateDraftEngine:
         language: str,
         history: tuple[CandidateHistoryEntry, ...],
         learned_feedback: tuple[str, ...],
+        editorial_context: CandidateEditorialContext | None,
     ) -> tuple[tuple[CandidateDocument, ...], str]:
         """Build the instruction, shrinking the reference sample until it fits.
 
@@ -315,6 +321,7 @@ class CandidateDraftEngine:
                 history=history,
                 account=brief,
                 learned_feedback=learned_feedback,
+                editorial_context=editorial_context,
             )
             if len(instruction) <= self.max_instruction_chars:
                 return sampled, instruction

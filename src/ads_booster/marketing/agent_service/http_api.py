@@ -20,17 +20,41 @@ from ads_booster.contracts.agent_run import (
     ToolInvocation,
     contract_sha256,
 )
+from ads_booster.contracts.knowledge_context import ContextTransferValidationRequest
 from ads_booster.contracts.models import ContractModel
+from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
 from ads_booster.marketing.agent_service.browser_login import BrowserLogin
+from ads_booster.marketing.agent_service.creative_api import dispatch_creative
+from ads_booster.marketing.agent_service.delivery_api import dispatch_delivery
+from ads_booster.marketing.agent_service.image_edit_api import dispatch_image_edit
 from ads_booster.marketing.agent_service.jobs import AgentJobs, WebJob
+from ads_booster.marketing.agent_service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    PendingKnowledgeIngress,
+)
+from ads_booster.marketing.agent_service.knowledge_ingress_api import (
+    ApiIngressRequest,
+    build_api_ingress,
+)
+from ads_booster.marketing.agent_service.knowledge_transfer import KnowledgeTransferProvider
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
+from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from ads_booster.marketing.agent_service.memory_api import dispatch_memory
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
+from ads_booster.marketing.agent_service.performance_api import dispatch_performance
+from ads_booster.marketing.agent_service.remote_capture_api import (
+    CaptureApiOwner,
+    capture_body_limit,
+    dispatch_remote_capture,
+)
 from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
+from ads_booster.marketing.agent_service.sqlite_repository import RepositoryAdmission
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
+from ads_booster.marketing.agent_service.work_continuation import continue_work
 from ads_booster.marketing.channels.slack_commands import SlackCommands
 from ads_booster.marketing.channels.slack_conversations import SlackInboxFullError
 from ads_booster.marketing.channels.slack_events import SlackEvents
@@ -38,6 +62,7 @@ from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Callable
 
 _MAX_BODY_BYTES = 1024 * 1024
@@ -45,12 +70,21 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class ApiCreateRunRequest(ContractModel):
+    request_id: str | None = None
     run_id: str
     goal: AgentGoal
     budget: AgentBudget
 
 
+class ApiContinuationRequest(ContractModel):
+    event_id: str
+    note: str
+    action: Literal["revise", "pause"]
+
+
 class ApiInputRequest(ContractModel):
+    request_id: str | None = None
+    corrects_revision_ref: str | None = None
     evidence: JsonObject
 
 
@@ -90,6 +124,36 @@ class MarketingAgentApi:
     allowed_tenant_id: str | None = None
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
+    approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    remote_capture: CaptureApiOwner | None = None
+
+    knowledge_ingress: CanonicalKnowledgeIngress | None = None
+    knowledge_transfers: KnowledgeTransferProvider | None = None
+
+    def __post_init__(self) -> None:
+        """Install current approval authority and canonical ingress on the same Run ledger."""
+        if self.jobs is not None:
+            self.jobs.approval_authorizer = self._can_approve
+        if self.knowledge_ingress is None:
+            object.__setattr__(
+                self,
+                "knowledge_ingress",
+                CanonicalKnowledgeIngress(self.service.repository.database_path)
+                if self.service.knowledge is None
+                else self.service.knowledge.ingress,
+            )
+
+    def _knowledge_admission(
+        self, ingress: PendingKnowledgeIngress | None
+    ) -> RepositoryAdmission | None:
+        owner = self.knowledge_ingress
+        if owner is None or ingress is None:
+            return None
+
+        def admit(connection: sqlite3.Connection) -> None:
+            _ = owner.admit(connection, ingress.binding, ingress.event, ingress.envelope)
+
+        return admit
 
     def dispatch(  # noqa: PLR0913 - preserve the HTTP boundary call contract.
         self,
@@ -106,6 +170,11 @@ class MarketingAgentApi:
             if self.maintenance is not None:
                 health.update(self.maintenance.health())
             return ApiResponse(200, health)
+        # Cancellation admits no new work and remains available while an update drains.
+        if method == "POST" and urlsplit(target).path == "/channels/slack/interactions":
+            return self._dispatch(
+                method, target, authorization=authorization, body=body, now=now, headers=headers
+            )
         if self.maintenance is not None:
             with self.maintenance.work() as admitted:
                 if not admitted:
@@ -128,6 +197,16 @@ class MarketingAgentApi:
         headers: dict[str, str] | None = None,
     ) -> ApiResponse:
         path = urlsplit(target).path
+        worker_response = dispatch_remote_capture(
+            method,
+            target,
+            body,
+            authorization=authorization,
+            owner=self.remote_capture,
+            now=now or datetime.now(UTC),
+        )
+        if worker_response is not None:
+            return ApiResponse(*worker_response)
         headers = headers or {}
         if (
             method == "POST"
@@ -149,6 +228,17 @@ class MarketingAgentApi:
                 return ApiResponse(503, {"error": "slack_inbox_full"})
             except ValueError, UnicodeError:
                 return ApiResponse(403, {"error": "slack_event_rejected"})
+        if (
+            method == "POST"
+            and path == "/channels/slack/interactions"
+            and self.slack_events is not None
+        ):
+            try:
+                return ApiResponse(
+                    200, self.slack_events.interact(body, headers, now=now or datetime.now(UTC))
+                )
+            except ValueError, UnicodeError:
+                return ApiResponse(403, {"error": "slack_interaction_rejected"})
         if self.slack_only:
             return ApiResponse(404, {"error": "slack_only_service"})
         login = self.browser_login
@@ -199,10 +289,72 @@ class MarketingAgentApi:
             )
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            image_edit_response = dispatch_image_edit(
+                method,
+                path,
+                body,
+                identity=identity,
+                service=self.service,
+                review_authorizer=self._can_approve,
+            )
+            if image_edit_response is not None:
+                return ApiResponse(*image_edit_response)
+            performance_response = dispatch_performance(
+                method, target, identity=identity, service=self.service
+            )
+            if performance_response is not None:
+                return ApiResponse(*performance_response)
+            creative_response = dispatch_creative(
+                method,
+                path,
+                body,
+                identity=identity,
+                service=self.service,
+                artifact_root=self.service.repository.database_path.parent / "artifacts",
+                now=occurred_at,
+            )
+            if creative_response is not None:
+                return ApiResponse(*creative_response)
+            delivery_response = dispatch_delivery(
+                method, path, body, identity=identity, service=self.service
+            )
+            if delivery_response is not None:
+                return ApiResponse(*delivery_response)
+            memory_response = dispatch_memory(
+                method,
+                target,
+                body,
+                identity=identity,
+                store=SQLiteMemoryStore(self.service.repository.database_path),
+                now=occurred_at,
+            )
+            if memory_response is not None:
+                return ApiResponse(*memory_response)
+            transfer_id = _context_transfer_validation_target(path)
+            if method == "POST" and transfer_id is not None:
+                if self.knowledge_transfers is None:
+                    return ApiResponse(503, {"error": "knowledge_transfer_owner_unavailable"})
+                request = ContextTransferValidationRequest.model_validate(_body_json(body))
+                if request.transfer_id != transfer_id:
+                    return ApiResponse(409, {"error": "knowledge_transfer_route_mismatch"})
+                result = self.knowledge_transfers.validate_transfer(
+                    request,
+                    authenticated_tenant_id=identity.tenant_id,
+                    authenticated_principal_id=identity.principal_id,
+                )
+                return ApiResponse(200, result.model_dump(mode="json", by_alias=True))
             if self.jobs is not None and method == "POST" and path == "/v1/jobs":
                 job = WebJob.model_validate(_body_json(body))
+                if job.action == "approval" and not self._can_approve(identity):
+                    return ApiResponse(403, {"error": "agent_approval_permission_required"})
                 return ApiResponse(
-                    202, self.jobs.enqueue(identity.tenant_id, identity.principal_id, job)
+                    202,
+                    self.jobs.enqueue(
+                        identity.tenant_id,
+                        identity.principal_id,
+                        job,
+                        now=occurred_at,
+                    ),
                 )
             if self.jobs is not None and method == "GET" and path.startswith("/v1/jobs/"):
                 return ApiResponse(
@@ -250,6 +402,22 @@ class MarketingAgentApi:
                 )
             if method == "POST" and path == "/v1/runs":
                 request = ApiCreateRunRequest.model_validate(_body_json(body))
+                request_id = request.request_id or "api-request-" + contract_sha256(request)[:40]
+                ingress = (
+                    None
+                    if self.knowledge_ingress is None
+                    else build_api_ingress(
+                        ApiIngressRequest(
+                            request_id=request_id,
+                            run_id=request.run_id,
+                            action="create",
+                            text=request.goal.objective,
+                            identity=identity,
+                            revision=1,
+                            occurred_at=occurred_at,
+                        )
+                    )
+                )
                 run = self.service.create(
                     CreateAgentRunRequest(
                         run_id=request.run_id,
@@ -258,6 +426,7 @@ class MarketingAgentApi:
                         budget=request.budget,
                     ),
                     now=occurred_at,
+                    admission=self._knowledge_admission(ingress),
                 )
                 return ApiResponse(
                     HTTPStatus.ACCEPTED,
@@ -277,15 +446,67 @@ class MarketingAgentApi:
             run = self.service.repository.get(identity.tenant_id, run_id)
             if run is None:
                 return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "agent_run_not_found"})
+            if method == "POST" and suffix == "/continuation":
+                continuation = ApiContinuationRequest.model_validate(_body_json(body))
+                _ = continue_work(
+                    self.service,
+                    identity.tenant_id,
+                    run_id,
+                    event_id=continuation.event_id,
+                    actor_id=identity.principal_id,
+                    note=continuation.note,
+                    action=continuation.action,
+                    now=occurred_at,
+                )
+                return ApiResponse(200, self._run_view(identity.tenant_id, run_id))
             if method == "GET" and suffix == "":
                 return ApiResponse(HTTPStatus.OK, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/input":
                 request = ApiInputRequest.model_validate(_body_json(body))
+                request_id = (
+                    request.request_id
+                    or "api-request-"
+                    + contract_sha256(
+                        {
+                            "tenant": identity.tenant_id,
+                            "run": run_id,
+                            "revision": run.revision,
+                            "evidence": request.evidence,
+                        }
+                    )[:40]
+                )
+                ingress = (
+                    None
+                    if self.knowledge_ingress is None
+                    else build_api_ingress(
+                        ApiIngressRequest(
+                            request_id=request_id,
+                            run_id=run_id,
+                            action="input",
+                            text=json.dumps(
+                                request.evidence,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            identity=identity,
+                            revision=1,
+                            occurred_at=occurred_at,
+                            corrects_revision_ref=request.corrects_revision_ref,
+                        )
+                    )
+                )
                 _ = self.service.submit_input(
-                    identity.tenant_id, run_id, request.evidence, now=occurred_at
+                    identity.tenant_id,
+                    run_id,
+                    request.evidence,
+                    now=occurred_at,
+                    admission=self._knowledge_admission(ingress),
                 )
                 return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/approval":
+                if not self._can_approve(identity):
+                    return ApiResponse(403, {"error": "agent_approval_permission_required"})
                 request = ApiApprovalRequest.model_validate(_body_json(body))
                 _ = self.service.decide_approval(
                     identity.tenant_id,
@@ -297,6 +518,8 @@ class MarketingAgentApi:
                     now=occurred_at,
                 )
                 return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
+        except KnowledgePolicyError:
+            return ApiResponse(HTTPStatus.FORBIDDEN, {"error": "knowledge_access_denied"})
         except (ValidationError, ValueError) as error:
             return ApiResponse(HTTPStatus.CONFLICT, {"error": _safe_error(error)})
         except CodexReasoningError:
@@ -305,6 +528,22 @@ class MarketingAgentApi:
                 {"error": "reasoning_provider_unavailable", "retryable": True},
             )
         return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "route_not_found"})
+
+    def _can_approve(self, identity: OAuthIdentity) -> bool:
+        """Authentication is not reviewer membership; only server policy can grant it."""
+        if self.approval_authorizer is not None:
+            try:
+                return self.approval_authorizer(identity) is True
+            except Exception:  # noqa: BLE001 - role lookup failure cannot grant execution authority.
+                return False
+        # A deliberately configured loopback token is the local operator surface.
+        # OAuth/browser subjects need an explicit trusted reviewer mapping instead.
+        return (
+            self.oauth_authenticator is None
+            and self.browser_login is None
+            and bool(self.bearer_token)
+            and identity == OAuthIdentity(self.tenant_id, self.principal_id)
+        )
 
     def _identity(self, authorization: str | None) -> OAuthIdentity | None:
         if self.oauth_authenticator is not None:
@@ -367,8 +606,14 @@ def serve_marketing_agent_api(
             _ = format, args
 
         def _dispatch(self, method: str) -> None:
-            length = _content_length(self.headers.get("content-length"))
-            if length > _MAX_BODY_BYTES:
+            maximum = (
+                capture_body_limit(
+                    method, self.path, api.remote_capture, self.headers.get("authorization")
+                )
+                or _MAX_BODY_BYTES
+            )
+            length = _content_length(self.headers.get("content-length"), maximum=maximum)
+            if length > maximum:
                 self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
                 return
             body = self.rfile.read(length) if length else b""
@@ -446,14 +691,25 @@ def _skill_run_target(path: str) -> str | None:
     return skill_id
 
 
-def _content_length(value: str | None) -> int:
+def _context_transfer_validation_target(path: str) -> str | None:
+    prefix = "/v1/knowledge/context-transfers/"
+    suffix = "/validate"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return None
+    transfer_id = path[len(prefix) : -len(suffix)]
+    if not transfer_id or "/" in transfer_id:
+        return None
+    return transfer_id
+
+
+def _content_length(value: str | None, *, maximum: int = _MAX_BODY_BYTES) -> int:
     if value is None:
         return 0
     try:
         length = int(value)
     except ValueError:
-        return _MAX_BODY_BYTES + 1
-    return max(0, length)
+        return maximum + 1
+    return length if length >= 0 else maximum + 1
 
 
 def _safe_error(error: ValidationError | ValueError) -> str:

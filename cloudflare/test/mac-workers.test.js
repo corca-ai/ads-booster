@@ -130,7 +130,7 @@ class ClaimStatement {
         row.lease_expires_at > now
       ) ?? null;
     }
-    if (this.sql.includes("SELECT task_id FROM hosted_workspace_capture_tasks") &&
+    if (this.sql.includes("FROM hosted_workspace_capture_tasks") &&
         this.sql.includes("worker_id IS NULL")) {
       const [now] = this.values;
       const kinds = this.values.slice(1, -1);
@@ -1555,4 +1555,105 @@ test("one-time enrollment stores only hashes and cannot be replayed", async () =
   assert.equal(persisted.includes(created.enrollment_code), false);
   assert.equal(persisted.includes(enrolled.worker_token), false);
   assert.match([...db.workers.values()][0].token_sha256, /^[0-9a-f]{64}$/);
+});
+
+async function knowledgeRouteFixture(policy = "required") {
+  const { D1Adapter } = await import("./d1-fixture.js");
+  const { canonicalSha256 } = await import("../src/marketing-agent-runs.js");
+  const DB = new D1Adapter();
+  const now = new Date().toISOString();
+  const tokenHash = Buffer.from(await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode("worker-secret"),
+  )).toString("hex");
+  DB.sqlite.prepare(`INSERT INTO mac_workers
+    (worker_id, display_name, pool, state, token_sha256, capabilities_json,
+     doctor_json, created_at, updated_at, last_seen_at)
+    VALUES ('worker-1', 'Mac', 'appium', 'active', ?, '{}', '{}', ?, ?, ?)`)
+    .run(tokenHash, now, now, now);
+  const binding = { task_ref: "task-1", run_ref: "run-1", account_id: "trace_demo_kr",
+    workspace_id: "workspace-1", scoped_actor_ref: "actor-1", brand_ref: "brand-1",
+    action_kind: "feature_launch", invocation_ref: "invocation-1" };
+  const envelope = { ...binding, transfer_id: "transfer-1" };
+  const wire = { ...JSON.parse(task().task_json), kind: "marketing_judgment",
+    knowledge_context_policy: policy,
+    ...(policy === "required" ? { knowledge_context_binding: binding,
+      payload: { knowledge_context: envelope,
+        knowledge_context_sha256: await canonicalSha256(envelope) } } : {}) };
+  DB.sqlite.prepare(`INSERT INTO hosted_workspace_capture_tasks
+    (task_id, run_id, account_id, candidate_id, candidate_revision, idempotency_key,
+     task_json, state, created_at, updated_at, dispatch_mode, kind, required_capability)
+    VALUES ('task-1', 'run-1', 'trace_demo_kr', 'candidate-1', 1, 'key-1', ?,
+      'queued', ?, ?, 'worker_broker', 'marketing_judgment', ?)`)
+    .run(JSON.stringify(wire), now, now, policy === "required" ? "knowledge_context_v1" : null);
+  const env = { DB, CONTROL_PLANE_TOKEN: "admin-secret", KNOWLEDGE_SERVICE_URL: "https://owner.invalid",
+    KNOWLEDGE_SERVICE_TOKEN: "fixture-owner-secret", KNOWLEDGE_SERVICE_PRINCIPAL_ID: "principal-1" };
+  const route = (path, method = "GET", body = undefined, admin = false) => handleMacWorkerRequest(
+    new Request(`https://workspace.example${path}`, { method,
+      headers: { authorization: `Bearer ${admin ? "admin-secret" : "worker-secret"}`,
+        "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), env,
+    () => { throw new Error("unexpected callback"); });
+  const claim = () => route("/v1/workers/tasks/claim", "POST", {
+    capabilities: { task_kinds: "marketing_judgment", marketing_reasoning_ready: true,
+      knowledge_context_v1: true }, doctor: { ready: true }, version: "fixture" });
+  return { DB, env, wire, route, claim };
+}
+
+test("SQLite claim route admits disabled and required transfers and rejects invalid authority expiry", async (t) => {
+  let expiry = new Date(Date.now() + 60_000).toISOString();
+  const stages = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const body = JSON.parse(options.body);
+    stages.push(body.stage);
+    return Response.json({ ...body, status: "accepted", valid_until: expiry });
+  });
+  const disabled = await knowledgeRouteFixture("disabled");
+  assert.equal((await disabled.claim()).status, 200);
+  assert.equal(stages.length, 0);
+  const required = await knowledgeRouteFixture();
+  const accepted = await required.claim();
+  assert.equal(accepted.status, 200);
+  assert.equal((await accepted.json()).leases[0].message_id, "task-1");
+  const { validateTaskKnowledgeContextAuthority } = await import("../src/mac-workers.js");
+  await validateTaskKnowledgeContextAuthority(required.env, {
+    task_id: "task-1", account_id: "trace_demo_kr", required_capability: "knowledge_context_v1",
+    task_json: JSON.stringify(required.wire),
+  }, "callback");
+  assert.deepEqual(stages, ["pre_dispatch", "callback"]);
+  expiry = "invalid-time";
+  const denied = await knowledgeRouteFixture();
+  assert.equal((await denied.claim()).status, 409);
+  assert.equal(denied.DB.sqlite.prepare("SELECT current_task_id FROM mac_workers").get().current_task_id, null);
+  assert.equal(denied.DB.sqlite.prepare("SELECT worker_id FROM hosted_workspace_capture_tasks").get().worker_id, null);
+});
+
+test("replica purge route rolls back failed erasure and waits for the assigned Mac acknowledgement", async () => {
+  const { DB, route } = await knowledgeRouteFixture();
+  DB.sqlite.exec("UPDATE hosted_workspace_capture_tasks SET worker_id = 'worker-1'");
+  const cloudflareId = "cloudflare-task:trace_demo_kr:task-1";
+  const macId = "mac-inbox:trace_demo_kr:task-1";
+  const path = `/v1/knowledge/context-transfers/transfer-1/replicas/${encodeURIComponent(cloudflareId)}`;
+  DB.sqlite.exec(`CREATE TRIGGER reject_purge BEFORE UPDATE OF task_json ON hosted_workspace_capture_tasks
+    BEGIN SELECT RAISE(ABORT, 'injected erasure failure'); END`);
+  assert.equal((await route(path, "DELETE", undefined, true)).status, 500);
+  assert.equal(DB.sqlite.prepare("SELECT count(*) AS n FROM knowledge_context_replica_purges").get().n, 0);
+  DB.sqlite.exec("DROP TRIGGER reject_purge");
+  assert.equal((await route(path, "DELETE", undefined, true)).status, 202);
+  const row = DB.sqlite.prepare("SELECT task_json, state FROM hosted_workspace_capture_tasks").get();
+  assert.equal(JSON.parse(row.task_json).payload.knowledge_context, undefined);
+  assert.equal(row.state, "failed");
+  const macPath = `/v1/knowledge/context-transfers/transfer-1/replicas/${encodeURIComponent(macId)}`;
+  assert.equal((await (await route(macPath, "GET", undefined, true)).json()).state, "purge_pending");
+  const directives = await (await route("/v1/workers/knowledge-replica-purges")).json();
+  assert.equal(directives.directives[0].replica_id, macId);
+  assert.equal((await route("/v1/workers/knowledge-replica-purges", "POST", {
+    transfer_id: "wrong-transfer", replica_id: macId,
+  })).status, 409);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    assert.equal((await route("/v1/workers/knowledge-replica-purges", "POST", {
+      transfer_id: "transfer-1", replica_id: macId,
+    })).status, 200);
+  }
+  assert.equal((await (await route(macPath, "GET", undefined, true)).json()).state, "purged");
+  assert.deepEqual((await (await route("/v1/workers/knowledge-replica-purges")).json()).directives, []);
 });

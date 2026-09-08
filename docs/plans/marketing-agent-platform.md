@@ -1,12 +1,49 @@
 # Marketing Agent Platform
 
+## Current direction override — 2026-09-07
+
+Status: Draft for unimplemented expansion. The [product decision](marketing-agent-product.md)
+and [on-prem service contract](../contracts/on-prem-marketing-agent-service.md) take precedence
+over historical D1-platform and weekly-growth proposals below. New canonical Runs and
+choices belong only to Agent Service. D1 keeps current campaign/external execution facts
+with explicit lineage, never independent dual writes of a new Run. Trace small creative
+requests and human handoff are the initial value; generic SaaS, new channels and dedicated
+always-on role agents are deferred until real work justifies them. No Ceal runtime dependency.
+
+### External pattern decisions
+
+| Problem / source | Application | Cost and decision |
+| --- | --- | --- |
+| [Independent research delegation](https://www.anthropic.com/engineering/multi-agent-research-system) | bounded goal/input/preserve/authority/budget/output packet; main integrates | extra tokens/coordination; selective delegation only |
+| [Context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) | canonical history retained; bounded attributed projection and scoped retrieval | omission risk; record selection/omission hashes |
+| [Advanced tool use](https://www.anthropic.com/engineering/advanced-tool-use) | selective definitions after policy/readiness filtering | discovery roundtrip; begin with small catalog, no provider API assumptions |
+| [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) | composable skills and durable human waits | reject new harness dependency: duplicates current owner |
+| [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence) | separate Run history and cross-work scoped memory | retain SQLite, avoid second checkpoint authority |
+| [Letta attach/detach](https://docs.letta.com/tutorials/attaching-detaching-blocks/) | storage and current-context inclusion are distinct | retrieval/expiry cost; no vector DB or Letta dependency |
+
+The Letta tutorial URL redirected to its documentation home during investigation; the
+indexed official tutorial and official attach/detach API documentation confirmed the
+pattern. Detaching context does not physically delete history or revoke already-read data.
+
+### Ceal reference coverage
+
+Read the installed ceal-guide and CLI help. Local session status reported expired access
+and unknown renewal outcome; its recovery instruction forbids blind refresh retry and
+requires an administrator replacement session. Capability discovery can refresh remotely,
+so it was not invoked. Confirmed local contracts include bounded capability discovery,
+grant/readiness distinction and receipt/readback with no blind unknown-effect retry.
+Natural Slack mention/steering/DM behavior remains a Trace target, not verified Ceal behavior.
+A replacement Ceal session with gateway document/read capabilities is needed for further
+live comparison; Ceal is neither modified nor a runtime dependency.
+
+
 Status: Draft — establishes the product and architecture contract before multi-tenant platform
 implementation. Trace is the first reference tenant and evidence-producing integration, not the
 definition of the product. The hosted campaign ledger now carries a narrow customer-context reference
 lane, while the existing Cloudflare automation and effect owners remain intact; this is not a rewrite
 of that automation.
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-07
 
 ## Product thesis
 

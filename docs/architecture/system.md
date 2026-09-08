@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## Canonical product direction and transition
 
@@ -35,8 +35,9 @@ the remaining cutover work must be distinguished:
   feature-launch pipeline are HTTPS tools; Slack delivery and Notion daily storage are direct
   adapters. The hosted workflow remains the effect owner for candidate, Appium, review, Threads,
   outcome, and learning during cutover.
-- **Not implemented yet:** Cloudflare projection-only cutover, direct Mac enrollment against the
-  on-premises API, KakaoTalk delivery, and deletion of hosted canonical campaign ownership. Fake
+- **Not implemented yet:** Cloudflare projection-only cutover, automated Mac enrollment/lifecycle
+  management, KakaoTalk delivery, and deletion of hosted canonical campaign ownership. The opt-in
+  local and configured remote capture paths below do not supply automated provisioning. Fake
   Slack/Notion roundtrips are not live platform evidence.
 
 The binding contract and migration gates are in
@@ -86,6 +87,86 @@ delivery invocations and never hosted publication or capture.
 
 The [server packet](../operations/agent-server/README.md) defines deployment and live acceptance.
 No live OAuth/Slack/Tunnel or Linux systemd success is implied by local tests.
+
+## Server-owned knowledge context
+
+The on-premises `MarketingAgentService` is the integration owner for team knowledge. The knowledge
+domain owns its own absolute `knowledge_root` and SQLite catalog, while the existing Agent Service
+database remains the owner of Runs, Slack admission, and Run bindings. `KnowledgeSettings.from_env`
+requires all three values together: `TRACE_MARKETING_KNOWLEDGE_ROOT`,
+`TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and `TRACE_MARKETING_KNOWLEDGE_POLICY`. All paths must be
+absolute. With all three absent the feature is disabled; a partial set raises a configuration error.
+The service user owns root/control directories at mode `0700`; policy and `control_root/identity.json`
+are private mode `0600` files.
+
+When enabled, `cli/marketing.py` builds `InstalledKnowledgeRuntime` beside the canonical service.
+It registers the local actor, creates the SQLite knowledge repository, canonical ingress, ingestion,
+retrieval and tool host, Codex curation provider, owner lock, bounded job runner, index worker, and
+memory-view dispatcher. `CurationBatchRuntime` defaults to collecting compatible routine jobs until
+60 seconds after their first event, without extending the deadline for later arrivals. It claims
+urgent work immediately and runs one shared bounded model round at a time for every active job.
+Each later round receives the actual guarded tool observations from earlier rounds; terminal
+job decisions become receipts bound to their original event and revision. Explicit flush updates
+the indexed and serialized batch state in one transaction. Cancelled unfinished jobs re-enter
+collection with a deterministic generation derived from persisted terminal batch history; earlier
+receipts remain intact. Startup recovers abandoned running batches only after acquiring the exclusive
+owner lock; completed per-event receipts remain terminal and unfinished jobs return to collection.
+Private batches reload their registered actor and current private grants from the catalog rather
+than inheriting the local administrator's identity or workspace grants. Revoked private jobs and
+unclaimed batches fail durably without preventing later authorized work. The runtime starts as a daemon loop with the service and stops before the
+service releases its owner lock. Standalone
+knowledge CLI ownership is separate from the service owner and must not share a live root. The
+registered local-admin surface covers `init`, `doctor`,
+`ingest`, `run`, `search`, `get`, `context`, `schedule`, `backup`, `restore`, `retract`, `purge`,
+`questions`, plus memory, brand, and task subgroups. Every operation takes the absolute `--root`,
+`--control-root`, and `--policy` paths; `run` and `memory consolidate` take optional `--model` and
+bounded `--once`/`--until-idle` controls. Installed commands and fresh-install behavior require their
+own verification.
+
+Ingress remains authenticated at the existing service/channel boundary. The installed API and Slack
+adapters share the canonical ingress and its authority bridge. Before admission, the bridge maps the
+authenticated actor to stored member, session and read/write grants at the current policy epoch,
+preserving revoked memberships, closed sessions and reader roles. Outbox replay and context
+preparation recheck the stored authority. Active task lookup includes member and session identity.
+A shared Slack thread maps to workspace scope. A Slack DM maps to member plus conversation scope and
+is projected through a
+read-only capability set. The DM projection permits knowledge search/get, memory get/explain, and
+source read; it excludes knowledge or memory writes, scheduling, purge, and external delivery. The
+canonical ingress stores the binding, conversation event, and durable outbox before dispatch. Edited,
+deleted, or correcting events create a pending fence; context preparation blocks the affected Run
+until the new source state is admitted. A dispatch that durably records a classified item failure
+returns progress without acknowledging or automatically retrying that item, so later ingress and
+maintenance continue. Unknown receipt outcomes and persistence errors still propagate.
+Source fetching admits only 2xx or 304 after redirect handling. HTTP 408/429 and server errors are
+retryable; other unsuccessful statuses fail before their body can enter extraction or curation.
+
+`source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
+memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment
+identity. Curation uses the extracted text and character offsets. Its optional
+`authenticated_user_event` contains evidence and authority references only for a canonical matching
+user message with no quoted spans; imported documents and other conversation roles do not gain
+user-instruction authority.
+
+Before reasoning, the service adapter assembles a bounded context receipt from current revisions,
+constraints, grants, and task/brand binding. It stores the selected immutable revision references and
+rechecks that receipt immediately before tool dispatch. Hosted generation receives only a strict,
+digest-bound `trace.knowledge-context.v1` transfer with selected editorial blocks and evidence
+excerpts. The hosted broker validates tenant/account/task/run/action binding before dispatch and the
+callback must return the matching transfer, digest, and receipt. Missing or mismatched required
+context fails closed; it does not silently fall back to legacy context. Generation checks the same
+required worker capability used for leasing before consuming its cooldown or publishing a task.
+An identical callback retry returns duplicate success only after current authority, context receipt,
+callback identity and result equality are checked again; altered or revoked callbacks remain rejected.
+Cached validation acceptance is reused only after current authentication, binding, expiry, grant,
+head and tombstone checks pass. Required constraints retain their constraint role in the transfer.
+
+Deletion records a manifest and chained erase-ledger entry in the control root before blocking live
+reads. Tombstones and reverse dependencies cover source, Wiki, memory, claims, context receipts, and
+transfer replicas. A remote replica is tracked separately and remains pending until its purge receipt
+is verified. CLI purge resolves its target from the applied retraction receipt, retaining request
+identity on replay. Restore validates the manifest and file digests, applies the current erase ledger
+including mixed-memory redactions, and rebuilds search in a private staging root before activation.
+No external deletion or deployment success is implied by this source wiring.
 
 ## Runtime boundary
 
@@ -794,3 +875,287 @@ allowlisted configuration/unit paths and exact previous/desired contents, so int
 resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
 missing configuration and Codex login from readiness; status includes update provenance. No company
 IdP or repository authentication is required for the default public Slack-only server.
+
+## Continuing small work (candidate, 2026-09-07)
+
+Agent Service remains the sole new Run/decision owner. Slack's signed durable inbox admits
+text and bounded file references. Ordinary thread follow-ups resume the same safe Run with
+cumulative budget; `새 작업 ...` starts independent work. Pending input signals are read
+without waiting on the execution lock, then committed to an input wait before the next
+plan/fresh dispatch. Started effects retain receipt/reconciliation ownership. Closing
+conversation replies and pausing work remain distinct.
+
+Same-event human continuation is idempotent across the admission/input/provider boundaries.
+Every replan selects bounded canonical evidence with selected hashes/omission accounting;
+raw events remain intact. Current approved memory is separately retrieved by trusted
+workspace/product/member/session scope before relevance, with a persisted selection receipt.
+Prior user/model text is not a current approval or reusable rule. HTTP memory drafts derive
+workspace/author from OAuth identity; adoption currently uses authenticated Slack reviewers.
+
+Creative uploads store real PNG/JPEG bytes below a tenant/digest artifact root, immutable
+source/revision/locale/preserve/change metadata and same-Run human input. Pixel decoding is
+not visual QA. Source revisions mark only dependent assets stale. Optional Slack image review
+binds signed file IDs to tenant/Run before fixed-origin file lookup; actual official Codex
+image input yields model assessment and human-review-required status. It never edits images
+or verifies native app capabilities. DM tool scope remains public search only.
+
+The optional image tool requires `TRACE_MARKETING_SLACK_IMAGE_REVIEW=1`, a `files:read`-capable
+Slack token and a confirmed identity/scope probe. Existing manifests, tokens, login, tunnels,
+installers and service units are unchanged. Missing permission never makes startup fail.
+
+Delivery review is a local preparation projection, separate from actual D1 effect facts.
+Production/publication/Paid/format/code/public-amendment targets have independent digest/CAS
+reviews. `scheduled_prepared` is not a provider reservation or scheduled public post. Every
+packet declares external execution disabled; user reports and injected owner readback are
+distinct. Existing effect owners and their approvals still govern any future activation.
+
+The installed composition registers `delivery.prepare` as a local no-effect tool. New
+ToolInvocations bind the trusted tenant; legacy invocations omit that optional field from
+serialization so existing approval digests remain valid. The preparation adapter requires
+the tenant and exact Run lookup and rejects caller-supplied scope/approval fields.
+HTTP direct and queued approvals require a trusted reviewer policy in addition to OAuth;
+queued execution rechecks it. Legacy/unmapped queued approvals become blocked records.
+Asset-bearing approval and scheduling use the current creative asset owner to recheck bytes,
+revision and ancestors; prepared Paid reservations share one SQLite transaction.
+Slack memory defaults to the current work; explicit `기억 공용` in shared channels creates
+reviewed product-scoped learning. Private chat cannot widen that scope.
+
+Human effort reports use the same Run identity and workspace/member/session scope. Slack
+records phase, locale, reported minutes/revisions and the report time, without deriving an
+execution interval. Append-only corrections replace earlier reports in totals. Learning
+candidates bind exact report snapshots; memory review and selection validate those sources
+on the same SQLite connection before writing approval or selection receipts. Tool receipt
+cost units are shown separately and are not currency or human time.
+
+Native export contracts also accept an explicitly supplied background provenance variant.
+Existing search provenance serialization is unchanged. This permits truthful source/use-term
+metadata for Figma/capture handoff. Remote Mac transport remains separate work.
+Device-booting readiness functions are not read-only probes.
+
+Opt-in local Mac composition now exposes `capture.appium` through the canonical registry and
+existing approval/runtime admission. Its read-only preflight checks already available local
+dependencies; worker `ensure_ready` runs only after admission. The adapter binds the current
+Run and source revision/digest, persists a started claim before worker preparation, and verifies
+native export provenance plus actual result bytes before registering a derived asset. Replay
+revalidates source and cached result; uncertain worker outcomes require reconciliation.
+DM capture remains disabled. This is local Mac execution; Linux-to-Mac transport remains
+unimplemented. Capture results now also enter the existing Run-to-asset Web projection.
+
+Optional Slack file intake reuses the signed tenant/Run/file binding and bounded downloader.
+`creative.file.inspect` observes bytes without model inference; `creative.asset.import` binds
+an exact digest and proposed source/use metadata to the existing canonical approval. A current
+approval and matching bytes are required before registration. The receipt records human
+confirmation, not independent rights/visual/product verification. Registration feeds the
+current Run through its tool receipt, avoiding nested continuation/planning. Only registered
+assets enter the shared Run-to-asset projection; a crash before linkage can replay local
+registration without exposing another asset. DM intake remains disabled.
+
+Deferred tools return an operation/executor binding, not a successful output. Canonical
+acknowledgement and runtime events preserve the accepted work across restarts without invoking
+the adapter again. The Run waits in `awaiting_tool`, releasing the service execution lock for
+other Runs. Cost remains reserved until an exact terminal receipt is validated and persisted.
+The completion boundary is internal; no unauthenticated or operator HTTP callback is introduced.
+The optional remote capture adapter supplies scoped worker identity, lease/start control and
+validated artifact transfer; synchronous adapters retain their existing behavior.
+The owner records explicit worker uncertainty separately in `awaiting_reconciliation`, retaining
+the reservation until validated readback. Waiting alone does not imply uncertainty or retry.
+Human follow-ups remain canonical task input; a pending pause stops subsequent planning after
+the admitted result is recorded. A later revision can supersede that pause. Completion retains
+the original admitted approval even when its admission window has since expired.
+
+Canonical acknowledgement precedes the runtime acknowledgement; canonical completion precedes
+runtime settlement and receipt projection. Recovery repairs those local boundaries without
+re-entering the adapter. Legacy serialized sessions are unchanged, but older binaries reject
+the newly reserved deferred events. Rollback must preserve the database and use a compatible
+reader for Runs containing those events; do not delete pending state to downgrade.
+
+Capture contract construction and native provenance comparison are pure shared functions. The
+local caller explicitly supplies its Python executable and nonce. Native request digests retain
+their existing visual-request semantics and exclude host execution configuration; a remote
+transport must separately bind the full worker profile and job envelope before execution.
+
+The installed CLI now composes a remote coordinator only when
+`TRACE_MARKETING_REMOTE_CAPTURE_CONFIG` is supplied. A separate worker token hash authorizes
+only `/workers/capture/*`, including in Slack-only mode; Slack, browser and operator tokens
+do not grant worker authority. Configuration pins one tenant and Mac profile. Readiness comes
+from a bounded, expiring worker heartbeat; it neither starts Appium nor changes server setup.
+
+The canonical SQLite queue is unarmed until its acknowledgement is durable. A worker pulls a
+60-second lease, validates the source bytes/profile/job, persists local start intent and obtains
+server start permission before `ensure_ready`. Only unstarted work can be re-leased; possible
+device effects are never reassigned. Expired approval, changed source or queued human changes
+produce `no_effect` before device permission. Expiry fences new execution; a terminal no-effect
+cleanup may still settle the exact, unreassigned lease because no start was granted.
+
+Worker uploads are durable before transmission. Server verification checks state/lease before
+artifact mutation, then image bytes, native nonce/device/provenance and source currentness.
+Current native results become same-Run assets requiring human review. A source changed or lost
+during capture produces a terminal failure with source/provenance digests, without a current
+asset. Completed queue receipts precede canonical settlement; heartbeat/claim repair interrupted
+receipt projection. Exact job status readback releases a worker whose terminal response was lost.
+Actual unresolved device execution remains waiting; there is no automatic replay or deletion.
+Canonical completion queues a stable event in the existing Slack outbox before settlement is
+acknowledged. A crash between those writes repeats only the idempotent projection. Notifications
+do not become user input; delivery checks current membership and retains unknown send outcomes.
+
+No remote capture service is activated by this PR. Real Mac export quality, live Slack delivery
+of remote results and unattended device reconciliation still require separate acceptance.
+
+### Human-reported marketing outcomes
+
+The canonical service stores attributed performance snapshots alongside a Run, independently
+of D1's external execution facts. Signed Slack commands derive workspace/member/session/work
+scope from authenticated membership and the conversation; payloads cannot supply authority or
+declare metrics verified. Each snapshot retains account, country, publication reference, UTC
+window, source digest and author. Missing clicks/installs remain unknown. Corrections are
+immutable successors restricted to the author or an authenticated reviewer. Listing returns
+the latest bounded set; comparison preserves separate snapshots and mismatched conditions
+without aggregation or causal attribution.
+
+Learning candidates freeze their source digests, observation, counterexample and applicability.
+Memory review and context selection recheck current sources in the same database transaction;
+a correction prevents adoption or selection of the stale candidate. The existing memory
+review/approval lifecycle remains mandatory. `GET /v1/runs/{run_id}/performance` is a bounded,
+authenticated read projection, with no private-chat promotion or write authority. Collection
+from live marketing accounts, attribution to installs and measurement of actual lift remain
+separate integrations; reported numbers do not establish them.
+
+### Optional bounded raster production
+
+`TRACE_MARKETING_IMAGE_EDIT_CONFIG` enrolls an explicit official Codex executable/model in
+the shared service. No login, server unit, publishing setting or private-chat production
+authority is changed. Planning readiness retains its observed timestamp for at most 60
+seconds; execution checks readiness again. Missing readiness leaves preparation and human
+continuation usable.
+
+An admitted invocation freezes source revision/digest, requested regions or top extension,
+locale/text, configuration and exact production approval. The SQLite queue waits for canonical
+acknowledgement before recording start. Provider execution runs outside the service lock, so
+other work can continue. A durable start without a terminal receipt is uncertain and cannot
+trigger regeneration. Known preflight failures settle without effect; verified output failures
+retain the generation cost and fail without presenting an asset as successful.
+
+The compositor restores unchanged original pixels and verifies their equality. Asset provenance
+retains original/generated/composed digests and whether generated pixels were resized. This
+deterministic check does not validate translation, fonts, seams or visual taste; model visual
+review and human review remain pending. Same-Run asset linking and the existing Slack outbox
+receive the validated result. Pending pause/revision and changed source state retain their
+canonical meaning. Edited promotions do not prove actual Trace language or font support.
+
+Managed visual review authorizes exact same-Run asset links before reading source bytes or
+cached inference. It rechecks lineage before and after the existing Codex visual helper and
+retains an unresolved start record after response loss. Source changes invalidate cached review;
+model findings cannot update human approval or native-product facts. Preparation selects this
+capability when managed inputs and readiness exist, independently of Slack file permissions.
+
+The Web Run projection lists only linked asset metadata, bounded separately from byte readback.
+It loads a selected PNG/JPEG through the authenticated single-asset route and displays origin,
+locale, QA and stale state. Metadata listing does not read or verify every image. Delayed asset
+and performance responses cannot overwrite another selected Run. Shared Slack summaries link
+to the configured Web origin only when public links are enabled; private history is not promoted.
+
+Natural production assent binds the current exact local-artifact invocation only after all
+review pages were successfully delivered to that same authenticated user. Its frozen action
+retains the invocation digest and current approval membership is checked before dispatch.
+Initial broad requests, missing review pages, changed targets and external publication do not
+inherit a production grant. The explicit hash approval path remains available.
+
+Unknown edit operations expose a scoped status and explicit reviewer abandonment endpoint.
+The API derives authority from current authenticated membership, never the request body.
+Abandonment binds the pending operation/invocation, reviewer, note and time to a durable
+human-reported terminal failure with reserved cost consumed. External outcome remains unknown;
+this is not a no-effect or verified provider failure receipt. Identical requests repair
+completion/outbox projection without re-entering generation. The original start ledger and
+artifacts remain available. Queued, unrelated or changed operations cannot be abandoned by
+that decision. No automatic timeout abandonment is introduced.
+
+### Managed server port
+
+The default agent listener is loopback port 8090. New setup persists `port: 8090` in the
+credential-free `~/.config/trace-marketing/server.json` outside the selected release. The process
+launcher, updater health/drain/activation and operator status use this same integer setting
+(1–65535, default 8090). Cloudflare independently routes the public HTTPS hostname to localhost:8090;
+Slack callback URLs retain HTTPS without an internal port suffix. The updater need not load agent
+secrets to learn the port. The standalone `service run --port` remains an independent explicit CLI.
+Older fixed-8765 managers require an idle/offline reinstall with preserved configuration/state/current
+link backup before the new channel can take over; ordinary self-update cannot bridge that change.
+
+### Slack GitHub issue creation
+
+The optional `github.issue.create` integration writes only to `corca-ai/ads-booster`. A private
+operator token file is loaded at service startup, outside release state; `server github-setup`
+checks repository access and writes it atomically without rewriting Slack setup. Tokens never enter
+catalogs, reasoning requests or receipts. The GitHub REST adapter rejects redirects, POSTs only the
+approved title/body, GETs the created issue number and verifies its URL and exact text before returning
+a minimal receipt. Known HTTP rejections return sanitized failure; uncertain mutation or readback
+results use the canonical awaiting-reconciliation boundary with no blind retry.
+
+Slack's existing signature/member/channel scope and exact invocation-hash approval remain mandatory.
+The public repository is explicit in the frozen input reviewed by the approver. Private DM policy
+still exposes only public search. Both Slack message and slash-command summaries project issue URLs
+from matching successful receipt/output digests, independently of model-generated prose. No new
+posting scheduler, GitHub shell authority or repository-wide token access is introduced.
+
+### Slack progress and cancellation
+
+Each mention/DM execution owns a durable `slack_progress` row binding the inbox message, Run and
+Slack status-message timestamp. A worker-local status thread updates that message every five seconds
+with the current execution stage/elapsed time; final outbox delivery updates the same timestamp and
+removes buttons. Unknown initial sends are not repeated; final delivery may use a separate message
+when no confirmed timestamp exists. Status threads join before final delivery to prevent late overwrites.
+
+The signed form endpoint `/channels/slack/interactions` accepts only the stop action for the recorded
+app/team/channel/message, from its author or a shared-channel approver. It persists cancellation
+without the execution lock or an outbound Slack call, including during maintenance drain. It admits
+no new work. Cancellation flags survive worker restart and affect only their original inbox job.
+
+A thread-scoped control checks before/after reasoning and before tool dispatch. Official Codex
+structured jobs terminate and reap their owned process group when cancelled; other processes and
+services are untouched. The service appends an explicit STOP step after the execution yields.
+Already-started external effects retain normal receipt/readback or awaiting-reconciliation handling,
+then subsequent work stops. Canonical history and completed side-effect receipts are preserved.
+
+### Codex image drafts in Slack
+
+The installed composition registers approval-required `creative.image.generate` as a local-artifact
+tool. Its dedicated ephemeral Codex turn uses the service user's official login, enables image
+generation and disables shell, apps and browser tools. User/project configuration is ignored. The
+visual brief cannot select paths or delivery destinations. The adapter reads the CLI JSON thread.started ID and selects the latest PNG from a bounded set of up to four variants in that runtime
+thread’s generated_images directory, never from model-provided paths. It validates the bounded PNG
+and persists a private copy by SHA-256, recording prompt/invocation provenance in the
+canonical receipt/evidence stream. Cancellation uses the shared owned-process control; interrupted
+admitted generation retains the runtime's uncertain-effect state without regeneration.
+
+Mention-thread result delivery projects only matching successful receipt/evidence pairs. After
+current member/channel authorization it reads the digest-bound file and shares a review draft in that
+exact channel/thread through Slack's external upload protocol. `slack_image_deliveries` records
+admission before upload, keyed by conversation/run/digest; unknown completion is never reposted.
+The bot credential goes only to fixed Slack API endpoints, never to the signed file upload URL.
+Private conversations remain public-search-only. Slash/API callers can generate local artifacts,
+but automatic image attachment is the mention-thread delivery surface.
+### Combined work continuity and team knowledge
+
+The service keeps two complementary context owners: scoped work memory for feedback/learning and
+optional TEAM/SOUL/wiki knowledge for attributed cross-conversation facts. Both feed the same
+canonical Run; neither can issue approval. Historical prepared knowledge stays in the ledger but
+is excluded from generic conversation projection and is selected again under current authority.
+Context selection uses the latest canonical follow-up together with the original goal.
+
+Slack intake preserves its immutable source admission. Before executing a queued message, an
+additive execution binding links its authenticated actor/message to the actual continuing Run;
+queued messages received before the first Run exists cannot invent independent knowledge Runs.
+Corrections/deletions fence that execution alias as well as the original source binding.
+
+Image and remote capture queues recheck knowledge immediately before starting. A prestart
+change settles without effect; an already-started result retains its actual receipt and cost.
+A stale context discovered after runtime admission retains the pending invocation/reservation in
+reconciliation, since no schema-safe prestart cancellation contract exists. It never silently
+replans over the admitted invocation. Knowledge and image worker lifecycles coexist with the
+managed server's persistent8090 port and existing maintenance/shutdown boundaries.
+
+Installed Slack Events admit signed mentions from all members in the configured app/team and any
+internal channel where the bot receives mentions. User identity binding is created atomically on
+first use without replacing existing grants or revocations. New bindings can create runs but cannot
+approve effects. Shared threads remain channel/thread scoped; DMs remain member/session scoped.
+Slack Connect events are excluded. Legacy channel/member lists still constrain slash commands, not
+installed Events conversations.

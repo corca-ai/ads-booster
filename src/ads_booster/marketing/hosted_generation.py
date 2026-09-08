@@ -14,6 +14,7 @@ import random
 import re
 import secrets
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal, Protocol
@@ -25,6 +26,7 @@ from ads_booster.candidate_generation import (
     REQUIRED_DOCUMENTS,
     CandidateContextSource,
     CandidateDraftEngine,
+    CandidateEditorialContext,
     CandidateFormatError,
     CandidateGenerationError,
     CandidateReferenceSource,
@@ -32,7 +34,18 @@ from ads_booster.candidate_generation import (
     default_context_directory,
     default_domain_shuffle,
 )
+from ads_booster.contracts.canonical import canonical_json
 from ads_booster.contracts.feedback import FeedbackContext, feedback_context_sha256
+from ads_booster.contracts.knowledge_context import (
+    KnowledgeContextTransfer,
+    KnowledgeContextUseReceipt,
+)
+from ads_booster.contracts.knowledge_context_validation import (
+    KnowledgeContextContractError,
+    TrustedKnowledgeDisabled,
+    TrustedKnowledgeRequired,
+    parse_knowledge_context_fields,
+)
 from ads_booster.marketing.inbox import ExecutionAdmission, MarketingExecutionError
 from ads_booster.marketing.models import MarketingTask, TaskKind, TaskResult, TaskStatus
 
@@ -109,6 +122,8 @@ class HostedGenerationRequest(GenerationModel):
     ] = ()
     feedback_context: FeedbackContext | None = None
     feedback_context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    knowledge_context: JsonObject | None = None
+    knowledge_context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     requested_by: Literal["hosted_workspace"]
 
 
@@ -333,6 +348,9 @@ class PreparedHostedGeneration:
     pool: ReferencePool
     domains: tuple[CandidatePersonaDomain, ...]
     brief: CandidateAccountBrief | None
+    editorial_context: CandidateEditorialContext | None
+    knowledge_context: KnowledgeContextTransfer | None
+    knowledge_context_sha256: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,8 +409,11 @@ class HostedWorkspaceGenerationExecutor:
             case _:
                 raise MarketingExecutionError("unsupported_hosted_generation_task")
         try:
+            knowledge_context = task.payload.get("knowledge_context")
+            if isinstance(knowledge_context, dict):
+                canonical_json(knowledge_context)
             request = HostedGenerationRequest.model_validate(task.payload)
-        except ValidationError as error:
+        except (TypeError, ValidationError) as error:
             pipeline = task.payload.get("pipeline")
             if pipeline != PIPELINE:
                 raise MarketingExecutionError("unsupported_hosted_generation_pipeline") from error
@@ -407,6 +428,33 @@ class HostedWorkspaceGenerationExecutor:
             or feedback_context_sha256(request.feedback_context) != request.feedback_context_sha256
         ):
             raise MarketingExecutionError("hosted_generation_feedback_context_invalid")
+        policy = (
+            TrustedKnowledgeRequired(task.knowledge_context_binding)
+            if task.knowledge_context_policy == "required"
+            and task.knowledge_context_binding is not None
+            else TrustedKnowledgeDisabled()
+        )
+        try:
+            parsed_context = parse_knowledge_context_fields(
+                request.knowledge_context,
+                request.knowledge_context_sha256,
+                policy,
+                now=datetime.now(UTC),
+            )
+        except KnowledgeContextContractError as error:
+            raise MarketingExecutionError(error.code.value) from error
+        transfer = parsed_context if isinstance(parsed_context, KnowledgeContextTransfer) else None
+        try:
+            editorial_context = (
+                None
+                if transfer is None
+                else CandidateEditorialContext(
+                    voice_status=transfer.receipt.voice_status,
+                    blocks=transfer.editorial_context,
+                )
+            )
+        except ValidationError as error:
+            raise MarketingExecutionError("hosted_generation_editorial_context_invalid") from error
         brief = None if request.persona is None else _account_brief(request.persona)
         directory = (
             default_context_directory(Path.cwd())
@@ -414,7 +462,12 @@ class HostedWorkspaceGenerationExecutor:
             else self.context_directory
         )
         try:
-            bundle = CandidateContextSource(directory, required=REQUIRED_DOCUMENTS).load()
+            required_documents = (
+                REQUIRED_DOCUMENTS
+                if transfer is None
+                else tuple(path for path in REQUIRED_DOCUMENTS if path != "core/VOICE-KR.md")
+            )
+            bundle = CandidateContextSource(directory, required=required_documents).load()
             pool = CandidateReferenceSource(directory).load(request.country)
         except CandidateGenerationError as error:
             raise MarketingExecutionError("hosted_generation_context_unavailable") from error
@@ -432,6 +485,9 @@ class HostedWorkspaceGenerationExecutor:
                 else (brief.domain,) * request.count
             ),
             brief=brief,
+            editorial_context=editorial_context,
+            knowledge_context=transfer,
+            knowledge_context_sha256=request.knowledge_context_sha256,
         )
 
     def execute(self, prepared: PreparedHostedGeneration) -> TaskResult:
@@ -466,6 +522,7 @@ class HostedWorkspaceGenerationExecutor:
                     )
                     if rule.stage == "caption" and "candidate_generation" in rule.targets
                 ),
+                editorial_context=prepared.editorial_context,
             )
         except CandidateFormatError as error:
             raise MarketingExecutionError(
@@ -485,21 +542,31 @@ class HostedWorkspaceGenerationExecutor:
                 "hosted_generation_result_invalid",
                 unknown_side_effect=True,
             )
-        return TaskResult(
-            status=TaskStatus.SUCCEEDED,
-            output={
-                "pipeline": PIPELINE,
-                "persona_id": prepared.request.persona_id,
-                "requested": prepared.request.count,
-                "failures": batch.failures,
-                "failure_reason": batch.failure_reason,
-                "feedback_application_sha256": prepared.request.feedback_context_sha256,
-                "candidates": [
-                    _candidate_output(candidate, drafted)
-                    for candidate, drafted in zip(generated.candidates, batch.drafts, strict=True)
-                ],
-            },
+        knowledge_receipt = (
+            None
+            if prepared.knowledge_context is None or prepared.knowledge_context_sha256 is None
+            else KnowledgeContextUseReceipt(
+                schema="trace.knowledge-context-use-receipt.v1",
+                transfer_id=prepared.knowledge_context.transfer_id,
+                knowledge_context_sha256=prepared.knowledge_context_sha256,
+                context_receipt=prepared.knowledge_context.receipt,
+            ).model_dump(mode="json", by_alias=True)
         )
+        output: JsonObject = {
+            "pipeline": PIPELINE,
+            "persona_id": prepared.request.persona_id,
+            "requested": prepared.request.count,
+            "failures": batch.failures,
+            "failure_reason": batch.failure_reason,
+            "feedback_application_sha256": prepared.request.feedback_context_sha256,
+            "candidates": [
+                _candidate_output(candidate, drafted)
+                for candidate, drafted in zip(generated.candidates, batch.drafts, strict=True)
+            ],
+        }
+        if knowledge_receipt is not None:
+            output["knowledge_context_use_receipt"] = knowledge_receipt
+        return TaskResult(status=TaskStatus.SUCCEEDED, output=output)
 
     def _prepare_workspace(
         self,

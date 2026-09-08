@@ -1,0 +1,8 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.invalid-ref.1",
+  "event_kind": "attachment_received",
+  "request_text": "존재하지 않는 논리 원본을 가리키는 실패 fixture입니다.",
+  "timestamp": "2026-09-07T09:00:00Z",
+  "attachments": [{"ordinal": 0, "logical_source_ref": "source.does-not-exist", "logical_revision_ref": "source.does-not-exist.rev1", "mime_type": "text/plain"}]
+}

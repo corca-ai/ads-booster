@@ -1,6 +1,11 @@
 import { applyHostedGenerationResult } from "./hosted-workspace.js";
 import { HttpError } from "./http-error.js";
-import { assertHostedCallbackTransport, reserveWorkerTaskCallback } from "./mac-workers.js";
+import {
+  assertHostedCallbackTransport,
+  reserveWorkerTaskCallback,
+  validateTaskKnowledgeContextAuthority,
+} from "./mac-workers.js";
+import { canonicalJson } from "./marketing-run-capabilities.js";
 
 /**
  * Take one caption batch back from the Mac worker that wrote it.
@@ -31,6 +36,26 @@ export async function receiveHostedGenerationCallback(env, task, callback, worke
     publishedPayload = JSON.parse(task.task_json)?.payload ?? {};
   } catch {
     throw new HttpError(409, "hosted generation task payload is invalid");
+  }
+  const publishedTask = JSON.parse(task.task_json);
+  const knowledgeRequired = publishedTask.knowledge_context_policy === "required";
+  if (knowledgeRequired) {
+    await validateTaskKnowledgeContextAuthority(env, task, "accept_result");
+    if (status === "succeeded") {
+      const used = callback.result?.output?.knowledge_context_use_receipt;
+      const expected = publishedPayload.knowledge_context;
+      if (
+        !used || used.transfer_id !== expected?.transfer_id
+        || used.knowledge_context_sha256 !== publishedPayload.knowledge_context_sha256
+        || canonicalJson(used.context_receipt) !== canonicalJson(expected?.receipt)
+      ) throw new HttpError(409, "hosted generation knowledge receipt does not match task");
+    }
+  } else if (
+    publishedPayload.knowledge_context != null
+    || publishedPayload.knowledge_context_sha256 != null
+    || publishedTask.knowledge_context_binding != null
+  ) {
+    throw new HttpError(409, "disabled hosted generation task carries knowledge context");
   }
   if (status === "succeeded" && publishedPayload.feedback_context_sha256 && (
     callback.result?.output?.feedback_application_sha256

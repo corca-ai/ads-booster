@@ -26,10 +26,11 @@ jobs:
       - name: Verify service, channels and update recovery
         run: >-
           uv run --no-sync pytest tests/marketing/agent_service tests/marketing/channels
-          tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py
+          tests/providers/test_codex_reasoning.py tests/providers/test_execution_control.py
+          tests/cli/test_cli_compatibility.py
           tests/cli/test_agent_server_update.py -q
           tests/marketing/tool_adapters/test_compatibility.py
-          tests/cli/test_server_onboarding.py
+          tests/cli/test_server_onboarding.py tests/cli/test_github_setup.py
       - name: Install the built wheel in a fresh environment
         shell: bash
         run: |

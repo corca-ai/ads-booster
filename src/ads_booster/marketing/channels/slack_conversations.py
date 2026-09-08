@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import AgentGoal
+from ads_booster.contracts.agent_run import AgentGoal, contract_sha256
 from ads_booster.contracts.models import ContractModel
+from ads_booster.knowledge.contract_types import ConversationEventKind
+from ads_booster.knowledge.source_contracts import ConversationEvent
+from ads_booster.marketing.agent_service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    KnowledgeIngressSink,
+    PendingKnowledgeIngress,
+    TrustedRunBinding,
+)
+from ads_booster.marketing.channels.slack_attachments import SlackAttachment
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -34,11 +43,26 @@ class Message(ContractModel):
     conversation_id: str
     user_id: str
     text: str
+    notification_only: bool = False
     reopens: bool = False
+    attachments: tuple[SlackAttachment, ...] = ()
 
 
 class MessagePlan(ContractModel):
-    action: Literal["create", "input", "approve", "reject", "resume", "reply", "close"]
+    action: Literal[
+        "create",
+        "input",
+        "approve",
+        "reject",
+        "resume",
+        "reply",
+        "close",
+        "revise",
+        "pause",
+        "memory",
+        "delivery",
+        "observation",
+    ]
     run_id: str = ""
     goal: AgentGoal | None = None
     evidence: JsonObject | None = None
@@ -51,6 +75,8 @@ _ROW: TypeAdapter[tuple[str, ...] | None] = TypeAdapter(tuple[str, ...] | None)
 _ROWS = TypeAdapter(list[tuple[str, ...]])
 _MAX_PENDING = 1000
 _MAX_CONTEXT_CHARS = 24000
+_MAX_NOTIFICATION_EVENT = 320
+_MAX_NOTIFICATION_CHARS = 12000
 
 
 class SlackInboxFullError(RuntimeError):
@@ -60,9 +86,18 @@ class SlackInboxFullError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class SlackConversationStore:
     database_path: Path
+    knowledge_sink: KnowledgeIngressSink | None = None
+    installed_knowledge_ingress: CanonicalKnowledgeIngress | None = None
+    knowledge_ingress: CanonicalKnowledgeIngress = field(init=False)
 
     def __post_init__(self) -> None:
         """Create the durable inbox without modifying canonical Run records."""
+        object.__setattr__(
+            self,
+            "knowledge_ingress",
+            self.installed_knowledge_ingress
+            or CanonicalKnowledgeIngress(self.database_path, sink=self.knowledge_sink),
+        )
         with self.connect() as db:
             _ = db.executescript("""
                 CREATE TABLE IF NOT EXISTS slack_conversations (
@@ -96,7 +131,12 @@ class SlackConversationStore:
             )
         return None if row is None else Conversation.model_validate_json(row[0])
 
-    def admit(self, conversation: Conversation, message: Message) -> None:
+    def admit(
+        self,
+        conversation: Conversation,
+        message: Message,
+        knowledge: tuple[PendingKnowledgeIngress, ...] = (),
+    ) -> None:
         with self.connect() as db:
             _ = db.execute("BEGIN IMMEDIATE")
             row = _ROW.validate_python(
@@ -125,6 +165,47 @@ class SlackConversationStore:
                 (message_id,conversation_id,message_json) VALUES (?,?,?)""",
                 (message.message_id, conversation.conversation_id, message.model_dump_json()),
             )
+            for delivery in knowledge:
+                _ = self.knowledge_ingress.admit(
+                    db, delivery.binding, delivery.event, delivery.envelope
+                )
+
+    def admit_mutation(self, knowledge: PendingKnowledgeIngress) -> None:
+        with self.connect() as db:
+            _ = db.execute("BEGIN IMMEDIATE")
+            _ = self.knowledge_ingress.admit(
+                db, knowledge.binding, knowledge.event, knowledge.envelope
+            )
+
+    def admitted_message(self, message_id: str) -> Message | None:
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    "SELECT message_json FROM slack_message_jobs WHERE message_id=?",
+                    (message_id,),
+                ).fetchone()
+            )
+        return None if row is None else Message.model_validate_json(row[0])
+
+    def latest_knowledge_event(
+        self, message_id: str
+    ) -> tuple[ConversationEvent, TrustedRunBinding] | None:
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT event_json,binding_json
+                    FROM knowledge_conversation_events AS event
+                    JOIN knowledge_ingress_outbox AS outbox USING(event_key)
+                    JOIN knowledge_run_bindings AS binding USING(binding_id)
+                    WHERE event.message_id=? ORDER BY event.revision DESC LIMIT 1""",
+                    (message_id,),
+                ).fetchone()
+            )
+        if row is None:
+            return None
+        return ConversationEvent.model_validate_json(row[0]), TrustedRunBinding.model_validate_json(
+            row[1]
+        )
 
     def update_conversation(self, conversation: Conversation) -> None:
         with self.connect() as db:
@@ -133,12 +214,109 @@ class SlackConversationStore:
                 (conversation.model_dump_json(), conversation.conversation_id),
             )
 
+    def conversation_for_run(self, tenant_id: str, run_id: str) -> Conversation | None:
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT data_json FROM slack_conversations
+                WHERE json_extract(data_json,'$.tenant_id')=?
+                AND json_extract(data_json,'$.current_run')=? LIMIT 1""",
+                    (tenant_id, run_id),
+                ).fetchone()
+            )
+        return None if row is None else Conversation.model_validate_json(row[0])
+
+    def enqueue_run_notification(
+        self, tenant_id: str, run_id: str, *, event_id: str, result: str
+    ) -> bool:
+        """Atomically bind one local notification to the still-current conversation."""
+        if (
+            not event_id
+            or len(event_id) > _MAX_NOTIFICATION_EVENT
+            or len(result) > _MAX_NOTIFICATION_CHARS
+        ):
+            raise ValueError("slack_run_notification_invalid")
+        with self.connect() as db:
+            _ = db.execute("BEGIN IMMEDIATE")
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT data_json FROM slack_conversations
+                WHERE json_extract(data_json,'$.tenant_id')=?
+                AND json_extract(data_json,'$.current_run')=?
+                AND json_extract(data_json,'$.closed')=0 LIMIT 1""",
+                    (tenant_id, run_id),
+                ).fetchone()
+            )
+            if row is None:
+                return False
+            conversation = Conversation.model_validate_json(row[0])
+            sender = _ROW.validate_python(
+                db.execute(
+                    """SELECT message_json FROM slack_message_jobs WHERE conversation_id=?
+                AND COALESCE(json_extract(message_json,'$.notification_only'),0)=0
+                ORDER BY rowid DESC LIMIT 1""",
+                    (conversation.conversation_id,),
+                ).fetchone()
+            )
+            if sender is None:
+                return False
+            original = Message.model_validate_json(sender[0])
+            message = Message(
+                message_id="slack-run-notification-"
+                + contract_sha256(
+                    {
+                        "tenant_id": tenant_id,
+                        "run_id": run_id,
+                        "event_id": event_id,
+                        "conversation_id": conversation.conversation_id,
+                    }
+                ),
+                conversation_id=conversation.conversation_id,
+                user_id=original.user_id,
+                text="",
+                notification_only=True,
+            )
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO slack_message_jobs
+                (message_id,conversation_id,message_json,state,result,ack_state)
+                VALUES (?,?,?,'done',?,'skipped')""",
+                (
+                    message.message_id,
+                    conversation.conversation_id,
+                    message.model_dump_json(),
+                    result,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def pending_for_run(self, tenant_id: str, run_id: str) -> tuple[Message, ...]:
+        with self.connect() as db:
+            rows = _ROWS.validate_python(
+                db.execute(
+                    """SELECT j.message_json FROM slack_message_jobs j
+                JOIN slack_conversations c ON c.conversation_id=j.conversation_id
+                WHERE j.state='pending' AND json_extract(c.data_json,'$.tenant_id')=?
+                AND json_extract(c.data_json,'$.current_run')=? ORDER BY j.rowid LIMIT 1000""",
+                    (tenant_id, run_id),
+                ).fetchall()
+            )
+        return tuple(Message.model_validate_json(row[0]) for row in rows)
+
     def claim(self) -> tuple[Message, MessagePlan | None] | None:
         with self.connect() as db:
             _ = db.execute("BEGIN IMMEDIATE")
             row = _ROW.validate_python(
-                db.execute("""SELECT message_json,plan_json FROM
-                slack_message_jobs WHERE state='pending' ORDER BY rowid LIMIT 1""").fetchone()
+                db.execute(
+                    """SELECT message_json,plan_json FROM slack_message_jobs AS job
+                    WHERE job.state='pending' AND (
+                        ?=0 OR NOT EXISTS (
+                            SELECT 1 FROM knowledge_conversation_events AS event
+                            JOIN knowledge_ingress_outbox AS outbox USING(event_key)
+                            WHERE event.message_id=job.message_id AND outbox.state!='acked'
+                        )
+                    ) ORDER BY job.rowid LIMIT 1""",
+                    (int(self.knowledge_sink is not None),),
+                ).fetchone()
             )
             if row is None:
                 return None
@@ -171,7 +349,14 @@ class SlackConversationStore:
                 ).fetchall()
             ):
                 plan = MessagePlan.model_validate_json(raw) if raw else None
-                replayable = plan is None or plan.action in {"create", "reply", "close"}
+                replayable = plan is None or plan.action in {
+                    "create",
+                    "reply",
+                    "close",
+                    "revise",
+                    "pause",
+                    "observation",
+                }
                 _ = db.execute(
                     "UPDATE slack_message_jobs SET state=?,result=? WHERE message_id=?",
                     (
@@ -185,6 +370,7 @@ class SlackConversationStore:
             _ = db.execute(
                 "UPDATE slack_message_jobs SET ack_state='unknown' WHERE ack_state='sending'"
             )
+        self.knowledge_ingress.recover()
 
     def transcript(self, conversation_id: str) -> JsonObject:
         with self.connect() as db:
@@ -192,6 +378,7 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT message_json,result FROM
                 slack_message_jobs WHERE conversation_id=? AND state IN ('done','blocked')
+                AND COALESCE(json_extract(message_json,'$.notification_only'),0)=0
                 ORDER BY rowid DESC LIMIT 21""",
                     (conversation_id,),
                 ).fetchall()
@@ -200,10 +387,25 @@ class SlackConversationStore:
         size = 0
         for raw, reply in rows[:20]:
             message = Message.model_validate_json(raw)
-            if size + len(message.text) + len(reply) > _MAX_CONTEXT_CHARS:
+            latest = self.latest_knowledge_event(message.message_id)
+            if latest is not None:
+                event, _ = latest
+                if event.event_kind is ConversationEventKind.MESSAGE_DELETED:
+                    continue
+                text = event.text
+            else:
+                text = message.text
+            if size + len(text) + len(reply) > _MAX_CONTEXT_CHARS:
                 break
-            size += len(message.text) + len(reply)
-            messages.append({"user_id": message.user_id, "user": message.text, "assistant": reply})
+            size += len(text) + len(reply)
+            messages.append(
+                {
+                    "user_id": message.user_id,
+                    "user": text,
+                    "assistant": reply,
+                    "attachments": [a.model_dump(mode="json") for a in message.attachments],
+                }
+            )
         return {
             "messages": list(reversed(messages)),
             "projection_truncated": len(messages) < len(rows),

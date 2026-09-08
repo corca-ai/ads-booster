@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.soul.b.decision.1",
+  "event_kind": "message_finalized",
+  "request_text": "브랜드 B 원칙을 채택합니다. 독자를 탐험에 초대하고, 발견의 즐거움과 감각적 장면으로 설득하며, 경쾌한 리듬과 따뜻한 질문을 씁니다. 충돌하면 호기심을 유지하되 확인되지 않은 효능은 말하지 않습니다.",
+  "timestamp": "2026-09-07T06:05:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.brand-b", "message_ref": "message.soul.b.decision", "revision": 1, "logical_source_ref": "source.soul.b.decision", "logical_revision_ref": "source.soul.b.decision.rev1"},
+  "attachments": [],
+  "trusted_capability_refs": {"brand_ref": "brand.b", "grant": "brand_voice_edit"}
+}

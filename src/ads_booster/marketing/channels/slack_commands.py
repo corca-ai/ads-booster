@@ -27,6 +27,7 @@ from ads_booster.marketing.channels.contracts import (
     ChannelKind,
     ChannelRunRequest,
 )
+from ads_booster.marketing.channels.github_results import issue_results
 from ads_booster.marketing.channels.slack import SlackRequestVerifier
 from ads_booster.transport.json_types import JsonObject
 
@@ -313,6 +314,13 @@ class SlackCommands:
         return True
 
     def review(self, tenant_id: str, run_id: str, page: int) -> str:
+        pages = self.review_pages(tenant_id, run_id)
+        if not 1 <= page <= len(pages):
+            raise ValueError("agent_review_page_invalid")
+        return pages[page - 1]
+
+    def review_pages(self, tenant_id: str, run_id: str) -> tuple[str, ...]:
+        """One authoritative rendering for exact approval review and delivery evidence."""
         run = self.application.service.repository.get(tenant_id, run_id)
         if run is None or run.state.value != "awaiting_approval":
             raise ValueError("agent_approval_not_pending")
@@ -322,15 +330,16 @@ class SlackCommands:
         content = invocation.model_dump_json(indent=2)
         size = 1800
         pages = (len(content) + size - 1) // size
-        if not 1 <= page <= pages:
-            raise ValueError("agent_review_page_invalid")
-        return "\n".join(
-            (
-                f"실행: {run_id}",
-                f"승인해시: {contract_sha256(invocation)}",
-                f"페이지 {page}/{pages} (모든 페이지 확인 후 이 해시로 승인)",
-                content[(page - 1) * size : page * size],
+        return tuple(
+            "\n".join(
+                (
+                    f"실행: {run_id}",
+                    f"승인해시: {contract_sha256(invocation)}",
+                    f"페이지 {page}/{pages} (모든 페이지 확인 후 이 해시로 승인)",
+                    content[(page - 1) * size : page * size],
+                )
             )
+            for page in range(1, pages + 1)
         )
 
     def summary(self, tenant_id: str, run_id: str) -> str:
@@ -362,4 +371,6 @@ class SlackCommands:
                 decision = latest.payload.get("decision")
                 if isinstance(decision, dict):
                     lines.append(str(decision.get("reasoning_summary", ""))[:1800])
+        if result := issue_results(records):
+            lines.append(result)
         return "\n".join(lines)

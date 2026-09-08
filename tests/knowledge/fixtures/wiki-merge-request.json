@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.wiki.merge.1",
+  "event_kind": "message_finalized",
+  "request_text": "‘라이트 플랜 가격’ 페이지를 ‘라이트 요금제’ 페이지로 병합해 주세요. 가격 claim ID와 과거 revision 인용은 유지하고 이전 제목은 alias로 남겨 주세요.",
+  "timestamp": "2026-09-07T08:00:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.wiki", "message_ref": "message.wiki.merge", "revision": 1},
+  "attachments": [],
+  "logical_page_refs": {"source": "page.light-price", "target": "page.light-plan"}
+}

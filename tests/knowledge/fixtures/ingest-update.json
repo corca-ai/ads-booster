@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.file.kr-price.2",
+  "event_kind": "message_edited",
+  "request_text": "한국 가격을 정정합니다. 2026년 9월 15일부터 월 31,000원입니다.",
+  "timestamp": "2026-09-07T01:15:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.seed", "message_ref": "message.team-a.seed-price", "revision": 2, "logical_source_ref": "source.price.kr", "logical_revision_ref": "source.price.kr.rev2"},
+  "attachments": []
+}
