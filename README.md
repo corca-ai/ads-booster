@@ -41,6 +41,8 @@ missing system packages (sudo), checksum-pinned uv, native Codex and cloudflared
 login and Node.js are unnecessary. If logged in as root, use `bash /tmp/trace-install.sh --user
 trace-marketing`, then `sudo -iu trace-marketing` for Codex login and setup. Credentials stay with
 that user. Installer enables linger for operation after logout and reboot.
+The Python package includes IANA timezone data via `tzdata`, including on minimal Ubuntu hosts
+without a system timezone database.
 
 The managed agent listens on `127.0.0.1:8090`; route the marketing Cloudflare hostname to
 `http://localhost:8090`. `~/.config/trace-marketing/server.json` stores an integer `port` (default
