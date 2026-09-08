@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -62,16 +63,19 @@ class CliKnowledgeSession:
         root, _, _ = self.settings.require_enabled()
         self.actor = load_local_actor(self.settings)
         self.owner = KnowledgeOwner(root, f"cli-{uuid4().hex}")
-        self.owner.acquire()
-        self.repository = SqliteKnowledgeRepository(root)
-        self.repository.register_actor(self.actor, MembershipRole.ADMIN)
-        reader = (
-            None
-            if self.attachment_paths is None
-            else LocalAttachmentReader(self.attachment_paths)
-        )
-        self.ingestion = KnowledgeIngestion(self.repository, attachment_reader=reader)
-        self.host = ToolHost(self.repository, ingestion=self.ingestion)
+        with ExitStack() as initialization:
+            _ = initialization.callback(self.owner.release)
+            self.owner.acquire()
+            self.repository = SqliteKnowledgeRepository(root)
+            self.repository.register_actor(self.actor, MembershipRole.ADMIN)
+            reader = (
+                None
+                if self.attachment_paths is None
+                else LocalAttachmentReader(self.attachment_paths)
+            )
+            self.ingestion = KnowledgeIngestion(self.repository, attachment_reader=reader)
+            self.host = ToolHost(self.repository, ingestion=self.ingestion)
+            _ = initialization.pop_all()
 
     def trusted_context(
         self,
