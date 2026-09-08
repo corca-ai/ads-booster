@@ -531,6 +531,23 @@ class SlackEvents:
             _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
         return self.summary(conversation)
 
+    def enqueue_run_update(self, tenant_id: str, run_id: str, *, event_id: str) -> bool:
+        """Queue a canonical completion projection; delivery rechecks Slack membership."""
+        conversation = self.store.conversation_for_run(tenant_id, run_id)
+        if conversation is None or conversation.closed:
+            return False
+        service = self._service(conversation)
+        with service.execution_lock:
+            run = service.repository.get(tenant_id, run_id)
+            if run is None:
+                return False
+            return self.store.enqueue_run_notification(
+                tenant_id,
+                run_id,
+                event_id=event_id,
+                result=self.summary(conversation)[:12000],
+            )
+
     def summary(self, conversation: Conversation) -> str:
         service = self._service(conversation)
         run = service.repository.get(conversation.tenant_id, conversation.current_run)

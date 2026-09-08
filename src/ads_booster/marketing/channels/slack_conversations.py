@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import AgentGoal
+from ads_booster.contracts.agent_run import AgentGoal, contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.channels.slack_attachments import SlackAttachment
 from ads_booster.transport.json_types import JsonObject
@@ -35,6 +35,7 @@ class Message(ContractModel):
     conversation_id: str
     user_id: str
     text: str
+    notification_only: bool = False
     reopens: bool = False
     attachments: tuple[SlackAttachment, ...] = ()
 
@@ -66,6 +67,8 @@ _ROW: TypeAdapter[tuple[str, ...] | None] = TypeAdapter(tuple[str, ...] | None)
 _ROWS = TypeAdapter(list[tuple[str, ...]])
 _MAX_PENDING = 1000
 _MAX_CONTEXT_CHARS = 24000
+_MAX_NOTIFICATION_EVENT = 320
+_MAX_NOTIFICATION_CHARS = 12000
 
 
 class SlackInboxFullError(RuntimeError):
@@ -160,6 +163,69 @@ class SlackConversationStore:
             )
         return None if row is None else Conversation.model_validate_json(row[0])
 
+    def enqueue_run_notification(
+        self, tenant_id: str, run_id: str, *, event_id: str, result: str
+    ) -> bool:
+        """Atomically bind one local notification to the still-current conversation."""
+        if (
+            not event_id
+            or len(event_id) > _MAX_NOTIFICATION_EVENT
+            or len(result) > _MAX_NOTIFICATION_CHARS
+        ):
+            raise ValueError("slack_run_notification_invalid")
+        with self.connect() as db:
+            _ = db.execute("BEGIN IMMEDIATE")
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT data_json FROM slack_conversations
+                WHERE json_extract(data_json,'$.tenant_id')=?
+                AND json_extract(data_json,'$.current_run')=?
+                AND json_extract(data_json,'$.closed')=0 LIMIT 1""",
+                    (tenant_id, run_id),
+                ).fetchone()
+            )
+            if row is None:
+                return False
+            conversation = Conversation.model_validate_json(row[0])
+            sender = _ROW.validate_python(
+                db.execute(
+                    """SELECT message_json FROM slack_message_jobs WHERE conversation_id=?
+                AND COALESCE(json_extract(message_json,'$.notification_only'),0)=0
+                ORDER BY rowid DESC LIMIT 1""",
+                    (conversation.conversation_id,),
+                ).fetchone()
+            )
+            if sender is None:
+                return False
+            original = Message.model_validate_json(sender[0])
+            message = Message(
+                message_id="slack-run-notification-"
+                + contract_sha256(
+                    {
+                        "tenant_id": tenant_id,
+                        "run_id": run_id,
+                        "event_id": event_id,
+                        "conversation_id": conversation.conversation_id,
+                    }
+                ),
+                conversation_id=conversation.conversation_id,
+                user_id=original.user_id,
+                text="",
+                notification_only=True,
+            )
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO slack_message_jobs
+                (message_id,conversation_id,message_json,state,result,ack_state)
+                VALUES (?,?,?,'done',?,'skipped')""",
+                (
+                    message.message_id,
+                    conversation.conversation_id,
+                    message.model_dump_json(),
+                    result,
+                ),
+            )
+            return cursor.rowcount == 1
+
     def pending_for_run(self, tenant_id: str, run_id: str) -> tuple[Message, ...]:
         with self.connect() as db:
             rows = _ROWS.validate_python(
@@ -239,6 +305,7 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT message_json,result FROM
                 slack_message_jobs WHERE conversation_id=? AND state IN ('done','blocked')
+                AND COALESCE(json_extract(message_json,'$.notification_only'),0)=0
                 ORDER BY rowid DESC LIMIT 21""",
                     (conversation_id,),
                 ).fetchall()
