@@ -770,7 +770,7 @@ class SlackEvents:
             len(descriptors) != 1
             or descriptors[0].effect_class is not EffectClass.LOCAL_ARTIFACT
             or descriptors[0].capability_id
-            not in {"capture.appium", "creative.image.edit", "creative.image.localize"}
+            not in {"creative.image.edit", "creative.image.localize"}
         ):
             return fallback
         pages = self.commands.review_pages(conversation.tenant_id, run.run_id)

@@ -144,10 +144,10 @@ def test_slack_review_exposes_exact_invocation_without_requiring_web_login(tmp_p
     owner = setup_commands(tmp_path)
     service = owner.application.service
     service.registry = ToolRegistry(
-        (_descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True),)
+        (_descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True),)
     )
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     _ = service.create(_request().model_copy(update={"tenant_id": "team"}), now=APP_NOW)
     body, headers = request("review run-one 1")
     result = owner.receive(body, headers, now=NOW)

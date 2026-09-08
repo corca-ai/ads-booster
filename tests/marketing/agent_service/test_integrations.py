@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
+from ads_booster.contracts.tool_capability import ToolExecutionResult
 from ads_booster.marketing.agent_service.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -44,8 +45,6 @@ class UnusedResearchRunner:
 def test_configured_tools_refresh_only_integrations_with_complete_credentials() -> None:
     configured = ConfiguredAgentTools(
         config=AgentServiceIntegrationConfig(
-            hosted_origin="https://trace.example",
-            hosted_token="control-secret",  # noqa: S106
             slack_bot_token="slack-secret",  # noqa: S106
             slack_channel_id="C123",
         ),
@@ -58,16 +57,12 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
         "creative.prepare",
         "research.search",
         "research.web",
-        "catalog.hosted.install",
-        "workflow.feature_launch",
         "deliver.slack",
     ]
     assert set(configured.adapters()) == {
         "creative.prepare",
         "research.search",
         "research.web",
-        "catalog.hosted.install",
-        "workflow.feature_launch",
         "deliver.slack",
     }
     assert all(item.readiness.observed_at == NOW for item in descriptors)
@@ -76,33 +71,6 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
 def test_partial_integration_configuration_fails_service_startup() -> None:
     with pytest.raises(ValueError, match="agent_integration_config_incomplete"):
         _ = AgentServiceIntegrationConfig(notion_parent_page_id="page-without-token")
-
-
-def test_hosted_workflow_adapter_delegates_to_existing_control_plane() -> None:
-    seen: list[Request] = []
-
-    def opener(request: Request, *, timeout: float) -> Response:
-        assert timeout == 30.0
-        seen.append(request)
-        return Response({"agent_run_id": "run-1", "state": "queued"})
-
-    configured = ConfiguredAgentTools(
-        config=AgentServiceIntegrationConfig(
-            hosted_origin="https://trace.example",
-            hosted_token="control-secret",  # noqa: S106
-        ),
-        research_runner=UnusedResearchRunner(),
-        opener=opener,
-    )
-    descriptor = _descriptor(configured, "workflow.feature_launch")
-
-    result = configured.adapters()[descriptor.capability_id].execute(
-        _invocation(descriptor, {"schema_version": "trace.hosted-feature-launch.v1"}), descriptor
-    )
-
-    assert result.output == {"agent_run_id": "run-1", "state": "queued"}
-    assert seen[0].full_url == "https://trace.example/api/marketing-agent/runs"
-    assert seen[0].get_header("Authorization") == "Bearer control-secret"
 
 
 def test_slack_and_notion_are_real_adapters_not_catalog_references() -> None:
@@ -136,6 +104,8 @@ def test_slack_and_notion_are_real_adapters_not_catalog_references() -> None:
         _invocation(notion, {"title": "2026-09-03", "content": "브리프"}), notion
     )
 
+    assert isinstance(slack_result, ToolExecutionResult)
+    assert isinstance(notion_result, ToolExecutionResult)
     assert slack_result.output["ok"] is True
     assert notion_result.output["id"] == "notion-page"
     assert urls == [

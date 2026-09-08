@@ -163,7 +163,7 @@ Choose only a capability_id present in capability_snapshot.descriptors.
 Unavailable tools are absent and must not be requested.
 Roles are responsibilities, skills are reusable procedures and tools perform actual operations.
 For small creative work use creative.prepare with an explicit task and known inputs:
-mood, reference, background_review, partial_edit, font_color, app_capture, localization,
+mood, reference, background_review, partial_edit, font_color, localization,
 mockup, final_qa or partial_feedback. Preserve regions, change regions and target locales.
 creative.prepare returns a bounded plan and human handoff, never an edited image or completed QA.
 For a reviewable campaign/production/publication/learning proposal, use delivery.prepare when

@@ -39,16 +39,6 @@ _NOTION_DAILY_INPUT_SCHEMA: JsonObject = {
     },
     "additionalProperties": False,
 }
-_HOSTED_INSTALL_INPUT_SCHEMA: JsonObject = {
-    "type": "object",
-    "required": ["capability_id"],
-    "properties": {
-        "capability_id": {
-            "enum": ["research.web", "capture.native_png", "publish.threads", "deliver.slack"]
-        }
-    },
-    "additionalProperties": False,
-}
 _RECEIPT_SCHEMA: JsonObject = {
     "type": "object",
     "required": [
@@ -110,127 +100,6 @@ def research_descriptor(
             credential_boundary="adapter_owner",
         ),
         _InstallationState(installation_id, observed_at, ready, reason_code, version),
-    )
-
-
-def candidate_descriptor(
-    *,
-    installation_id: str,
-    observed_at: datetime,
-    ready: bool,
-    reason_code: str | None = None,
-    version: str = "1",
-) -> ToolDescriptor:
-    return _descriptor(
-        _DescriptorSpec(
-            capability_id="creative.candidates.generate",
-            owner="ads_booster.candidate_generation",
-            effect_class=EffectClass.LOCAL_ARTIFACT,
-            worst_case_units=10,
-            cost_unit="candidate_batch",
-            credential_boundary="adapter_owner",
-        ),
-        _InstallationState(installation_id, observed_at, ready, reason_code, version),
-    )
-
-
-def appium_descriptor(
-    *,
-    installation_id: str,
-    observed_at: datetime,
-    ready: bool,
-    reason_code: str | None = None,
-    version: str = "1",
-) -> ToolDescriptor:
-    return _descriptor(
-        _DescriptorSpec(
-            capability_id="capture.appium",
-            owner="ads_booster.capture",
-            effect_class=EffectClass.EXTERNAL,
-            worst_case_units=20,
-            cost_unit="device_session",
-            credential_boundary="adapter_owner",
-        ),
-        _InstallationState(installation_id, observed_at, ready, reason_code, version),
-    )
-
-
-def capture_descriptor(
-    *,
-    installation_id: str,
-    observed_at: datetime,
-    ready: bool,
-    reason_code: str | None = None,
-    version: str = "1",
-) -> ToolDescriptor:
-    return _descriptor(
-        _DescriptorSpec(
-            capability_id="capture.native_png",
-            owner="ads_booster.marketing.native_capture",
-            effect_class=EffectClass.LOCAL_ARTIFACT,
-            worst_case_units=20,
-            cost_unit="capture",
-            credential_boundary="adapter_owner",
-        ),
-        _InstallationState(installation_id, observed_at, ready, reason_code, version),
-    )
-
-
-def threads_descriptor(
-    *,
-    installation_id: str,
-    observed_at: datetime,
-    ready: bool,
-    reason_code: str | None = None,
-    version: str = "1",
-) -> ToolDescriptor:
-    return _descriptor(
-        _DescriptorSpec(
-            capability_id="publish.threads",
-            owner="ads_booster.marketing.threads",
-            effect_class=EffectClass.EXTERNAL,
-            worst_case_units=10,
-            cost_unit="post",
-            credential_boundary="adapter_owner",
-            reconciliation_mode="readback",
-            lookup_capability_id="threads.readback",
-        ),
-        _InstallationState(installation_id, observed_at, ready, reason_code, version),
-    )
-
-
-def hosted_workflow_descriptor(
-    *, installation_id: str, observed_at: datetime, ready: bool, reason_code: str | None = None
-) -> ToolDescriptor:
-    return _descriptor(
-        _DescriptorSpec(
-            capability_id="workflow.feature_launch",
-            owner="trace.hosted_marketing_workflow",
-            effect_class=EffectClass.CONTROL_PLANE_WRITE,
-            worst_case_units=40,
-            cost_unit="workflow_run",
-            credential_boundary="adapter_owner",
-            reconciliation_mode="readback",
-            lookup_capability_id="workflow.feature_launch.readback",
-        ),
-        _InstallationState(installation_id, observed_at, ready, reason_code, "1"),
-    )
-
-
-def hosted_tool_install_descriptor(
-    *, installation_id: str, observed_at: datetime, ready: bool, reason_code: str | None = None
-) -> ToolDescriptor:
-    return _descriptor(
-        _DescriptorSpec(
-            capability_id="catalog.hosted.install",
-            owner="trace.hosted_tool_catalog",
-            effect_class=EffectClass.CONTROL_PLANE_WRITE,
-            worst_case_units=1,
-            cost_unit="catalog_registration",
-            credential_boundary="adapter_owner",
-        ),
-        _InstallationState(installation_id, observed_at, ready, reason_code, "1"),
-        input_schema=_HOSTED_INSTALL_INPUT_SCHEMA,
     )
 
 
@@ -357,13 +226,7 @@ def _descriptor(
 
 
 __all__ = [
-    "appium_descriptor",
-    "candidate_descriptor",
-    "capture_descriptor",
-    "hosted_tool_install_descriptor",
-    "hosted_workflow_descriptor",
     "notion_daily_descriptor",
     "research_descriptor",
     "slack_delivery_descriptor",
-    "threads_descriptor",
 ]

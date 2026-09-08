@@ -1,5 +1,9 @@
 # Marketing Agent Product Strategy
 
+> Historical record: sections describing Cloudflare Workers/D1/R2, hosted campaigns, Mac/Appium
+> workers or Threads automation predate their removal on 2026-09-08. They are not current
+> implementation or installation instructions. See [current architecture](../architecture/system.md).
+
 Status: Draft — product direction and staged implementation contract. It does not authorize a new
 publisher, CRM mutation, spend, customer outreach, or SaaS rollout.
 

@@ -1,5 +1,9 @@
 # Creative Automation Quality Development Plan
 
+> Historical record: sections describing Cloudflare Workers/D1/R2, hosted campaigns, Mac/Appium
+> workers or Threads automation predate their removal on 2026-09-08. They are not current
+> implementation or installation instructions. See [current architecture](../architecture/system.md).
+
 Status: Draft — the attempt feedback foundation is implemented; offline evaluation, prompt
 experiments, and post-publication measurement are not yet implemented.
 

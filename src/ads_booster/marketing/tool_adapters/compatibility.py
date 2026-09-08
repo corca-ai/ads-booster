@@ -97,30 +97,6 @@ def research_adapter(
     return _adapter("research.web", version, executor_id, executor)
 
 
-def candidate_adapter(
-    *, executor_id: str, executor: ToolExecutor, version: str = "1"
-) -> DelegatingToolAdapter:
-    return _adapter("creative.candidates.generate", version, executor_id, executor)
-
-
-def appium_adapter(
-    *, executor_id: str, executor: ToolExecutor, version: str = "1"
-) -> DelegatingToolAdapter:
-    return _adapter("capture.appium", version, executor_id, executor)
-
-
-def capture_adapter(
-    *, executor_id: str, executor: ToolExecutor, version: str = "1"
-) -> DelegatingToolAdapter:
-    return _adapter("capture.native_png", version, executor_id, executor)
-
-
-def threads_adapter(
-    *, executor_id: str, executor: ToolExecutor, version: str = "1"
-) -> DelegatingToolAdapter:
-    return _adapter("publish.threads", version, executor_id, executor)
-
-
 def _adapter(
     capability_id: str,
     version: str,
@@ -140,9 +116,5 @@ __all__ = [
     "DelegatingToolAdapter",
     "ToolDelegationError",
     "ToolExecutor",
-    "appium_adapter",
-    "candidate_adapter",
-    "capture_adapter",
     "research_adapter",
-    "threads_adapter",
 ]

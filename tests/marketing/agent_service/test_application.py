@@ -140,7 +140,7 @@ class EffectThenStopReasoning:
         decision = ReasoningDecision(
             schema_version="trace.reasoning-decision.v1",
             action="stop" if request.evidence else "invoke_tool",
-            capability_id=None if request.evidence else "capture.appium",
+            capability_id=None if request.evidence else "creative.image.edit",
             tool_input=None if request.evidence else {"screen": "lock-screen"},
             expected_outcome="Capture proves the changing character concept",
             reasoning_summary="Use the approved visual proof tool",
@@ -206,7 +206,7 @@ def test_service_executes_observe_tool_and_replans_without_appium(tmp_path: Path
     ]
     assert reasoning.requests[1].phase == "replan"
     assert all(
-        item.capability_id != "capture.appium"
+        item.capability_id != "creative.image.edit"
         for request in reasoning.requests
         for item in request.capability_snapshot.descriptors
     )
@@ -252,13 +252,13 @@ def test_create_retry_drives_run_after_reasoning_failure(tmp_path: Path) -> None
 def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Path) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    descriptor = _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True)
+    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
 
     first = MarketingAgentService(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((descriptor,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
     )
 
@@ -271,7 +271,7 @@ def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Pat
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((descriptor,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
     )
     with pytest.raises(ValueError, match="agent_approval_invocation_changed"):
@@ -314,12 +314,12 @@ def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Pat
 def test_rejected_effect_approval_never_calls_adapter(tmp_path: Path) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    descriptor = _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True)
+    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
     service = MarketingAgentService(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((descriptor,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
     )
     waiting = service.create(_request(), now=NOW)
@@ -381,21 +381,21 @@ def test_pending_approval_rechecks_current_tool_readiness_before_mutating_run(
 ) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    ready = _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True)
+    ready = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
     service = MarketingAgentService(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((ready,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
     )
     waiting = service.create(_request(), now=NOW)
-    unavailable = _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=False)
+    unavailable = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=False)
     restarted = MarketingAgentService(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((unavailable,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
     )
 
@@ -418,7 +418,7 @@ def test_restart_resumes_a_committed_exact_approval_without_second_decision(
 ) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    descriptor = _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True)
+    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
 
     def crash_after_approval(point: str) -> None:
         if point == "approval_committed":
@@ -429,7 +429,7 @@ def test_restart_resumes_a_committed_exact_approval_without_second_decision(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((descriptor,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
         fault_hook=crash_after_approval,
     )
@@ -448,7 +448,7 @@ def test_restart_resumes_a_committed_exact_approval_without_second_decision(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((descriptor,)),
         reasoning=EffectThenStopReasoning(),
-        tools={"capture.appium": adapter},
+        tools={"creative.image.edit": adapter},
         runtime_store=SqliteSessionStore(database),
     )
     completed = restarted.drive("trace", waiting.run_id, now=NOW + timedelta(seconds=2))
@@ -529,7 +529,7 @@ def _service(
         registry=ToolRegistry(
             (
                 _descriptor("research.web", EffectClass.OBSERVE, ready=True),
-                _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=False),
+                _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=False),
             )
         ),
         reasoning=reasoning,
@@ -590,7 +590,9 @@ def _descriptor(
         idempotency=ToolIdempotencyPolicy(key_scope=key_scope),
         reconciliation=ToolReconciliationPolicy(
             mode="none" if effect_class is EffectClass.OBSERVE else "readback",
-            lookup_capability_id=None if effect_class is EffectClass.OBSERVE else "capture.status",
+            lookup_capability_id=None
+            if effect_class is EffectClass.OBSERVE
+            else "creative.image.status",
             terminal_dispositions=("succeeded", "failed"),
         ),
     )

@@ -5,7 +5,7 @@ Status: Candidate — 이 설치 경로가 포함된 변경을 main에 병합하
 
 온프레미스 서버가 에이전트를 계속 실행하고, 기존 Cloudflare 터널·도메인이 Slack 요청을
 전달한다. 기본 경로에 ZIP 업로드, 회사 인증 서비스, Mac/Appium 설치는 필요 없다.
-Mac worker의 기존 연결 방식은 유지되며 on-prem 직접 등록/수명주기 관리는 아직 미구현이다.
+Cloudflare Tunnel은 HTTPS 진입점으로 유지된다. Mac/Appium worker와 hosted 게시 경로는 제거됐다.
 
 ## 1. 서버 설치 — 서버 Codex
 

@@ -1,5 +1,9 @@
 # Marketing Agent Runtime
 
+> Historical record: sections describing Cloudflare Workers/D1/R2, hosted campaigns, Mac/Appium
+> workers or Threads automation predate their removal on 2026-09-08. They are not current
+> implementation or installation instructions. See [current architecture](../architecture/system.md).
+
 Status: Draft — the first dynamic-research-to-hosted-shadow bridge and small-work preparation are implemented;
 autonomous campaign execution and next-experiment planning remain future work. This high-level agent uses the
 existing Trace control plane and does not replace or directly reorganize its execution automation.

@@ -5,7 +5,7 @@
 
 ## 프로젝트 개요
 
-`ads-booster`는 Trace 마케팅 에이전트, 팀 워크스페이스와 Appium 이미지 파이프라인을
+`ads-booster`는 온프레미스 Trace 마케팅 에이전트, 팀 지식과 검토 가능한 이미지 작업을
 제공합니다. 설치된 CLI 진입점은 `trace-marketing`입니다.
 
 ## 제품 기준 환경
@@ -60,7 +60,7 @@
 
 ## 핵심 불변식
 
-- Mac production model 경로는 같은 macOS 사용자의 공식 Codex CLI 로그인 세션을 사용하며
+- production model 경로는 서비스 사용자의 공식 Codex CLI 로그인 세션을 사용하며
 `trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
 - canonical conversation history를 보존하고 compaction은 provider projection만 줄입니다.
 - shared workspace context는 private chat에서 read-only입니다.
@@ -71,8 +71,7 @@
 무조건 재시도하지 않습니다.
 - 생성 결과는 artifact 검증과 사람의 review 승인을 거쳐야 합니다.
 - 외부 게시·전달은 [시스템 아키텍처](./docs/architecture/system.md)의 채널별 승인 경계를
-  따릅니다. Mac worker는 게시하지 않으며, Cloudflare Threads 게시에는 사람의 이미지 승인과
-  운영자의 프로필 연결·자동 게시 활성화가 필요합니다.
+  따릅니다. 이미지 제작 승인은 외부 전달 권한을 부여하지 않습니다.
 
 ## 검증
 

@@ -17,7 +17,6 @@ Task = Literal[
     "background_review",
     "partial_edit",
     "font_color",
-    "app_capture",
     "localization",
     "mockup",
     "final_qa",
@@ -151,22 +150,6 @@ PROCEDURES = (
         ),
     ),
     CreativeProcedure(
-        task="app_capture",
-        purpose="실제 Trace 앱 캡처",
-        capability_id="capture.appium",
-        asset_required=True,
-        creates_asset=True,
-        guidance=(
-            "실제 폰 Trace 앱에 배경과 합성/허용 일정을 넣고 달력·폰트·색상을 적용한다.",
-            "폰 크기로 여백과 가독성을 확인해 위치·크기를 조정하고 원본 캡처를 반환한다.",
-        ),
-        quality_checks=_VISUAL,
-        return_requirements=(
-            *_RETURNS,
-            "기기·Trace 앱 버전·언어·캡처 방법과 실제 화면인지 보고한다.",
-        ),
-    ),
-    CreativeProcedure(
         task="localization",
         purpose="기존 캡처의 다국어 확장",
         capability_id="creative.image.localize",
@@ -241,7 +224,7 @@ def build_creative_brief(  # noqa: PLR0913 - explicit preservation and locale in
     if len(set(locales)) != len(locales):
         raise ValueError("creative_locale_duplicate")
     missing = _missing_inputs(procedure, inputs, preserve, change, locales)
-    capability = procedure.capability_id
+    capability: str | None = procedure.capability_id
     guidance = procedure.guidance
     if (
         task in {"background_review", "final_qa"}
@@ -251,7 +234,7 @@ def build_creative_brief(  # noqa: PLR0913 - explicit preservation and locale in
         capability = "creative.asset.review"
         guidance += ("같은 업무의 asset ID·revision·digest를 확인해 등록된 원본을 직접 검토한다.",)
     if task == "localization" and inputs.require_product_proof:
-        capability = "capture.appium"
+        capability = None
         guidance += ("실제 앱의 언어별 캡처가 필요하다. 이미지 텍스트 가공으로 대체하지 않는다.",)
     route: Literal["automatic", "human_assisted", "awaiting_input"] = (
         "awaiting_input"

@@ -1,5 +1,9 @@
 # Marketing Agent Platform
 
+> Historical record: sections describing Cloudflare Workers/D1/R2, hosted campaigns, Mac/Appium
+> workers or Threads automation predate their removal on 2026-09-08. They are not current
+> implementation or installation instructions. See [current architecture](../architecture/system.md).
+
 ## Current direction override — 2026-09-07
 
 Status: Draft for unimplemented expansion. The [product decision](marketing-agent-product.md)
@@ -334,7 +338,7 @@ source lineage; keep every existing effect owner unchanged. In parallel, use a p
 and repeated pinned provider/model paired trials before making a model-quality claim. Connector
 ingestion and a multi-product role model remain later policy work. The
 canonical companion for current Trace behavior remains
-[`threads-marketing-agent.md`](./threads-marketing-agent.md).
+`threads-marketing-agent.md` (retired document).
 
 The hosted research entrypoint now also has the first host-owned common action-plane proof. The host
 derives an observe-only capability snapshot with bounded configuration, schema, cost, and approval

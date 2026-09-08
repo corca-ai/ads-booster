@@ -33,7 +33,7 @@ def test_signed_reviewed_same_thread_natural_approval(tmp_path: Path, phrase: st
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text=phrase, ts="100.002", thread_ts="100.001")
@@ -51,7 +51,7 @@ def test_review_does_not_preserve_revoked_approval_authority(tmp_path: Path) -> 
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text="검토 1", ts="100.002", thread_ts="100.001")
@@ -75,7 +75,7 @@ def test_frozen_natural_approval_cannot_approve_changed_invocation(tmp_path: Pat
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text="검토 1", ts="100.002", thread_ts="100.001")
@@ -107,7 +107,7 @@ def test_frozen_natural_approval_cannot_approve_changed_invocation(tmp_path: Pat
 
 
 class ScopedReasoning:
-    def __init__(self, capability: str = "capture.appium", *, large: bool = False) -> None:
+    def __init__(self, capability: str = "creative.image.edit", *, large: bool = False) -> None:
         self.capability: str = capability
         self.large: bool = large
 
@@ -132,7 +132,7 @@ def test_natural_approval_requires_every_delivered_review_page(tmp_path: Path) -
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = ScopedReasoning(large=True)
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     run = service.repository.list_runs("team")[0]
@@ -156,7 +156,7 @@ def test_natural_approval_requires_every_delivered_review_page(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("capability", "effect"),
     [
-        ("capture.appium", EffectClass.EXTERNAL),
+        ("creative.image.edit", EffectClass.EXTERNAL),
         ("delivery.publish", EffectClass.LOCAL_ARTIFACT),
     ],
 )
@@ -199,7 +199,7 @@ def test_other_members_review_does_not_count_for_natural_approval(tmp_path: Path
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text="검토 1", ts="100.002", thread_ts="100.001")

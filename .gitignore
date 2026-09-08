@@ -6,5 +6,7 @@ __pycache__/
 .basedpyright/
 appium/outputs/*
 !appium/outputs/.gitkeep
+# Preserve local build caches from the retired hosted application.
+/cloudflare/
 .omo/
 .codegraph

@@ -12,16 +12,8 @@ from ads_booster.marketing.tool_adapters import (
     DelegatingToolAdapter,
     ToolDelegationError,
     ToolExecutor,
-    appium_adapter,
-    appium_descriptor,
-    candidate_adapter,
-    candidate_descriptor,
-    capture_adapter,
-    capture_descriptor,
     research_adapter,
     research_descriptor,
-    threads_adapter,
-    threads_descriptor,
 )
 
 if TYPE_CHECKING:
@@ -121,19 +113,19 @@ def test_adapter_refuses_descriptor_substitution_before_delegation() -> None:
     assert executor.calls == []
 
 
-def test_unavailable_worker_descriptor_cannot_be_delegated() -> None:
-    unavailable = appium_descriptor(
-        installation_id="mac-worker-one",
+def test_unavailable_descriptor_cannot_be_delegated() -> None:
+    unavailable = research_descriptor(
+        installation_id="research-owner",
         observed_at=NOW,
         ready=False,
-        reason_code="appium_unavailable",
+        reason_code="research_unavailable",
     )
     invocation = _invocation(unavailable)
     executor = RecordingExecutor()
     adapter = DelegatingToolAdapter(
         capability_id=unavailable.capability_id,
         version=unavailable.version,
-        executor_id="mac-worker-one",
+        executor_id="research-owner",
         executor=executor,
     )
 
@@ -151,30 +143,6 @@ def test_unavailable_worker_descriptor_cannot_be_delegated() -> None:
             "research.web",
             "ads_booster.marketing.dynamic_evidence_research",
             EffectClass.OBSERVE,
-        ),
-        (
-            candidate_descriptor,
-            "creative.candidates.generate",
-            "ads_booster.candidate_generation",
-            EffectClass.LOCAL_ARTIFACT,
-        ),
-        (
-            appium_descriptor,
-            "capture.appium",
-            "ads_booster.capture",
-            EffectClass.EXTERNAL,
-        ),
-        (
-            capture_descriptor,
-            "capture.native_png",
-            "ads_booster.marketing.native_capture",
-            EffectClass.LOCAL_ARTIFACT,
-        ),
-        (
-            threads_descriptor,
-            "publish.threads",
-            "ads_booster.marketing.threads",
-            EffectClass.EXTERNAL,
         ),
     ],
 )
@@ -203,26 +171,10 @@ def test_existing_automation_descriptors_keep_owner_and_effect_boundary(
     assert descriptor.receipt_schema_sha256 == contract_sha256(descriptor.receipt_schema)
 
 
-def test_threads_publish_keeps_readback_reconciliation_boundary() -> None:
-    descriptor = threads_descriptor(
-        installation_id="threads-account-one",
-        observed_at=NOW,
-        ready=True,
-    )
-
-    assert descriptor.reconciliation.mode == "readback"
-    assert descriptor.reconciliation.lookup_capability_id == "threads.readback"
-    assert descriptor.credential_boundary == "adapter_owner"
-
-
 @pytest.mark.parametrize(
     ("adapter_factory", "descriptor_factory"),
     [
         (research_adapter, research_descriptor),
-        (candidate_adapter, candidate_descriptor),
-        (appium_adapter, appium_descriptor),
-        (capture_adapter, capture_descriptor),
-        (threads_adapter, threads_descriptor),
     ],
 )
 def test_named_adapter_constructors_delegate_only_their_owner_capability(

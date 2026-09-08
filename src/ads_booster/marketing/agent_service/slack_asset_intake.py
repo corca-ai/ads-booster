@@ -27,7 +27,7 @@ from ads_booster.marketing.agent_service.slack_image_files import SlackImageFile
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.tool_adapters.compatibility import DelegatedToolResult
 from ads_booster.marketing.tool_adapters.descriptors import (
-    candidate_descriptor,
+    image_generation_descriptor,
     research_descriptor,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -253,8 +253,12 @@ class SlackAssetIntakeTool:
 
 
 def _descriptor(now: datetime, ready: bool, *, importing: bool) -> ToolDescriptor:
-    template = (candidate_descriptor if importing else research_descriptor)(
-        installation_id="installed:slack-asset-intake", observed_at=now, ready=ready
+    template = (
+        image_generation_descriptor(observed_at=now)
+        if importing
+        else research_descriptor(
+            installation_id="installed:slack-asset-intake", observed_at=now, ready=ready
+        )
     )
     schema = _JSON.validate_python(
         (ImportSlackAsset if importing else InspectSlackFile).model_json_schema()
@@ -266,6 +270,10 @@ def _descriptor(now: datetime, ready: bool, *, importing: bool) -> ToolDescripto
         update={
             "capability_id": "creative.asset.import" if importing else "creative.file.inspect",
             "owner": "ads_booster.marketing.agent_service.slack_asset_intake",
+            "installation_id": "installed:slack-asset-intake",
+            "readiness": template.readiness.model_copy(
+                update={"ready": ready, "reason_code": None if ready else "adapter_unavailable"}
+            ),
             "input_schema": schema,
             "input_schema_sha256": contract_sha256(schema),
             "output_schema": output,

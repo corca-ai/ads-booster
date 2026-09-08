@@ -1,11 +1,11 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-08
 
 ## Focused checks
 
-Choose the boundary that changed. Source tests are not installed-worker or hosted-runtime proof.
+Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
 For acknowledged asynchronous tool work, select `tests/marketing/test_runtime_deferred.py`,
 `tests/marketing/agent_service/test_application_deferred.py` and
@@ -14,33 +14,9 @@ Service `test_application.py` and `test_work_continuation.py` for their directly
 receipt/recovery/steering behavior. These fake adapter tests exercise real SQLite admission,
 approval expiry after admission, exact operation/executor/cost binding, duplicate completion,
 acknowledgement/completion crash windows, explicit uncertainty, pending pause and signed Slack
-follow-ups. They do not prove remote worker authentication, artifact transfer or actual capture.
+follow-ups. They do not prove live provider or channel behavior.
 Fresh wheel proof must also show that a second Run can answer while the first waits, and that
 restarting and replaying completion neither calls the adapter again nor charges twice.
-Capture contract extraction selects `tests/marketing/agent_service/test_creative_capture_contract.py`
-with existing `test_creative_capture.py` and `test_capture_setup.py`. Validate explicit worker
-configuration, source revision/digest and nonce/device/image metadata rejection. A pure builder
-test does not prove remote transport or image quality; preserve installed local capture proof.
-
-For remote capture, run `uv run pytest -q
-tests/marketing/agent_service/test_remote_capture_contract.py
-tests/marketing/agent_service/test_remote_capture_store.py
-tests/marketing/agent_service/test_remote_capture.py
-tests/marketing/agent_service/test_remote_capture_api.py
-tests/marketing/test_canonical_capture_worker.py tests/cli/test_remote_capture.py`.
-Include `test_creative_capture_contract.py` and `test_creative_capture.py` when changing the
-shared builder, and channel `test_slack_run_notifications.py`/`test_slack_deferred.py` when
-changing completion projection. These tests cover exact worker authority, profile/job/lease
-fencing, source changes, approval/lease expiry, readiness loss, output containment, start and
-upload crash windows, canonical cost settlement and duplicate-safe Slack outbox projection.
-Run affected HTTP/CLI compatibility tests for composition or request-limit changes.
-
-Fresh isolated wheel verification must exercise the installed worker commands and real loopback
-HTTP with a fake native worker: approved queue → source → start → upload → same-Run asset/readback;
-drop the completion response after server commit, restart the worker and prove upload-only replay.
-Check wrong-token/default-off routes, local read-only doctor, module hashes and one device call.
-This establishes transport behavior, not real Appium quality, live Slack delivery, systemd/linger
-or the public installer. Preserve existing installed lifecycle evidence separately.
 ## Team knowledge checks
 
 The knowledge implementation is covered by focused `tests/knowledge` contracts, repository/filesystem,
@@ -59,19 +35,13 @@ with `uv run pytest -q <test-file>`; the focused owners are:
 | Backup integrity, current erase-ledger restore and purge | `test_backup_restore.py`, `test_deletion.py` |
 | Constraint transfer and current checks on validation replay | `test_transfer_material.py`, `test_transfer_validation_replay.py` |
 
-Hosted required-knowledge generation uses `node --test cloudflare/test/hosted-generation-knowledge.test.js`.
-It covers capability preflight before cooldown/task creation and identical callback retries with
-current authority, receipt and result validation. `hosted-generation.test.js`, `hosted-workspace.test.js`
-and `mac-workers.test.js` cover the surrounding generation and worker paths. Local HTTP/SQLite checks
-are candidate evidence; deployed Worker and actual provider results require separate verification.
-
 The configuration seam must also be checked directly with synthetic absolute paths: all three
 `TRACE_MARKETING_KNOWLEDGE_ROOT`, `TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and
 `TRACE_MARKETING_KNOWLEDGE_POLICY` values absent means disabled; any partial set must fail; relative
 paths must fail; root/control permissions are `0700`; policy and `identity.json` are `0600`.
 The service composition check covers `trace-marketing service run --help` and source inspection of
 the enabled runtime, but a source checkout or local test does not prove a fresh installed service,
-Codex entitlement, Slack delivery, hosted validation, remote purge, or deployment.
+Codex entitlement, Slack delivery, remote deletion, or deployment.
 
 The context-transfer checks must cover both required and disabled policies, exact SHA-256 binding,
 workspace/account/run/task/action/brand matching, expiry, stale head/grant/tombstone rejection,
@@ -80,7 +50,8 @@ after expiry, revocation, stale heads or tombstones; replay cannot bypass curren
 must cover shared workspace scope, private member/conversation scope, read-only DM capability filtering, pending edit/
 delete/correction fences, and replayed outbox delivery. Deletion checks must assert the erase-ledger
 sequence, local tombstones and reverse dependency blocks, clean restore, and remote replica
-`purge_pending` until an acknowledgement is recorded. Restore checks include exact file digests,
+`purge_pending` until separately reconciled. Local purge must not execute or acknowledge
+remote deletion without a configured transport. Restore checks include exact file digests,
 private nested paths, mixed-memory redaction and a searchable surviving revision. Run
 `tests/cli/test_server_onboarding.py` for fresh private knowledge-root creation and interrupted setup.
 Its timezone-data regression clears the system search path and cache before setup, verifying that
@@ -95,88 +66,22 @@ and `--policy` on every command. Focused CLI checks should cover `init`, `doctor
 reference operations until the installed `knowledge --help` and a fresh installation are checked;
 do not claim operator usability or deployment proof from source alone.
 
-| Change | Command |
+## Source and installed-service checks
+
+| Changed boundary | Focused owners |
 | --- | --- |
-| on-prem canonical Agent Service contracts, live tool catalog, versioned skill runs, daily scheduling, installed research plus hosted/Slack/Notion adapters, OAuth-introspected tenant API and direct Run result URL, tool admission/approval, and crash recovery | `uv run pytest -q tests/agent_core tests/marketing/agent_service tests/marketing/tool_adapters/test_compatibility.py tests/marketing/test_agent_runtime.py tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py`; matching scoped Ruff and BasedPyright; fresh wheel install: `trace-marketing service doctor`, `trace-marketing service run --help`, then authenticated `GET /v1/tools`, `GET /v1/skills`, and one skill Run. Remote binding must require HTTPS token introspection. A scheduled run must be date-idempotent and may auto-approve only exact Slack/Notion delivery, never image or publication. Fake HTTP adapters do not prove a live OAuth, Slack, Notion, Meta, or Codex provider. |
-| bounded customer-evidence resume: exact/idempotent replay, body drift, stale head, cross-account scope, immutable child task, sequence-two parent, cumulative cost, concurrent callback, stop/propose terminal paths, v4 upgrade termination, and workspace retry UI | `node --test cloudflare/test/marketing-agent-runs.test.js cloudflare/test/mac-workers.test.js cloudflare/test/marketing-worker-capabilities.test.js cloudflare/test/workspace-static.test.js`; `uv run pytest tests/marketing/test_hosted_feature_launch_run.py tests/marketing/test_feature_launch_intent_parity.py tests/marketing/test_cloudflare_schema.py -q`; fresh install: `trace-marketing agent research --help`, `trace-marketing agent launch --help`, `trace-marketing worker run --help`, and assert `feature_launch_run_v5` from `ads_booster.marketing.worker_capabilities` |
-| hosted feature-launch delegation durability: atomic proof/step/outbox plus worker completion, campaign-created/finalization fault recovery without a worker, concurrent reconciler exactly-once finalization, bounded non-sensitive retry/backoff with ten failing heads not starving the eleventh, safe pending status, and zero outbox for stop/needs-input | `node --test cloudflare/test/marketing-agent-runs.test.js`; `node --check cloudflare/src/marketing-agent-delegations.js cloudflare/src/hosted-feature-launch-run-callback.js cloudflare/src/index.js` |
-| derived marketing run journey and offline-safe outcome handoff: protected/account-scoped parent-frontier traversal, 100-node fan-out truncation, root→assisted→evaluated/reassessed/requested→activated-successor projection, pending-successor exclusion, truthful UI state labels, no duplicate graph writes, evaluation commit while reassessment workers are unavailable, and later exact-capability lease | `node --test cloudflare/test/marketing-agent-runs.test.js cloudflare/test/marketing-next-experiment.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js cloudflare/test/workspace-static.test.js`; `uv run pytest tests/marketing/test_cloudflare_schema.py -q`; `node --check cloudflare/src/marketing-agent-run-journey.js cloudflare/src/hosted-experiment-evaluation-callback.js cloudflare/src/marketing-agent.js` |
-| hosted marketing-agent handoff/review UI, memory-only token, account-switch isolation, protected campaign reads, and server-projected approval action | `cd cloudflare && npm run build && node --check static/workspace-agent.js && node --test test/workspace-static.test.js test/marketing-agent-supervised-runtime.test.js test/marketing-agent-reference-runtime.test.js test/marketing-next-experiment.test.js` |
-| marketing-agent feature/strategy contracts, unique ordered D1 migrations, and worker-event upgrade preservation | `uv run pytest tests/marketing/test_marketing_agent_contracts.py tests/marketing/test_cloudflare_schema.py -q` |
-| provider-neutral marketing runtime invocation/receipt/session persistence, v3 ledger-header replay, closed runtime-event transitions, and checkpoint-tamper rejection | `uv run pytest tests/marketing/test_agent_runtime.py -q`; `uv run ruff check src/ads_booster/marketing/runtime.py tests/marketing/test_agent_runtime.py`; `uv run ruff format --check src/ads_booster/marketing/runtime.py tests/marketing/test_agent_runtime.py`; `uv run basedpyright src/ads_booster/marketing/runtime.py tests/marketing/test_agent_runtime.py`; `git diff --check` |
-| versioned Marketing OS adversarial regression corpus and private-grader loader: opaque runner input, separate test tool environment/grader reference, independently issued fixture receipt plus pre-append Research and Feature Launch observation proof, fixed-root paired corpus validation, independent runtime-trace replay, Research -> immutable Brief -> Launch paths, threshold and comparable runner reports | `uv run pytest tests/marketing/test_marketing_os_scorecard.py tests/marketing/test_marketing_os_scorecard_corpus.py -q`; `uv run ruff check src/ads_booster/marketing/runtime.py src/ads_booster/marketing/marketing_os_scorecard.py src/ads_booster/marketing/marketing_os_scorecard_corpus.py tests/marketing/marketing_os_scorecard_runner.py tests/marketing/test_marketing_os_scorecard.py tests/marketing/test_marketing_os_scorecard_corpus.py`; `uv run ruff format --check src/ads_booster/marketing/runtime.py src/ads_booster/marketing/marketing_os_scorecard.py src/ads_booster/marketing/marketing_os_scorecard_corpus.py tests/marketing/marketing_os_scorecard_runner.py tests/marketing/test_marketing_os_scorecard.py tests/marketing/test_marketing_os_scorecard_corpus.py`; `uv run basedpyright src/ads_booster/marketing/runtime.py src/ads_booster/marketing/marketing_os_scorecard.py src/ads_booster/marketing/marketing_os_scorecard_corpus.py tests/marketing/marketing_os_scorecard_runner.py tests/marketing/test_marketing_os_scorecard.py tests/marketing/test_marketing_os_scorecard_corpus.py`; `git diff --check` |
-| Feature Launch Experiment Operator planner replay, safe product/evidence-brief projections, canonical bound observe invocation, source-verifier seam, claim containment, receipt/observation/evaluation lineage, terminal trace audit, and held-out fixture | `uv run pytest tests/marketing/test_feature_launch_operator.py -q`; `uv run ruff check src/ads_booster/marketing/planning_projections.py src/ads_booster/marketing/feature_launch_evidence_brief.py src/ads_booster/marketing/feature_launch_operator.py tests/marketing/test_feature_launch_operator.py`; `uv run ruff format --check src/ads_booster/marketing/planning_projections.py src/ads_booster/marketing/feature_launch_evidence_brief.py src/ads_booster/marketing/feature_launch_operator.py tests/marketing/test_feature_launch_operator.py`; `uv run basedpyright src/ads_booster/marketing/planning_projections.py src/ads_booster/marketing/feature_launch_evidence_brief.py src/ads_booster/marketing/feature_launch_operator.py tests/marketing/test_feature_launch_operator.py` |
-| bounded evidence-research replanning, scope/action isolation, safe product/observation projections, canonical bound observe invocation, replay, historical-evaluation revalidation, insufficient-evidence stop, source re-derivation for the research-to-launch handoff, and immutable brief creation | `uv run pytest tests/marketing/test_evidence_research_operator.py -q`; `uv run ruff check src/ads_booster/marketing/runtime.py src/ads_booster/marketing/planning_projections.py src/ads_booster/marketing/feature_launch_evidence_brief.py src/ads_booster/marketing/evidence_research_operator.py tests/marketing/test_evidence_research_operator.py`; `uv run ruff format --check src/ads_booster/marketing/runtime.py src/ads_booster/marketing/planning_projections.py src/ads_booster/marketing/feature_launch_evidence_brief.py src/ads_booster/marketing/evidence_research_operator.py tests/marketing/test_evidence_research_operator.py`; `uv run basedpyright src/ads_booster/marketing/runtime.py src/ads_booster/marketing/planning_projections.py src/ads_booster/marketing/feature_launch_evidence_brief.py src/ads_booster/marketing/evidence_research_operator.py tests/marketing/test_evidence_research_operator.py` |
-| installed dynamic evidence-research composition: official-Codex planner receipt, runtime-derived observe calls, product/customer/market hand isolation, semantic prompt redaction, unverified-model false-completion rejection, immutable and tamper-detected hand receipts, pinned provider/model/prompt protocol, dynamic action order, restart without provider replay, typed provider failure, and input-snapshot drift rejection | `uv run pytest tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_evidence_research_operator.py tests/cli/test_cli_compatibility.py -q`; `uv run ruff check src/ads_booster/cli/marketing.py src/ads_booster/marketing/evidence_research_operator.py src/ads_booster/marketing/dynamic_evidence_research.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_evidence_research_operator.py tests/cli/test_cli_compatibility.py`; `uv run ruff format --check src/ads_booster/cli/marketing.py src/ads_booster/marketing/evidence_research_operator.py src/ads_booster/marketing/dynamic_evidence_research.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_evidence_research_operator.py tests/cli/test_cli_compatibility.py`; `uv run basedpyright src/ads_booster/cli/marketing.py src/ads_booster/marketing/evidence_research_operator.py src/ads_booster/marketing/dynamic_evidence_research.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_evidence_research_operator.py tests/cli/test_cli_compatibility.py`; fresh install: `trace-marketing agent research --help` and one private-state product-truth run |
-| dynamic research-to-hosted shadow launch: terminal continuation admission, zero-HTTP failure gates, host-derived request binding, write-ahead dispatch, GET-only ambiguous reconciliation, immutable D1 lineage, callback propagation, and replay without a second POST | `uv run pytest tests/marketing/test_feature_launch_run.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_agent_runtime.py tests/marketing/test_cloudflare_schema.py tests/cli/test_cli_compatibility.py -q`; `uv run ruff check src/ads_booster/cli/marketing.py src/ads_booster/marketing/dynamic_evidence_research.py src/ads_booster/marketing/feature_launch_run.py src/ads_booster/marketing/runtime.py tests/marketing/test_feature_launch_run.py tests/cli/test_cli_compatibility.py`; `uv run basedpyright src/ads_booster/cli/marketing.py src/ads_booster/marketing/dynamic_evidence_research.py src/ads_booster/marketing/feature_launch_run.py src/ads_booster/marketing/runtime.py tests/marketing/test_feature_launch_run.py tests/cli/test_cli_compatibility.py`; `node --test cloudflare/test/hosted-marketing-agent.test.js cloudflare/test/marketing-agent-reference-runtime.test.js`; fresh install: `trace-marketing agent launch --help` |
-| hosted marketing-agent product run: authenticated exact intake/replay, account-scoped list/status with protected model rationale, host-derived observe-only capability snapshot, cross-runtime Python/JavaScript intent object/canonical-byte/digest parity including eligible subsets and Unicode, snapshot-backed worker registry, canonical redacted worker-reported invocation/receipt/observation envelope with host-side digest/source/fixed-cost recomputation, append-only D1 run receipt ledger, host-rederived eligible no-effect intent snapshot and planner bytes, immutable parent-ready run step, distinct stop/terminal-needs-input/propose transitions, competing callback exactly-once behavior, direct wrong-account/task/sequence/parent and update/delete migration rejection, credential exclusion, callback/result/continuation/proposal rebinding, frozen proposal reuse without a second search, exact proposed-URL byte verification, digest-substitution/underreported-cost/unavailable-intent/requested-scope/blocked/failure zero-campaign behavior, and idempotent handoff to the existing shadow owner | `uv run pytest tests/marketing/test_feature_launch_intent_parity.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_hosted_feature_launch_run.py tests/marketing/test_hosted_reference_research.py tests/marketing/test_hosted_task_router.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py -q`; `uv run ruff check src/ads_booster/contracts/marketing_capability.py src/ads_booster/marketing/dynamic_evidence_research.py src/ads_booster/marketing/hosted_feature_launch_run.py src/ads_booster/marketing/hosted_reference_research.py src/ads_booster/marketing/hosted_task_router.py src/ads_booster/marketing/worker_capabilities.py src/ads_booster/marketing/worker_doctor.py tests/marketing/test_feature_launch_intent_parity.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_hosted_feature_launch_run.py tests/marketing/test_hosted_reference_research.py tests/marketing/test_hosted_task_router.py`; `uv run basedpyright src/ads_booster/contracts/marketing_capability.py src/ads_booster/marketing/dynamic_evidence_research.py src/ads_booster/marketing/hosted_feature_launch_run.py src/ads_booster/marketing/hosted_reference_research.py src/ads_booster/marketing/hosted_task_router.py tests/marketing/test_feature_launch_intent_parity.py tests/marketing/test_dynamic_evidence_research.py tests/marketing/test_hosted_feature_launch_run.py tests/marketing/test_hosted_reference_research.py`; from `cloudflare/`: `npm run build && node --test test/marketing-agent-runs.test.js test/marketing-agent-reference-runtime.test.js test/marketing-agent-supervised-runtime.test.js test/marketing-adapter-capabilities.test.js test/mac-workers.test.js` |
-| shadow strategist, official Codex receipt, subtype capability/readiness broker, and hosted callback | `uv run pytest tests/marketing/test_hosted_judgment.py tests/providers/test_codex_cli_generation.py tests/marketing/test_worker_loop.py tests/marketing/test_worker_broker.py -q`; `node --test cloudflare/test/hosted-marketing-agent.test.js cloudflare/test/marketing-worker-capabilities.test.js cloudflare/test/mac-workers.test.js` |
-| canonical candidate image-input parity across main generation and marketing materialization, including structured week/todos, provider-schema and digest parity, compatible-worker preflight, callback capability binding, and in-flight legacy compatibility | `uv run pytest tests/candidate_generation/test_candidate_instruction.py tests/marketing/test_hosted_supervised_judgments.py -q`; `node --test cloudflare/test/candidate-image-inputs.test.js cloudflare/test/hosted-workspace.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js` |
-| governed customer signals and campaign-context binding: safe planner projection, final review, freshness/retention lifetime, idempotent snapshot creation, research-to-strategy propagation, and callback rebind | `uv run pytest tests/marketing/test_marketing_context.py tests/marketing/test_hosted_judgment.py tests/marketing/test_hosted_reference_research.py -q`; `node --test cloudflare/test/marketing-agent-context-signals.test.js cloudflare/test/hosted-marketing-agent.test.js cloudflare/test/marketing-agent-reference-runtime.test.js` |
-| proof-first creative plan, account-active tool subset and optional-tool independence, no-executable-format stop, host-derived executable format allowlist, exact `creative_plan_v2` worker gate, v1 queued-task drain without new v1 creation, Python/control-plane format-map parity, executable capture requirement, immutable adapter binding, deterministic capture-manifest retry, Decision Dossier and six offline synthetic senior-marketer decision scenarios, execution ledger, independently re-derived conservative evaluation (including false worker winner/state/coverage rejection with no mutation), server-randomized complete-block allocation, registration-time profile/schedule exposure plan, fixed causal sample, rank re-verification, immutable exposure schedule plus exact identity/publication/tolerance readback, exact structured learning applicability (including callback lineage re-derivation, legacy/mismatched exclusion, and nonmatching records before the bounded lookup), and the protected read-only review queue/packet | `uv run pytest tests/marketing/test_decision_quality.py tests/marketing/test_hosted_judgment.py tests/marketing/test_hosted_creative_judgment.py tests/marketing/test_hosted_supervised_judgments.py tests/marketing/test_experiment_evaluation.py tests/marketing/test_marketing_agent_contracts.py tests/marketing/test_cloudflare_schema.py -q`; `node --test cloudflare/test/experiment-evaluation.test.js cloudflare/test/hosted-capture-manifests.test.js cloudflare/test/marketing-adapter-capabilities.test.js cloudflare/test/hosted-creative-plan.test.js cloudflare/test/hosted-marketing-agent.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js cloudflare/test/mac-workers.test.js` |
-| outcome-driven live reassessment: deterministic situation routing, immutable evaluation/strategy handoff, no-effect Codex proposal, evidence/ICP/claim/hypothesis rebinding, and append-only D1 callback | `uv run pytest tests/marketing/test_hosted_reassessment_judgment.py tests/marketing/test_hosted_supervised_judgments.py tests/marketing/test_marketing_agent_contracts.py tests/marketing/test_cloudflare_schema.py -q`; `node --test cloudflare/test/marketing-outcome-reassessment.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js` |
-| repeated outcome-judgment canary boundary: separate runner/grader files, explicit external process/mount privacy requirement, fresh per-trial workspaces, minimum two trials, observed executable/requested-model identity, typed directional plus human-anchor grading, same-situation outcome-evidence counterfactuals, corpus-path rejection, and fixed-router negative control | `uv run pytest tests/marketing/test_marketing_judgment_canary.py -q`; `uv run ruff check src/ads_booster/marketing/marketing_judgment_canary.py src/ads_booster/marketing/marketing_judgment_canary_corpus.py tests/marketing/test_marketing_judgment_canary.py`; `uv run ruff format --check src/ads_booster/marketing/marketing_judgment_canary.py src/ads_booster/marketing/marketing_judgment_canary_corpus.py tests/marketing/test_marketing_judgment_canary.py`; `uv run basedpyright src/ads_booster/marketing/marketing_judgment_canary.py src/ads_booster/marketing/marketing_judgment_canary_corpus.py tests/marketing/test_marketing_judgment_canary.py` |
-| outcome-informed next experiment: offline-safe outbox, dynamic evidence/counterevidence interpretation, explicit untrusted-source boundary, parent-claim and one-variable binding, protected exact review, immutable activation intent, atomic approval/source/context/effect revalidation, reviewer-authority projection exclusion, safe activation status, exactly-one successor shadow strategy task, callback constraint rebind, and zero candidate/Appium/Threads/tool effects | `uv run pytest tests/marketing/test_hosted_next_experiment_judgment.py tests/marketing/test_hosted_judgment.py tests/marketing/test_hosted_task_router.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py -q`; `node --test cloudflare/test/marketing-next-experiment.test.js cloudflare/test/marketing-outcome-reassessment.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js cloudflare/test/mac-workers.test.js` |
-| quarantined reference research, public-HTTPS redirect/size/type guards, byte-level source receipts, D1 callback rebind, and assisted marketing-agent runtime | `uv run pytest tests/marketing/test_hosted_reference_research.py tests/marketing/test_hosted_judgment.py tests/marketing/test_hosted_supervised_judgments.py -q`; `node --test cloudflare/test/reference-source-verification.test.js cloudflare/test/marketing-agent-reference-runtime.test.js cloudflare/test/hosted-marketing-agent.test.js cloudflare/test/marketing-agent-supervised-runtime.test.js` |
-| deterministic Calendar prepare/cleanup | `uv run pytest tests/capture/test_calendar_preparation.py tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/providers/test_codex_cli_handshake.py` |
-| v2 job and Appium adapter | `uv run pytest tests/capture/test_codex_appium_capture.py tests/capture/test_codex_appium_handshake.py tests/capture/test_appium_editor_verifier.py tests/providers/test_codex_cli_handshake.py tests/capture/test_appium_endpoint.py tests/capture/test_readiness.py` |
-| background search and native validation | `uv run pytest tests/search/test_web_image_search_providers.py tests/search/test_background_fetcher.py tests/marketing/test_background.py tests/marketing/test_native_capture.py` |
-| hosted Codex candidate generation | `uv run pytest tests/marketing/test_hosted_generation.py tests/providers/test_codex_cli_generation.py` |
-| Threads D1 contract | `uv run pytest tests/marketing/test_cloudflare_schema.py -q` |
-| Threads Graph/profile/scheduling/publication/engagement | `node --test cloudflare/test/threads-client.test.js cloudflare/test/hosted-threads-profiles.test.js cloudflare/test/hosted-threads-candidates.test.js cloudflare/test/threads-scheduling.test.js cloudflare/test/threads-publication.test.js cloudflare/test/threads-engagement.test.js` |
-| optional Threads deployment config | `node --test cloudflare/test/threads-config.test.js cloudflare/test/deployment-health.test.js cloudflare/test/threads-security.test.js`; then render once with all `THREADS_*` values absent and require no Threads key plus `threads_ready: false` |
-| Threads workspace/status/security | `npm --prefix cloudflare run build && node --test cloudflare/test/workspace-static.test.js cloudflare/test/hosted-threads-ui-api.test.js cloudflare/test/threads-security.test.js` |
-| hosted feedback selection, worker receipt, and schema | `uv run pytest tests/marketing/test_hosted_generation.py tests/marketing/test_native_capture.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `node --test test/hosted-workspace.test.js test/hosted-generation.test.js test/mac-workers.test.js test/hosted-capture-result.test.js` |
-| native Trace lock-screen preview passthrough | `uv run pytest tests/marketing/test_native_capture.py tests/capture/test_codex_appium_handshake.py` |
-| Codex ImageGen iOS UI layer and marketing artifact provenance | `uv run pytest tests/capture/test_codex_imagegen_ui.py tests/capture/test_ios_lock_screen_layer.py tests/capture/test_imagegen_ios_ui_contract.py tests/marketing/test_imagegen_ios_ui_capture.py`; from `cloudflare/`: `node --test test/hosted-capture-result.test.js test/marketing-adapter-capabilities.test.js` |
-| inbox/barrier/recovery | `uv run pytest tests/marketing/test_worker_loop.py` |
-| workspace worker execution timeline | `uv run pytest tests/marketing/test_worker_loop.py tests/marketing/test_worker_broker.py tests/marketing/test_cloudflare_schema.py`; from `cloudflare/`: `npm run build && node --test test/mac-workers.test.js test/hosted-workspace.test.js test/workspace-static.test.js` |
-| update and installation guard | `uv run pytest tests/marketing/test_worker_update.py tests/cli/test_installer.py` |
-| immediate stable-release update signal | `uv run pytest tests/marketing/test_worker_broker.py tests/cli/test_release_builder.py`; from `cloudflare/`: `node --test test/mac-workers.test.js` |
-| CLI surface | `uv run pytest tests/cli/test_cli_compatibility.py`; `uv run trace-marketing --help`; `uv run trace-marketing worker --help`; `uv run trace-marketing agent research --help`; `uv run trace-marketing agent launch --help` |
+| Canonical service, lifecycle and API | affected files in `tests/marketing/agent_service/`, `tests/agent_core/` and `tests/cli/test_cli_compatibility.py` |
+| Runtime admission, receipts and recovery | `tests/marketing/test_agent_runtime.py`, `tests/marketing/test_runtime_deferred.py` |
+| Signed Slack conversation and approval | affected files in `tests/marketing/channels/` |
+| Codex reasoning and direct images | corresponding tests in `tests/providers/` and `tests/marketing/agent_service/test_image_generation.py` |
+| Research collectors and evidence | `tests/marketing/test_dynamic_evidence_research.py` and the affected research contract tests |
+| Server setup, Tunnel and updater | `tests/cli/test_server_onboarding.py`, `tests/cli/test_agent_server_update.py` |
+| CLI surface | `tests/cli/test_cli_compatibility.py`; installed `trace-marketing --help`, `service --help`, `server --help`, `agent research --help` |
 
-For changed Python paths, run the matching scoped Ruff, formatter, BasedPyright, and
-`git diff --check`. Do not run the full suite or repository-wide static checks unless requested.
-The Trace checkout additionally runs `TraceTests/MarketingCalendarAutomationTests` on the selected
-iPhone Simulator. A source parse or Python fake does not prove EventKit authorization or data flow.
-
-## Installed-worker proof
-
-Use the managed executable, not `uv run`:
-
-```bash
-"$HOME/.local/share/trace-marketing/current/bin/trace-marketing" version --json
-"$HOME/.local/share/trace-marketing/current/bin/trace-marketing" worker doctor
-"$HOME/.local/share/trace-marketing/current/bin/trace-marketing" worker status
-```
-
-For a real job record task ID, callback receipt, PNG path/SHA-256, native manifest, and resulting
-`image_awaiting_review` state. `doctor` proves prerequisites only. A manifest proves bindings
-only. Human review alone passes visual correctness.
-
-For an ImageGen iOS UI image, also record the intermediate Trace PNG SHA-256, prompt SHA-256,
-UI-layer SHA-256, `trace.imagen-ios-ui.v1` manifest, and final PNG SHA-256. Confirm that the
-generated layer is transparent, has only date/time UI, and keeps the packaged default iPhone
-reference's neutral color, typography, hierarchy, spacing, and placement. This proves a generated
-copy of iPhone UI, not that iOS applied a system wallpaper.
-
-A regression test for a post-barrier defect must assert `unknown_side_effect` and no automatic
-native re-execution. Never place credentials, raw Codex output, or private user data in evidence.
-
-Threads source proof uses injected fake Graph responses and a real local D1 migration chain. Browser
-QA uses the built workspace at 1440x900, 1024x768, and 390x844 and verifies token-memory lock,
-profile/default/toggle, candidate pinning, publication states, metrics, privileged replies, keyboard
-focus, overflow, and console errors. It is not live Meta proof. A production-readiness claim also
-requires explicit authorization for a non-production Meta test profile, authoritative post-ID and
-permalink readback, then at least one metric snapshot and top-level reply. Never record tokens,
-authorization codes, OAuth states, or unexpired signed media URLs in test artifacts.
-
-Worker timeline QA opens `실행 기록` in the 1440x900 desktop workspace, confirms newest-first polling
-and account switching, and checks that preparation, execution, failure, and callback states are readable.
-Inspect the rendered DOM and network payload to confirm there is no prompt, raw provider/callback
-output, credential, enrollment code, exception message, or local path. A visible event is diagnostic
-evidence only; the task row and callback remain completion evidence.
-
+Select test files by changed behavior. Run scoped Ruff, formatter, BasedPyright and `git diff --check`.
+Do not run the full suite or repository-wide static checks unless explicitly requested. Removed
+Cloudflare, Mac/Appium and Threads tests have no current production owner and are not verification
+requirements. Fresh installation must also show that removed CLI groups and worker routes are absent.
 
 ## Main agent web and Slack onboarding
 
@@ -212,15 +117,9 @@ it via the candidate manager; source success alone is not installed-product evid
 check `Verify on-prem agent` runs on every main push and is required by the updater. Faked systemctl
 and health calls prove transaction behavior, not live Linux lifecycle or live GitHub automatic rollout.
 
-That Ubuntu check also runs `tests/marketing/tool_adapters/test_compatibility.py`; unrelated Mac release
+That Ubuntu check also runs `tests/marketing/tool_adapters/test_compatibility.py`; unrelated
 checks are not server admission requirements. The updater tests cover unrelated failed/pending checks
 alongside rejection of missing, wrong-app, failed, skipped or incomplete required checks.
-For Mac release-policy changes run `tests/cli/test_mac_release_policy.py`,
-`tests/cli/test_release_builder.py` and `tests/cli/test_github_release_state.py`. Policy tests execute
-the workflow identity shell against a Git fixture and conflicting release fixture: unchanged versions
-skip publication identity checks, version changes and explicit dispatch retain them. The macOS job
-still builds and fresh-installs the compatibility candidate; PRs cannot publish.
-
 Slack conversations: `tests/marketing/channels/test_slack_events.py` proves signed challenge and
 app/team admission, pre-reasoning ack, mention/message dedupe, thread continuation, same-Run input,
 private context/tool/member separation, explicit hash/reviewer approval, close/reopen, removal before
@@ -250,7 +149,8 @@ For this composition change, run the affected `tests/marketing/agent_service` an
 `tests/marketing/channels` owners, `tests/providers/test_codex_reasoning.py`,
 `tests/providers/test_codex_image_review.py`, existing Codex generation compatibility and
 `tests/cli/test_cli_compatibility.py` and `tests/agent_core/test_contracts.py`; scoped
-Ruff/format/BasedPyright and diff check. The candidate composition passed 233 focused tests.
+Ruff/format/BasedPyright and diff check. The original 2026-09-07 candidate passed 233 focused tests; this historical count is not
+verification of subsequent changes.
 Do not run the repository-wide suite. Focused new regression owners cover canonical context,
 work continuation/interruption, creative asset/upload, memory/API, prepared delivery and
 Slack image access.
@@ -275,23 +175,13 @@ may infer this from fake HTTP. Existing deployed app manifests are not edited by
 Human-effort changes use `test_work_observations.py`, `test_slack_work_observations.py`,
 memory/API and Slack continuation/event tests. Cover correction/restart totals, author/reviewer
 scope, source-derived learning invalidation before approval and receipt selection, and report
-time versus measured duration. Supplied-background contracts use
-`tests/capture/test_supplied_background_provenance.py` plus affected native capture validation
-tests; exact legacy digests and byte tamper checks do not establish live capture success.
-
-Canonical capture changes select `test_creative_capture.py`, `test_capture_readiness.py`,
-`test_capture_setup.py`, affected lifecycle/integration tests and CLI compatibility. Fake
-workers prove nonce/digest/byte checks, source/cached-result invalidation and no replay after
-failure. Fake readiness proves that no boot/start command is used. Real native output and
-phone-size visual QA still require an available Mac/Trace Debug/Appium environment.
-
-Slack asset intake changes select `test_slack_image_files.py`, `test_slack_image_review.py`,
+time versus measured duration. Slack asset intake changes select `test_slack_image_files.py`, `test_slack_image_review.py`,
 `test_slack_asset_intake.py`, `test_slack_asset_intake_flow.py`, `test_slack_asset_link_failure.py`
 and `test_slack_creative_setup.py`.
 The flow uses actual service/SQLite/approval owners with fake HTTP/reasoning, from trusted
 signed-file binding through inspection, approval wait/restart, exact import and same-Run output.
 It is not signed live Slack transport or image quality proof. Asset projection changes also
-select `test_creative_api.py` and `test_creative_capture.py` for registration/link failure and
+select `test_creative_api.py` for registration/link failure and
 bounded Web readback of registered files above the inline upload limit.
 
 Performance reporting selects `test_performance_observations.py`, `test_performance_memory.py`,
@@ -410,23 +300,14 @@ Fixture PNGs and HTTP transports do not establish live image entitlement or Slac
 Operator acceptance uses the server's actual login, one approved image brief and a visible draft in
 its originating thread after adding files:write and reinstalling the Slack app. A human reviews the
 result's visual correctness before use.
-## PR134 / PR136 integration acceptance
-
-The combined candidate retained the persistent8090 server change from main. The existing on-prem
-CI selection (`tests/marketing/agent_service`, `tests/marketing/channels`, Codex reasoning, CLI
-compatibility/server update/onboarding and tool compatibility) passed529 tests. This is the
-affected service boundary, not the entire repository suite. Cloudflare's three directly changed
-hosted-generation/mac-worker/agent-run test files passed64 tests after `npm run build` generated
-workspace context. Existing knowledge review regressions passed40 focused tests, including
-classified ingress failures, private actors, source HTTP errors and batch recovery
-as applicable to their respective existing checks; Ubuntu installation itself remains a CI check.
+## Work continuity and knowledge integration
 
 New combined regressions select `tests/knowledge/test_slack_continuity_binding.py` and
-`tests/marketing/agent_service/test_knowledge_context_continuity.py`, plus affected image-edit and
-remote-capture coordinator files. They cover queued messages and execution aliases, current actor
+`tests/marketing/agent_service/test_knowledge_context_continuity.py`, plus affected image-edit
+coordinator files. They cover queued messages and execution aliases, current actor
 scope, original history retention, revoked prepared knowledge, follow-up retrieval, and knowledge
 change between approval and actual start. CLI compatibility additionally proves doctor creates no
-state. Repeat only an affected owner after a further fix; use the final GitHub head's Ubuntu/Mac
+state. Repeat only an affected owner after a further fix; use the final GitHub head's Ubuntu
 checks as installed CI evidence before merge.
 
 Workspace-wide mention admission is covered by `tests/marketing/channels/test_slack_events.py`:
