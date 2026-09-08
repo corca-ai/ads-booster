@@ -7,8 +7,15 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
-from ads_booster.knowledge.backup import KnowledgeBackupManifest, _inside
+from pydantic import TypeAdapter
+
+from ads_booster.knowledge.backup import (
+    KnowledgeBackupManifest,
+    _inside,
+    make_private_backup_parents,
+)
 from ads_booster.knowledge.erase_ledger import EraseLedgerExport, RestoreAuthorityReceipt
+from ads_booster.knowledge.indexing import index_content
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 
 
@@ -76,7 +83,7 @@ def restore_backup(
             if len(body) != item.byte_length or sha256(body).hexdigest() != item.sha256:
                 raise ValueError(f"knowledge_restore_file_integrity:{item.relative_path}")
             output = _inside(staging, item.relative_path)
-            output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            make_private_backup_parents(staging, output.parent)
             output.write_bytes(body)
             output.chmod(0o600)
         repository = SqliteKnowledgeRepository(staging)
@@ -93,10 +100,16 @@ def _rebuild_search(repository: SqliteKnowledgeRepository) -> None:
     with repository.connection() as connection:
         _ = connection.execute("BEGIN IMMEDIATE")
         _ = connection.execute("DELETE FROM chunks_fts")
-        _ = connection.execute(
-            "INSERT INTO chunks_fts(chunk_id,content,index_content) SELECT chunk_id,content,index_content FROM chunks"
+        rows = TypeAdapter(list[tuple[str, str]]).validate_python(
+            connection.execute("SELECT chunk_id,content FROM chunks").fetchall()
         )
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        _ = connection.executemany(
+            "INSERT INTO chunks_fts(chunk_id,content) VALUES (?,?)",
+            ((chunk_id, index_content(content)) for chunk_id, content in rows),
+        )
+        integrity = TypeAdapter[tuple[str] | None](tuple[str] | None).validate_python(
+            connection.execute("PRAGMA integrity_check").fetchone()
+        )
         if integrity is None or integrity[0] != "ok":
             raise ValueError("knowledge_restore_database_invalid")
 
