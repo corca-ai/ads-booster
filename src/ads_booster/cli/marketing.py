@@ -24,6 +24,7 @@ from ads_booster.marketing.agent_service.channel_setup import (
     run_web_jobs,
     slack_from_env,
 )
+from ads_booster.marketing.agent_service.github_issues import token_from_env
 from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
@@ -121,7 +122,11 @@ _HTTP_SUCCESS_MIN = 200
 _HTTP_SUCCESS_MAX = 300
 _DYNAMIC_RESEARCH_REQUEST_MAX_BYTES = 1024 * 1024
 
-app = typer.Typer(no_args_is_help=True, help="Operate the dynamic marketing account loop.")
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Operate the dynamic marketing account loop.",
+    pretty_exceptions_show_locals=False,
+)
 worker_app = typer.Typer(no_args_is_help=True, help="Enroll and operate a replaceable Mac worker.")
 agent_app = typer.Typer(no_args_is_help=True, help="Run bounded Marketing OS reasoning sessions.")
 service_app = typer.Typer(
@@ -220,6 +225,7 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
         model_id=model,
         timeout_seconds=timeout_seconds,
         integrations=AgentServiceIntegrationConfig(
+            github_token=token_from_env(os.environ),
             hosted_origin=os.environ.get("TRACE_MARKETING_HOSTED_ORIGIN"),
             hosted_token=os.environ.get("TRACE_MARKETING_CONTROL_TOKEN"),
             slack_bot_token=os.environ.get("TRACE_MARKETING_SLACK_BOT_TOKEN"),

@@ -18,6 +18,12 @@ from urllib.request import Request, urlopen
 
 import typer
 
+from ads_booster.marketing.agent_service.github_issues import (
+    GitHubIssues,
+    GitHubRejectedError,
+    validate_token,
+)
+
 if TYPE_CHECKING:
     from http.client import HTTPResponse
 
@@ -350,6 +356,29 @@ def stop() -> None:
     _ = execute("systemctl", "--user", "stop", TIMER)
     _ = execute("systemctl", "--user", "stop", "trace-marketing-update.service")
     _ = execute("systemctl", "--user", "stop", SERVICE, *([TUNNEL] if settings["tunnel"] else []))
+
+
+@app.command("github-setup")
+def github_setup() -> None:
+    """Store an issue-only GitHub credential without changing Slack configuration."""
+    try:
+        token = validate_token(getpass.getpass("GitHub 토큰 (ads-booster Issues: write): ").strip())
+        GitHubIssues(token).check_access()
+        private_write(CONFIG / "github.token", token + "\n")
+    except GitHubRejectedError as error:
+        typer.echo(
+            f"GitHub credential rejected (HTTP {error.code}); previous token preserved.", err=True
+        )
+        raise typer.Exit(1) from None
+    except Exception:  # noqa: BLE001 - credential entry must never render traceback locals.
+        typer.echo(
+            "GitHub setup failed; check token, repository access and file permissions.", err=True
+        )
+        raise typer.Exit(1) from None
+    typer.echo(
+        "Token saved; repository accessible. Issues: write permission is required for creation."
+    )
+    typer.echo("Restart the idle agent: systemctl --user restart trace-marketing.service")
 
 
 def server_port(settings: dict[str, object]) -> int:
