@@ -31,6 +31,13 @@ loads arbitrary files/URLs nor creates another Run. The canonical runtime owns i
 receipt and budget accounting. `codex_reasoning.py` owns generic discover/act/inspect guidance;
 marketing procedure bodies remain in the skill catalog rather than the initial prompt.
 
+`agent_service/task_input.py` projects the latest direct, host-admitted continuation into
+`ReasoningRequest.current_user_message`; `application.py` supplies it independently of evidence
+compaction and uses it for retrieval. The original goal and canonical history remain unchanged.
+Nested tool/source data cannot become task input, and task intent grants no effect authority.
+`knowledge.py` owns the shared read-only DM tool set, also used by the Slack composition so its
+outer policy does not accidentally remove the inner knowledge owner's supported reads.
+
 `SlackEvents._current_context` reprojects the authorized conversation through
 `SlackConversationStore.transcript` and the existing scoped memory selector at every planning
 boundary. This includes prior assistant replies for same-Run follow-ups. It does not write a

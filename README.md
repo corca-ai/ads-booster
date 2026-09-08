@@ -83,6 +83,12 @@ Small writing requests can be answered directly. When a creative plan has an ava
 tool, the agent is guided to continue through that tool and inspect its result before handing back.
 Slack follow-ups receive the current bounded conversation, including earlier assistant answers,
 so selections such as “use the second option” can resolve within the same work after restart.
+The latest admitted request is also passed separately from the original goal and reference data,
+so a new question or a shorter-answer request can steer the next reply. Normal answers omit
+internal Run diagnostics; `상태` still shows them, and the optional work link appears separately.
+`marketing.context` guides on-demand wiki/memory/source lookup. When team knowledge is configured,
+DMs expose its scoped read tools as well as skill discovery and public search. A missing read
+integration does not mean the wiki is empty; this PR does not enable that integration on a server.
 
 Creative skills can prepare mood/reference/font/color, background review/partial-edit,
 capture/localization/mockup/QA instructions without a campaign. If Appium or editing is

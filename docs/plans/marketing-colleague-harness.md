@@ -93,6 +93,58 @@ extra tools or approval. Existing persisted v1 skill goals are not rewritten.
 
 ## Follow-up scope under #93
 
+### Conversation follow-up review
+
+A user-provided deployed conversation showed repeated tool-inventory replies after the question
+changed, unnecessary diagnostics, and a speculative explanation for inconsistent tool counts.
+Its private messages are not reproduced in this public repository. A private colleague-agent
+reference was also inspected in source and in actual workspace conversations: scoped turn focus,
+on-demand capability/skill discovery, source-based short summaries and bounded scheduled reports
+were useful patterns. Observed messages do not prove the underlying tool executions, and that
+agent's current source and deployed runtime were not assumed to be the same version.
+
+Additional implementation:
+
+- The latest admitted continuation now has a separate `current_user_message` field, independent
+  of bounded evidence selection. The original goal remains unchanged. Only direct host-created
+  continuation records qualify; nested tool or submitted reference data cannot set task intent.
+  This corrects the ambiguous combination of a stale original goal and instructions to treat all
+  reference evidence as data. Current knowledge retrieval uses that admitted request too.
+- The Slack DM policy previously removed even the knowledge owner's permitted read tools.
+  Both layers now share that owner's read-only set. It includes wiki search/get, memory
+  get/explain and admitted-source read; no source-fetch, shared write or delivery is added.
+  The installed knowledge integration and its current actor/session grants are still required.
+- `marketing.context` is an on-demand procedure for retrieving and using team sources. It
+  distinguishes unavailable access, no search hits and an empty corpus. It adds no product facts.
+- Normal answers omit Run diagnostics and show an enabled shared work link in a separate context
+  block. Explicit status requests, exceptional states and asynchronous completion retain status.
+
+The opt-in `slack_colleague_canary.py` uses synthetic signed Slack messages and search data,
+actual installed service/SQLite/Codex, and restarts the composition between six same-thread turns.
+Every Slack send is captured locally. It covers tool availability, real skill lookup, inaccessible
+wiki, changed question, one-sentence constraint and a final search-plus-two-line deliverable.
+
+One comparison against the earlier PR wheel already followed the new questions correctly;
+the supplied deployed failure was **not reproduced** on that earlier candidate. It did still
+append diagnostic footers and added an irrelevant wiki caveat to the search-availability answer.
+The follow-up candidate answered that question directly, used actual skill discovery and search,
+and did not equate inaccessible wiki with an empty wiki. These are inspected single-trial
+observations with `gpt-6-astra`, not a measured general quality increase or deployed Slack proof.
+
+Final output rehearsal retained actual `skills.list` and `research.search` intents, answered the
+availability question in one sentence, and returned two lines from synthetic search without Run
+footers. Final installed-package verification passed 109 focused tests with source Python paths
+disabled (`python -I -m pytest --import-mode=importlib -o pythonpath=`). Seven changed production
+modules matched source bytes; final wheel SHA-256:
+`98ee65dbc90357743a00e3eeea500fc88c6d325b88b938b615ce13c00a6a5c01`.
+Scoped Ruff and BasedPyright passed for the 13 changed Python files. Tests include retained
+asynchronous status notifications; the real-model rehearsal covers ordinary dialogue only.
+
+Private reference materials and runtime data were not copied into this PR. Production deployment,
+knowledge configuration, broad Slack history access and live scheduling remain separate boundaries.
+
+### Remaining work
+
 - Verify the deployed Slack server version/configuration and collect representative authorized
   conversations before claiming production improvement.
 - Broaden repeated, independently reviewed task evaluations after the initial canary. Measure

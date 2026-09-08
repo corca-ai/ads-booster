@@ -49,6 +49,22 @@ comparison and search execution after creative procedure loading. `completed` is
 not a quality grade. Retain actual provider receipts and disclose model/trial count and fixture
 limitations. Do not turn prompt-substring assertions into claims of model competence.
 
+For latest-request projection, include `test_work_continuation.py`, `test_application.py`,
+`test_application_deferred.py` and `test_knowledge_context_continuity.py` in the service directory.
+For DM read wiring, include `tests/knowledge/test_installed_service_context.py` and
+`test_slack_continuity_binding.py`; existing actor/session authorization remains the owner.
+For conversational output, select channel `test_slack_result_link.py`, `test_slack_events.py`,
+`test_slack_progress.py` and `test_slack_run_notifications.py`. Verify ordinary body brevity,
+explicit status readback, asynchronous completion and private-link exclusion separately.
+
+Run the opt-in `tests/marketing/agent_service/slack_colleague_canary.py` with the same installed
+interpreter and `--output-root`, `--codex`, `--model` arguments shown above. It sends six synthetic
+signed events through one persistent thread, rebuilds the installed composition between turns,
+captures Slack sends locally and uses synthetic search. Review the saved dialogue and actual tool
+intents, including subject changes and the one-sentence request. This is not production Slack QA.
+The earlier PR candidate already avoided repeating its first answer in one comparison; do not
+claim the supplied deployed failure was reproduced or statistically eliminated by this rehearsal.
+
 For acknowledged asynchronous tool work, select `tests/marketing/test_runtime_deferred.py`,
 `tests/marketing/agent_service/test_application_deferred.py` and
 `tests/marketing/channels/test_slack_deferred.py`. Include existing `test_agent_runtime.py`,
