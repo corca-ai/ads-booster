@@ -353,8 +353,7 @@ def _insert_redirects(
     for redirect in command.redirects:
         if redirect.from_page_id == redirect.to_page_id:
             conflict("page_redirect_cycle", redirect.from_page_id)
-        cycle = cast(
-            "tuple[object, ...] | None",
+        cycle = _OPTIONAL_STRING_ROW.validate_python(
             connection.execute(
                 """
             WITH RECURSIVE chain(page_id) AS (
@@ -362,7 +361,7 @@ def _insert_redirects(
                 SELECT redirect.to_page_id FROM page_redirects AS redirect
                 JOIN chain ON redirect.from_page_id=chain.page_id
                 WHERE redirect.workspace_id=?
-            ) SELECT 1 FROM chain WHERE page_id=? LIMIT 1
+            ) SELECT page_id FROM chain WHERE page_id=? LIMIT 1
             """,
                 (redirect.to_page_id, workspace_id, redirect.from_page_id),
             ).fetchone(),
