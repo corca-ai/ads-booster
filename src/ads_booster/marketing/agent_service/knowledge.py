@@ -45,10 +45,15 @@ from ads_booster.contracts.tool_capability import (
     ToolReconciliationPolicy,
 )
 from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
-from ads_booster.knowledge.contracts import ActorContext, ScopeKind, TaskBinding, TaskBindingState
+from ads_booster.knowledge.contracts import (
+    ActorContext,
+    GrantCapability,
+    ScopeKind,
+    TaskBinding,
+    TaskBindingState,
+)
 from ads_booster.knowledge.repository_context import active_task_binding, context_receipt_is_current
 from ads_booster.knowledge.tool_contracts import (
-    GrantCapability,
     KnowledgeToolName,
     ToolCatalogEntry,
     ToolResult,
@@ -137,6 +142,8 @@ class KnowledgeServiceAdapter:
         if binding is None:
             return _unresolved(run.run_id, action_kind or KnowledgeActionKind.TEAM_CHAT, brand_id)
         actor = binding.actor
+        if self.ingress.authority is not None:
+            actor = self.ingress.authority.bind_actor(actor)
         current = active_task_binding(self.repository, actor)
         selected_action = action_kind or (
             KnowledgeActionKind.TEAM_CHAT if current is None else current.action_kind
