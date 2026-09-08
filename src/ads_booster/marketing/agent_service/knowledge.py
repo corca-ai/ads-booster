@@ -29,6 +29,7 @@ from ads_booster.contracts.knowledge_context_validation import TrustedKnowledgeC
 from ads_booster.contracts.knowledge_preparation import (
     BrandUnresolvedPreparation,
     PreparedContextRole,
+    PreparedContextSlot,
     PreparedKnowledgeContext,
     RequiredContextErrorCode,
     RequiredContextPreparationError,
@@ -229,15 +230,49 @@ class KnowledgeServiceAdapter:
         return knowledge_descriptors(self.host.catalog(), self.host.schemas(), now=now)
 
     def transfer_material(self, prepared: PreparedKnowledgeContext) -> TransferContextMaterial:
+        if contract_sha256(prepared.receipt) != prepared.receipt_sha256:
+            raise ValueError("knowledge_transfer_receipt_invalid")
+        selected = {
+            item.constraint_id: item.revision_id for item in prepared.receipt.required_constraints
+        }
+        constraints = tuple(
+            block for block in prepared.blocks if block.slot is PreparedContextSlot.CONSTRAINT
+        )
+        if (
+            len(constraints) != len(selected)
+            or len(selected) != len(prepared.receipt.required_constraints)
+            or any(
+                block.role is not PreparedContextRole.SYSTEM
+                or block.revision_refs != (selected.get(block.block_id),)
+                for block in constraints
+            )
+            or len({block.block_id for block in constraints}) != len(constraints)
+        ):
+            raise ValueError("knowledge_transfer_constraint_invalid")
         editorial = tuple(
             EditorialContextBlock(
                 block_id=block.block_id,
-                role=EditorialContextRole.REFERENCE,
+                role=(
+                    EditorialContextRole.CONSTRAINT
+                    if block.slot is PreparedContextSlot.CONSTRAINT
+                    else EditorialContextRole.REFERENCE
+                ),
                 text=block.text,
                 revision_refs=block.revision_refs,
             )
             for block in prepared.blocks
-            if block.role is PreparedContextRole.EDITORIAL and block.revision_refs
+            if block.slot is PreparedContextSlot.CONSTRAINT
+            or (
+                block.role is PreparedContextRole.EDITORIAL
+                and block.slot
+                in {
+                    PreparedContextSlot.BRAND_VOICE,
+                    PreparedContextSlot.TASK_OVERLAY,
+                    PreparedContextSlot.MEMORY,
+                    PreparedContextSlot.WIKI,
+                }
+                and block.revision_refs
+            )
         )
         return TransferContextMaterial(
             request=prepared.request,
