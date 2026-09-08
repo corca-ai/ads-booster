@@ -28,12 +28,18 @@ from ads_booster.contracts.agent_run import (
     ToolReceiptRecord,
     contract_sha256,
 )
+from ads_booster.contracts.knowledge_preparation import (
+    BrandUnresolvedPreparation,
+    PreparedKnowledgeContext,
+    RequiredContextPreparationError,
+)
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import ToolExecutionResult
 from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
 from ads_booster.marketing.agent_service.sqlite_repository import (
     AgentRunConflictError,
+    RepositoryAdmission,
     SqliteAgentRunRepository,
 )
 from ads_booster.marketing.runtime import (
@@ -68,6 +74,7 @@ if TYPE_CHECKING:
 
     from ads_booster.contracts.tool_capability import ToolDescriptor
     from ads_booster.marketing.agent_core.ports import ReasoningProvider, ToolAdapter
+    from ads_booster.marketing.agent_service.knowledge import KnowledgeServiceAdapter
 
 
 class CreateAgentRunRequest(ContractModel):
@@ -91,6 +98,7 @@ class MarketingAgentService:
     boundary_signal: Callable[[str, str], JsonObject | None] | None = None
 
     current_context: Callable[[AgentRun, datetime], JsonObject | None] | None = None
+    knowledge: KnowledgeServiceAdapter | None = None
 
     def __post_init__(self) -> None:
         """Fail closed when a selectable descriptor has no execution adapter."""
@@ -104,7 +112,13 @@ class MarketingAgentService:
         if missing:
             raise ValueError("ready_tool_adapter_missing")
 
-    def create(self, request: CreateAgentRunRequest, *, now: datetime) -> AgentRun:
+    def create(
+        self,
+        request: CreateAgentRunRequest,
+        *,
+        now: datetime,
+        admission: RepositoryAdmission | None = None,
+    ) -> AgentRun:
         with self.execution_lock:
             current = self.repository.get(request.tenant_id, request.run_id)
             if current is not None:
@@ -127,6 +141,7 @@ class MarketingAgentService:
                     updated_at=now,
                 ),
                 request_sha256=contract_sha256(request),
+                admission=admission,
             )
             return self._plan(run, evidence=(), now=now)
 
@@ -277,6 +292,7 @@ class MarketingAgentService:
         evidence: JsonObject,
         *,
         now: datetime,
+        admission: RepositoryAdmission | None = None,
     ) -> AgentRun:
         with self.execution_lock:
             run = self._required_run(tenant_id, run_id)
@@ -306,6 +322,7 @@ class MarketingAgentService:
                 state=AgentRunState.RUNNING,
                 expected_revision=run.revision,
                 records=(record,),
+                admission=admission,
             )
             return self._plan(resumed, evidence=(evidence_payload,), now=now)
 
@@ -408,12 +425,52 @@ class MarketingAgentService:
             policy=self.capability_policy,
             now=now,
         )
+        # Reuse only bounded, authority-filtered canonical conversation evidence.
+        latest_note = next(
+            (
+                item["note"]
+                for item in reversed(evidence)
+                if item.get("schema_version")
+                in {"trace.work-continuation.v1", "trace.work-interruption.v1"}
+                and isinstance(item.get("note"), str)
+            ),
+            "",
+        )
+        knowledge_query = run.goal.objective[:4000] + (
+            "\n" + str(latest_note)[:4000] if latest_note else ""
+        )
+        prepared_context: PreparedKnowledgeContext | None = None
+        if self.knowledge is not None:
+            snapshot = self.knowledge.filter_snapshot(run.run_id, snapshot)
+            preparation = self.knowledge.prepare(run, snapshot, now=now, query=knowledge_query)
+            if isinstance(
+                preparation,
+                RequiredContextPreparationError | BrandUnresolvedPreparation,
+            ):
+                return self._await_knowledge_input(run, preparation, snapshot, now=now)
+            prepared_context = preparation
         snapshot_record = _record(
             run,
             record_id=snapshot.snapshot_id,
             kind=AgentRecordKind.CAPABILITY_SNAPSHOT,
             payload=snapshot.model_dump(mode="json"),
             now=now,
+        )
+        context_records = (
+            ()
+            if prepared_context is None
+            else (
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:knowledge-context:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload={
+                        "schema_version": "trace.prepared-knowledge-context-record.v1",
+                        "prepared_context": prepared_context.model_dump(mode="json"),
+                    },
+                    now=now,
+                ),
+            )
         )
         observed = self.repository.append_step(
             run,
@@ -435,6 +492,7 @@ class MarketingAgentService:
                     payload=context_selection,
                     now=now,
                 ),
+                *context_records,
             ),
         )
         current_context = None if self.current_context is None else self.current_context(run, now)
@@ -453,12 +511,42 @@ class MarketingAgentService:
             remaining_cost_units=max(
                 0, run.budget.max_cost_units - self._spent_cost(run.tenant_id, run.run_id)
             ),
+            prepared_context=prepared_context,
         )
         reasoning_result = self.reasoning.plan(reasoning_request)
         if reasoning_result.receipt.request_sha256 != contract_sha256(reasoning_request):
             raise ValueError("reasoning_receipt_request_digest_mismatch")
         decision = reasoning_result.decision
         self._validate_reasoning_decision(snapshot, decision)
+        if (
+            self.knowledge is not None
+            and prepared_context is not None
+            and decision.proposed_action_kind is not None
+            and (
+                decision.proposed_action_kind is not prepared_context.request.action_kind
+                or decision.proposed_brand_ref != prepared_context.request.brand_ref
+            )
+        ):
+            rebound = self.knowledge.prepare(
+                observed,
+                snapshot,
+                now=now,
+                action_kind=decision.proposed_action_kind,
+                brand_id=decision.proposed_brand_ref,
+                query=knowledge_query,
+            )
+            if isinstance(rebound, RequiredContextPreparationError | BrandUnresolvedPreparation):
+                return self._await_knowledge_input(observed, rebound, snapshot, now=now)
+            return self._plan(
+                observed,
+                evidence=(
+                    {
+                        "schema_version": "trace.knowledge-action-reprepared.v1",
+                        "prepared_context_sha256": contract_sha256(rebound),
+                    },
+                ),
+                now=now,
+            )
         intent = AgentIntent(
             schema_version="trace.agent-intent.v1",
             intent_id=f"{run.run_id}:intent:{observed.revision}",
@@ -524,7 +612,14 @@ class MarketingAgentService:
             for record in self.repository.records(run.tenant_id, run.run_id)
             if record.kind is AgentRecordKind.EVIDENCE
             and record.payload_schema_version
-            not in {_CONTEXT_SELECTION_SCHEMA, "trace.tool-deferred.v1", "trace.tool-completion.v1"}
+            not in {
+                _CONTEXT_SELECTION_SCHEMA,
+                "trace.tool-deferred.v1",
+                "trace.tool-completion.v1",
+                # Knowledge must be reselected under current authority, never replayed
+                # through the general conversation projection after invalidation.
+                "trace.prepared-knowledge-context-record.v1",
+            }
         ]
         # Keep the latest observation first, then recent human constraints ahead of
         # tool output. Restore chronological order so corrections stay after originals.
@@ -650,6 +745,59 @@ class MarketingAgentService:
             ),
         )
 
+    def _await_knowledge_input(
+        self,
+        run: AgentRun,
+        preparation: RequiredContextPreparationError | BrandUnresolvedPreparation,
+        snapshot: CapabilitySnapshot,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        payload: JsonObject = {
+            "schema_version": "trace.knowledge-preparation-blocked.v1",
+            "preparation": preparation.model_dump(mode="json"),
+        }
+        snapshot_already_recorded = any(
+            record.record_id == snapshot.snapshot_id
+            for record in self.repository.records(run.tenant_id, run.run_id)
+        )
+        snapshot_records = (
+            ()
+            if snapshot_already_recorded
+            else (
+                _record(
+                    run,
+                    record_id=snapshot.snapshot_id,
+                    kind=AgentRecordKind.CAPABILITY_SNAPSHOT,
+                    payload=snapshot.model_dump(mode="json"),
+                    now=now,
+                ),
+            )
+        )
+        return self.repository.append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.OBSERVE,
+                input_sha256=contract_sha256(run.goal),
+                output_sha256=contract_sha256(payload),
+                now=now,
+            ),
+            state=AgentRunState.AWAITING_INPUT,
+            expected_revision=run.revision,
+            records=(
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:knowledge-blocked:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=payload,
+                    now=now,
+                ),
+                *snapshot_records,
+            ),
+            blocked_reason=preparation.status,
+        )
+
     def _execute_tool(  # noqa: PLR0913 - explicit immutable bindings define the admission edge.
         self,
         run: AgentRun,
@@ -716,7 +864,7 @@ class MarketingAgentService:
             persist_invocation=True,
         )
 
-    def _dispatch_tool(  # noqa: PLR0913,C901 - keep steering and execution admission guards explicit.
+    def _dispatch_tool(  # noqa: PLR0911,PLR0912,PLR0913,C901 - keep steering and execution admission guards explicit.
         self,
         run: AgentRun,
         *,
@@ -733,6 +881,23 @@ class MarketingAgentService:
         _ = self.registry.require_current_dispatch(
             descriptor, policy=self.capability_policy, now=now
         )
+        if not self.knowledge_is_current(run.tenant_id, run.run_id):
+            session = self.runtime_store.load(run.run_id)
+            if session is not None and session.pending_invocation is not None:
+                # Current runtime admission cannot be superseded by a new plan.
+                # Preserve its reservation and exact call for explicit reconciliation;
+                # no provider effect or invented schema-breaking receipt is produced.
+                return self._mark_reconciliation(run, contract_sha256(invocation), now=now)
+            return self._plan(
+                run,
+                evidence=(
+                    {
+                        "schema_version": "trace.knowledge-context-stale.v1",
+                        "reason": "knowledge_context_changed_before_dispatch",
+                    },
+                ),
+                now=now,
+            )
         adapter = self.tools.get(descriptor.capability_id)
         if adapter is None:
             raise ValueError("tool_dispatch_adapter_unavailable")
@@ -1320,6 +1485,33 @@ class MarketingAgentService:
             if record.kind is AgentRecordKind.INVOCATION:
                 return ToolInvocation.model_validate(record.payload)
         raise ValueError("pending_tool_invocation_missing")
+
+    def knowledge_is_current(self, tenant_id: str, run_id: str) -> bool:
+        """Recheck canonical knowledge authority immediately before an optional worker effect."""
+        if self.repository.get(tenant_id, run_id) is None:
+            return False
+        if self.knowledge is None:
+            return True
+        try:
+            prepared = self._latest_prepared_context(tenant_id, run_id)
+            return prepared is not None and self.knowledge.is_current(run_id, prepared)
+        except Exception:  # noqa: BLE001 - failed authority/readback never grants a worker effect.
+            return False
+
+    def _latest_prepared_context(
+        self,
+        tenant_id: str,
+        run_id: str,
+    ) -> PreparedKnowledgeContext | None:
+        for record in reversed(self.repository.records(tenant_id, run_id)):
+            if record.kind is not AgentRecordKind.EVIDENCE:
+                continue
+            if record.payload_schema_version != "trace.prepared-knowledge-context-record.v1":
+                continue
+            payload = record.payload.get("prepared_context")
+            if isinstance(payload, dict):
+                return PreparedKnowledgeContext.model_validate(payload)
+        return None
 
     def _descriptor_for_invocation(
         self, tenant_id: str, run_id: str, invocation: ToolInvocation

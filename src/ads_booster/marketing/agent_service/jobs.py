@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter
@@ -19,6 +20,14 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.agent_service.application import CreateAgentRunRequest
+from ads_booster.marketing.agent_service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    KnowledgeIngressSink,
+)
+from ads_booster.marketing.agent_service.knowledge_ingress_api import (
+    ApiIngressRequest,
+    build_api_ingress,
+)
 from ads_booster.marketing.agent_service.oauth import OAuthIdentity
 from ads_booster.transport.json_types import JsonObject
 
@@ -55,9 +64,14 @@ class ApprovalPermissionError(ValueError):
 class AgentJobs:
     service: MarketingAgentService
     approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    knowledge_sink: KnowledgeIngressSink | None = None
+    knowledge_ingress: CanonicalKnowledgeIngress = field(init=False)
 
     def __post_init__(self) -> None:
         """Create additive durable request admission tables."""
+        self.knowledge_ingress = CanonicalKnowledgeIngress(
+            self.service.repository.database_path, sink=self.knowledge_sink
+        )
         with self._db() as db:
             _ = db.execute("""CREATE TABLE IF NOT EXISTS agent_web_jobs (
                 tenant TEXT NOT NULL, job_id TEXT NOT NULL, principal TEXT NOT NULL,
@@ -73,7 +87,14 @@ class AgentJobs:
         finally:
             connection.close()
 
-    def enqueue(self, tenant: str, principal: str, job: WebJob) -> JsonObject:
+    def enqueue(
+        self,
+        tenant: str,
+        principal: str,
+        job: WebJob,
+        *,
+        now: datetime | None = None,
+    ) -> JsonObject:
         if (
             not job.job_id
             or len(job.job_id) > _MAX_ID
@@ -105,6 +126,31 @@ class AgentJobs:
                     "INSERT INTO agent_web_jobs VALUES (?,?,?,?,'pending',NULL)",
                     (tenant, job.job_id, principal, payload),
                 )
+                if job.action in {"create", "input"}:
+                    text = (
+                        job.goal.objective
+                        if job.action == "create" and job.goal is not None
+                        else json.dumps(
+                            job.evidence or {},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    )
+                    ingress = build_api_ingress(
+                        ApiIngressRequest(
+                            request_id=job.job_id,
+                            run_id=job.run_id,
+                            action=job.action,
+                            text=text,
+                            identity=OAuthIdentity(tenant_id=tenant, principal_id=principal),
+                            revision=1,
+                            occurred_at=now or datetime.now(UTC),
+                        )
+                    )
+                    _ = self.knowledge_ingress.admit(
+                        db, ingress.binding, ingress.event, ingress.envelope
+                    )
         return self.status(tenant, job.job_id)
 
     def status(self, tenant: str, job_id: str) -> JsonObject:
@@ -142,7 +188,9 @@ class AgentJobs:
                     ),
                 )
 
-    def work_once(self, *, now: datetime) -> bool:
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ingress and execution have distinct recovery guards.
+        if self.knowledge_ingress.dispatch_once():
+            return True
         with self._db() as db:
             _ = db.execute("BEGIN IMMEDIATE")
             row = _ROW.validate_python(

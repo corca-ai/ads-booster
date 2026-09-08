@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.fixture-validation-grader.v1",
+  "fixture_revision": 1,
+  "grader_only": true,
+  "cases": [
+    {"fixture": "malformed-logical-ref.json", "expected_error": "unresolved_logical_reference", "expected_unresolved_refs": ["source.does-not-exist", "source.does-not-exist.rev1"]},
+    {"fixture": "context-required-missing-both.json", "expected_action": "reject_before_generation", "expected_generation_count": 0, "expected_acceptance_count": 0},
+    {"fixture": "context-legacy-missing-both.json", "expected_action": "preserve_legacy_disabled_path", "expected_knowledge_context_fields": 0}
+  ]
+}

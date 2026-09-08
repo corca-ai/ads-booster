@@ -362,6 +362,8 @@ class RemoteCaptureCoordinator:
             return {"started": True}
 
     def _prestart_reason(self, job: RemoteCaptureJob, *, now: datetime) -> str | None:
+        if not self.service.knowledge_is_current(self.profile.tenant_id, job.invocation.run_id):
+            return "remote_capture_knowledge_changed"
         if job.approval.expires_at is None or job.approval.expires_at <= now:
             return "remote_capture_approval_expired"
         try:

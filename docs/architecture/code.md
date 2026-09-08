@@ -85,6 +85,58 @@ cli/marketing
                                       deterministic, no-model outcome evaluation
 ```
 
+## Knowledge ownership and dependency direction
+
+`knowledge/batch_actor.py` rehydrates private batch identities and current catalog grants.
+`knowledge/batch_failure.py` records denied queued jobs and unclaimed batches without replaying
+completed receipts; the batch runtime then continues to other authorized work.
+`knowledge/repository_batch_recovery.py` reconciles abandoned batch/job state under the exclusive
+`KnowledgeOwner`; the installed lifecycle invokes it before starting any processing.
+
+`knowledge/` is the server-owned domain. It owns contracts, scope and grant policy, immutable source
+and Wiki/memory files, SQLite catalog migrations, ingestion, retrieval/index outbox, curation jobs,
+backup/restore, tombstones, the control-root erase ledger, and transfer dependency records. It does
+not import Slack, HTTP, Mac, Cloudflare, or UI modules.
+
+`marketing/agent_service/lifecycle.py` is the composition root for the enabled runtime. It injects
+the configured `KnowledgeSettings`, local actor, `SqliteKnowledgeRepository`, canonical ingress,
+`KnowledgeServiceAdapter`, `KnowledgeContextAssembler`, `CodexKnowledgeProvider`, `BoundedJobRunner`,
+`KnowledgeIndexWorker`, `MemoryViewDispatcher`, and `CurationBatchRuntime`. The batch runtime groups
+scope- and policy-compatible jobs, honors collection deadlines and urgent interruption, and drives
+one shared provider call per bounded round. `knowledge/curation.py` executes each job-bound decision
+through the trusted tool host, feeds its actual observation into the next shared round, and returns
+one receipt per original event revision. `cli/marketing.py` starts and stops the continuous runtime
+with `service run`; the existing Agent Service still owns Runs, approvals, and execution records.
+`repository_batch.py` owns atomic batch state/JSON updates and persisted retry generations;
+`runtime.py` delegates explicit flush to that owner. `batch_curation.py` derives new collection IDs
+from those generations while preserving event deduplication and the first-event deadline.
+
+`marketing/agent_service/knowledge_ingress.py` owns the service-database outbox and trusted Run
+binding. `knowledge_ingress_authority.py` maps authenticated channel actors to existing knowledge
+members, sessions and grants without resetting revocations or roles. API and Slack composition share
+this ingress; context preparation and outbox dispatch recheck authority through the same bridge.
+`marketing/channels/knowledge_ingress_slack.py` translates authenticated Slack identity to
+workspace or member/conversation scope. `marketing/agent_service/knowledge.py` owns context
+preparation, read-only DM capability filtering, tool adapters, receipt freshness checks, and the
+server-to-hosted transfer boundary. `contracts/knowledge_context.py`,
+`contracts/knowledge_preparation.py`, and `contracts/knowledge_selection.py` own the typed transfer,
+preparation, action, and receipt contracts. `cloudflare/src/hosted-workspace.js` and
+`cloudflare/src/mac-workers.js` validate and carry the transfer; they do not become the canonical
+knowledge store.
+
+`knowledge/tool_source_operations.py` returns verified segment evidence references and quote hashes.
+`maintenance_jobs.py` builds curation inputs from extracted text and attaches authenticated user-event
+metadata only after matching the canonical conversation event; `curation_contracts.py` owns that
+metadata type. Evidence resolution remains in the knowledge domain, not in provider-generated IDs.
+
+The deletion path is split by ownership: `knowledge/erase_ledger.py` owns the chained control-root
+record, `schema_deletion.py` and repository deletion code own local manifest/block/purge state, and
+the hosted/Mac replica routes own remote acknowledgement. A pending remote receipt keeps the global
+purge state pending. `backup.py` owns manifest/file integrity and private backup paths; `restore.py`
+applies current erase authority and rebuilds search before activating a new root. Mixed-memory
+redaction remains owned by repository deletion code. No module may infer actor, workspace, member,
+brand, or sharing authority from model tool input or a request JSON field.
+
 ## Responsibility boundaries
 
 | Area | Owns | Does not own |

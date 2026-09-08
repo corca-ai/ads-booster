@@ -396,3 +396,44 @@ def test_missing_or_corrupted_source_after_start_settles_failed(
     assert record.result is not None
     assert record.result.disposition == "failed"
     assert coordinator.assets.get(lease.job.source.scope, lease.job.operation_id) is None
+
+
+def test_knowledge_changed_after_claim_prevents_device_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator, lease = approved(tmp_path)
+    monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
+    started = coordinator.start(
+        lease.job.operation_id, lease_id=lease.lease_id, job_sha256=lease.job_sha256, now=NOW
+    )
+    assert started["started"] is False
+    record = coordinator.store.get("tenant-a", lease.job.operation_id)
+    assert record is not None
+    assert record.result is not None
+    assert record.result.disposition == "no_effect"
+    assert record.result.actual_cost_units == 0
+
+
+def test_knowledge_change_after_device_start_preserves_execution_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator, lease = approved(tmp_path)
+    assert (
+        coordinator.start(
+            lease.job.operation_id, lease_id=lease.lease_id, job_sha256=lease.job_sha256, now=NOW
+        )["started"]
+        is True
+    )
+    monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
+    _ = coordinator.complete(lease.job.operation_id, upload=upload(lease), now=NOW)
+    record = coordinator.store.get("tenant-a", lease.job.operation_id)
+    assert record is not None
+    assert record.result is not None
+    assert record.result.disposition == "succeeded"
+    assert record.result.actual_cost_units == 20
+    assert coordinator.claim(now=NOW) is None
+
+
+def knowledge_stale(_service: MarketingAgentService, tenant_id: str, run_id: str) -> bool:
+    assert (tenant_id, run_id) == ("tenant-a", "run-one")
+    return False

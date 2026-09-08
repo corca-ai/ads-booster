@@ -1,0 +1,11 @@
+{
+  "schema": "knowledge.context-request.v1",
+  "request_id": "context.fixture.soul.write",
+  "action_kind": "content_write",
+  "task_ref": "task.fixture.soul.write",
+  "brand_ref": "brand.a",
+  "query": "라이트 요금제의 한국 출시 안내문을 작성해 주세요.",
+  "required_context": true,
+  "budget": {"max_input_tokens": 4000},
+  "trusted_binding_refs": {"workspace_ref": "workspace.team-a", "actor_ref": "member.a1"}
+}

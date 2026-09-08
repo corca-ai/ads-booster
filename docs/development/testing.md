@@ -41,6 +41,59 @@ drop the completion response after server commit, restart the worker and prove u
 Check wrong-token/default-off routes, local read-only doctor, module hashes and one device call.
 This establishes transport behavior, not real Appium quality, live Slack delivery, systemd/linger
 or the public installer. Preserve existing installed lifecycle evidence separately.
+## Team knowledge checks
+
+The knowledge implementation is covered by focused `tests/knowledge` contracts, repository/filesystem,
+ingress, Slack-scope, retrieval, curation, transfer, and deletion tests. Select the affected boundary
+with `uv run pytest -q <test-file>`; the focused owners are:
+
+| Boundary | Test files under `tests/knowledge/` |
+| --- | --- |
+| Canonical API/Slack identity, session isolation and context preparation | `test_installed_service_context.py` |
+| Extracted text, source evidence and authenticated user authority | `test_curation_inputs.py`, `test_source_memory_evidence.py`, `test_curation_user_authority.py` |
+| First-event collection window, flush, receipts, cancellation and restart | `test_batch_runtime.py` |
+| Private batch identity, current grants and exclusive-owner crash recovery | `test_batch_recovery.py`, `test_batch_startup.py`, `test_batch_policy_failures.py`, `test_private_batch_ingress.py` |
+| Continuous processing after durable item failure without automatic replay | `test_ingress_runtime_failures.py` |
+| Source HTTP success, redirect, 304 and retryable/terminal error classification | `test_source_fetch.py` |
+| Brand registration replay, current authority and failed-session cleanup | `test_brand_cli.py` |
+| Backup integrity, current erase-ledger restore and purge | `test_backup_restore.py`, `test_deletion.py` |
+| Constraint transfer and current checks on validation replay | `test_transfer_material.py`, `test_transfer_validation_replay.py` |
+
+Hosted required-knowledge generation uses `node --test cloudflare/test/hosted-generation-knowledge.test.js`.
+It covers capability preflight before cooldown/task creation and identical callback retries with
+current authority, receipt and result validation. `hosted-generation.test.js`, `hosted-workspace.test.js`
+and `mac-workers.test.js` cover the surrounding generation and worker paths. Local HTTP/SQLite checks
+are candidate evidence; deployed Worker and actual provider results require separate verification.
+
+The configuration seam must also be checked directly with synthetic absolute paths: all three
+`TRACE_MARKETING_KNOWLEDGE_ROOT`, `TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and
+`TRACE_MARKETING_KNOWLEDGE_POLICY` values absent means disabled; any partial set must fail; relative
+paths must fail; root/control permissions are `0700`; policy and `identity.json` are `0600`.
+The service composition check covers `trace-marketing service run --help` and source inspection of
+the enabled runtime, but a source checkout or local test does not prove a fresh installed service,
+Codex entitlement, Slack delivery, hosted validation, remote purge, or deployment.
+
+The context-transfer checks must cover both required and disabled policies, exact SHA-256 binding,
+workspace/account/run/task/action/brand matching, expiry, stale head/grant/tombstone rejection,
+pre-dispatch and callback validation, and the callback use receipt. A cached acceptance must fail
+after expiry, revocation, stale heads or tombstones; replay cannot bypass current checks. Slack checks
+must cover shared workspace scope, private member/conversation scope, read-only DM capability filtering, pending edit/
+delete/correction fences, and replayed outbox delivery. Deletion checks must assert the erase-ledger
+sequence, local tombstones and reverse dependency blocks, clean restore, and remote replica
+`purge_pending` until an acknowledgement is recorded. Restore checks include exact file digests,
+private nested paths, mixed-memory redaction and a searchable surviving revision. Run
+`tests/cli/test_server_onboarding.py` for fresh private knowledge-root creation and interrupted setup.
+Its timezone-data regression clears the system search path and cache before setup, verifying that
+the installed `tzdata` dependency supports initialization on minimal hosts.
+
+The registered `trace-marketing knowledge` reference surface requires `--root`, `--control-root`,
+and `--policy` on every command. Focused CLI checks should cover `init`, `doctor`, `ingest --envelope`,
+`run --once`/`--until-idle --flush-batches`, `search --query`, `get --id`, `context --request`,
+`backup --destination`, `restore --backup`, `retract --source`, `purge --request`,
+`questions --pending`/`--answer --text`, and the memory/brand/task subgroups. `run` and
+`memory consolidate` require Codex availability when they execute curation. These are source-level
+reference operations until the installed `knowledge --help` and a fresh installation are checked;
+do not claim operator usability or deployment proof from source alone.
 
 | Change | Command |
 | --- | --- |
@@ -321,3 +374,22 @@ custom port, invalid values, and agreement across actual launch argv, update hea
 The installed Ubuntu lifecycle fixture occupies 8765 with an unrelated HTTP service, starts the
 agent on 8090, performs real systemd update/restart and verifies the unrelated service and persistent
 port survive. This does not prove the live on-prem port migration or Cloudflare route change.
+
+## PR134 / PR136 integration acceptance
+
+The combined candidate retained the persistent8090 server change from main. The existing on-prem
+CI selection (`tests/marketing/agent_service`, `tests/marketing/channels`, Codex reasoning, CLI
+compatibility/server update/onboarding and tool compatibility) passed529 tests. This is the
+affected service boundary, not the entire repository suite. Cloudflare's three directly changed
+hosted-generation/mac-worker/agent-run test files passed64 tests after `npm run build` generated
+workspace context. Existing knowledge review regressions passed40 focused tests, including
+classified ingress failures, private actors, source HTTP errors and batch recovery
+as applicable to their respective existing checks; Ubuntu installation itself remains a CI check.
+
+New combined regressions select `tests/knowledge/test_slack_continuity_binding.py` and
+`tests/marketing/agent_service/test_knowledge_context_continuity.py`, plus affected image-edit and
+remote-capture coordinator files. They cover queued messages and execution aliases, current actor
+scope, original history retention, revoked prepared knowledge, follow-up retrieval, and knowledge
+change between approval and actual start. CLI compatibility additionally proves doctor creates no
+state. Repeat only an affected owner after a further fix; use the final GitHub head's Ubuntu/Mac
+checks as installed CI evidence before merge.

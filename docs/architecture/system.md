@@ -84,6 +84,86 @@ delivery invocations and never hosted publication or capture.
 The [server packet](../operations/agent-server/README.md) defines deployment and live acceptance.
 No live OAuth/Slack/Tunnel or Linux systemd success is implied by local tests.
 
+## Server-owned knowledge context
+
+The on-premises `MarketingAgentService` is the integration owner for team knowledge. The knowledge
+domain owns its own absolute `knowledge_root` and SQLite catalog, while the existing Agent Service
+database remains the owner of Runs, Slack admission, and Run bindings. `KnowledgeSettings.from_env`
+requires all three values together: `TRACE_MARKETING_KNOWLEDGE_ROOT`,
+`TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and `TRACE_MARKETING_KNOWLEDGE_POLICY`. All paths must be
+absolute. With all three absent the feature is disabled; a partial set raises a configuration error.
+The service user owns root/control directories at mode `0700`; policy and `control_root/identity.json`
+are private mode `0600` files.
+
+When enabled, `cli/marketing.py` builds `InstalledKnowledgeRuntime` beside the canonical service.
+It registers the local actor, creates the SQLite knowledge repository, canonical ingress, ingestion,
+retrieval and tool host, Codex curation provider, owner lock, bounded job runner, index worker, and
+memory-view dispatcher. `CurationBatchRuntime` defaults to collecting compatible routine jobs until
+60 seconds after their first event, without extending the deadline for later arrivals. It claims
+urgent work immediately and runs one shared bounded model round at a time for every active job.
+Each later round receives the actual guarded tool observations from earlier rounds; terminal
+job decisions become receipts bound to their original event and revision. Explicit flush updates
+the indexed and serialized batch state in one transaction. Cancelled unfinished jobs re-enter
+collection with a deterministic generation derived from persisted terminal batch history; earlier
+receipts remain intact. Startup recovers abandoned running batches only after acquiring the exclusive
+owner lock; completed per-event receipts remain terminal and unfinished jobs return to collection.
+Private batches reload their registered actor and current private grants from the catalog rather
+than inheriting the local administrator's identity or workspace grants. Revoked private jobs and
+unclaimed batches fail durably without preventing later authorized work. The runtime starts as a daemon loop with the service and stops before the
+service releases its owner lock. Standalone
+knowledge CLI ownership is separate from the service owner and must not share a live root. The
+registered local-admin surface covers `init`, `doctor`,
+`ingest`, `run`, `search`, `get`, `context`, `schedule`, `backup`, `restore`, `retract`, `purge`,
+`questions`, plus memory, brand, and task subgroups. Every operation takes the absolute `--root`,
+`--control-root`, and `--policy` paths; `run` and `memory consolidate` take optional `--model` and
+bounded `--once`/`--until-idle` controls. Installed commands and fresh-install behavior require their
+own verification.
+
+Ingress remains authenticated at the existing service/channel boundary. The installed API and Slack
+adapters share the canonical ingress and its authority bridge. Before admission, the bridge maps the
+authenticated actor to stored member, session and read/write grants at the current policy epoch,
+preserving revoked memberships, closed sessions and reader roles. Outbox replay and context
+preparation recheck the stored authority. Active task lookup includes member and session identity.
+A shared Slack thread maps to workspace scope. A Slack DM maps to member plus conversation scope and
+is projected through a
+read-only capability set. The DM projection permits knowledge search/get, memory get/explain, and
+source read; it excludes knowledge or memory writes, scheduling, purge, and external delivery. The
+canonical ingress stores the binding, conversation event, and durable outbox before dispatch. Edited,
+deleted, or correcting events create a pending fence; context preparation blocks the affected Run
+until the new source state is admitted. A dispatch that durably records a classified item failure
+returns progress without acknowledging or automatically retrying that item, so later ingress and
+maintenance continue. Unknown receipt outcomes and persistence errors still propagate.
+Source fetching admits only 2xx or 304 after redirect handling. HTTP 408/429 and server errors are
+retryable; other unsuccessful statuses fail before their body can enter extraction or curation.
+
+`source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
+memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment
+identity. Curation uses the extracted text and character offsets. Its optional
+`authenticated_user_event` contains evidence and authority references only for a canonical matching
+user message with no quoted spans; imported documents and other conversation roles do not gain
+user-instruction authority.
+
+Before reasoning, the service adapter assembles a bounded context receipt from current revisions,
+constraints, grants, and task/brand binding. It stores the selected immutable revision references and
+rechecks that receipt immediately before tool dispatch. Hosted generation receives only a strict,
+digest-bound `trace.knowledge-context.v1` transfer with selected editorial blocks and evidence
+excerpts. The hosted broker validates tenant/account/task/run/action binding before dispatch and the
+callback must return the matching transfer, digest, and receipt. Missing or mismatched required
+context fails closed; it does not silently fall back to legacy context. Generation checks the same
+required worker capability used for leasing before consuming its cooldown or publishing a task.
+An identical callback retry returns duplicate success only after current authority, context receipt,
+callback identity and result equality are checked again; altered or revoked callbacks remain rejected.
+Cached validation acceptance is reused only after current authentication, binding, expiry, grant,
+head and tombstone checks pass. Required constraints retain their constraint role in the transfer.
+
+Deletion records a manifest and chained erase-ledger entry in the control root before blocking live
+reads. Tombstones and reverse dependencies cover source, Wiki, memory, claims, context receipts, and
+transfer replicas. A remote replica is tracked separately and remains pending until its purge receipt
+is verified. CLI purge resolves its target from the applied retraction receipt, retaining request
+identity on replay. Restore validates the manifest and file digests, applies the current erase ledger
+including mixed-memory redactions, and rebuilds search in a private staging root before activation.
+No external deletion or deployment success is implied by this source wiring.
+
 ## Runtime boundary
 
 Cloudflare owns hosted candidates, D1 leases/callback acceptance, R2 storage, review state, Threads

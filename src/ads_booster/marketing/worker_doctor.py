@@ -59,6 +59,7 @@ class MacWorkerDoctorReport:
                 "native_appium": True,
                 "hosted_workspace_capture_v1": True,
                 "feedback_context_v1": True,
+                "knowledge_context_v1": True,
                 "marketing_judgment_v1": True,
                 "capture_ready": self.ready,
                 "marketing_reasoning_ready": reasoning_ready,

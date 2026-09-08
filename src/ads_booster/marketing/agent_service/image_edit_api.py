@@ -11,6 +11,8 @@ from ads_booster.contracts.models import ContractModel
 from ads_booster.marketing.agent_service.creative_image_edit import CreativeImageEditTool
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ads_booster.marketing.agent_service.application import MarketingAgentService
     from ads_booster.marketing.agent_service.oauth import OAuthIdentity
     from ads_booster.transport.json_types import JsonObject
@@ -32,7 +34,7 @@ def dispatch_image_edit(  # noqa: PLR0911, PLR0913 - explicit HTTP authorization
     *,
     identity: OAuthIdentity,
     service: MarketingAgentService,
-    allow_review: bool = False,
+    review_authorizer: Callable[[OAuthIdentity], bool] | None = None,
 ) -> tuple[int, JsonObject] | None:
     match = _ROUTE.fullmatch(path)
     if match is None:
@@ -46,7 +48,7 @@ def dispatch_image_edit(  # noqa: PLR0911, PLR0913 - explicit HTTP authorization
         return 200, tool.operation_status(identity.tenant_id, match[1], match[2])
     if method != "POST" or match[3] != "/abandon":
         return 405, {"error": "image_edit_method_not_allowed"}
-    if not allow_review:
+    if review_authorizer is None or not review_authorizer(identity):
         return 403, {"error": "agent_reviewer_required"}
     request = AbandonImageEditRequest.model_validate_json(body)
     return 200, tool.abandon(

@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.observation.1",
+  "event_kind": "message_finalized",
+  "request_text": "오늘 데모에서 세 명 중 두 명이 CSV 내보내기 버튼을 찾는 데 30초 넘게 걸렸다. 표본이 작아 일반화하지 않는다.",
+  "timestamp": "2026-09-07T03:20:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.research", "message_ref": "message.daily.observation", "revision": 1, "logical_source_ref": "source.daily.observation", "logical_revision_ref": "source.daily.observation.rev1"},
+  "attachments": []
+}

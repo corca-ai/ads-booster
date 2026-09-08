@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.message.delete.1",
+  "event_kind": "message_deleted",
+  "request_text": "",
+  "timestamp": "2026-09-07T01:30:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.promo", "message_ref": "message.deleted.promo", "revision": 2, "logical_source_ref": "source.deleted.promo", "logical_revision_ref": "source.deleted.promo.rev1"},
+  "attachments": []
+}

@@ -674,3 +674,48 @@ def test_unknown_abandonment_persists_failure_without_provider_replay(tmp_path: 
             reviewer_id="reviewer",
             note="Different decision",
         )
+
+
+def test_knowledge_changed_while_queued_prevents_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool, provider = setup(tmp_path)
+    approve(tool)
+    monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
+    assert tool.work_once()["state"] == "completed"
+    assert provider.calls == 0
+    receipts = [
+        record.payload
+        for record in tool.service.repository.records("tenant-a", "run-one")
+        if record.kind is AgentRecordKind.RECEIPT
+    ]
+    assert receipts[0]["disposition"] == "no_effect"
+    assert receipts[0]["actual_cost_units"] == 0
+
+
+def test_knowledge_change_after_generation_preserves_execution_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool, provider = setup(tmp_path)
+    approve(tool)
+
+    def changed() -> None:
+        monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
+
+    provider.hook = changed
+    assert tool.work_once()["state"] == "completed"
+    assert provider.calls == 1
+    receipts = [
+        record.payload
+        for record in tool.service.repository.records("tenant-a", "run-one")
+        if record.kind is AgentRecordKind.RECEIPT
+    ]
+    assert receipts[0]["disposition"] == "succeeded"
+    assert receipts[0]["actual_cost_units"] == 20
+    assert replace(tool).work_once()["state"] == "idle"
+    assert provider.calls == 1
+
+
+def knowledge_stale(_service: MarketingAgentService, tenant_id: str, run_id: str) -> bool:
+    assert (tenant_id, run_id) == ("tenant-a", "run-one")
+    return False

@@ -458,6 +458,9 @@ WHERE operation=?""",
                     or job.approval.expires_at is None
                     or self.clock() >= job.approval.expires_at
                     or not self.readiness()
+                    or not self.service.knowledge_is_current(
+                        job.source.scope.workspace_id, job.invocation.run_id
+                    )
                     or (
                         self.service.boundary_signal is not None
                         and self.service.boundary_signal(
