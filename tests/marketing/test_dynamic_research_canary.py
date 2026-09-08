@@ -24,11 +24,11 @@ from ads_booster.contracts.marketing_context import (
     CustomerSignalPlanningProjection,
     MarketingContextPlanningProjection,
 )
-from ads_booster.marketing.dynamic_evidence_research import (
+from ads_booster.research.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
     planner_protocol_sha256,
 )
-from ads_booster.marketing.dynamic_research_canary import (
+from ads_booster.evaluation.dynamic_research_canary import (
     DynamicResearchCanaryCase,
     DynamicResearchCanaryExpectation,
     DynamicResearchCanaryInput,
@@ -38,10 +38,10 @@ from ads_booster.marketing.dynamic_research_canary import (
     DynamicResearchSemanticAnchor,
     evaluate_dynamic_research_canary,
 )
-from ads_booster.marketing.dynamic_research_canary_corpus import (
+from ads_booster.evaluation.dynamic_research_canary_corpus import (
     load_private_dynamic_research_canary_cases,
 )
-from ads_booster.marketing.evidence_research_operator import ResearchScope
+from ads_booster.research.evidence_research_operator import ResearchScope
 
 if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject

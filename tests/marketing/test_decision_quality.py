@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ads_booster.contracts.marketing_agent import DecisionDossier
-from ads_booster.marketing.decision_quality import (
+from ads_booster.evaluation.decision_quality import (
     DecisionQualityScenario,
     evaluate_decision_quality,
 )

@@ -2,7 +2,7 @@ from dataclasses import replace
 from threading import Event, Thread
 from typing import TYPE_CHECKING
 
-from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
+from ads_booster.agent.service.maintenance import MaintenanceGate
 from tests.marketing.agent_service.test_http_api import _api  # pyright: ignore[reportPrivateUsage]
 from tests.marketing.channels.test_slack_commands import NOW, request, setup_commands
 

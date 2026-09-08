@@ -31,25 +31,25 @@ from ads_booster.knowledge.errors import AccessDeniedError, PolicyEpochStaleErro
 from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.knowledge_ingress import (
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
     TrustedRunBinding,
 )
-from ads_booster.marketing.agent_service.knowledge_ingress_authority import (
+from ads_booster.agent.service.knowledge_ingress_authority import (
     KnowledgeIngressAuthority,
 )
-from ads_booster.marketing.agent_service.lifecycle import (
+from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
-from ads_booster.marketing.channels.contracts import ChannelIdentityBinding
-from ads_booster.marketing.channels.knowledge_ingress_slack import (
+from ads_booster.channels.contracts import ChannelIdentityBinding
+from ads_booster.channels.knowledge_ingress_slack import (
     SlackIngressRequest,
     build_slack_ingress,
 )
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from tests.knowledge.change_test_fixtures import actor as catalog_actor

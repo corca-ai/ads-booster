@@ -6,11 +6,11 @@ from datetime import timedelta
 from threading import Event
 from typing import TYPE_CHECKING, override
 
-from ads_booster.marketing.agent_service.image_edit_setup import (
+from ads_booster.bootstrap.image_edit_setup import (
     ImageEditCatalog,
     run_image_edit_worker,
 )
-from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
+from ads_booster.agent.service.maintenance import MaintenanceGate
 from tests.marketing.agent_service.test_creative_image_edit import setup
 from tests.marketing.channels.test_slack_commands import NOW
 

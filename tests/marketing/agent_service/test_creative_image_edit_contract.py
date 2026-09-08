@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from ads_booster.contracts.creative_work import AssetParent
-from ads_booster.marketing.agent_service.creative_image_edit_contract import (
+from ads_booster.creative.creative_image_edit_contract import (
     CreativeImageEditInput,
     EditRegion,
     compose_preserved_edit,

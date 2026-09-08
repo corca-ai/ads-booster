@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
+from ads_booster.channels.http.oauth import OAuthTokenIntrospector
 
 
 @dataclass

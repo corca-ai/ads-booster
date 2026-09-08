@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
-from ads_booster.marketing.agent_service.performance_observations import PerformanceObservationStore
-from ads_booster.marketing.channels.slack_conversations import Conversation, Message
-from ads_booster.marketing.channels.slack_performance import (
+from ads_booster.learning.performance_observations import PerformanceObservationStore
+from ads_booster.channels.slack_conversations import Conversation, Message
+from ads_booster.channels.slack_performance import (
     is_performance_command,
     performance_command,
 )
@@ -21,7 +21,7 @@ from tests.marketing.channels.test_slack_events import receive, setup_events
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.channels.slack_events import SlackEvents
+    from ads_booster.channels.slack_events import SlackEvents
 
 
 def payload() -> str:

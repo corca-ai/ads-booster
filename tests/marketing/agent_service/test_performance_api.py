@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
-from ads_booster.marketing.channels.slack_conversations import Conversation
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.oauth import OAuthIdentity
+from ads_booster.channels.slack_conversations import Conversation
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 from tests.marketing.channels.test_slack_performance import payload

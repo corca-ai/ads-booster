@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
-from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
-from ads_booster.marketing.agent_service.memory_api import (
+from ads_booster.learning.memory import SQLiteMemoryStore
+from ads_booster.channels.http.memory_api import (
     dispatch_memory,
     planner_memory_projection,
 )
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:

@@ -19,11 +19,11 @@ from ads_booster.contracts.marketing_agent import (
     OutcomeScope,
     contract_sha256,
 )
-from ads_booster.marketing.feature_launch_evidence_brief import (
+from ads_booster.contracts.feature_launch_evidence_brief import (
     BriefEvidenceItem,
     FeatureLaunchEvidenceBrief,
 )
-from ads_booster.marketing.feature_launch_operator import (
+from ads_booster.workflows.feature_launch_operator import (
     AvailableAction,
     DecisionProposal,
     FeatureLaunchDependencies,
@@ -39,8 +39,8 @@ from ads_booster.marketing.feature_launch_operator import (
     FeatureLaunchTask,
     MarketingGoal,
 )
-from ads_booster.marketing.planning_projections import FeaturePlanningProjection
-from ads_booster.marketing.runtime import (
+from ads_booster.contracts.planning_projections import FeaturePlanningProjection
+from ads_booster.agent.runtime import (
     AgentSession,
     BoundToolInvocation,
     Budget,

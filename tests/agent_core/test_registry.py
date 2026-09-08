@@ -20,7 +20,7 @@ from ads_booster.contracts.tool_capability import (
     ToolReadiness,
     ToolReconciliationPolicy,
 )
-from ads_booster.marketing.agent_core.registry import (
+from ads_booster.agent.core.registry import (
     CapabilityPolicy,
     ToolDescriptorFactory,
     ToolRegistration,

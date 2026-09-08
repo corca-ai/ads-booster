@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Literal
 
 import pytest
 
-import ads_booster.marketing.agent_service.slack_asset_intake as module
+import ads_booster.channels.slack_asset_intake as module
 from ads_booster.contracts.creative_work import CreativeAsset, CreativeScope
-from ads_booster.marketing.agent_service.creative_asset_links import link_asset
+from ads_booster.creative.creative_asset_links import link_asset
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,14 +27,14 @@ from ads_booster.contracts.agent_run import (
     ToolInvocation,
     contract_sha256,
 )
-from ads_booster.marketing.agent_service.slack_asset_intake import (
+from ads_booster.channels.slack_asset_intake import (
     ImportSlackAsset,
     SlackAssetIntakeTool,
     slack_asset_import_descriptor,
     slack_file_inspect_descriptor,
 )
-from ads_booster.marketing.agent_service.slack_image_files import SlackImageFiles
-from ads_booster.marketing.agent_service.slack_image_review import bind_files
+from ads_booster.channels.slack_image_files import SlackImageFiles
+from ads_booster.channels.slack_image_review import bind_files
 from tests.marketing.agent_service.creative_fixtures import NOW, png, setup_assets
 from tests.marketing.agent_service.test_slack_image_review import HTTP
 

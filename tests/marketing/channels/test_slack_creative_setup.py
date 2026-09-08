@@ -10,8 +10,8 @@ import pytest
 
 from ads_booster.contracts.agent_run import ToolExecutionDeferred, ToolInvocation
 from ads_booster.contracts.tool_capability import ToolDescriptor, ToolExecutionResult
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
-from ads_booster.marketing.channels.slack_creative_setup import (
+from ads_booster.agent.core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.channels.slack_creative_setup import (
     SlackCreativeCatalog,
     SlackImagePermissionProbe,
     connect_slack_creative,

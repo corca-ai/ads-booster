@@ -5,36 +5,52 @@ Last reviewed: 2026-09-08
 
 ## On-premises Marketing Agent
 
-The new dependency direction is portable contracts → agent core → agent service → provider/tool/
-channel adapters. Research, creative and delivery adapters remain leaves; they must not own the Agent core.
+An arrow below means “imports”: `A → B` means A imports B. `bootstrap` composes concrete
+`channels`, `agent/service`, `tools`, `providers`, `knowledge`, and domain owners. `channels` may
+import public service and domain surfaces plus `contracts`/`transport`; `agent/service` may import
+`agent/core`, `agent/runtime`, `contracts`, providers, and established domain canonical-repository
+types. `agent/core` imports only portable contracts and ports. `providers` and `knowledge` use shared
+contracts or transport as appropriate. Domain owners do not own channel admission or Agent Core, but
+an existing service-to-domain or canonical-repository bridge remains permitted.
 
 | Package | Responsibility | Must not own |
 | --- | --- | --- |
 | `contracts/agent_run.py` | portable Run, Step, Intent, snapshot, invocation, approval, receipt, outcome, learning, and record envelopes | provider calls, storage, channel state |
 | `contracts/tool_capability.py` | complete ToolDescriptor policy/readiness/idempotency/reconciliation contract | registry selection or execution |
 | `contracts/reasoning.py` | replaceable structured reasoning request and decision | Codex process lifecycle |
-| `marketing/agent_core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
-| `marketing/agent_service/` | canonical on-prem application flow and append-only SQLite repository | channel-specific planning or effect implementation |
+| `agent/core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
+| `agent/service/` | canonical on-prem application flow and append-only SQLite repository | channel-specific planning or effect implementation |
+| `agent/runtime.py` | write-ahead invocation, exact approval, receipt validation and recovery | channel admission or effect-specific implementation |
+| `channels/`, `channels/http/` | signed Slack and authenticated HTTP input/output boundaries | canonical Run state or tool effects |
+| `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs | Run/approval/recovery ownership |
+| `bootstrap/` | composition of the configured service and concrete integrations | a second execution path |
+| `knowledge/` | team knowledge, scoped retrieval and curation | Agent, channel, bootstrap, tool or workload dependencies |
+| `creative/`, `delivery/`, `learning/`, `research/`, `workflows/`, `evaluation/` | their named domain policies and implementations | Agent Core or channel admission; their established service bridge remains explicit |
+| `contracts/`, `providers/`, `transport/`, `cli/` | data-only contracts, external provider clients, shared transport and installed commands | another domain's mutable runtime state |
 
-`marketing/agent_service/integrations.py` is the composition boundary for installed research,
-Slack, Notion and GitHub owners. It resolves secrets only inside adapters and does
-not move their effect logic into Agent Core. `skills.py` owns versioned procedures and readiness;
-`scheduler.py` owns date-stable daily admission and the narrow scheduled-delivery approval allowlist.
-`ToolRegistry` accepts a live catalog provider so readiness is refreshed at plan and dispatch time
-rather than frozen at process startup.
+`bootstrap/integrations.py` is the composition boundary for installed research, Slack, Notion and
+GitHub owners. It resolves secrets only inside adapters and does not move their effect logic into
+Agent Core. `agent/service/skills.py` owns versioned procedures and readiness;
+`agent/service/scheduler.py` owns date-stable daily admission and the narrow scheduled-delivery
+approval allowlist.
 
-`skill_tools.py` exposes the versioned `skills.py` catalog through read-only `skills.list` and
-`skills.read` adapters, registered by `integrations.py`. Discovery returns compact metadata;
+Tool registration is one atomic configuration unit: a stable capability ID/version, descriptor
+factory and execution adapter are validated together before catalog and adapter projections become
+visible. Duplicate or incomplete registrations are configuration errors. Readiness is recomputed at
+planning and dispatch time, without replacing an already admitted invocation's executor identity.
+
+`tools/skill_tools.py` exposes the versioned `agent/service/skills.py` catalog through read-only
+`skills.list` and `skills.read` adapters, registered by `bootstrap/integrations.py`. Discovery returns compact metadata;
 reading returns one exact server-owned procedure, criteria and required capabilities. Neither
 loads arbitrary files/URLs nor creates another Run. The canonical runtime owns invocation,
-receipt and budget accounting. `codex_reasoning.py` owns generic discover/act/inspect guidance;
+receipt and budget accounting. `providers/codex_reasoning.py` owns generic discover/act/inspect guidance;
 marketing procedure bodies remain in the skill catalog rather than the initial prompt.
 
-`agent_service/task_input.py` projects the latest direct, host-admitted continuation into
-`ReasoningRequest.current_user_message`; `application.py` supplies it independently of evidence
+`agent/service/task_input.py` projects the latest direct, host-admitted continuation into
+`ReasoningRequest.current_user_message`; `agent/service/application.py` supplies it independently of evidence
 compaction and uses it for retrieval. The original goal and canonical history remain unchanged.
 Nested tool/source data cannot become task input, and task intent grants no effect authority.
-`knowledge.py` owns the shared read-only DM tool set, also used by the Slack composition so its
+`agent/service/knowledge.py` owns the shared read-only DM tool set, also used by the Slack composition so its
 outer policy does not accidentally remove the inner knowledge owner's supported reads.
 
 `SlackEvents._current_context` reprojects the authorized conversation through
@@ -43,10 +59,10 @@ boundary. This includes prior assistant replies for same-Run follow-ups. It does
 second transcript into continuation evidence. Existing transcript bounds, source edit/deletion
 handling, conversation identity and private member/session isolation remain the authority.
 
-`marketing/runtime.py` remains the execution-safety kernel for write-ahead invocation, exact-call
+`agent/runtime.py` remains the execution-safety kernel for write-ahead invocation, exact-call
 approval, receipt validation, restart recovery, and reconciliation. The service composes it; it does
-not fork those guarantees. The previous deleted `agent/` connector-specific product is not restored,
-and no `trace-agent` or `trace-ads` entrypoint is introduced.
+not fork those guarantees. The `agent/` namespace now contains this canonical engine only; the prior
+connector-specific product is not restored, and no `trace-agent` or `trace-ads` entrypoint is introduced.
 
 Codex reasoning uses a strict provider projection: arbitrary tool input is encoded as
 JSON text in tool_input_json, decoded immediately back into the portable ReasoningDecision,
@@ -56,16 +72,16 @@ structured-output provider rejects; canonical invocation input and history remai
 
 ## Web and Slack onboarding owners
 
-- agent_service/browser_login.py owns browser-bound PKCE, short-lived server sessions and CSRF;
-  oauth.py owns token exchange/introspection transport with redirects disabled.
-- agent_service/jobs.py owns durable web request admission, background dispatch and scoped status.
+- channels/http/browser_login.py owns browser-bound PKCE, short-lived server sessions and CSRF;
+  channels/http/oauth.py owns token exchange/introspection transport with redirects disabled.
+- channels/http/jobs.py owns durable web request admission, background dispatch and scoped status.
   It never creates a separate Run ledger or plans outside MarketingAgentService.
 - channels/slack_commands.py owns real Slack form translation, command admission and response
   dispatch markers. It uses the existing ChannelApplicationAdapter for identity and exact approval.
-- agent_service/channel_setup.py composes installed environment configuration and operator-managed
+- bootstrap/channel_setup.py composes installed environment configuration and operator-managed
   Slack member bindings; cli/marketing.py starts and stops background owners.
-- agent_service/web_search.py owns bounded query-to-search-result observation, separately from the
-  immutable installed-product evidence owner. skills.py retains the original daily skill and adds
+- tools/web_search.py owns bounded query-to-search-result observation, separately from the
+  immutable installed-product evidence owner. `agent/service/skills.py` retains the original daily skill and adds
   the Slack-only versioned procedure.
 
 ## Composition
@@ -76,15 +92,15 @@ queue. `cli/server.py` owns Linux installation configuration and service lifecyc
 
 ```text
 cli/marketing.py
-  -> agent_service/lifecycle.py
-     -> agent_service/application.py -> agent_core registry/provider ports
-     -> agent_service/sqlite_repository.py -> local canonical Run ledger
-     -> marketing/runtime.py -> write-ahead execution and reconciliation
+  -> bootstrap/lifecycle.py
+     -> agent/service/application.py -> agent/core registry/provider ports
+     -> agent/service/sqlite_repository.py -> local canonical Run ledger
+     -> agent/runtime.py -> write-ahead execution and reconciliation
      -> providers/codex_reasoning.py -> providers/codex_cli.py
-     -> agent_service/integrations.py -> research/creative/Slack/Notion/GitHub tools
+     -> bootstrap/integrations.py -> research/creative/Slack/Notion/GitHub tools
      -> knowledge/ -> scoped source, memory and curation owners
-  -> agent_service/http_api.py -> Web/Slack/API admission
-  -> agent_service/image_edit_setup.py -> asynchronous image editing
+  -> channels/http/http_api.py -> Web/Slack/API admission
+  -> bootstrap/image_edit_setup.py -> asynchronous image editing
 ```
 
 No Worker/D1/R2 client, Mac worker broker or Appium executor is composed. The retained Python
@@ -104,7 +120,7 @@ and Wiki/memory files, SQLite catalog migrations, ingestion, retrieval/index out
 backup/restore, tombstones, the control-root erase ledger, and transfer dependency records. It does
 not import Slack, HTTP, Mac, Cloudflare, or UI modules.
 
-`marketing/agent_service/lifecycle.py` is the composition root for the enabled runtime. It injects
+`bootstrap/lifecycle.py` is the composition root for the enabled runtime. It injects
 the configured `KnowledgeSettings`, local actor, `SqliteKnowledgeRepository`, canonical ingress,
 `KnowledgeServiceAdapter`, `KnowledgeContextAssembler`, `CodexKnowledgeProvider`, `BoundedJobRunner`,
 `KnowledgeIndexWorker`, `MemoryViewDispatcher`, and `CurationBatchRuntime`. The batch runtime groups
@@ -117,12 +133,12 @@ with `service run`; the existing Agent Service still owns Runs, approvals, and e
 `runtime.py` delegates explicit flush to that owner. `batch_curation.py` derives new collection IDs
 from those generations while preserving event deduplication and the first-event deadline.
 
-`marketing/agent_service/knowledge_ingress.py` owns the service-database outbox and trusted Run
+`agent/service/knowledge_ingress.py` owns the service-database outbox and trusted Run
 binding. `knowledge_ingress_authority.py` maps authenticated channel actors to existing knowledge
 members, sessions and grants without resetting revocations or roles. API and Slack composition share
 this ingress; context preparation and outbox dispatch recheck authority through the same bridge.
-`marketing/channels/knowledge_ingress_slack.py` translates authenticated Slack identity to
-workspace or member/conversation scope. `marketing/agent_service/knowledge.py` owns context
+`channels/knowledge_ingress_slack.py` translates authenticated Slack identity to
+workspace or member/conversation scope. `agent/service/knowledge.py` owns context
 preparation, read-only DM capability filtering, tool adapters, receipt freshness checks, and the
 typed context boundary. `contracts/knowledge_context.py`, `contracts/knowledge_preparation.py`,
 and `contracts/knowledge_selection.py` own transfer, preparation, action and receipt contracts.
@@ -144,14 +160,14 @@ brand, or sharing authority from model tool input or a request JSON field.
 
 ## Research and runtime contracts
 
-`marketing/dynamic_evidence_research.py` composes the local observe-only research loop, official
+`research/dynamic_evidence_research.py` composes the local observe-only research loop, official
 Codex planner and product/customer/market collectors. `contracts/marketing_agent.py` owns feature
 evidence and strategy/outcome contracts; these data types do not imply an active hosted campaign.
 `contracts/reference_research.py` owns the quarantined market proposal schema; the local runner
 retains unverified proposals without promoting them to source evidence. `providers/runtime_identity.py`
 owns provider identity checks shared by research and Codex callers.
 
-`marketing/runtime.py` owns the provider-neutral, local session-and-dispatch harness. It has no
+`agent/runtime.py` owns the provider-neutral, local session-and-dispatch harness. It has no
 Cloudflare, Appium, Threads, or model-provider import. `ToolCapability` owns both descriptor and
 request-schema digests. `bind_tool_invocation` is the single construction boundary for a
 `BoundToolInvocation`: canonical non-secret request JSON, schema version, and a `ToolCall` whose
@@ -176,24 +192,24 @@ outcome-evaluation owners remain separate from effect adapters; the implemented 
 verticals are described below. Verified pre-header v1/v2 terminal traces are read-only; pre-header
 pending/non-terminal sessions and all legacy saves fail closed.
 
-`marketing/planning_projections.py` owns `FeaturePlanningProjection`, the shared data-only planner
+`contracts/planning_projections.py` owns `FeaturePlanningProjection`, the shared data-only planner
 projection for the Feature Launch and Evidence Research verticals. It contains packet identity/digest,
 lifecycle, and claim IDs only; raw claim text, source references, evidence payloads, capability data,
 and instructions remain outside planner context.
 
-`marketing/feature_launch_evidence_brief.py` owns the immutable contract between completed Evidence
+`contracts/feature_launch_evidence_brief.py` owns the immutable contract between completed Evidence
 Research and a new Feature Launch session. It contains only research-trace provenance digests,
 scope-complete receipt-bound observation digests, bounded semantic summaries/caveats/trust states,
 and allowed supported claim IDs, plus the data-only projection used by the Feature Launch planner.
 Raw sources, URLs, and locations stay out. It also owns the narrow verifier protocol and its
 failure type, but imports no runtime, planner, registry, hand, or session owner.
-`evidence_research_operator.py` alone converts an already terminal validated research trace into this
+`research/evidence_research_operator.py` alone converts an already terminal validated research trace into this
 contract and supplies the local verifier that reloads and re-derives its source session. Before its
-first brief commit, `feature_launch_operator.py` requires that verifier to pass; it depends on the
+first brief commit, `workflows/feature_launch_operator.py` requires that verifier to pass; it depends on the
 protocol, not the research runtime. No module combines the two sessions or transfers a research tool
 authority into launch.
 
-`marketing/feature_launch_operator.py` owns the first, narrow reasoning vertical over that harness.
+`workflows/feature_launch_operator.py` owns the first, narrow reasoning vertical over that harness.
 It defines `MarketingGoal`, a strict `DecisionProposal`, one versioned skill registry action, receipt-
 bound observation, and deterministic process/outcome graders. The planner can return a proposal but
 never a `ToolCall`; `FeatureLaunchSkillRegistry` derives the call from the pinned feature packet,
@@ -206,7 +222,7 @@ revalidates a persisted decision, observation, and evaluation against the regist
 and event-time prefix before finalizing; terminal sessions audit that trace without calling a hand.
 This module accepts only an observe effect class and has no Cloudflare or live-channel backend.
 
-`marketing/evidence_research_operator.py` owns a separate bounded research loop over the same
+`research/evidence_research_operator.py` owns a separate bounded research loop over the same
 runtime. Its registry maps the three distinct research scopes—product truth, customer intelligence,
 and market evidence—to canonical versioned observe-only actions; it derives each call from the pinned
 goal, feature packet, decision, and action schema. The planner can emit a typed decision but never a
@@ -221,10 +237,10 @@ historical evaluation against its trace prefix before another hand can run. The 
 committed decision, terminal trace audit without hand reinvocation, the at-most-three-step stop
 condition, and deterministic completed/inconclusive evaluation; it does not own a live research
 provider, Cloudflare adapter, campaign mutation, or publication. It can only freeze a completed
-validated trace as the contract owned by `feature_launch_evidence_brief.py`; it cannot start Feature
+validated trace as the contract owned by `contracts/feature_launch_evidence_brief.py`; it cannot start Feature
 Launch or merge the two sessions.
 
-`marketing/marketing_os_scorecard.py` owns a pure offline evaluation contract rather than a planner,
+`evaluation/marketing_os_scorecard.py` owns a pure offline evaluation contract rather than a planner,
 runtime, tool, or provider adapter. Each named corpus case separates the runner-visible packet/scope
 input from its grader-only expectation and test-only tool environment. The runner returns canonical
 terminal event traces plus an attempted brief—not self-reported quality booleans—and the scorecard
@@ -239,7 +255,7 @@ The report pins the corpus digest and runner/model/prompt/registry metadata. Thi
 corpus proves local vertical behavior only; it is neither private held-out model evidence, hosted
 authority, nor a live marketing result.
 
-`marketing/marketing_os_scorecard_corpus.py` owns the narrow private-grader corpus loader. A trusted
+`evaluation/marketing_os_scorecard_corpus.py` owns the narrow private-grader corpus loader. A trusted
 grader process supplies one mounted corpus directory; the loader resolves only its fixed
 `runner_inputs.json` and `grader_expectations.json` children, validates strict envelopes and matching
 case-ID sets, and preserves the input-file order before it returns the existing case contract. It does
@@ -257,8 +273,10 @@ process and mount, and a future comparable grader-environment digest is a separa
   the canonical Slack manifests and unit templates from `docs/operations/agent-server` into
   `ads_booster/server_assets`; runtime reads these installed bytes, not a development checkout.
 
-- `agent_service/maintenance.py` owns admission accounting shared by the HTTP dispatcher, background
+- `agent/service/maintenance.py` owns admission accounting shared by the HTTP dispatcher, background
   queues (including recovery and outbound notification) and scheduled skill execution.
+- The updater's installed import probe verifies the `agent/service/maintenance.py` and
+  `channels/http/http_api.py` pair; the manager itself remains a standalone transition boundary.
 - `docs/operations/agent-server/agent-manager.py` is the standalone Python 3.10+ Linux operator CLI:
   bootstrap wheel installation, main fetch/CI gates, locked candidate install, systemd switching,
   offline state backup, transaction recovery, and installed process launch. The timer executes the
@@ -266,17 +284,17 @@ process and mount, and a future comparable grader-environment digest is a separa
 - The supplied systemd service/timer are the Linux process composition. The actual service process
   receives the release identity and maintenance path from the launcher, not from request parameters.
 - `.github/workflows/verify-agent-server.yml` owns the dedicated exact-commit CI gate and fresh-wheel
-  CLI smoke on Ubuntu, including `tool_adapters` compatibility. The manager requires only this named
+  CLI smoke on Ubuntu, including `tools` compatibility. The manager requires only this named
   GitHub Actions check, completed successfully. `tests/cli/test_agent_server_update.py` exercises
   admission, rollback and crash boundaries.
 
 ## Slack conversation ownership
 
-`marketing/channels/slack_conversations.py` owns typed conversation/message/plan records and the
-additive SQLite inbox/outbox beside the canonical Run ledger. `slack_events.py` owns signed Events
+`channels/slack_conversations.py` owns typed conversation/message/plan records and the
+additive SQLite inbox/outbox beside the canonical Run ledger. `channels/slack_events.py` owns signed Events
 admission, scope derivation, dialogue projection, action planning and original-conversation replies.
 It delegates Run/input/approval mutations to `MarketingAgentService`; it does not duplicate the engine.
-`agent_service/http_api.py` exposes the Events ingress and `channel_setup.py` drains it within the
+`channels/http/http_api.py` exposes the Events ingress and `bootstrap/channel_setup.py` drains it within the
 existing maintenance-gated worker. `cli/marketing.py` composes this optional surface from env.
 Private DM composition narrows CapabilityPolicy while sharing the service lock and canonical stores.
 Operator manifests and merge-to-operation guidance live in `docs/operations/agent-server`.
@@ -300,16 +318,16 @@ IdP or repository authentication is required for the default public Slack-only s
 
 | Owner | Responsibility |
 | --- | --- |
-| `agent_service/work_continuation.py` | canonical human input/pause admission, exact event replay at safe boundaries |
-| `application.py` | bounded evidence projection, signal boundary, current-memory callback, unchanged runtime dispatch owner |
-| `contracts/creative_work.py`, `agent_service/creative_assets.py` | small scoped assets, byte provenance, parent revisions and stale descendants |
-| `agent_service/creative_api.py` | authenticated PNG/JPEG upload/preview and same-Run continuation |
-| `contracts/agent_memory.py`, `agent_service/memory.py`, `memory_api.py` | attributed reviewed notes, scope-before-query, corrections/expiry/tombstones and selected-memory receipts |
-| `agent_service/creative_procedures.py` | ten composable procedures and honest ready-tool/human return briefs |
-| `agent_service/slack_image_review.py`, `image_review.py` | authorized file binding/download and actual read-only image assessment, no editing |
+| `agent/service/work_continuation.py` | canonical human input/pause admission, exact event replay at safe boundaries |
+| `agent/service/application.py` | bounded evidence projection, signal boundary, current-memory callback, unchanged runtime dispatch owner |
+| `contracts/creative_work.py`, `creative/creative_assets.py` | small scoped assets, byte provenance, parent revisions and stale descendants |
+| `channels/http/creative_api.py` | authenticated PNG/JPEG upload/preview and same-Run continuation |
+| `contracts/agent_memory.py`, `learning/memory.py`, `channels/http/memory_api.py` | attributed reviewed notes, scope-before-query, corrections/expiry/tombstones and selected-memory receipts |
+| `creative/creative_procedures.py` | ten composable procedures and honest ready-tool/human return briefs |
+| `channels/slack_image_review.py`, `tools/image_review.py` | authorized file binding/download and actual read-only image assessment, no editing |
 | `channels/slack_creative_setup.py` | optional permission-probed tool catalog composition; no service lifecycle ownership |
-| `channels/slack_memory.py`, `slack_delivery.py` | authenticated exact review command translation |
-| `contracts/marketing_delivery.py`, `agent_service/delivery_review.py`, `delivery_api.py` | prepared review packets only; no duplicate channel execution ledger |
+| `channels/slack_memory.py`, `channels/slack_delivery.py` | authenticated exact review command translation |
+| `contracts/marketing_delivery.py`, `delivery/delivery_review.py`, `channels/http/delivery_api.py` | prepared review packets only; no duplicate channel execution ledger |
 
 `CodexCli.run_marketing_image_review_job` adds validated image arguments to the existing
 no-tools/read-only structured runner. Ordinary judgment calls keep their existing signature.
@@ -320,58 +338,58 @@ New delivery API/tool request schemas omit `d1_campaign_id`. The persisted `Deli
 contract retains that optional field to preserve old signed history. Generic `PublicationTarget`
 drafts and manual performance platform labels confer no Threads API capability.
 
-`delivery_tools.py` owns reasoning-callable preparation and is wired by `lifecycle.py` through
-`ConfiguredAgentTools`; `creative_asset_verifier.py` bridges immutable assets to preparation
+`delivery/delivery_tools.py` owns reasoning-callable preparation and is wired by `bootstrap/lifecycle.py`
+through `ConfiguredAgentTools`; `creative/creative_asset_verifier.py` bridges immutable assets to preparation
 approval. Neither owns external effects. `AgentJobs` rechecks the API's trusted reviewer
 policy immediately before queued approvals. `ToolInvocation.tenant_id` binds new local tool
 mutations without rewriting legacy invocation digests.
 
-`work_observations.py` owns immutable human effort records and scoped learning snapshots;
-`slack_work_observations.py` translates authenticated report/summary/correction commands.
-`work_observation_validity.py` validates sources without importing the memory repository,
+`learning/work_observations.py` owns immutable human effort records and scoped learning snapshots;
+`channels/slack_work_observations.py` translates authenticated report/summary/correction commands.
+`learning/work_observation_validity.py` validates sources without importing the memory repository,
 so memory selection/review can reuse its connection and preserve transactional currentness.
 
 
-`slack_image_files.py` owns signed file resolution, bounded download/decode and immutable cache
-for both review and intake. `slack_asset_intake.py` owns the inspect/import schemas, current
-approval attribution and registration. `slack_creative_setup.py` composes all three optional
-file capabilities under the same observed Slack grant. `creative_asset_links.py` owns the
+`channels/slack_image_files.py` owns signed file resolution, bounded download/decode and immutable cache
+for both review and intake. `channels/slack_asset_intake.py` owns the inspect/import schemas, current
+approval attribution and registration. `channels/slack_creative_setup.py` composes all three optional
+file capabilities under the same observed Slack grant. `creative/creative_asset_links.py` owns the
 Run-to-asset projection used by HTTP uploads, Slack imports and image production results.
 
 `contracts/agent_run.py` owns the nonterminal `ToolExecutionDeferred` acknowledgement and
-`awaiting_tool` Run state. `marketing/runtime.py` owns the deferred event, retained pending
+`awaiting_tool` Run state. `agent/runtime.py` owns the deferred event, retained pending
 invocation/reservation and exact operation resolution; acknowledgement adds no terminal receipt.
 The Agent Service translates adapter acknowledgements and validates eventual results against
 frozen invocation/output contracts before recording canonical receipts. Transport authentication
 and worker artifact validation must precede that internal completion method.
 
 `contracts/performance_observation.py` owns attributed performance snapshots and comparison
-contracts. `performance_observations.py` owns immutable scoped reports, corrections and
-learning-candidate construction; `performance_observation_validity.py` validates current
+contracts. `learning/performance_observations.py` owns immutable scoped reports, corrections and
+learning-candidate construction; `learning/performance_observation_validity.py` validates current
 source digests using the memory owner's transaction without a circular store dependency.
-`slack_performance.py` translates signed conversation commands; `performance_api.py` exposes
+`channels/slack_performance.py` translates signed conversation commands; `channels/http/performance_api.py` exposes
 the authenticated, read-only same-Run projection. Neither adapter owns approval or external
 metric collection. Human reports are not promoted to independently verified external facts.
 
-`creative_image_edit_contract.py` owns bounded source/region/locale requests and deterministic
+`creative/creative_image_edit_contract.py` owns bounded source/region/locale requests and deterministic
 composition that restores and checks unchanged pixels. `providers/codex_image_edit.py` owns
 the official app-server protocol, restricted tool inventory, immutable input files, generation
-start marker and verified output readback. `creative_image_edit.py` owns exact admission,
+start marker and verified output readback. `agent/service/creative_image_edit.py` owns exact admission,
 durable asynchronous job state, source currentness, asset provenance and canonical settlement.
-`image_edit_setup.py` composes the explicit configuration and readiness catalog; the existing
+`bootstrap/image_edit_setup.py` composes the explicit configuration and readiness catalog; the existing
 service CLI starts its polling thread under the maintenance gate. These owners do not infer
 native product support or final visual approval from generated output.
 
-`managed_image_review.py` authorizes exact Run links and current source bytes, delegates to
+`creative/managed_image_review.py` authorizes exact Run links and current source bytes, delegates to
 the existing read-only visual helper, and stores bounded no-replay inference receipts. Its
-catalog is composed by `lifecycle.py`; `creative_procedures.py` chooses it for registered inputs.
-`creative_assets.describe` exposes stored metadata only for collection discovery; existing
-`get` remains the byte-verifying owner. `creative_api.py` bounds same-Run collection discovery,
-and `web_ui.py` renders authenticated selected images and human outcome snapshots without
+catalog is composed by `bootstrap/lifecycle.py`; `creative/creative_procedures.py` chooses it for registered inputs.
+`creative/creative_assets.py` `describe` exposes stored metadata only for collection discovery; existing
+`get` remains the byte-verifying owner. `channels/http/creative_api.py` bounds same-Run collection discovery,
+and `channels/http/web_ui.py` renders authenticated selected images and human outcome snapshots without
 creating another execution owner. Slack's review-page owner also supplies the natural assent
 boundary; rendered pages and authorization must not maintain independent pagination contracts.
 
-`image_edit_api.py` exposes exact operation status and reviewer abandonment through the
+`channels/http/image_edit_api.py` exposes exact operation status and reviewer abandonment through the
 existing authenticated API. The image queue owner records human abandonment and settles the
 canonical deferred operation; HTTP neither invents worker evidence nor calls the provider.
 
@@ -381,8 +399,8 @@ for process launch and health checks; both default to 8090. Cross-boundary regre
 launch argv, update health and status to the same configured port. The standalone manager remains
 Python 3.10 compatible and does not import the Python 3.14 application to discover its port.
 
-`marketing/agent_service/github_issues.py` owns fixed-repository issue input validation, private token
-loading and GitHub HTTP execution/readback. `tool_adapters/descriptors.py` supplies its external-effect
+`tools/github_issues.py` owns fixed-repository issue input validation, private token loading and GitHub
+HTTP execution/readback. `tools/descriptors.py` supplies its external-effect
 approval descriptor; `ConfiguredAgentTools` registers it only with a configured credential.
 `cli/marketing.py` loads the token at service composition, while `cli/server.py` owns hidden operator
 setup and atomic secret storage. `channels/github_results.py` projects successful receipt-bound issue
@@ -393,13 +411,13 @@ remain in Agent Core/service/runtime, with no separate retry or issue state stor
 cancellation. `providers/codex_cli.py` uses it for structured jobs; `codex_reasoning.py` preserves the
 cancellation signal. The canonical service owns checkpoints and append-only STOP transitions.
 `channels/slack_progress.py` owns only status-message identity and durable cancellation requests.
-`slack_events.py` owns signed button authorization, status updates and scoped execution, using the
+`channels/slack_events.py` owns signed button authorization, status updates and scoped execution, using the
 existing sender transport (`chat.postMessage` for new status, `chat.update` for known timestamps).
 The HTTP composition exposes only the signed interaction route during maintenance, without admitting
 new runs. Slack manifests own the external callback registration contract.
 
-`agent_service/image_generation.py` owns the image input schema, Codex image turn and bounded PNG
-artifact verification. The descriptor remains in `tool_adapters/descriptors.py`; installed lifecycle
+`tools/image_generation.py` owns the image input schema, Codex image turn and bounded PNG
+artifact verification. The descriptor remains in `tools/descriptors.py`; installed lifecycle
 injects the executor and private artifact root through `ConfiguredAgentTools`. Existing Agent Core
 owns exact approval and uncertain execution handling. `channels/slack_images.py` owns receipt-bound
 artifact projection, durable upload admission and Slack's external file-upload adapter. Slack event

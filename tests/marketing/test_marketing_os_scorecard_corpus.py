@@ -8,14 +8,14 @@ from typing import cast
 
 import pytest
 
-from ads_booster.marketing.marketing_os_scorecard import (
+from ads_booster.evaluation.marketing_os_scorecard import (
     MarketingOsEvalCase,
     MarketingOsEvalExpectation,
     MarketingOsEvalInput,
     MarketingOsScorecardError,
     marketing_os_corpus_sha256,
 )
-from ads_booster.marketing.marketing_os_scorecard_corpus import (
+from ads_booster.evaluation.marketing_os_scorecard_corpus import (
     load_private_marketing_os_scorecard_cases,
 )
 

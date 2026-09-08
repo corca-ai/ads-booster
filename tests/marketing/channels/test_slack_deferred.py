@@ -13,7 +13,7 @@ from ads_booster.contracts.agent_run import (
     contract_sha256,
 )
 from ads_booster.contracts.tool_capability import ToolExecutionResult
-from ads_booster.marketing.agent_core.registry import ToolRegistry
+from ads_booster.agent.core.registry import ToolRegistry
 from tests.marketing.agent_service.test_application import EffectThenStopReasoning
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import effect_descriptor, receive, setup_events

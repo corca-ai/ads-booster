@@ -12,9 +12,9 @@ from ads_booster.knowledge.configuration import (
     initialize_local_configuration,
 )
 from ads_booster.knowledge.contracts import ConversationEventKind
-from ads_booster.marketing.agent_service.lifecycle import build_installed_knowledge_runtime
-from ads_booster.marketing.channels.contracts import ChannelIdentityBinding
-from ads_booster.marketing.channels.knowledge_ingress_slack import (
+from ads_booster.bootstrap.lifecycle import build_installed_knowledge_runtime
+from ads_booster.channels.contracts import ChannelIdentityBinding
+from ads_booster.channels.knowledge_ingress_slack import (
     SlackIngressRequest,
     build_slack_ingress,
 )

@@ -30,35 +30,35 @@ from ads_booster.contracts.tool_capability import (
     ToolReadiness,
     ToolReconciliationPolicy,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.channels.base import ChannelApplicationAdapter
-from ads_booster.marketing.channels.contracts import (
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.channels.base import ChannelApplicationAdapter
+from ads_booster.channels.contracts import (
     ChannelApprovalRequest,
     ChannelIdentityBinding,
     ChannelInstallation,
     ChannelKind,
     ChannelRunRequest,
 )
-from ads_booster.marketing.channels.kakao import (
+from ads_booster.channels.kakao import (
     KakaoChannelAdapter,
     KakaoWebhookEnvelope,
     WebApprovalLinkIssuer,
 )
-from ads_booster.marketing.channels.slack import (
+from ads_booster.channels.slack import (
     SlackChannelAdapter,
     SlackRequestVerifier,
     SlackWebhookEnvelope,
     encode_slack_envelope,
     slack_signature,
 )
-from ads_booster.marketing.channels.store import SqliteChannelStore
-from ads_booster.marketing.channels.web import WebChannelAdapter
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.channels.store import SqliteChannelStore
+from ads_booster.channels.web import WebChannelAdapter
+from ads_booster.agent.runtime import SqliteSessionStore
 
 if TYPE_CHECKING:
     from pathlib import Path

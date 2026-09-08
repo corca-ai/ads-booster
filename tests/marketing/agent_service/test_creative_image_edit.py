@@ -24,18 +24,18 @@ from ads_booster.contracts.agent_run import (
 from ads_booster.contracts.creative_work import CreativeAsset, CreativeScope
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import ToolExecutionResult
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.marketing.agent_service.creative_image_edit import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.agent.service.creative_image_edit import (
     CreativeImageEditTool,
     ImageEditConfig,
     ImageEditJob,
     image_edit_descriptor,
 )
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.agent_service.work_continuation import continue_work
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
 from ads_booster.providers.codex_image_edit import ImageEditResult
 from tests.marketing.agent_service.creative_fixtures import NOW, png, setup_assets
@@ -375,7 +375,7 @@ def test_known_decode_failure_has_terminal_effect_classification(
         return read_review_images(paths)
 
     monkeypatch.setattr(
-        "ads_booster.marketing.agent_service.creative_image_edit.read_review_images",
+        "ads_booster.agent.service.creative_image_edit.read_review_images",
         decode,
     )
     assert tool.work_once()["state"] == "completed"

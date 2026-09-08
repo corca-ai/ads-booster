@@ -20,17 +20,17 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.creative_api import dispatch_creative
-from ads_booster.marketing.agent_service.creative_asset_links import link_asset
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.channels.http.creative_api import dispatch_creative
+from ads_booster.creative.creative_asset_links import link_asset
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.channels.http.oauth import OAuthIdentity
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.runtime import SqliteSessionStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -294,7 +294,7 @@ def test_registered_asset_retry_after_interrupted_continuation_is_safe(
         raise OSError(message)
 
     with monkeypatch.context() as patch:
-        patch.setattr("ads_booster.marketing.agent_service.creative_api.continue_work", interrupt)
+        patch.setattr("ads_booster.channels.http.creative_api.continue_work", interrupt)
         failed = dispatch_creative(
             "POST",
             "/v1/runs/work/assets",

@@ -25,8 +25,8 @@ from ads_booster.contracts.marketing_context import (
     CustomerSignalPlanningProjection,
     MarketingContextPlanningProjection,
 )
-from ads_booster.marketing import dynamic_evidence_research as dynamic_research
-from ads_booster.marketing.dynamic_evidence_research import (
+from ads_booster.research import dynamic_evidence_research as dynamic_research
+from ads_booster.research.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
     DynamicEvidenceResearchResult,
@@ -35,12 +35,12 @@ from ads_booster.marketing.dynamic_evidence_research import (
     build_dynamic_research_registry,
     build_local_research_capability_snapshot,
 )
-from ads_booster.marketing.evidence_research_operator import (
+from ads_booster.research.evidence_research_operator import (
     PlannerInvocationReceipt,
     ResearchDecision,
     ResearchScope,
 )
-from ads_booster.marketing.runtime import JsonSessionStore, RuntimeState
+from ads_booster.agent.runtime import JsonSessionStore, RuntimeState
 from ads_booster.providers.codex_cli import CodexCliError
 
 if TYPE_CHECKING:

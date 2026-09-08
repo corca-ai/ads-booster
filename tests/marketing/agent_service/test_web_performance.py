@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
+from ads_booster.channels.http.web_ui import AGENT_RUN_UI
 
 if TYPE_CHECKING:
     from pathlib import Path

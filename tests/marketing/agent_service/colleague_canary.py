@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, AgentRecordKind
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy
-from ads_booster.marketing.agent_service.application import CreateAgentRunRequest
-from ads_booster.marketing.agent_service.lifecycle import (
+from ads_booster.agent.core.registry import CapabilityPolicy
+from ads_booster.agent.service.application import CreateAgentRunRequest
+from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )
-from ads_booster.marketing.agent_service.web_search import WebSearch
-from ads_booster.marketing.tool_adapters.compatibility import DelegatingToolAdapter
+from ads_booster.tools.web_search import WebSearch
+from ads_booster.tools.compatibility import DelegatingToolAdapter
 
 if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject

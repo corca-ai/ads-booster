@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import ads_booster.marketing.agent_service.application as application_module
+import ads_booster.agent.service.application as application_module
 from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.work_continuation import continue_work
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.work_continuation import continue_work
 from tests.marketing.agent_service.test_application import (
     NOW,
     AskThenStopReasoning,

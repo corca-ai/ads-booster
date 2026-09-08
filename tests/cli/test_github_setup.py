@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from typer.testing import CliRunner
 
 from ads_booster.cli import server
-from ads_booster.marketing.agent_service.github_issues import GitHubIssues
+from ads_booster.tools.github_issues import GitHubIssues
 
 if TYPE_CHECKING:
     from pathlib import Path

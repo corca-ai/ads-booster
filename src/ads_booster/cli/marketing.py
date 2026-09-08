@@ -18,46 +18,46 @@ from ads_booster.cli.knowledge import app as knowledge_app
 from ads_booster.cli.server import app as server_app
 from ads_booster.knowledge.configuration import KnowledgeSettings, validate_settings
 from ads_booster.knowledge.maintenance import inspect_owner
-from ads_booster.marketing.agent_service.channel_setup import (
+from ads_booster.bootstrap.channel_setup import (
     browser_from_env,
     run_slack_worker,
     run_web_jobs,
     slack_from_env,
 )
-from ads_booster.marketing.agent_service.github_issues import token_from_env
-from ads_booster.marketing.agent_service.http_api import (
+from ads_booster.tools.github_issues import token_from_env
+from ads_booster.channels.http.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
-from ads_booster.marketing.agent_service.image_edit_setup import (
+from ads_booster.bootstrap.image_edit_setup import (
     connect_image_edit,
     run_image_edit_worker,
 )
-from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
-from ads_booster.marketing.agent_service.jobs import AgentJobs
-from ads_booster.marketing.agent_service.lifecycle import (
+from ads_booster.bootstrap.integrations import AgentServiceIntegrationConfig
+from ads_booster.channels.http.jobs import AgentJobs
+from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
-from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
-from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
-from ads_booster.marketing.agent_service.scheduler import (
+from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.channels.http.oauth import OAuthTokenIntrospector
+from ads_booster.agent.service.scheduler import (
     AgentSkillScheduler,
     DailySkillSchedule,
 )
-from ads_booster.marketing.agent_service.web_search import SearchInput
-from ads_booster.marketing.channels.slack_events import events_from_env
-from ads_booster.marketing.dynamic_evidence_research import (
+from ads_booster.tools.web_search import SearchInput
+from ads_booster.channels.slack_events import events_from_env
+from ads_booster.research.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
     DynamicEvidenceResearchRunner,
 )
-from ads_booster.marketing.evidence_research_operator import EvidenceResearchOperatorError
+from ads_booster.research.evidence_research_operator import EvidenceResearchOperatorError
 from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 
 if TYPE_CHECKING:
-    from ads_booster.marketing.agent_service.application import MarketingAgentService
+    from ads_booster.agent.service.application import MarketingAgentService
     from ads_booster.transport.json_types import JsonObject
 
 _HTTP_SUCCESS_MIN = 200

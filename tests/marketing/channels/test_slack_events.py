@@ -9,11 +9,11 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import AgentRunState, ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
-from ads_booster.marketing.channels.slack import slack_signature
-from ads_booster.marketing.channels.slack_events import SlackEvents, events_from_env
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.channels.slack import slack_signature
+from ads_booster.channels.slack_events import SlackEvents, events_from_env
 from tests.marketing.agent_service.test_application import (
     AskThenStopReasoning,
     EffectThenStopReasoning,

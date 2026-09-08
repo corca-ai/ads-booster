@@ -5,9 +5,9 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from ads_booster.marketing.agent_service.browser_login import BrowserLogin, BrowserLoginConfig
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
+from ads_booster.channels.http.browser_login import BrowserLogin, BrowserLoginConfig
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.oauth import OAuthIdentity
 from tests.marketing.agent_service.test_jobs import jobs
 
 if TYPE_CHECKING:

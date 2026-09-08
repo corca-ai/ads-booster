@@ -16,8 +16,8 @@ from ads_booster.contracts.agent_run import (
     contract_sha256,
 )
 from ads_booster.contracts.creative_work import CreativeAsset, CreativeScope
-from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 
 if TYPE_CHECKING:
     from pathlib import Path

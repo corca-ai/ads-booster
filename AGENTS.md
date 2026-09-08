@@ -61,7 +61,8 @@
 ## 핵심 불변식
 
 - production model 경로는 서비스 사용자의 공식 Codex CLI 로그인 세션을 사용하며
-`trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
+  canonical `ads_booster.agent` namespace는 기존 engine의 위치입니다. 과거 connector-specific
+  runtime이나 `trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
 - canonical conversation history를 보존하고 compaction은 provider projection만 줄입니다.
 - shared workspace context는 private chat에서 read-only입니다.
 - private session은 workspace, member, session scope를 모두 적용합니다.

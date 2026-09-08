@@ -23,7 +23,7 @@ from ads_booster.knowledge.configuration import (
     initialize_knowledge_store,
 )
 from ads_booster.knowledge.erase_ledger import EraseLedger
-from ads_booster.marketing.agent_service.github_issues import (
+from ads_booster.tools.github_issues import (
     GitHubIssues,
     GitHubRejectedError,
     validate_token,

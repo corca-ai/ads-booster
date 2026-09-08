@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ads_booster.contracts.creative_work import CreativeScope
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.agent.runtime import SqliteSessionStore
 
 from .creative_fixtures import NOW
 from .test_slack_asset_intake import approve, setup

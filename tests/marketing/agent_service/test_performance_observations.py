@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
 from ads_booster.contracts.performance_observation import PerformanceObservation
-from ads_booster.marketing.agent_service.performance_observations import PerformanceObservationStore
+from ads_booster.learning.performance_observations import PerformanceObservationStore
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -30,17 +30,17 @@ from ads_booster.contracts.tool_capability import (
     ToolReadiness,
     ToolReconciliationPolicy,
 )
-from ads_booster.marketing.agent_core.registry import (
+from ads_booster.agent.core.registry import (
     CapabilityPolicy,
     ToolRegistration,
     ToolRegistry,
 )
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.runtime import SqliteSessionStore
 
 if TYPE_CHECKING:
     from pathlib import Path

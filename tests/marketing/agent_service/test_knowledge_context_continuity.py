@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState, AgentStepKind
-from ads_booster.marketing.agent_service.application import _record, _step
-from ads_booster.marketing.agent_service.work_continuation import continue_work
+from ads_booster.agent.service.application import _record, _step
+from ads_booster.agent.service.work_continuation import continue_work
 from tests.marketing.agent_service.test_application import (
     NOW,
     AskThenStopReasoning,
@@ -21,7 +21,7 @@ from tests.marketing.agent_service.test_application import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.agent_service.knowledge import KnowledgeServiceAdapter
+    from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
 
 
 def test_previous_knowledge_projection_is_not_reused_as_current_evidence(tmp_path: Path) -> None:

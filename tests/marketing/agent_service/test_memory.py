@@ -11,7 +11,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryNote, MemoryScope
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from ads_booster.learning.memory import SQLiteMemoryStore
 
 NOW = datetime(2026, 9, 7, tzinfo=UTC)
 

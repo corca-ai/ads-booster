@@ -11,17 +11,17 @@ from ads_booster.contracts.reasoning import (
     ReasoningResult,
 )
 from ads_booster.contracts.tool_capability import ToolDescriptor, ToolExecutionResult
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.marketing.agent_service.scheduler import AgentSkillScheduler, DailySkillSchedule
-from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
-from ads_booster.marketing.runtime import SqliteSessionStore
-from ads_booster.marketing.tool_adapters.descriptors import (
+from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
+from ads_booster.agent.service.skills import MarketingSkillCatalog
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.tools.web_search import WebSearch, search_descriptor
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.tools.descriptors import (
     research_descriptor,
     slack_delivery_descriptor,
 )

@@ -7,8 +7,8 @@ from ads_booster.contracts.agent_memory import MemoryAccess, MemoryNote, MemoryS
 from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
 from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.learning.memory import SQLiteMemoryStore
 from tests.marketing.agent_service.test_application import (
     _descriptor,  # pyright: ignore[reportPrivateUsage]
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]

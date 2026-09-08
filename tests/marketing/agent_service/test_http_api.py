@@ -11,14 +11,14 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.marketing.agent_core.registry import ToolRegistry
-from ads_booster.marketing.agent_service.application import MarketingAgentService
-from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
-from ads_booster.marketing.agent_service.oauth import OAuthIdentity
-from ads_booster.marketing.agent_service.scheduler import AgentSkillScheduler, DailySkillSchedule
-from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.runtime import SqliteSessionStore
-from ads_booster.marketing.tool_adapters.descriptors import (
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.oauth import OAuthIdentity
+from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.tools.descriptors import (
     notion_daily_descriptor,
     research_descriptor,
     slack_delivery_descriptor,
@@ -28,7 +28,7 @@ from ads_booster.providers.codex_reasoning import CodexReasoningError
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.marketing.agent_core.ports import ReasoningProvider
+    from ads_booster.agent.core.ports import ReasoningProvider
 
 NOW = datetime(2026, 9, 3, tzinfo=UTC)
 

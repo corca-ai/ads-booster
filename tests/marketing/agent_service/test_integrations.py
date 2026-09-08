@@ -9,7 +9,7 @@ import pytest
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import ToolExecutionResult
-from ads_booster.marketing.agent_service.integrations import (
+from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from urllib.request import Request
 
     from ads_booster.contracts.tool_capability import ToolDescriptor
-    from ads_booster.marketing.dynamic_evidence_research import (
+    from ads_booster.research.dynamic_evidence_research import (
         DynamicEvidenceResearchRequest,
         DynamicEvidenceResearchResult,
     )

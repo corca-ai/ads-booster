@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
-from ads_booster.marketing.agent_service.performance_observations import PerformanceObservationStore
+from ads_booster.learning.memory import SQLiteMemoryStore
+from ads_booster.learning.performance_observations import PerformanceObservationStore
 from tests.marketing.agent_service.test_performance_observations import NOW, access, observation
 
 if TYPE_CHECKING:
