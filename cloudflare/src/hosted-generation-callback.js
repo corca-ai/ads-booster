@@ -65,7 +65,6 @@ export async function receiveHostedGenerationCallback(env, task, callback, worke
   }
   const storedResultJson = JSON.stringify(callback.result);
   if (task.callback_id) {
-    if (knowledgeRequired) throw new HttpError(409, "knowledge context callback replayed");
     if (task.callback_id !== callback.callback_id) throw new HttpError(409, "conflicting callback");
     if (task.result_json !== storedResultJson) throw new HttpError(409, "callback result changed");
     return { accepted: true, duplicate: true };

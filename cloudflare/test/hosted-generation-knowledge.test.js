@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { D1Adapter } from "./d1-fixture.js";
 import { publishCandidateGeneration } from "../src/hosted-workspace.js";
+import { receiveHostedGenerationCallback } from "../src/hosted-generation-callback.js";
 import { canonicalSha256 } from "../src/marketing-agent-runs.js";
 
 const ACCOUNT = "trace_demo_kr";
@@ -54,4 +55,44 @@ test("disabled generation still admits a feedback-only worker", async (t) => {
   assert.equal(accepted.state, "queued");
   assert.equal(DB.sqlite.prepare("SELECT required_capability FROM hosted_workspace_capture_tasks").get().required_capability,
     "feedback_context_v1");
+});
+
+test("required callback retry succeeds without writes and revalidates authority and result", async (t) => {
+  const { DB, env, knowledge } = await fixture(t, { ...FEEDBACK_WORKER, knowledge_context_v1: true });
+  let authorized = true;
+  const stages = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const request = JSON.parse(options.body);
+    stages.push(request.stage);
+    return Response.json({ ...request, status: authorized ? "accepted" : "rejected",
+      valid_until: new Date(Date.now() + 60_000).toISOString() });
+  });
+  await publishCandidateGeneration(env, REGISTRY, null, null, null, knowledge);
+  DB.sqlite.exec(`UPDATE hosted_workspace_capture_tasks
+    SET worker_id = 'worker-1', lease_id = 'lease-1', execution_started_at = '2026-09-08'`);
+  const readTask = () => DB.sqlite.prepare("SELECT * FROM hosted_workspace_capture_tasks").get();
+  const wire = JSON.parse(readTask().task_json);
+  const callback = { task_id: "task-1", run_id: "run-1", account_id: ACCOUNT,
+    callback_id: "task-1:completed", kind: "generate_candidates",
+    result: { status: "succeeded", output: { candidates: [],
+      feedback_application_sha256: wire.payload.feedback_context_sha256,
+      knowledge_context_use_receipt: { transfer_id: "transfer-1",
+        knowledge_context_sha256: knowledge.knowledge_context_sha256,
+        context_receipt: knowledge.knowledge_context.receipt } } } };
+  const worker = { worker_id: "worker-1" };
+  assert.equal((await receiveHostedGenerationCallback(env, readTask(), callback, worker)).duplicate, false);
+  const committed = readTask();
+  DB.sqlite.exec(`CREATE TRIGGER reject_duplicate_write BEFORE UPDATE ON hosted_workspace_capture_tasks
+    BEGIN SELECT RAISE(ABORT, 'unexpected callback rewrite'); END`);
+  assert.deepEqual(await receiveHostedGenerationCallback(env, readTask(), callback, worker),
+    { accepted: true, duplicate: true });
+  assert.deepEqual(readTask(), committed);
+  assert.deepEqual(stages, ["accept_result", "accept_result"]);
+  const changed = structuredClone(callback);
+  changed.result.output.failures = 1;
+  await assert.rejects(receiveHostedGenerationCallback(env, readTask(), changed, worker), /callback result changed/);
+  await assert.rejects(receiveHostedGenerationCallback(env, readTask(),
+    { ...callback, callback_id: "other:completed" }, worker), /callback_id does not match/);
+  authorized = false;
+  await assert.rejects(receiveHostedGenerationCallback(env, readTask(), callback, worker), /authority rejected/);
 });
