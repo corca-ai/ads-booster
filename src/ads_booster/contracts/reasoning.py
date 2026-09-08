@@ -6,7 +6,14 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from ads_booster.contracts.agent_run import AgentGoal, CapabilitySnapshot, contract_sha256
+from ads_booster.contracts.agent_run import (
+    AgentGoal,
+    BoundedId,
+    CapabilitySnapshot,
+    contract_sha256,
+)
+from ads_booster.contracts.knowledge_preparation import PreparedKnowledgeContext
+from ads_booster.contracts.knowledge_selection import KnowledgeActionKind
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.transport.json_types import JsonObject  # noqa: TC001
 
@@ -20,6 +27,7 @@ class ReasoningRequest(ContractModel):
     evidence: Annotated[tuple[JsonObject, ...], Field(max_length=128)] = ()
     remaining_tool_calls: Annotated[int, Field(ge=0, le=10_000)]
     remaining_cost_units: Annotated[int, Field(ge=0, le=1_000_000)]
+    prepared_context: PreparedKnowledgeContext | None = None
 
 
 class ReasoningDecision(ContractModel):
@@ -29,6 +37,8 @@ class ReasoningDecision(ContractModel):
     tool_input: JsonObject | None = None
     expected_outcome: Annotated[str, Field(min_length=1, max_length=2000)]
     reasoning_summary: Annotated[str, Field(min_length=1, max_length=4000)]
+    proposed_action_kind: KnowledgeActionKind | None = None
+    proposed_brand_ref: BoundedId | None = None
 
     @model_validator(mode="after")
     def require_action_payload(self) -> Self:
@@ -38,6 +48,9 @@ class ReasoningDecision(ContractModel):
             raise ValueError(message)
         if not invokes and (self.capability_id is not None or self.tool_input is not None):
             message = "non-tool reasoning decision cannot include a tool"
+            raise ValueError(message)
+        if self.proposed_brand_ref is not None and self.proposed_action_kind is None:
+            message = "reasoning brand proposal requires an action proposal"
             raise ValueError(message)
         return self
 

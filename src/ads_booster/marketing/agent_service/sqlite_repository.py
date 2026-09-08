@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import TypeAdapter
 
@@ -31,6 +31,10 @@ _STRING = TypeAdapter(str)
 
 class AgentRunConflictError(ValueError):
     """A requested mutation does not match the canonical run revision or lineage."""
+
+
+class RepositoryAdmission(Protocol):
+    def __call__(self, connection: sqlite3.Connection) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +141,13 @@ class SqliteAgentRunRepository:
                 raise AgentRunConflictError("agent_schema_version_unsupported")
         self.database_path.chmod(0o600)
 
-    def create(self, run: AgentRun, *, request_sha256: str | None = None) -> AgentRun:
+    def create(
+        self,
+        run: AgentRun,
+        *,
+        request_sha256: str | None = None,
+        admission: RepositoryAdmission | None = None,
+    ) -> AgentRun:
         create_sha256 = contract_sha256(run) if request_sha256 is None else request_sha256
         run_json = run.model_dump_json()
         event = AgentRunEvent(
@@ -170,6 +180,8 @@ class SqliteAgentRunRepository:
                         run.updated_at.isoformat(),
                     ),
                 )
+                if admission is not None:
+                    admission(connection)
                 _ = connection.execute(
                     """
                     INSERT INTO agent_run_events(
@@ -305,6 +317,7 @@ class SqliteAgentRunRepository:
         expected_revision: int,
         records: tuple[AgentRecord, ...] = (),
         blocked_reason: str | None = None,
+        admission: RepositoryAdmission | None = None,
     ) -> AgentRun:
         if step.run_id != run.run_id:
             raise AgentRunConflictError("agent_step_run_conflict")
@@ -389,6 +402,8 @@ class SqliteAgentRunRepository:
                         event.occurred_at.isoformat(),
                     ),
                 )
+                if admission is not None:
+                    admission(connection)
                 _ = connection.execute(
                     """
                     INSERT INTO agent_steps(
@@ -489,4 +504,4 @@ class SqliteAgentRunRepository:
             connection.close()
 
 
-__all__ = ["AgentRunConflictError", "SqliteAgentRunRepository"]
+__all__ = ["AgentRunConflictError", "RepositoryAdmission", "SqliteAgentRunRepository"]

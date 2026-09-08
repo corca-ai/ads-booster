@@ -18,6 +18,12 @@ from urllib.request import Request, urlopen
 
 import typer
 
+from ads_booster.knowledge.configuration import (
+    KnowledgeSettings,
+    initialize_knowledge_store,
+)
+from ads_booster.knowledge.erase_ledger import EraseLedger
+
 if TYPE_CHECKING:
     from http.client import HTTPResponse
 
@@ -41,6 +47,7 @@ def execute(*args: str) -> str:
 
 def private_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
     if path.is_symlink():
         raise RuntimeError("refusing_symlink")
     # Unique exclusive files allow recovery after a process dies during a write.
@@ -52,6 +59,7 @@ def private_write(path: Path, text: str) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         _ = temp.replace(path)
+        path.chmod(0o600)
     finally:
         temp.unlink(missing_ok=True)
 
@@ -231,6 +239,9 @@ def setup_config() -> None:
         "TRACE_MARKETING_SLACK_ALLOWED_CHANNEL_IDS": channel,
         "TRACE_MARKETING_SLACK_ALLOW_DM": "1",
         "TRACE_MARKETING_SLACK_INSTALLATION": str(CONFIG / "slack-installation.json"),
+        "TRACE_MARKETING_KNOWLEDGE_ROOT": str(ROOT / "knowledge"),
+        "TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT": str(CONFIG / "knowledge-control"),
+        "TRACE_MARKETING_KNOWLEDGE_POLICY": str(CONFIG / "knowledge-policy.json"),
     }
     environment = "\n".join(f"{k}={env_value(v)}" for k, v in settings.items()) + "\n"
     installation = {
@@ -248,6 +259,24 @@ def setup_config() -> None:
         **({"tunnel.token": tunnel_token} if tunnel else {}),
         **units,
         "server.json": json.dumps({"origin": origin, "tunnel": tunnel, "port": 8090}),
+        "knowledge-policy.json": json.dumps(
+            {
+                "schema": "trace.knowledge-local-policy.v1",
+                "workspace_id": tenant,
+                "policy_epoch": 1,
+                "capabilities": ["read", "write", "schedule", "share", "purge"],
+                "brand_voice_brand_ids": [],
+            }
+        ),
+        "knowledge-control/identity.json": json.dumps(
+            {
+                "schema": "trace.knowledge-local-identity.v1",
+                "actor_id": f"local-owner-{os.getuid()}",
+                "workspace_id": tenant,
+                "member_id": f"local-member-{os.getuid()}",
+                "session_id": "local-admin-session",
+            }
+        ),
     }
     for name in ["slack-app-bootstrap-manifest.json", "slack-app-manifest.json"]:
         files[name] = (
@@ -271,6 +300,8 @@ def setup_target(name: str) -> Path:
         "server.json",
         "slack-app-bootstrap-manifest.json",
         "slack-app-manifest.json",
+        "knowledge-policy.json",
+        "knowledge-control/identity.json",
     }:
         return CONFIG / name
     raise RuntimeError("invalid_setup_checkpoint")
@@ -290,6 +321,15 @@ def finish_setup() -> None:
         if current != value["previous"][name]:
             raise RuntimeError(f"setup_resume_preserves_operator_edit:{name}")
         private_write(target, content)
+    (ROOT / "knowledge").mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ = initialize_knowledge_store(
+        KnowledgeSettings(
+            root=ROOT / "knowledge",
+            control_root=CONFIG / "knowledge-control",
+            policy_path=CONFIG / "knowledge-policy.json",
+        )
+    )
+    _ = EraseLedger(CONFIG / "knowledge-control").initialize()
     pending.unlink()
     typer.echo("설정 완료. 다음: trace-marketing server start")
     typer.echo(f"Slack 최종 App Manifest: {CONFIG / 'slack-app-manifest.json'}")

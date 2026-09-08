@@ -3,12 +3,13 @@ from __future__ import annotations
 from contextlib import suppress
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
 from ads_booster.marketing.errors import CloudflareQueueError
 from ads_booster.marketing.inbox import (
     ExecutionAdmission,
     InboxConflictError,
+    InboxStateError,
     MarketingExecutionError,
     MarketingInbox,
 )
@@ -24,7 +25,9 @@ from ads_booster.marketing.models import (
 from ads_booster.marketing.worker_events import QueuedWorkerEventReporter
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
+
+    from ads_booster.marketing.worker_broker import KnowledgeReplicaPurgeDirective
 
 _EVENT_TYPE_BY_STATUS: Final[Mapping[TaskStatus, WorkerTaskEventType]] = MappingProxyType(
     {
@@ -107,6 +110,7 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         return recovered.requeued + recovered.unknown_side_effects
 
     def tick(self, *, accept_remote: bool = True) -> bool:
+        purged = self._purge_knowledge_replicas()
         leases = self._pull() if accept_remote else ()
         self._ingest_and_acknowledge(leases)
 
@@ -114,7 +118,42 @@ class MarketingWorkerLoop[TPrepared: PreparedTask]:
         if task is not None:
             self._run(task)
         delivered = self._flush_callbacks()
-        return bool(leases or task is not None or delivered)
+        return bool(purged or leases or task is not None or delivered)
+
+    def _purge_knowledge_replicas(self) -> int:
+        read = cast(
+            "Callable[[], tuple[KnowledgeReplicaPurgeDirective, ...]] | None",
+            getattr(self.broker, "knowledge_replica_purge_directives", None),
+        )
+        acknowledge = cast(
+            "Callable[[KnowledgeReplicaPurgeDirective], None] | None",
+            getattr(self.broker, "acknowledge_knowledge_replica_purge", None),
+        )
+        if not callable(read) or not callable(acknowledge):
+            return 0
+        try:
+            directives = read()
+        except CloudflareQueueError:
+            return 0
+        purged = 0
+        for directive in directives:
+            try:
+                removed = self.inbox.purge_knowledge_replica(
+                    transfer_id=directive.transfer_id,
+                    account_id=directive.account_id,
+                    task_id=directive.task_id,
+                    replica_id=directive.replica_id,
+                )
+            except (InboxConflictError, InboxStateError):
+                continue
+            if not removed:
+                continue
+            try:
+                acknowledge(directive)
+            except CloudflareQueueError:
+                continue
+            purged += 1
+        return purged
 
     def _pull(self) -> tuple[QueueLease, ...]:
         try:

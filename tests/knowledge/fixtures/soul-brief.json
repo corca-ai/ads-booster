@@ -1,0 +1,16 @@
+{
+  "schema": "knowledge.soul-brief.v1",
+  "brief_id": "brief.fixture.light-launch",
+  "title": "라이트 요금제 한국 출시 안내",
+  "audience": "작은 팀에서 프로젝트를 정리하는 실무자",
+  "channel": "웹 공지",
+  "objective": "가격과 핵심 기능을 정확히 알리고 사용 장면을 이해시킨다.",
+  "required_facts": [
+    {"field": "kr_monthly_price_krw", "value": 31000, "currency": "KRW", "tax_included": true, "source_ref": "source.price.kr.rev2"},
+    {"field": "effective_date", "value": "2026-09-15", "source_ref": "source.price.kr.rev2"},
+    {"field": "project_limit", "value": 3, "source_ref": "source.product.guide.rev1"},
+    {"field": "export_format", "value": "CSV", "source_ref": "source.product.guide.rev1"}
+  ],
+  "forbidden_claims": ["전환율 두 배", "모든 고객 50% 할인", "무제한 프로젝트"],
+  "output_constraints": {"language": "ko", "max_characters": 500, "call_to_action": "가격과 기능 확인"}
+}

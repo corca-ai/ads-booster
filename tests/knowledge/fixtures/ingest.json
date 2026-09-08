@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.file.kr-price.1",
+  "event_kind": "attachment_received",
+  "request_text": "이 가격표를 참고해서 한국 가격을 기억해 주세요.",
+  "timestamp": "2026-09-07T00:05:00Z",
+  "conversation": {"conversation_ref": "conversation.team-a.seed", "message_ref": "message.team-a.seed-price", "revision": 1},
+  "attachments": [{"ordinal": 0, "logical_source_ref": "source.price.kr", "logical_revision_ref": "source.price.kr.rev1", "mime_type": "text/markdown"}]
+}

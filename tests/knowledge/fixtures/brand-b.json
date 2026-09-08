@@ -1,0 +1,7 @@
+{
+  "schema": "knowledge.brand-register-request.v1",
+  "request_id": "brand-register.fixture.b",
+  "logical_brand_ref": "brand.b",
+  "workspace_ref": "workspace.team-a",
+  "name": "합성 브랜드 B"
+}

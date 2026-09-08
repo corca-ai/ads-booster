@@ -41,6 +41,8 @@ missing system packages (sudo), checksum-pinned uv, native Codex and cloudflared
 login and Node.js are unnecessary. If logged in as root, use `bash /tmp/trace-install.sh --user
 trace-marketing`, then `sudo -iu trace-marketing` for Codex login and setup. Credentials stay with
 that user. Installer enables linger for operation after logout and reboot.
+The Python package includes IANA timezone data via `tzdata`, including on minimal Ubuntu hosts
+without a system timezone database.
 
 The managed agent listens on `127.0.0.1:8090`; route the marketing Cloudflare hostname to
 `http://localhost:8090`. `~/.config/trace-marketing/server.json` stores an integer `port` (default
@@ -75,8 +77,11 @@ tenant-scoped HTTP API. Start it with the same macOS user's official Codex CLI l
 ```bash
 trace-marketing service doctor
 export TRACE_MARKETING_SERVICE_TOKEN='replace-with-a-private-token'
-trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8090
+trace-marketing service run --model gpt-6-astra --host 127.0.0.1 --port 8090
 ```
+
+Keep `--model` explicit. These examples use `gpt-6-astra`; choose a model available to the Codex
+account logged in on that host.
 
 For an on-premises or cloud server, terminate HTTPS at the ingress/reverse proxy and configure OAuth
 2.0 token introspection before binding beyond loopback:
@@ -93,7 +98,7 @@ export TRACE_MARKETING_SLACK_BOT_TOKEN='<xoxb-token>'
 export TRACE_MARKETING_SLACK_CHANNEL_ID='<channel-id>'
 export TRACE_MARKETING_NOTION_TOKEN='<notion-integration-token>'
 export TRACE_MARKETING_NOTION_PARENT_PAGE_ID='<daily-marketing-parent-page-id>'
-trace-marketing service run --model gpt-5.4 --host 0.0.0.0 --port 8090
+trace-marketing service run --model gpt-6-astra --host 0.0.0.0 --port 8090
 ```
 
 The service accepts a token only when introspection returns `active: true`, the configured audience,
@@ -171,6 +176,66 @@ never preapprove Appium or Threads publication. Existing Cloudflare/D1 hosted ru
 compatibility effect owner until projection cutover. Fake adapter tests do not count as live Slack,
 Notion, Meta, or platform-review evidence.
 
+## Team knowledge context
+
+The on-premises `MarketingAgentService` can own a server-local team knowledge store. The knowledge
+owner keeps immutable source and Markdown revisions under `TRACE_MARKETING_KNOWLEDGE_ROOT`, its
+SQLite catalog in that root, and the deletion chain in `TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`.
+The store is separate from the canonical Agent Run database. A Mac worker receives only a selected,
+digest-bound `trace.knowledge-context.v1` envelope; it does not open the knowledge database or select
+TEAM, SOUL, MEMORY, Wiki, or source revisions.
+
+Knowledge configuration is all-or-none. Set these three absolute paths together:
+
+```bash
+export TRACE_MARKETING_KNOWLEDGE_ROOT='/private/path/to/knowledge'
+export TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT='/private/path/to/knowledge-control'
+export TRACE_MARKETING_KNOWLEDGE_POLICY='/private/path/to/knowledge-control/policy.json'
+```
+
+With all three unset, knowledge is disabled. A partial set fails configuration. The root and control
+directory must be owned by the service user with mode `0700`; the policy and control identity file
+must be mode `0600`. When configured, `trace-marketing service run` builds the knowledge ingress,
+curation provider, bounded jobs, index worker, memory-view worker, owner lock, and continuous runtime
+alongside the canonical service. Fresh installed-service behavior and deployment require separate
+verification.
+
+Authenticated Agent Service and Slack adapters provide the actor, workspace, member, session, and
+grants. The service binds these identities to existing knowledge members and conversation sessions,
+preserving stored roles and revocations; replay and context preparation recheck that authority.
+Shared Slack threads use workspace scope. Private Slack DMs use member and conversation
+scope; the service filters them to read-only knowledge tools (`knowledge_search`, `knowledge_get`,
+`memory_get`, `memory_explain`, and `source_read`) and does not grant shared-memory writes or
+external delivery. Edits, deletes, and corrections enter a pending fence before the affected Run is
+prepared again.
+
+The `trace-marketing knowledge` CLI group is registered as a local admin surface. Every command
+requires `--root`, `--control-root`, and `--policy`; `init` also requires `--workspace`. The current
+commands are `init`, `doctor`, `ingest --envelope <file> [--attachment ORDINAL=/absolute/path]`,
+`run [--model MODEL] [--service-database PATH] [--once|--until-idle [--flush-batches]]`,
+`search --query TEXT [--limit N]`, `get --id ID [--revision REVISION]`,
+`context --request FILE [--brand ID]`, `schedule --request FILE`, `backup --destination PATH`,
+`restore --backup PATH`, `retract --source ID`, `purge --request ID`, and
+`questions --pending|--answer ID --text TEXT`. Subgroups provide `memory get|explain|correct|consolidate`,
+`brand register|list`, and `task open|close`; their selectors are `--kind`, `--date`, `--brand`,
+`--entry`, `--request`, `--task`, and `--id` as applicable. `memory consolidate` requires
+`--until-idle`; `run` accepts `--flush-batches` only with `--until-idle`.
+
+Routine curation batches default to a 60-second window from the first event. `--flush-batches` makes collected
+routine work ready immediately. Cancellation releases unfinished events for a new batch while
+preserving completed event receipts. `brand register` replays an identical operation and name under
+the same authority; reusing the operation ID with another name conflicts and replay still requires
+current write permission. Verify installed commands, live Codex/Slack, hosted validation, remote purge,
+and deployment separately from source tests.
+
+Deletion writes an immutable control-root erase-ledger entry before local blocking and purge. Source,
+Wiki, memory, derived context, and transfer dependencies are blocked through tombstones and reverse
+dependency records. Hosted or Mac transfer replicas remain `purge_pending` until their deletion
+receipts arrive; an external acknowledgement gap is not reported as global purge completion.
+`purge --request ID` takes the operation ID returned by `retract`; repeating it resolves the same
+stored target and purge request. Restore requires a new target root, validates the backup manifest
+and file digests, applies the current erase ledger, and rebuilds search before activating the root.
+
 ## Legacy compatibility path
 
 The existing hosted Trace marketing workspace and replaceable macOS capture worker continue to
@@ -196,7 +261,7 @@ feature packet -> agent_v1 shadow campaign -> marketing_judgment lease
 The installed CLI also exposes the first dynamic, observe-only Marketing OS slice:
 
 ```bash
-trace-marketing agent research --input request.json --home /private/path/to/state --model gpt-5.4
+trace-marketing agent research --input request.json --home /private/path/to/state --model gpt-6-astra
 ```
 
 [`docs/examples/dynamic-evidence-research-product-only.json`](docs/examples/dynamic-evidence-research-product-only.json)
@@ -266,7 +331,7 @@ existing hosted workflow without taking ownership of any execution adapter:
 ```bash
 TRACE_MARKETING_CONTROL_TOKEN=... trace-marketing agent launch \
   --input launch.json --url https://control.example.com --home /private/path/to/state \
-  --model gpt-5.4
+  --model gpt-6-astra
 ```
 
 [`docs/examples/feature-launch-shadow.json`](docs/examples/feature-launch-shadow.json) shows the

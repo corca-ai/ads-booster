@@ -1,0 +1,36 @@
+{
+  "schema": "knowledge.soul-grader.v1",
+  "brief_ref": "brief.fixture.light-launch",
+  "grader_only": true,
+  "shared_fact_checks": [
+    {"field": "kr_monthly_price_krw", "operator": "equals", "value": 31000, "source_ref": "source.price.kr.rev2"},
+    {"field": "effective_date", "operator": "equals", "value": "2026-09-15", "source_ref": "source.price.kr.rev2"},
+    {"field": "project_limit", "operator": "equals", "value": 3, "source_ref": "source.product.guide.rev1"},
+    {"field": "export_format", "operator": "equals", "value": "CSV", "source_ref": "source.product.guide.rev1"}
+  ],
+  "brands": [
+    {
+      "brand_ref": "brand.a",
+      "decision_source_ref": "source.soul.a.decision.rev1",
+      "semantic_checks": [
+        {"criterion_id": "a.reader_view", "pass_definition": "독자를 스스로 판단할 수 있는 실무자로 대하고 훈계하거나 무지하다고 전제하지 않는다."},
+        {"criterion_id": "a.persuasion", "pass_definition": "과장된 효능 대신 프로젝트 세 개 비교나 CSV 내보내기 같은 구체적 사용 장면과 확인 가능한 사실로 설득한다."},
+        {"criterion_id": "a.voice", "pass_definition": "문장이 짧고 단정하며 흥분을 유도하는 느낌표와 과장을 피한다."},
+        {"criterion_id": "a.tradeoff", "pass_definition": "흥분감보다 정확성을 택하고 확인되지 않은 성과를 쓰지 않는다."}
+      ]
+    },
+    {
+      "brand_ref": "brand.b",
+      "decision_source_ref": "source.soul.b.decision.rev1",
+      "semantic_checks": [
+        {"criterion_id": "b.reader_view", "pass_definition": "독자를 탐험에 초대하는 동료로 대한다."},
+        {"criterion_id": "b.persuasion", "pass_definition": "발견의 즐거움과 구체적인 사용 장면을 함께 보여준다."},
+        {"criterion_id": "b.voice", "pass_definition": "경쾌한 리듬과 따뜻한 질문을 사용하되 사실을 흐리지 않는다."},
+        {"criterion_id": "b.tradeoff", "pass_definition": "호기심을 유지하면서 확인되지 않은 효능과 과장을 말하지 않는다."}
+      ]
+    }
+  ],
+  "hard_forbidden": ["29000", "전환율 두 배", "50% 할인", "무제한"],
+  "observation_expected_effect": {"source_ref": "source.soul.observation.rev1", "daily_or_wiki_proposal_allowed": true, "soul_head_change_before_explicit_approval": false},
+  "deleted_example_expected_effect": {"source_ref": "source.soul.example.delete.rev1", "visible_in_context": false, "adopted_core_survives_if_decision_source_active": true}
+}

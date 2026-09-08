@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.context-request.v1",
+  "request_id": "context.fixture.kr-price",
+  "action_kind": "research",
+  "task_ref": "task.fixture.price-check",
+  "query": "as of 2026-09-15 기준으로 적용되는 라이트 요금제의 한국 가격과 적용일을 근거와 함께 알려 주세요.",
+  "required_context": true,
+  "budget": {"max_input_tokens": 4000},
+  "trusted_binding_refs": {"workspace_ref": "workspace.team-a", "actor_ref": "member.a1"}
+}

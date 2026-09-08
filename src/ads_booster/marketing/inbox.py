@@ -158,6 +158,43 @@ class MarketingInbox:
             )
         return True
 
+    def purge_knowledge_replica(
+        self,
+        *,
+        transfer_id: str,
+        account_id: str,
+        task_id: str,
+        replica_id: str,
+    ) -> bool:
+        if replica_id != f"mac-inbox:{account_id}:{task_id}":
+            raise InboxConflictError(task_id)
+        with self._connect(write=True) as connection:
+            row = _fetchone(
+                connection,
+                "SELECT task_json, state FROM marketing_inbox WHERE task_id = ?",
+                (task_id,),
+            )
+            if row is None:
+                return True
+            task = MarketingTask.model_validate_json(str(row[0]))
+            knowledge_context = task.payload.get("knowledge_context")
+            if (
+                task.account_id != account_id
+                or not isinstance(knowledge_context, dict)
+                or knowledge_context.get("transfer_id") != transfer_id
+            ):
+                raise InboxConflictError(task_id)
+            if str(row[1]) == "running":
+                return False
+            _ = connection.execute("DELETE FROM marketing_outbox WHERE task_id = ?", (task_id,))
+            deleted = connection.execute(
+                "DELETE FROM marketing_inbox WHERE task_id = ? AND state != 'running'",
+                (task_id,),
+            )
+            if deleted.rowcount != 1:
+                raise InboxStateError(f"cannot purge knowledge replica for task {task_id!r}")
+        return True
+
     def claim_next(self) -> MarketingTask | None:
         now = datetime.now(UTC).timestamp()
         with self._connect(write=True) as connection:

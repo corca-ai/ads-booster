@@ -70,6 +70,15 @@ class MacWorkerEnrollment(BaseModel):
     state: Literal["active"]
 
 
+class KnowledgeReplicaPurgeDirective(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    transfer_id: str = Field(min_length=1, max_length=160)
+    account_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=128)
+    replica_id: str = Field(min_length=1, max_length=320)
+
+
 @dataclass(frozen=True, slots=True)
 class MacWorkerStore:
     home: Path
@@ -156,6 +165,35 @@ class WorkerBrokerClient:
             self._headers(),
         )
         _ = _response_payload(response, operation="worker task acknowledgement")
+
+    def knowledge_replica_purge_directives(self) -> tuple[KnowledgeReplicaPurgeDirective, ...]:
+        response = self.http.get(
+            self._url("/v1/workers/knowledge-replica-purges"),
+            self._headers(),
+        )
+        payload = _response_payload(response, operation="knowledge replica purge directives")
+        values = payload.get("directives", [])
+        if not isinstance(values, list):
+            raise CloudflareQueueError("knowledge replica purge directives are invalid")
+        try:
+            return tuple(KnowledgeReplicaPurgeDirective.model_validate(value) for value in values)
+        except ValidationError as error:
+            raise CloudflareQueueError("knowledge replica purge directive is invalid") from error
+
+    def acknowledge_knowledge_replica_purge(
+        self,
+        directive: KnowledgeReplicaPurgeDirective,
+    ) -> None:
+        response = _post_json(
+            self.http,
+            self._url("/v1/workers/knowledge-replica-purges"),
+            {
+                "transfer_id": directive.transfer_id,
+                "replica_id": directive.replica_id,
+            },
+            self._headers(),
+        )
+        _ = _response_payload(response, operation="knowledge replica purge acknowledgement")
 
     def mark_execution_started(self, task_id: str) -> None:
         response = _post_json(
