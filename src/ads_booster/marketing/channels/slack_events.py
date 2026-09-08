@@ -17,9 +17,11 @@ from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     AgentRun,
     AgentRunState,
+    CapabilitySnapshot,
     ToolInvocation,
     contract_sha256,
 )
+from ads_booster.contracts.tool_capability import EffectClass
 from ads_booster.marketing.agent_core.registry import CapabilityPolicy
 from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
@@ -154,7 +156,18 @@ class SlackEvents:
                 or is_work_observation_command(message.text)
                 or is_performance_command(message.text)
                 or message.text
-                in {"도움말", "help", "종료", "close", "계속", "resume", "다시 시작", "reopen"}
+                in {
+                    "도움말",
+                    "help",
+                    "종료",
+                    "close",
+                    "계속",
+                    "resume",
+                    "다시 시작",
+                    "reopen",
+                    "이대로 만들어줘",
+                    "이대로 제작해줘",
+                }
             ):
                 continue
             conversation = self.store.conversation(message.conversation_id)
@@ -386,6 +399,8 @@ class SlackEvents:
                 conversation.tenant_id, conversation.current_run, int(argument or "1")
             )
             return MessagePlan(action="reply", reply=reply)
+        if text in {"이대로 만들어줘", "이대로 제작해줘"}:
+            return self._production_approval(conversation, message, run)
         if action in {"승인", "approve", "거절", "reject"}:
             if run is None or not _HASH.fullmatch(argument):
                 return MessagePlan(
@@ -438,6 +453,52 @@ class SlackEvents:
                 context={"slack_conversation": context},
             ),
         )
+
+    def _production_approval(
+        self, conversation: Conversation, message: Message, run: AgentRun | None
+    ) -> MessagePlan:
+        fallback = MessagePlan(
+            action="reply",
+            reply="먼저 현재 제작안의 '검토 1'부터 모든 페이지를 확인해 주세요.",
+        )
+        if run is None or conversation.private or run.state is not AgentRunState.AWAITING_APPROVAL:
+            return fallback
+        records = self._service(conversation).repository.records(conversation.tenant_id, run.run_id)
+        latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION), None)
+        if latest is None:
+            return fallback
+        invocation = ToolInvocation.model_validate(latest.payload)
+        snapshots = [
+            CapabilitySnapshot.model_validate(r.payload)
+            for r in records
+            if r.kind is AgentRecordKind.CAPABILITY_SNAPSHOT
+            and r.payload_sha256 == invocation.capability_snapshot_sha256
+        ]
+        descriptors = [
+            d
+            for snapshot in snapshots
+            for d in snapshot.descriptors
+            if contract_sha256(d) == invocation.descriptor_sha256
+        ]
+        if (
+            len(descriptors) != 1
+            or descriptors[0].effect_class is not EffectClass.LOCAL_ARTIFACT
+            or descriptors[0].capability_id
+            not in {"capture.appium", "creative.image.edit", "creative.image.localize"}
+        ):
+            return fallback
+        pages = self.commands.review_pages(conversation.tenant_id, run.run_id)
+        with self.store.connect() as db:
+            rows = db.execute(
+                """SELECT result FROM slack_message_jobs
+                WHERE conversation_id=? AND state='done' AND notification_state='delivered'
+                AND json_extract(message_json,'$.user_id')=? ORDER BY rowid DESC LIMIT 100""",
+                (conversation.conversation_id, message.user_id),
+            ).fetchall()
+        delivered = TypeAdapter(list[tuple[str]]).validate_python(rows)
+        if any((page,) not in delivered for page in pages):
+            return fallback
+        return MessagePlan(action="approve", run_id=run.run_id, digest=contract_sha256(invocation))
 
     def _execute(  # noqa: C901,PLR0911,PLR0912 - one canonical mutation per frozen action.
         self,
@@ -527,6 +588,11 @@ class SlackEvents:
         elif plan.action in {"approve", "reject"}:
             if not identity.can_approve or conversation.private:
                 raise ValueError("slack_approval_not_allowed")
+            if (
+                message.text in {"이대로 만들어줘", "이대로 제작해줘"}
+                and conversation.current_run != plan.run_id
+            ):
+                raise ValueError("slack_production_target_changed")
             _ = service.decide_approval(
                 conversation.tenant_id,
                 plan.run_id,
