@@ -16,6 +16,7 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
+from ads_booster.execution_control import ExecutionCancelledError
 from ads_booster.transport.json_types import JsonObject
 
 _MAX_TOOL_INPUT_BYTES = 65536
@@ -61,6 +62,8 @@ class CodexReasoningProvider:
                     timeout_seconds=self.timeout_seconds,
                 )
             decision = _decode_decision(raw)
+        except ExecutionCancelledError:
+            raise
         except (OSError, RuntimeError, ValidationError, ValueError) as error:
             message = "reasoning_provider_result_invalid"
             raise CodexReasoningError(message) from error
