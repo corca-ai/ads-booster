@@ -112,6 +112,7 @@ class SlackEvents:
     allow_dm: bool = True
     knowledge_sink: KnowledgeIngressSink | None = None
     image_delivery: SlackImageDelivery | None = None
+    workspace_mentions: bool = False
     store: SlackConversationStore = field(init=False)
     private_service: MarketingAgentService = field(init=False)
     progress: SlackProgressStore = field(init=False)
@@ -223,14 +224,20 @@ class SlackEvents:
         installation = self.commands.application.store.resolve_installation(
             ChannelKind.SLACK, self.commands.team_id
         )
-        identity = self.commands.application.store.resolve_identity(
-            installation.installation_id, user_id
+        if not re.fullmatch(r"[UW][A-Z0-9]+", user_id):
+            raise ValueError("slack_user_invalid")
+        identity = (
+            self.commands.application.store.bind_workspace_member(installation, user_id)
+            if self.workspace_mentions
+            else self.commands.application.store.resolve_identity(
+                installation.installation_id, user_id
+            )
         )
         if (
             not installation.enabled
             or not identity.can_create_runs
             or identity.revoked_at is not None
-            or user_id not in self.commands.allowed_user_ids
+            or (not self.workspace_mentions and user_id not in self.commands.allowed_user_ids)
         ):
             raise ValueError("slack_user_not_allowed")
         return identity
@@ -302,7 +309,9 @@ class SlackEvents:
                 return None
             thread = thread or ""  # Unthreaded DM messages share the user's DM session.
         else:
-            if channel not in self.channel_ids:
+            if not re.fullmatch(r"[CG][A-Z0-9]+", channel):
+                return None
+            if not self.workspace_mentions and channel not in self.channel_ids:
                 return None
             # Slack can deliver both message and app_mention for the same message.
             if event.get("type") == "message" and mentioned:
@@ -464,9 +473,8 @@ class SlackEvents:
             if not self.allow_dm or conversation.owner_id != identity.member_id:
                 raise ValueError("slack_private_scope_denied")
         elif (
-            conversation.channel_id not in self.channel_ids
-            or identity.tenant_id != conversation.tenant_id
-        ):
+            not self.workspace_mentions and conversation.channel_id not in self.channel_ids
+        ) or identity.tenant_id != conversation.tenant_id:
             raise ValueError("slack_channel_removed")
         return identity
 
@@ -1042,6 +1050,7 @@ def events_from_env(env: Mapping[str, str], commands: SlackCommands | None) -> S
         bot_user_id,
         channels,
         allow_dm=env.get("TRACE_MARKETING_SLACK_ALLOW_DM", "1") == "1",
+        workspace_mentions=True,
         image_delivery=SlackImageDelivery(
             commands.application.store.database_path.parent / "images",
             commands.application.store.database_path,
