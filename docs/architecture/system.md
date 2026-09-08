@@ -819,3 +819,22 @@ The public repository is explicit in the frozen input reviewed by the approver. 
 still exposes only public search. Both Slack message and slash-command summaries project issue URLs
 from matching successful receipt/output digests, independently of model-generated prose. No new
 posting scheduler, GitHub shell authority or repository-wide token access is introduced.
+
+### Slack progress and cancellation
+
+Each mention/DM execution owns a durable `slack_progress` row binding the inbox message, Run and
+Slack status-message timestamp. A worker-local status thread updates that message every five seconds
+with the current execution stage/elapsed time; final outbox delivery updates the same timestamp and
+removes buttons. Unknown initial sends are not repeated; final delivery may use a separate message
+when no confirmed timestamp exists. Status threads join before final delivery to prevent late overwrites.
+
+The signed form endpoint `/channels/slack/interactions` accepts only the stop action for the recorded
+app/team/channel/message, from its author or a shared-channel approver. It persists cancellation
+without the execution lock or an outbound Slack call, including during maintenance drain. It admits
+no new work. Cancellation flags survive worker restart and affect only their original inbox job.
+
+A thread-scoped control checks before/after reasoning and before tool dispatch. Official Codex
+structured jobs terminate and reap their owned process group when cancelled; other processes and
+services are untouched. The service appends an explicit STOP step after the execution yields.
+Already-started external effects retain normal receipt/readback or awaiting-reconciliation handling,
+then subsequent work stops. Canonical history and completed side-effect receipts are preserved.

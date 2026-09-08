@@ -656,3 +656,29 @@ the tool. GitHub authentication for automatic main updates does not grant this w
 A timeout, malformed creation response or failed readback leaves the run awaiting reconciliation;
 creation is never blindly retried. Check the repository's recent issues before making another request.
 Explicit GitHub rejection (for example 401/403) returns a sanitized failure instead of an issue URL.
+
+### Slack working status and stop button
+
+Mention/DM requests now show one working message with an **실행 중단** button. The same message
+updates its current stage and elapsed time every five seconds, then becomes the answer, approval
+request, failure or stopped result. The old acceptance-only message is no longer sent. This is
+execution status, not streaming model tokens or an estimated completion percentage.
+
+For an existing Slack app, after deploying this update enable **Interactivity & Shortcuts** and set:
+
+```text
+https://marketing-agent.borca.ai/channels/slack/interactions
+```
+
+Use your own public hostname for another installation. Both exported manifests include this setting;
+`trace-marketing server manifest --origin https://marketing-agent.borca.ai` prints the updated manifest.
+Existing installations must apply the interactivity setting once; automatic server updates cannot
+change the Slack app configuration. The existing `chat:write` scope also permits message updates.
+
+The request author (or a configured approver in a shared channel) can stop that execution. The signed
+button callback is acknowledged without waiting for reasoning. It cancels the owned Codex subprocess
+and prevents subsequent planning/tool dispatch. Already-dispatched external requests finish or enter
+reconciliation; stopping does not undo a GitHub issue that was already created. The final message
+keeps verified issue links and reports uncertain effects explicitly. Cancellation survives restart,
+and a delayed old button cannot stop a newer request. `종료` still closes conversation auto-replies;
+the button stops the current execution without closing the conversation.

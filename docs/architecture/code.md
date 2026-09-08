@@ -564,3 +564,12 @@ approval descriptor; `ConfiguredAgentTools` registers it only with a configured 
 setup and atomic secret storage. `channels/github_results.py` projects successful receipt-bound issue
 URLs for both Slack entry points. Canonical run admission, execution checkpoints and reconciliation
 remain in Agent Core/service/runtime, with no separate retry or issue state store.
+
+`execution_control.py` provides the channel/provider-neutral cooperative scope and owned subprocess
+cancellation. `providers/codex_cli.py` uses it for structured jobs; `codex_reasoning.py` preserves the
+cancellation signal. The canonical service owns checkpoints and append-only STOP transitions.
+`channels/slack_progress.py` owns only status-message identity and durable cancellation requests.
+`slack_events.py` owns signed button authorization, status updates and scoped execution, using the
+existing sender transport (`chat.postMessage` for new status, `chat.update` for known timestamps).
+The HTTP composition exposes only the signed interaction route during maintenance, without admitting
+new runs. Slack manifests own the external callback registration contract.

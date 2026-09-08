@@ -176,3 +176,14 @@ Run the focused owners against a newly built non-editable installed wheel outsid
 pytest's source pythonpath disabled. This proves installed composition with fixture GitHub/Slack and
 reasoning transports, not a live GitHub write or on-prem credential configuration. Operator acceptance
 requires one authorized real issue, readback URL and Slack reply after configuring the server token.
+
+Slack progress/cancellation: `tests/marketing/channels/test_slack_progress.py` covers status replacement,
+heartbeat/final ordering, signed immediate stop during active reasoning and maintenance, exact message
+scope, non-owner denial, duplicate old buttons, restart and externally completed/uncertain issue
+requests. `tests/providers/test_execution_control.py` runs a real sleeping child through the official
+Codex adapter seam, proves cancellation/reaping and retained timeout behavior. Include existing
+service/channels tests and `tests/providers/test_codex_cli_generation.py` for structured subprocess
+compatibility. Server CI includes the cancellation subprocess tests. Repeat these focused cases with
+a freshly installed wheel outside the checkout. Fixtures do not prove real Slack interactivity;
+operator acceptance requires enabling the callback URL, observing a live stage update, stopping a
+running answer and successfully starting another request.
