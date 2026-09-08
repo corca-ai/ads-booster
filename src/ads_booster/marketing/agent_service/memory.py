@@ -21,7 +21,12 @@ from ads_booster.contracts.agent_memory import (
     require_aware,
 )
 from ads_booster.contracts.agent_run import contract_sha256
-from ads_booster.marketing.agent_service.work_observation_validity import learning_source_is_current
+from ads_booster.marketing.agent_service.performance_observation_validity import (
+    learning_source_is_current as performance_learning_source_is_current,
+)
+from ads_booster.marketing.agent_service.work_observation_validity import (
+    learning_source_is_current as work_learning_source_is_current,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -135,7 +140,10 @@ class SQLiteMemoryStore:
             note = self._require(db, note_id, access, expected_sha256)
             if not note.created_at <= now < note.expires_at:
                 raise ValueError("memory_note_not_current")
-            if stage in {"review", "approved"} and not learning_source_is_current(db, note, access):
+            if stage in {"review", "approved"} and not (
+                work_learning_source_is_current(db, note, access)
+                and performance_learning_source_is_current(db, note, access)
+            ):
                 raise ValueError("memory_learning_source_not_current")
             transitions: dict[str, set[str]] = {
                 "candidate": {"review", "rejected"},
@@ -219,7 +227,8 @@ class SQLiteMemoryStore:
                 if n.stage == "approved"
                 and n.note_id not in superseded
                 and n.created_at <= now < n.expires_at
-                and learning_source_is_current(db, n, access)
+                and work_learning_source_is_current(db, n, access)
+                and performance_learning_source_is_current(db, n, access)
             ]
             terms = set(
                 TypeAdapter(list[str]).validate_python(re.findall(r"\w+", query.casefold()))
