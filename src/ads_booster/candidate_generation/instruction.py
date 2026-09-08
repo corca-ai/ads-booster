@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING, Final
 
+from ads_booster.contracts.knowledge_selection import VoiceStatus
 from ads_booster.workspace import (
     OFFERED_BACKGROUND_SUBJECTS,
     PERSONA_DOMAIN_LABELS,
@@ -15,7 +16,10 @@ from ads_booster.workspace import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ads_booster.candidate_generation.models import CandidateContextBundle, CandidateEditorialContext
+    from ads_booster.candidate_generation.models import (
+        CandidateContextBundle,
+        CandidateEditorialContext,
+    )
 
 DEFAULT_COUNTRY: Final = "KR"
 DEFAULT_LANGUAGE: Final = "ko"
@@ -543,9 +547,15 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
             distinct=distinct,
             colors=_COLOR_LINE,
             voice_rule=(
-                "반말/존댓말과 어조는 VOICE 문서를 그대로 따르세요. 스스로 문체를 새로 정하지 마세요."
+                (
+                    "반말/존댓말과 어조는 VOICE 문서를 그대로 따르세요. "
+                    "스스로 문체를 새로 정하지 마세요."
+                )
                 if editorial_context is None
-                else "아래 서버 선택 편집 컨텍스트만 문체 기준으로 사용하세요. 로컬 VOICE를 추정하거나 대체하지 마세요."
+                else (
+                    "아래 서버 선택 편집 컨텍스트만 문체 기준으로 사용하세요. "
+                    "로컬 VOICE를 추정하거나 대체하지 마세요."
+                )
             ),
         ),
         *([_INVENT_IDENTITY] if account is None else []),
@@ -565,12 +575,18 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
 
 
 def _editorial_section(context: CandidateEditorialContext) -> str:
-    if not context.blocks:
-        return "[서버 선택 편집 컨텍스트]\nvoice_status: voice_unconfigured\n현재 요청에 명시된 어조 외에 브랜드 문체를 만들지 마세요."
     blocks = "\n\n".join(
         f"[{block.role.value}:{block.block_id}]\n{block.text}" for block in context.blocks
     )
-    return f"[서버 선택 편집 컨텍스트]\nvoice_status: configured\n\n{blocks}"
+    voice_guidance = (
+        "\n현재 요청에 명시된 어조 외에 브랜드 문체를 만들지 마세요."
+        if context.voice_status is VoiceStatus.VOICE_UNCONFIGURED
+        else ""
+    )
+    return (
+        f"[서버 선택 편집 컨텍스트]\nvoice_status: {context.voice_status.value}"
+        f"{voice_guidance}\n\n{blocks}"
+    )
 
 
 def _feedback_section(instructions: tuple[str, ...]) -> str:
