@@ -124,8 +124,7 @@ def _action(  # noqa: PLR0913,PLR0911,PLR0917 - bounded explicit command dispatc
         observations = store.list(access, current_only=True, limit=_MAX_ROWS)
         lines = "\n".join(_row(item) for item in observations)
         return (
-            f"사람 보고(최근 최대 {_MAX_ROWS}개):\n{lines or '기록 없음'}\n"
-            "미보고는 0이 아닙니다."
+            f"사람 보고(최근 최대 {_MAX_ROWS}개):\n{lines or '기록 없음'}\n미보고는 0이 아닙니다."
         )
     if action == "비교":
         ids = tuple(argument.split())
