@@ -29,6 +29,10 @@ from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
+from ads_booster.marketing.agent_service.image_edit_setup import (
+    connect_image_edit,
+    run_image_edit_worker,
+)
 from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
 from ads_booster.marketing.agent_service.jobs import AgentJobs
 from ads_booster.marketing.agent_service.lifecycle import (
@@ -256,6 +260,17 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             on_completed=notify_remote_completion,
         )
     )
+    image_edit_path = os.environ.get("TRACE_MARKETING_IMAGE_EDIT_CONFIG")
+    image_edit = (
+        None
+        if image_edit_path is None
+        else connect_image_edit(
+            service,
+            config_path=Path(image_edit_path),
+            now=datetime.now(UTC),
+            on_completed=notify_remote_completion,
+        )
+    )
     if slack_only and slack_commands is None:
         message = "Slack-only mode requires a configured Slack installation"
         raise typer.BadParameter(message)
@@ -290,7 +305,20 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
         )
     )
 
+    image_edit_thread = (
+        None
+        if image_edit is None
+        else Thread(
+            target=run_image_edit_worker,
+            args=(image_edit, scheduler_stop, gate),
+            name="trace-marketing-image-edit",
+            daemon=True,
+        )
+    )
+
     def start_background() -> None:
+        if image_edit_thread is not None:
+            image_edit_thread.start()
         jobs_thread.start()
         if scheduler_thread is not None:
             scheduler_thread.start()
@@ -321,6 +349,8 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
         )
     finally:
         scheduler_stop.set()
+        if image_edit_thread is not None and image_edit_thread.is_alive():
+            image_edit_thread.join(timeout=5)
         if jobs_thread.is_alive():
             jobs_thread.join(timeout=5)
         if scheduler_thread is not None and scheduler_thread.is_alive():
