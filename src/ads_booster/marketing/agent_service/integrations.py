@@ -33,6 +33,8 @@ from ads_booster.marketing.agent_service.github_issues import (
 )
 from ads_booster.marketing.agent_service.image_generation import CodexImages
 from ads_booster.marketing.agent_service.image_generation import descriptor as image_descriptor
+from ads_booster.marketing.agent_service.skill_tools import execute as execute_skill
+from ads_booster.marketing.agent_service.skill_tools import skill_descriptors
 from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
@@ -107,6 +109,8 @@ class ConfiguredAgentTools:
 
     def adapters(self) -> Mapping[str, ToolAdapter]:
         adapters: dict[str, ToolAdapter] = {
+            "skills.list": _delegating("skills.list", "trace.skills", execute_skill),
+            "skills.read": _delegating("skills.read", "trace.skills", execute_skill),
             "creative.prepare": _delegating(
                 "creative.prepare", "trace.creative_procedures", self._creative
             ),
@@ -148,6 +152,7 @@ class ConfiguredAgentTools:
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
         result = [
+            *skill_descriptors(now=now),
             creative_prepare_descriptor(now=now),
             search_descriptor(now=now),
             research_descriptor(

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
+from ads_booster.contracts.tool_capability import ToolExecutionResult
 from ads_booster.marketing.agent_service.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -55,6 +56,8 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
     descriptors = configured.descriptors(now=NOW)
 
     assert [item.capability_id for item in descriptors] == [
+        "skills.list",
+        "skills.read",
         "creative.prepare",
         "research.search",
         "research.web",
@@ -63,6 +66,8 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
         "deliver.slack",
     ]
     assert set(configured.adapters()) == {
+        "skills.list",
+        "skills.read",
         "creative.prepare",
         "research.search",
         "research.web",
@@ -100,6 +105,7 @@ def test_hosted_workflow_adapter_delegates_to_existing_control_plane() -> None:
         _invocation(descriptor, {"schema_version": "trace.hosted-feature-launch.v1"}), descriptor
     )
 
+    assert isinstance(result, ToolExecutionResult)
     assert result.output == {"agent_run_id": "run-1", "state": "queued"}
     assert seen[0].full_url == "https://trace.example/api/marketing-agent/runs"
     assert seen[0].get_header("Authorization") == "Bearer control-secret"
@@ -136,6 +142,8 @@ def test_slack_and_notion_are_real_adapters_not_catalog_references() -> None:
         _invocation(notion, {"title": "2026-09-03", "content": "브리프"}), notion
     )
 
+    assert isinstance(slack_result, ToolExecutionResult)
+    assert isinstance(notion_result, ToolExecutionResult)
     assert slack_result.output["ok"] is True
     assert notion_result.output["id"] == "notion-page"
     assert urls == [

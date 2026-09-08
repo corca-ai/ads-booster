@@ -133,7 +133,9 @@ class SlackEvents:
         self.progress = SlackProgressStore(self.store)
         self.private_service = replace(
             self.commands.application.service,
-            capability_policy=CapabilityPolicy(allowed_capability_ids=("research.search",)),
+            capability_policy=CapabilityPolicy(
+                allowed_capability_ids=("research.search", "skills.list", "skills.read")
+            ),
         )
         self.private_service.execution_lock = self.commands.application.service.execution_lock
         self.commands.application.service.boundary_signal = self._pending_steering
