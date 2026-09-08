@@ -160,11 +160,34 @@ def test_fetch_stops_when_stream_exceeds_bound_without_echoing_url() -> None:
     assert "token-secret" not in str(caught.value)
 
 
-def test_fetch_reports_private_access_failure_without_reading_or_echoing_body() -> None:
+@pytest.mark.parametrize(
+    ("status_code", "code", "retryable"),
+    [
+        (100, "http_status_unsupported", False),
+        (300, "http_status_unsupported", False),
+        (400, "http_client_error", False),
+        (401, "http_access_denied", False),
+        (403, "http_access_denied", False),
+        (404, "http_not_found", False),
+        (405, "http_client_error", False),
+        (408, "http_request_timeout", True),
+        (409, "http_client_error", False),
+        (429, "http_rate_limited", True),
+        (451, "http_client_error", False),
+        (500, "http_server_unavailable", True),
+        (503, "http_server_unavailable", True),
+    ],
+)
+def test_fetch_rejects_unsuccessful_status_before_reading_or_echoing_body(
+    status_code: int,
+    code: str,
+    retryable: bool,
+) -> None:
     # Given
     fetcher = ScopedSourceFetcher(
+        SourceFetchConfig(maximum_bytes=1),
         transport=httpx2.MockTransport(
-            lambda _request: httpx2.Response(403, content=b"token=private-value")
+            lambda _request: httpx2.Response(status_code, content=b"token=private-value")
         ),
         resolver=lambda _host: ("93.184.216.34",),
     )
@@ -172,5 +195,6 @@ def test_fetch_reports_private_access_failure_without_reading_or_echoing_body() 
     # When / Then
     with pytest.raises(SourceFetchError) as caught:
         _ = fetcher.fetch(SourceFetchRequest(url="https://origin.example/private-token"))
-    assert caught.value.code == "http_access_denied"
+    assert caught.value.code == code
+    assert caught.value.retryable is retryable
     assert "private" not in str(caught.value)

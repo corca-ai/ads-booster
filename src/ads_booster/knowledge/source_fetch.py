@@ -17,7 +17,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
+_SUCCESS_START: Final = 200
+_SUCCESS_END: Final = 300
 _NOT_MODIFIED: Final = 304
+_CLIENT_ERROR_START: Final = 400
+_REQUEST_TIMEOUT: Final = 408
+_RATE_LIMITED: Final = 429
 _NOT_FOUND: Final = 404
 _SERVER_ERROR_START: Final = 500
 _DENIED_HOSTS: Final = frozenset({"localhost", "metadata.google.internal"})
@@ -231,12 +236,21 @@ def _redirect_url(
 
 
 def _raise_for_status(status_code: int) -> None:
+    if _SUCCESS_START <= status_code < _SUCCESS_END or status_code == _NOT_MODIFIED:
+        return
     if status_code in {401, 403}:
         _fail("http_access_denied")
     if status_code == _NOT_FOUND:
         _fail("http_not_found")
+    if status_code == _REQUEST_TIMEOUT:
+        _raise_retryable("http_request_timeout")
+    if status_code == _RATE_LIMITED:
+        _raise_retryable("http_rate_limited")
     if status_code >= _SERVER_ERROR_START:
         _raise_retryable("http_server_unavailable")
+    if status_code >= _CLIENT_ERROR_START:
+        _fail("http_client_error")
+    _fail("http_status_unsupported")
 
 
 def _resolve_host(host: str) -> tuple[str, ...]:
