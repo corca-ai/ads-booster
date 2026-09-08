@@ -320,6 +320,7 @@ def finish_setup() -> None:
         if current != value["previous"][name]:
             raise RuntimeError(f"setup_resume_preserves_operator_edit:{name}")
         private_write(target, content)
+    (ROOT / "knowledge").mkdir(mode=0o700, parents=True, exist_ok=True)
     _ = initialize_knowledge_store(
         KnowledgeSettings(
             root=ROOT / "knowledge",
