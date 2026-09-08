@@ -4,7 +4,9 @@
 
 Trace Workspace is a utilitarian marketing workbench. Its primary job is to make the live pipeline
 legible: choose an account-scoped country/persona context, generate candidates, review caption and
-topic, review the image, then leave approved work in `submitted` for manual publication.
+topic, review the image, then mark approved work as `submitted`. Image approval alone does not prove
+publication; the separate [Threads publication flow](docs/contracts/cloudflare-marketing-loop.md)
+depends on the connected profile, operator toggle and scheduled slot.
 
 `DESIGN_VARIANCE: 4`, `MOTION_INTENSITY: 2`, `VISUAL_DENSITY: 5`.
 

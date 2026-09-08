@@ -71,7 +71,9 @@
 - artifact는 설정된 root와 digest provenance를 유지하며 확인할 수 없는 side effect를
   무조건 재시도하지 않습니다.
 - 생성 결과는 artifact 검증과 사람의 review 승인을 거쳐야 합니다.
-- 현재 런타임은 Notion, Threads 또는 다른 외부 마케팅 채널에 자동 게시하지 않습니다.
+- 외부 게시·전달은 [시스템 아키텍처](./docs/architecture/system.md)의 채널별 승인 경계를
+  따릅니다. Mac worker는 게시하지 않으며, Cloudflare Threads 게시에는 사람의 이미지 승인과
+  운영자의 프로필 연결·자동 게시 활성화가 필요합니다.
 
 ## 검증
 
