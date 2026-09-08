@@ -37,7 +37,11 @@ from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import ToolExecutionResult
 from ads_booster.execution_control import checkpoint
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.marketing.agent_core.registry import (
+    CapabilityPolicy,
+    ToolRegistrationCatalog,
+    ToolRegistry,
+)
 from ads_booster.marketing.agent_service.sqlite_repository import (
     AgentRunConflictError,
     RepositoryAdmission,
@@ -113,6 +117,17 @@ class MarketingAgentService:
         )
         if missing:
             raise ValueError("ready_tool_adapter_missing")
+
+    def install_tool_catalog(
+        self,
+        catalog: ToolRegistrationCatalog,
+        *,
+        now: datetime,
+    ) -> None:
+        """Publish validated descriptor and adapter projections as one service update."""
+        with self.execution_lock:
+            candidate = self.registry.with_registrations(catalog.registrations(), now=now)
+            self.registry, self.tools = candidate, candidate.adapters
 
     def create(
         self,

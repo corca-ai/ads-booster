@@ -9,7 +9,7 @@ from threading import Lock
 from typing import TYPE_CHECKING
 
 from ads_booster.contracts.tool_capability import ToolReadiness
-from ads_booster.marketing.agent_core.registry import ToolRegistry
+from ads_booster.marketing.agent_core.registry import ToolRegistration, ToolRegistry
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.creative_image_edit import (
     CreativeImageEditTool,
@@ -35,12 +35,25 @@ _CAPABILITIES = ("creative.image.edit", "creative.image.localize")
 
 @dataclass
 class ImageEditCatalog:
-    base: ToolRegistry
     tool: CreativeImageEditTool
     _cached: ToolReadiness | None = field(default=None, init=False, repr=False)
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
+    def registrations(self) -> tuple[ToolRegistration, ...]:
+        return tuple(
+            ToolRegistration(
+                capability_id=capability,
+                version="1",
+                adapter=self.tool,
+                descriptor_factory=_ImageEditDescriptorFactory(self, capability),
+            )
+            for capability in _CAPABILITIES
+        )
+
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
+        return ToolRegistry.from_registrations(self.registrations(), now=now).descriptors
+
+    def descriptor(self, capability: str, *, now: datetime) -> ToolDescriptor:
         with self._lock:
             if (
                 self._cached is None
@@ -57,23 +70,21 @@ class ImageEditCatalog:
                     reason_code=None if ready else "image_edit_unavailable",
                 )
             readiness = self._cached
-        existing = tuple(
-            d
-            for d in self.base.current_descriptors(now=now)
-            if d.capability_id not in _CAPABILITIES
-        )
-        return (
-            *existing,
-            *(
-                image_edit_descriptor(
-                    config=self.tool.config,
-                    capability_id=capability,
-                    now=readiness.observed_at,
-                    ready=readiness.ready,
-                ).model_copy(update={"readiness": readiness})
-                for capability in _CAPABILITIES
-            ),
-        )
+        return image_edit_descriptor(
+            config=self.tool.config,
+            capability_id=capability,
+            now=readiness.observed_at,
+            ready=readiness.ready,
+        ).model_copy(update={"readiness": readiness})
+
+
+@dataclass(frozen=True, slots=True)
+class _ImageEditDescriptorFactory:
+    catalog: ImageEditCatalog
+    capability_id: str
+
+    def __call__(self, *, now: datetime) -> ToolDescriptor:
+        return self.catalog.descriptor(self.capability_id, now=now)
 
 
 def connect_image_edit(
@@ -106,9 +117,8 @@ def connect_image_edit(
         readiness=lambda: provider.readiness().ready,
         on_completed=on_completed,
     )
-    catalog = ImageEditCatalog(service.registry, tool)
-    service.registry = ToolRegistry(catalog.descriptors(now=now), provider=catalog)
-    service.tools = {**service.tools, **dict.fromkeys(_CAPABILITIES, tool)}
+    catalog = ImageEditCatalog(tool)
+    service.install_tool_catalog(catalog, now=now)
     return tool
 
 

@@ -63,6 +63,7 @@ from ads_booster.knowledge.tool_contracts import (
     ToolResult,
     TrustedInvocationContext,
 )
+from ads_booster.marketing.agent_core.registry import ToolRegistration
 from ads_booster.marketing.agent_service.knowledge_transfer import TransferContextMaterial
 from ads_booster.transport.json_types import JsonObject
 
@@ -126,6 +127,19 @@ class KnowledgeToolAdapter:
             output=_JSON_OBJECT.validate_python(result.model_dump(mode="json")),
             actual_cost_units=1,
             executor_id=f"knowledge.{self.name.value}",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _KnowledgeDescriptorFactory:
+    host: ToolHost
+    name: KnowledgeToolName
+
+    def __call__(self, *, now: datetime) -> ToolDescriptor:
+        return next(
+            item
+            for item in knowledge_descriptors(self.host.catalog(), self.host.schemas(), now=now)
+            if item.capability_id == self.name.value
         )
 
 
@@ -275,14 +289,28 @@ class KnowledgeServiceAdapter:
             invoked_at=datetime.now(UTC),
         )
 
+    def registrations(self) -> tuple[ToolRegistration, ...]:
+        return tuple(
+            ToolRegistration(
+                capability_id=name.value,
+                version="1",
+                adapter=KnowledgeToolAdapter(name=name, host=self.host, resolver=self),
+                descriptor_factory=_KnowledgeDescriptorFactory(self.host, name),
+            )
+            for name in KnowledgeToolName
+        )
+
     def adapters(self) -> dict[str, ToolAdapter]:
         return {
-            name.value: KnowledgeToolAdapter(name=name, host=self.host, resolver=self)
-            for name in KnowledgeToolName
+            registration.capability_id: registration.adapter
+            for registration in self.registrations()
+            if registration.adapter is not None
         }
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
-        return knowledge_descriptors(self.host.catalog(), self.host.schemas(), now=now)
+        return tuple(
+            registration.descriptor(now=now) for registration in self.registrations()
+        )
 
     def transfer_material(self, prepared: PreparedKnowledgeContext) -> TransferContextMaterial:
         if contract_sha256(prepared.receipt) != prepared.receipt_sha256:

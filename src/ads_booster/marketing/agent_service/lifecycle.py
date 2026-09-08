@@ -55,7 +55,6 @@ from ads_booster.marketing.agent_service.managed_image_review import (
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.dynamic_evidence_research import DynamicEvidenceResearchRunner
 from ads_booster.marketing.runtime import SqliteSessionStore
-from ads_booster.marketing.tool_adapters.compatibility import DelegatingToolAdapter
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from ads_booster.providers.codex_reasoning import CodexReasoningProvider
@@ -117,18 +116,17 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
         ),
         knowledge=knowledge,
     )
-    adapters = configured.adapters()
-    initial_descriptors = configured.descriptors(now=datetime.now(UTC))
+    registry = ToolRegistry.from_catalog(configured, now=datetime.now(UTC))
     service = MarketingAgentService(
         repository=repository,
-        registry=ToolRegistry(initial_descriptors, provider=configured),
+        registry=registry,
         reasoning=CodexReasoningProvider(
             codex=codex,
             workspace_root=paths.reasoning_workspace,
             model_id=model_id,
             timeout_seconds=timeout_seconds,
         ),
-        tools=adapters,
+        tools=registry.adapters,
         runtime_store=SqliteSessionStore(paths.database),
         knowledge=knowledge,
     )
@@ -138,19 +136,8 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
         assets=SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts"),
         codex=codex,
     )
-    review_catalog = ManagedImageReviewCatalog(service.registry, managed_review)
-    service.registry = ToolRegistry(
-        review_catalog.descriptors(now=datetime.now(UTC)), provider=review_catalog
-    )
-    service.tools = {
-        **service.tools,
-        "creative.asset.review": DelegatingToolAdapter(
-            capability_id="creative.asset.review",
-            version="1",
-            executor_id="managed-image-review",
-            executor=managed_review.execute,
-        ),
-    }
+    review_catalog = ManagedImageReviewCatalog(managed_review)
+    service.install_tool_catalog(review_catalog, now=datetime.now(UTC))
     configured.creative_capabilities = lambda invocation, now: _creative_capabilities(
         service, invocation, now
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
@@ -29,7 +30,11 @@ from ads_booster.contracts.tool_capability import (
     ToolReadiness,
     ToolReconciliationPolicy,
 )
-from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.marketing.agent_core.registry import (
+    CapabilityPolicy,
+    ToolRegistration,
+    ToolRegistry,
+)
 from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
@@ -115,6 +120,64 @@ class ResearchAdapter:
             actual_cost_units=1,
             executor_id="research.fake",
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationCatalog:
+    items: tuple[ToolRegistration, ...]
+
+    def registrations(self) -> tuple[ToolRegistration, ...]:
+        return self.items
+
+
+def research_registration(
+    capability_id: str,
+    adapter: ResearchAdapter,
+) -> ToolRegistration:
+    def descriptor(*, now: datetime) -> ToolDescriptor:
+        return _descriptor(capability_id, EffectClass.OBSERVE, ready=True).model_copy(
+            update={
+                "readiness": _descriptor(
+                    capability_id, EffectClass.OBSERVE, ready=True
+                ).readiness.model_copy(update={"observed_at": now})
+            }
+        )
+
+    return ToolRegistration(capability_id, "1", adapter, descriptor)
+
+
+def test_catalog_install_rejects_whole_duplicate_bundle_without_partial_publication(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "agent-service.sqlite3"
+    adapter = ResearchAdapter()
+    registry = ToolRegistry.from_registrations(
+        (research_registration("research.web", adapter),), now=NOW
+    )
+    service = MarketingAgentService(
+        repository=SqliteAgentRunRepository(database),
+        registry=registry,
+        reasoning=AskThenStopReasoning(),
+        tools=registry.adapters,
+        runtime_store=SqliteSessionStore(database),
+    )
+    original_registry = service.registry
+    original_tools = service.tools
+
+    with pytest.raises(ValueError, match="duplicate_tool_registration"):
+        service.install_tool_catalog(
+            RegistrationCatalog(
+                (
+                    research_registration("creative.prepare", ResearchAdapter()),
+                    research_registration("research.web", adapter),
+                )
+            ),
+            now=NOW,
+        )
+
+    assert service.registry is original_registry
+    assert service.tools is original_tools
+    assert "creative.prepare" not in service.tools
 
 
 class FlakyReasoning:

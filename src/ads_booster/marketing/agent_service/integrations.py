@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol, cast
-from urllib.error import HTTPError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from functools import partial
+from typing import TYPE_CHECKING, Protocol
+from urllib.request import urlopen
 
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import ToolDescriptor
+from ads_booster.marketing.agent_core.registry import ToolRegistration
 from ads_booster.marketing.agent_service.creative_procedures import (
     CreativeBrief,
     CreativeBriefRequest,
@@ -32,8 +31,11 @@ from ads_booster.marketing.agent_service.github_issues import (
 )
 from ads_booster.marketing.agent_service.image_generation import CodexImages
 from ads_booster.marketing.agent_service.image_generation import descriptor as image_descriptor
+from ads_booster.marketing.tool_adapters._http_json import HttpResponse
+from ads_booster.marketing.tool_adapters.notion_daily import execute_notion_daily
 from ads_booster.marketing.agent_service.skill_tools import execute as execute_skill
 from ads_booster.marketing.agent_service.skill_tools import skill_descriptors
+from ads_booster.marketing.tool_adapters.slack_delivery import execute_slack_delivery
 from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
@@ -60,19 +62,15 @@ if TYPE_CHECKING:
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
-class HttpResponse(Protocol):
-    def read(self) -> bytes: ...
-
-
 class ResearchRunner(Protocol):
     def run(self, request: DynamicEvidenceResearchRequest) -> DynamicEvidenceResearchResult: ...
 
 
 @dataclass(frozen=True, slots=True)
 class AgentServiceIntegrationConfig:
-    slack_bot_token: str | None = None
+    slack_bot_token: str | None = field(default=None, repr=False)
     slack_channel_id: str | None = None
-    notion_token: str | None = None
+    notion_token: str | None = field(default=None, repr=False)
     notion_parent_page_id: str | None = None
     github_token: str | None = field(default=None, repr=False)
 
@@ -99,72 +97,106 @@ class ConfiguredAgentTools:
 
     images: CodexImages | None = None
 
-    def adapters(self) -> Mapping[str, ToolAdapter]:
-        adapters: dict[str, ToolAdapter] = {
-            "skills.list": _delegating("skills.list", "trace.skills", execute_skill),
-            "skills.read": _delegating("skills.read", "trace.skills", execute_skill),
-            "creative.prepare": _delegating(
-                "creative.prepare", "trace.creative_procedures", self._creative
+    def registrations(self) -> tuple[ToolRegistration, ...]:
+        registrations = [
+            _registration(
+                "skills.list",
+                "trace.skills",
+                execute_skill,
+                partial(_skill_descriptor, "skills.list"),
             ),
-            "research.search": _delegating("research.search", "public_search", WebSearch().execute),
-            "research.web": _delegating(
-                "research.web", "trace.dynamic_evidence_research", self._research
+            _registration(
+                "skills.read",
+                "trace.skills",
+                execute_skill,
+                partial(_skill_descriptor, "skills.read"),
             ),
-        }
-        if self.delivery_tool is not None:
-            adapters["delivery.prepare"] = _delegating(
-                "delivery.prepare", "trace.delivery_preparation", self.delivery_tool.execute
-            )
-        if self.config.slack_bot_token and self.config.slack_channel_id:
-            adapters["deliver.slack"] = _delegating(
-                "deliver.slack", "slack.chat_post_message", self._slack
-            )
-        if self.config.notion_token and self.config.notion_parent_page_id:
-            adapters["store.notion.daily"] = _delegating(
-                "store.notion.daily", "notion.pages_create", self._notion
-            )
-        if self.config.github_token:
-            adapters[CAPABILITY] = _delegating(
-                CAPABILITY, "github.issues", GitHubIssues(self.config.github_token).execute
-            )
-        if self.images is not None:
-            adapters["creative.image.generate"] = _delegating(
-                "creative.image.generate", "codex.image_generation", self.images.execute
-            )
-        if self.knowledge is not None:
-            adapters.update(self.knowledge.adapters())
-        return adapters
-
-    def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
-        result = [
-            *skill_descriptors(now=now),
-            creative_prepare_descriptor(now=now),
-            search_descriptor(now=now),
-            research_descriptor(
-                installation_id="installed:research.web", observed_at=now, ready=True
+            _registration(
+                "creative.prepare",
+                "trace.creative_procedures",
+                self._creative,
+                creative_prepare_descriptor,
+            ),
+            _registration(
+                "research.search", "public_search", WebSearch().execute, search_descriptor
+            ),
+            _registration(
+                "research.web",
+                "trace.dynamic_evidence_research",
+                self._research,
+                _research_descriptor,
             ),
         ]
         if self.delivery_tool is not None:
-            result.append(delivery_prepare_descriptor(now=now))
+            registrations.append(
+                _registration(
+                    "delivery.prepare",
+                    "trace.delivery_preparation",
+                    self.delivery_tool.execute,
+                    delivery_prepare_descriptor,
+                )
+            )
         if self.config.slack_bot_token and self.config.slack_channel_id:
-            result.append(
-                slack_delivery_descriptor(
-                    installation_id="configured:slack", observed_at=now, ready=True
+            registrations.append(
+                _registration(
+                    "deliver.slack",
+                    "slack.chat_post_message",
+                    partial(
+                        execute_slack_delivery,
+                        token=_required(self.config.slack_bot_token),
+                        channel_id=_required(self.config.slack_channel_id),
+                        opener=self.opener,
+                    ),
+                    _slack_delivery_descriptor,
                 )
             )
         if self.config.notion_token and self.config.notion_parent_page_id:
-            result.append(
-                notion_daily_descriptor(
-                    installation_id="configured:notion", observed_at=now, ready=True
+            registrations.append(
+                _registration(
+                    "store.notion.daily",
+                    "notion.pages_create",
+                    partial(
+                        execute_notion_daily,
+                        token=_required(self.config.notion_token),
+                        parent_page_id=_required(self.config.notion_parent_page_id),
+                        opener=self.opener,
+                    ),
+                    _notion_daily_descriptor,
                 )
             )
         if self.config.github_token:
-            result.append(github_descriptor(now=now))
+            registrations.append(
+                _registration(
+                    CAPABILITY,
+                    "github.issues",
+                    GitHubIssues(self.config.github_token).execute,
+                    github_descriptor,
+                )
+            )
         if self.images is not None:
-            result.append(image_descriptor(now=now))
+            registrations.append(
+                _registration(
+                    "creative.image.generate",
+                    "codex.image_generation",
+                    self.images.execute,
+                    image_descriptor,
+                )
+            )
         if self.knowledge is not None:
-            result.extend(self.knowledge.descriptors(now=now))
-        return tuple(result)
+            registrations.extend(self.knowledge.registrations())
+        return tuple(registrations)
+
+    def adapters(self) -> Mapping[str, ToolAdapter]:
+        return {
+            registration.capability_id: registration.adapter
+            for registration in self.registrations()
+            if registration.adapter is not None
+        }
+
+    def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
+        return tuple(
+            registration.descriptor(now=now) for registration in self.registrations()
+        )
 
     def _creative(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor
@@ -212,69 +244,6 @@ class ConfiguredAgentTools:
             actual_cost_units=result.spent_cost_units,
         )
 
-    def _slack(self, invocation: ToolInvocation, descriptor: ToolDescriptor) -> DelegatedToolResult:
-        _ = descriptor
-        text = invocation.input.get("text")
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("slack_delivery_text_required")
-        output = self._post_json(
-            "https://slack.com/api/chat.postMessage",
-            {"channel": _required(self.config.slack_channel_id), "text": text},
-            {"authorization": f"Bearer {_required(self.config.slack_bot_token)}"},
-        )
-        if output.get("ok") is not True:
-            raise ValueError("slack_delivery_rejected")
-        return DelegatedToolResult(disposition="succeeded", output=output, actual_cost_units=1)
-
-    def _notion(
-        self, invocation: ToolInvocation, descriptor: ToolDescriptor
-    ) -> DelegatedToolResult:
-        _ = descriptor
-        title = invocation.input.get("title")
-        content = invocation.input.get("content")
-        if not isinstance(title, str) or not title.strip():
-            raise ValueError("notion_daily_title_required")
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("notion_daily_content_required")
-        output = self._post_json(
-            "https://api.notion.com/v1/pages",
-            {
-                "parent": {"page_id": _required(self.config.notion_parent_page_id)},
-                "properties": {"title": {"title": [{"text": {"content": title}}]}},
-                "children": [
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [{"type": "text", "text": {"content": content}}]
-                        },
-                    }
-                ],
-            },
-            {
-                "authorization": f"Bearer {_required(self.config.notion_token)}",
-                "notion-version": "2022-06-28",
-            },
-        )
-        return DelegatedToolResult(disposition="succeeded", output=output, actual_cost_units=1)
-
-    def _post_json(self, url: str, payload: JsonObject, headers: Mapping[str, str]) -> JsonObject:
-        if urlsplit(url).scheme != "https":
-            raise ValueError("tool_endpoint_must_be_https")
-        request = Request(  # noqa: S310 - all adapter endpoints are HTTPS and operator-owned.
-            url,
-            data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
-            headers={"accept": "application/json", "content-type": "application/json", **headers},
-            method="POST",
-        )
-        try:
-            response = self.opener(request, timeout=30.0)
-            raw = cast("object", json.loads(response.read()))
-            return _JSON_OBJECT.validate_python(raw)
-        except HTTPError as error:
-            raise ValueError(f"tool_endpoint_http_{error.code}") from error
-
-
 def creative_prepare_descriptor(*, now: datetime) -> ToolDescriptor:
     template = research_descriptor(
         installation_id="installed:creative.prepare",
@@ -297,16 +266,46 @@ def creative_prepare_descriptor(*, now: datetime) -> ToolDescriptor:
     )
 
 
-def _delegating(
+def _registration(
     capability_id: str,
     executor_id: str,
     executor: ToolExecutor,
-) -> DelegatingToolAdapter:
-    return DelegatingToolAdapter(
+    descriptor_factory: Callable[..., ToolDescriptor],
+) -> ToolRegistration:
+    return ToolRegistration(
         capability_id=capability_id,
         version="1",
-        executor_id=executor_id,
-        executor=executor,
+        adapter=DelegatingToolAdapter(
+            capability_id=capability_id,
+            version="1",
+            executor_id=executor_id,
+            executor=executor,
+        ),
+        descriptor_factory=descriptor_factory,
+    )
+
+
+def _skill_descriptor(capability_id: str, *, now: datetime) -> ToolDescriptor:
+    return next(
+        item for item in skill_descriptors(now=now) if item.capability_id == capability_id
+    )
+
+
+def _research_descriptor(*, now: datetime) -> ToolDescriptor:
+    return research_descriptor(
+        installation_id="installed:research.web", observed_at=now, ready=True
+    )
+
+
+def _slack_delivery_descriptor(*, now: datetime) -> ToolDescriptor:
+    return slack_delivery_descriptor(
+        installation_id="configured:slack", observed_at=now, ready=True
+    )
+
+
+def _notion_daily_descriptor(*, now: datetime) -> ToolDescriptor:
+    return notion_daily_descriptor(
+        installation_id="configured:notion", observed_at=now, ready=True
     )
 
 

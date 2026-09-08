@@ -6,7 +6,6 @@ from datetime import timedelta
 from threading import Event
 from typing import TYPE_CHECKING, override
 
-from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.image_edit_setup import (
     ImageEditCatalog,
     run_image_edit_worker,
@@ -30,7 +29,7 @@ def test_planning_cache_preserves_observation_time_and_execution_probe(tmp_path:
         return True
 
     tool.readiness = probe
-    catalog = ImageEditCatalog(ToolRegistry(()), tool)
+    catalog = ImageEditCatalog(tool)
     first = catalog.descriptors(now=NOW)
     cached = catalog.descriptors(now=NOW + timedelta(seconds=59))
     assert len(calls) == 1

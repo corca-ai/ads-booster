@@ -10,7 +10,7 @@ from urllib.request import Request
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.tool_capability import ToolReadiness
-from ads_booster.marketing.agent_core.registry import ToolRegistry
+from ads_booster.marketing.agent_core.registry import ToolRegistration, ToolRegistry
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.oauth import open_auth_request
 from ads_booster.marketing.agent_service.slack_asset_intake import (
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ads_booster.contracts.tool_capability import ToolDescriptor
+    from ads_booster.marketing.agent_core.ports import ToolAdapter
     from ads_booster.marketing.agent_service.application import MarketingAgentService
 
 
@@ -117,13 +118,44 @@ class SlackImagePermissionProbe:
 
 @dataclass(slots=True)
 class SlackCreativeCatalog:
-    base: ToolRegistry
     probe: SlackImagePermissionProbe
+    review_adapter: ToolAdapter = field(repr=False)
+    inspect_adapter: ToolAdapter = field(repr=False)
+    import_adapter: ToolAdapter = field(repr=False)
     monotonic: Callable[[], float] = field(default=time.monotonic, repr=False)
     _readiness: ToolReadiness | None = field(default=None, init=False)
     _checked_at: float = field(default=0, init=False)
 
+    def remember(self, readiness: ToolReadiness) -> None:
+        self._readiness = readiness
+        self._checked_at = self.monotonic()
+
+    def registrations(self) -> tuple[ToolRegistration, ...]:
+        return (
+            ToolRegistration(
+                capability_id="creative.image.review",
+                version="1",
+                adapter=self.review_adapter,
+                descriptor_factory=_SlackDescriptorFactory(self, "creative.image.review"),
+            ),
+            ToolRegistration(
+                capability_id="creative.file.inspect",
+                version="1",
+                adapter=self.inspect_adapter,
+                descriptor_factory=_SlackDescriptorFactory(self, "creative.file.inspect"),
+            ),
+            ToolRegistration(
+                capability_id="creative.asset.import",
+                version="1",
+                adapter=self.import_adapter,
+                descriptor_factory=_SlackDescriptorFactory(self, "creative.asset.import"),
+            ),
+        )
+
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
+        return ToolRegistry.from_registrations(self.registrations(), now=now).descriptors
+
+    def descriptor(self, capability_id: str, *, now: datetime) -> ToolDescriptor:
         tick = self.monotonic()
         readiness = self._readiness
         if (
@@ -134,18 +166,26 @@ class SlackCreativeCatalog:
             readiness = self.probe.check(now=now)
             self._readiness = readiness
             self._checked_at = self.monotonic()
-        descriptor = slack_image_review_descriptor(now=readiness.observed_at, ready=readiness.ready)
-        descriptor = descriptor.model_copy(update={"readiness": readiness})
-        return (
-            *self.base.current_descriptors(now=now),
-            descriptor,
-            slack_file_inspect_descriptor(
-                now=readiness.observed_at, ready=readiness.ready
-            ).model_copy(update={"readiness": readiness}),
-            slack_asset_import_descriptor(
-                now=readiness.observed_at, ready=readiness.ready
-            ).model_copy(update={"readiness": readiness}),
+        factories = {
+            "creative.image.review": slack_image_review_descriptor,
+            "creative.file.inspect": slack_file_inspect_descriptor,
+            "creative.asset.import": slack_asset_import_descriptor,
+        }
+        factory = factories.get(capability_id)
+        if factory is None:
+            raise ValueError("slack_creative_capability_invalid")
+        return factory(now=readiness.observed_at, ready=readiness.ready).model_copy(
+            update={"readiness": readiness}
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlackDescriptorFactory:
+    catalog: SlackCreativeCatalog
+    capability_id: str
+
+    def __call__(self, *, now: datetime) -> ToolDescriptor:
+        return self.catalog.descriptor(self.capability_id, now=now)
 
 
 def connect_slack_creative(  # noqa: PLR0913 - identity, opt-in credentials and probe injection.
@@ -169,12 +209,8 @@ def connect_slack_creative(  # noqa: PLR0913 - identity, opt-in credentials and 
         or not token
     ):
         return {"ready": False, "reason": "slack_image_provider_unconfigured"}
-    catalog = SlackCreativeCatalog(
-        service.registry,
-        SlackImagePermissionProbe(team_id, token, opener),
-    )
-    descriptors = catalog.descriptors(now=now)
-    readiness = descriptors[-1].readiness
+    probe = SlackImagePermissionProbe(team_id, token, opener)
+    readiness = probe.check(now=now)
     if not readiness.ready:
         return {
             "ready": False,
@@ -203,26 +239,30 @@ def connect_slack_creative(  # noqa: PLR0913 - identity, opt-in credentials and 
             expected_team_id=team_id,
         ),
     )
-    service.tools = {
-        **service.tools,
-        "creative.file.inspect": DelegatingToolAdapter(
+    inspect_adapter = DelegatingToolAdapter(
             capability_id="creative.file.inspect",
             version="1",
             executor_id="slack-bound-file-inspect",
             executor=intake.inspect,
-        ),
-        "creative.asset.import": DelegatingToolAdapter(
+        )
+    import_adapter = DelegatingToolAdapter(
             capability_id="creative.asset.import",
             version="1",
             executor_id="slack-approved-asset-import",
             executor=intake.import_asset,
-        ),
-        "creative.image.review": DelegatingToolAdapter(
+        )
+    review_adapter = DelegatingToolAdapter(
             capability_id="creative.image.review",
             version="1",
             executor_id="official-codex-image-review",
             executor=tool.execute,
-        ),
-    }
-    service.registry = ToolRegistry(descriptors, provider=catalog)
+        )
+    catalog = SlackCreativeCatalog(
+        probe,
+        review_adapter,
+        inspect_adapter,
+        import_adapter,
+    )
+    catalog.remember(readiness)
+    service.install_tool_catalog(catalog, now=now)
     return {"ready": True, "required_scope": "files:read", "readiness_ttl_seconds": _READINESS_TTL}

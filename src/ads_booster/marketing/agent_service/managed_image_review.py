@@ -15,13 +15,16 @@ from ads_booster.contracts.creative_work import AssetParent, CreativeScope
 from ads_booster.contracts.marketing_delivery import ReviewAsset
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.tool_capability import ToolDescriptor
-from ads_booster.marketing.agent_core.registry import ToolRegistry
+from ads_booster.marketing.agent_core.registry import ToolRegistration
 from ads_booster.marketing.agent_service.creative_asset_links import asset_links
 from ads_booster.marketing.agent_service.creative_asset_verifier import CreativeAssetVerifier
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.image_review import review_images
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.marketing.tool_adapters.compatibility import DelegatedToolResult
+from ads_booster.marketing.tool_adapters.compatibility import (
+    DelegatedToolResult,
+    DelegatingToolAdapter,
+)
 from ads_booster.marketing.tool_adapters.descriptors import research_descriptor
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.transport.json_types import JsonObject
@@ -209,11 +212,22 @@ class ManagedImageReviewTool:
 
 @dataclass(frozen=True, slots=True)
 class ManagedImageReviewCatalog:
-    base: ToolRegistry
     tool: ManagedImageReviewTool
 
-    def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
+    def registrations(self) -> tuple[ToolRegistration, ...]:
         return (
-            *self.base.current_descriptors(now=now),
-            managed_image_review_descriptor(now=now, ready=self.tool.ready()),
+            ToolRegistration(
+                capability_id=_CAPABILITY,
+                version="1",
+                adapter=DelegatingToolAdapter(
+                    capability_id=_CAPABILITY,
+                    version="1",
+                    executor_id="managed-image-review",
+                    executor=self.tool.execute,
+                ),
+                descriptor_factory=self,
+            ),
         )
+
+    def __call__(self, *, now: datetime) -> ToolDescriptor:
+        return managed_image_review_descriptor(now=now, ready=self.tool.ready())
