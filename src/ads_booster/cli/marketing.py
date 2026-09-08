@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 import typer
 from pydantic import ValidationError
 
+from ads_booster.cli.remote_capture import capture_remote_doctor, capture_remote_run
 from ads_booster.cli.server import app as server_app
 from ads_booster.marketing.agent_service.channel_setup import (
     browser_from_env,
@@ -128,6 +129,8 @@ service_app = typer.Typer(
     no_args_is_help=True,
     help="Operate the canonical on-premises Marketing Agent Service.",
 )
+_ = worker_app.command("capture-remote-run")(capture_remote_run)
+_ = worker_app.command("capture-remote-doctor")(capture_remote_doctor)
 app.add_typer(worker_app, name="worker")
 app.add_typer(agent_app, name="agent")
 app.add_typer(service_app, name="service")
