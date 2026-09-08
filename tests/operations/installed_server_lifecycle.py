@@ -15,8 +15,10 @@ import json
 import os
 import subprocess
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from threading import Thread
+from typing import Any, override
 from unittest.mock import patch
 from urllib.request import Request, urlopen
 
@@ -25,6 +27,22 @@ from ads_booster.cli import server
 
 def run(*args: str) -> str:
     return subprocess.check_output(args, text=True).strip()
+
+
+class ExistingService(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+        _ = self.wfile.write(b"unrelated-service-preserved")
+
+    @override
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+# Simulate the reported server: 8765 belongs to an unrelated service.
+existing_service = ThreadingHTTPServer(("127.0.0.1", 8765), ExistingService)
+Thread(target=existing_service.serve_forever, daemon=True).start()
 
 
 answers = [
@@ -58,7 +76,7 @@ _ = run("systemctl", "--user", "stop", server.TIMER)
 def health() -> dict[str, Any]:
     for _attempt in range(60):
         try:
-            with urlopen("http://127.0.0.1:8765/health", timeout=2) as response:
+            with urlopen("http://127.0.0.1:8090/health", timeout=2) as response:
                 value = json.load(response)
             if value.get("owner") == "on_prem_agent":
                 return value
@@ -81,7 +99,7 @@ signature = (
     ).hexdigest()
 )
 request = Request(
-    "http://127.0.0.1:8765/channels/slack/events",
+    "http://127.0.0.1:8090/channels/slack/events",
     data=body,
     headers={
         "Content-Type": "application/json",
@@ -160,6 +178,11 @@ assert run("systemctl", "--user", "is-enabled", server.TIMER) == "enabled"
 assert run("systemctl", "--user", "is-active", server.TIMER) == "active"
 assert run("loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value") == "yes"
 assert (server.ROOT / "last-success.json").is_file()
+assert json.loads((server.CONFIG / "server.json").read_text())["port"] == 8090
+with urlopen("http://127.0.0.1:8765/health", timeout=2) as response:
+    assert response.read() == b"unrelated-service-preserved"
+existing_service.shutdown()
+existing_service.server_close()
 print(
     json.dumps(
         {

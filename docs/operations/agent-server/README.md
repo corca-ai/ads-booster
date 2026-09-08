@@ -118,14 +118,14 @@ Codex/uv/gh가 npm/nvm 등 별도 경로에 있다면 **service와 update.servic
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now trace-marketing.service
-curl -fsS http://127.0.0.1:8765/health
+curl -fsS http://127.0.0.1:8090/health
 systemctl --user enable --now trace-marketing-update.timer
 systemctl --user list-timers trace-marketing-update.timer
 ```
 
 재부팅 후 로그인 없이 실행하려면 관리자 권한으로 해당 계정의 `loginctl enable-linger`를
 설정한다. 계정 권한을 확인한 후 서버 Codex에게 맡긴다.
-Cloudflare는 별도의 cloudflared 마케팅 서비스가 `localhost:8765`에 연결하게 한다.
+Cloudflare는 별도의 cloudflared 마케팅 서비스가 `localhost:8090`에 연결하게 한다.
 기존 ear 서비스와 충돌하는 기본 `cloudflared service install`을 그대로 실행하지 않는다.
 Slack Events와 명령 URL에는 Cloudflare Access 로그인 리디렉션을 적용하지 않는다.
 이 경로는 Slack 원본 본문 서명, 타임스탬프, app/team/channel/member를 서버에서 검증한다.
@@ -167,7 +167,7 @@ GitHub 원본 접근은 update.json의 허용된 저장소와 SSH/credential hel
 python3 ~/.local/share/trace-marketing-server/current/agent-manager.py status
 systemctl --user start trace-marketing-update.service
 journalctl --user -u trace-marketing-update.service -n 30 --no-pager
-curl -fsS http://127.0.0.1:8765/health
+curl -fsS http://127.0.0.1:8090/health
 ```
 
 `agent_update_complete`는 검사 종료를 뜻하며 새 SHA 적용의 증거는 아니다.

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from http.client import HTTPResponse
 
 app = typer.Typer(no_args_is_help=True, help="Install settings and operate the Linux Slack agent.")
+MAX_PORT = 65535
 ROOT = Path.home() / ".local/share/trace-marketing-server"
 CONFIG = Path.home() / ".config/trace-marketing"
 UNITS = Path.home() / ".config/systemd/user"
@@ -257,7 +258,7 @@ def setup_config() -> None:
         "agent.env": environment,
         **({"tunnel.token": tunnel_token} if tunnel else {}),
         **units,
-        "server.json": json.dumps({"origin": origin, "tunnel": tunnel}),
+        "server.json": json.dumps({"origin": origin, "tunnel": tunnel, "port": 8090}),
         "knowledge-policy.json": json.dumps(
             {
                 "schema": "trace.knowledge-local-policy.v1",
@@ -391,13 +392,20 @@ def stop() -> None:
     _ = execute("systemctl", "--user", "stop", SERVICE, *([TUNNEL] if settings["tunnel"] else []))
 
 
+def server_port(settings: dict[str, object]) -> int:
+    port = settings.get("port", 8090)
+    if type(port) is not int or not 1 <= port <= MAX_PORT:
+        raise RuntimeError("server_port_requires_integer_1_to_65535")
+    return port
+
+
 @app.command("status")
 def status() -> None:
     """Report local/public health, service and linger status without reading secrets."""
     settings = operator_settings()
     checks: dict[str, object] = {}
     for label, url in [
-        ("local", "http://127.0.0.1:8765/health"),
+        ("local", f"http://127.0.0.1:{server_port(settings)}/health"),
         ("public", str(settings["origin"]) + "/health"),
     ]:
         try:

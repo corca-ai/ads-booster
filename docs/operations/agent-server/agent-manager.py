@@ -26,7 +26,9 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 PROTOCOL = 1
+MAX_PORT = 65535
 ROOT = Path.home() / ".local/share/trace-marketing-server"
+CONFIG = Path.home() / ".config/trace-marketing/server.json"
 STATE = Path.home() / ".local/state/trace-marketing"
 UNIT = "trace-marketing.service"
 REPO = "git@github.com:corca-ai/ads-booster.git"
@@ -76,11 +78,19 @@ def read_json(path: Path) -> dict[str, Any]:
     return cast("dict[str, Any]", value)
 
 
+def server_port() -> int:
+    settings = read_json(CONFIG) if CONFIG.exists() else {}
+    port = settings.get("port", 8090)
+    if type(port) is not int or not 1 <= port <= MAX_PORT:
+        raise RuntimeError("server_port_requires_integer_1_to_65535")
+    return port
+
+
 def health() -> dict[str, Any]:
     try:
         # Deliberately fixed loopback URL; never honor proxy environment variables.
         with build_opener(ProxyHandler({})).open(
-            "http://127.0.0.1:8765/health", timeout=3
+            f"http://127.0.0.1:{server_port()}/health", timeout=3
         ) as response:
             value = json.load(response)
             return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
@@ -494,7 +504,7 @@ def run(root: Path) -> NoReturn:
             "--host",
             "127.0.0.1",
             "--port",
-            "8765",
+            str(server_port()),
         ],
         env,
     )

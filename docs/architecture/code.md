@@ -595,3 +595,10 @@ allowlisted configuration/unit paths and exact previous/desired contents, so int
 resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
 missing configuration and Codex login from readiness; status includes update provenance. No company
 IdP or repository authentication is required for the default public Slack-only server.
+
+
+`cli/server.py` owns the persistent `server.json.port` setting written at initial setup and read by
+status. The dependency-free Linux manager independently validates and reads the same public setting
+for process launch and health checks; both default to 8090. Cross-boundary regression coverage binds
+launch argv, update health and status to the same configured port. The standalone manager remains
+Python 3.10 compatible and does not import the Python 3.14 application to discover its port.

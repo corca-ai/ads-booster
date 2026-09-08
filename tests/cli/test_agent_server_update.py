@@ -3,13 +3,16 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import sqlite3
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, NoReturn, Protocol, cast
 
 import pytest
+
+from ads_booster.cli import server
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,6 +31,9 @@ class Manager(Protocol):
     def bootstrap(self, root: Path) -> None: ...
     def select(self, root: Path, release: Path) -> None: ...
     def probe(self, release: Path) -> None: ...
+    def health(self) -> dict[str, object]: ...
+    def server_port(self) -> int: ...
+    def run(self, root: Path) -> NoReturn: ...
 
 
 @pytest.fixture
@@ -376,3 +382,77 @@ def test_candidate_cannot_remove_the_installed_operator_surface(
     monkeypatch.setattr(manager, "command", old_candidate)
     with pytest.raises(RuntimeError, match="command_failed:trace-marketing"):
         manager.probe(tmp_path)
+
+
+@pytest.mark.parametrize("configured", [None, 8090, 18090])
+def test_launch_update_health_and_status_share_persistent_port(
+    manager: Manager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    configured: int | None,
+) -> None:
+    config = tmp_path / "config/server.json"
+    config.parent.mkdir()
+    settings: dict[str, object] = {"origin": "https://agent.example.com", "tunnel": False}
+    if configured is not None:
+        settings["port"] = configured
+    _ = config.write_text(json.dumps(settings))
+    monkeypatch.setattr(manager, "CONFIG", config, raising=False)
+    monkeypatch.setattr(server, "CONFIG", config.parent)
+    monkeypatch.setattr(server, "ROOT", tmp_path / "install")
+    root = tmp_path / "install"
+    (root / "current").mkdir(parents=True)
+    _ = (root / "current/release.json").write_text('{"release":"fixture"}')
+    port = configured or 8090
+    requested: list[str] = []
+
+    class Opener:
+        def open(self, url: str, *, timeout: int) -> BytesIO:
+            assert timeout == 3
+            requested.append(url)
+            return BytesIO(b'{"owner":"on_prem_agent"}')
+
+    def opener(*_args: object) -> Opener:
+        return Opener()
+
+    monkeypatch.setattr(manager, "build_opener", opener)
+    assert manager.health()["owner"] == "on_prem_agent"
+    assert requested == [f"http://127.0.0.1:{port}/health"]
+
+    def request(url: str) -> dict[str, object]:
+        requested.append(url)
+        return {"owner": "on_prem_agent"}
+
+    def execute(*_args: str) -> str:
+        return "yes"
+
+    monkeypatch.setattr(server, "json_request", request)
+    monkeypatch.setattr(server, "execute", execute)
+    server.status()
+    assert requested[1] == requested[0]
+    monkeypatch.setenv("TRACE_MARKETING_MODEL", "fixture-model")
+    monkeypatch.setenv("TRACE_MARKETING_TENANT", "fixture")
+
+    def execve(_path: str, argv: list[str], _env: dict[str, str]) -> NoReturn:
+        assert argv[argv.index("--port") + 1] == str(port)
+        raise SystemExit
+
+    monkeypatch.setattr(os, "execve", execve)
+    with pytest.raises(SystemExit):
+        manager.run(root)
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, True, "8090"])
+def test_invalid_port_fails_before_contacting_any_service(
+    manager: Manager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    port: object,
+) -> None:
+    config = tmp_path / "server.json"
+    _ = config.write_text(json.dumps({"port": port}))
+    monkeypatch.setattr(manager, "CONFIG", config)
+    with pytest.raises(RuntimeError, match="server_port_requires_integer"):
+        _ = manager.server_port()
+    with pytest.raises(RuntimeError, match="server_port_requires_integer"):
+        _ = server.server_port({"port": port})
