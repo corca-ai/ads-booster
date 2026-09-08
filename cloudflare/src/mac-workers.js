@@ -629,7 +629,7 @@ export async function validateTaskKnowledgeContextAuthority(env, task, stage) {
     || result.stage !== stage || result.transfer_id !== request.transfer_id
     || result.workspace_id !== request.workspace_id || result.account_id !== request.account_id
     || result.knowledge_context_sha256 !== digest
-    || Date.parse(result.valid_until ?? "") <= Date.now()
+    || !(Date.parse(result.valid_until ?? "") > Date.now())
   ) throw new WorkerHttpError(409, "knowledge context authority rejected task");
   return result;
 }
