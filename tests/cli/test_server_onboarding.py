@@ -265,3 +265,21 @@ def test_doctor_reports_missing_setup_as_not_ready(monkeypatch: pytest.MonkeyPat
     assert value["ready"] is False
     assert "gh" not in value
     assert "cloudflared" not in value
+
+
+def test_setup_creates_private_knowledge_root_before_actor_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    setup_inputs(monkeypatch)
+    knowledge_root = server.ROOT / "knowledge"
+    assert not knowledge_root.exists()
+
+    # When
+    server.setup_config()
+
+    # Then
+    assert stat.S_IMODE(knowledge_root.stat().st_mode) == 0o700
+    assert (knowledge_root / "index.sqlite").is_file()
+    assert (server.CONFIG / "knowledge-control/identity.json").is_file()
+    assert (server.CONFIG / "knowledge-policy.json").is_file()
