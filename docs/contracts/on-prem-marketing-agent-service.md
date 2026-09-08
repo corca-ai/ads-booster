@@ -1,9 +1,9 @@
 # On-premises Marketing Agent Service
 
-Status: Transition contract — the portable domain and service are being implemented in PR #99.
+Status: Active transition contract — portable service foundation is implemented; broader live integration remains unverified.
 The current Cloudflare-hosted run remains operational during migration, but is not the target owner.
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
 ## Product invariant
 
@@ -16,7 +16,7 @@ The service must still create, reason about, persist, and resume a run when no A
 installed or ready. A Mac worker may execute only an invocation admitted and persisted by this
 service. Codex CLI is one `ReasoningProvider`; it is not the process owner or durable memory.
 
-## Current, transition, and target states
+## Historical migration baseline and target states
 
 | State | Canonical owner | Cloudflare/D1 | Mac/Appium | User surface |
 | --- | --- | --- | --- | --- |
@@ -161,3 +161,49 @@ readback, or human-review gates. Existing automatic publishing remains off.
 - Distributed active-active run ownership; the first service is a durable single canonical writer.
 - Causal marketing lift from descriptive channel metrics.
 - Completion merely because the old Cloudflare workspace can display hosted tasks.
+
+## September 7 small-work extension
+
+The product may enter at any useful point in the responsibility graph. Existing images,
+questions, Figma output and human captures are valid initial inputs; campaign identity is
+optional. A task records original/derived assets, requested preservation/change, locale,
+human reports and independent verification. Production, final publication, post-publication
+changes, community actions, Paid budget/execute and format promotion/deactivation remain
+different review targets. Explicit preparation approval never enables external execution.
+
+Canonical Run history, runtime invocation receipts and scoped shared knowledge have separate
+owners. Private requests cannot promote or mutate shared context. Memory corrections/expiry
+remove notes from current selection while original audit history remains. Tombstone deletion
+is retrieval deletion, not physical erasure of historical evidence.
+
+Implemented candidate surfaces and evidence are tracked in the existing product/runtime
+plans and testing document. Live editing/capture, external publishing/readback/metrics,
+community actions, Paid execution and model-quality generalization remain unverified or Draft;
+prepared packets and fake adapters must not be described as those integrations completing.
+
+Performance reports enter as attributed human observations scoped to the current work, retaining
+source, account/country and observation window. Corrections preserve originals and invalidate
+derived memory before approval or retrieval. Shared Web readback cannot promote private reports.
+Optional image editing uses the existing exact production approval and asynchronous completion
+boundary; it checks unchanged pixels and records promotional/background provenance with pending
+visual/human review. It does not grant final publication authority or verify native product support.
+
+Slack asset intake is an optional small-work tool pair: inspect authenticated file bytes, then
+import the exact digest with human-confirmed source/use terms under runtime approval. It does
+not grant downstream production/publication approval. Register before linking for Web readback;
+failed registration cannot attach an existing different asset to that Run. Returned image bytes
+are bounded separately from inline upload size; provenance and reported status remain explicit.
+
+An asynchronous tool acknowledgement binds the original invocation and executor to one operation.
+It does not claim success, verified artifacts or final cost. The canonical owner retains the
+pending work and resolves only the matching terminal result. Restart and duplicate completion
+must not redispatch work or charge twice. The opt-in remote transport authenticates the configured
+worker and verifies native artifacts before invoking the internal completion boundary.
+
+Remote capture uses a complete profile/job digest in addition to the native visual request digest.
+The profile pins tenant, worker, simulator and execution paths. Queue admission records the exact
+production approval, synthetic schedule and background revision. Worker-token authority is scoped
+to profile/heartbeat/claim/source/start/status/complete/uncertain routes, with a 16 KiB control
+request bound and a 14 MiB authenticated completion wire bound (decoded image at most10 MiB).
+User API limits remain separate. Started work cannot be reassigned. Receipt projection may be
+repaired from durable completion; missing execution evidence is not permission to repeat a job.

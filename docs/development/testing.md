@@ -7,6 +7,40 @@ Last reviewed: 2026-09-07
 
 Choose the boundary that changed. Source tests are not installed-worker or hosted-runtime proof.
 
+For acknowledged asynchronous tool work, select `tests/marketing/test_runtime_deferred.py`,
+`tests/marketing/agent_service/test_application_deferred.py` and
+`tests/marketing/channels/test_slack_deferred.py`. Include existing `test_agent_runtime.py`,
+Service `test_application.py` and `test_work_continuation.py` for their directly affected
+receipt/recovery/steering behavior. These fake adapter tests exercise real SQLite admission,
+approval expiry after admission, exact operation/executor/cost binding, duplicate completion,
+acknowledgement/completion crash windows, explicit uncertainty, pending pause and signed Slack
+follow-ups. They do not prove remote worker authentication, artifact transfer or actual capture.
+Fresh wheel proof must also show that a second Run can answer while the first waits, and that
+restarting and replaying completion neither calls the adapter again nor charges twice.
+Capture contract extraction selects `tests/marketing/agent_service/test_creative_capture_contract.py`
+with existing `test_creative_capture.py` and `test_capture_setup.py`. Validate explicit worker
+configuration, source revision/digest and nonce/device/image metadata rejection. A pure builder
+test does not prove remote transport or image quality; preserve installed local capture proof.
+
+For remote capture, run `uv run pytest -q
+tests/marketing/agent_service/test_remote_capture_contract.py
+tests/marketing/agent_service/test_remote_capture_store.py
+tests/marketing/agent_service/test_remote_capture.py
+tests/marketing/agent_service/test_remote_capture_api.py
+tests/marketing/test_canonical_capture_worker.py tests/cli/test_remote_capture.py`.
+Include `test_creative_capture_contract.py` and `test_creative_capture.py` when changing the
+shared builder, and channel `test_slack_run_notifications.py`/`test_slack_deferred.py` when
+changing completion projection. These tests cover exact worker authority, profile/job/lease
+fencing, source changes, approval/lease expiry, readiness loss, output containment, start and
+upload crash windows, canonical cost settlement and duplicate-safe Slack outbox projection.
+Run affected HTTP/CLI compatibility tests for composition or request-limit changes.
+
+Fresh isolated wheel verification must exercise the installed worker commands and real loopback
+HTTP with a fake native worker: approved queue → source → start → upload → same-Run asset/readback;
+drop the completion response after server commit, restart the worker and prove upload-only replay.
+Check wrong-token/default-off routes, local read-only doctor, module hashes and one device call.
+This establishes transport behavior, not real Appium quality, live Slack delivery, systemd/linger
+or the public installer. Preserve existing installed lifecycle evidence separately.
 ## Team knowledge checks
 
 The knowledge implementation is covered by focused `tests/knowledge` contracts, repository/filesystem,
@@ -210,6 +244,130 @@ is sent. This is candidate/source installation proof. ARM assets are pinned but 
 ARM host acceptance. The deployed default main URL and a real Slack conversation remain post-merge
 acceptance, not inferred from source or mocked providers.
 
+## Continuing small work acceptance (2026-09-07)
+
+For this composition change, run the affected `tests/marketing/agent_service` and
+`tests/marketing/channels` owners, `tests/providers/test_codex_reasoning.py`,
+`tests/providers/test_codex_image_review.py`, existing Codex generation compatibility and
+`tests/cli/test_cli_compatibility.py` and `tests/agent_core/test_contracts.py`; scoped
+Ruff/format/BasedPyright and diff check. The candidate composition passed 233 focused tests.
+Do not run the repository-wide suite. Focused new regression owners cover canonical context,
+work continuation/interruption, creative asset/upload, memory/API, prepared delivery and
+Slack image access.
+
+Build a wheel and install it into a fresh isolated venv. From outside the checkout with
+PYTHONPATH unset run `tests/operations/installed_work_continuity.py --checkout <checkout>
+--output-dir <new-private-directory>` using that venv interpreter. It rejects editable/source
+imports, exercises real installed HTTP/SQLite and signed events with fixture provider/sender,
+reconstructs a waiting service, and writes an evidence packet plus synthetic image. A/B/C
+prove input/locale/constraint continuity, not actual image edit or localization quality.
+
+Separately run installed CLI help/version and a real `service run --home <isolated-root>`
+loopback start/health/stop/restart. This does not establish Ubuntu systemd/linger/timer or
+public installer acceptance. Preserve the existing installation and server onboarding.
+
+Visual evidence must name the actual viewed image and actual provider response. Current
+Mac candidate vision was exercised with a synthetic low-contrast calendar (gpt-6-astra);
+model findings are not human final approval, actual Trace capture, editing, or marketing lift.
+Live Slack requires optional files:read grant/reinstallation and permission probe; no test
+may infer this from fake HTTP. Existing deployed app manifests are not edited by these tests.
+
+Human-effort changes use `test_work_observations.py`, `test_slack_work_observations.py`,
+memory/API and Slack continuation/event tests. Cover correction/restart totals, author/reviewer
+scope, source-derived learning invalidation before approval and receipt selection, and report
+time versus measured duration. Supplied-background contracts use
+`tests/capture/test_supplied_background_provenance.py` plus affected native capture validation
+tests; exact legacy digests and byte tamper checks do not establish live capture success.
+
+Canonical capture changes select `test_creative_capture.py`, `test_capture_readiness.py`,
+`test_capture_setup.py`, affected lifecycle/integration tests and CLI compatibility. Fake
+workers prove nonce/digest/byte checks, source/cached-result invalidation and no replay after
+failure. Fake readiness proves that no boot/start command is used. Real native output and
+phone-size visual QA still require an available Mac/Trace Debug/Appium environment.
+
+Slack asset intake changes select `test_slack_image_files.py`, `test_slack_image_review.py`,
+`test_slack_asset_intake.py`, `test_slack_asset_intake_flow.py`, `test_slack_asset_link_failure.py`
+and `test_slack_creative_setup.py`.
+The flow uses actual service/SQLite/approval owners with fake HTTP/reasoning, from trusted
+signed-file binding through inspection, approval wait/restart, exact import and same-Run output.
+It is not signed live Slack transport or image quality proof. Asset projection changes also
+select `test_creative_api.py` and `test_creative_capture.py` for registration/link failure and
+bounded Web readback of registered files above the inline upload limit.
+
+Performance reporting selects `test_performance_observations.py`, `test_performance_memory.py`,
+`test_performance_api.py` and `tests/marketing/channels/test_slack_performance.py`. These exercise
+actual scoped SQLite owners, signed-event intake, authenticated readback, correction/restart,
+latest-report ordering, mismatched observation windows and source invalidation before memory
+review/selection. They use human-reported fixture metrics; no live analytics or causal effect
+is established. Run only directly affected memory/Slack/API checks after subsequent changes.
+
+Bounded image production selects `tests/providers/test_codex_image_edit.py`,
+`test_creative_image_edit_contract.py`, `test_creative_image_edit.py`, `test_image_edit_setup.py`
+in the service test directory, and `tests/cli/test_image_edit_lifecycle.py`. Cover exact preserved
+pixels, changed source/approval/readiness, no regeneration after unknown execution, interrupted
+uncertainty and completion projection, source/output root containment, private production denial,
+provider protocol/tool-inventory rejection and maintenance/shutdown behavior. Fake image pixels
+do not establish translation or visual quality. A live proof must open the original and final
+image and retain generation/provenance evidence; capability discovery is insufficient.
+
+Managed review selects `test_managed_image_review.py`, affected `test_creative_procedures.py`
+and lifecycle tests. Same-Run generated PNG review exercises actual source copying/decoding
+with fixture inference, preserving pending human QA. Asset discovery/readback and Web changes
+select `test_creative_asset_listing.py`, `test_creative_api.py` and `test_web_performance.py`;
+the Node harness fences delayed Run/image/metric responses and untrusted markup. Browser fixture
+rendering is separate from live service/provider evidence. Slack result navigation and natural
+assent select `test_slack_result_link.py`, `test_slack_production_approval.py` and affected
+event/command tests, including full-page delivery, current membership and stale targets.
+
+`test_image_edit_api.py` and the coordinator's abandonment regression verify current reviewer
+authority, exact uncertain target, durable human-reported abandonment, cost retention and
+projection-only retry. They do not confirm what the external provider executed. September8
+actual Codex0.153.4 readiness fails restricted thread setup (error32603), so no live edit output
+or localization quality is claimed. The initial failed generation attempt is not retried.
+
+September 8 final continuation selection: 142 passed across the 18 files below. Run from the
+worktree with `.venv/bin/python -m pytest -q <selected files> -p no:cacheprovider --tb=short`;
+`PYTHONPATH=src` is source evidence only. Do not expand to the whole suite.
+
+```text
+tests/cli/test_image_edit_lifecycle.py
+tests/marketing/agent_service/test_creative_image_edit_contract.py
+tests/providers/test_codex_image_edit.py
+tests/marketing/agent_service/test_creative_image_edit.py
+tests/marketing/agent_service/test_image_edit_setup.py
+tests/marketing/agent_service/test_image_edit_api.py
+tests/marketing/agent_service/test_managed_image_review.py
+tests/marketing/agent_service/test_creative_procedures.py
+tests/marketing/agent_service/test_performance_observations.py
+tests/marketing/agent_service/test_performance_memory.py
+tests/marketing/agent_service/test_performance_api.py
+tests/marketing/channels/test_slack_performance.py
+tests/marketing/channels/test_slack_production_approval.py
+tests/marketing/channels/test_slack_result_link.py
+tests/marketing/channels/test_slack_events.py
+tests/marketing/channels/test_slack_commands.py
+tests/marketing/agent_service/test_creative_asset_listing.py
+tests/marketing/agent_service/test_web_performance.py
+```
+
+Ruff check/format and BasedPyright passed for the 37 Python files changed in this continuation
+(relative to f3de492, including newly added files). Two final formatting/unused-result findings
+were corrected and their two files rechecked without repeating unrelated tests.
+
+Fresh installed evidence: local wheel 0.4.21, SHA256
+`8fd386e3ab32a2d74cfafc285b95401b446bd7c4ba8869f44bcb777b9a5b9092`, installed in a separate
+venv and run outside the checkout with PYTHONPATH unset. All 21 changed production file hashes
+match installed bytes. Installed `version` and `--help`, real loopback `service run` health,
+default-disabled/explicit-enabled image catalog, SIGINT listener shutdown and three starts
+with the same Run/performance state passed. Standalone installed owners exercised real SQLite,
+PNG composition and managed source copying with explicit fake reasoning/image assessment:
+2,048 original pixels preserved, one generation and one review call after replay, 2,204 pixels
+preserved outside a localized rectangle, and corrected performance learning excluded. The opened
+composed fixture is a tiny white synthetic image, not a translation or visual-quality result.
+Evidence and reproducible standalone harness are retained locally under
+`/private/tmp/trace-image-performance-installed-proof/` (`proof.py`, `evidence.json`,
+`installed-source-manifest.json`). This is a local wheel proof, not public installer,
+service-manager, real device, real Slack or operational image-generation acceptance.
 
 Port selection uses `tests/cli/test_agent_server_update.py`: default/missing port, explicit 8090,
 custom port, invalid values, and agreement across actual launch argv, update health and CLI status.
@@ -252,3 +410,21 @@ Fixture PNGs and HTTP transports do not establish live image entitlement or Slac
 Operator acceptance uses the server's actual login, one approved image brief and a visible draft in
 its originating thread after adding files:write and reinstalling the Slack app. A human reviews the
 result's visual correctness before use.
+## PR134 / PR136 integration acceptance
+
+The combined candidate retained the persistent8090 server change from main. The existing on-prem
+CI selection (`tests/marketing/agent_service`, `tests/marketing/channels`, Codex reasoning, CLI
+compatibility/server update/onboarding and tool compatibility) passed529 tests. This is the
+affected service boundary, not the entire repository suite. Cloudflare's three directly changed
+hosted-generation/mac-worker/agent-run test files passed64 tests after `npm run build` generated
+workspace context. Existing knowledge review regressions passed40 focused tests, including
+classified ingress failures, private actors, source HTTP errors and batch recovery
+as applicable to their respective existing checks; Ubuntu installation itself remains a CI check.
+
+New combined regressions select `tests/knowledge/test_slack_continuity_binding.py` and
+`tests/marketing/agent_service/test_knowledge_context_continuity.py`, plus affected image-edit and
+remote-capture coordinator files. They cover queued messages and execution aliases, current actor
+scope, original history retention, revoked prepared knowledge, follow-up retrieval, and knowledge
+change between approval and actual start. CLI compatibility additionally proves doctor creates no
+state. Repeat only an affected owner after a further fix; use the final GitHub head's Ubuntu/Mac
+checks as installed CI evidence before merge.

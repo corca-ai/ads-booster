@@ -150,3 +150,10 @@ def test_worker_stop_treats_an_already_missing_launchd_service_as_stopped(
 
     assert result.exit_code == 0
     assert "worker service: stopped" in result.stdout
+
+
+def test_service_doctor_does_not_create_state_directories(tmp_path: Path) -> None:
+    home = tmp_path / "uninstalled"
+    result = CliRunner().invoke(marketing_app, ["service", "doctor", "--home", str(home)])
+    assert result.exit_code == 0
+    assert not home.exists()

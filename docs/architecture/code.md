@@ -602,6 +602,103 @@ resume without replacing intervening edits. Completed setup is idempotent. Docto
 missing configuration and Codex login from readiness; status includes update provenance. No company
 IdP or repository authentication is required for the default public Slack-only server.
 
+## Continuing-work owners (2026-09-07 candidate)
+
+| Owner | Responsibility |
+| --- | --- |
+| `agent_service/work_continuation.py` | canonical human input/pause admission, exact event replay at safe boundaries |
+| `application.py` | bounded evidence projection, signal boundary, current-memory callback, unchanged runtime dispatch owner |
+| `contracts/creative_work.py`, `agent_service/creative_assets.py` | small scoped assets, byte provenance, parent revisions and stale descendants |
+| `agent_service/creative_api.py` | authenticated PNG/JPEG upload/preview and same-Run continuation |
+| `contracts/agent_memory.py`, `agent_service/memory.py`, `memory_api.py` | attributed reviewed notes, scope-before-query, corrections/expiry/tombstones and selected-memory receipts |
+| `agent_service/creative_procedures.py` | ten composable procedures and honest ready-tool/human return briefs |
+| `agent_service/slack_image_review.py`, `image_review.py` | authorized file binding/download and actual read-only image assessment, no editing |
+| `channels/slack_creative_setup.py` | optional permission-probed tool catalog composition; no service lifecycle ownership |
+| `channels/slack_memory.py`, `slack_delivery.py` | authenticated exact review command translation |
+| `contracts/marketing_delivery.py`, `agent_service/delivery_review.py`, `delivery_api.py` | prepared review packets only; no duplicate channel execution ledger |
+
+`CodexCli.run_marketing_image_review_job` adds validated image arguments to the existing
+no-tools/read-only structured runner. Ordinary judgment calls keep their existing signature.
+No provider framework/vector database/custom agent entrypoint is introduced. `creative.prepare`
+is a real no-effect local adapter; its output says prepared, never executed.
+
+`delivery_tools.py` owns reasoning-callable preparation and is wired by `lifecycle.py` through
+`ConfiguredAgentTools`; `creative_asset_verifier.py` bridges immutable assets to preparation
+approval. Neither owns external effects. `AgentJobs` rechecks the API's trusted reviewer
+policy immediately before queued approvals. `ToolInvocation.tenant_id` binds new local tool
+mutations without rewriting legacy invocation digests.
+
+`work_observations.py` owns immutable human effort records and scoped learning snapshots;
+`slack_work_observations.py` translates authenticated report/summary/correction commands.
+`work_observation_validity.py` validates sources without importing the memory repository,
+so memory selection/review can reuse its connection and preserve transactional currentness.
+`contracts/native_export.py` owns both searched and supplied background provenance; existing
+worker request digest/path validation handles either variant without fabricated search fields.
+
+`creative_capture.py` implements the canonical capture executor using `CodexAppiumJobAdapter`;
+`capture_readiness.py` owns read-only preflight, while `capture_setup.py` composes the optional
+Mac config/catalog/adapter. `lifecycle.py` accepts the optional config path from the installed
+CLI. Source assets remain in the creative repository and actual execution admission remains
+in the existing canonical runtime. The adapter's local ledger prevents uncertain worker replay.
+
+`slack_image_files.py` owns signed file resolution, bounded download/decode and immutable cache
+for both review and intake. `slack_asset_intake.py` owns the inspect/import schemas, current
+approval attribution and registration. `slack_creative_setup.py` composes all three optional
+file capabilities under the same observed Slack grant. `creative_asset_links.py` owns the
+Run-to-asset projection used by HTTP uploads, Slack imports and native capture results.
+
+`contracts/agent_run.py` owns the nonterminal `ToolExecutionDeferred` acknowledgement and
+`awaiting_tool` Run state. `marketing/runtime.py` owns the deferred event, retained pending
+invocation/reservation and exact operation resolution; acknowledgement adds no terminal receipt.
+The Agent Service translates adapter acknowledgements and validates eventual results against
+frozen invocation/output contracts before recording canonical receipts. Transport authentication
+and worker artifact validation must precede that internal completion method.
+
+`creative_capture_contract.py` owns the reusable capture input/result types, deterministic native
+job builder and output metadata/provenance comparison. `creative_capture.py` re-exports the old
+type names and owns local source reads, nonce creation, host execution configuration, worker
+calls and asset registration. The builder receives worker configuration explicitly; it performs
+no host lookup or device action. This keeps future remote execution from inheriting Linux paths.
+
+`remote_capture_contract.py` freezes the canonical invocation/approval/source and complete worker
+profile into the native job envelope. `remote_capture_store.py` owns fenced SQLite queue/start/
+completion transitions; `remote_capture.py` owns admission, readiness, artifact validation and
+canonical result integration. `remote_capture_api.py` owns dedicated worker authentication routes
+and bounds; `http_api.py` dispatches them under the existing maintenance gate.
+`marketing/canonical_capture_worker.py` owns the Mac's local start and upload ledger and fixed-origin
+HTTP client. `cli/remote_capture.py` composes existing Codex/Appium ports; `cli/marketing.py` exposes
+the two worker commands and optional server configuration. Existing D1 owners and worker services
+are unchanged. No additional reasoning provider or framework is introduced.
+
+`contracts/performance_observation.py` owns attributed performance snapshots and comparison
+contracts. `performance_observations.py` owns immutable scoped reports, corrections and
+learning-candidate construction; `performance_observation_validity.py` validates current
+source digests using the memory owner's transaction without a circular store dependency.
+`slack_performance.py` translates signed conversation commands; `performance_api.py` exposes
+the authenticated, read-only same-Run projection. Neither adapter owns approval or external
+metric collection. D1's execution records are not duplicated as verified canonical facts.
+
+`creative_image_edit_contract.py` owns bounded source/region/locale requests and deterministic
+composition that restores and checks unchanged pixels. `providers/codex_image_edit.py` owns
+the official app-server protocol, restricted tool inventory, immutable input files, generation
+start marker and verified output readback. `creative_image_edit.py` owns exact admission,
+durable asynchronous job state, source currentness, asset provenance and canonical settlement.
+`image_edit_setup.py` composes the explicit configuration and readiness catalog; the existing
+service CLI starts its polling thread under the maintenance gate. These owners do not infer
+native product support or final visual approval from generated output.
+
+`managed_image_review.py` authorizes exact Run links and current source bytes, delegates to
+the existing read-only visual helper, and stores bounded no-replay inference receipts. Its
+catalog is composed by `lifecycle.py`; `creative_procedures.py` chooses it for registered inputs.
+`creative_assets.describe` exposes stored metadata only for collection discovery; existing
+`get` remains the byte-verifying owner. `creative_api.py` bounds same-Run collection discovery,
+and `web_ui.py` renders authenticated selected images and human outcome snapshots without
+creating another execution owner. Slack's review-page owner also supplies the natural assent
+boundary; rendered pages and authorization must not maintain independent pagination contracts.
+
+`image_edit_api.py` exposes exact operation status and reviewer abandonment through the
+existing authenticated API. The image queue owner records human abandonment and settles the
+canonical deferred operation; HTTP neither invents worker evidence nor calls the provider.
 
 `cli/server.py` owns the persistent `server.json.port` setting written at initial setup and read by
 status. The dependency-free Linux manager independently validates and reads the same public setting
@@ -633,3 +730,11 @@ owns exact approval and uncertain execution handling. `channels/slack_images.py`
 artifact projection, durable upload admission and Slack's external file-upload adapter. Slack event
 composition binds the artifact directory beside the canonical service database and passes only the
 authorized conversation, never model-selected channel IDs or local filenames.
+`CanonicalKnowledgeIngress` owns additive `knowledge_execution_bindings`: immutable Slack source
+admission remains separate from message-to-actual-Run execution binding. Its current binding and
+pending-fence queries resolve aliases before knowledge preparation. `MarketingAgentService` owns
+the bounded canonical follow-up query, distinct work/knowledge context record IDs, exclusion of
+old prepared knowledge from generic evidence, and `knowledge_is_current` for deferred workers.
+Image-edit and remote-capture owners use that public authority check before effects.
+The composition root and API retain both knowledge ingress and current production reviewer hooks;
+service doctor remains read-only and does not prepare state directories.

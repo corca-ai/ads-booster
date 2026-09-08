@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
 from threading import RLock
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ from ads_booster.contracts.agent_run import (
     AgentStepKind,
     CapabilitySnapshot,
     ToolApproval,
+    ToolExecutionDeferred,
     ToolInvocation,
     ToolReceiptRecord,
     contract_sha256,
@@ -46,6 +48,7 @@ from ads_booster.marketing.runtime import (
     ApprovalGrant,
     BoundToolInvocation,
     Budget,
+    DeferredToolExecution,
     EffectDisposition,
     MarketingAgentRuntime,
     RuntimeState,
@@ -54,8 +57,17 @@ from ads_booster.marketing.runtime import (
     ToolCapability,
     ToolReceipt,
     bind_tool_invocation,
+    pending_deferred_execution,
+    tool_receipt_from_event,
 )
 from ads_booster.transport.json_types import JsonObject
+
+_CONTEXT_SELECTION_SCHEMA = "trace.reasoning-context-selection.v1"
+_MAX_CONTEXT_RECORDS = 32
+_MAX_CONTEXT_BYTES = 48 * 1024
+_MAX_STEERING_EVENT_ID = 512
+_MAX_STEERING_ACTOR_ID = 160
+_MAX_STEERING_NOTE = 20_000
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -84,6 +96,9 @@ class MarketingAgentService:
     fault_hook: Callable[[str], None] | None = None
     capability_policy: CapabilityPolicy = field(default_factory=CapabilityPolicy)
     runtime: MarketingAgentRuntime = field(default_factory=MarketingAgentRuntime)
+    boundary_signal: Callable[[str, str], JsonObject | None] | None = None
+
+    current_context: Callable[[AgentRun, datetime], JsonObject | None] | None = None
     knowledge: KnowledgeServiceAdapter | None = None
 
     def __post_init__(self) -> None:
@@ -155,10 +170,18 @@ class MarketingAgentService:
                 expected_revision=run.revision,
             )
 
-    def drive(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun:
+    def drive(  # noqa: PLR0911 - distinct persisted recovery boundaries.
+        self, tenant_id: str, run_id: str, *, now: datetime
+    ) -> AgentRun:
         """Continue a recoverable reasoning boundary without repeating a claimed effect."""
         with self.execution_lock:
             run = self._required_run(tenant_id, run_id)
+            if run.state in {AgentRunState.AWAITING_TOOL, AgentRunState.AWAITING_RECONCILIATION}:
+                if run.state is AgentRunState.AWAITING_RECONCILIATION:
+                    invocation = self._latest_invocation(tenant_id, run_id)
+                    if self._deferred_for_invocation(run, invocation) is None:
+                        return run
+                return self._resume_execution(run, now=now)
             if run.state is not AgentRunState.RUNNING and run.state is not AgentRunState.CREATED:
                 return run
             steps = self.repository.steps(tenant_id, run_id)
@@ -220,6 +243,18 @@ class MarketingAgentService:
         invocation = self._latest_invocation(run.tenant_id, run.run_id)
         descriptor = self._descriptor_for_invocation(run.tenant_id, run.run_id, invocation)
         session = self.runtime_store.load(run.run_id)
+        acknowledgement = self._deferred_for_invocation(run, invocation)
+        if acknowledgement is not None:
+            completion = self._deferred_completion(run, acknowledgement.operation_id)
+            if completion is not None:
+                return self.complete_deferred(
+                    run.tenant_id,
+                    run.run_id,
+                    operation_id=acknowledgement.operation_id,
+                    result=ToolExecutionResult.model_validate(completion.payload["result"]),
+                    now=now,
+                )
+            return self._await_deferred(run, invocation, acknowledgement, now=now)
         if (
             session is not None
             and invocation.idempotency_key in session.dispatched_idempotency_keys
@@ -260,19 +295,7 @@ class MarketingAgentService:
         if receipt_record is None or evidence_record is None:
             raise ValueError("verified_tool_recovery_records_missing")
         receipt = ToolReceiptRecord.model_validate(receipt_record.payload)
-        evaluated = self.repository.append_step(
-            run,
-            _step(
-                run,
-                kind=AgentStepKind.EVALUATE,
-                input_sha256=contract_sha256(receipt),
-                output_sha256=contract_sha256(evidence_record.payload),
-                now=now,
-            ),
-            state=AgentRunState.RUNNING,
-            expected_revision=run.revision,
-        )
-        return self._plan(evaluated, evidence=(evidence_record.payload,), now=now)
+        return self._evaluate_tool_result(run, receipt, evidence_record.payload, now=now)
 
     def _resume_approved_invocation(self, run: AgentRun, *, now: datetime) -> AgentRun:
         invocation = self._latest_invocation(run.tenant_id, run.run_id)
@@ -410,6 +433,12 @@ class MarketingAgentService:
         now: datetime,
     ) -> AgentRun:
         checkpoint("내용을 살펴보고 답변을 작성하고 있습니다")
+        interrupted = self._pause_for_signal(run, now=now)
+        if interrupted is not None:
+            return interrupted
+        # All callers, including restart recovery, project the same canonical history.
+        # The caller's last observation is only a trigger, never the whole context.
+        evidence, context_selection = self._select_context(run)
         snapshot = self.registry.snapshot_for_plan(
             snapshot_id=f"{run.run_id}:capabilities:{run.revision}",
             run_id=run.run_id,
@@ -422,10 +451,24 @@ class MarketingAgentService:
             policy=self.capability_policy,
             now=now,
         )
+        # Reuse only bounded, authority-filtered canonical conversation evidence.
+        latest_note = next(
+            (
+                item["note"]
+                for item in reversed(evidence)
+                if item.get("schema_version")
+                in {"trace.work-continuation.v1", "trace.work-interruption.v1"}
+                and isinstance(item.get("note"), str)
+            ),
+            "",
+        )
+        knowledge_query = run.goal.objective[:4000] + (
+            "\n" + str(latest_note)[:4000] if latest_note else ""
+        )
         prepared_context: PreparedKnowledgeContext | None = None
         if self.knowledge is not None:
             snapshot = self.knowledge.filter_snapshot(run.run_id, snapshot)
-            preparation = self.knowledge.prepare(run, snapshot, now=now)
+            preparation = self.knowledge.prepare(run, snapshot, now=now, query=knowledge_query)
             if isinstance(
                 preparation,
                 RequiredContextPreparationError | BrandUnresolvedPreparation,
@@ -445,7 +488,7 @@ class MarketingAgentService:
             else (
                 _record(
                     run,
-                    record_id=f"{run.run_id}:context:{run.revision}",
+                    record_id=f"{run.run_id}:knowledge-context:{run.revision}",
                     kind=AgentRecordKind.EVIDENCE,
                     payload={
                         "schema_version": "trace.prepared-knowledge-context-record.v1",
@@ -466,8 +509,21 @@ class MarketingAgentService:
             ),
             state=AgentRunState.RUNNING,
             expected_revision=run.revision,
-            records=(snapshot_record, *context_records),
+            records=(
+                snapshot_record,
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:context:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=context_selection,
+                    now=now,
+                ),
+                *context_records,
+            ),
         )
+        current_context = None if self.current_context is None else self.current_context(run, now)
+        if current_context is not None:
+            evidence = (*evidence, current_context)
         reasoning_request = ReasoningRequest(
             schema_version="trace.reasoning-request.v1",
             run_id=run.run_id,
@@ -504,6 +560,7 @@ class MarketingAgentService:
                 now=now,
                 action_kind=decision.proposed_action_kind,
                 brand_id=decision.proposed_brand_ref,
+                query=knowledge_query,
             )
             if isinstance(rebound, RequiredContextPreparationError | BrandUnresolvedPreparation):
                 return self._await_knowledge_input(observed, rebound, snapshot, now=now)
@@ -573,6 +630,146 @@ class MarketingAgentService:
             tool_input=decision.tool_input,
             snapshot=snapshot,
             now=now,
+        )
+
+    def _select_context(self, run: AgentRun) -> tuple[tuple[JsonObject, ...], JsonObject]:
+        """Bound the provider projection; retain source records and selection provenance."""
+        sources = [
+            record
+            for record in self.repository.records(run.tenant_id, run.run_id)
+            if record.kind is AgentRecordKind.EVIDENCE
+            and record.payload_schema_version
+            not in {
+                _CONTEXT_SELECTION_SCHEMA,
+                "trace.tool-deferred.v1",
+                "trace.tool-completion.v1",
+                # Knowledge must be reselected under current authority, never replayed
+                # through the general conversation projection after invalidation.
+                "trace.prepared-knowledge-context-record.v1",
+            }
+        ]
+        # Keep the latest observation first, then recent human constraints ahead of
+        # tool output. Restore chronological order so corrections stay after originals.
+        order = sorted(
+            range(len(sources)),
+            key=lambda index: (
+                index == len(sources) - 1,
+                sources[index].payload_schema_version
+                in {
+                    "trace.agent-input-evidence.v1",
+                    "trace.work-continuation.v1",
+                    "trace.work-interruption.v1",
+                },
+                index,
+            ),
+            reverse=True,
+        )
+        selected: list[int] = []
+        selected_bytes = 0
+        for index in order:
+            size = len(
+                json.dumps(
+                    sources[index].payload, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
+            )
+            if len(selected) < _MAX_CONTEXT_RECORDS and selected_bytes + size <= _MAX_CONTEXT_BYTES:
+                selected.append(index)
+                selected_bytes += size
+        selected.sort()
+        evidence = tuple(sources[index].payload for index in selected)
+        omitted_count = len(sources) - len(selected)
+        selection: JsonObject = {
+            "schema_version": _CONTEXT_SELECTION_SCHEMA,
+            "selected_sha256s": [sources[index].payload_sha256 for index in selected],
+            "selected_bytes": selected_bytes,
+            "omitted_count": omitted_count,
+            "max_records": _MAX_CONTEXT_RECORDS,
+            "max_bytes": _MAX_CONTEXT_BYTES,
+            "policy": "latest_observation_then_recent_human_inputs_then_recent_evidence",
+        }
+        if omitted_count:
+            notice: JsonObject = {
+                "schema_version": "trace.reasoning-context-omission.v1",
+                "omitted_count": omitted_count,
+                "notice": (
+                    "Earlier or oversized evidence is omitted from this bounded projection, "
+                    "not deleted. Do not assume omitted constraints or sources are absent. "
+                    "Request the needed scope before claiming preservation or verification."
+                ),
+            }
+            evidence = (*evidence, notice)
+        return evidence, selection
+
+    def _pause_for_signal(self, run: AgentRun, *, now: datetime) -> AgentRun | None:
+        """Observe admitted steering without replacing an in-flight runtime decision.
+
+        The callback must authenticate its channel input and read its durable inbox
+        without waiting for execution_lock. This method runs under that lock at a
+        boundary before planning or before a fresh invocation is admitted.
+        """
+        if self.boundary_signal is None:
+            return None
+        signal = self.boundary_signal(run.tenant_id, run.run_id)
+        if signal is None:
+            return None
+        event_id, actor_id, note = (signal.get(key) for key in ("event_id", "actor_id", "note"))
+        if (
+            not isinstance(event_id, str)
+            or not 0 < len(event_id) <= _MAX_STEERING_EVENT_ID
+            or not isinstance(actor_id, str)
+            or not 0 < len(actor_id) <= _MAX_STEERING_ACTOR_ID
+            or not isinstance(note, str)
+            or not note.strip()
+            or len(note) > _MAX_STEERING_NOTE
+        ):
+            raise ValueError("work_boundary_signal_invalid")
+        payload: JsonObject = {
+            "schema_version": "trace.work-interruption.v1",
+            "event_id": event_id,
+            "actor_id": actor_id,
+            "note": note,
+            "verification": "human_reported",
+            "authority": "task_input_only",
+        }
+        record_id = "interruption-" + contract_sha256({"run_id": run.run_id, "event_id": event_id})
+        digest = contract_sha256(payload)
+        existing = next(
+            (
+                item
+                for item in self.repository.records(run.tenant_id, run.run_id)
+                if item.record_id == record_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.payload_sha256 != digest:
+                raise ValueError("work_boundary_signal_idempotency_conflict")
+            return None
+        session = self.runtime_store.load(run.run_id)
+        if session is not None and session.pending_invocation is not None:
+            # Once admitted, the runtime must finish or reconcile its existing call.
+            # A channel signal cannot clear that write-ahead execution ownership.
+            return None
+        return self.repository.append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.OBSERVE,
+                input_sha256=digest,
+                output_sha256=digest,
+                now=now,
+            ),
+            state=AgentRunState.AWAITING_INPUT,
+            expected_revision=run.revision,
+            records=(
+                _record(
+                    run,
+                    record_id=record_id,
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=payload,
+                    now=now,
+                ),
+            ),
         )
 
     def _await_knowledge_input(
@@ -647,6 +844,7 @@ class MarketingAgentService:
         _validate_json_schema(tool_input, descriptor.input_schema, "tool_input_schema_invalid")
         input_sha256 = contract_sha256(tool_input)
         invocation = ToolInvocation(
+            tenant_id=run.tenant_id,
             schema_version="trace.tool-invocation.v1",
             invocation_id=f"{run.run_id}:invocation:{run.revision}",
             run_id=run.run_id,
@@ -693,7 +891,7 @@ class MarketingAgentService:
             persist_invocation=True,
         )
 
-    def _dispatch_tool(  # noqa: PLR0913 - every execution authority binding is explicit.
+    def _dispatch_tool(  # noqa: PLR0911,PLR0912,PLR0913,C901 - keep steering and execution admission guards explicit.
         self,
         run: AgentRun,
         *,
@@ -711,24 +909,29 @@ class MarketingAgentService:
                 "github.issue.create": "GitHub 이슈를 등록하고 확인하고 있습니다",
             }.get(descriptor.capability_id, "요청한 도구 작업을 실행하고 있습니다")
         )
+        interrupted = self._pause_for_signal(run, now=now)
+        if interrupted is not None:
+            return interrupted
         _ = self.registry.require_current_dispatch(
             descriptor, policy=self.capability_policy, now=now
         )
-        if self.knowledge is not None:
-            prepared_context = self._latest_prepared_context(run.tenant_id, run.run_id)
-            if prepared_context is None or not self.knowledge.is_current(
-                run.run_id, prepared_context
-            ):
-                return self._plan(
-                    run,
-                    evidence=(
-                        {
-                            "schema_version": "trace.knowledge-context-stale.v1",
-                            "reason": "knowledge_context_changed_before_dispatch",
-                        },
-                    ),
-                    now=now,
-                )
+        if not self.knowledge_is_current(run.tenant_id, run.run_id):
+            session = self.runtime_store.load(run.run_id)
+            if session is not None and session.pending_invocation is not None:
+                # Current runtime admission cannot be superseded by a new plan.
+                # Preserve its reservation and exact call for explicit reconciliation;
+                # no provider effect or invented schema-breaking receipt is produced.
+                return self._mark_reconciliation(run, contract_sha256(invocation), now=now)
+            return self._plan(
+                run,
+                evidence=(
+                    {
+                        "schema_version": "trace.knowledge-context-stale.v1",
+                        "reason": "knowledge_context_changed_before_dispatch",
+                    },
+                ),
+                now=now,
+            )
         adapter = self.tools.get(descriptor.capability_id)
         if adapter is None:
             raise ValueError("tool_dispatch_adapter_unavailable")
@@ -843,6 +1046,7 @@ class MarketingAgentService:
             invocation,
             descriptor,
             None if grant is None else grant.digest,
+            on_deferred=lambda deferred: self._persist_deferred_ack(admitted, deferred, now=now),
         )
         started = self.runtime.start_persisted_tool_execution(
             self.runtime_store, dispatched, now=now
@@ -852,6 +1056,10 @@ class MarketingAgentService:
             self.runtime_store, started, backend, now=now
         )
         self._fault("runtime_result_persisted")
+        if backend.deferred is not None:
+            return self._await_deferred(
+                self._required_run(run.tenant_id, run.run_id), invocation, backend.deferred, now=now
+            )
         if completed.state.value == "awaiting_reconciliation" or backend.result is None:
             return self.repository.append_step(
                 admitted,
@@ -869,7 +1077,22 @@ class MarketingAgentService:
                 state=AgentRunState.AWAITING_RECONCILIATION,
                 expected_revision=admitted.revision,
             )
-        result = backend.result
+        return self._record_tool_result(
+            admitted, invocation, descriptor, approval, backend.result, now=now
+        )
+
+    def _record_tool_result(  # noqa: PLR0913 - exact terminal result bindings.
+        self,
+        admitted: AgentRun,
+        invocation: ToolInvocation,
+        descriptor: ToolDescriptor,
+        approval: ToolApproval | None,
+        result: ToolExecutionResult,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        run = admitted
+        invocation_sha256 = contract_sha256(invocation)
         receipt = ToolReceiptRecord(
             schema_version="trace.tool-receipt.v1",
             receipt_id=f"{run.run_id}:receipt:{admitted.revision}",
@@ -918,19 +1141,341 @@ class MarketingAgentService:
             ),
         )
         self._fault("verify_committed")
+        return self._evaluate_tool_result(verified, receipt, evidence_payload, now=now)
+
+    def _evaluate_tool_result(
+        self, run: AgentRun, receipt: ToolReceiptRecord, evidence: JsonObject, *, now: datetime
+    ) -> AgentRun:
+        paused = self._deferred_pause_requested(run, receipt.invocation_sha256)
         evaluated = self.repository.append_step(
-            verified,
+            run,
             _step(
-                verified,
+                run,
                 kind=AgentStepKind.EVALUATE,
-                input_sha256=receipt_sha256,
-                output_sha256=contract_sha256(evidence_payload),
+                input_sha256=contract_sha256(receipt),
+                output_sha256=contract_sha256(evidence),
+                now=now,
+            ),
+            state=AgentRunState.AWAITING_INPUT if paused else AgentRunState.RUNNING,
+            expected_revision=run.revision,
+        )
+        if paused:
+            return evaluated
+        return self._plan(evaluated, evidence=(evidence,), now=now)
+
+    def _deferred_pause_requested(self, run: AgentRun, invocation_sha256: str) -> bool:
+        after_invocation = False
+        action = None
+        for record in self.repository.records(run.tenant_id, run.run_id):
+            if record.kind is AgentRecordKind.INVOCATION:
+                after_invocation = record.payload_sha256 == invocation_sha256
+            elif after_invocation and record.payload.get("deferred_input") is True:
+                action = record.payload.get("action")
+        return action == "pause"
+
+    def _deferred_for_invocation(
+        self, run: AgentRun, invocation: ToolInvocation
+    ) -> ToolExecutionDeferred | None:
+        for record in self.repository.records(run.tenant_id, run.run_id):
+            if record.payload_schema_version == "trace.tool-deferred.v1":
+                deferred = ToolExecutionDeferred.model_validate(record.payload)
+                if deferred.invocation_sha256 == contract_sha256(invocation):
+                    return deferred
+        return None
+
+    def _deferred_completion(self, run: AgentRun, operation_id: str) -> AgentRecord | None:
+        return next(
+            (
+                record
+                for record in self.repository.records(run.tenant_id, run.run_id)
+                if record.payload_schema_version == "trace.tool-completion.v1"
+                and record.payload.get("operation_id") == operation_id
+            ),
+            None,
+        )
+
+    def _persist_deferred_ack(
+        self, run: AgentRun, deferred: ToolExecutionDeferred, *, now: datetime
+    ) -> None:
+        run = self._required_run(run.tenant_id, run.run_id)
+        for record in self.repository.records(run.tenant_id, run.run_id):
+            if record.payload_schema_version == "trace.tool-deferred.v1":
+                previous = ToolExecutionDeferred.model_validate(record.payload)
+                if previous.operation_id == deferred.operation_id:
+                    if previous != deferred:
+                        raise ValueError("deferred_operation_conflict")
+                    return
+        _ = self.repository.append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.EXECUTE,
+                input_sha256=deferred.invocation_sha256,
+                output_sha256=contract_sha256(deferred),
                 now=now,
             ),
             state=AgentRunState.RUNNING,
-            expected_revision=verified.revision,
+            expected_revision=run.revision,
+            records=(
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:deferred:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=deferred.model_dump(mode="json"),
+                    now=now,
+                ),
+            ),
         )
-        return self._plan(evaluated, evidence=(evidence_payload,), now=now)
+        self._fault("deferred_ack_committed")
+
+    def _await_deferred(
+        self,
+        run: AgentRun,
+        invocation: ToolInvocation,
+        deferred: ToolExecutionDeferred,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        session = self.runtime_store.load(run.run_id)
+        if (
+            session is None
+            or session.pending_call is None
+            or session.pending_call.call_id != invocation.invocation_id
+            or deferred.invocation_sha256 != contract_sha256(invocation)
+        ):
+            raise ValueError("deferred_runtime_binding_missing")
+        if session.state is RuntimeState.AWAITING_RECONCILIATION:
+            if run.state is AgentRunState.AWAITING_RECONCILIATION:
+                return run
+            return self._mark_reconciliation(run, deferred.invocation_sha256, now=now)
+        acknowledgement = pending_deferred_execution(session)
+        if acknowledgement is None:
+            # The canonical acknowledgement was saved before the runtime acknowledgement.
+            # Finish only that local acknowledgement; never enter the original adapter again.
+            session = self.runtime.finish_persisted_tool_execution(
+                self.runtime_store, session, _AcknowledgedBackend(deferred), now=now
+            )
+            acknowledgement = pending_deferred_execution(session)
+        if (
+            acknowledgement is None
+            or acknowledgement.operation_id != deferred.operation_id
+            or deferred.invocation_sha256 != contract_sha256(invocation)
+        ):
+            raise ValueError("deferred_runtime_acknowledgement_invalid")
+        if run.state is AgentRunState.AWAITING_TOOL:
+            return run
+        waiting = self.repository.append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.EXECUTE,
+                input_sha256=deferred.invocation_sha256,
+                output_sha256=contract_sha256(deferred),
+                now=now,
+            ),
+            state=AgentRunState.AWAITING_TOOL,
+            expected_revision=run.revision,
+        )
+        self._fault("deferred_wait_committed")
+        return waiting
+
+    def mark_deferred_uncertain(
+        self, tenant_id: str, run_id: str, *, operation_id: str, now: datetime
+    ) -> AgentRun:
+        """Internal worker readback boundary; elapsed time alone is not evidence of uncertainty."""
+        with self.execution_lock:
+            run = self._required_run(tenant_id, run_id)
+            invocation = self._latest_invocation(tenant_id, run_id)
+            deferred = self._deferred_for_invocation(run, invocation)
+            if deferred is None or deferred.operation_id != operation_id:
+                raise ValueError("deferred_operation_unknown")
+            run = self._await_deferred(run, invocation, deferred, now=now)
+            session = self.runtime_store.load(run_id)
+            if session is None:
+                raise ValueError("deferred_runtime_binding_missing")
+            if session.state is not RuntimeState.AWAITING_RECONCILIATION:
+                _ = self.runtime.mark_persisted_deferred_uncertain(
+                    self.runtime_store, session, operation_id, now=now
+                )
+                self._fault("deferred_uncertainty_persisted")
+            return self._await_deferred(run, invocation, deferred, now=now)
+
+    def complete_deferred(  # noqa: C901,PLR0912 - exact completion and crash recovery guards.
+        self,
+        tenant_id: str,
+        run_id: str,
+        *,
+        operation_id: str,
+        result: ToolExecutionResult,
+        now: datetime,
+    ) -> AgentRun:
+        """Internal owner API. Worker authentication and artifact verification precede this call."""
+        with self.execution_lock:
+            run = self._required_run(tenant_id, run_id)
+            result = ToolExecutionResult.model_validate_json(result.model_dump_json())
+            records = self.repository.records(tenant_id, run_id)
+            deferred = next(
+                (
+                    ToolExecutionDeferred.model_validate(record.payload)
+                    for record in records
+                    if record.payload_schema_version == "trace.tool-deferred.v1"
+                    and record.payload.get("operation_id") == operation_id
+                ),
+                None,
+            )
+            if deferred is None:
+                raise ValueError("deferred_operation_unknown")
+            if (
+                result.invocation_sha256 != deferred.invocation_sha256
+                or result.executor_id != deferred.executor_id
+            ):
+                raise ValueError("deferred_result_binding_invalid")
+            invocation = next(
+                (
+                    ToolInvocation.model_validate(record.payload)
+                    for record in records
+                    if record.kind is AgentRecordKind.INVOCATION
+                    and record.payload_sha256 == deferred.invocation_sha256
+                ),
+                None,
+            )
+            if invocation is None:
+                raise ValueError("deferred_invocation_missing")
+            descriptor = self._descriptor_for_invocation(tenant_id, run_id, invocation)
+            _validate_terminal_result(result, invocation, descriptor)
+            completion = self._deferred_completion(run, operation_id)
+            if completion is not None and completion.payload.get("result") != result.model_dump(
+                mode="json"
+            ):
+                raise ValueError("deferred_completion_conflict")
+            session = self.runtime_store.load(run_id)
+            if session is None:
+                raise ValueError("deferred_runtime_binding_missing")
+            bound = _runtime_bound(invocation, descriptor)
+            approval, grant_digest = self._admitted_deferred_approval(
+                run, session, bound, invocation
+            )
+            receipt = ToolReceipt(
+                call_id=bound.call.call_id,
+                call_sha256=bound.call.digest,
+                approval_grant_sha256=grant_digest,
+                disposition=EffectDisposition(result.disposition),
+                actual_cost_units=result.actual_cost_units,
+                receipt_sha256=contract_sha256(result.output),
+            )
+            settled = next(
+                (
+                    tool_receipt_from_event(event)
+                    for event in session.events
+                    if event.event_type in {"tool_succeeded", "tool_no_effect", "tool_failed"}
+                    and event.payload.get("call_id") == bound.call.call_id
+                ),
+                None,
+            )
+            if settled is not None and settled != receipt:
+                raise ValueError("deferred_runtime_receipt_conflict")
+            if completion is None:
+                if settled is not None or run.state not in {
+                    AgentRunState.AWAITING_TOOL,
+                    AgentRunState.RUNNING,
+                    AgentRunState.AWAITING_RECONCILIATION,
+                }:
+                    raise ValueError("deferred_completion_state_invalid")
+                run = self._await_deferred(run, invocation, deferred, now=now)
+                payload: JsonObject = {
+                    "schema_version": "trace.tool-completion.v1",
+                    "operation_id": operation_id,
+                    "result": result.model_dump(mode="json"),
+                }
+                run = self.repository.append_step(
+                    run,
+                    _step(
+                        run,
+                        kind=AgentStepKind.EXECUTE,
+                        input_sha256=deferred.invocation_sha256,
+                        output_sha256=contract_sha256(payload),
+                        now=now,
+                    ),
+                    state=run.state,
+                    expected_revision=run.revision,
+                    records=(
+                        _record(
+                            run,
+                            record_id=f"{run_id}:completion:{run.revision}",
+                            kind=AgentRecordKind.EVIDENCE,
+                            payload=payload,
+                            now=now,
+                        ),
+                    ),
+                )
+                self._fault("deferred_completion_committed")
+            if settled is None:
+                session = self.runtime_store.load(run_id)
+                if session is None:
+                    raise ValueError("deferred_runtime_binding_missing")
+                if session.state is RuntimeState.AWAITING_RECONCILIATION:
+                    _ = self.runtime.resolve_persisted_reconciliation(
+                        self.runtime_store, session, receipt, now=now
+                    )
+                else:
+                    _ = self.runtime.resolve_persisted_deferred(
+                        self.runtime_store, session, operation_id, receipt, now=now
+                    )
+                self._fault("deferred_runtime_settled")
+            if any(
+                record.kind is AgentRecordKind.RECEIPT
+                and record.payload.get("invocation_sha256") == deferred.invocation_sha256
+                for record in self.repository.records(tenant_id, run_id)
+            ):
+                if (
+                    run.state is AgentRunState.RUNNING
+                    and self._latest_invocation(tenant_id, run_id) == invocation
+                ):
+                    return self.drive(tenant_id, run_id, now=now)
+                return run
+            return self._record_tool_result(run, invocation, descriptor, approval, result, now=now)
+
+    def _admitted_deferred_approval(  # noqa: C901 - original dispatch and approval bindings.
+        self,
+        run: AgentRun,
+        session: AgentSession,
+        bound: BoundToolInvocation,
+        invocation: ToolInvocation,
+    ) -> tuple[ToolApproval | None, str | None]:
+        dispatch = None
+        for event in session.events:
+            value = event.payload.get("invocation")
+            if event.event_type != "tool_dispatched" or not isinstance(value, dict):
+                continue
+            call = value.get("call")
+            if call == asdict(bound.call) and value.get("request") == bound.request:
+                dispatch = event
+                break
+        if dispatch is None:
+            raise ValueError("deferred_runtime_admission_missing")
+        grant_digest = dispatch.payload.get("approval_grant_sha256")
+        if grant_digest is None:
+            return None, None
+        if not isinstance(grant_digest, str):
+            raise ValueError("deferred_runtime_grant_invalid")
+        for record in self.repository.records(run.tenant_id, run.run_id):
+            if record.kind is AgentRecordKind.APPROVAL:
+                approval = ToolApproval.model_validate(record.payload)
+                if (
+                    approval.invocation_sha256 != contract_sha256(invocation)
+                    or approval.decision != "granted"
+                    or approval.expires_at is None
+                ):
+                    continue
+                grant = ApprovalGrant(
+                    approval.approval_id,
+                    bound.call.digest,
+                    approval.approver_id,
+                    approval.expires_at,
+                )
+                if grant.digest == grant_digest:
+                    return approval, grant_digest
+        raise ValueError("deferred_original_approval_missing")
 
     @staticmethod
     def _validate_reasoning_decision(
@@ -974,6 +1519,18 @@ class MarketingAgentService:
             if record.kind is AgentRecordKind.INVOCATION:
                 return ToolInvocation.model_validate(record.payload)
         raise ValueError("pending_tool_invocation_missing")
+
+    def knowledge_is_current(self, tenant_id: str, run_id: str) -> bool:
+        """Recheck canonical knowledge authority immediately before an optional worker effect."""
+        if self.repository.get(tenant_id, run_id) is None:
+            return False
+        if self.knowledge is None:
+            return True
+        try:
+            prepared = self._latest_prepared_context(tenant_id, run_id)
+            return prepared is not None and self.knowledge.is_current(run_id, prepared)
+        except Exception:  # noqa: BLE001 - failed authority/readback never grants a worker effect.
+            return False
 
     def _latest_prepared_context(
         self,
@@ -1143,19 +1700,30 @@ class _AdapterBackend:
         invocation: ToolInvocation,
         descriptor: ToolDescriptor,
         approval_grant_sha256: str | None,
+        on_deferred: Callable[[ToolExecutionDeferred], None] | None = None,
     ) -> None:
         self.adapter: ToolAdapter = adapter
         self.invocation: ToolInvocation = invocation
         self.descriptor: ToolDescriptor = descriptor
         self.approval_grant_sha256: str | None = approval_grant_sha256
         self.result: ToolExecutionResult | None = None
+        self.deferred: ToolExecutionDeferred | None = None
+        self.on_deferred: Callable[[ToolExecutionDeferred], None] | None = on_deferred
 
-    def execute(self, invocation: BoundToolInvocation) -> ToolReceipt:
+    def execute(self, invocation: BoundToolInvocation) -> ToolReceipt | DeferredToolExecution:
         if invocation.request != self.invocation.input:
             raise ValueError("adapter_invocation_input_mismatch")
         result = self.adapter.execute(self.invocation, self.descriptor)
         if result.invocation_sha256 != contract_sha256(self.invocation):
             raise ValueError("adapter_receipt_invocation_mismatch")
+        if isinstance(result, ToolExecutionDeferred):
+            if self.on_deferred is None:
+                raise ValueError("adapter_deferred_owner_missing")
+            self.on_deferred(result)
+            self.deferred = result
+            return DeferredToolExecution(
+                invocation.call.call_id, invocation.call.digest, result.operation_id
+            )
         _validate_json_schema(
             result.output,
             self.descriptor.output_schema,
@@ -1175,4 +1743,43 @@ class _AdapterBackend:
             disposition=disposition,
             actual_cost_units=result.actual_cost_units,
             receipt_sha256=contract_sha256(result.output),
+        )
+
+
+def _runtime_bound(invocation: ToolInvocation, descriptor: ToolDescriptor) -> BoundToolInvocation:
+    capability = ToolCapability(
+        descriptor.capability_id,
+        contract_sha256(descriptor),
+        contract_sha256(descriptor.input_schema),
+        descriptor.effect_class,
+        descriptor.cost.worst_case_units,
+    )
+    return bind_tool_invocation(
+        capability,
+        call_id=invocation.invocation_id,
+        idempotency_key=invocation.idempotency_key,
+        request=invocation.input,
+    )
+
+
+def _validate_terminal_result(
+    result: ToolExecutionResult, invocation: ToolInvocation, descriptor: ToolDescriptor
+) -> None:
+    if result.invocation_sha256 != contract_sha256(invocation):
+        raise ValueError("adapter_receipt_invocation_mismatch")
+    if result.actual_cost_units > descriptor.cost.worst_case_units:
+        raise ValueError("deferred_cost_outside_reserved_budget")
+    _validate_json_schema(result.output, descriptor.output_schema, "tool_output_schema_invalid")
+    _validate_json_schema(
+        result.model_dump(mode="json"), descriptor.receipt_schema, "tool_receipt_schema_invalid"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AcknowledgedBackend:
+    acknowledgement: ToolExecutionDeferred
+
+    def execute(self, invocation: BoundToolInvocation) -> DeferredToolExecution:
+        return DeferredToolExecution(
+            invocation.call.call_id, invocation.call.digest, self.acknowledgement.operation_id
         )

@@ -106,6 +106,9 @@ class CanonicalKnowledgeIngress:
 
     def install(self, db: sqlite3.Connection) -> None:
         install_ingress_schema(db)
+        _ = db.execute("""CREATE TABLE IF NOT EXISTS knowledge_execution_bindings (
+            message_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+            binding_id TEXT NOT NULL, binding_json TEXT NOT NULL)""")
 
     def admit(
         self,
@@ -325,15 +328,68 @@ class CanonicalKnowledgeIngress:
             )
         return row is not None
 
+    def bind_execution(self, message_id: str, run_id: str, *, actor_id: str) -> None:
+        """Bind authenticated channel execution without rewriting ingress history."""
+        with self.connect() as db:
+            _ = db.execute("BEGIN IMMEDIATE")
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT binding.binding_json FROM knowledge_run_bindings AS binding
+                JOIN knowledge_ingress_outbox AS outbox USING(binding_id)
+                JOIN knowledge_conversation_events AS event USING(event_key)
+                WHERE event.message_id=? ORDER BY event.revision DESC LIMIT 1""",
+                    (message_id,),
+                ).fetchone()
+            )
+            if row is None:
+                return
+            admitted = TrustedRunBinding.model_validate_json(row[0])
+            if admitted.actor.actor_id != actor_id:
+                raise KnowledgeIngressConflictError("knowledge_execution_actor_mismatch")
+            binding = admitted.model_copy(update={"run_id": run_id})
+            previous = _ROW.validate_python(
+                db.execute(
+                    """SELECT run_id,binding_json FROM knowledge_execution_bindings
+                    WHERE message_id=?""",
+                    (message_id,),
+                ).fetchone()
+            )
+            if previous is not None:
+                if previous[0] != run_id:
+                    raise KnowledgeIngressConflictError("knowledge_execution_run_mismatch")
+                return
+            _ = db.execute(
+                "INSERT INTO knowledge_execution_bindings VALUES (?,?,?,?)",
+                (message_id, run_id, admitted.binding_id, binding.model_dump_json()),
+            )
+
+    def execution_run_for_message(self, message_id: str) -> str | None:
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    "SELECT run_id FROM knowledge_execution_bindings WHERE message_id=?",
+                    (message_id,),
+                ).fetchone()
+            )
+        return None if row is None else row[0]
+
     def binding_for_run(self, run_id: str) -> TrustedRunBinding | None:
         with self.connect() as db:
             row = _ROW.validate_python(
                 db.execute(
-                    """SELECT binding_json FROM knowledge_run_bindings
-                    WHERE run_id=? ORDER BY rowid DESC LIMIT 1""",
+                    """SELECT binding_json FROM knowledge_execution_bindings
+                WHERE run_id=? ORDER BY rowid DESC LIMIT 1""",
                     (run_id,),
                 ).fetchone()
             )
+            if row is None:
+                row = _ROW.validate_python(
+                    db.execute(
+                        """SELECT binding_json FROM knowledge_run_bindings
+                    WHERE run_id=? ORDER BY rowid DESC LIMIT 1""",
+                        (run_id,),
+                    ).fetchone()
+                )
         return None if row is None else TrustedRunBinding.model_validate_json(row[0])
 
     def pending_fence_for_run(self, run_id: str) -> bool:
@@ -345,8 +401,11 @@ class CanonicalKnowledgeIngress:
                         ON event.conversation_id=fence.conversation_id
                     JOIN knowledge_ingress_outbox AS outbox USING(event_key)
                     JOIN knowledge_run_bindings AS binding USING(binding_id)
-                    WHERE binding.run_id=? AND fence.state='pending' LIMIT 1""",
-                    (run_id,),
+                    WHERE (binding.run_id=? OR EXISTS (
+                        SELECT 1 FROM knowledge_execution_bindings AS execution
+                        WHERE execution.message_id=event.message_id AND execution.run_id=?
+                    )) AND fence.state='pending' LIMIT 1""",
+                    (run_id, run_id),
                 ).fetchone()
             )
         return row is not None

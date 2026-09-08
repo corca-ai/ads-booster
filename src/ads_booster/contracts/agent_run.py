@@ -6,12 +6,21 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 
 from ads_booster.contracts.canonical import canonical_sha256
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.contracts.tool_capability import ToolDescriptor  # noqa: TC001
-from ads_booster.transport.json_types import JsonObject  # noqa: TC001
+from ads_booster.transport.json_types import JsonObject
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 BoundedId = Annotated[
     str,
@@ -24,6 +33,7 @@ class AgentRunState(StrEnum):
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
     AWAITING_INPUT = "awaiting_input"
+    AWAITING_TOOL = "awaiting_tool"
     AWAITING_RECONCILIATION = "awaiting_reconciliation"
     BLOCKED = "blocked"
     COMPLETED = "completed"
@@ -204,6 +214,7 @@ class CapabilitySnapshot(ContractModel):
 
 
 class ToolInvocation(ContractModel):
+    tenant_id: BoundedId | None = None
     schema_version: Literal["trace.tool-invocation.v1"]
     invocation_id: BoundedId
     run_id: BoundedId
@@ -215,12 +226,29 @@ class ToolInvocation(ContractModel):
     input: JsonObject
     input_sha256: Sha256Digest
 
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        """Keep persisted v1 invocations byte-equivalent when no tenant was recorded."""
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.tenant_id is None:
+            _ = result.pop("tenant_id", None)
+        return result
+
     @model_validator(mode="after")
     def require_input_binding(self) -> Self:
         if contract_sha256(self.input) != self.input_sha256:
             message = "tool invocation input digest mismatch"
             raise ValueError(message)
         return self
+
+
+class ToolExecutionDeferred(ContractModel):
+    """Accepted asynchronous work; neither a terminal result nor an execution receipt."""
+
+    schema_version: Literal["trace.tool-deferred.v1"]
+    invocation_sha256: Sha256Digest
+    operation_id: BoundedId
+    executor_id: BoundedId
 
 
 class ToolApproval(ContractModel):
@@ -325,6 +353,7 @@ __all__ = [
     "AgentStepKind",
     "CapabilitySnapshot",
     "ToolApproval",
+    "ToolExecutionDeferred",
     "ToolInvocation",
     "ToolReceiptRecord",
     "contract_sha256",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import shutil
@@ -13,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal
 
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ads_booster.execution_control import controlled_process
@@ -26,6 +29,10 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _APPIUM_RECEIPT_NAME: Final = "codex-appium-invocation.json"
 _GENERATION_RECEIPT_NAME: Final = "codex-generation-invocation.json"
 _MARKETING_JUDGMENT_RECEIPT_NAME: Final = "codex-marketing-judgment-invocation.json"
+_IMAGE_REVIEW_RECEIPT_NAME: Final = "codex-marketing-image-review-invocation.json"
+_MAX_REVIEW_IMAGES: Final = 4
+_MAX_REVIEW_IMAGE_BYTES: Final = 10 * 1024 * 1024
+_MAX_REVIEW_IMAGE_PIXELS: Final = 20_000_000
 _APPIUM_READY_NAME: Final = "codex-appium-ready.json"
 _APPIUM_READY_VERIFIED_NAME: Final = "codex-appium-ready-verified.json"
 _APPIUM_SAVED_NAME: Final = "codex-appium-saved.json"
@@ -125,6 +132,53 @@ class CodexCliError(RuntimeError):
     """A sanitized failure at the official Codex CLI process boundary."""
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewImage:
+    data: bytes
+    format: Literal["PNG", "JPEG"]
+    width: int
+    height: int
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.data).hexdigest()
+
+
+def read_review_images(images: tuple[Path, ...]) -> tuple[ReviewImage, ...]:
+    """Decode bounded regular image files; callers own asset scope authorization."""
+    if not 0 < len(images) <= _MAX_REVIEW_IMAGES:
+        message = "codex_image_review_count_invalid"
+        raise CodexCliError(message)
+    result: list[ReviewImage] = []
+    for path in images:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_REVIEW_IMAGE_BYTES:
+                    message = "codex_image_review_file_invalid"
+                    raise CodexCliError(message)
+                data = stream.read(_MAX_REVIEW_IMAGE_BYTES + 1)
+            if not data or len(data) > _MAX_REVIEW_IMAGE_BYTES:
+                message = "codex_image_review_size_invalid"
+                raise CodexCliError(message)
+            with Image.open(io.BytesIO(data)) as image:
+                image_format = image.format
+                if (
+                    image_format not in ("PNG", "JPEG")
+                    or image.width * image.height > _MAX_REVIEW_IMAGE_PIXELS
+                    or getattr(image, "n_frames", 1) != 1
+                ):
+                    message = "codex_image_review_format_or_dimensions_invalid"
+                    raise CodexCliError(message)
+                _ = image.load()
+                result.append(ReviewImage(data, image_format, image.width, image.height))
+        except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as error:
+            message = "codex_image_review_decode_failed"
+            raise CodexCliError(message) from error
+    return tuple(result)
+
+
 class CodexAppiumSavedState(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
@@ -157,6 +211,7 @@ class _StructuredTurn:
     error_prefix: str
     no_tools: bool = False
     web_search: bool = False
+    images: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +298,42 @@ class CodexCli:
                 error_prefix="codex_marketing_research",
                 no_tools=True,
                 web_search=True,
+            )
+        )
+
+    def run_marketing_image_review_job(
+        self,
+        prompt: str,
+        schema: JsonObject,
+        *,
+        images: tuple[Path, ...],
+        workspace: Path,
+        timeout_seconds: float,
+    ) -> JsonObject:
+        decoded = read_review_images(images)
+        try:
+            for path in images:
+                _ = path.resolve(strict=True).relative_to(workspace.resolve(strict=True))
+            _write_private_json(
+                workspace / _IMAGE_REVIEW_RECEIPT_NAME,
+                {
+                    "schema": "trace.codex-marketing-image-review-invocation.v1",
+                    "invocation_count": 1,
+                    "source_sha256s": [item.sha256 for item in decoded],
+                },
+            )
+        except (OSError, ValueError) as error:
+            message = "codex_image_review_workspace_or_receipt_invalid"
+            raise CodexCliError(message) from error
+        return self._run_structured_job(
+            _StructuredTurn(
+                prompt=prompt,
+                schema=schema,
+                workspace=workspace,
+                timeout_seconds=timeout_seconds,
+                error_prefix="codex_marketing_image_review",
+                no_tools=True,
+                images=images,
             )
         )
 
@@ -382,6 +473,8 @@ class CodexCli:
             command.extend(("--sandbox", "read-only"))
             for feature in _NO_TOOL_FEATURES:
                 command.extend(("--disable", feature))
+        for image in turn.images:
+            command.extend(("--image", str(image.resolve())))
         command.append("-")
         return command
 

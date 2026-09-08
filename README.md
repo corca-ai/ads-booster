@@ -67,6 +67,199 @@ explicit candidate installation, not proof of the published default URL. CI exer
 installation and systemd activation with fixture Slack identity/upstream CI; real Slack delivery and
 post-merge public-URL installation require deployment acceptance.
 
+## Small tasks, human work and image review
+
+In an authorized Slack thread, follow-ups keep the same work and budget: ask a question,
+provide a correction, or send a human-made result. `어디까지 됐어?` reads status,
+`잠깐 멈춰줘` waits at the next safe boundary, and `계속` resumes an input wait.
+`새 작업 <request>` starts independent work. A stopped external action is never claimed
+undone. Existing `/trace` commands and server onboarding continue to work.
+
+Creative skills can prepare mood/reference/font/color, background review/partial-edit,
+capture/localization/mockup/QA instructions without a campaign. If Appium or editing is
+unavailable, the answer specifies what to do and what to return. A preparation receipt
+is not a produced image. Source/derivative kind, preserved areas, locale and human vs
+system verification remain separate.
+
+In an existing Slack work thread, `성과 도움말` shows the bounded reporting commands.
+`성과 기록 {JSON}` records the account, country, publication reference, UTC observation
+window and views/likes/comments; clicks and installs stay unknown when omitted. Use
+`성과 목록` for the six latest reports, `성과 비교 ID ID` to compare two snapshots, and
+`성과 정정 ID {JSON}` to correct a report without erasing its source. These are attributed
+human reports, not automatically collected platform metrics. `성과 학습 ID[,ID] 관찰 | 반례 |
+적용범위` prepares a memory candidate for the existing review/approval flow. Correcting a
+source excludes its earlier learning from future context selection. Authenticated clients
+can read the same Run's current reports at `GET /v1/runs/{run_id}/performance`; private-chat
+reports are not projected into the shared Web workspace.
+
+When Web access is configured, shared Slack summaries link to the same work page. The page
+shows up to six recent performance reports and six linked images; selecting an image uses
+authenticated byte readback. Source, locale, human-report/worker origin, stale lineage and QA
+remain visible. A preview is not a quality approval. Private conversations do not receive a
+shared-workspace link. `creative.asset.review` can assess registered same-work images directly,
+without uploading a generated result back to Slack; its model findings still require human review.
+
+Slack image review is **optional and off by default**. In a separately approved app update,
+add `files:read` to the app's bot OAuth scopes and reinstall it, then set
+`TRACE_MARKETING_SLACK_IMAGE_REVIEW=1` in the service environment. Token identity and actual
+scope are probed before readiness. This PR does not change an existing app, token, login,
+server unit or tunnel. Without that setup, attachments remain task references and human
+handoff is available. With access, up to four bound PNG/JPEG files are visually reviewed
+through official Codex; no image generation/editing or native app proof is claimed. DM
+image execution is not enabled.
+
+Bounded raster editing is separately opt-in: `TRACE_MARKETING_IMAGE_EDIT_CONFIG` points to
+a JSON file with an absolute `executable` path to the existing user's official Codex CLI,
+an explicit `model_id`, and optional `timeout_seconds` (1–1800, default 300). The service
+does not install a provider, change its login or enable this configuration automatically.
+Provider capability readiness alone does not prove a successful image edit; validate the
+selected installation's actual input/output before team use.
+
+When available, `creative.image.edit` extends the top of a registered image or replaces
+explicit rectangular regions; `creative.image.localize` additionally binds the target
+locale and exact replacement text. An exact production approval is required. Original
+pixels outside the requested region are copied back and checked, including the complete
+shifted original for top extension. Typography, meaning, seams and phone-size readability
+still require visual and human review. Results are raster assets or edited promotional
+images, never evidence of native Trace font/language support. Unknown generation outcomes
+are retained for reconciliation and are not automatically regenerated. Without readiness,
+the existing preparation and human-handoff paths remain available.
+Each admitted edit reserves 20 conservative accounting units; these are not a measured
+provider price. A rejected preflight costs zero units, while a started generation retains
+its reservation until a validated terminal result or explicit reconciliation.
+
+For a currently pending local capture/edit/localization proposal, an authorized reviewer who
+has received every `검토` page for that exact proposal can say `이대로 만들어줘` or
+`이대로 제작해줘`. This reuses the exact production review context. Changed targets, another
+member's review, publication and remote external effects retain their explicit approval path.
+
+For an uncertain edit, authenticated clients can inspect
+`GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop
+tracking it with `POST` to the same path plus `/abandon`, supplying only
+`{"invocation_sha256":"<exact digest>","note":"<reason>"}`. This records a human-reported
+abandonment, consumes the reserved 20 units and preserves `outcome_unknown: true`; it does
+not assert provider failure, refund cost, publish anything or authorize regeneration.
+Repeated identical decisions repair only local completion projection. Keep the database and
+artifact directory for readback even after abandonment.
+
+Local acceptance on September 8: Codex 0.153.4 advertised image generation, but restricted
+ephemeral-thread setup failed on this host (`codex_image_edit_thread_start_rpc_error_32603`).
+The optional edit tool therefore reports unavailable here. Automatic editing/localization
+quality remains unverified; do not activate it for the team based solely on fixture tests.
+
+Local Mac capture can be enabled separately with `TRACE_MARKETING_CAPTURE_CONFIG` pointing
+to a JSON file containing `device` (`kind: "simulator"`, real `udid`, `platform_version`,
+`device_name`), optional loopback `appium_server` and `timeout_seconds` (30–3600).
+Start the existing `trace-marketing service run` with that environment variable. This is
+local Mac composition, not a remote Mac connection from the Linux server. Defaults and
+server onboarding are unchanged. Readiness checks only inspect the already-booted configured
+Simulator, installed Trace app and Appium status; they never boot a device or start Appium.
+Native export/Debug support is verified only by the approved capture result.
+
+For a separate Mac, the service also supports an **optional remote capture worker**. Configure
+`TRACE_MARKETING_REMOTE_CAPTURE_CONFIG` with a private JSON file containing `profile` and
+`token_sha256` (SHA-256 of a separate random worker token, at least 32 characters). The profile
+contains `worker_id`, the service's exact `tenant_id`, simulator `device`, the Mac's installed
+`python_executable` absolute path, loopback `appium_server`, and integer `timeout_seconds`.
+Use either local capture configuration or remote capture configuration, not both. No worker
+enrollment, existing service mutation or automatic activation occurs during installation.
+
+On that Mac, prepare a separate JSON configuration containing the identical `profile`, HTTPS
+service `origin`, `token_env` (name of the environment variable containing the worker token),
+and an absolute private `state_root`. Enter the token in the Mac terminal or secret manager;
+the server configuration stores its hash. Preserve both state directories on restart.
+
+```bash
+trace-marketing worker capture-remote-doctor --config /absolute/path/worker.json
+trace-marketing worker capture-remote-run --config /absolute/path/worker.json --once
+```
+
+Doctor is local and read-only: it does not send a heartbeat, create worker state or start a
+device. Run checks the pinned profile, reports actual readiness and processes approved work;
+omit `--once` to remain in the foreground. The Mac must already have the configured Simulator,
+Trace app, Appium and the same macOS user's official Codex login ready. An unavailable worker
+leaves capture out of the usable catalog; human capture handoff remains available.
+
+Worker credentials grant only the configured capture queue and source/result routes. A job
+binds its Run, exact approval, source and complete Mac profile. Local and server start records
+precede device preparation. Response loss after a recorded result retries only that result;
+unknown device execution stays pending for explicit reconciliation. The new commands do not
+install a LaunchAgent, alter the existing D1 worker service or start the marketing server.
+
+When ready, `capture.appium` accepts a registered background's ID/revision/digest, country
+(`KR`, `JP`, `US`), reference date, synthetic schedule and preserve/change instructions.
+It requires exact runtime approval before device preparation. The result remains subject
+to human visual review. Its 20 cost units are conservative fixed accounting, not measured
+time or currency. An uncertain capture requires reconciliation and is not automatically
+repeated. Slack file references become registered assets only through the optional file intake
+below or the existing asset upload API. Remote Mac transport is described above; live device
+acceptance remains separate from its local contract verification.
+
+The same optional Slack image configuration also exposes `creative.file.inspect` and
+`creative.asset.import`. Inspection downloads a signed, same-work PNG/JPEG (up to 10 MiB)
+without invoking image reasoning. The agent can then propose that exact file digest with
+source/use terms, data permission and preserve/change metadata for the existing approval
+review. Import records the approver's confirmation as `human_reported`; neither upload nor
+approval proves licensing, visual quality or native product support. Changed file bytes or
+use terms require a new exact review. Import feeds a receipt to the same Run and links the
+asset for Web readback. It does not approve subsequent capture, editing or publication.
+DM file intake remains disabled. Missing `files:read` keeps these tools unavailable and the
+agent can request an asset through the existing human handoff.
+
+Web/API users can `POST /v1/runs/:id/continuation` with `event_id`, `action` (`revise`/`pause`)
+and `note`; `POST /v1/runs/:id/assets` accepts a base64 PNG/JPEG (512 KiB maximum), asset ID,
+kind, source/use terms/data permission, preserve/change and locale/parent metadata. Registered
+Slack/worker image GET readback has a separate 10 MiB limit. Uploads
+resume the same work by default; `resume:false` retains a wait. Authenticated
+`GET /v1/runs/:id/assets/:asset-id` returns a preview and stale state. Byte validation never
+implies visual QA. Run details remain available in the existing Web view.
+`awaiting_tool` means an asynchronous tool accepted the task and its result is still pending.
+It is distinct from completion or an unknown execution result. Follow-up requests are retained
+without cancelling an already-started effect. Remote capture uses this capability only when
+enabled by the separate configuration above. Its completion queues one update in the existing
+Slack thread; delivery rechecks current membership and preserves unknown send outcomes.
+
+`/v1/memories` provides scoped candidate drafts/read/selection. HTTP identity alone cannot
+adopt a shared rule. Authorized Slack reviewers use `기억 제안 <내용>`, `기억 목록`,
+`기억 검토 <ID>`, then `기억 채택 <ID> <해시>` or `기억 폐기 <ID> <해시>`.
+These default to the current work. For explicitly shared product learning, use
+`기억 공용 제안`, `기억 공용 검토`, and `기억 공용 채택` in a team channel; private
+conversations cannot create or alter shared notes. Review displays the scope and expiry.
+Candidates do not enter future context until review; expiry and corrected/deleted notes
+leave current retrieval. Private chat cannot change shared memories.
+
+Record human effort in the current Slack work with `작업 기록 제작 12분 설명` (also
+`수정`, `검수`, `현지화`); add `언어=ja` before the description for a locale.
+`작업 정정 <ID> 현지화 9분 언어=ja 설명` replaces an earlier report in totals while
+preserving history. `작업 요약` separates reported minutes/revisions from recorded tool
+cost units. It does not infer start times, currency costs or unreported effort. A report
+can be corrected by its author or an authenticated reviewer; at most 1000 records per work.
+`작업 학습 <ID> 관찰 | 반례 | 적용범위` creates a work-scoped hypothesis for the existing
+memory review flow. Correcting its source excludes that learning from current retrieval
+and blocks further approval. No automatic promotion or causal claim is made.
+
+The installed reasoning tool `delivery.prepare` can persist a draft on the current Run.
+`POST /v1/runs/:id/delivery` also prepares a typed production/publication/Paid/format/code/change
+review packet; `GET /v1/runs/:id/delivery/:proposal-id` reads it. In the same Slack work,
+`실행안 검토 <ID> [페이지]` shows its full versioned scope in bounded pages;
+the first page leads with a brief of the reason, requested change and relevant costs/conditions.
+That brief is navigation only; the complete target below remains the approval reference.
+review every page before using the exact approval command shown on the last page.
+Membership-authorized reviewers can approve its
+version/hash, prepare a reservation or cancel the preparation. **These are preparation
+records: no post, reservation, ad spend or GitHub mutation is executed.** Existing external
+owners retain their own approval and readback contracts. Asset-bearing approvals and
+prepared reservations recheck current revisions, parent lineage, digests and actual bytes;
+Paid preparation reserves against the exact approved budget in one local transaction.
+OAuth/browser login alone grants no Run approval authority: deployments must supply a trusted
+reviewer mapping. Queued approvals recheck it at execution; the configured local operator
+token retains its existing loopback authority. Slack uses authenticated membership.
+
+`research.daily_slack` v2 requires only research and Slack. Explicit combined delivery uses
+`research.daily_slack_and_notion`; `research.daily_slack_only` remains available. Already-created
+v1 scheduled Runs retain their frozen procedure; updating does not silently grant new
+Notion permissions or recreate them.
+
 ## On-premises Agent Service (implemented foundation)
 
 The current PR adds the installed service boundary and portable Run/Step/Intent/CapabilitySnapshot/
@@ -760,8 +953,8 @@ Codex's `image_generation` feature. Authentication alone does not prove image-ge
 A validated PNG draft is attached to the originating Slack thread for human visual review. Generated
 files are private, digest-addressed artifacts under the service state's `images/` directory, outside
 release directories. Results include image/prompt/invocation digests and dimensions. This first
-version generates one new PNG from text; reference-image editing and private-DM generation are not
-exposed. It does not publish the draft to a marketing channel.
+tool generates one new PNG from text and is not exposed in private DMs. Existing optional
+image-review/edit tools retain their own configuration; this tool accepts no reference-image input. It does not publish the draft to a marketing channel.
 
 For an existing Slack app add the Bot Token Scope **files:write** under **OAuth & Permissions**, then
 **Reinstall to Workspace** and approve the added permission. Both manifests include the scope. If Slack

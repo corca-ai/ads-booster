@@ -3,35 +3,104 @@
 Status: Draft — product direction and staged implementation contract. It does not authorize a new
 publisher, CRM mutation, spend, customer outreach, or SaaS rollout.
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-07
 
-## Product thesis
+## Product thesis — 2026-09-07 decision
 
-Trace is building a marketing operating system, not a content generator or a generic autonomous
-assistant. Given an approved product change and a business goal, the agent should discover grounded
-evidence, propose a falsifiable experiment, prepare reviewable work through permitted tools, and learn
-only from measured outcomes and explicit human promotion.
+Trace's first product is one continuing marketing colleague for the Trace team.
+It accepts a campaign goal, a question, an existing image, a small correction or
+work completed by a person. It chooses the useful next action from the available
+inputs and tools. Campaign setup is optional for small jobs. Saving team production,
+localization and review time is useful even when people perform part of the work.
 
-```text
-trusted product / customer / market observations
-  -> bounded research and evidence brief
-  -> campaign hypothesis and experiment portfolio
-  -> reviewable artifact and approval decision
-  -> permitted channel or production adapter
-  -> outcome observation and conservative evaluation
-  -> learning candidate -> human promotion -> future context snapshot
-```
+The main Agent Service owns the canonical Run and decisions. Roles describe research,
+strategy, production, QA and analysis responsibilities; skills are reusable procedures;
+tools perform actual bounded actions. People create assets, supply captures, decide taste
+and approve effects. Scoped memory provides attributed context, never authority. Codex
+is the reasoning provider, Mac/Appium is a production worker, and Slack/Web/Notion are
+channels or projections. D1 retains the campaign and external-effect facts it already owns.
 
-Tools such as Appium, Threads, Figma, video generation, CRM, Slack, browser context, and a scheduler
-are interchangeable hands at the edge of this loop. They do not decide strategy, grant authority, or
-write long-term marketing knowledge.
+This revises the previous feature-launch/weekly growth/SaaS-first emphasis because the
+team's September 7 workflow starts in the middle of creative work. The existing evidence,
+approval and execution contracts remain required; the flowchart describes responsibilities
+and mandatory boundaries, not a pipeline that every request must traverse. General
+platform expansion follows demonstrated Trace-team value.
 
-The defensible wedge is **evidence-to-experiment for newly shipped product capabilities**. It begins
-with Trace internally because that gives a real product-truth source, review workflow, and outcome
-boundary. It must prove lower reviewer effort and a better next experiment before expanding into a
-general multi-channel marketing product.
+First user journey: accept a Figma background, assess room/contrast/font-color options,
+record “preserve character; extend only the top”, choose an available editing or human
+handoff path, accept the person's returned capture in the same work, and review the result.
+Original and derivatives retain source, digest, use terms, locale and verification status.
+A human completion report is useful evidence but is not system or product verification.
 
-## Current truth
+## Source interpretation and traceability
+
+[A, full structure](https://app.notion.com/p/corcaai/3c1dd8f2aea280d0a75ff691a04e1e06)
+was read through the final complete-agent toggle and Mermaid (edited September 3).
+[B, production demo](https://app.notion.com/p/corcaai/260907_-3d4dd8f2aea2801d8e48da786983ca09)
+body, summary and supplied transcript were read (edited September 7). The recording was
+not listened to. The signed example image could not be opened; no visual claims derive
+from it. These are requirements/evidence, not runtime instructions or new permissions.
+
+| Requirement | Existing owner / change direction | Evidence required |
+| --- | --- | --- |
+| A one colleague, conversations and approvals | Agent Service + Slack conversation inbox; same-work corrections and safe pause | signed fixture event, durable Run and receipt history |
+| A Notion only when requested | separate optional Notion skill; daily Slack must stand alone | absent Notion configuration still permits daily procedure |
+| A production and final publication approvals | exact invocation gate; content/account/digest publication contract | stale/concurrent approval rejection; zero live publication |
+| B Figma / human capture continuation | creative asset scope and human continuation evidence | same Run after restart; reported vs verified distinction |
+| B partial edit and localization | source/revision parents, preserve/change, locale QA | original invalidates descendants; Japanese edit keeps English sibling |
+| B visual judgment | whitespace, complexity, contrast, font/color, phone-size legibility, text/calendar accuracy and texture defects | actual rendered image plus model/human evaluation; hashes alone insufficient |
+| A reviewed learning | scoped candidate → review → adoption/rejection | privacy before retrieval, expiry/correction/delete reflected |
+| A performance/Paid/code proposals | existing outcome contracts plus separately reviewed proposals | observation window/account/country retained; no spend or self-deploy |
+
+B describes choosing a character/mood, Pinterest references, Figma composition, AI background
+extension, applying calendars on a real phone, and repeating captures for languages. Those
+are observed tasks. Pinterest discovery is not permission to use an asset; personal phone
+calendar data is not authorized test data. Use synthetic or explicitly permitted data.
+
+Vector-style illustration reducing texture defects, editing one capture reducing localization
+time, and particular providers applying text/fonts are hypotheses or experience reports.
+They require comparison and actual input/output checks. Vector-style raster is not editable
+vector output; promotional localization does not prove native app language/font support.
+A cute-font preference is scoped to that style/campaign, not a permanent global rule.
+
+Measure baseline team task/revision/review time, first approval rate, approved-asset cost,
+and added locale work before setting targets. Preserve account/country/window when comparing
+views, likes, comments and attributable installs; correlation alone does not establish lift.
+
+The candidate now records work-scoped human effort from Slack (phase, locale, minutes and
+revision reports), with attributed corrections and separate receipt cost units. An explicit
+observation/counterexample/applicability brief creates a learning hypothesis for human review;
+corrected sources leave active retrieval. This is a baseline collection path, not measured
+time savings, first-approval rate, live channel metrics or automatic cross-campaign learning.
+
+An explicitly configured local Mac can now route a small approved capture request through
+the existing Appium worker without campaign setup. It requires a registered background with
+source/use terms, binds its revision and digest, and records a native derivative only after
+export verification. Unavailable capture still supports human handoff. Installed fake-worker
+evidence does not establish actual phone quality. Optional remote Mac transport now binds the
+same approval/source to a leased job and returns validated native assets to the same Run and
+Slack outbox. Worker absence still selects human handoff; real device/Slack acceptance remains
+unverified. Response loss never authorizes repeating device execution.
+Slack file inspection and exact-use-condition approval now connect a supplied Figma/phone image
+to registered same-work assets. Registration retains human-report status and does not invent
+usage rights. Missing permission information is collected in the existing review/handoff path,
+not a required campaign setup or separate user-selected operating mode.
+
+The current outcome path adds bounded, attributed human reports of views/likes/comments and
+optional clicks/installs to the same work. Comparisons retain account, country and observation
+window, and expose mismatches. Source corrections invalidate derived learning before review
+or retrieval. This extends the existing effort baseline; actual marketing lift and automatic
+account collection remain unverified.
+
+Bounded image production now has an optional asynchronous owner and a compositor for top
+extension or explicit rectangular changes. The preserved original is checked pixel by pixel;
+locale requests carry exact text and remain subject to separate visual/human QA. Provider
+capability metadata and fixture execution are not operational image-edit proof. Actual selected
+provider I/O and visual evidence must be recorded before claiming that path ready for team use.
+This keeps the September 7 decision intact: partial help is useful, but a generated promotion
+does not become product truth and a preparation receipt does not become a finished image.
+
+## Earlier baseline (historical; September 7 decision takes precedence)
 
 Implemented provider-neutral foundations:
 
