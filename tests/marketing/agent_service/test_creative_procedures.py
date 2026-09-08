@@ -59,19 +59,9 @@ def _inputs(**updates: object) -> CreativeInputs:
     )
 
 
-def test_appium_absence_returns_concrete_human_capture_instructions() -> None:
-    brief = build_creative_brief("app_capture", _inputs())
-    assert brief.route == "human_assisted"
-    assert brief.capability_id is None
-    assert any("실제 폰 Trace 앱" in step for step in brief.guidance)
-    assert any("기기·Trace 앱 버전·언어" in item for item in brief.return_requirements)
-    assert brief.status == "prepared_not_executed"
-    ready = build_creative_brief(
-        "app_capture", _inputs(), ready_capabilities=frozenset({"capture.appium"})
-    )
-    assert ready.route == "automatic"
-    assert ready.status == "prepared_not_executed"
-    assert any("제작 승인은 게시 승인이 아니다" in item for item in ready.boundaries)
+def test_removed_capture_task_is_rejected_by_request_contract() -> None:
+    with pytest.raises(ValueError, match="literal_error"):
+        _ = CreativeBriefRequest.model_validate({"task": "app_capture"})
 
 
 def test_localization_routes_product_proof_to_real_capture_only() -> None:
@@ -119,7 +109,7 @@ def test_partial_edit_requires_exact_preserve_change_and_source_lineage() -> Non
         _inputs(),
         preserve=brief.preserve,
         change=brief.change,
-        ready_capabilities=frozenset({"creative.candidates.generate"}),
+        ready_capabilities=frozenset({"creative.image.generate"}),
     )
     assert unrelated.route == "human_assisted"
 
@@ -147,7 +137,7 @@ def test_bounded_catalog_and_locale_requests_do_not_require_campaign() -> None:
         _ = build_creative_brief("localization", _inputs(), locales=("../ja",))
 
 
-def test_configured_service_executes_prepare_without_appium_or_external_writes(
+def test_configured_service_executes_prepare_without_external_writes(
     tmp_path: Path,
 ) -> None:
     configured = ConfiguredAgentTools(
@@ -168,7 +158,7 @@ def test_configured_service_executes_prepare_without_appium_or_external_writes(
             run_id="creative-small",
             tenant_id="trace",
             goal=AgentGoal(
-                objective="Figma에서 배경은 만들었어. 다음엔?", success_criteria=("캡처 안내",)
+                objective="Figma에서 배경은 만들었어. 다음엔?", success_criteria=("목업 안내",)
             ),
             budget=AgentBudget(max_tool_calls=1, max_cost_units=0),
         ),
@@ -180,9 +170,9 @@ def test_configured_service_executes_prepare_without_appium_or_external_writes(
     with pytest.raises(ValueError, match="extra_forbidden"):
         _ = CreativeBriefRequest.model_validate(
             {
-                "task": "app_capture",
+                "task": "mockup",
                 "inputs": _inputs().model_dump(mode="json"),
-                "ready_capabilities": ["capture.appium"],
+                "ready_capabilities": ["creative.image.mockup"],
             }
         )
 
@@ -203,21 +193,20 @@ class PrepareThenWait:
             evidence = str(request.evidence)
             assert "human_assisted" in evidence
             assert "prepared_not_executed" in evidence
-            assert "실제 폰 Trace 앱" in evidence
             self.saw_packet = True
             decision = ReasoningDecision(
                 schema_version="trace.reasoning-decision.v1",
                 action="request_input",
-                expected_outcome="실제 캡처를 같은 작업에 받아 검수",
-                reasoning_summary="Appium이 없으므로 준비한 절차로 사람에게 캡처 요청",
+                expected_outcome="목업을 같은 작업에 받아 검수",
+                reasoning_summary="목업 도구가 없으므로 준비한 절차로 사람에게 요청",
             )
         else:
             decision = ReasoningDecision(
                 schema_version="trace.reasoning-decision.v1",
                 action="invoke_tool",
                 capability_id="creative.prepare",
-                tool_input={"task": "app_capture", "inputs": _inputs().model_dump(mode="json")},
-                expected_outcome="실제 앱 캡처와 반환물 안내",
+                tool_input={"task": "mockup", "inputs": _inputs().model_dump(mode="json")},
+                expected_outcome="목업 제작과 반환물 안내",
                 reasoning_summary="작은 작업 절차 준비",
             )
         return ReasoningResult(

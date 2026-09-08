@@ -52,11 +52,10 @@ scope and expose read-only knowledge search/get, memory get/explain, and source 
 they cannot write shared memory, schedule jobs, purge data, or send external effects. Corrections and
 message edits/deletes create a pending fence before the affected Run is prepared again.
 
-The service assembles a bounded, revision- and digest-bound context transfer for hosted/Mac work.
-The remote task must validate the transfer before dispatch and the callback must return the matching
-receipt. Remote replica deletion remains pending until its purge acknowledgement is recorded; local
-success is not global deletion proof. This source wiring has not been verified by a fresh installed
-Linux service, live Slack/Codex account, hosted deployment, or remote purge.
+The service assembles bounded revision- and digest-bound context for the canonical Run.
+Preexisting transfer replicas remain `purge_pending` until separately reconciled. No remote purge
+transport is configured; local cleanup neither executes nor acknowledges external deletion. Validate a fresh installed Linux service and live
+Slack/Codex separately from local tests.
 
 The `trace-marketing knowledge` command group is registered as a local admin surface. Every command
 requires `--root`, `--control-root`, and `--policy`. The current commands are `init --workspace`,
@@ -70,5 +69,5 @@ requires `--root`, `--control-root`, and `--policy`. The current commands are `i
 `--flush-batches` requires `--until-idle`.
 
 This is a source-implemented reference surface for one private store. Installed help, fresh Linux
-installation, live Slack/Codex, hosted validation, remote purge, and deployment verification remain
+installation, live Slack/Codex, and deployment verification remain
 deferred.

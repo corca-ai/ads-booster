@@ -30,8 +30,10 @@ from ads_booster.contracts.creative_work import (
 from ads_booster.contracts.marketing_delivery import ReviewAsset
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.tool_capability import (
+    ToolCost,
     ToolDescriptor,
     ToolExecutionResult,
+    ToolReadiness,
     ToolReconciliationPolicy,
 )
 from ads_booster.marketing.agent_service.creative_asset_links import link_asset
@@ -42,7 +44,7 @@ from ads_booster.marketing.agent_service.creative_image_edit_contract import (
     compose_preserved_edit,
 )
 from ads_booster.marketing.runtime import ApprovalGrant, pending_deferred_execution
-from ads_booster.marketing.tool_adapters.descriptors import capture_descriptor
+from ads_booster.marketing.tool_adapters.descriptors import image_generation_descriptor
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
 from ads_booster.providers.codex_image_edit import ImageEditResult
 from ads_booster.transport.json_types import JsonObject
@@ -127,18 +129,21 @@ def image_edit_descriptor(
 ) -> ToolDescriptor:
     if capability_id not in _CAPABILITIES:
         raise ValueError("image_edit_capability_invalid")
-    descriptor = capture_descriptor(
-        installation_id="image-edit:" + contract_sha256(config),
-        observed_at=now,
-        ready=ready,
-        reason_code=None if ready else "image_edit_unavailable",
-    )
+    descriptor = image_generation_descriptor(observed_at=now)
     schema = _JSON.validate_python(CreativeImageEditInput.model_json_schema())
     output = _JSON.validate_python(_OUTPUT.json_schema())
     return descriptor.model_copy(
         update={
             "capability_id": capability_id,
             "owner": "ads_booster.creative_image_edit",
+            "installation_id": "image-edit:" + contract_sha256(config),
+            "readiness": ToolReadiness(
+                ready=ready,
+                reason_code=None if ready else "image_edit_unavailable",
+                observed_at=now,
+                max_age_seconds=300,
+            ),
+            "cost": ToolCost(worst_case_units=20, unit="image_edit"),
             "input_schema": schema,
             "input_schema_sha256": contract_sha256(schema),
             "output_schema": output,

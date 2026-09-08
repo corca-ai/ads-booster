@@ -88,24 +88,6 @@ _BASE_SKILLS = (
             "4. Slack 전달 receipt를 확인한 뒤 완료한다."
         ),
     ),
-    MarketingSkill(
-        skill_id="threads.validated_format_replication",
-        version="1",
-        purpose="검증된 이미지 또는 URL 포맷을 국가별 Trace 콘텐츠 실험으로 복제한다.",
-        required_capabilities=("workflow.feature_launch",),
-        success_criteria=(
-            "입력 이미지 또는 URL과 대상 국가·계정이 immutable 실행 요청에 보존된다.",
-            "기존 hosted 연구·기획·Appium·검수·Threads 파이프라인에 한 번만 위임된다.",
-            "이미지와 게시 승인을 우회하지 않는다.",
-        ),
-        procedure=(
-            "1. input의 feature_launch_request를 변경하지 않고 "
-            "workflow.feature_launch에 전달한다.\n"
-            "2. hosted run ID와 상태 receipt를 보존한다.\n"
-            "3. Appium 이미지 검수와 Threads 게시 승인은 hosted workflow에서 계속 집행한다.\n"
-            "4. 자동 게시나 승인 우회를 제안하지 않는다."
-        ),
-    ),
 )
 
 _MARKETING_SKILLS = (

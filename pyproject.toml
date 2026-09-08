@@ -1,11 +1,10 @@
 [project]
 name = "trace-appium-capture"
 version = "0.5.1"
-description = "On-premises Trace Marketing Agent Service with replaceable execution workers"
+description = "On-premises Trace Marketing Agent Service"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "Appium-Python-Client>=5.1.1,<6",
     "ddgs>=9,<10",
     "httpx2[brotli,http2,zstd]>=0.1",
     "jsonschema>=4.23,<5",
@@ -89,33 +88,9 @@ unfixable = []
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG", "PLR2004", "SLF001", "D"]
-"src/ads_booster/search/image/providers.py" = ["S603"]
 "src/ads_booster/transport/http.py" = ["D105", "D107"]
 "src/ads_booster/marketing/*.py" = ["D107", "EM101", "EM102", "TC001", "TRY003", "TRY004"]
 "src/ads_booster/cli/marketing.py" = ["EM102", "TRY003"]
-"tests/cli/test_installer.py" = ["S603"]
-"scripts/bootstrap-mac-worker.py" = [
-    "ANN",
-    "ARG001",
-    "C901",
-    "EM101",
-    "EM102",
-    "EM103",
-    "PLR0911",
-    "PLR0912",
-    "PLR0913",
-    "PLR0915",
-    "PLR0917",
-    "PLR2004",
-    "PTH105",
-    "RUF005",
-    "S603",
-    "S607",
-    "T201",
-    "TRY003",
-    "UP032",
-]
-"tests/search/test_web_image_search_providers.py" = ["FLY002", "Q003"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

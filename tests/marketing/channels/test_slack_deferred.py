@@ -32,7 +32,7 @@ class DeferredCapture:
     def execute(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor
     ) -> ToolExecutionDeferred:
-        assert descriptor.capability_id == "capture.appium"
+        assert descriptor.capability_id == "creative.image.edit"
         self.calls += 1
         self.invocation = invocation
         return ToolExecutionDeferred(
@@ -51,7 +51,7 @@ def test_signed_followup_keeps_pending_work_and_applies_after_completion(
     service = owner.commands.application.service
     adapter = DeferredCapture()
     service.registry = ToolRegistry((effect_descriptor(),))
-    service.tools = {"capture.appium": adapter}
+    service.tools = {"creative.image.edit": adapter}
     service.reasoning = EffectThenStopReasoning()
     receive(owner, text="<@UBOT> 배경을 캡처해줘")
     assert owner.work_once(now=NOW)

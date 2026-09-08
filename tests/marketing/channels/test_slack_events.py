@@ -46,7 +46,7 @@ class RecordingReasoning(StopReasoning):
 
 
 def effect_descriptor() -> ToolDescriptor:
-    descriptor = _descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True)
+    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
     return descriptor.model_copy(
         update={"readiness": descriptor.readiness.model_copy(update={"observed_at": NOW})}
     )
@@ -246,7 +246,7 @@ def test_dm_is_scoped_and_cannot_use_shared_tools_or_history(tmp_path: Path) -> 
     service = owner.commands.application.service
     service.reasoning = reasoning
     service.registry = ToolRegistry((effect_descriptor(),))
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     owner = SlackEvents(owner.commands, "UBOT", frozenset({"C1"}))
     receive(owner, text="<@UBOT> 공유 비밀")
     assert owner.work_once(now=NOW)
@@ -256,7 +256,7 @@ def test_dm_is_scoped_and_cannot_use_shared_tools_or_history(tmp_path: Path) -> 
     assert owner.work_once(now=NOW)
     private = reasoning.requests[-1]
     assert "공유 비밀" not in private.model_dump_json()
-    assert "capture.appium" not in private.model_dump_json()
+    assert "creative.image.edit" not in private.model_dump_json()
     assert messages[-1]["channel"] == "D1"
     assert "thread_ts" not in messages[-1]
     receive(owner, type="message", channel="D1", channel_type="im", text="이어 질문", ts="100.003")
@@ -338,7 +338,7 @@ def test_approval_requires_current_exact_hash_and_authorized_member(tmp_path: Pa
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     run = service.repository.list_runs("team")[0]
@@ -416,7 +416,7 @@ def test_nonapprover_cannot_approve_and_dm_member_scope_is_separate(
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     receive(owner)
     assert owner.work_once(now=NOW)
     digest = str(messages[-1]["text"]).split("승인 ")[1].split("\n")[0]

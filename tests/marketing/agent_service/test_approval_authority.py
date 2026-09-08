@@ -43,9 +43,9 @@ def pending_api(
     service = _service(root / "state.db", AskThenStopReasoning())
     service.reasoning = EffectThenStopReasoning()
     service.registry = ToolRegistry(
-        (_descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True),)
+        (_descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True),)
     )
-    service.tools = {"capture.appium": adapter}
+    service.tools = {"creative.image.edit": adapter}
     run = service.create(_request(), now=NOW)
     assert run.state is AgentRunState.AWAITING_APPROVAL
     invocation = next(

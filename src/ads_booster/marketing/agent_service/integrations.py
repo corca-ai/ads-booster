@@ -7,13 +7,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.error import HTTPError
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
-from ads_booster.contracts.knowledge_context import knowledge_context_sha256
 from ads_booster.contracts.tool_capability import ToolDescriptor
 from ads_booster.marketing.agent_service.creative_procedures import (
     CreativeBrief,
@@ -46,8 +45,6 @@ from ads_booster.marketing.tool_adapters.compatibility import (
     ToolExecutor,
 )
 from ads_booster.marketing.tool_adapters.descriptors import (
-    hosted_tool_install_descriptor,
-    hosted_workflow_descriptor,
     notion_daily_descriptor,
     research_descriptor,
     slack_delivery_descriptor,
@@ -73,8 +70,6 @@ class ResearchRunner(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AgentServiceIntegrationConfig:
-    hosted_origin: str | None = None
-    hosted_token: str | None = None
     slack_bot_token: str | None = None
     slack_channel_id: str | None = None
     notion_token: str | None = None
@@ -84,14 +79,11 @@ class AgentServiceIntegrationConfig:
     def __post_init__(self) -> None:
         """Reject partial integrations instead of silently hiding a requested tool."""
         pairs = (
-            (self.hosted_origin, self.hosted_token),
             (self.slack_bot_token, self.slack_channel_id),
             (self.notion_token, self.notion_parent_page_id),
         )
         if any((left is None) != (right is None) for left, right in pairs):
             raise ValueError("agent_integration_config_incomplete")
-        if self.hosted_origin is not None:
-            _ = _https_origin(self.hosted_origin)
 
 
 @dataclass(slots=True)
@@ -122,13 +114,6 @@ class ConfiguredAgentTools:
         if self.delivery_tool is not None:
             adapters["delivery.prepare"] = _delegating(
                 "delivery.prepare", "trace.delivery_preparation", self.delivery_tool.execute
-            )
-        if self.config.hosted_origin and self.config.hosted_token:
-            adapters["catalog.hosted.install"] = _delegating(
-                "catalog.hosted.install", "trace.hosted_tool_catalog", self._hosted_install
-            )
-            adapters["workflow.feature_launch"] = _delegating(
-                "workflow.feature_launch", "trace.hosted_marketing_workflow", self._hosted
             )
         if self.config.slack_bot_token and self.config.slack_channel_id:
             adapters["deliver.slack"] = _delegating(
@@ -161,17 +146,6 @@ class ConfiguredAgentTools:
         ]
         if self.delivery_tool is not None:
             result.append(delivery_prepare_descriptor(now=now))
-        if self.config.hosted_origin and self.config.hosted_token:
-            result.append(
-                hosted_tool_install_descriptor(
-                    installation_id="configured:hosted", observed_at=now, ready=True
-                )
-            )
-            result.append(
-                hosted_workflow_descriptor(
-                    installation_id="configured:hosted", observed_at=now, ready=True
-                )
-            )
         if self.config.slack_bot_token and self.config.slack_channel_id:
             result.append(
                 slack_delivery_descriptor(
@@ -237,69 +211,6 @@ class ConfiguredAgentTools:
             output=_JSON_OBJECT.validate_python(result.model_dump(mode="json")),
             actual_cost_units=result.spent_cost_units,
         )
-
-    def _hosted(
-        self, invocation: ToolInvocation, descriptor: ToolDescriptor
-    ) -> DelegatedToolResult:
-        _ = descriptor
-        origin = _https_origin(self.config.hosted_origin)
-        token = _required(self.config.hosted_token)
-        payload = invocation.input
-        transfer = None
-        if self.knowledge is not None:
-            research = invocation.input.get("research")
-            if not isinstance(research, dict):
-                raise ValueError("hosted_research_binding_required")
-            account_id = research.get("account_id")
-            if not isinstance(account_id, str) or not account_id:
-                raise ValueError("hosted_account_binding_required")
-            transfer, binding = self.knowledge.outbound_transfer(invocation, account_id)
-            payload = _JSON_OBJECT.validate_python(
-                {
-                    **invocation.input,
-                    "trusted_knowledge": {
-                        "binding": binding,
-                        "knowledge_context": transfer.model_dump(mode="json", by_alias=True),
-                        "knowledge_context_sha256": knowledge_context_sha256(transfer),
-                    },
-                }
-            )
-        output = self._post_json(
-            urljoin(f"{origin}/", "api/marketing-agent/runs"),
-            payload,
-            {"authorization": f"Bearer {token}", "idempotency-key": invocation.idempotency_key},
-        )
-        if transfer is not None:
-            self._record_transfer_replicas(transfer.transfer_id, output)
-        return DelegatedToolResult(disposition="succeeded", output=output, actual_cost_units=1)
-
-    def _record_transfer_replicas(self, transfer_id: str, output: JsonObject) -> None:
-        if self.knowledge is None or output.get("knowledge_context_transfer_id") != transfer_id:
-            raise ValueError("knowledge_transfer_admission_receipt_invalid")
-        replicas = output.get("knowledge_context_replicas")
-        if not isinstance(replicas, list) or not replicas:
-            raise ValueError("knowledge_transfer_admission_receipt_invalid")
-        for replica in replicas:
-            if not isinstance(replica, dict):
-                raise ValueError("knowledge_transfer_admission_receipt_invalid")
-            system_id = replica.get("system_id")
-            replica_id = replica.get("replica_id")
-            if not isinstance(system_id, str) or not isinstance(replica_id, str):
-                raise ValueError("knowledge_transfer_admission_receipt_invalid")
-            self.knowledge.record_replica(transfer_id, system_id, replica_id)
-
-    def _hosted_install(
-        self, invocation: ToolInvocation, descriptor: ToolDescriptor
-    ) -> DelegatedToolResult:
-        _ = descriptor
-        origin = _https_origin(self.config.hosted_origin)
-        token = _required(self.config.hosted_token)
-        output = self._post_json(
-            urljoin(f"{origin}/", "api/marketing-agent/tools/install"),
-            invocation.input,
-            {"authorization": f"Bearer {token}", "idempotency-key": invocation.idempotency_key},
-        )
-        return DelegatedToolResult(disposition="succeeded", output=output, actual_cost_units=1)
 
     def _slack(self, invocation: ToolInvocation, descriptor: ToolDescriptor) -> DelegatedToolResult:
         _ = descriptor
@@ -403,14 +314,6 @@ def _required(value: str | None) -> str:
     if not value:
         raise ValueError("configured_integration_value_missing")
     return value
-
-
-def _https_origin(value: str | None) -> str:
-    origin = _required(value).rstrip("/")
-    parts = urlsplit(origin)
-    if parts.scheme != "https" or not parts.netloc or parts.path not in {"", "/"}:
-        raise ValueError("hosted_origin_must_be_https_origin")
-    return origin
 
 
 __all__ = ["AgentServiceIntegrationConfig", "ConfiguredAgentTools", "ResearchRunner"]

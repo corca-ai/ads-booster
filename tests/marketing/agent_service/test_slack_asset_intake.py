@@ -35,28 +35,28 @@ from ads_booster.marketing.agent_service.slack_asset_intake import (
 )
 from ads_booster.marketing.agent_service.slack_image_files import SlackImageFiles
 from ads_booster.marketing.agent_service.slack_image_review import bind_files
-from tests.marketing.agent_service.test_creative_capture import NOW, png, setup_tool
+from tests.marketing.agent_service.creative_fixtures import NOW, png, setup_assets
 from tests.marketing.agent_service.test_slack_image_review import HTTP
 
 
 def setup(tmp_path: Path) -> tuple[SlackAssetIntakeTool, HTTP, ToolInvocation, ToolDescriptor]:
-    capture, _, _ = setup_tool(tmp_path)
+    seed, _ = setup_assets(tmp_path)
     http = HTTP(png())
     files = SlackImageFiles(
-        capture.repository.database_path,
-        capture.assets.artifact_root,
+        seed.repository.database_path,
+        seed.assets.artifact_root,
         "tenant-a",
         "synthetic-test-token",
         opener=http,
     )
     bind_files(
-        capture.repository.database_path,
+        seed.repository.database_path,
         tenant_id="tenant-a",
         run_id="run-a",
         channel_id="C1",
         file_ids=("F01",),
     )
-    tool = SlackAssetIntakeTool(capture.repository, capture.assets, files, clock=lambda: NOW)
+    tool = SlackAssetIntakeTool(seed.repository, seed.assets, files, clock=lambda: NOW)
     descriptor = slack_asset_import_descriptor(now=NOW, ready=True)
     request = ImportSlackAsset(
         file_id="F01",

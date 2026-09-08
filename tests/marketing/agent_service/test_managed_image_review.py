@@ -23,7 +23,7 @@ from ads_booster.marketing.agent_service.managed_image_review import (
     managed_image_review_descriptor,
 )
 from ads_booster.providers.codex_cli import CodexCli, read_review_images
-from tests.marketing.agent_service.test_creative_capture import NOW, setup_tool
+from tests.marketing.agent_service.creative_fixtures import NOW, setup_assets
 from tests.marketing.agent_service.test_creative_image_edit import approve
 from tests.marketing.agent_service.test_creative_image_edit import setup as setup_edit
 
@@ -97,7 +97,7 @@ def setup(
     ToolInvocation,
     FakeInference,
 ]:
-    seed, _, old = setup_tool(tmp_path)
+    seed, old = setup_assets(tmp_path)
     fake = install_fake(monkeypatch)
     source = old.input["background"]
     assert isinstance(source, dict)

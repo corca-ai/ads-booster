@@ -93,9 +93,9 @@ def test_pause_invalidates_pending_approval_and_survives_restart(tmp_path: Path)
     service = _service(tmp_path / "state.db", AskThenStopReasoning())
     service.reasoning = EffectThenStopReasoning()
     service.registry = ToolRegistry(
-        (_descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True),)
+        (_descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True),)
     )
-    service.tools = {"capture.appium": ResearchAdapter()}
+    service.tools = {"creative.image.edit": ResearchAdapter()}
     run = service.create(_request(), now=NOW)
     assert run.state is AgentRunState.AWAITING_APPROVAL
     pending = service.repository.records(run.tenant_id, run.run_id)[-1]

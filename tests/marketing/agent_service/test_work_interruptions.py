@@ -144,9 +144,9 @@ def test_steering_during_approved_production_keeps_exact_approval_receipt(tmp_pa
     service = _service(tmp_path / "agent.sqlite3", AskThenStopReasoning())
     service.reasoning = EffectThenStopReasoning()
     service.registry = ToolRegistry(
-        (_descriptor("capture.appium", EffectClass.LOCAL_ARTIFACT, ready=True),)
+        (_descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True),)
     )
-    service.tools = {"capture.appium": adapter}
+    service.tools = {"creative.image.edit": adapter}
     service.boundary_signal = steering.read
     waiting = service.create(_request(), now=NOW)
     invocation = next(

@@ -46,11 +46,6 @@ from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
 from ads_booster.marketing.agent_service.memory_api import dispatch_memory
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
 from ads_booster.marketing.agent_service.performance_api import dispatch_performance
-from ads_booster.marketing.agent_service.remote_capture_api import (
-    CaptureApiOwner,
-    capture_body_limit,
-    dispatch_remote_capture,
-)
 from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
 from ads_booster.marketing.agent_service.sqlite_repository import RepositoryAdmission
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
@@ -125,7 +120,6 @@ class MarketingAgentApi:
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
     approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
-    remote_capture: CaptureApiOwner | None = None
 
     knowledge_ingress: CanonicalKnowledgeIngress | None = None
     knowledge_transfers: KnowledgeTransferProvider | None = None
@@ -197,16 +191,6 @@ class MarketingAgentApi:
         headers: dict[str, str] | None = None,
     ) -> ApiResponse:
         path = urlsplit(target).path
-        worker_response = dispatch_remote_capture(
-            method,
-            target,
-            body,
-            authorization=authorization,
-            owner=self.remote_capture,
-            now=now or datetime.now(UTC),
-        )
-        if worker_response is not None:
-            return ApiResponse(*worker_response)
         headers = headers or {}
         if (
             method == "POST"
@@ -606,12 +590,7 @@ def serve_marketing_agent_api(
             _ = format, args
 
         def _dispatch(self, method: str) -> None:
-            maximum = (
-                capture_body_limit(
-                    method, self.path, api.remote_capture, self.headers.get("authorization")
-                )
-                or _MAX_BODY_BYTES
-            )
+            maximum = _MAX_BODY_BYTES
             length = _content_length(self.headers.get("content-length"), maximum=maximum)
             if length > maximum:
                 self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 from typer.testing import CliRunner
@@ -21,12 +22,19 @@ from ads_booster.knowledge.repository import (
 )
 from ads_booster.knowledge.retrieval import KnowledgeRetriever, SearchRequest
 
+if TYPE_CHECKING:
+    import pytest
+
 
 class BackupLocation(BaseModel):
     path: str
 
 
-def test_cli_purge_replays_original_retraction_request(tmp_path: Path) -> None:
+def test_cli_purge_replays_original_retraction_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACE_MARKETING_HOSTED_ORIGIN", "https://retired.invalid")
+    monkeypatch.delenv("TRACE_MARKETING_CONTROL_TOKEN", raising=False)
     runner = CliRunner()
     root, control, policy = tmp_path / "store", tmp_path / "control", tmp_path / "policy.json"
     options = ["--root", str(root), "--control-root", str(control), "--policy", str(policy)]

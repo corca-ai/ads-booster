@@ -12,7 +12,7 @@ from ads_booster.marketing.agent_service.application import MarketingAgentServic
 from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
 from ads_booster.marketing.runtime import SqliteSessionStore
 
-from .test_creative_capture import NOW
+from .creative_fixtures import NOW
 from .test_slack_asset_intake import approve, setup
 from .test_slack_asset_intake_flow import IntakeReasoning
 

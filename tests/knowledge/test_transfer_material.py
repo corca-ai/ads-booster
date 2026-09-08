@@ -7,7 +7,6 @@ if TYPE_CHECKING:
 
 import pytest
 
-from ads_booster.candidate_generation.models import CandidateEditorialContext
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.knowledge_context import EditorialContextRole
 from ads_booster.contracts.knowledge_preparation import (
@@ -101,20 +100,18 @@ def _prepared(*, configured: bool) -> PreparedKnowledgeContext:
 def test_transfer_preserves_selected_team_constraints(tmp_path: Path, configured: bool) -> None:
     # Given: selected mandatory TEAM constraint, with either configured or empty SOUL.
     prepared = _prepared(configured=configured)
-    # When: the service projects the context to the worker's editorial model.
+    # When: the service projects selected context into editorial transfer material.
     material = transfer_adapter(tmp_path).transfer_material(prepared)
-    editorial = CandidateEditorialContext(
-        voice_status=material.receipt.voice_status,
-        blocks=material.editorial_context,
-    )
     # Then: the constraint retains authority and revision, without system internals.
-    constraint = next(block for block in editorial.blocks if block.block_id == "constraint.team")
+    constraint = next(
+        block for block in material.editorial_context if block.block_id == "constraint.team"
+    )
     assert constraint.role is EditorialContextRole.CONSTRAINT
     assert constraint.revision_refs == ("team.r1",)
-    assert {block.block_id for block in editorial.blocks} == (
+    assert {block.block_id for block in material.editorial_context} == (
         {"constraint.team", "brand.voice"} if configured else {"constraint.team"}
     )
-    assert editorial.voice_status is prepared.receipt.voice_status
+    assert material.receipt.voice_status is prepared.receipt.voice_status
 
 
 @pytest.mark.parametrize(

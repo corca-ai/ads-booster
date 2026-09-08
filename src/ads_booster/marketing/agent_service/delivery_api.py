@@ -28,7 +28,6 @@ class PrepareDelivery(ContractModel):
     rationale: str = Field(min_length=1, max_length=4000)
     target: ReviewTarget
     expected_revision: int = Field(default=0, ge=0)
-    d1_campaign_id: Identifier | None = None
 
 
 def dispatch_delivery(  # noqa: PLR0911 - explicit authenticated route responses.
@@ -62,7 +61,6 @@ def dispatch_delivery(  # noqa: PLR0911 - explicit authenticated route responses
                 proposal_id=request.proposal_id,
                 scope=scope,
                 run_id=run_id,
-                d1_campaign_id=request.d1_campaign_id,
                 rationale=request.rationale,
                 target=request.target,
             )

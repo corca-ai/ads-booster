@@ -1,5 +1,9 @@
 # 수동 wheel 설치·복구 기록 — 2026-09-07 후보
 
+> Historical record: sections describing Cloudflare Workers/D1/R2, hosted campaigns, Mac/Appium
+> workers or Threads automation predate their removal on 2026-09-08. They are not current
+> implementation or installation instructions. See [current architecture](../../architecture/system.md).
+
 Status: Historical — 2026-09-07 후보 패키지의 수동 설치와 복구 절차를 보존한 문서다.
 2026-09-08에 기존 서버 README에서 분리했다. 현재 신규 설치 절차는
 [CLI 설치 안내](slack-launch-guide.md)를 따른다.

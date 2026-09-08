@@ -54,9 +54,6 @@ from ads_booster.knowledge.tool_contracts import (
     TrustedQuestionAnswer,
 )
 from ads_booster.marketing.agent_service.knowledge import knowledge_descriptors
-from ads_booster.marketing.agent_service.knowledge_replica_purge import (
-    CloudflareReplicaPurgePort,
-)
 from ads_booster.marketing.agent_service.lifecycle import (
     InstalledKnowledgeRuntime,
     build_installed_knowledge_runtime,
@@ -251,9 +248,10 @@ def register_operations(  # noqa: C901, PLR0915
     ) -> None:
         with CliKnowledgeSession(settings_from_options(root, control_root, policy)) as session:
             service = _deletion_service(session.repository, control_root)
-            operation_id = "retract." + sha256(
-                f"{session.actor.workspace_id}\x1f{source}".encode()
-            ).hexdigest()[:32]
+            operation_id = (
+                "retract."
+                + sha256(f"{session.actor.workspace_id}\x1f{source}".encode()).hexdigest()[:32]
+            )
             receipt = service.retract(
                 RetractionRequest(
                     operation_id=operation_id,
@@ -377,16 +375,7 @@ def _runtime(
 
 
 def _deletion_service(repository: SqliteKnowledgeRepository, control_root: Path) -> DeletionService:
-    origin = os.environ.get("TRACE_MARKETING_HOSTED_ORIGIN")
-    if origin is None:
-        replica_port = _PendingReplicaPurge()
-    else:
-        token = os.environ.get("TRACE_MARKETING_CONTROL_TOKEN")
-        if token is None:
-            message = "TRACE_MARKETING_CONTROL_TOKEN is required for configured replica purge"
-            raise typer.BadParameter(message)
-        replica_port = CloudflareReplicaPurgePort(origin, token)
-    return DeletionService(repository, EraseLedger(control_root), replica_port)
+    return DeletionService(repository, EraseLedger(control_root), _PendingReplicaPurge())
 
 
 def _retraction_target(
@@ -506,6 +495,8 @@ def _answer_question(session: CliKnowledgeSession, question_id: str, text: str) 
         ).model_copy(update={"actor": actor, "invoked_at": answered_at}),
     )
     typer.echo(result.question.model_dump_json(indent=2))
+
+
 def _require_only_root_subtree(
     repository: SqliteKnowledgeRepository,
     actor: ActorContext,

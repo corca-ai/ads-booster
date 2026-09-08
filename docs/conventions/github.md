@@ -14,7 +14,7 @@ for code changes and inspect the current branch and remote state before starting
 - Use a Merge commit by default to preserve individual responsibility commits on `main`, including
   for `feature/`, `fix/`, and `hotfix/` branches deleted after merge. Use Squash Merge only when the
   user explicitly requests it for that Pull Request.
-- After a change lands on `main`, verify the applicable server update or managed Mac release path
+- After a change lands on `main`, verify the applicable server update path
   described in [Post-merge verification](#post-merge-verification).
 
 ## Authorization and existing work
@@ -231,23 +231,17 @@ git pull --ff-only origin main
 
 ## Post-merge verification
 
-A merged commit, a server update and a Mac release are separate results. Report only the result
-actually verified for the affected path:
+A merged commit and an installed server update are separate results. On-prem updates follow the
+exact `main` SHA's successful `Verify on-prem agent` check and the installed updater. Use the
+[server operation guide](../operations/agent-server/slack-launch-guide.md) to verify the installed
+SHA; passing CI alone does not prove activation.
 
-- On-prem server updates follow the exact `main` SHA's successful `Verify on-prem agent` check and
-  the installed server updater. Use the [server operation guide](../operations/agent-server/slack-launch-guide.md)
-  to verify the installed SHA; a passing CI run alone does not prove activation.
-- Mac releases follow the [managed release procedure](../contracts/mac-worker-auto-update.md#managed-release-publication).
-  An unchanged package version does not require a new Mac release. The workflow owns tags, release
-  assets, attestations and publication; do not create or edit those manually.
+Only publish releases within an explicit release request. A permission to merge does not authorize
+rewriting existing published tags or release history. Preserve package metadata compatibility unless
+renaming or migration is explicitly part of the change.
 
-Only trigger release publication within an explicit `main` merge or release request. A permission
-to merge does not authorize rewriting existing published tags or release history. If a new version
-is needed, update package metadata and lockfiles in an issue-linked commit before merging.
-
-After the requested delivery and its applicable verification are complete, close the owning Issue
-within the authorized GitHub scope with the PR reference and, when applicable, the verified release
-reference. Do not require a fictitious Mac release for a server-only change or close deferred scope.
+After authorized delivery and its verification, close the owning Issue with the PR reference and
+observed installed result. Do not close deferred scope.
 
 ## Pre-merge checklist
 
@@ -259,4 +253,4 @@ reference. Do not require a fictitious Mac release for a server-only change or c
 - [ ] No secrets or unrelated changes are included.
 - [ ] Merge commit is selected to preserve individual commits, or the user explicitly requested
   Squash Merge for this Pull Request.
-- [ ] The applicable post-merge server or Mac verification path is identified.
+- [ ] The applicable post-merge server verification path is identified.
