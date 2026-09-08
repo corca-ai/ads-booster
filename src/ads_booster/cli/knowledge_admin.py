@@ -3,10 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 
+from ads_booster.cli.knowledge_runtime import CliKnowledgeSession
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.knowledge_selection import KnowledgeActionKind
+from ads_booster.knowledge.contract_types import AuthorityClass, MemoryKind
+from ads_booster.knowledge.evidence_contracts import AuthorityRef
 from ads_booster.knowledge.file_paths import MemoryRevisionTarget, RevisionFileDraft
 from ads_booster.knowledge.governance_contracts import Brand, BrandEvent, TaskBinding
+from ads_booster.knowledge.grant_policy import authorize_write
 from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryRevision
 from ads_booster.knowledge.operation_contracts import OperationReceipt
 from ads_booster.knowledge.operation_enums import (
@@ -15,11 +19,7 @@ from ads_booster.knowledge.operation_enums import (
     OperationStatus,
     TaskBindingState,
 )
-from ads_booster.knowledge.evidence_contracts import AuthorityRef
-from ads_booster.knowledge.contract_types import AuthorityClass, MemoryKind
 from ads_booster.knowledge.repository_types import BrandRegistration
-
-from ads_booster.cli.knowledge_runtime import CliKnowledgeSession
 from ads_booster.transport.json_types import JsonObject
 
 
@@ -33,6 +33,11 @@ def register_brand(session: CliKnowledgeSession, request: JsonObject) -> Operati
         raise ValueError("knowledge_brand_workspace_claim_rejected")
     brand_id = f"brand.{sha256(operation_id.encode()).hexdigest()[:32]}"
     now = datetime.now(UTC)
+    write_grant = authorize_write(
+        actor=session.actor,
+        target_scope=session.actor.conversation_scope,
+        at=now,
+    )
     authority = AuthorityRef(
         event_id=f"event.{operation_id}",
         authority_class=AuthorityClass.RUNTIME_POLICY,
@@ -98,7 +103,15 @@ def register_brand(session: CliKnowledgeSession, request: JsonObject) -> Operati
             revision=revision,
             prepared_file=prepared,
             receipt=receipt,
-            payload_sha256=contract_sha256(event),
+            payload_sha256=contract_sha256(
+                {
+                    "brand": brand.model_dump(mode="json"),
+                    "authority": authority.model_dump(mode="json"),
+                    "member_id": session.actor.member_id,
+                    "session_id": session.actor.session_id,
+                    "write_grant": write_grant.model_dump(mode="json"),
+                }
+            ),
         )
     )
 
