@@ -69,6 +69,7 @@ class SlackInboxFullError(RuntimeError):
 class SlackConversationStore:
     database_path: Path
     knowledge_sink: KnowledgeIngressSink | None = None
+    installed_knowledge_ingress: CanonicalKnowledgeIngress | None = None
     knowledge_ingress: CanonicalKnowledgeIngress = field(init=False)
 
     def __post_init__(self) -> None:
@@ -76,7 +77,8 @@ class SlackConversationStore:
         object.__setattr__(
             self,
             "knowledge_ingress",
-            CanonicalKnowledgeIngress(self.database_path, sink=self.knowledge_sink),
+            self.installed_knowledge_ingress
+            or CanonicalKnowledgeIngress(self.database_path, sink=self.knowledge_sink),
         )
         with self.connect() as db:
             _ = db.executescript("""
