@@ -18,9 +18,14 @@ from ads_booster.marketing.agent_service.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
+from ads_booster.marketing.agent_service.managed_image_review import (
+    ManagedImageReviewCatalog,
+    ManagedImageReviewTool,
+)
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.dynamic_evidence_research import DynamicEvidenceResearchRunner
 from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.marketing.tool_adapters.compatibility import DelegatingToolAdapter
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_reasoning import CodexReasoningProvider
 
@@ -91,6 +96,24 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
         runtime_store=SqliteSessionStore(paths.database),
     )
 
+    managed_review = ManagedImageReviewTool(
+        repository=repository,
+        assets=SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts"),
+        codex=codex,
+    )
+    review_catalog = ManagedImageReviewCatalog(service.registry, managed_review)
+    service.registry = ToolRegistry(
+        review_catalog.descriptors(now=datetime.now(UTC)), provider=review_catalog
+    )
+    service.tools = {
+        **service.tools,
+        "creative.asset.review": DelegatingToolAdapter(
+            capability_id="creative.asset.review",
+            version="1",
+            executor_id="managed-image-review",
+            executor=managed_review.execute,
+        ),
+    }
     configured.creative_capabilities = lambda invocation, now: _creative_capabilities(
         service, invocation, now
     )
