@@ -19,6 +19,7 @@ from ads_booster.knowledge.contracts import (
     ConversationEventKind,
     IngestEnvelope,
 )
+from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.ingest_receipts import (
     IngestDeliveryReceipt,
     validate_ingest_delivery_receipt,
@@ -57,6 +58,10 @@ class CanonicalIngressPayload(ContractModel):
     envelope: IngestEnvelope
 
 
+class KnowledgeIngressActorAuthority(Protocol):
+    def bind_actor(self, actor: ActorContext, *, fresh: bool = False) -> ActorContext: ...
+
+
 class KnowledgeIngressSink(Protocol):
     def ingest(
         self,
@@ -83,6 +88,7 @@ class PendingKnowledgeIngress:
 class CanonicalKnowledgeIngress:
     database_path: Path
     sink: KnowledgeIngressSink | None = None
+    authority: KnowledgeIngressActorAuthority | None = None
 
     def __post_init__(self) -> None:
         """Install the additive canonical ingress schema."""
@@ -108,11 +114,6 @@ class CanonicalKnowledgeIngress:
         event: ConversationEvent,
         envelope: IngestEnvelope,
     ) -> bool:
-        message_event = validate_ingress(binding.actor, event, envelope)
-        event_key = self.event_key(event)
-        payload_sha256 = contract_sha256(
-            CanonicalIngressPayload(binding=binding, event=event, envelope=envelope)
-        )
         previous = _ROW.validate_python(
             db.execute(
                 """SELECT binding_json,event_json,envelope_json
@@ -122,6 +123,23 @@ class CanonicalKnowledgeIngress:
                 WHERE request_id=?""",
                 (binding.request_id,),
             ).fetchone()
+        )
+        message_event = validate_ingress(binding.actor, event, envelope)
+        if self.authority is not None:
+            actor = binding.actor
+            epoch = (
+                actor.policy_epoch
+                if previous is None
+                else TrustedRunBinding.model_validate_json(previous[0]).actor.policy_epoch
+            )
+            actor = actor.model_copy(update={"policy_epoch": epoch})
+            actor = self.authority.bind_actor(actor, fresh=previous is None)
+            binding = binding.model_copy(update={"actor": actor})
+            event = event.model_copy(update={"scope": actor.conversation_scope})
+            message_event = validate_ingress(actor, event, envelope)
+        event_key = self.event_key(event)
+        payload_sha256 = contract_sha256(
+            CanonicalIngressPayload(binding=binding, event=event, envelope=envelope)
         )
         binding_sha256 = contract_sha256(binding)
         if previous is not None:
@@ -247,12 +265,17 @@ class CanonicalKnowledgeIngress:
                 (envelope.delivery_id,),
             )
         try:
+            if self.authority is not None:
+                _ = self.authority.bind_actor(binding.actor)
             receipt = self.sink.ingest(binding.actor, event, envelope)
             validate_ingest_delivery_receipt(envelope, receipt)
         except Exception as error:
             state = "dispatching"
             error_code = "knowledge_ingress_receipt_unknown"
-            if isinstance(error, ClassifiedKnowledgeIngressError):
+            if isinstance(error, KnowledgePolicyError):
+                state = "failed"
+                error_code = "knowledge_ingress_actor_denied"
+            elif isinstance(error, ClassifiedKnowledgeIngressError):
                 state = "retryable" if error.retryable else "failed"
                 error_code = (
                     error.code
