@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# ruff: noqa: EM101, TC001
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import Annotated, Literal, Self, override
@@ -16,6 +17,7 @@ from ads_booster.knowledge.contract_types import (
     SourceDisposition,
     UtcDatetime,
 )
+from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
 from ads_booster.knowledge.operation_contracts import EventReceipt
 from ads_booster.knowledge.operation_enums import CurationTarget
 from ads_booster.knowledge.tool_contracts import KnowledgeToolName, ToolResult
@@ -53,6 +55,11 @@ class CurationToolDefinition(KnowledgeContractModel):
     input_schema: JsonObject
 
 
+class CurationUserEvent(KnowledgeContractModel):
+    evidence_ref: EvidenceRef
+    authority_ref: AuthorityRef
+
+
 class CurationRequest(KnowledgeContractModel):
     schema_version: Literal["knowledge.curation-request.v1"] = Field(alias="schema")
     job_id: BoundedId
@@ -60,6 +67,7 @@ class CurationRequest(KnowledgeContractModel):
     event_revision: Annotated[int, Field(ge=1)]
     policy_version: BoundedId
     objective: BoundedText
+    authenticated_user_event: CurationUserEvent | None = None
     excerpts: Annotated[tuple[CurationExcerpt, ...], Field(max_length=20)] = ()
     tool_catalog: Annotated[tuple[CurationToolDefinition, ...], Field(max_length=12)] = ()
     started_at: UtcDatetime
