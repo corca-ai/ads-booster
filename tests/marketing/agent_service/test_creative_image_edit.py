@@ -38,8 +38,8 @@ from ads_booster.marketing.agent_service.work_continuation import continue_work
 from ads_booster.marketing.runtime import SqliteSessionStore
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
 from ads_booster.providers.codex_image_edit import ImageEditResult
+from tests.marketing.agent_service.creative_fixtures import NOW, png, setup_assets
 from tests.marketing.agent_service.test_application import _reasoning_result, _request
-from tests.marketing.agent_service.test_creative_capture import NOW, png, setup_tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -104,10 +104,10 @@ class Provider:
 def setup(tmp_path: Path, *, max_cost: int = 40) -> tuple[CreativeImageEditTool, Provider]:
     fixture = tmp_path / "fixture"
     fixture.mkdir()
-    seed, _, _ = setup_tool(fixture)
+    seed, _ = setup_assets(fixture)
     run = seed.repository.get("tenant-a", "run-a")
     assert run is not None
-    asset = seed.assets.get(seed.scope_for_run(run), "background")
+    asset = seed.assets.get(seed.scope, "background")
     assert asset is not None
     db = tmp_path / "state.db"
     assets = SqliteCreativeAssetRepository(db, tmp_path / "artifacts")

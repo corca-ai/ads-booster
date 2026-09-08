@@ -11,7 +11,7 @@ import pytest
 from ads_booster.marketing.agent_service.channel_setup import slack_from_env
 from ads_booster.marketing.channels.slack_conversations import Conversation, Message
 from ads_booster.marketing.channels.slack_events import SlackEvents
-from tests.marketing.agent_service.test_remote_capture import approved, upload
+from tests.marketing.agent_service.test_creative_image_edit import approve, setup
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 
@@ -73,12 +73,13 @@ def test_notification_rechecks_current_member_and_excludes_synthetic_user_contex
     assert not owner.enqueue_run_update("team", run.run_id, event_id="another-operation")
 
 
-def test_remote_completion_projects_to_slack_outbox_and_recovers_callback_loss(
+def test_image_edit_completion_projects_to_slack_outbox_and_recovers_callback_loss(
     tmp_path: Path,
 ) -> None:
     remote = tmp_path / "remote"
     remote.mkdir()
-    coordinator, lease = approved(remote)
+    coordinator, provider = setup(remote)
+    approve(coordinator)
     config = tmp_path / "slack-remote.json"
     _ = config.write_text(
         json.dumps(
@@ -122,7 +123,7 @@ def test_remote_completion_projects_to_slack_outbox_and_recovers_callback_loss(
         message_id="fixture-request",
         conversation_id=conversation.conversation_id,
         user_id="U1",
-        text="승인된 캡처",
+        text="승인된 이미지 편집",
     )
     events.store.admit(conversation, message)
     events.store.finish(message, "")
@@ -135,25 +136,17 @@ def test_remote_completion_projects_to_slack_outbox_and_recovers_callback_loss(
             detail = "fixture callback response lost after durable enqueue"
             raise RuntimeError(detail)
 
-    coordinator = replace(coordinator, on_completed=callback)
-    _ = coordinator.start(
-        lease.job.operation_id, lease_id=lease.lease_id, job_sha256=lease.job_sha256, now=NOW
-    )
+    coordinator.on_completed = callback
     with pytest.raises(RuntimeError, match="response lost"):
-        _ = coordinator.complete(lease.job.operation_id, upload=upload(lease), now=NOW)
-    pending = coordinator.store.get("tenant-a", lease.job.operation_id)
-    assert pending is not None
-    assert not pending.canonical_settled
+        _ = coordinator.work_once()
     events.recover()
     failure = False
-    _ = coordinator.complete(lease.job.operation_id, upload=upload(lease), now=NOW)
-    settled = coordinator.store.get("tenant-a", lease.job.operation_id)
-    assert settled is not None
-    assert settled.canonical_settled
+    assert replace(coordinator).work_once()["state"] == "completed"
     assert events.work_once(now=NOW)
     assert len(sent) == 1
     assert sent[0]["thread_ts"] == "100.001"
     assert "completed" in str(sent[0]["text"])
-    _ = coordinator.complete(lease.job.operation_id, upload=upload(lease), now=NOW)
+    assert replace(coordinator).work_once()["state"] == "idle"
     assert not events.work_once(now=NOW)
     assert len(sent) == 1
+    assert provider.calls == 1
