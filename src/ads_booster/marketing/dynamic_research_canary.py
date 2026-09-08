@@ -33,10 +33,10 @@ from ads_booster.marketing.dynamic_evidence_research import (
     planner_protocol_sha256,
 )
 from ads_booster.marketing.evidence_research_operator import ResearchScope
-from ads_booster.marketing.marketing_judgment_canary import (
+from ads_booster.providers.codex_cli import CodexCli, CodexCliError
+from ads_booster.providers.runtime_identity import (
     inspect_marketing_judgment_runtime,
 )
-from ads_booster.providers.codex_cli import CodexCli, CodexCliError
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:

@@ -33,6 +33,7 @@ from ads_booster.contracts.marketing_capability import (
 )
 from ads_booster.contracts.marketing_context import MarketingContextPlanningProjection
 from ads_booster.contracts.models import ContractModel, Sha256Digest
+from ads_booster.contracts.reference_research import ReferenceResearchProposal
 from ads_booster.marketing.evidence_research_operator import (
     EvidenceResearchDependencies,
     EvidenceResearchEvaluator,
@@ -54,7 +55,6 @@ from ads_booster.marketing.feature_launch_evidence_brief import (
     EvidenceTrustState,
     FeatureLaunchEvidenceBrief,
 )
-from ads_booster.marketing.hosted_reference_research import ReferenceResearchProposal
 from ads_booster.marketing.runtime import (
     AgentSession,
     BoundToolInvocation,
@@ -148,7 +148,7 @@ class DynamicEvidenceFinding(ContractModel):
 
 
 class ResearchContinuation(ContractModel):
-    """Terminal, fail-closed handoff for evidence only the hosted verifier may promote."""
+    """Terminal handoff for market evidence awaiting independent source verification."""
 
     schema_version: Literal["trace.research-continuation.v1"]
     continuation_id: AgentIdentifier
@@ -167,7 +167,7 @@ class ResearchContinuation(ContractModel):
     def require_terminal_market_boundary(self) -> Self:
         _require_utc(self.created_at)
         if ResearchScope.MARKET_EVIDENCE in self.completed_scopes:
-            raise ValueError("market evidence cannot be completed before hosted byte verification")
+            raise ValueError("market evidence cannot be completed before source byte verification")
         return self
 
 
