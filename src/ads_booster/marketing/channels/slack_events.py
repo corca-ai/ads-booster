@@ -23,6 +23,7 @@ from ads_booster.marketing.agent_service.application import (
     MarketingAgentService,
 )
 from ads_booster.marketing.channels.contracts import ChannelIdentityBinding, ChannelKind
+from ads_booster.marketing.channels.github_results import issue_results
 from ads_booster.marketing.channels.slack_commands import SlackCommands
 from ads_booster.marketing.channels.slack_conversations import (
     Conversation,
@@ -383,7 +384,7 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        return f"{answer}\n\n상태: {run.state.value}\n실행: {run.run_id}"
+        return f"{answer}\n{issue_results(records)}\n\n상태: {run.state.value}\n실행: {run.run_id}"
 
     def _send(self, conversation: Conversation, text: str) -> str:
         if not text:
