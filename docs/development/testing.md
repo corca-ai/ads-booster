@@ -40,6 +40,8 @@ sequence, local tombstones and reverse dependency blocks, clean restore, and rem
 `purge_pending` until an acknowledgement is recorded. Restore checks include exact file digests,
 private nested paths, mixed-memory redaction and a searchable surviving revision. Run
 `tests/cli/test_server_onboarding.py` for fresh private knowledge-root creation and interrupted setup.
+Its timezone-data regression clears the system search path and cache before setup, verifying that
+the installed `tzdata` dependency supports initialization on minimal hosts.
 
 The registered `trace-marketing knowledge` reference surface requires `--root`, `--control-root`,
 and `--policy` on every command. Focused CLI checks should cover `init`, `doctor`, `ingest --envelope`,
