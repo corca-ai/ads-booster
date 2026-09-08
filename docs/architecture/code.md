@@ -87,6 +87,12 @@ cli/marketing
 
 ## Knowledge ownership and dependency direction
 
+`knowledge/batch_actor.py` rehydrates private batch identities and current catalog grants.
+`knowledge/batch_failure.py` records denied queued jobs and unclaimed batches without replaying
+completed receipts; the batch runtime then continues to other authorized work.
+`knowledge/repository_batch_recovery.py` reconciles abandoned batch/job state under the exclusive
+`KnowledgeOwner`; the installed lifecycle invokes it before starting any processing.
+
 `knowledge/` is the server-owned domain. It owns contracts, scope and grant policy, immutable source
 and Wiki/memory files, SQLite catalog migrations, ingestion, retrieval/index outbox, curation jobs,
 backup/restore, tombstones, the control-root erase ledger, and transfer dependency records. It does
