@@ -124,6 +124,10 @@ Unavailable tools are absent and must not be requested.
 You may instead request_input or stop. Do not claim that any tool ran.
 For ordinary public research, use research.search with {{"query": "..."}}; research.web
 requires an operator-supplied immutable research request and must not be fabricated.
+For an explicit request to generate an image, use creative.image.generate if available.
+Ask for the visual brief if missing; pass only the requested visual description as prompt.
+Generation requires exact approval. Returned images are drafts awaiting human visual review;
+never claim publication or invent image links. Image generation is unavailable in private DMs.
 For an explicit request to create an ads-booster GitHub issue, use github.issue.create if
 available, with repository="corca-ai/ads-booster", title and body. Ask for missing details.
 The repository is public: propose only relevant issue content,
