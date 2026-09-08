@@ -11,13 +11,13 @@
 ## 제품 기준 환경
 
 - 제품 동작의 최우선 기준은 현재 worktree가 아니라 처음 설치한 격리된 `trace-marketing`
-  환경입니다.
+환경입니다.
 - 설치, PATH, CLI 노출, 기본 설정, 상태 디렉터리와 service lifecycle은 fresh install에서
-  확인합니다.
+확인합니다.
 - worktree의 source, `uv run`, local venv 성공은 후보 변경의 개발 근거이며 설치된 제품이
-  작동한다는 증거가 아닙니다.
+작동한다는 증거가 아닙니다.
 - public installer나 원격 설치 명령은 실제 배포된 URL과 ref를 fresh environment에서 실행한
-  경우에만 작동한다고 주장합니다.
+경우에만 작동한다고 주장합니다.
 
 ## 기준 문서와 읽기 순서
 
@@ -41,20 +41,20 @@
 - 요청 범위 밖의 파일을 정리, 복원, 이동, 삭제하지 않습니다.
 - `.codegraph/`가 있으면 코드 위치와 호출 경로를 이해할 때 CodeGraph를 먼저 사용합니다.
 - CodeGraph가 없거나 stale, lock, 동기화 실패를 보고하면 해당 결과를 현재 코드로 간주하지
-  않고 필요한 live source만 직접 확인합니다.
+않고 필요한 live source만 직접 확인합니다.
 - 읽기 전용 분석, 설명, 리뷰 요청은 사용자가 변경도 요청하지 않은 이상 코드나 문서를
-  수정하지 않습니다.
+수정하지 않습니다.
 
 ## 문서 동기화
 
 - 진입점, 프로세스 구성, 실행 흐름, 상태 저장, 인증·승인 또는 외부 시스템 경계를 바꾸면
-  같은 변경에서 `docs/architecture/system.md`를 갱신합니다.
+같은 변경에서 `docs/architecture/system.md`를 갱신합니다.
 - package 책임, 의존 방향, composition root, type owner 또는 코드 배치 규칙을 바꾸면 같은
-  변경에서 `docs/architecture/code.md`를 갱신합니다.
+변경에서 `docs/architecture/code.md`를 갱신합니다.
 - 테스트 위치, 선택 기준, 공식 검증 명령 또는 실제 QA 기준을 바꾸면 같은 변경에서
-  `docs/development/testing.md`를 갱신합니다.
+`docs/development/testing.md`를 갱신합니다.
 - 사용자 명령, 환경변수, 설치 또는 운영 절차를 바꾸면 같은 변경에서 `README.md`를
-  갱신합니다.
+갱신합니다.
 - 아직 구현되지 않은 설계 문서는 `Status: Draft`와 미구현 범위를 표시합니다.
 
 필요한 문서가 빠진 구조 변경은 완료한 것으로 간주하지 않습니다.
@@ -62,14 +62,14 @@
 ## 핵심 불변식
 
 - Mac production model 경로는 같은 macOS 사용자의 공식 Codex CLI 로그인 세션을 사용하며
-  `trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
+`trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
 - canonical conversation history를 보존하고 compaction은 provider projection만 줄입니다.
 - shared workspace context는 private chat에서 read-only입니다.
 - private session은 workspace, member, session scope를 모두 적용합니다.
 - secret을 로그나 테스트 산출물에 기록하지 않고 외부 side effect는 승인 또는 worker 경계를
-  통과합니다.
+통과합니다.
 - artifact는 설정된 root와 digest provenance를 유지하며 확인할 수 없는 side effect를
-  무조건 재시도하지 않습니다.
+무조건 재시도하지 않습니다.
 - 생성 결과는 artifact 검증과 사람의 review 승인을 거쳐야 합니다.
 - 외부 게시·전달은 [시스템 아키텍처](./docs/architecture/system.md)의 채널별 승인 경계를
   따릅니다. Mac worker는 게시하지 않으며, Cloudflare Threads 게시에는 사람의 이미지 승인과
