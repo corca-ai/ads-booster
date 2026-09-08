@@ -4,8 +4,11 @@ Status: Active
 Last reviewed: 2026-08-31
 
 The hosted workspace owns candidate/review state, D1 worker registration and leases, callback
-acceptance, and R2 image storage. Workers AI may create hosted candidates. A caption-approved
-candidate creates `hosted_workspace_capture_v1` for an enrolled Mac.
+acceptance, and R2 image storage. Candidate generation queues `generate_candidates` for an enrolled
+Mac worker, which runs the Python candidate generator and returns candidates through its callback.
+Workers AI is still used for account suggestions; the retained Workers AI candidate generator is
+not called by the current generation routes. A caption-approved candidate creates
+`hosted_workspace_capture_v1` for an enrolled Mac.
 
 ```text
 candidate approval -> D1 task/lease -> Mac callback -> R2/D1 image -> human review
