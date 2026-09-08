@@ -28,6 +28,7 @@ from ads_booster.marketing.agent_service.application import (
 from ads_booster.marketing.agent_service.browser_login import BrowserLogin
 from ads_booster.marketing.agent_service.creative_api import dispatch_creative
 from ads_booster.marketing.agent_service.delivery_api import dispatch_delivery
+from ads_booster.marketing.agent_service.image_edit_api import dispatch_image_edit
 from ads_booster.marketing.agent_service.jobs import AgentJobs, WebJob
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
@@ -233,6 +234,16 @@ class MarketingAgentApi:
             )
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            image_edit_response = dispatch_image_edit(
+                method,
+                path,
+                body,
+                identity=identity,
+                service=self.service,
+                allow_review=self._can_approve(identity),
+            )
+            if image_edit_response is not None:
+                return ApiResponse(*image_edit_response)
             performance_response = dispatch_performance(
                 method, target, identity=identity, service=self.service
             )
