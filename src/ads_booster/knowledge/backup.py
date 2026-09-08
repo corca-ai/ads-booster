@@ -77,7 +77,7 @@ def create_backup(
             if len(body) != item.byte_length or sha256(body).hexdigest() != item.sha256:
                 raise RuntimeError(f"knowledge_backup_file_integrity:{item.relative_path}")
             output = _inside(target / "files", item.relative_path)
-            output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            make_private_backup_parents(target, output.parent)
             output.write_bytes(body)
             output.chmod(0o600)
             copied.append(item)
@@ -153,3 +153,10 @@ __all__ = [
     "KnowledgeBackupManifest",
     "create_backup",
 ]
+
+
+def make_private_backup_parents(root: Path, directory: Path) -> None:
+    current = root
+    for part in directory.relative_to(root).parts:
+        current /= part
+        current.mkdir(mode=0o700, exist_ok=True)
