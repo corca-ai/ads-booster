@@ -26,6 +26,7 @@ from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
+from ads_booster.marketing.agent_service.delivery_api import PrepareDelivery
 from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
 from ads_booster.marketing.agent_service.delivery_tools import (
     DeliveryPreparationTool,
@@ -154,10 +155,14 @@ def test_reasoning_prepares_durable_same_run_review_without_grant(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    "key", ["scope", "tenant_id", "run_id", "approval", "external_execution_enabled"]
+    "key",
+    ["scope", "tenant_id", "run_id", "approval", "external_execution_enabled", "d1_campaign_id"],
 )
-def test_model_cannot_supply_authority(key: str) -> None:
+@pytest.mark.parametrize("request_model", [DeliveryPrepareRequest, PrepareDelivery])
+def test_request_rejects_authority_and_retired_fields(
+    key: str, request_model: type[DeliveryPrepareRequest | PrepareDelivery]
+) -> None:
     body = payload()
     body[key] = "forged"
     with pytest.raises(ValueError, match="extra_forbidden"):
-        _ = DeliveryPrepareRequest.model_validate(body)
+        _ = request_model.model_validate(body)

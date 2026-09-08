@@ -112,10 +112,17 @@ def _approve(store: DeliveryReviewStore, proposal: DeliveryProposal, revision: i
     ).revision
 
 
-def test_exact_approval_change_invalidation_and_prepared_schedule(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy_campaign_id", [None, "historical-campaign"])
+def test_exact_approval_change_invalidation_and_prepared_schedule(
+    tmp_path: Path, legacy_campaign_id: str | None
+) -> None:
     store = _store(tmp_path)
-    proposal = _publication()
+    proposal = _publication().model_copy(update={"d1_campaign_id": legacy_campaign_id})
     _ = store.prepare(proposal, actor_scope=SCOPE)
+    restored = DeliveryReviewStore(store.database).get(SCOPE, proposal.proposal_id)
+    assert restored is not None
+    assert restored.proposal.model_dump_json() == proposal.model_dump_json()
+    assert restored.proposal.target_sha256 == proposal.target_sha256
     with pytest.raises(ValueError, match="reviewer_not_authorized"):
         _ = store.review(
             SCOPE,
