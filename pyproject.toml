@@ -1,6 +1,6 @@
 [project]
 name = "trace-appium-capture"
-version = "0.5.0"
+version = "0.5.1"
 description = "On-premises Trace Marketing Agent Service with replaceable execution workers"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"

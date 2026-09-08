@@ -39,6 +39,7 @@ from ads_booster.marketing.agent_service.creative_asset_verifier import Creative
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
 from ads_booster.marketing.agent_service.delivery_tools import DeliveryPreparationTool
+from ads_booster.marketing.agent_service.image_generation import CodexImages
 from ads_booster.marketing.agent_service.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -100,6 +101,7 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
     codex = CodexCli(executable=codex_executable, model=model_id)
     configured = ConfiguredAgentTools(
         config=integrations or AgentServiceIntegrationConfig(),
+        images=CodexImages(codex_executable, paths.root / "images", model_id),
         delivery_tool=DeliveryPreparationTool(
             DeliveryReviewStore(
                 paths.database,

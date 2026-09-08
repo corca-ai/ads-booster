@@ -706,6 +706,30 @@ for process launch and health checks; both default to 8090. Cross-boundary regre
 launch argv, update health and status to the same configured port. The standalone manager remains
 Python 3.10 compatible and does not import the Python 3.14 application to discover its port.
 
+`marketing/agent_service/github_issues.py` owns fixed-repository issue input validation, private token
+loading and GitHub HTTP execution/readback. `tool_adapters/descriptors.py` supplies its external-effect
+approval descriptor; `ConfiguredAgentTools` registers it only with a configured credential.
+`cli/marketing.py` loads the token at service composition, while `cli/server.py` owns hidden operator
+setup and atomic secret storage. `channels/github_results.py` projects successful receipt-bound issue
+URLs for both Slack entry points. Canonical run admission, execution checkpoints and reconciliation
+remain in Agent Core/service/runtime, with no separate retry or issue state store.
+
+`execution_control.py` provides the channel/provider-neutral cooperative scope and owned subprocess
+cancellation. `providers/codex_cli.py` uses it for structured jobs; `codex_reasoning.py` preserves the
+cancellation signal. The canonical service owns checkpoints and append-only STOP transitions.
+`channels/slack_progress.py` owns only status-message identity and durable cancellation requests.
+`slack_events.py` owns signed button authorization, status updates and scoped execution, using the
+existing sender transport (`chat.postMessage` for new status, `chat.update` for known timestamps).
+The HTTP composition exposes only the signed interaction route during maintenance, without admitting
+new runs. Slack manifests own the external callback registration contract.
+
+`agent_service/image_generation.py` owns the image input schema, Codex image turn and bounded PNG
+artifact verification. The descriptor remains in `tool_adapters/descriptors.py`; installed lifecycle
+injects the executor and private artifact root through `ConfiguredAgentTools`. Existing Agent Core
+owns exact approval and uncertain execution handling. `channels/slack_images.py` owns receipt-bound
+artifact projection, durable upload admission and Slack's external file-upload adapter. Slack event
+composition binds the artifact directory beside the canonical service database and passes only the
+authorized conversation, never model-selected channel IDs or local filenames.
 `CanonicalKnowledgeIngress` owns additive `knowledge_execution_bindings`: immutable Slack source
 admission remains separate from message-to-actual-Run execution binding. Its current binding and
 pending-fence queries resolve aliases before knowledge preparation. `MarketingAgentService` owns
@@ -714,3 +738,9 @@ old prepared knowledge from generic evidence, and `knowledge_is_current` for def
 Image-edit and remote-capture owners use that public authority check before effects.
 The composition root and API retain both knowledge ingress and current production reviewer hooks;
 service doctor remains read-only and does not prepare state directories.
+
+`SqliteChannelStore.bind_workspace_member` owns idempotent first-use identity admission; it
+preserves existing approval, disable and revocation state. `SlackEvents.workspace_mentions`, enabled
+by installed `events_from_env`, removes static channel/member admission limits after
+app/team/signature validation. Worker execution and notification re-check current identity
+authority.

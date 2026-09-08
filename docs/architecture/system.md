@@ -1076,6 +1076,59 @@ secrets to learn the port. The standalone `service run --port` remains an indepe
 Older fixed-8765 managers require an idle/offline reinstall with preserved configuration/state/current
 link backup before the new channel can take over; ordinary self-update cannot bridge that change.
 
+### Slack GitHub issue creation
+
+The optional `github.issue.create` integration writes only to `corca-ai/ads-booster`. A private
+operator token file is loaded at service startup, outside release state; `server github-setup`
+checks repository access and writes it atomically without rewriting Slack setup. Tokens never enter
+catalogs, reasoning requests or receipts. The GitHub REST adapter rejects redirects, POSTs only the
+approved title/body, GETs the created issue number and verifies its URL and exact text before returning
+a minimal receipt. Known HTTP rejections return sanitized failure; uncertain mutation or readback
+results use the canonical awaiting-reconciliation boundary with no blind retry.
+
+Slack's existing signature/member/channel scope and exact invocation-hash approval remain mandatory.
+The public repository is explicit in the frozen input reviewed by the approver. Private DM policy
+still exposes only public search. Both Slack message and slash-command summaries project issue URLs
+from matching successful receipt/output digests, independently of model-generated prose. No new
+posting scheduler, GitHub shell authority or repository-wide token access is introduced.
+
+### Slack progress and cancellation
+
+Each mention/DM execution owns a durable `slack_progress` row binding the inbox message, Run and
+Slack status-message timestamp. A worker-local status thread updates that message every five seconds
+with the current execution stage/elapsed time; final outbox delivery updates the same timestamp and
+removes buttons. Unknown initial sends are not repeated; final delivery may use a separate message
+when no confirmed timestamp exists. Status threads join before final delivery to prevent late overwrites.
+
+The signed form endpoint `/channels/slack/interactions` accepts only the stop action for the recorded
+app/team/channel/message, from its author or a shared-channel approver. It persists cancellation
+without the execution lock or an outbound Slack call, including during maintenance drain. It admits
+no new work. Cancellation flags survive worker restart and affect only their original inbox job.
+
+A thread-scoped control checks before/after reasoning and before tool dispatch. Official Codex
+structured jobs terminate and reap their owned process group when cancelled; other processes and
+services are untouched. The service appends an explicit STOP step after the execution yields.
+Already-started external effects retain normal receipt/readback or awaiting-reconciliation handling,
+then subsequent work stops. Canonical history and completed side-effect receipts are preserved.
+
+### Codex image drafts in Slack
+
+The installed composition registers approval-required `creative.image.generate` as a local-artifact
+tool. Its dedicated ephemeral Codex turn uses the service user's official login, enables image
+generation and disables shell, apps and browser tools. User/project configuration is ignored. The
+visual brief cannot select paths or delivery destinations. The adapter reads the CLI JSON thread.started ID and selects the latest PNG from a bounded set of up to four variants in that runtime
+thread’s generated_images directory, never from model-provided paths. It validates the bounded PNG
+and persists a private copy by SHA-256, recording prompt/invocation provenance in the
+canonical receipt/evidence stream. Cancellation uses the shared owned-process control; interrupted
+admitted generation retains the runtime's uncertain-effect state without regeneration.
+
+Mention-thread result delivery projects only matching successful receipt/evidence pairs. After
+current member/channel authorization it reads the digest-bound file and shares a review draft in that
+exact channel/thread through Slack's external upload protocol. `slack_image_deliveries` records
+admission before upload, keyed by conversation/run/digest; unknown completion is never reposted.
+The bot credential goes only to fixed Slack API endpoints, never to the signed file upload URL.
+Private conversations remain public-search-only. Slash/API callers can generate local artifacts,
+but automatic image attachment is the mention-thread delivery surface.
 ### Combined work continuity and team knowledge
 
 The service keeps two complementary context owners: scoped work memory for feedback/learning and
@@ -1095,3 +1148,10 @@ A stale context discovered after runtime admission retains the pending invocatio
 reconciliation, since no schema-safe prestart cancellation contract exists. It never silently
 replans over the admitted invocation. Knowledge and image worker lifecycles coexist with the
 managed server's persistent8090 port and existing maintenance/shutdown boundaries.
+
+Installed Slack Events admit signed mentions from all members in the configured app/team and any
+internal channel where the bot receives mentions. User identity binding is created atomically on
+first use without replacing existing grants or revocations. New bindings can create runs but cannot
+approve effects. Shared threads remain channel/thread scoped; DMs remain member/session scoped.
+Slack Connect events are excluded. Legacy channel/member lists still constrain slash commands, not
+installed Events conversations.

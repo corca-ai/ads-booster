@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from threading import Event, Thread
 from typing import TYPE_CHECKING
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 from pydantic import TypeAdapter
 
@@ -22,6 +25,7 @@ from ads_booster.contracts.agent_run import (
     contract_sha256,
 )
 from ads_booster.contracts.tool_capability import EffectClass
+from ads_booster.execution_control import ExecutionCancelledError, ExecutionControl, execution_scope
 from ads_booster.knowledge.contract_types import ConversationEventKind
 from ads_booster.marketing.agent_core.registry import CapabilityPolicy
 from ads_booster.marketing.agent_service.application import (
@@ -36,6 +40,7 @@ from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
 from ads_booster.marketing.agent_service.slack_image_review import bind_files
 from ads_booster.marketing.agent_service.work_continuation import continue_work
 from ads_booster.marketing.channels.contracts import ChannelIdentityBinding, ChannelKind
+from ads_booster.marketing.channels.github_results import issue_results
 from ads_booster.marketing.channels.knowledge_ingress_slack import (
     SlackIngressRequest,
     build_slack_ingress,
@@ -56,11 +61,13 @@ from ads_booster.marketing.channels.slack_conversations import (
 )
 from ads_booster.marketing.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.marketing.channels.slack_delivery import delivery_command
+from ads_booster.marketing.channels.slack_images import SlackImageDelivery
 from ads_booster.marketing.channels.slack_memory import memory_command
 from ads_booster.marketing.channels.slack_performance import (
     is_performance_command,
     performance_command,
 )
+from ads_booster.marketing.channels.slack_progress import SlackProgressStore
 from ads_booster.marketing.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
@@ -68,8 +75,9 @@ from ads_booster.marketing.channels.slack_work_observations import (
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Generator, Mapping
 
+_PROGRESS_INTERVAL_SECONDS = 5
 _MAX_CHALLENGE = 4096
 _MAX_MESSAGE = 8000
 _MAX_FIELD = 100000
@@ -103,8 +111,11 @@ class SlackEvents:
     channel_ids: frozenset[str]
     allow_dm: bool = True
     knowledge_sink: KnowledgeIngressSink | None = None
+    image_delivery: SlackImageDelivery | None = None
+    workspace_mentions: bool = False
     store: SlackConversationStore = field(init=False)
     private_service: MarketingAgentService = field(init=False)
+    progress: SlackProgressStore = field(init=False)
 
     def __post_init__(self) -> None:
         """Share the canonical ledger while constraining private tool authority."""
@@ -119,6 +130,7 @@ class SlackEvents:
                 else self.commands.application.service.knowledge.ingress
             ),
         )
+        self.progress = SlackProgressStore(self.store)
         self.private_service = replace(
             self.commands.application.service,
             capability_policy=CapabilityPolicy(allowed_capability_ids=("research.search",)),
@@ -212,14 +224,20 @@ class SlackEvents:
         installation = self.commands.application.store.resolve_installation(
             ChannelKind.SLACK, self.commands.team_id
         )
-        identity = self.commands.application.store.resolve_identity(
-            installation.installation_id, user_id
+        if not re.fullmatch(r"[UW][A-Z0-9]+", user_id):
+            raise ValueError("slack_user_invalid")
+        identity = (
+            self.commands.application.store.bind_workspace_member(installation, user_id)
+            if self.workspace_mentions
+            else self.commands.application.store.resolve_identity(
+                installation.installation_id, user_id
+            )
         )
         if (
             not installation.enabled
             or not identity.can_create_runs
             or identity.revoked_at is not None
-            or user_id not in self.commands.allowed_user_ids
+            or (not self.workspace_mentions and user_id not in self.commands.allowed_user_ids)
         ):
             raise ValueError("slack_user_not_allowed")
         return identity
@@ -291,7 +309,9 @@ class SlackEvents:
                 return None
             thread = thread or ""  # Unthreaded DM messages share the user's DM session.
         else:
-            if channel not in self.channel_ids:
+            if not re.fullmatch(r"[CG][A-Z0-9]+", channel):
+                return None
+            if not self.workspace_mentions and channel not in self.channel_ids:
                 return None
             # Slack can deliver both message and app_mention for the same message.
             if event.get("type") == "message" and mentioned:
@@ -452,11 +472,13 @@ class SlackEvents:
         if conversation.private:
             if not self.allow_dm or conversation.owner_id != identity.member_id:
                 raise ValueError("slack_private_scope_denied")
-        elif conversation.channel_id not in self.channel_ids:
+        elif (
+            not self.workspace_mentions and conversation.channel_id not in self.channel_ids
+        ) or identity.tenant_id != conversation.tenant_id:
             raise ValueError("slack_channel_removed")
         return identity
 
-    def work_once(self, *, now: datetime) -> bool:
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ordered ingress, notification and cancellable run boundaries.
         if self.store.knowledge_ingress.dispatch_once():
             return True
         if self._notify():
@@ -476,21 +498,21 @@ class SlackEvents:
                 if plan is None:
                     plan = self._plan(conversation, message)
                     self.store.save_plan(message, plan)
-                if plan.action in {"create", "input", "resume", "revise"} and self.store.claim_ack(
-                    message
-                ):
-                    self.store.sent(
-                        message,
-                        self._send(
-                            conversation, "접수했습니다. 이 대화에서 이어서 처리하겠습니다."
-                        ),
-                        ack=True,
-                    )
                 if plan.run_id and plan.action != "reply":
                     self.store.knowledge_ingress.bind_execution(
                         message.message_id, plan.run_id, actor_id=identity.member_id
                     )
-                result = self._execute(conversation, message, plan, identity, now=now)
+                if plan.action in {"create", "input", "resume", "approve", "revise"}:
+                    with self._working(conversation, message, plan) as control:
+                        try:
+                            result = self._execute(conversation, message, plan, identity, now=now)
+                        except ExecutionCancelledError:
+                            result = self._cancelled_result(conversation, plan, now=now)
+                        else:
+                            if control.cancelled():
+                                result = self._cancelled_result(conversation, plan, now=now)
+                else:
+                    result = self._execute(conversation, message, plan, identity, now=now)
                 self.store.finish(message, result)
         except Exception:  # noqa: BLE001 - never repeat an uncertain effect; no provider secrets.
             self.store.finish(
@@ -505,6 +527,135 @@ class SlackEvents:
             )
         _ = self._notify()
         return True
+
+    def interact(self, body: bytes, headers: dict[str, str], *, now: datetime) -> JsonObject:
+        """Persist cancellation without waiting for the active execution lock or Slack API."""
+        self.commands.verifier.verify(
+            body,
+            timestamp=headers.get("x-slack-request-timestamp", ""),
+            signature=headers.get("x-slack-signature", ""),
+            now=now,
+        )
+        form = parse_qs(body.decode(), keep_blank_values=True, max_num_fields=2)
+        if set(form) != {"payload"} or len(form["payload"]) != 1:
+            raise ValueError("slack_interaction_form_invalid")
+        payload = _JSON.validate_json(form["payload"][0])
+        team, user, container = payload.get("team"), payload.get("user"), payload.get("container")
+        actions = payload.get("actions")
+        if (
+            payload.get("type") != "block_actions"
+            or payload.get("api_app_id") != self.commands.app_id
+            or not isinstance(team, dict)
+            or team.get("id") != self.commands.team_id
+            or not isinstance(user, dict)
+            or not isinstance(container, dict)
+            or not isinstance(actions, list)
+            or len(actions) != 1
+            or not isinstance(actions[0], dict)
+            or actions[0].get("action_id") != "trace_stop_run"
+        ):
+            raise ValueError("slack_interaction_scope_rejected")
+        record = self.progress.locate(_string(actions[0], "value"))
+        if (
+            record is None
+            or container.get("channel_id") != record.channel_id
+            or container.get("message_ts") != record.timestamp
+            or not record.timestamp
+        ):
+            raise ValueError("slack_interaction_message_rejected")
+        conversation = self.store.conversation(record.conversation_id)
+        if conversation is None:
+            raise ValueError("slack_conversation_missing")
+        actor = _string(user, "id")
+        identity = self._authorize(conversation, actor)
+        if actor != record.user_id and (conversation.private or not identity.can_approve):
+            raise ValueError("slack_cancel_not_allowed")
+        self.progress.cancel(record.message_id)
+        return {}
+
+    def _cancelled_result(
+        self, conversation: Conversation, plan: MessagePlan, *, now: datetime
+    ) -> str:
+        service = self._service(conversation)
+        run = service.stop(conversation.tenant_id, plan.run_id, now=now)
+        if run is not None and run.state is AgentRunState.AWAITING_RECONCILIATION:
+            return "후속 실행을 멈췄습니다. 이미 요청한 외부 작업의 결과는 확인이 필요합니다."
+        if run is not None and run.state is AgentRunState.COMPLETED:
+            return self.summary(conversation.model_copy(update={"current_run": plan.run_id}))
+        result = "실행을 중단했습니다. 새 요청을 보내면 다시 시작합니다."
+        if run is not None:
+            result += "\n" + issue_results(
+                service.repository.records(conversation.tenant_id, plan.run_id)
+            )
+        return result
+
+    @contextmanager
+    def _working(
+        self, conversation: Conversation, message: Message, plan: MessagePlan
+    ) -> Generator[ExecutionControl]:
+        self.progress.begin(message.message_id, plan.run_id, conversation.channel_id)
+        control = ExecutionControl(lambda: self.progress.cancelled(message.message_id))
+        stopped = Event()
+        started = time.monotonic()
+        if self.store.claim_ack(message):
+            state = self._status(conversation, message, control.stage, initial=True)
+            self.store.sent(message, state, ack=True)
+
+        def refresh() -> None:
+            while not stopped.wait(_PROGRESS_INTERVAL_SECONDS):
+                try:
+                    stage = (
+                        "중단 요청을 처리하고 있습니다" if control.cancelled() else control.stage
+                    )
+                    _ = self._status(
+                        conversation, message, f"{stage} · {int(time.monotonic() - started)}초 경과"
+                    )
+                except Exception:  # noqa: BLE001,S110 - status failure cannot retry agent work.
+                    pass
+
+        thread = Thread(target=refresh, name="trace-slack-progress", daemon=True)
+        thread.start()
+        try:
+            with execution_scope(control):
+                yield control
+        finally:
+            stopped.set()
+            thread.join()
+
+    def _status(
+        self, conversation: Conversation, message: Message, text: str, *, initial: bool = False
+    ) -> str:
+        record = self.progress.locate(message.message_id)
+        if record is None or (not initial and not record.timestamp):
+            return "skipped"
+        payload = self._payload(conversation, "⏳ " + text)
+        blocks = payload["blocks"]
+        if isinstance(blocks, list) and not record.cancelled:
+            blocks.append(
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "실행 중단"},
+                            "action_id": "trace_stop_run",
+                            "value": message.message_id,
+                            "style": "danger",
+                        }
+                    ],
+                }
+            )
+        if record.timestamp:
+            payload["ts"] = record.timestamp
+            _ = payload.pop("thread_ts", None)
+        try:
+            response = self.commands.sender(payload)
+            if response.get("ok") is True and isinstance(response.get("ts"), str):
+                self.progress.sent(message.message_id, str(response["ts"]))
+                return "delivered"
+            return "failed"  # noqa: TRY300 - explicit Slack success/rejection.
+        except Exception:  # noqa: BLE001 - no duplicate initial status post on uncertain send.
+            return "unknown"
 
     def _plan(self, conversation: Conversation, message: Message) -> MessagePlan:  # noqa: C901,PLR0911,PLR0912 - freeze one of the supported conversation actions.
         text = message.text
@@ -778,15 +929,15 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        result = f"{answer}\n\n상태: {run.state.value}\n실행: {run.run_id}"
+        result = (
+            f"{answer}\n{issue_results(records)}\n\n상태: {run.state.value}\n실행: {run.run_id}"
+        )
         if self.commands.public_links and not conversation.private:
             origin = self.commands.application.result_base_url.rstrip("/")
             result += f"\n업무·산출물 보기: {origin}/runs/{quote(run.run_id, safe='')}"
         return result
 
-    def _send(self, conversation: Conversation, text: str) -> str:
-        if not text:
-            return "skipped"
+    def _payload(self, conversation: Conversation, text: str) -> JsonObject:
         payload: JsonObject = {
             "channel": conversation.channel_id,
             "text": text,
@@ -800,6 +951,15 @@ class SlackEvents:
         }
         if conversation.thread_ts:
             payload["thread_ts"] = conversation.thread_ts
+        return payload
+
+    def _send(self, conversation: Conversation, text: str, *, timestamp: str = "") -> str:
+        if not text:
+            return "skipped"
+        payload = self._payload(conversation, text)
+        if timestamp:
+            payload["ts"] = timestamp
+            _ = payload.pop("thread_ts", None)
         try:
             response = self.commands.sender(payload)
             return "delivered" if response.get("ok") is True and response.get("ts") else "failed"
@@ -820,7 +980,19 @@ class SlackEvents:
         except ValueError:
             state = "denied"
         else:
-            state = self._send(conversation, result)
+            if self.image_delivery is not None and not conversation.private:
+                plan = self.progress.locate(message.message_id)
+                if plan is not None:
+                    result += "\n" + self.image_delivery.deliver(
+                        self._service(conversation).repository.records(
+                            conversation.tenant_id, plan.run_id
+                        ),
+                        conversation,
+                    )
+            status = self.progress.locate(message.message_id)
+            state = self._send(
+                conversation, result, timestamp="" if status is None else status.timestamp
+            )
         self.store.sent(message, state)
         return True
 
@@ -878,4 +1050,12 @@ def events_from_env(env: Mapping[str, str], commands: SlackCommands | None) -> S
         bot_user_id,
         channels,
         allow_dm=env.get("TRACE_MARKETING_SLACK_ALLOW_DM", "1") == "1",
+        workspace_mentions=True,
+        image_delivery=SlackImageDelivery(
+            commands.application.store.database_path.parent / "images",
+            commands.application.store.database_path,
+            env.get("TRACE_MARKETING_SLACK_BOT_TOKEN", ""),
+        )
+        if env.get("TRACE_MARKETING_SLACK_BOT_TOKEN")
+        else None,
     )

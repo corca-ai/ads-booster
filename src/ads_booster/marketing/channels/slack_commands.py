@@ -27,6 +27,7 @@ from ads_booster.marketing.channels.contracts import (
     ChannelKind,
     ChannelRunRequest,
 )
+from ads_booster.marketing.channels.github_results import issue_results
 from ads_booster.marketing.channels.slack import SlackRequestVerifier
 from ads_booster.transport.json_types import JsonObject
 
@@ -370,4 +371,6 @@ class SlackCommands:
                 decision = latest.payload.get("decision")
                 if isinstance(decision, dict):
                     lines.append(str(decision.get("reasoning_summary", ""))[:1800])
+        if result := issue_results(records):
+            lines.append(result)
         return "\n".join(lines)

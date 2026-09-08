@@ -375,6 +375,41 @@ The installed Ubuntu lifecycle fixture occupies 8765 with an unrelated HTTP serv
 agent on 8090, performs real systemd update/restart and verifies the unrelated service and persistent
 port survive. This does not prove the live on-prem port migration or Cloudflare route change.
 
+## GitHub issues from Slack
+
+Focused owners: `tests/marketing/agent_service/test_github_issues.py`,
+`tests/marketing/channels/test_slack_github_issues.py`, and `tests/cli/test_github_setup.py`.
+For composition changes include the existing service/channels/provider/CLI selections above.
+The server CI includes these owners. Assert fixed repository and exact approved payload, no calls
+before approval, creation plus readback, receipt-backed URL rendering, duplicate Slack delivery,
+uncertain write no-retry after restart, private-DM denial, safe credential storage and secret-free
+failure output. Reuse existing member/approver/hash/recovery tests instead of duplicating those rules.
+Run the focused owners against a newly built non-editable installed wheel outside the checkout with
+pytest's source pythonpath disabled. This proves installed composition with fixture GitHub/Slack and
+reasoning transports, not a live GitHub write or on-prem credential configuration. Operator acceptance
+requires one authorized real issue, readback URL and Slack reply after configuring the server token.
+
+Slack progress/cancellation: `tests/marketing/channels/test_slack_progress.py` covers status replacement,
+heartbeat/final ordering, signed immediate stop during active reasoning and maintenance, exact message
+scope, non-owner denial, duplicate old buttons, restart and externally completed/uncertain issue
+requests. `tests/providers/test_execution_control.py` runs a real sleeping child through the official
+Codex adapter seam, proves cancellation/reaping and retained timeout behavior. Include existing
+service/channels tests and `tests/providers/test_codex_cli_generation.py` for structured subprocess
+compatibility. Server CI includes the cancellation subprocess tests. Repeat these focused cases with
+a freshly installed wheel outside the checkout. Fixtures do not prove real Slack interactivity;
+operator acceptance requires enabling the callback URL, observing a live stage update, stopping a
+running answer and successfully starting another request.
+
+Image drafts: `tests/marketing/agent_service/test_image_generation.py` owns artifact/thread binding
+and `tests/marketing/channels/test_slack_images.py` exercises signed mention -> exact approval
+-> configured image tool -> PNG verification -> original-thread file attachment. It also covers DM
+denial, invalid output, path/symlink/digest rejection, upload URL origin and credential isolation,
+uncertain completion and restart deduplication. Run with service/channels, Codex reasoning/cancellation
+and onboarding owners; repeat the image/progress/process cases against a fresh non-editable wheel.
+Fixture PNGs and HTTP transports do not establish live image entitlement or Slack upload permission.
+Operator acceptance uses the server's actual login, one approved image brief and a visible draft in
+its originating thread after adding files:write and reinstalling the Slack app. A human reviews the
+result's visual correctness before use.
 ## PR134 / PR136 integration acceptance
 
 The combined candidate retained the persistent8090 server change from main. The existing on-prem
@@ -393,3 +428,9 @@ scope, original history retention, revoked prepared knowledge, follow-up retriev
 change between approval and actual start. CLI compatibility additionally proves doctor creates no
 state. Repeat only an affected owner after a further fix; use the final GitHub head's Ubuntu/Mac
 checks as installed CI evidence before merge.
+
+Workspace-wide mention admission is covered by `tests/marketing/channels/test_slack_events.py`:
+installed composition, new users/channels, distinct identity, preserved approver rights, rejected
+foreign/shared workspaces, disabled/revoked users and non-approver effects. Run this owner together
+with Slack progress and installed knowledge ingress checks; actual multi-user Slack delivery
+requires live workspace verification.

@@ -170,6 +170,11 @@ class MarketingAgentApi:
             if self.maintenance is not None:
                 health.update(self.maintenance.health())
             return ApiResponse(200, health)
+        # Cancellation admits no new work and remains available while an update drains.
+        if method == "POST" and urlsplit(target).path == "/channels/slack/interactions":
+            return self._dispatch(
+                method, target, authorization=authorization, body=body, now=now, headers=headers
+            )
         if self.maintenance is not None:
             with self.maintenance.work() as admitted:
                 if not admitted:
@@ -223,6 +228,17 @@ class MarketingAgentApi:
                 return ApiResponse(503, {"error": "slack_inbox_full"})
             except ValueError, UnicodeError:
                 return ApiResponse(403, {"error": "slack_event_rejected"})
+        if (
+            method == "POST"
+            and path == "/channels/slack/interactions"
+            and self.slack_events is not None
+        ):
+            try:
+                return ApiResponse(
+                    200, self.slack_events.interact(body, headers, now=now or datetime.now(UTC))
+                )
+            except ValueError, UnicodeError:
+                return ApiResponse(403, {"error": "slack_interaction_rejected"})
         if self.slack_only:
             return ApiResponse(404, {"error": "slack_only_service"})
         login = self.browser_login

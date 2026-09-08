@@ -864,9 +864,10 @@ check. Settings, secrets and canonical records remain outside release directorie
 and a one-time timer installation are required; these files do not deploy themselves to a server.
 Candidate packages and worktree tests are not proof of a live main update, Slack send or Linux reboot.
 
-Slack conversation setup: enable `TRACE_MARKETING_SLACK_BOT_USER_ID`, set optional comma-separated
-`TRACE_MARKETING_SLACK_ALLOWED_CHANNEL_IDS` (defaults to the primary channel), and use
-`TRACE_MARKETING_SLACK_ALLOW_DM=1` for allowed members' DMs. The signed
+Slack conversation setup: enable `TRACE_MARKETING_SLACK_BOT_USER_ID` and invite the bot to an
+internal channel. Any workspace member can mention it there. Legacy configured channel/member
+lists no longer restrict installed Events conversations. Use `TRACE_MARKETING_SLACK_ALLOW_DM=1`
+for members' DMs. The signed
 `/channels/slack/events` route acknowledges durable admission before reasoning. Mentions start
 threads; ordinary replies continue them with scoped persisted context. DM runs use a derived
 workspace/member/session tenant and search-only capability policy; they cannot mutate shared
@@ -874,3 +875,103 @@ workspace state or invoke delivery tools. `상태`, `검토 1`, `승인 해시`,
 `다시 시작` work within the conversation. File contents and Slack-wide history search are not supported.
 Use the [merge-to-Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md), creating
 from the bootstrap manifest first and activating the full Events manifest after server startup.
+
+### Create ads-booster issues from Slack
+
+The optional `github.issue.create` tool creates issues only in `corca-ai/ads-booster`.
+In an allowed shared Slack channel, mention the agent with the issue details. It proposes the
+repository, title and body for review; use `검토 1` (and subsequent pages), then send the exact
+`승인 <hash>` reply as a configured approver. `/trace` uses its existing review/approve commands.
+After creation and GitHub readback, the reply includes the actual issue URL. Private DMs do not
+have repository write authority. Labels, assignees, PRs and other repositories are not supported.
+
+After the update reaches your server, run as the service user:
+
+```bash
+trace-marketing server github-setup
+```
+
+Enter a GitHub fine-grained personal access token in the hidden terminal prompt. Select resource
+owner `corca-ai`, only repository `ads-booster`, and repository **Issues: Read and write** permission.
+See [GitHub's create-issue permission contract](https://docs.github.com/en/rest/issues/issues#create-an-issue).
+If the organization requires token approval, wait for it before testing. Never paste the token into
+Slack or a chat. The command checks repository access without creating an issue, then stores the
+credential in `~/.config/trace-marketing/github.token` with mode 0600; this check alone does not prove
+write permission. Existing Slack settings and credentials are preserved.
+
+Once no agent work/update is in progress, restart only the agent:
+
+```bash
+systemctl --user restart trace-marketing.service
+trace-marketing server status
+```
+
+The service reads that private file on startup. For a custom path, set
+`TRACE_MARKETING_GITHUB_TOKEN_FILE` in the service environment; it must name a private regular file.
+The default token file is outside the release directory and survives main updates. Rotate it with
+`server github-setup` and restart the idle service. Remove the credential file and restart to disable
+the tool. GitHub authentication for automatic main updates does not grant this write capability.
+
+A timeout, malformed creation response or failed readback leaves the run awaiting reconciliation;
+creation is never blindly retried. Check the repository's recent issues before making another request.
+Explicit GitHub rejection (for example 401/403) returns a sanitized failure instead of an issue URL.
+
+### Slack working status and stop button
+
+Mention/DM requests now show one working message with an **실행 중단** button. The same message
+updates its current stage and elapsed time every five seconds, then becomes the answer, approval
+request, failure or stopped result. The old acceptance-only message is no longer sent. This is
+execution status, not streaming model tokens or an estimated completion percentage.
+
+For an existing Slack app, after deploying this update enable **Interactivity & Shortcuts** and set:
+
+```text
+https://marketing-agent.borca.ai/channels/slack/interactions
+```
+
+Use your own public hostname for another installation. Both exported manifests include this setting;
+`trace-marketing server manifest --origin https://marketing-agent.borca.ai` prints the updated manifest.
+Existing installations must apply the interactivity setting once; automatic server updates cannot
+change the Slack app configuration. The existing `chat:write` scope also permits message updates.
+
+The request author (or a configured approver in a shared channel) can stop that execution. The signed
+button callback is acknowledged without waiting for reasoning. It cancels the owned Codex subprocess
+and prevents subsequent planning/tool dispatch. Already-dispatched external requests finish or enter
+reconciliation; stopping does not undo a GitHub issue that was already created. The final message
+keeps verified issue links and reports uncertain effects explicitly. Cancellation survives restart,
+and a delayed old button cannot stop a newer request. `종료` still closes conversation auto-replies;
+the button stops the current execution without closing the conversation.
+
+### Generate an image from Slack with the server's Codex login
+
+In an allowed shared channel, mention the bot with a visual brief, for example
+`@Trace Marketing Agent 파란 배경의 미니멀한 Trace 앱 광고 이미지 한 장 만들어줘`.
+Review the proposed `creative.image.generate` prompt and approve its exact hash. The installed
+server runs one dedicated official Codex image-generation turn with its existing ChatGPT login and
+configured model; no image API key or Mac/Appium worker is required. The account/model must support
+Codex's `image_generation` feature. Authentication alone does not prove image-generation entitlement.
+
+A validated PNG draft is attached to the originating Slack thread for human visual review. Generated
+files are private, digest-addressed artifacts under the service state's `images/` directory, outside
+release directories. Results include image/prompt/invocation digests and dimensions. This first
+tool generates one new PNG from text and is not exposed in private DMs. Existing optional
+image-review/edit tools retain their own configuration; this tool accepts no reference-image input. It does not publish the draft to a marketing channel.
+
+For an existing Slack app add the Bot Token Scope **files:write** under **OAuth & Permissions**, then
+**Reinstall to Workspace** and approve the added permission. Both manifests include the scope. If Slack
+issues a replacement bot token, enter it through server setup's hidden prompt and restart the idle
+agent; never paste it in chat. Keep the previously configured interaction callback for the stop button.
+
+Working status includes generation and image validation. Stopping cancels the owned Codex process;
+if generation was already admitted the run can require reconciliation because usage/results may be
+uncertain. It never automatically reruns an uncertain generation. Slack attachment failures preserve
+the local draft, report the unconfirmed upload and do not upload again automatically. A generated
+image requires human review; a PNG/digest check is not visual approval.
+
+Installed Slack mention access is workspace-wide: invite the bot to any internal public or private
+channel, then any member can mention it and continue in that thread. Existing configured
+member/channel lists no longer limit Events API conversations. Each newly seen Slack user gets a
+separate durable identity without approval rights; configured approvers retain their rights.
+Revoked/disabled identities and Slack Connect channels remain rejected. `/trace` slash commands
+retain their configured channel/member restrictions. No additional Slack scope or setup reset is
+required for mention access after updating the server.

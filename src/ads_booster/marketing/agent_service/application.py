@@ -36,6 +36,7 @@ from ads_booster.contracts.knowledge_preparation import (
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import ToolExecutionResult
+from ads_booster.execution_control import checkpoint
 from ads_booster.marketing.agent_core.registry import CapabilityPolicy, ToolRegistry
 from ads_booster.marketing.agent_service.sqlite_repository import (
     AgentRunConflictError,
@@ -144,6 +145,30 @@ class MarketingAgentService:
                 admission=admission,
             )
             return self._plan(run, evidence=(), now=now)
+
+    def stop(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun | None:
+        """Stop future work after the owning execution has yielded; preserve uncertain effects."""
+        with self.execution_lock:
+            run = self.repository.get(tenant_id, run_id)
+            if run is None or run.state in {
+                AgentRunState.STOPPED,
+                AgentRunState.COMPLETED,
+                AgentRunState.FAILED,
+                AgentRunState.AWAITING_RECONCILIATION,
+            }:
+                return run
+            return self.repository.append_step(
+                run,
+                _step(
+                    run,
+                    kind=AgentStepKind.STOP,
+                    input_sha256=contract_sha256({"run": run_id, "reason": "user_cancelled"}),
+                    output_sha256=contract_sha256({"state": "stopped"}),
+                    now=now,
+                ),
+                state=AgentRunState.STOPPED,
+                expected_revision=run.revision,
+            )
 
     def drive(  # noqa: PLR0911 - distinct persisted recovery boundaries.
         self, tenant_id: str, run_id: str, *, now: datetime
@@ -407,6 +432,7 @@ class MarketingAgentService:
         evidence: tuple[JsonObject, ...],
         now: datetime,
     ) -> AgentRun:
+        checkpoint("내용을 살펴보고 답변을 작성하고 있습니다")
         interrupted = self._pause_for_signal(run, now=now)
         if interrupted is not None:
             return interrupted
@@ -514,6 +540,7 @@ class MarketingAgentService:
             prepared_context=prepared_context,
         )
         reasoning_result = self.reasoning.plan(reasoning_request)
+        checkpoint("다음 작업을 확인하고 있습니다")
         if reasoning_result.receipt.request_sha256 != contract_sha256(reasoning_request):
             raise ValueError("reasoning_receipt_request_digest_mismatch")
         decision = reasoning_result.decision
@@ -875,6 +902,13 @@ class MarketingAgentService:
         persist_invocation: bool,
         admitted_already: bool = False,
     ) -> AgentRun:
+        checkpoint(
+            {
+                "research.search": "자료를 검색하고 있습니다",
+                "research.web": "조사 자료를 확인하고 있습니다",
+                "github.issue.create": "GitHub 이슈를 등록하고 확인하고 있습니다",
+            }.get(descriptor.capability_id, "요청한 도구 작업을 실행하고 있습니다")
+        )
         interrupted = self._pause_for_signal(run, now=now)
         if interrupted is not None:
             return interrupted

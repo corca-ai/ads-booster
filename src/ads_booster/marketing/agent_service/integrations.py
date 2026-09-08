@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.error import HTTPError
@@ -24,6 +24,15 @@ from ads_booster.marketing.agent_service.delivery_tools import (
     DeliveryPreparationTool,
     delivery_prepare_descriptor,
 )
+from ads_booster.marketing.agent_service.github_issues import (
+    CAPABILITY,
+    GitHubIssues,
+)
+from ads_booster.marketing.agent_service.github_issues import (
+    descriptor as github_descriptor,
+)
+from ads_booster.marketing.agent_service.image_generation import CodexImages
+from ads_booster.marketing.agent_service.image_generation import descriptor as image_descriptor
 from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
@@ -68,6 +77,7 @@ class AgentServiceIntegrationConfig:
     slack_channel_id: str | None = None
     notion_token: str | None = None
     notion_parent_page_id: str | None = None
+    github_token: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Reject partial integrations instead of silently hiding a requested tool."""
@@ -92,6 +102,8 @@ class ConfiguredAgentTools:
     delivery_tool: DeliveryPreparationTool | None = None
     creative_capabilities: Callable[[ToolInvocation, datetime], frozenset[str]] | None = None
     knowledge: KnowledgeServiceAdapter | None = None
+
+    images: CodexImages | None = None
 
     def adapters(self) -> Mapping[str, ToolAdapter]:
         adapters: dict[str, ToolAdapter] = {
@@ -121,6 +133,14 @@ class ConfiguredAgentTools:
         if self.config.notion_token and self.config.notion_parent_page_id:
             adapters["store.notion.daily"] = _delegating(
                 "store.notion.daily", "notion.pages_create", self._notion
+            )
+        if self.config.github_token:
+            adapters[CAPABILITY] = _delegating(
+                CAPABILITY, "github.issues", GitHubIssues(self.config.github_token).execute
+            )
+        if self.images is not None:
+            adapters["creative.image.generate"] = _delegating(
+                "creative.image.generate", "codex.image_generation", self.images.execute
             )
         if self.knowledge is not None:
             adapters.update(self.knowledge.adapters())
@@ -159,6 +179,10 @@ class ConfiguredAgentTools:
                     installation_id="configured:notion", observed_at=now, ready=True
                 )
             )
+        if self.config.github_token:
+            result.append(github_descriptor(now=now))
+        if self.images is not None:
+            result.append(image_descriptor(now=now))
         if self.knowledge is not None:
             result.extend(self.knowledge.descriptors(now=now))
         return tuple(result)

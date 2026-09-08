@@ -28,6 +28,7 @@
       "bot": [
         "commands",
         "chat:write",
+        "files:write",
         "app_mentions:read",
         "channels:history",
         "groups:history",
@@ -37,6 +38,10 @@
   },
   "settings": {
     "org_deploy_enabled": false,
-    "socket_mode_enabled": false
+    "socket_mode_enabled": false,
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://marketing-agent.borca.ai/channels/slack/interactions"
+    }
   }
 }

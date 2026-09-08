@@ -13,7 +13,7 @@ from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.http_api import MarketingAgentApi
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.channels.slack import slack_signature
-from ads_booster.marketing.channels.slack_events import SlackEvents
+from ads_booster.marketing.channels.slack_events import SlackEvents, events_from_env
 from tests.marketing.agent_service.test_application import (
     AskThenStopReasoning,
     EffectThenStopReasoning,
@@ -116,8 +116,10 @@ def test_ack_dedupe_restart_and_thread_followup_preserve_context(tmp_path: Path)
     restarted.recover()
     assert restarted.work_once(now=NOW)
     assert len(reasoning.requests) == 1
-    assert len(messages) == 2  # accepted + answer, both in the original thread
-    assert all(m["thread_ts"] == "100.001" and m["channel"] == "C1" for m in messages)
+    assert len(messages) == 2  # Initial status, then update that same Slack message.
+    assert messages[0]["thread_ts"] == "100.001"
+    assert messages[1]["ts"] == "123.456"
+    assert all(m["channel"] == "C1" for m in messages)
     assert not restarted.work_once(now=NOW)
     receive(restarted, type="message", text="둘째 질문", ts="100.002", thread_ts="100.001")
     assert restarted.work_once(now=NOW)
@@ -393,8 +395,12 @@ def test_interrupted_create_replays_frozen_plan_without_duplicate_run(tmp_path: 
     assert len(messages) == 2
 
 
-def test_nonapprover_cannot_approve_and_dm_member_scope_is_separate(tmp_path: Path) -> None:
+@pytest.mark.parametrize("workspace_mentions", [False, True])
+def test_nonapprover_cannot_approve_and_dm_member_scope_is_separate(
+    tmp_path: Path, workspace_mentions: bool
+) -> None:
     owner, messages = setup_events(tmp_path)
+    owner.workspace_mentions = workspace_mentions
     first = owner.identity("U1")
     owner.commands.application.store.put_identity(
         first.model_copy(
@@ -473,3 +479,70 @@ def test_signed_envelope_must_match_the_installed_workspace(
     with pytest.raises(ValueError, match="scope_rejected"):
         _ = owner.receive(body, headers, now=NOW)
     assert not owner.work_once(now=NOW)
+
+
+def test_workspace_mentions_admit_new_member_and_channel(tmp_path: Path) -> None:
+    owner, messages = setup_events(tmp_path)
+    installed = events_from_env({"TRACE_MARKETING_SLACK_BOT_USER_ID": "UBOT"}, owner.commands)
+    assert installed is not None
+    assert installed.workspace_mentions
+    owner = installed
+    body, headers = event(channel="CNEW", user="UNEW")
+    assert owner.receive(body, headers, now=NOW) == {"ok": True}
+    assert owner.work_once(now=NOW)
+    while owner.work_once(now=NOW):
+        pass
+    assert messages
+    assert all(message["channel"] == "CNEW" for message in messages)
+    identity = owner.identity("UNEW")
+    assert identity.member_id != owner.identity("U1").member_id
+    assert not identity.can_approve
+    assert owner.identity("U1").can_approve
+    assert owner.identity("UOTHER").member_id != identity.member_id
+
+
+@pytest.mark.parametrize("revoked", [False, True])
+def test_workspace_admission_preserves_disabled_authority(tmp_path: Path, revoked: bool) -> None:
+    owner, messages = setup_events(tmp_path)
+    owner.workspace_mentions = True
+    binding = owner.identity("UNEW")
+    binding = binding.model_copy(
+        update={"revoked_at": NOW} if revoked else {"can_create_runs": False}
+    )
+    with owner.commands.application.store._connection() as db:  # pyright: ignore[reportPrivateUsage]
+        _ = db.execute(
+            "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
+            (binding.model_dump_json(), binding.binding_id),
+        )
+    body, headers = event(user="UNEW", channel="CNEW")
+    assert owner.receive(body, headers, now=NOW) == {"ok": True}
+    assert not owner.work_once(now=NOW)
+    assert not messages
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_workspace_mentions_reject_foreign_workspace(tmp_path: Path, shared: bool) -> None:
+    owner, messages = setup_events(tmp_path)
+    owner.workspace_mentions = True
+    body, headers = signed(
+        {
+            "type": "event_callback",
+            "api_app_id": "A1",
+            "team_id": "T1" if shared else "TOTHER",
+            "is_ext_shared_channel": shared,
+            "event": {
+                "type": "app_mention",
+                "user": "UNEW",
+                "channel": "CNEW",
+                "text": "<@UBOT> hello",
+                "ts": "100.001",
+            },
+        }
+    )
+    if shared:
+        assert owner.receive(body, headers, now=NOW) == {"ok": True}
+    else:
+        with pytest.raises(ValueError, match="scope_rejected"):
+            _ = owner.receive(body, headers, now=NOW)
+    assert not owner.work_once(now=NOW)
+    assert not messages

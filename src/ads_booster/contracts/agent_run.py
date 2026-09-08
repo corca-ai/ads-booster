@@ -42,6 +42,7 @@ class AgentRunState(StrEnum):
 
 
 class AgentStepKind(StrEnum):
+    STOP = "stop"
     OBSERVE = "observe"
     PLAN = "plan"
     APPROVE = "approve"

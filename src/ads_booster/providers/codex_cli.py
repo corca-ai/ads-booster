@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Final, Literal
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from ads_booster.execution_control import controlled_process
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
@@ -352,14 +353,7 @@ class CodexCli:
             )
             command = self._structured_command(turn, schema_path, output_path)
             try:
-                completed = subprocess.run(  # noqa: S603
-                    command,
-                    input=turn.prompt,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=turn.timeout_seconds,
-                )
+                completed = controlled_process(command, turn.prompt, turn.timeout_seconds)
             except OSError as error:
                 message = f"{turn.error_prefix}_unavailable"
                 raise CodexCliError(message) from error
