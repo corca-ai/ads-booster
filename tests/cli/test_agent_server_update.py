@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 import sqlite3
+import sys
+import venv
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
@@ -19,6 +21,10 @@ if TYPE_CHECKING:
     from urllib.request import Request
 
 MANAGER = Path(__file__).resolve().parents[2] / "docs/operations/agent-server/agent-manager.py"
+LEGACY_MAINTENANCE = "ads_booster.marketing.agent_service.maintenance"
+LEGACY_HTTP_API = "ads_booster.marketing.agent_service.http_api"
+CURRENT_MAINTENANCE = "ads_booster.agent.service.maintenance"
+CURRENT_HTTP_API = "ads_booster.channels.http.http_api"
 
 
 class Manager(Protocol):
@@ -78,6 +84,169 @@ def controls(
     monkeypatch.setattr(manager, "systemctl", control)
     monkeypatch.setattr(manager, "wait_health", waiter)
     return calls
+
+
+def module_path(site_packages: Path, module: str) -> Path:
+    parts = module.split(".")
+    package = site_packages.joinpath(*parts[:-1])
+    package.mkdir(parents=True, exist_ok=True)
+    for parent in [package, *package.parents]:
+        if parent.name == "site-packages":
+            break
+        _ = (parent / "__init__.py").touch()
+    return package / f"{parts[-1]}.py"
+
+
+def candidate_venv(
+    release: Path,
+    *,
+    maintenance_module: str,
+    api_module: str,
+    protocol: int = 1,
+    api_fields: tuple[str, ...] = ("slack_only", "slack_events"),
+) -> Path:
+    executable = release / ".venv/bin/python"
+    if not executable.exists():
+        venv.EnvBuilder(with_pip=False).create(release / ".venv")
+    runtime = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site_packages = release / ".venv/lib" / runtime
+    package_root = site_packages / "site-packages"
+    _ = module_path(package_root, maintenance_module).write_text(f"UPDATE_PROTOCOL = {protocol}\n")
+    api_parameters = tuple(f"    {field}: object" for field in api_fields)
+    _ = module_path(package_root, api_module).write_text(
+        "\n".join(
+            (
+                "from dataclasses import dataclass",
+                "",
+                "@dataclass",
+                "class MarketingAgentApi:",
+                *api_parameters,
+                "",
+            )
+        )
+    )
+    calls = release / "probe-cli-calls.jsonl"
+    cli = release / ".venv/bin/trace-marketing"
+    _ = cli.write_text(
+        "\n".join(
+            (
+                f"#!{executable}",
+                "import json",
+                "import sys",
+                f"calls = {str(calls)!r}",
+                "with open(calls, 'a', encoding='utf-8') as stream:",
+                "    stream.write(json.dumps(sys.argv[1:]) + '\\n')",
+                "manifest = [",
+                "    'server', 'manifest', '--origin',",
+                "    'https://agent.example.com', '--bootstrap',",
+                "]",
+                "if sys.argv[1:] == ['service', 'doctor']:",
+                "    print(json.dumps({'ready': True}))",
+                "elif sys.argv[1:] == manifest:",
+                "    pass",
+                "else:",
+                "    raise SystemExit(2)",
+                "",
+            )
+        )
+    )
+    _ = cli.chmod(0o755)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("maintenance_module", "api_module"),
+    [(LEGACY_MAINTENANCE, LEGACY_HTTP_API), (CURRENT_MAINTENANCE, CURRENT_HTTP_API)],
+)
+def test_probe_accepts_each_supported_canonical_namespace_when_candidate_is_ready(
+    tmp_path: Path,
+    manager: Manager,
+    maintenance_module: str,
+    api_module: str,
+) -> None:
+    # Given: an isolated candidate venv with only one supported namespace layout.
+    release = tmp_path / "release"
+    release.mkdir()
+    calls = candidate_venv(
+        release,
+        maintenance_module=maintenance_module,
+        api_module=api_module,
+    )
+
+    # When: the standalone manager probes that candidate with its installed interpreter.
+    manager.probe(release)
+
+    # Then: it accepts the candidate and preserves its service doctor and manifest checks.
+    assert calls.read_text().splitlines() == [
+        '["service", "doctor"]',
+        '["server", "manifest", "--origin", "https://agent.example.com", "--bootstrap"]',
+    ]
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api_fields"),
+    [(0, ("slack_only", "slack_events")), (1, ("slack_only",))],
+    ids=["protocol", "api_shape"],
+)
+def test_probe_rejects_invalid_candidate_contract_before_doctor_or_activation(
+    tmp_path: Path,
+    manager: Manager,
+    protocol: int,
+    api_fields: tuple[str, ...],
+) -> None:
+    # Given: a new-layout candidate whose protocol or API shape violates the updater contract.
+    root = tmp_path / "install"
+    previous, release = setup(root, manager)
+    calls = candidate_venv(
+        release,
+        maintenance_module=CURRENT_MAINTENANCE,
+        api_module=CURRENT_HTTP_API,
+        protocol=protocol,
+        api_fields=api_fields,
+    )
+
+    # When: the manager evaluates the candidate before starting an activation transaction.
+    with pytest.raises(RuntimeError, match="command_failed:python"):
+        manager.probe(release)
+
+    # Then: it leaves the current release selected and never reaches the candidate CLI surface.
+    assert (root / "current").resolve() == previous
+    assert not calls.exists()
+
+
+def test_probe_does_not_fallback_when_a_supported_namespace_has_an_unrelated_import_failure(
+    tmp_path: Path,
+    manager: Manager,
+) -> None:
+    # Given: a legacy package with a broken dependency and an otherwise valid new package.
+    release = tmp_path / "release"
+    release.mkdir()
+    calls = candidate_venv(
+        release,
+        maintenance_module=LEGACY_MAINTENANCE,
+        api_module=LEGACY_HTTP_API,
+    )
+    legacy_package = (
+        release
+        / ".venv/lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages/ads_booster/marketing"
+    )
+    _ = (legacy_package / "__init__.py").write_text(
+        "raise ModuleNotFoundError(name='unexpected_dependency')\n"
+    )
+    _ = candidate_venv(
+        release,
+        maintenance_module=CURRENT_MAINTENANCE,
+        api_module=CURRENT_HTTP_API,
+    )
+
+    # When: the manager searches for a canonical service namespace.
+    with pytest.raises(RuntimeError, match="command_failed:python"):
+        manager.probe(release)
+
+    # Then: the unrelated legacy failure rejects the candidate instead of falling through.
+    assert not calls.exists()
 
 
 def test_update_waits_for_quiescence_and_preserves_completed_effects(
