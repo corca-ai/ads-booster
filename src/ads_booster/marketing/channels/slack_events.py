@@ -406,6 +406,7 @@ class SlackEvents:
                 AgentRunState.STOPPED,
                 AgentRunState.AWAITING_INPUT,
                 AgentRunState.AWAITING_APPROVAL,
+                AgentRunState.AWAITING_TOOL,
             }
             and not text.startswith("새 작업 ")
         ):
@@ -484,7 +485,7 @@ class SlackEvents:
                 now=now,
             )
         elif plan.action in {"revise", "pause"}:
-            _ = continue_work(
+            continued = continue_work(
                 service,
                 conversation.tenant_id,
                 plan.run_id,
@@ -498,6 +499,12 @@ class SlackEvents:
                     "verification": "reference_only_not_visually_inspected",
                 },
             )
+            if continued.state is AgentRunState.AWAITING_TOOL:
+                return (
+                    "요청을 현재 업무에 기록했습니다. "
+                    "진행 중인 도구의 결과를 확인한 뒤 반영합니다. "
+                    "이미 시작된 작업이 취소됐다는 뜻은 아닙니다."
+                )
             if plan.action == "pause":
                 return (
                     "다음 작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다. "

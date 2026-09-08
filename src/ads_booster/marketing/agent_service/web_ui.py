@@ -15,7 +15,7 @@ AGENT_RUN_UI = r"""<!doctype html>
 <div class="grid"><section class="card"><h2>실행 목록</h2><div id="runs"></div></section><section class="card"><h2>실행 내용</h2><div id="detail" class="muted">실행을 선택하세요.</div></section></div>
 </main><script>
 const $=id=>document.getElementById(id);const pathRun=location.pathname.match(/^\/runs\/([^/]+)$/);let selected=pathRun?decodeURIComponent(pathRun[1]):null,csrf='',browserMode=false,pendingDigest=null,selectedRevision=null,busy=false,retryJob=null,sessionOwner='local';
-const states={created:'접수',running:'조사 중',awaiting_input:'추가 근거 필요',awaiting_approval:'승인 필요',completed:'완료',stopped:'종료',blocked:'확인 필요',failed:'실패',awaiting_reconciliation:'실행 결과 확인 필요'};
+const states={created:'접수',running:'조사 중',awaiting_input:'추가 근거 필요',awaiting_tool:'도구 결과 대기',awaiting_approval:'승인 필요',completed:'완료',stopped:'종료',blocked:'확인 필요',failed:'실패',awaiting_reconciliation:'실행 결과 확인 필요'};
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function api(path,options={}){const headers={'content-type':'application/json'};if(browserMode){if(csrf)headers['x-trace-csrf']=csrf}else{if(!$('token').value)throw Error('로컬 서비스 토큰을 입력하세요.');headers.authorization=`Bearer ${$('token').value}`}
  const response=await fetch(path,{...options,headers,credentials:'same-origin'});const body=await response.json();if(!response.ok){if(response.status===401)throw Error('로그인이 필요하거나 만료됐습니다. 다시 로그인하세요.');const e=Error(body.error||`HTTP ${response.status}`);e.status=response.status;throw e}return body}
