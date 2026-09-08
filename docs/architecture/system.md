@@ -98,26 +98,42 @@ are private mode `0600` files.
 When enabled, `cli/marketing.py` builds `InstalledKnowledgeRuntime` beside the canonical service.
 It registers the local actor, creates the SQLite knowledge repository, canonical ingress, ingestion,
 retrieval and tool host, Codex curation provider, owner lock, bounded job runner, index worker, and
-memory-view dispatcher. `CurationBatchRuntime` collects compatible jobs until their batch deadline,
-claims urgent work immediately, and runs one shared bounded model round at a time for every active
-job. Each later round receives the actual guarded tool observations from earlier rounds; terminal
-job decisions become receipts bound to their original event and revision. The runtime starts as a
-daemon loop with the service and stops before the service releases its owner lock. Standalone
+memory-view dispatcher. `CurationBatchRuntime` defaults to collecting compatible routine jobs until
+60 seconds after their first event, without extending the deadline for later arrivals. It claims
+urgent work immediately and runs one shared bounded model round at a time for every active job.
+Each later round receives the actual guarded tool observations from earlier rounds; terminal
+job decisions become receipts bound to their original event and revision. Explicit flush updates
+the indexed and serialized batch state in one transaction. Cancelled unfinished jobs re-enter
+collection with a deterministic generation derived from persisted terminal batch history; earlier
+receipts remain intact. The runtime starts as a daemon loop with the service and stops before the
+service releases its owner lock. Standalone
 knowledge CLI ownership is separate from the service owner and must not share a live root. The
 registered local-admin surface covers `init`, `doctor`,
 `ingest`, `run`, `search`, `get`, `context`, `schedule`, `backup`, `restore`, `retract`, `purge`,
 `questions`, plus memory, brand, and task subgroups. Every operation takes the absolute `--root`,
 `--control-root`, and `--policy` paths; `run` and `memory consolidate` take optional `--model` and
-bounded `--once`/`--until-idle` controls. This is source wiring; installed help and fresh-install
-verification remain deferred.
+bounded `--once`/`--until-idle` controls. Installed commands and fresh-install behavior require their
+own verification.
 
-Ingress remains authenticated at the existing service/channel boundary. A shared Slack thread maps
-to workspace scope. A Slack DM maps to member plus conversation scope and is projected through a
+Ingress remains authenticated at the existing service/channel boundary. The installed API and Slack
+adapters share the canonical ingress and its authority bridge. Before admission, the bridge maps the
+authenticated actor to stored member, session and read/write grants at the current policy epoch,
+preserving revoked memberships, closed sessions and reader roles. Outbox replay and context
+preparation recheck the stored authority. Active task lookup includes member and session identity.
+A shared Slack thread maps to workspace scope. A Slack DM maps to member plus conversation scope and
+is projected through a
 read-only capability set. The DM projection permits knowledge search/get, memory get/explain, and
 source read; it excludes knowledge or memory writes, scheduling, purge, and external delivery. The
 canonical ingress stores the binding, conversation event, and durable outbox before dispatch. Edited,
 deleted, or correcting events create a pending fence; context preparation blocks the affected Run
 until the new source state is admitted.
+
+`source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
+memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment
+identity. Curation uses the extracted text and character offsets. Its optional
+`authenticated_user_event` contains evidence and authority references only for a canonical matching
+user message with no quoted spans; imported documents and other conversation roles do not gain
+user-instruction authority.
 
 Before reasoning, the service adapter assembles a bounded context receipt from current revisions,
 constraints, grants, and task/brand binding. It stores the selected immutable revision references and
@@ -126,12 +142,16 @@ digest-bound `trace.knowledge-context.v1` transfer with selected editorial block
 excerpts. The hosted broker validates tenant/account/task/run/action binding before dispatch and the
 callback must return the matching transfer, digest, and receipt. Missing or mismatched required
 context fails closed; it does not silently fall back to legacy context.
+Cached validation acceptance is reused only after current authentication, binding, expiry, grant,
+head and tombstone checks pass. Required constraints retain their constraint role in the transfer.
 
 Deletion records a manifest and chained erase-ledger entry in the control root before blocking live
 reads. Tombstones and reverse dependencies cover source, Wiki, memory, claims, context receipts, and
 transfer replicas. A remote replica is tracked separately and remains pending until its purge receipt
-is verified; restore applies the current erase ledger before rebuilding indexes. No external deletion
-or deployment success is implied by this source wiring.
+is verified. CLI purge resolves its target from the applied retraction receipt, retaining request
+identity on replay. Restore validates the manifest and file digests, applies the current erase ledger
+including mixed-memory redactions, and rebuilds search in a private staging root before activation.
+No external deletion or deployment success is implied by this source wiring.
 
 ## Runtime boundary
 
