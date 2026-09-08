@@ -240,6 +240,7 @@ class CanonicalKnowledgeIngress:
             return self.admit(db, ingress.binding, ingress.event, ingress.envelope)
 
     def dispatch_once(self) -> bool:
+        """Consume one pending item; classified failures remain durable and unacknowledged."""
         if self.sink is None:
             return False
         with self.connect() as db:
@@ -290,6 +291,8 @@ class CanonicalKnowledgeIngress:
                     WHERE delivery_id=? AND state='dispatching'""",
                     (state, error_code, envelope.delivery_id),
                 )
+            if state in {"failed", "retryable"}:
+                return True
             raise
         with self.connect() as db:
             _ = db.execute("BEGIN IMMEDIATE")

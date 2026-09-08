@@ -58,7 +58,7 @@ from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 
 
-def _reference_batch(
+def reference_batch(
     self: CodexKnowledgeProvider,
     batch_id: str,
     jobs: tuple[CurationBatchJobContext, ...],
@@ -94,7 +94,7 @@ def test_installed_service_admits_canonical_session_before_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _reference_batch)
+    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", reference_batch)
     # Given: the actual installed composition and a separately named local member.
     settings = KnowledgeSettings(
         root=tmp_path / "store",
@@ -186,8 +186,12 @@ def test_installed_service_admits_canonical_session_before_context(
         assert prepared.receipt.selected_source_revisions
         with installed.adapter.repository.connection() as db:
             _ = db.execute("UPDATE workspaces SET policy_epoch=2 WHERE workspace_id='trace'")
-        with pytest.raises(PolicyEpochStaleError):
-            _ = installed.adapter.ingress.dispatch_once()
+        assert installed.adapter.ingress.dispatch_once()
+        with installed.adapter.ingress.connect() as db:
+            assert db.execute(
+                """SELECT state,error_code FROM knowledge_ingress_outbox
+                WHERE delivery_id='request-two'"""
+            ).fetchone() == ("failed", "knowledge_ingress_actor_denied")
         fresh = api.dispatch(
             "POST",
             "/v1/runs",
@@ -231,12 +235,12 @@ def test_installed_service_admits_canonical_session_before_context(
             ).encode(),
         )
         assert denied.status == 403
-        with pytest.raises(AccessDeniedError):
-            _ = installed.adapter.ingress.dispatch_once()
+        assert installed.adapter.ingress.dispatch_once()
         with installed.adapter.ingress.connect() as db:
             assert db.execute(
-                "SELECT state FROM knowledge_ingress_outbox WHERE delivery_id='request-two'"
-            ).fetchone() == ("failed",)
+                """SELECT state,error_code FROM knowledge_ingress_outbox
+                WHERE delivery_id='request-current'"""
+            ).fetchone() == ("failed", "knowledge_ingress_actor_denied")
     finally:
         installed.runtime.close()
 

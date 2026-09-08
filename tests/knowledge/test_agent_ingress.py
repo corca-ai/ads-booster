@@ -459,8 +459,7 @@ def test_retryable_sink_failure_is_durable_without_blind_retry(tmp_path: Path) -
     assert owner.admit_standalone(_api_ingress("retryable-request"))
 
     # When: dispatch records the failure and recovery runs.
-    with pytest.raises(ControlledRetryableIngressError):
-        _ = owner.dispatch_once()
+    assert owner.dispatch_once()
     owner.recover()
 
     # Then: the attempt remains explicitly retryable and is not selected again automatically.
