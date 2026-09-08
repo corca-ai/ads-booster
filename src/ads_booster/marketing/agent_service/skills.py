@@ -110,6 +110,30 @@ _BASE_SKILLS = (
 
 _MARKETING_SKILLS = (
     MarketingSkill(
+        skill_id="marketing.context",
+        version="1",
+        purpose="팀 위키·기억·이전 근거를 조회해 현재 마케팅 요청에 필요한 맥락을 복원한다.",
+        required_capabilities=("knowledge_search", "knowledge_get"),
+        success_criteria=(
+            "조회한 팀 근거와 현재 요청을 연결하고 검색 범위와 공백을 정확히 설명한다.",
+        ),
+        procedure=(
+            "1. 최신 요청에서 필요한 제품 사실, 이전 결정, 브랜드 제약 또는 성과를 식별한다. "
+            "현재 도구 목록에서 knowledge_search, knowledge_get, memory_get, source_read의 "
+            "실제 제공 여부와 입력 스키마를 확인한다.\n"
+            "2. 사용 가능한 지식 검색으로 주제·제품·캠페인을 찾아 반환된 문서 ID와 "
+            "revision으로 원문을 읽는다. 기억 조회는 현재 도구의 kind 등 실제 스키마를 따른다. "
+            "관련 출처는 반환된 참조로 읽고, 검색어가 좁으면 한 번 다른 표현으로 확인한다.\n"
+            "3. 이미 조회한 근거로 요청한 요약·카피·추천을 작성한다. 출처, 사람의 보고, "
+            "확인된 사실과 가설을 구분한다. 옛 결정이 최신 지시와 충돌하면 최신 요청을 따른다.\n"
+            "4. 검색 결과 없음은 그 검색 범위에 결과가 없다는 뜻이며 전체 위키가 비었다는 "
+            "뜻이 아니다. 읽기 도구가 없으면 현재 연결에서 조회할 수 없다고 짧게 설명하고 "
+            "제공된 자료로 가능한 부분을 진행한다. 저장·수정했다고 주장하지 않는다. "
+            "개인 대화에서는 허용된 공유 자료 읽기만 수행하며 "
+            "다른 사람의 개인 기억을 조회하지 않는다."
+        ),
+    ),
+    MarketingSkill(
         skill_id="marketing.opportunity",
         version="1",
         purpose="시장·트렌드·시즈널 신호에서 제품에 맞는 마케팅 기회를 찾고 다음 실험을 추천한다.",
