@@ -3,23 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from multiprocessing import get_context
-from multiprocessing.context import ForkContext
-from multiprocessing.process import BaseProcess
-from multiprocessing.queues import Queue
 from queue import Empty
 from threading import Event
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
+from ads_booster.knowledge.batch_actor import load_batch_actor
 from ads_booster.knowledge.batch_curation import (
     BatchCurationCoordinator,
     ClaimedBatchRun,
     CurationBatchItem,
     CurationBatchWork,
 )
+from ads_booster.knowledge.batch_failure import fail_unbatched_job, fail_unclaimed_batch
 from ads_booster.knowledge.contracts import CurationBatch, EventReceipt, KnowledgeJob
 from ads_booster.knowledge.curation_contracts import CurationRunStatus
+from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.maintenance_jobs import (
     CancellationEvent,
     CanonicalJobProcessor,
@@ -30,11 +30,16 @@ from ads_booster.knowledge.operation_enums import (
     JobPriority,
     OperationStatus,
 )
-from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
 
 if TYPE_CHECKING:
-    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from multiprocessing.context import ForkContext
+    from multiprocessing.process import BaseProcess
+    from multiprocessing.queues import Queue
 
+    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
+
+_READY_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
 _JOB_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
 
 
@@ -71,7 +76,8 @@ class CurationBatchRuntime:
     _batch_actor: ActorContext | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._context = cast("ForkContext", get_context("fork"))
+        """Allocate the process channel owned by this runtime."""
+        self._context = get_context("fork")
         self._queue = self._context.Queue(maxsize=1)
 
     @property
@@ -92,13 +98,11 @@ class CurationBatchRuntime:
             ):
                 self._cancel.set()
             return collected
-        batch_actor = self._ready_actor(instant)
-        if batch_actor is None:
+        claimed = self._claim_ready_batch(instant)
+        if claimed is None:
             return collected
+        batch, batch_actor = claimed
         coordinator = BatchCurationCoordinator(self.repository)
-        batch = coordinator.claim(batch_actor, instant)
-        if batch is None:
-            return collected
         try:
             work = self._work_for(batch, batch_actor)
         except Exception:
@@ -150,19 +154,22 @@ class CurationBatchRuntime:
         coordinator = BatchCurationCoordinator(self.repository)
         for (encoded,) in rows:
             job = KnowledgeJob.model_validate_json(encoded)
-            actor = self._actor_for(job)
-            work = self.jobs.build_curation_work(job, actor)
-            _ = coordinator.collect(
-                CurationBatchItem(
-                    job_id=job.job_id,
-                    event_id=job.root_event_id,
-                    event_revision=work.request.event_revision,
-                    actor=actor,
-                    policy_version=job.policy_version,
-                    priority=job.priority,
-                    occurred_at=job.created_at,
+            try:
+                actor = self._actor_for_scope(job.scope, now)
+                work = self.jobs.build_curation_work(job, actor)
+                _ = coordinator.collect(
+                    CurationBatchItem(
+                        job_id=job.job_id,
+                        event_id=job.root_event_id,
+                        event_revision=work.request.event_revision,
+                        actor=actor,
+                        policy_version=job.policy_version,
+                        priority=job.priority,
+                        occurred_at=job.created_at,
+                    )
                 )
-            )
+            except KnowledgePolicyError as error:
+                fail_unbatched_job(self.repository, job, error.code)
         return bool(rows)
 
     def _work_for(
@@ -179,7 +186,7 @@ class CurationBatchRuntime:
             )
         jobs = {
             job.root_event_id: job
-            for encoded, in rows
+            for (encoded,) in rows
             for job in (KnowledgeJob.model_validate_json(encoded),)
         }
         return tuple(
@@ -187,45 +194,45 @@ class CurationBatchRuntime:
             for receipt in batch.event_receipts
         )
 
-    def _ready_actor(self, now: datetime) -> ActorContext | None:
+    def _claim_ready_batch(self, now: datetime) -> tuple[CurationBatch, ActorContext] | None:
         with self.repository.connection() as connection:
-            row = connection.execute(
-                """SELECT batch_json FROM curation_batches
+            rows = _JOB_ROWS.validate_python(
+                connection.execute(
+                    """SELECT batch_json FROM curation_batches
                 WHERE workspace_id=? AND (
                     state='ready' OR (state='collecting' AND batch_deadline<=?)
                 ) ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,
-                    batch_deadline,batch_id LIMIT 1""",
-                (self.actor.workspace_id, now.isoformat()),
-            ).fetchone()
-        if row is None:
-            return None
-        batch = CurationBatch.model_validate_json(row[0])
-        return self._actor_for_scope(batch.scope)
+                    batch_deadline,batch_id""",
+                    (self.actor.workspace_id, now.isoformat()),
+                ).fetchall()
+            )
+        for (encoded,) in rows:
+            batch = CurationBatch.model_validate_json(encoded)
+            try:
+                actor = self._actor_for_scope(batch.scope, now)
+                claimed = BatchCurationCoordinator(self.repository).claim(actor, now)
+            except KnowledgePolicyError as error:
+                fail_unclaimed_batch(self.repository, batch, error.code)
+                continue
+            if claimed is not None:
+                return claimed, actor
+        return None
 
-    def _actor_for(self, job: KnowledgeJob) -> ActorContext:
-        return self._actor_for_scope(job.scope)
-
-    def _actor_for_scope(self, scope: AccessScope) -> ActorContext:
+    def _actor_for_scope(self, scope: AccessScope, now: datetime) -> ActorContext:
         if scope == self.actor.conversation_scope:
             return self.actor
-        if scope.member_id is None or scope.session_id is None:
-            raise ValueError("knowledge_batch_scope_identity_missing")
-        return self.actor.model_copy(
-            update={
-                "member_id": scope.member_id,
-                "session_id": scope.session_id,
-                "conversation_scope": scope,
-            }
-        )
+        return load_batch_actor(self.repository, scope, now)
 
     def _urgent_ready(self) -> bool:
         with self.repository.connection() as connection:
-            row = connection.execute(
-                """SELECT 1 FROM curation_batches
+            row = _READY_ROW.validate_python(
+                connection.execute(
+                    """SELECT 1 FROM curation_batches
                 WHERE workspace_id=? AND priority='urgent'
                     AND state IN ('collecting','ready') LIMIT 1""",
-                (self.actor.workspace_id,),
-            ).fetchone()
+                    (self.actor.workspace_id,),
+                ).fetchone()
+            )
         return row is not None
 
     def _finish_active(self) -> None:
