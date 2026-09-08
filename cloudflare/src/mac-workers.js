@@ -239,32 +239,32 @@ async function requestKnowledgeReplicaPurge(db, transferId, replicaId) {
   }
   const now = new Date().toISOString();
   const macReplicaId = `mac-inbox:${accountId}:${taskId}`;
-  await db.prepare(
-    `INSERT INTO knowledge_context_replica_purges(
-       transfer_id, account_id, task_id, worker_id, cloudflare_replica_id,
-       mac_replica_id, requested_at, mac_purged_at, cloudflare_purged_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(transfer_id, task_id) DO NOTHING`,
-  ).bind(
-    transferId,
-    accountId,
-    taskId,
-    row.worker_id,
-    replicaId,
-    macReplicaId,
-    now,
-    row.worker_id ? null : now,
-    now,
-  ).run();
   task.payload = { ...task.payload };
   delete task.payload.knowledge_context;
   const state = row.execution_started_at ? null : "failed";
-  await db.prepare(
-    `UPDATE hosted_workspace_capture_tasks
-     SET task_json = ?, result_json = NULL, state = COALESCE(?, state), updated_at = ?
-     WHERE task_id = ? AND account_id = ?`,
-  ).bind(JSON.stringify(task), state, now, taskId, accountId).run();
   await db.batch([
+    db.prepare(
+      `INSERT INTO knowledge_context_replica_purges(
+         transfer_id, account_id, task_id, worker_id, cloudflare_replica_id,
+         mac_replica_id, requested_at, mac_purged_at, cloudflare_purged_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(transfer_id, task_id) DO NOTHING`,
+    ).bind(
+      transferId,
+      accountId,
+      taskId,
+      row.worker_id,
+      replicaId,
+      macReplicaId,
+      now,
+      row.worker_id ? null : now,
+      now,
+    ),
+    db.prepare(
+      `UPDATE hosted_workspace_capture_tasks
+       SET task_json = ?, result_json = NULL, state = COALESCE(?, state), updated_at = ?
+       WHERE task_id = ? AND account_id = ?`,
+    ).bind(JSON.stringify(task), state, now, taskId, accountId),
     db.prepare(
       `UPDATE hosted_marketing_agent_runs
        SET trusted_knowledge_json = NULL, knowledge_context_sha256 = NULL, updated_at = ?
