@@ -202,6 +202,31 @@ def collecting_curation_batch(
     return None
 
 
+def flush_curation_batches(
+    repository: KnowledgeRepository,
+    workspace_id: str,
+    now: datetime,
+) -> int:
+    with repository.connection() as connection:
+        _ = connection.execute("BEGIN IMMEDIATE")
+        rows = _BATCH_ROWS.validate_python(
+            connection.execute(
+                """SELECT batch_json FROM curation_batches
+                WHERE workspace_id=? AND state='collecting' AND priority='routine'
+                    AND first_event_at<=?""",
+                (workspace_id, now.isoformat()),
+            ).fetchall()
+        )
+        for (encoded,) in rows:
+            batch = CurationBatch.model_validate_json(encoded)
+            _update_batch(
+                connection,
+                batch.model_copy(update={"state": BatchState.READY}),
+                BatchState.COLLECTING,
+            )
+        return len(rows)
+
+
 def ready_curation_batch(
     repository: KnowledgeRepository,
     actor: ActorContext,
@@ -583,5 +608,6 @@ __all__ = [
     "curation_batch",
     "curation_batch_generation",
     "finish_curation_batch",
+    "flush_curation_batches",
     "ready_curation_batch",
 ]
