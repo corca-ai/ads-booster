@@ -29,7 +29,7 @@ jobs:
           tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py
           tests/cli/test_agent_server_update.py -q
           tests/marketing/tool_adapters/test_compatibility.py
-          tests/cli/test_server_onboarding.py
+          tests/cli/test_server_onboarding.py tests/cli/test_github_setup.py
       - name: Install the built wheel in a fresh environment
         shell: bash
         run: |
