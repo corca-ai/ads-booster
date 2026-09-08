@@ -7,35 +7,29 @@ import sqlite3
 import sys
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-from pydantic import Field, TypeAdapter, model_validator
+from pydantic import TypeAdapter
 
 from ads_booster.capture.appium_endpoint import validate_appium_server_url
 from ads_booster.capture.capture_safety import CaptureControl
-from ads_booster.capture.codex_appium_job import CodexAppiumJobContract, CodexAppiumJobIdentity
+from ads_booster.capture.codex_appium_job import CodexAppiumJobContract
 from ads_booster.contracts.agent_run import AgentRun, ToolInvocation, contract_sha256
 from ads_booster.contracts.creative_work import AssetParent, CreativeAsset, CreativeScope
-from ads_booster.contracts.generation import (
-    MarketingContextBundle,
-    PersonaProfile,
-    PromotionMaterial,
-)
-from ads_booster.contracts.models import (
-    CaptureProvenance,
-    ContractModel,
-    DeviceKind,
-    DeviceTarget,
-    TraceScheduleItem,
-)
-from ads_booster.contracts.native_export import (
-    PreparedBackground,
-    TraceSuppliedBackgroundProvenance,
-)
+from ads_booster.contracts.models import CaptureProvenance, DeviceKind, DeviceTarget
 from ads_booster.contracts.tool_capability import ToolDescriptor
 from ads_booster.marketing.agent_service.creative_asset_links import link_asset
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.marketing.agent_service.creative_capture_contract import (
+    CreativeCaptureInput as CreativeCaptureInput,  # noqa: PLC0414 - public compatibility re-export.
+)
+from ads_booster.marketing.agent_service.creative_capture_contract import (
+    CreativeCaptureResult as CreativeCaptureResult,  # noqa: PLC0414 - public compatibility re-export.
+)
+from ads_booster.marketing.agent_service.creative_capture_contract import (
+    build_creative_capture_contract,
+    validate_native_capture_result,
+)
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.tool_adapters.compatibility import DelegatedToolResult
 from ads_booster.marketing.tool_adapters.descriptors import appium_descriptor
@@ -44,44 +38,11 @@ from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
     from pathlib import Path
 
 _MAX_TIMEOUT = 3600
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
-_COUNTRIES = {
-    "KR": ("ko-KR", "Asia/Seoul"),
-    "JP": ("ja-JP", "Asia/Tokyo"),
-    "US": ("en-US", "America/New_York"),
-}
-Text = Annotated[str, Field(min_length=1, max_length=2000)]
-
-
-class CreativeCaptureInput(ContractModel):
-    background: AssetParent
-    country: Literal["KR", "JP", "US"]
-    reference_date: datetime
-    trace_items: Annotated[tuple[TraceScheduleItem, ...], Field(min_length=1, max_length=24)]
-    concept: Text
-    creative_direction: Text
-    preserve: Annotated[tuple[Text, ...], Field(max_length=16)] = ()
-    change: Annotated[tuple[Text, ...], Field(max_length=16)] = ()
-    data_permission: Literal["synthetic"]
-
-    @model_validator(mode="after")
-    def utc_reference(self) -> CreativeCaptureInput:
-        if self.reference_date.tzinfo is None or self.reference_date.utcoffset() != UTC.utcoffset(
-            self.reference_date
-        ):
-            raise ValueError("capture_reference_must_be_utc")
-        return self
-
-
-class CreativeCaptureResult(ContractModel):
-    canonical_run_id: Annotated[str, Field(min_length=1, max_length=160)]
-    asset: CreativeAsset
-    provenance: CaptureProvenance
-    human_review_required: Literal[True] = True
-    product_support_verified: Literal[False] = False
 
 
 class CaptureWorker(Protocol):
@@ -232,7 +193,17 @@ class CreativeCaptureTool:
         background = job / background_relative
         _ = background.write_bytes(original.data)
         background.chmod(0o600)
-        contract = self._contract(run, request, source, key, background_relative)
+        contract = build_creative_capture_contract(
+            run=run,
+            request=request,
+            source=source,
+            key=key,
+            background_relative=background_relative,
+            python_executable=sys.executable,
+            device=self.device,
+            appium_server=self.appium_server,
+            export_nonce=secrets.token_hex(32),
+        )
         output = job / "outputs/trace_wallpaper.png"
         control = CaptureControl.start(self.timeout_seconds, cancel_file=job / "cancel")
         self.worker.ensure_ready(contract, control)
@@ -241,18 +212,15 @@ class CreativeCaptureTool:
         )
         image = read_review_images((output,))[0]
         output.chmod(0o600)
-        if (
-            image.format != "PNG"
-            or provenance.request_sha256 != contract.request_sha256
-            or provenance.artifact_sha256 != image.sha256
-            or provenance.byte_size != len(image.data)
-            or (provenance.width, provenance.height) != (image.width, image.height)
-            or provenance.bundle_id != contract.bundle_id
-            or provenance.device_udid != self.device.udid
-            or provenance.native_export_nonce != contract.export_nonce
-            or not provenance.native_export_binding_verified
-        ):
-            raise ValueError("capture_native_provenance_invalid")
+        validate_native_capture_result(
+            contract=contract,
+            provenance=provenance,
+            image_format=image.format,
+            image_sha256=image.sha256,
+            byte_size=len(image.data),
+            width=image.width,
+            height=image.height,
+        )
         # Source can change during a device session; never register stale parentage as current.
         _ = self._source(scope, request.background)
         asset = CreativeAsset(
@@ -275,75 +243,6 @@ class CreativeCaptureTool:
         )
         return CreativeCaptureResult(
             canonical_run_id=run.run_id, asset=asset, provenance=provenance
-        )
-
-    def _contract(
-        self,
-        run: AgentRun,
-        request: CreativeCaptureInput,
-        source: CreativeAsset,
-        key: str,
-        background_relative: str,
-    ) -> CodexAppiumJobContract:
-        request_id = f"capture-{key[:40]}"
-        locale, timezone = _COUNTRIES[request.country]
-        prepared = PreparedBackground(
-            path=background_relative,
-            sha256=source.sha256,
-            provenance=TraceSuppliedBackgroundProvenance(
-                schema_version="trace.supplied-background.v1",
-                artifact_path=background_relative,
-                artifact_sha256=source.sha256,
-                asset_id=source.asset_id,
-                asset_revision=source.revision,
-                source=source.source,
-                use_terms=source.use_terms,
-                data_permission=source.data_permission,
-                permission_evidence=source.permission_evidence,
-            ),
-        )
-        context = MarketingContextBundle(
-            schema_version="trace.marketing-context.v1",
-            request_id=request_id,
-            persona=PersonaProfile(persona_id=request_id, country=request.country, locale=locale),
-            promotion_material=PromotionMaterial(
-                promotion_material_id=request_id,
-                concept=request.concept,
-                creative_direction="\n".join(
-                    (
-                        request.creative_direction,
-                        "Preserve: " + "; ".join(request.preserve),
-                        "Change only: " + "; ".join(request.change),
-                    )
-                ),
-                trace_items=request.trace_items,
-            ),
-            reference_date=request.reference_date,
-            device=self.device,
-        )
-        return CodexAppiumJobContract(
-            schema_version="trace.codex-appium-job.v2",
-            identity=CodexAppiumJobIdentity(
-                task_id=request_id,
-                run_id="run-"
-                + contract_sha256({"tenant_id": run.tenant_id, "run_id": run.run_id})[:40],
-                request_id=request_id,
-                idempotency_key=key,
-                candidate_id=source.asset_id,
-                candidate_revision=source.revision,
-            ),
-            context=context,
-            prepared_background=prepared,
-            python_executable=sys.executable,
-            appium_server=self.appium_server,
-            bundle_id="com.corca.Trace",
-            app_group_id="group.ai.corca.trace",
-            device=self.device,
-            locale=locale,
-            time_zone=timezone,
-            calendar_namespace=f"trace-{request_id}",
-            todo_calendar_namespace=f"trace-{request_id}-todos",
-            export_nonce=secrets.token_hex(32),
         )
 
     def _result(
