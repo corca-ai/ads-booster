@@ -601,3 +601,9 @@ invocation/reservation and exact operation resolution; acknowledgement adds no t
 The Agent Service translates adapter acknowledgements and validates eventual results against
 frozen invocation/output contracts before recording canonical receipts. Transport authentication
 and worker artifact validation must precede that internal completion method.
+
+`creative_capture_contract.py` owns the reusable capture input/result types, deterministic native
+job builder and output metadata/provenance comparison. `creative_capture.py` re-exports the old
+type names and owns local source reads, nonce creation, host execution configuration, worker
+calls and asset registration. The builder receives worker configuration explicitly; it performs
+no host lookup or device action. This keeps future remote execution from inheriting Linux paths.

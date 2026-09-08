@@ -884,3 +884,8 @@ runtime settlement and receipt projection. Recovery repairs those local boundari
 re-entering the adapter. Legacy serialized sessions are unchanged, but older binaries reject
 the newly reserved deferred events. Rollback must preserve the database and use a compatible
 reader for Runs containing those events; do not delete pending state to downgrade.
+
+Capture contract construction and native provenance comparison are pure shared functions. The
+local caller explicitly supplies its Python executable and nonce. Native request digests retain
+their existing visual-request semantics and exclude host execution configuration; a remote
+transport must separately bind the full worker profile and job envelope before execution.

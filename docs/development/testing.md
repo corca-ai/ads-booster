@@ -17,6 +17,10 @@ acknowledgement/completion crash windows, explicit uncertainty, pending pause an
 follow-ups. They do not prove remote worker authentication, artifact transfer or actual capture.
 Fresh wheel proof must also show that a second Run can answer while the first waits, and that
 restarting and replaying completion neither calls the adapter again nor charges twice.
+Capture contract extraction selects `tests/marketing/agent_service/test_creative_capture_contract.py`
+with existing `test_creative_capture.py` and `test_capture_setup.py`. Validate explicit worker
+configuration, source revision/digest and nonce/device/image metadata rejection. A pure builder
+test does not prove remote transport or image quality; preserve installed local capture proof.
 
 | Change | Command |
 | --- | --- |

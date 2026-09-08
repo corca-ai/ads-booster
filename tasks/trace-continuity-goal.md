@@ -270,6 +270,22 @@ only bytes/contracts, with ensure_ready after local+server start. Bind the Mac p
 Mac Python executable), original source, nonce, approval and canonical invocation to the job.
 This transport remains Draft; no external callback is exposed by the async foundation.
 
+Next prerequisite implemented: `creative_capture_contract.py` now owns pure job construction and
+native result comparison, with explicit worker executable/device/Appium/nonce arguments. Existing
+local capture uses the same values and retains source reads/currentness/asset registration.
+Old CreativeCaptureInput/Result import names remain re-exported. The native request digest excludes
+host execution fields by existing contract design, so future remote transport must bind a separate
+worker-profile/full-envelope digest. Patterns authored this extraction and 9 tests; main reviewed.
+The 22 selected capture contract/local capture/setup tests pass with scoped Ruff/type checks.
+Fresh extraction proof: `/private/tmp/trace-capture-contract-installed-proof/evidence.json`,
+source6bdd160, wheel SHA256
+`56b9ea2a152c70b149c0abf4bb06356b6fd259d555bf12f3d251392f9e89af18`.
+Installed module hashes match source; old/new type identity remains equal. The copied standalone
+capture proof verifies fake native derivative parentage and replay with one worker call, default
+capture absence and optional actual-host unready status with zero device commands. A pure job
+preserves the explicitly supplied Mac executable without executing it. No live remote transport,
+image quality or public installer claim. Main read this evidence and independently ran the22tests.
+
 Goal management: get_goal on this resume reports `usageLimited` for the existing Goal. No duplicate
 Goal was created; status was not marked complete or blocked and local authorized work continued.
 Goal usage state can only be changed by the environment/user; retain this exact unfinished scope.
