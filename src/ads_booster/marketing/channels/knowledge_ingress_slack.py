@@ -58,22 +58,31 @@ def build_slack_ingress(request: SlackIngressRequest) -> PendingKnowledgeIngress
         member_id=request.identity.member_id,
         session_id=request.conversation_id,
         conversation_scope=scope,
-        grants=(
+        grants=tuple(
             ScopeGrant(
                 grant_id="slack-ingress-grant-"
                 + contract_sha256(
                     {
                         "binding": request.identity.binding_id,
-                        "scope": scope.model_dump(mode="json"),
+                        "scope": grant_scope.model_dump(mode="json"),
                         "epoch": 1,
+                        "capability": capability.value,
                     }
                 )[:40],
-                capability=GrantCapability.WRITE,
+                capability=capability,
                 workspace_id=request.identity.tenant_id,
-                scope=scope,
+                scope=grant_scope,
                 policy_epoch=1,
                 effective_at=request.identity.created_at,
-            ),
+            )
+            for capability, grant_scope in (
+                (
+                    GrantCapability.READ,
+                    AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=request.identity.tenant_id),
+                ),
+                *(((GrantCapability.READ, scope),) if request.private else ()),
+                (GrantCapability.WRITE, scope),
+            )
         ),
         policy_epoch=1,
         authenticated_at=request.observed_at,
