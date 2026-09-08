@@ -10,12 +10,17 @@ Choose the boundary that changed. Source tests are not installed-worker or hoste
 ## Team knowledge checks
 
 The knowledge implementation is covered by focused `tests/knowledge` contracts, repository/filesystem,
-ingress, Slack-scope, retrieval, curation, transfer, and deletion tests. Use the smallest relevant
-selection while the implementation is changing; a useful source-level sweep is:
+ingress, Slack-scope, retrieval, curation, transfer, and deletion tests. Select the affected boundary
+with `uv run pytest -q <test-file>`; the focused owners are:
 
-```bash
-uv run pytest -q tests/knowledge
-```
+| Boundary | Test files under `tests/knowledge/` |
+| --- | --- |
+| Canonical API/Slack identity, session isolation and context preparation | `test_installed_service_context.py` |
+| Extracted text, source evidence and authenticated user authority | `test_curation_inputs.py`, `test_source_memory_evidence.py`, `test_curation_user_authority.py` |
+| First-event collection window, flush, receipts, cancellation and restart | `test_batch_runtime.py` |
+| Brand registration replay, current authority and failed-session cleanup | `test_brand_cli.py` |
+| Backup integrity, current erase-ledger restore and purge | `test_backup_restore.py`, `test_deletion.py` |
+| Constraint transfer and current checks on validation replay | `test_transfer_material.py`, `test_transfer_validation_replay.py` |
 
 The configuration seam must also be checked directly with synthetic absolute paths: all three
 `TRACE_MARKETING_KNOWLEDGE_ROOT`, `TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT`, and
@@ -27,11 +32,14 @@ Codex entitlement, Slack delivery, hosted validation, remote purge, or deploymen
 
 The context-transfer checks must cover both required and disabled policies, exact SHA-256 binding,
 workspace/account/run/task/action/brand matching, expiry, stale head/grant/tombstone rejection,
-pre-dispatch and callback validation, and the callback use receipt. Slack checks must cover shared
-workspace scope, private member/conversation scope, read-only DM capability filtering, pending edit/
+pre-dispatch and callback validation, and the callback use receipt. A cached acceptance must fail
+after expiry, revocation, stale heads or tombstones; replay cannot bypass current checks. Slack checks
+must cover shared workspace scope, private member/conversation scope, read-only DM capability filtering, pending edit/
 delete/correction fences, and replayed outbox delivery. Deletion checks must assert the erase-ledger
 sequence, local tombstones and reverse dependency blocks, clean restore, and remote replica
-`purge_pending` until an acknowledgement is recorded.
+`purge_pending` until an acknowledgement is recorded. Restore checks include exact file digests,
+private nested paths, mixed-memory redaction and a searchable surviving revision. Run
+`tests/cli/test_server_onboarding.py` for fresh private knowledge-root creation and interrupted setup.
 
 The registered `trace-marketing knowledge` reference surface requires `--root`, `--control-root`,
 and `--policy` on every command. Focused CLI checks should cover `init`, `doctor`, `ingest --envelope`,
