@@ -403,12 +403,6 @@ class KnowledgeServiceAdapter:
             request.stage.value,
             request.request_id,
         )
-        if (
-            previous is not None
-            and authenticated_tenant_id == request.workspace_id
-            and authenticated_principal_id == request.principal_id
-        ):
-            return previous
         rejection = self._transfer_rejection(
             request,
             transfer,
@@ -416,6 +410,17 @@ class KnowledgeServiceAdapter:
             authenticated_principal_id=authenticated_principal_id,
             checked_at=checked_at,
         )
+        if previous is not None and (
+            previous.principal_id != request.principal_id
+            or previous.workspace_id != request.workspace_id
+            or previous.account_id != request.account_id
+            or previous.knowledge_context_sha256 != request.knowledge_context_sha256
+        ):
+            rejection = ValidationRejectionCode.TRANSFER_BLOCKED
+        if rejection is None and isinstance(previous, ContextTransferValidationAccepted):
+            if checked_at < previous.valid_until:
+                return previous
+            rejection = ValidationRejectionCode.EXPIRED
         if rejection is None and transfer is not None:
             dependencies = self.repository.transfer_dependencies(transfer.transfer_id)
             result: TransferValidationResult = ContextTransferValidationAccepted(
@@ -448,7 +453,11 @@ class KnowledgeServiceAdapter:
                 rejection_code=rejection or ValidationRejectionCode.TRANSFER_BLOCKED,
                 checked_at=checked_at,
             )
-        if transfer is not None and self._request_matches_transfer(request, transfer):
+        if (
+            previous is None
+            and transfer is not None
+            and self._request_matches_transfer(request, transfer)
+        ):
             self.repository.record_transfer_validation(request, result)
         return result
 
