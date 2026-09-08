@@ -59,7 +59,7 @@ def test_listing_discovers_latest_linked_revision_without_image_bytes(tmp_path: 
     )
     assert call("GET") == result
     # Metadata discovery is deliberately not byte verification; delivery still verifies it.
-    (repository.artifact_root / original.relative_path).write_bytes(b"corrupted")
+    _ = (repository.artifact_root / original.relative_path).write_bytes(b"corrupted")
     assert call("GET") == result
     readback = dispatch_creative(
         "GET",
