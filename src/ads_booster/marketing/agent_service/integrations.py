@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
@@ -13,6 +13,13 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import ToolInvocation
 from ads_booster.contracts.tool_capability import ToolDescriptor
+from ads_booster.marketing.agent_service.github_issues import (
+    CAPABILITY,
+    GitHubIssues,
+)
+from ads_booster.marketing.agent_service.github_issues import (
+    descriptor as github_descriptor,
+)
 from ads_booster.marketing.agent_service.web_search import WebSearch, search_descriptor
 from ads_booster.marketing.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
@@ -57,6 +64,7 @@ class AgentServiceIntegrationConfig:
     slack_channel_id: str | None = None
     notion_token: str | None = None
     notion_parent_page_id: str | None = None
+    github_token: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Reject partial integrations instead of silently hiding a requested tool."""
@@ -101,6 +109,10 @@ class ConfiguredAgentTools:
             adapters["store.notion.daily"] = _delegating(
                 "store.notion.daily", "notion.pages_create", self._notion
             )
+        if self.config.github_token:
+            adapters[CAPABILITY] = _delegating(
+                CAPABILITY, "github.issues", GitHubIssues(self.config.github_token).execute
+            )
         return adapters
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
@@ -133,6 +145,8 @@ class ConfiguredAgentTools:
                     installation_id="configured:notion", observed_at=now, ready=True
                 )
             )
+        if self.config.github_token:
+            result.append(github_descriptor(now=now))
         return tuple(result)
 
     def _research(
