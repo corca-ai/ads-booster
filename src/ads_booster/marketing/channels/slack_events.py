@@ -32,6 +32,7 @@ from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
+from ads_booster.marketing.agent_service.knowledge import READ_ONLY_DM_TOOLS
 from ads_booster.marketing.agent_service.knowledge_ingress import (
     KnowledgeIngressSink,
     PendingKnowledgeIngress,
@@ -134,7 +135,12 @@ class SlackEvents:
         self.private_service = replace(
             self.commands.application.service,
             capability_policy=CapabilityPolicy(
-                allowed_capability_ids=("research.search", "skills.list", "skills.read")
+                allowed_capability_ids=(
+                    "research.search",
+                    "skills.list",
+                    "skills.read",
+                    *sorted(READ_ONLY_DM_TOOLS),
+                )
             ),
         )
         self.private_service.execution_lock = self.commands.application.service.execution_lock

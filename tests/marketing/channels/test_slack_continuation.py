@@ -6,8 +6,11 @@ from typing import TYPE_CHECKING, override
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryNote, MemoryScope
 from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
 from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.contracts.tool_capability import EffectClass
+from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
 from tests.marketing.agent_service.test_application import (
+    _descriptor,  # pyright: ignore[reportPrivateUsage]
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.marketing.channels.test_slack_commands import NOW
@@ -72,6 +75,27 @@ def test_latest_question_is_task_input_not_buried_in_old_goal(tmp_path: Path) ->
         assert request.model_dump().get("current_user_message") == question
         assert request.goal.objective == "지원하는 기능을 설명해줘"
     assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+
+def test_private_chat_exposes_registered_knowledge_reads_without_writes(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    provider = RecordingReasoning()
+    owner.private_service.reasoning = provider
+    owner.private_service.registry = ToolRegistry(
+        d.model_copy(update={"readiness": d.readiness.model_copy(update={"observed_at": NOW})})
+        for d in (
+            _descriptor("knowledge_search", EffectClass.OBSERVE, ready=True),
+            _descriptor("memory_get", EffectClass.OBSERVE, ready=True),
+            _descriptor("knowledge_apply", EffectClass.CONTROL_PLANE_WRITE, ready=True),
+            _descriptor("source_fetch", EffectClass.OBSERVE, ready=True),
+        )
+    )
+    receive(owner, type="message", channel="D1", channel_type="im", text="팀 자료 찾아줘")
+    assert owner.work_once(now=NOW)
+    assert {d.capability_id for d in provider.requests[-1].capability_snapshot.descriptors} == {
+        "knowledge_search",
+        "memory_get",
+    }
 
 
 def test_natural_status_and_pause_do_not_create_new_work(tmp_path: Path) -> None:
