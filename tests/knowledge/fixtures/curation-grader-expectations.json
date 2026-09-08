@@ -1,0 +1,19 @@
+{
+  "schema": "knowledge.curation-grader.v1",
+  "fixture_revision": 1,
+  "grader_only": true,
+  "cases": [
+    {"source_ref": "source.team.reporting.rev1", "expected_kind": "decision", "canonical_target": "team", "allowed_derived_targets": [], "forbidden_targets": ["soul", "daily"], "expected_source_citations": 1},
+    {"source_ref": "source.launch.decision.rev1", "expected_kind": "decision", "canonical_target": "core", "allowed_derived_targets": ["wiki"], "forbidden_targets": ["soul"], "expected_source_citations": 1},
+    {"source_ref": "source.daily.observation.rev1", "expected_kind": "observation", "canonical_target": "daily", "local_date": "2026-09-07", "allowed_derived_targets": ["wiki"], "forbidden_targets": ["team", "soul", "core"], "expected_source_citations": 1},
+    {"source_ref": "source.price.kr.rev2", "expected_kind": "fact", "canonical_target": "wiki", "allowed_derived_targets": ["core"], "derived_target_requirement": "core entry is a reference to the Wiki claim and cannot independently change the price", "forbidden_targets": ["team", "soul"], "expected_source_citations": 1},
+    {"source_ref": "source.public.reference.rev1", "expected_kind": "reference", "canonical_target": "source", "allowed_derived_targets": [], "forbidden_targets": ["team", "soul", "core", "daily", "wiki_revision"], "expected_source_citations": 1},
+    {"source_ref": "source.insufficient.claim.rev1", "expected_kind": "inference", "expected_status": "contested", "canonical_target": "wiki_or_source_reference", "allowed_derived_targets": ["daily"], "forbidden_targets": ["fact", "decision", "soul"], "expected_source_citations": 1},
+    {"source_ref": "source.soul.a.decision.rev1", "expected_kind": "decision", "canonical_target": "soul", "brand_ref": "brand.a", "required_capability": "brand_voice_edit", "expected_head_change": 1, "forbidden_targets": ["team", "core"]},
+    {"source_ref": "source.soul.b.decision.rev1", "expected_kind": "decision", "canonical_target": "soul", "brand_ref": "brand.b", "required_capability": "brand_voice_edit", "expected_head_change": 1, "forbidden_targets": ["team", "core"]},
+    {"source_ref": "source.soul.observation.rev1", "expected_kind": "observation", "canonical_target": "daily", "allowed_derived_targets": ["wiki_proposal"], "brand_ref": "brand.a", "expected_soul_head_change_before_explicit_approval": 0, "forbidden_targets": ["soul_core"]},
+    {"source_ref": "source.deleted.promo.rev1", "expected_status": "retracted", "canonical_target": "tombstone", "allowed_derived_targets": [], "forbidden_targets": ["search", "context", "current_citation"]}
+  ],
+  "evidence_count_rule": "daily, core, and Wiki derivatives with the same source ancestry count as one source, not independent evidence",
+  "fact_inference_rule": "fact denotes an observed source claim, while unsupported conversion language remains contested inference"
+}

@@ -1,0 +1,8 @@
+{
+  "schema": "knowledge.context-transfer.v1",
+  "case_id": "context.legacy.missing-both",
+  "knowledge_required": false,
+  "trusted_knowledge_disabled": true,
+  "context_envelope": null,
+  "context_receipt": null
+}

@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.team.reporting.1",
+  "event_kind": "message_finalized",
+  "request_text": "팀 주간 보고는 월요일 11시 전에 결론, 근거, 막힌 점 순서로 작성하기로 결정합니다.",
+  "timestamp": "2026-09-07T02:00:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.operations", "message_ref": "message.team.reporting", "revision": 1, "logical_source_ref": "source.team.reporting", "logical_revision_ref": "source.team.reporting.rev1"},
+  "attachments": []
+}

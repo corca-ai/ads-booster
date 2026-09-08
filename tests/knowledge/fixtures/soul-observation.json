@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.soul.observation.1",
+  "event_kind": "message_finalized",
+  "request_text": "브랜드 A 게시물 한 건에서 느낌표가 많은 문안의 클릭 수가 12회 더 높았다. 노출 수와 표본 설명이 없어 원칙 변경 근거로 확정하지 않는다.",
+  "timestamp": "2026-09-07T07:00:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.brand-a", "message_ref": "message.soul.observation", "revision": 1, "logical_source_ref": "source.soul.observation", "logical_revision_ref": "source.soul.observation.rev1"},
+  "attachments": [],
+  "brand_ref": "brand.a"
+}

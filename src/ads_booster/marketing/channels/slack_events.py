@@ -22,13 +22,28 @@ from ads_booster.contracts.agent_run import (
     contract_sha256,
 )
 from ads_booster.execution_control import ExecutionCancelledError, ExecutionControl, execution_scope
+from ads_booster.knowledge.contract_types import ConversationEventKind
 from ads_booster.marketing.agent_core.registry import CapabilityPolicy
 from ads_booster.marketing.agent_service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
+from ads_booster.marketing.agent_service.knowledge_ingress import (
+    KnowledgeIngressSink,
+    PendingKnowledgeIngress,
+)
 from ads_booster.marketing.channels.contracts import ChannelIdentityBinding, ChannelKind
 from ads_booster.marketing.channels.github_results import issue_results
+from ads_booster.marketing.channels.knowledge_ingress_slack import (
+    SlackIngressRequest,
+    build_slack_ingress,
+    build_slack_ingresses,
+    slack_revision,
+)
+from ads_booster.marketing.channels.slack_attachments import (
+    SlackAttachmentContext,
+    attachment_capabilities,
+)
 from ads_booster.marketing.channels.slack_commands import SlackCommands
 from ads_booster.marketing.channels.slack_conversations import (
     Conversation,
@@ -38,7 +53,7 @@ from ads_booster.marketing.channels.slack_conversations import (
 )
 from ads_booster.marketing.channels.slack_images import SlackImageDelivery
 from ads_booster.marketing.channels.slack_progress import SlackProgressStore
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
@@ -58,7 +73,7 @@ DM에서도 텍스트로 대화할 수 있습니다. DM은 공개 검색과 답�
 계속 — 중단된 실행의 안전한 재개 시도
 종료 — 이 대화의 자동 응답 종료 (이미 실행 중인 작업을 강제 취소하지 않음)
 다시 시작 — 닫힌 대화 재개
-첨부파일 내용은 읽지 않습니다. 필요한 내용을 텍스트로 보내주세요."""
+첨부파일은 이 대화의 접근 범위에 맞춰 지식으로 저장합니다."""
 
 
 @dataclass(slots=True)
@@ -67,6 +82,7 @@ class SlackEvents:
     bot_user_id: str
     channel_ids: frozenset[str]
     allow_dm: bool = True
+    knowledge_sink: KnowledgeIngressSink | None = None
     image_delivery: SlackImageDelivery | None = None
     store: SlackConversationStore = field(init=False)
     private_service: MarketingAgentService = field(init=False)
@@ -76,7 +92,15 @@ class SlackEvents:
         """Share the canonical ledger while constraining private tool authority."""
         if not re.fullmatch(r"[UW][A-Z0-9]+", self.bot_user_id):
             raise ValueError("slack_bot_user_id_invalid")
-        self.store = SlackConversationStore(self.commands.application.store.database_path)
+        self.store = SlackConversationStore(
+            self.commands.application.store.database_path,
+            knowledge_sink=self.knowledge_sink,
+            installed_knowledge_ingress=(
+                None
+                if self.commands.application.service.knowledge is None
+                else self.commands.application.service.knowledge.ingress
+            ),
+        )
         self.progress = SlackProgressStore(self.store)
         self.private_service = replace(
             self.commands.application.service,
@@ -100,7 +124,9 @@ class SlackEvents:
             raise ValueError("slack_user_not_allowed")
         return identity
 
-    def receive(self, body: bytes, headers: dict[str, str], *, now: datetime) -> JsonObject:
+    def receive(  # noqa: C901,PLR0911 - explicit Slack admission variants.
+        self, body: bytes, headers: dict[str, str], *, now: datetime
+    ) -> JsonObject:
         self.commands.verifier.verify(
             body,
             timestamp=headers.get("x-slack-request-timestamp", ""),
@@ -124,7 +150,15 @@ class SlackEvents:
         if not isinstance(event, dict):
             raise ValueError("slack_event_missing")
         kind = event.get("type")
-        if kind not in {"message", "app_mention"} or event.get("bot_id") or event.get("subtype"):
+        subtype = event.get("subtype")
+        if kind not in {"message", "app_mention"} or event.get("bot_id"):
+            return {"ok": True}
+        if subtype in {"message_changed", "message_deleted"}:
+            self._receive_mutation(event, now=now)
+            return {"ok": True}
+        if subtype not in {None, "file_share"}:
+            return {"ok": True}
+        if subtype == "file_share" and not isinstance(event.get("files"), list):
             return {"ok": True}
         user_id = _string(event, "user")
         if user_id == self.bot_user_id:
@@ -133,15 +167,15 @@ class SlackEvents:
             identity = self.identity(user_id)
         except ValueError:
             return {"ok": True}
-        admitted = self._message(event, identity)
+        admitted = self._message(event, identity, now=now)
         if admitted is not None:
-            conversation, message = admitted
-            self.store.admit(conversation, message)
+            conversation, message, knowledge = admitted
+            self.store.admit(conversation, message, knowledge)
         return {"ok": True}
 
     def _message(  # noqa: C901,PLR0911 - explicit channel and DM admission boundaries.
-        self, event: JsonObject, identity: ChannelIdentityBinding
-    ) -> tuple[Conversation, Message] | None:
+        self, event: JsonObject, identity: ChannelIdentityBinding, *, now: datetime
+    ) -> tuple[Conversation, Message, tuple[PendingKnowledgeIngress, ...]] | None:
         channel = _string(event, "channel")
         text = _string(event, "text", default="")
         if len(text) > _MAX_MESSAGE:
@@ -179,6 +213,7 @@ class SlackEvents:
         if current is None and not private and not mentioned:
             return None  # Ordinary channel chatter never starts a conversation.
         text = text.replace(f"<@{self.bot_user_id}>", "").strip()
+        source_text = text
         reopens = text in {"다시 시작", "reopen"}
         if current is not None and current.closed and not reopens:
             return None
@@ -193,14 +228,115 @@ class SlackEvents:
             private=private,
         )
         message = Message(
-            message_id="slack-message-"
-            + contract_sha256({"team": self.commands.team_id, "channel": channel, "ts": ts}),
+            message_id=self._message_id(channel, ts),
             conversation_id=conversation_id,
             user_id=identity.external_user_id,
             text=text,
             reopens=reopens,
         )
-        return conversation, message
+        run = self._service(conversation).repository.get(
+            conversation.tenant_id, conversation.current_run
+        )
+        action = (
+            "input" if run is not None and run.state is AgentRunState.AWAITING_INPUT else "create"
+        )
+        run_id = (
+            run.run_id
+            if action == "input" and run is not None
+            else "slack-talk-"
+            + contract_sha256(
+                {"message": message.message_id, "scope": conversation.conversation_id}
+            )[:40]
+        )
+        files = _json_objects(event.get("files"))
+        attachments = attachment_capabilities(
+            SlackAttachmentContext(identity.tenant_id, message.message_id, files)
+        )
+        event_kind = (
+            ConversationEventKind.MESSAGE_FINALIZED
+            if source_text
+            else ConversationEventKind.ATTACHMENT_RECEIVED
+        )
+        knowledge = build_slack_ingresses(
+            SlackIngressRequest(
+                conversation_id=conversation.conversation_id,
+                message_id=message.message_id,
+                run_id=run_id,
+                action=action,
+                text=source_text,
+                revision=1,
+                external_revision=ts,
+                created_revision=ts,
+                event_kind=event_kind,
+                identity=identity,
+                private=private,
+                reply_to=self._message_id(channel, thread) if thread and thread != ts else None,
+                attachments=attachments,
+                observed_at=now,
+            )
+        )
+        return conversation, message, knowledge
+
+    def _receive_mutation(self, event: JsonObject, *, now: datetime) -> None:
+        channel = _string(event, "channel")
+        raw_previous = event.get("previous_message")
+        if not isinstance(raw_previous, dict):
+            return
+        previous = _JSON.validate_python(raw_previous)
+        original_ts = _string(previous, "ts", default=_string(event, "deleted_ts", default=""))
+        if not _TIMESTAMP.fullmatch(original_ts):
+            raise ValueError("slack_original_timestamp_invalid")
+        admitted = self.store.admitted_message(self._message_id(channel, original_ts))
+        if admitted is None:
+            return
+        prior = self.store.latest_knowledge_event(admitted.message_id)
+        if prior is None:
+            return
+        previous_event, previous_binding = prior
+        identity = self.identity(_string(previous, "user"))
+        if previous_event.speaker_ref != identity.member_id:
+            raise ValueError("slack_message_owner_mismatch")
+        conversation = self.store.conversation(admitted.conversation_id)
+        if conversation is None:
+            raise ValueError("slack_conversation_missing")
+        _ = self._authorize(conversation, identity.external_user_id)
+        subtype = _string(event, "subtype")
+        if subtype == "message_changed":
+            changed = _json_object(event.get("message"))
+            edited = _json_object(changed.get("edited"))
+            external_revision = _string(edited, "ts", default=_string(event, "event_ts"))
+            text = _string(changed, "text").replace(f"<@{self.bot_user_id}>", "").strip()
+            event_kind = ConversationEventKind.MESSAGE_EDITED
+        else:
+            external_revision = _string(event, "event_ts")
+            text = ""
+            event_kind = ConversationEventKind.MESSAGE_DELETED
+        if slack_revision(external_revision) <= slack_revision(previous_binding.source_version):
+            raise ValueError("slack_message_revision_stale")
+        knowledge = build_slack_ingress(
+            SlackIngressRequest(
+                conversation_id=conversation.conversation_id,
+                message_id=admitted.message_id,
+                run_id=previous_binding.run_id,
+                action="input",
+                text=text,
+                revision=previous_event.revision + 1,
+                external_revision=external_revision,
+                created_revision=original_ts,
+                event_kind=event_kind,
+                identity=identity,
+                private=conversation.private,
+                reply_to=previous_event.reply_to,
+                attachments=(),
+                observed_at=now,
+            )
+        )
+        self.store.admit_mutation(knowledge)
+
+    def _message_id(self, channel: str, timestamp: str) -> str:
+        return "slack-message-" + contract_sha256(
+            {"team": self.commands.team_id, "channel": channel, "ts": timestamp}
+        )
 
     def recover(self) -> None:
         self.store.recover()
@@ -220,7 +356,9 @@ class SlackEvents:
             raise ValueError("slack_channel_removed")
         return identity
 
-    def work_once(self, *, now: datetime) -> bool:
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ordered ingress, notification and cancellable run boundaries.
+        if self.store.knowledge_ingress.dispatch_once():
+            return True
         if self._notify():
             return True
         claimed = self.store.claim()
@@ -596,6 +734,16 @@ def _string(value: JsonObject, key: str, *, default: str | None = None) -> str:
     if not isinstance(result, str) or (default is None and not result) or len(result) > _MAX_FIELD:
         raise ValueError("slack_event_field_invalid")
     return result
+
+
+def _json_object(value: JsonValue) -> JsonObject:
+    return _JSON.validate_python(value)
+
+
+def _json_objects(value: JsonValue) -> tuple[JsonObject, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(_JSON.validate_python(item) for item in value)
 
 
 def events_from_env(env: Mapping[str, str], commands: SlackCommands | None) -> SlackEvents | None:

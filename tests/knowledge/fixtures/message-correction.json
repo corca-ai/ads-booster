@@ -1,0 +1,9 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.message.correction.1",
+  "event_kind": "message_finalized",
+  "request_text": "정정합니다. 라이트 요금제의 한국 월 가격은 부가세 포함 31,000원이며 2026년 9월 15일부터 적용합니다.",
+  "timestamp": "2026-09-07T01:15:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.seed", "message_ref": "message.price.correction", "revision": 1, "logical_source_ref": "source.price.kr", "logical_revision_ref": "source.price.kr.rev2", "corrects_revision_ref": "source.price.kr.rev1"},
+  "attachments": []
+}

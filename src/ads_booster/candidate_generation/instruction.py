@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING, Final
 
+from ads_booster.contracts.knowledge_selection import VoiceStatus
 from ads_booster.workspace import (
     OFFERED_BACKGROUND_SUBJECTS,
     PERSONA_DOMAIN_LABELS,
@@ -15,7 +16,10 @@ from ads_booster.workspace import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ads_booster.candidate_generation.models import CandidateContextBundle
+    from ads_booster.candidate_generation.models import (
+        CandidateContextBundle,
+        CandidateEditorialContext,
+    )
 
 DEFAULT_COUNTRY: Final = "KR"
 DEFAULT_LANGUAGE: Final = "ko"
@@ -32,7 +36,7 @@ _RULES: Final = """[반드시 지킬 규칙]
 1. FACTS 문서에 없는 검증 가능한 사실을 주장하지 마세요.
    확정되지 않은 내용은 캡션에서 단정하지 마세요.
 2. 면책성 괄호 문구(예: "(개인 경험입니다)" 같은 보험용 덧붙임)를 쓰지 마세요.
-3. 반말/존댓말과 어조는 VOICE 문서를 그대로 따르세요. 스스로 문체를 새로 정하지 마세요.
+3. {voice_rule}
 4. refs_used에는 레퍼런스 INDEX 문서에 실제로 존재하는 id만 넣으세요. 없으면 빈 배열로 두세요.
 5. principles_applied에는 원리 문서에서 실제로 사용한 원리 번호만 넣으세요.
    최소 1개는 반드시 넣으세요. 아무 원리도 대지 못하는 후보는 근거가 없는 후보입니다.
@@ -503,6 +507,7 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
     history: tuple[CandidateHistoryEntry, ...] = (),
     account: CandidateAccountBrief | None = None,
     learned_feedback: tuple[str, ...] = (),
+    editorial_context: CandidateEditorialContext | None = None,
 ) -> str:
     """Assemble the one generation instruction this batch is written from.
 
@@ -537,13 +542,29 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
         distinct = _DISTINCT_ONE if history else _DISTINCT_SOLO
     sections = [
         (_ROLE_ONE.format(country=country) if one else _ROLE.format(count=count, country=country)),
-        _RULES.format(subjects=subjects, distinct=distinct, colors=_COLOR_LINE),
+        _RULES.format(
+            subjects=subjects,
+            distinct=distinct,
+            colors=_COLOR_LINE,
+            voice_rule=(
+                (
+                    "반말/존댓말과 어조는 VOICE 문서를 그대로 따르세요. "
+                    "스스로 문체를 새로 정하지 마세요."
+                )
+                if editorial_context is None
+                else (
+                    "아래 서버 선택 편집 컨텍스트만 문체 기준으로 사용하세요. "
+                    "로컬 VOICE를 추정하거나 대체하지 마세요."
+                )
+            ),
+        ),
         *([_INVENT_IDENTITY] if account is None else []),
         _CRAFT,
         *([account_section(account, count=count)] if account is not None else []),
         *([_feedback_section(learned_feedback)] if learned_feedback else []),
         assignment_section(assignments),
         *([_history_section(history)] if history else []),
+        *([_editorial_section(editorial_context)] if editorial_context is not None else []),
         *(
             f"{_DOCUMENT_HEADER.format(relative_path=document.relative_path)}\n{document.text}"
             for document in bundle.documents
@@ -551,6 +572,21 @@ def build_instruction(  # noqa: PLR0913 - each argument is one independent promp
         _OUTPUT.format(count=count, country=country, language=language),
     ]
     return "\n\n".join(sections)
+
+
+def _editorial_section(context: CandidateEditorialContext) -> str:
+    blocks = "\n\n".join(
+        f"[{block.role.value}:{block.block_id}]\n{block.text}" for block in context.blocks
+    )
+    voice_guidance = (
+        "\n현재 요청에 명시된 어조 외에 브랜드 문체를 만들지 마세요."
+        if context.voice_status is VoiceStatus.VOICE_UNCONFIGURED
+        else ""
+    )
+    return (
+        f"[서버 선택 편집 컨텍스트]\nvoice_status: {context.voice_status.value}"
+        f"{voice_guidance}\n\n{blocks}"
+    )
 
 
 def _feedback_section(instructions: tuple[str, ...]) -> str:

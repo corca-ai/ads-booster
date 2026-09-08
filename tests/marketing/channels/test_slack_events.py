@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 
 from ads_booster.transport.json_types import JsonObject
 
+_JSON_MESSAGES: TypeAdapter[list[JsonObject]] = TypeAdapter(list[JsonObject])
+_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
+
 
 class RecordingReasoning(StopReasoning):
     def __init__(self) -> None:
@@ -143,6 +146,76 @@ def test_reply_to_input_uses_same_canonical_run(tmp_path: Path) -> None:
     assert after[0].run_id == before.run_id
     assert after[0].state is AgentRunState.COMPLETED
     assert len(messages) == 4
+
+
+def test_admitted_message_edit_and_delete_fence_transcript_without_new_run(
+    tmp_path: Path,
+) -> None:
+    # Given: a signed message has already produced one response Run.
+    owner, _ = setup_events(tmp_path)
+    receive(owner)
+    assert owner.work_once(now=NOW)
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+    # When: Slack delivers a newer edit for the admitted source message.
+    receive(
+        owner,
+        subtype="message_changed",
+        user="U1",
+        event_ts="100.002",
+        message={
+            "type": "message",
+            "user": "U1",
+            "text": "수정된 질문",
+            "ts": "100.001",
+            "edited": {"user": "U1", "ts": "100.002"},
+        },
+        previous_message={
+            "type": "message",
+            "user": "U1",
+            "text": "<@UBOT> 첫 질문",
+            "ts": "100.001",
+        },
+    )
+
+    # Then: the transcript uses the canonical revision and no response job is created.
+    conversation_id = _conversation_id(owner)
+    transcript = owner.store.transcript(conversation_id)
+    transcript_messages = _JSON_MESSAGES.validate_python(transcript["messages"])
+    assert [item["user"] for item in transcript_messages] == ["수정된 질문"]
+    assert not owner.work_once(now=NOW)
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+    # When: Slack deletes that same admitted source message.
+    receive(
+        owner,
+        subtype="message_deleted",
+        user="U1",
+        event_ts="100.003",
+        deleted_ts="100.001",
+        previous_message={
+            "type": "message",
+            "user": "U1",
+            "text": "수정된 질문",
+            "ts": "100.001",
+        },
+    )
+
+    # Then: deleted source text is immediately absent and still creates no new Run.
+    assert owner.store.transcript(conversation_id)["messages"] == []
+    assert not owner.work_once(now=NOW)
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+
+def _conversation_id(owner: SlackEvents) -> str:
+    with owner.store.connect() as db:
+        row = _STRING_ROW.validate_python(
+            db.execute("SELECT conversation_id FROM slack_conversations").fetchone()
+        )
+    if row is None:
+        message = "expected one admitted conversation"
+        raise AssertionError(message)
+    return TypeAdapter(tuple[str]).validate_python(row)[0]
 
 
 @pytest.mark.parametrize(

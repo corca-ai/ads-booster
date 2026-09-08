@@ -1,0 +1,10 @@
+{
+  "schema": "knowledge.ingest-envelope.v1",
+  "delivery_id": "delivery.fixture.soul.a.decision.1",
+  "event_kind": "message_finalized",
+  "request_text": "브랜드 A 원칙을 채택합니다. 독자를 이미 판단할 수 있는 동료로 대하고, 큰 약속보다 구체적 사용 장면과 검증 가능한 수치를 우선하며, 짧고 단정한 문장으로 씁니다. 충돌하면 정확성을 흥분감보다 우선합니다.",
+  "timestamp": "2026-09-07T06:00:00Z",
+  "message_event": {"conversation_ref": "conversation.team-a.brand-a", "message_ref": "message.soul.a.decision", "revision": 1, "logical_source_ref": "source.soul.a.decision", "logical_revision_ref": "source.soul.a.decision.rev1"},
+  "attachments": [],
+  "trusted_capability_refs": {"brand_ref": "brand.a", "grant": "brand_voice_edit"}
+}

@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import ToolInvocation
+from ads_booster.contracts.knowledge_context import knowledge_context_sha256
 from ads_booster.contracts.tool_capability import ToolDescriptor
 from ads_booster.marketing.agent_service.github_issues import (
     CAPABILITY,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ads_booster.marketing.agent_core.ports import ToolAdapter
+    from ads_booster.marketing.agent_service.knowledge import KnowledgeServiceAdapter
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
@@ -88,6 +90,7 @@ class ConfiguredAgentTools:
     config: AgentServiceIntegrationConfig
     research_runner: ResearchRunner
     opener: Callable[..., HttpResponse] = urlopen
+    knowledge: KnowledgeServiceAdapter | None = None
 
     images: CodexImages | None = None
 
@@ -121,6 +124,8 @@ class ConfiguredAgentTools:
             adapters["creative.image.generate"] = _delegating(
                 "creative.image.generate", "codex.image_generation", self.images.execute
             )
+        if self.knowledge is not None:
+            adapters.update(self.knowledge.adapters())
         return adapters
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
@@ -157,6 +162,8 @@ class ConfiguredAgentTools:
             result.append(github_descriptor(now=now))
         if self.images is not None:
             result.append(image_descriptor(now=now))
+        if self.knowledge is not None:
+            result.extend(self.knowledge.descriptors(now=now))
         return tuple(result)
 
     def _research(
@@ -177,12 +184,49 @@ class ConfiguredAgentTools:
         _ = descriptor
         origin = _https_origin(self.config.hosted_origin)
         token = _required(self.config.hosted_token)
+        payload = invocation.input
+        transfer = None
+        if self.knowledge is not None:
+            research = invocation.input.get("research")
+            if not isinstance(research, dict):
+                raise ValueError("hosted_research_binding_required")
+            account_id = research.get("account_id")
+            if not isinstance(account_id, str) or not account_id:
+                raise ValueError("hosted_account_binding_required")
+            transfer, binding = self.knowledge.outbound_transfer(invocation, account_id)
+            payload = _JSON_OBJECT.validate_python(
+                {
+                    **invocation.input,
+                    "trusted_knowledge": {
+                        "binding": binding,
+                        "knowledge_context": transfer.model_dump(mode="json", by_alias=True),
+                        "knowledge_context_sha256": knowledge_context_sha256(transfer),
+                    },
+                }
+            )
         output = self._post_json(
             urljoin(f"{origin}/", "api/marketing-agent/runs"),
-            invocation.input,
+            payload,
             {"authorization": f"Bearer {token}", "idempotency-key": invocation.idempotency_key},
         )
+        if transfer is not None:
+            self._record_transfer_replicas(transfer.transfer_id, output)
         return DelegatedToolResult(disposition="succeeded", output=output, actual_cost_units=1)
+
+    def _record_transfer_replicas(self, transfer_id: str, output: JsonObject) -> None:
+        if self.knowledge is None or output.get("knowledge_context_transfer_id") != transfer_id:
+            raise ValueError("knowledge_transfer_admission_receipt_invalid")
+        replicas = output.get("knowledge_context_replicas")
+        if not isinstance(replicas, list) or not replicas:
+            raise ValueError("knowledge_transfer_admission_receipt_invalid")
+        for replica in replicas:
+            if not isinstance(replica, dict):
+                raise ValueError("knowledge_transfer_admission_receipt_invalid")
+            system_id = replica.get("system_id")
+            replica_id = replica.get("replica_id")
+            if not isinstance(system_id, str) or not isinstance(replica_id, str):
+                raise ValueError("knowledge_transfer_admission_receipt_invalid")
+            self.knowledge.record_replica(transfer_id, system_id, replica_id)
 
     def _hosted_install(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor

@@ -53,6 +53,7 @@ from ads_booster.candidate_generation.models import (
     CandidateContextBundle,
     CandidateDocument,
     CandidateDraft,
+    CandidateEditorialContext,
 )
 from ads_booster.candidate_generation.parsing import CANDIDATES_KEY, parse_candidate_drafts
 
@@ -73,6 +74,7 @@ __all__ = [
     "CandidateContextSource",
     "CandidateDocument",
     "CandidateDraft",
+    "CandidateEditorialContext",
     "CandidateDraftBatch",
     "CandidateDraftClient",
     "CandidateDraftEngine",
