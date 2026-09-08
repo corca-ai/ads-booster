@@ -738,3 +738,9 @@ old prepared knowledge from generic evidence, and `knowledge_is_current` for def
 Image-edit and remote-capture owners use that public authority check before effects.
 The composition root and API retain both knowledge ingress and current production reviewer hooks;
 service doctor remains read-only and does not prepare state directories.
+
+`SqliteChannelStore.bind_workspace_member` owns idempotent first-use identity admission; it
+preserves existing approval, disable and revocation state. `SlackEvents.workspace_mentions`, enabled
+by installed `events_from_env`, removes static channel/member admission limits after
+app/team/signature validation. Worker execution and notification re-check current identity
+authority.

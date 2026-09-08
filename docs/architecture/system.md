@@ -1148,3 +1148,10 @@ A stale context discovered after runtime admission retains the pending invocatio
 reconciliation, since no schema-safe prestart cancellation contract exists. It never silently
 replans over the admitted invocation. Knowledge and image worker lifecycles coexist with the
 managed server's persistent8090 port and existing maintenance/shutdown boundaries.
+
+Installed Slack Events admit signed mentions from all members in the configured app/team and any
+internal channel where the bot receives mentions. User identity binding is created atomically on
+first use without replacing existing grants or revocations. New bindings can create runs but cannot
+approve effects. Shared threads remain channel/thread scoped; DMs remain member/session scoped.
+Slack Connect events are excluded. Legacy channel/member lists still constrain slash commands, not
+installed Events conversations.

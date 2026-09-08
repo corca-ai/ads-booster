@@ -428,3 +428,9 @@ scope, original history retention, revoked prepared knowledge, follow-up retriev
 change between approval and actual start. CLI compatibility additionally proves doctor creates no
 state. Repeat only an affected owner after a further fix; use the final GitHub head's Ubuntu/Mac
 checks as installed CI evidence before merge.
+
+Workspace-wide mention admission is covered by `tests/marketing/channels/test_slack_events.py`:
+installed composition, new users/channels, distinct identity, preserved approver rights, rejected
+foreign/shared workspaces, disabled/revoked users and non-approver effects. Run this owner together
+with Slack progress and installed knowledge ingress checks; actual multi-user Slack delivery
+requires live workspace verification.

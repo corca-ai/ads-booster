@@ -864,9 +864,10 @@ check. Settings, secrets and canonical records remain outside release directorie
 and a one-time timer installation are required; these files do not deploy themselves to a server.
 Candidate packages and worktree tests are not proof of a live main update, Slack send or Linux reboot.
 
-Slack conversation setup: enable `TRACE_MARKETING_SLACK_BOT_USER_ID`, set optional comma-separated
-`TRACE_MARKETING_SLACK_ALLOWED_CHANNEL_IDS` (defaults to the primary channel), and use
-`TRACE_MARKETING_SLACK_ALLOW_DM=1` for allowed members' DMs. The signed
+Slack conversation setup: enable `TRACE_MARKETING_SLACK_BOT_USER_ID` and invite the bot to an
+internal channel. Any workspace member can mention it there. Legacy configured channel/member
+lists no longer restrict installed Events conversations. Use `TRACE_MARKETING_SLACK_ALLOW_DM=1`
+for members' DMs. The signed
 `/channels/slack/events` route acknowledges durable admission before reasoning. Mentions start
 threads; ordinary replies continue them with scoped persisted context. DM runs use a derived
 workspace/member/session tenant and search-only capability policy; they cannot mutate shared
@@ -966,3 +967,11 @@ if generation was already admitted the run can require reconciliation because us
 uncertain. It never automatically reruns an uncertain generation. Slack attachment failures preserve
 the local draft, report the unconfirmed upload and do not upload again automatically. A generated
 image requires human review; a PNG/digest check is not visual approval.
+
+Installed Slack mention access is workspace-wide: invite the bot to any internal public or private
+channel, then any member can mention it and continue in that thread. Existing configured
+member/channel lists no longer limit Events API conversations. Each newly seen Slack user gets a
+separate durable identity without approval rights; configured approvers retain their rights.
+Revoked/disabled identities and Slack Connect channels remain rejected. `/trace` slash commands
+retain their configured channel/member restrictions. No additional Slack scope or setup reset is
+required for mention access after updating the server.
