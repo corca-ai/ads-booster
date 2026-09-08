@@ -234,7 +234,47 @@ approval → same-Run Web GET of a 1,081,525-byte synthetic PNG with matching di
 returned404. Final source is c717bc7. Main read evidence. No live Slack/model/device/public
 installer or image-quality claim follows from this proof; prior lifecycle proof is separate.
 
-Next independent implementation: inspect existing worker admission/transport and connect canonical
+Continuation 2026-09-08: asynchronous tools now have a typed nonterminal acknowledgement and
+canonical `awaiting_tool` state. Runtime keeps the admitted invocation, consumed approval and
+reserved cost. Canonical acknowledgement precedes runtime acknowledgement; typed completion
+precedes runtime settlement/receipt projection. Restart repairs only local records, never the
+adapter effect. Exact operation/executor/invocation/output/cost validation rejects mismatches;
+duplicate completion retains the current later Run state. Explicit worker uncertainty uses
+reconciliation and retains cost; elapsed time never implies retry. Signed Slack revise/pause
+inputs are retained during waiting, and pause prevents planning after the admitted result.
+
+Ownership: patterns implemented runtime+15 direct tests; interrupted requirements work in
+Service/ports/continuation was completed and integrated by main; baseline independently reviewed
+Service and authored 20 direct tests/fresh installed proof; main owns Slack/Web wiring/docs.
+The first signed Slack tests reproduced `deferred_runtime_admission_missing`: persisted call
+serialization omits the schema field used by ToolCall.digest. Matching the typed call fields and
+request fixes the original admission lookup; both signed follow-up regressions then passed.
+Focused runtime/Service/continuation/Slack selection: 90 passed before two additional Service
+duplicate/concurrency tests, then all 20 Service tests passed independently. Nine changed Python
+files pass Ruff, format and BasedPyright (0 errors/warnings). No whole suite was run.
+
+Fresh installed proof: `/private/tmp/trace-deferred-installed-proof/evidence.json` and `prove.py`;
+wheel SHA256 `e5460c83ab0cfe70832d96d70e6a80b4b291859e0ef5fefc24a68ebe8089b691`.
+Version0.4.21 imported from isolated site-packages. Actual installed SQLite Service/runtime with
+fake reasoning/adapter: wait→restart, another Run answers, expired admission approval accepts
+the exact completion, duplicate no replay, cost reserved20→0/spent7, pending pause→awaiting_input.
+Main read evidence. This proves internal owner behavior, not an enabled async production adapter,
+live remote capture/authentication, actual device quality, public installer or new lifecycle QA.
+The later source-only change is a lint annotation; execution logic matches the proof candidate.
+
+Remote transport decision: use a narrow canonical pull queue with a scoped worker identity and
+lease/start/receipt boundary, preserving D1 ownership. Existing MarketingTask requires account_id
+and hosted candidate fields, so do not fabricate those for a small request. Existing native
+preparer calls ensure_ready before the old loop's start barriers; the new preparer must validate
+only bytes/contracts, with ensure_ready after local+server start. Bind the Mac profile (including
+Mac Python executable), original source, nonce, approval and canonical invocation to the job.
+This transport remains Draft; no external callback is exposed by the async foundation.
+
+Goal management: get_goal on this resume reports `usageLimited` for the existing Goal. No duplicate
+Goal was created; status was not marked complete or blocked and local authorized work continued.
+Goal usage state can only be changed by the environment/user; retain this exact unfinished scope.
+
+Next independent implementation: connect canonical
 Run/approval/artifacts to remote Mac execution without giving D1 ownership of new Runs. Preserve
 no-Appium human handoff. Operational image editing/localization and campaign outcome integration
 also remain code gaps, not just credentials. External verification limits remain unchanged.

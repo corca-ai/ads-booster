@@ -115,6 +115,10 @@ Slack/worker image GET readback has a separate 10 MiB limit. Uploads
 resume the same work by default; `resume:false` retains a wait. Authenticated
 `GET /v1/runs/:id/assets/:asset-id` returns a preview and stale state. Byte validation never
 implies visual QA. Run details remain available in the existing Web view.
+`awaiting_tool` means an asynchronous tool accepted the task and its result is still pending.
+It is distinct from completion or an unknown execution result. Follow-up requests are retained
+without cancelling an already-started effect. This is a runtime capability for the pending
+remote-worker integration; it does not enable remote Mac capture by itself.
 
 `/v1/memories` provides scoped candidate drafts/read/selection. HTTP identity alone cannot
 adopt a shared rule. Authorized Slack reviewers use `기억 제안 <내용>`, `기억 목록`,

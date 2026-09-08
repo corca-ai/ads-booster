@@ -594,3 +594,10 @@ for both review and intake. `slack_asset_intake.py` owns the inspect/import sche
 approval attribution and registration. `slack_creative_setup.py` composes all three optional
 file capabilities under the same observed Slack grant. `creative_asset_links.py` owns the
 Run-to-asset projection used by HTTP uploads, Slack imports and native capture results.
+
+`contracts/agent_run.py` owns the nonterminal `ToolExecutionDeferred` acknowledgement and
+`awaiting_tool` Run state. `marketing/runtime.py` owns the deferred event, retained pending
+invocation/reservation and exact operation resolution; acknowledgement adds no terminal receipt.
+The Agent Service translates adapter acknowledgements and validates eventual results against
+frozen invocation/output contracts before recording canonical receipts. Transport authentication
+and worker artifact validation must precede that internal completion method.

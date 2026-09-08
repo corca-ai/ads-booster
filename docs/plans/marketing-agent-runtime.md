@@ -30,6 +30,22 @@ Unimplemented paths remain Draft until scenario evidence exists: operational ima
 remote native capture, publication scheduling/readback, live metrics/community and Paid actions.
 No new publisher or automatic self-modification is enabled by this plan.
 
+Remote capture requires an explicit asynchronous boundary before transport wiring. Existing
+D1 worker tasks require an account and hosted candidate fields; manufacturing those fields
+would enlarge a small image request and confuse ownership. A synchronous remote poll would
+hold the canonical execution lock. Therefore accepted tool operations now have a distinct
+acknowledgement and `awaiting_tool` Run state; they retain cost reservations and do not count
+as completed captures. Exact terminal results settle the existing runtime and feed the same
+Run. The remote worker lease/start/upload/authentication transport remains Draft and unavailable
+until implemented; this boundary alone does not make the Mac remotely callable.
+
+The next transport slice is a scoped pull queue with a frozen Mac worker profile. The existing
+native preparer invokes `ensure_ready` before its worker loop records execution start, so its
+preparation cannot be reused unchanged. Canonical remote preparation will validate bytes and
+contracts only; device preparation follows local and server start records. The contract must
+use the Mac profile's executable and bind source/nonce/invocation/approval digests. Started work
+must not be reassigned on timeout. These transport requirements remain **Status: Draft**.
+
 ## Problem
 
 Small software teams need more than a content generator. They need an operator that can turn a

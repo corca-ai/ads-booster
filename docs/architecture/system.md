@@ -865,3 +865,22 @@ confirmation, not independent rights/visual/product verification. Registration f
 current Run through its tool receipt, avoiding nested continuation/planning. Only registered
 assets enter the shared Run-to-asset projection; a crash before linkage can replay local
 registration without exposing another asset. DM intake remains disabled.
+
+Deferred tools return an operation/executor binding, not a successful output. Canonical
+acknowledgement and runtime events preserve the accepted work across restarts without invoking
+the adapter again. The Run waits in `awaiting_tool`, releasing the service execution lock for
+other Runs. Cost remains reserved until an exact terminal receipt is validated and persisted.
+The completion boundary is internal; no unauthenticated or operator HTTP callback is introduced.
+A remote capture worker still needs scoped enrollment, lease/start control and validated artifact
+transfer. Existing installed tool adapters remain synchronous until that transport is connected.
+The owner records explicit worker uncertainty separately in `awaiting_reconciliation`, retaining
+the reservation until validated readback. Waiting alone does not imply uncertainty or retry.
+Human follow-ups remain canonical task input; a pending pause stops subsequent planning after
+the admitted result is recorded. A later revision can supersede that pause. Completion retains
+the original admitted approval even when its admission window has since expired.
+
+Canonical acknowledgement precedes the runtime acknowledgement; canonical completion precedes
+runtime settlement and receipt projection. Recovery repairs those local boundaries without
+re-entering the adapter. Legacy serialized sessions are unchanged, but older binaries reject
+the newly reserved deferred events. Rollback must preserve the database and use a compatible
+reader for Runs containing those events; do not delete pending state to downgrade.

@@ -186,3 +186,9 @@ import the exact digest with human-confirmed source/use terms under runtime appr
 not grant downstream production/publication approval. Register before linking for Web readback;
 failed registration cannot attach an existing different asset to that Run. Returned image bytes
 are bounded separately from inline upload size; provenance and reported status remain explicit.
+
+An asynchronous tool acknowledgement binds the original invocation and executor to one operation.
+It does not claim success, verified artifacts or final cost. The canonical owner retains the
+pending work and resolves only the matching terminal result. Restart and duplicate completion
+must not redispatch work or charge twice. Later worker transport must authenticate that result
+and verify native artifacts before invoking the internal completion boundary.

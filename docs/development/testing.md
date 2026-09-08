@@ -7,6 +7,17 @@ Last reviewed: 2026-09-07
 
 Choose the boundary that changed. Source tests are not installed-worker or hosted-runtime proof.
 
+For acknowledged asynchronous tool work, select `tests/marketing/test_runtime_deferred.py`,
+`tests/marketing/agent_service/test_application_deferred.py` and
+`tests/marketing/channels/test_slack_deferred.py`. Include existing `test_agent_runtime.py`,
+Service `test_application.py` and `test_work_continuation.py` for their directly affected
+receipt/recovery/steering behavior. These fake adapter tests exercise real SQLite admission,
+approval expiry after admission, exact operation/executor/cost binding, duplicate completion,
+acknowledgement/completion crash windows, explicit uncertainty, pending pause and signed Slack
+follow-ups. They do not prove remote worker authentication, artifact transfer or actual capture.
+Fresh wheel proof must also show that a second Run can answer while the first waits, and that
+restarting and replaying completion neither calls the adapter again nor charges twice.
+
 | Change | Command |
 | --- | --- |
 | on-prem canonical Agent Service contracts, live tool catalog, versioned skill runs, daily scheduling, installed research plus hosted/Slack/Notion adapters, OAuth-introspected tenant API and direct Run result URL, tool admission/approval, and crash recovery | `uv run pytest -q tests/agent_core tests/marketing/agent_service tests/marketing/tool_adapters/test_compatibility.py tests/marketing/test_agent_runtime.py tests/providers/test_codex_reasoning.py tests/cli/test_cli_compatibility.py`; matching scoped Ruff and BasedPyright; fresh wheel install: `trace-marketing service doctor`, `trace-marketing service run --help`, then authenticated `GET /v1/tools`, `GET /v1/skills`, and one skill Run. Remote binding must require HTTPS token introspection. A scheduled run must be date-idempotent and may auto-approve only exact Slack/Notion delivery, never image or publication. Fake HTTP adapters do not prove a live OAuth, Slack, Notion, Meta, or Codex provider. |
