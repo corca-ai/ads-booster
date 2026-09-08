@@ -10,8 +10,8 @@ topic, review the image, then leave approved work in `submitted` for manual publ
 
 ## Tokens
 
-The canonical tokens live in `src/trace_capture/web/static/design-tokens.css`; root `tokens.css`
-is the Hallmark-compatible entrypoint that imports that source of truth.
+The canonical tokens live in [cloudflare/static/design-tokens.css](cloudflare/static/design-tokens.css).
+Root [tokens.css](tokens.css) is the Hallmark-compatible entrypoint that imports that source of truth.
 
 - Dark OKLCH surfaces create hierarchy without ornamental gradients or glow.
 - Indigo accent is reserved for the primary generation action, focus, and submitted state.
