@@ -11,7 +11,9 @@ for code changes and inspect the current branch and remote state before starting
 - Use `<type>: <specific-responsibility> (#<issue-number>)` for commit messages.
 - Create every Pull Request as Draft, then mark it `Ready for review` when review preparation is
   complete.
-- Squash Merge approved Pull Requests.
+- Use a Merge commit by default to preserve individual responsibility commits on `main`, including
+  for `feature/`, `fix/`, and `hotfix/` branches deleted after merge. Use Squash Merge only when the
+  user explicitly requests it for that Pull Request.
 - After a change lands on `main`, update the tag and GitHub Release for that commit.
 
 ## Branches
@@ -179,7 +181,13 @@ evidence, and operational impact.
 2. Confirm that changed files and the Pull Request description match the current head.
 3. Mark the Pull Request `Ready for review` when review preparation is complete.
 4. Apply feedback and push to the same branch.
-5. Squash Merge after approval.
+5. After approval, use **Create a merge commit** on GitHub or `gh pr merge <number> --merge`.
+   - Preserve the individual responsibility commits regardless of branch prefix or whether the
+     source branch will be deleted after merge.
+   - Use Squash Merge only when the user explicitly requests it for this Pull Request. General
+     permission to merge does not authorize squashing.
+   - If repository settings block Merge commits, report the blocker; do not silently switch to
+     Squash Merge or Rebase Merge.
 6. Synchronize local `main` immediately after the merge.
 7. After the merged work and any required release steps are verified, close each completed owning
    issue with a short PR/release reference. Do not close an issue when it still has deferred scope.
@@ -234,7 +242,8 @@ verification.
 - [ ] `git status --short` and `git diff --stat` show the intended scope.
 - [ ] `git diff --check` passes.
 - [ ] Focused tests and checks for the changed behavior pass.
-- [ ] The Pull Request is Draft and its description matches the actual change.
+- [ ] The Pull Request is Ready for review, approved, and its description matches the actual change.
 - [ ] No secrets or unrelated changes are included.
-- [ ] The Pull Request is ready for Squash Merge after approval.
+- [ ] Merge commit is selected to preserve individual commits, or the user explicitly requested
+  Squash Merge for this Pull Request.
 - [ ] After landing on `main`, the new tag and GitHub Release point to the same `main` commit.
