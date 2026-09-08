@@ -36,6 +36,7 @@ from ads_booster.marketing.channels.slack_conversations import (
     MessagePlan,
     SlackConversationStore,
 )
+from ads_booster.marketing.channels.slack_images import SlackImageDelivery
 from ads_booster.marketing.channels.slack_progress import SlackProgressStore
 from ads_booster.transport.json_types import JsonObject
 
@@ -66,6 +67,7 @@ class SlackEvents:
     bot_user_id: str
     channel_ids: frozenset[str]
     allow_dm: bool = True
+    image_delivery: SlackImageDelivery | None = None
     store: SlackConversationStore = field(init=False)
     private_service: MarketingAgentService = field(init=False)
     progress: SlackProgressStore = field(init=False)
@@ -572,6 +574,15 @@ class SlackEvents:
         except ValueError:
             state = "denied"
         else:
+            if self.image_delivery is not None and not conversation.private:
+                plan = self.progress.locate(message.message_id)
+                if plan is not None:
+                    result += "\n" + self.image_delivery.deliver(
+                        self._service(conversation).repository.records(
+                            conversation.tenant_id, plan.run_id
+                        ),
+                        conversation,
+                    )
             status = self.progress.locate(message.message_id)
             state = self._send(
                 conversation, result, timestamp="" if status is None else status.timestamp
@@ -611,4 +622,11 @@ def events_from_env(env: Mapping[str, str], commands: SlackCommands | None) -> S
         bot_user_id,
         channels,
         allow_dm=env.get("TRACE_MARKETING_SLACK_ALLOW_DM", "1") == "1",
+        image_delivery=SlackImageDelivery(
+            commands.application.store.database_path.parent / "images",
+            commands.application.store.database_path,
+            env.get("TRACE_MARKETING_SLACK_BOT_TOKEN", ""),
+        )
+        if env.get("TRACE_MARKETING_SLACK_BOT_TOKEN")
+        else None,
     )
