@@ -62,6 +62,8 @@ from ads_booster.knowledge.tool_contracts import (
 from ads_booster.marketing.agent_service.knowledge_transfer import TransferContextMaterial
 from ads_booster.transport.json_types import JsonObject
 
+_RECORD_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+
 if TYPE_CHECKING:
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
     from ads_booster.knowledge.tools import ToolHost
@@ -282,13 +284,15 @@ class KnowledgeServiceAdapter:
 
     def _prepared_context_for_run(self, run_id: str) -> PreparedKnowledgeContext | None:
         with self.ingress.connect() as connection:
-            rows = connection.execute(
-                """SELECT record_json FROM agent_records
+            rows = _RECORD_ROWS.validate_python(
+                connection.execute(
+                    """SELECT record_json FROM agent_records
                 WHERE run_id=? AND kind=? ORDER BY rowid DESC""",
-                (run_id, AgentRecordKind.EVIDENCE.value),
-            ).fetchall()
+                    (run_id, AgentRecordKind.EVIDENCE.value),
+                ).fetchall()
+            )
         for row in rows:
-            record = AgentRecord.model_validate_json(str(row[0]))
+            record = AgentRecord.model_validate_json(row[0])
             if record.payload_schema_version != "trace.prepared-knowledge-context-record.v1":
                 continue
             payload = record.payload.get("prepared_context")
