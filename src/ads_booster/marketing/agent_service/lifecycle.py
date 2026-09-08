@@ -25,6 +25,7 @@ from ads_booster.knowledge.memory_consolidation import (
     MemoryViewDispatcher,
 )
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
+from ads_booster.knowledge.repository_batch_recovery import recover_running_batches
 from ads_booster.knowledge.retrieval import KnowledgeRetriever
 from ads_booster.knowledge.runtime import KnowledgeRuntime, SqliteBatchFlusher
 from ads_booster.knowledge.source_fetch import ScopedSourceFetcher
@@ -157,6 +158,11 @@ def build_installed_knowledge_runtime(
     )
     owner = KnowledgeOwner(root, f"service-{actor.actor_id}")
     owner.acquire()
+    try:
+        _ = recover_running_batches(repository, actor.workspace_id, owner)
+    except BaseException:
+        owner.release()
+        raise
     processor = CanonicalJobProcessor(
         repository,
         actor,
