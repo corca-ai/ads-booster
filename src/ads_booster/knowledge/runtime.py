@@ -3,12 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Event
-from typing import Protocol
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from ads_booster.knowledge.jobs import BoundedJobRunner
 from ads_booster.knowledge.maintenance import KnowledgeActivity, KnowledgeOwner
+from ads_booster.knowledge.repository_batch import flush_curation_batches
 
 if TYPE_CHECKING:
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
@@ -42,15 +41,7 @@ class SqliteBatchFlusher:
     repository: SqliteKnowledgeRepository
 
     def flush_ready_batches(self, workspace_id: str, now: datetime) -> int:
-        with self.repository.connection() as connection:
-            _ = connection.execute("BEGIN IMMEDIATE")
-            cursor = connection.execute(
-                """UPDATE curation_batches SET state='ready',batch_deadline=?
-                WHERE workspace_id=? AND state='collecting' AND priority='routine'
-                AND first_event_at<=?""",
-                (now.isoformat(), workspace_id, now.isoformat()),
-            )
-            return cursor.rowcount
+        return flush_curation_batches(self.repository, workspace_id, now)
 
 
 @dataclass(slots=True)
