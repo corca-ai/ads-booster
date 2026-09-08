@@ -51,9 +51,16 @@ def active_task_binding(
         rows = _STRING_ROWS.validate_python(
             connection.execute(
                 """SELECT binding_json FROM task_bindings
-                WHERE workspace_id=? AND actor_ref=? AND capability_epoch=? AND state='active'
+                WHERE workspace_id=? AND actor_ref=? AND member_id=? AND session_id=?
+                    AND capability_epoch=? AND state='active'
                 ORDER BY opened_at DESC""",
-                (actor.workspace_id, actor.actor_id, actor.policy_epoch),
+                (
+                    actor.workspace_id,
+                    actor.actor_id,
+                    actor.member_id,
+                    actor.session_id,
+                    actor.policy_epoch,
+                ),
             ).fetchall(),
         )
     bindings = tuple(TaskBinding.model_validate_json(row[0]) for row in rows)
