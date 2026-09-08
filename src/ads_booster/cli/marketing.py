@@ -180,7 +180,7 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
     host: Annotated[
         str, typer.Option(help="Bind address; remote binds require OAuth.")
     ] = "127.0.0.1",
-    port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8090,
     tenant: Annotated[str, typer.Option(help="Tenant bound to this service token.")] = "trace",
     principal: Annotated[
         str, typer.Option(help="Principal bound to approval decisions from this token.")

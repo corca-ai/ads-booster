@@ -42,6 +42,14 @@ login and Node.js are unnecessary. If logged in as root, use `bash /tmp/trace-in
 trace-marketing`, then `sudo -iu trace-marketing` for Codex login and setup. Credentials stay with
 that user. Installer enables linger for operation after logout and reboot.
 
+The managed agent listens on `127.0.0.1:8090`; route the marketing Cloudflare hostname to
+`http://localhost:8090`. `~/.config/trace-marketing/server.json` stores an integer `port` (default
+8090), shared by launch, updater health and `server status`. Setup writes 8090 on a new install;
+existing files retain their values. Port changes require a stopped, idle agent and matching tunnel
+route; never edit the port during an update transaction. See the [one-time port migration](docs/operations/agent-server/slack-launch-guide.md#기존-8765-설치에서-8090으로-전환) for older fixed-port installations.
+The standalone `service run` command also defaults to 8090 but uses its explicit `--port` option,
+independently of managed-server configuration.
+
 Rerun the installer after an interrupted download; rerun `server setup` after an interrupted config
 write. Setup resumes its own writes, preserves intervening edits and never imports an unrelated
 manual configuration. `server doctor` exits nonzero until local prerequisites, Codex login and setup
@@ -67,7 +75,7 @@ tenant-scoped HTTP API. Start it with the same macOS user's official Codex CLI l
 ```bash
 trace-marketing service doctor
 export TRACE_MARKETING_SERVICE_TOKEN='replace-with-a-private-token'
-trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8765
+trace-marketing service run --model gpt-5.4 --host 127.0.0.1 --port 8090
 ```
 
 For an on-premises or cloud server, terminate HTTPS at the ingress/reverse proxy and configure OAuth
@@ -85,7 +93,7 @@ export TRACE_MARKETING_SLACK_BOT_TOKEN='<xoxb-token>'
 export TRACE_MARKETING_SLACK_CHANNEL_ID='<channel-id>'
 export TRACE_MARKETING_NOTION_TOKEN='<notion-integration-token>'
 export TRACE_MARKETING_NOTION_PARENT_PAGE_ID='<daily-marketing-parent-page-id>'
-trace-marketing service run --model gpt-5.4 --host 0.0.0.0 --port 8765
+trace-marketing service run --model gpt-5.4 --host 0.0.0.0 --port 8090
 ```
 
 The service accepts a token only when introspection returns `active: true`, the configured audience,
@@ -107,8 +115,8 @@ journey, `POST /v1/runs/:id/input` resumes requested evidence, and
 service configuration to one tenant and principal; callers cannot supply either identity in the
 request body. Appium is not inspected or required for service startup or reasoning.
 
-Open `http://127.0.0.1:8765/` and enter the same service token to create and inspect Runs. Channel
-result links use `http://127.0.0.1:8765/runs/<run-id>` and open the same run-centric UI directly.
+Open `http://127.0.0.1:8090/` and enter the same service token to create and inspect Runs. Channel
+result links use `http://127.0.0.1:8090/runs/<run-id>` and open the same run-centric UI directly.
 If the official Codex turn is temporarily unavailable, run creation returns HTTP `503` with
 `{"error":"reasoning_provider_unavailable","retryable":true}`. The admitted Run remains durable;
 submit the identical create request or refresh and retry after provider readiness is restored.
@@ -127,14 +135,14 @@ external-preparation checklist are in
 trace-marketing version --json
 trace-marketing service doctor
 export TRACE_MARKETING_SERVICE_TOKEN='generate-a-private-local-token'
-trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8765
+trace-marketing service run --model '<approved-codex-model>' --host 127.0.0.1 --port 8090
 ```
 
 In a second terminal, verify the installed service—not the checkout—and then use the browser UI:
 
 ```bash
-curl -s http://127.0.0.1:8765/health
-open http://127.0.0.1:8765/
+curl -s http://127.0.0.1:8090/health
+open http://127.0.0.1:8090/
 ```
 
 The first safe exercise is an Appium-independent goal such as “일본 Threads에서 검증된 Trace
