@@ -22,7 +22,7 @@ from ads_booster.contracts.models import ContractModel, Identifier
 from ads_booster.marketing.agent_service.creative_asset_links import asset_links as _links
 from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.marketing.agent_service.work_continuation import continue_work
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -34,6 +34,7 @@ _MAX_IMAGE = 512 * 1024
 _MAX_READBACK_IMAGE = 10 * 1024 * 1024
 _MAX_BODY = 1024 * 1024
 _MAX_PIXELS = 16_000_000
+_MAX_LIST = 100
 _ROUTE = re.compile(
     r"^/v1/runs/([A-Za-z0-9][A-Za-z0-9._:-]{0,159})/assets(?:/([A-Za-z0-9][A-Za-z0-9._-]{0,79}))?$"
 )
@@ -83,6 +84,8 @@ def dispatch_creative(  # noqa: PLR0913, PLR0911 - authenticated HTTP routing bo
             return _upload(upload, scope, identity, service, artifact_root, run_id, now)
         if method == "GET" and asset_id:
             return _get(scope, service, artifact_root, run_id, asset_id)
+        if method == "GET":
+            return _list(scope, service, artifact_root, run_id)
     except ValidationError:
         return 400, {"error": "creative_upload_invalid"}
     except (ValueError, OSError) as error:
@@ -92,6 +95,41 @@ def dispatch_creative(  # noqa: PLR0913, PLR0911 - authenticated HTTP routing bo
         return 409 if "conflict" in code or "safe_boundary" in code else 400, {"error": code}
 
     return 405, {"error": "creative_method_not_allowed"}
+
+
+def _list(
+    scope: CreativeScope, service: MarketingAgentService, root: Path, run_id: str
+) -> tuple[int, JsonObject]:
+    if scope.workspace_id.startswith("slack-private-"):
+        return 403, {"error": "creative_private_chat_not_projected"}
+    repository = SqliteCreativeAssetRepository(service.repository.database_path, root)
+    with _links(service.repository.database_path) as connection:
+        rows = cast(
+            "list[tuple[str, int]]",
+            connection.execute(
+                """SELECT asset_id,MAX(revision) FROM creative_run_assets
+                WHERE tenant_id=? AND run_id=? GROUP BY asset_id
+                ORDER BY MAX(rowid) DESC LIMIT ?""",
+                (scope.workspace_id, run_id, _MAX_LIST),
+            ).fetchall(),
+        )
+    assets: list[JsonValue] = []
+    for asset_id, revision in rows:
+        asset = repository.describe(scope, asset_id, revision)
+        if asset is not None:
+            assets.append(
+                {
+                    **asset.model_dump(mode="json"),
+                    "stale": repository.is_stale(scope, asset_id, revision),
+                }
+            )
+    return 200, {
+        "run_id": run_id,
+        "assets": assets,
+        "limit": _MAX_LIST,
+        "limit_reached": len(rows) == _MAX_LIST,
+        "verification": "stored_metadata_only_use_individual_readback_for_verified_bytes",
+    }
 
 
 def _image_bytes(value: str) -> tuple[bytes, str]:

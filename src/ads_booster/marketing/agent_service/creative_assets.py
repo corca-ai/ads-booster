@@ -83,6 +83,19 @@ class SqliteCreativeAssetRepository:
         self._verify_file(asset)
         return asset
 
+    def describe(self, scope: CreativeScope, asset_id: str, revision: int) -> CreativeAsset | None:
+        """List stored metadata only; execution and byte delivery must still use get()."""
+        with self._connect() as connection:
+            row = cast(
+                "tuple[str] | None",
+                connection.execute(
+                    """SELECT payload FROM creative_assets
+                    WHERE scope=? AND asset_id=? AND revision=?""",
+                    (self._scope(scope), asset_id, revision),
+                ).fetchone(),
+            )
+        return None if row is None else CreativeAsset.model_validate_json(row[0])
+
     def add(self, asset: CreativeAsset, *, actor_scope: CreativeScope) -> None:
         if actor_scope != asset.scope:
             raise ValueError("creative_scope_write_denied")
