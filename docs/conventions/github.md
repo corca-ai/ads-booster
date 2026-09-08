@@ -171,6 +171,28 @@ user-visible flow and verify the change without reading the commit history. Incl
 - `## Verification`: exact focused commands and observed results;
 - `## Deployment`: environment variables, data migrations, release/tag impact, and rollback notes.
 
+#### Write for a first-time reviewer
+
+Assume the reviewer has not read the originating conversation or worked on this feature before.
+
+- Lead with the problem and the user-visible outcome. Give a concrete usage example and explain
+  what happens before and after the change before introducing implementation details.
+- Explain unfamiliar domain terms, abbreviations, and component names when they first appear.
+  Use a short glossary when several terms are needed to understand the flow.
+- Include Mermaid flowcharts or sequence diagrams for multi-stage or cross-component behavior.
+  Show the real participants, data movement, and relevant authority or asynchronous boundaries.
+  Split distinct flows, such as storing knowledge and using it in generation, into separate diagrams
+  instead of one oversized graph. Pure copy or metadata changes do not require a diagram.
+- Render and inspect Mermaid diagrams before publishing. Use short labels and deliberate line
+  breaks so text remains readable; verify that the diagram agrees with the implemented flow.
+- For changes spanning multiple areas, provide an ordered review guide: the question each area
+  answers and links to its main code entry points. Follow the user or data flow, not commit order.
+- Separate local tests, installed-product checks, actual provider calls, CI, and deployed external
+  behavior. State the observed result and verification scope; keep failed, pending, and unverified
+  items visible. A passing subset or local run must not imply that CI or deployment passed.
+- Keep the main narrative focused on behavior and decisions. Put lengthy reproduction commands
+  and supporting logs in collapsible details, while leaving key results and blockers visible.
+
 Do not paste a commit hash list or a commit-by-commit diary into the PR body. The commit history
 should remain the atomic implementation record; the PR description explains the delivered behavior,
 evidence, and operational impact.
