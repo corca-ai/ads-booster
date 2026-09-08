@@ -5,7 +5,7 @@ from typing import Annotated, ClassVar, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
-from ads_booster.contracts.knowledge_context import EditorialContextBlock
+from ads_booster.contracts.knowledge_context import EditorialContextBlock, EditorialContextRole
 from ads_booster.contracts.knowledge_selection import VoiceStatus
 from ads_booster.workspace import (
     CandidateCaption,
@@ -67,11 +67,17 @@ class CandidateEditorialContext(GenerationModel):
 
     @model_validator(mode="after")
     def require_voice_shape(self) -> Self:
-        if self.voice_status not in {VoiceStatus.CONFIGURED, VoiceStatus.VOICE_UNCONFIGURED} or (
-            (self.voice_status is VoiceStatus.CONFIGURED) != bool(self.blocks)
+        if (
+            self.voice_status not in {VoiceStatus.CONFIGURED, VoiceStatus.VOICE_UNCONFIGURED}
+            or (self.voice_status is VoiceStatus.CONFIGURED and not self.blocks)
+            or (
+                self.voice_status is VoiceStatus.VOICE_UNCONFIGURED
+                and any(block.role is not EditorialContextRole.CONSTRAINT for block in self.blocks)
+            )
         ):
+            code = "candidate_editorial_context_invalid"
             raise PydanticCustomError(
-                "candidate_editorial_context_invalid",
-                "configured voice carries blocks and unconfigured voice carries none",
+                code,
+                "configured voice requires blocks; unconfigured voice permits only constraints",
             )
         return self
