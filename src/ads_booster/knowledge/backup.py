@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -63,7 +64,7 @@ def create_backup(
         target = destination / backup_id
         target.mkdir(mode=0o700, parents=True, exist_ok=False)
         database = target / "catalog.sqlite3"
-        with repository.connection() as source, sqlite3.connect(database) as sink:
+        with repository.connection() as source, closing(sqlite3.connect(database)) as sink:
             source.backup(sink)
         os.chmod(database, 0o600)
         committed = _committed_files(database, repository.root, workspace_id)
@@ -104,7 +105,7 @@ def _committed_files(
     source_root: Path,
     workspace_id: str,
 ) -> tuple[BackupFile, ...]:
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         rows = cast(
             "list[tuple[object, ...]]",
             connection.execute(
