@@ -573,3 +573,11 @@ cancellation signal. The canonical service owns checkpoints and append-only STOP
 existing sender transport (`chat.postMessage` for new status, `chat.update` for known timestamps).
 The HTTP composition exposes only the signed interaction route during maintenance, without admitting
 new runs. Slack manifests own the external callback registration contract.
+
+`agent_service/image_generation.py` owns the image input schema, Codex image turn and bounded PNG
+artifact verification. The descriptor remains in `tool_adapters/descriptors.py`; installed lifecycle
+injects the executor and private artifact root through `ConfiguredAgentTools`. Existing Agent Core
+owns exact approval and uncertain execution handling. `channels/slack_images.py` owns receipt-bound
+artifact projection, durable upload admission and Slack's external file-upload adapter. Slack event
+composition binds the artifact directory beside the canonical service database and passes only the
+authorized conversation, never model-selected channel IDs or local filenames.

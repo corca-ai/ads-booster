@@ -187,3 +187,14 @@ compatibility. Server CI includes the cancellation subprocess tests. Repeat thes
 a freshly installed wheel outside the checkout. Fixtures do not prove real Slack interactivity;
 operator acceptance requires enabling the callback URL, observing a live stage update, stopping a
 running answer and successfully starting another request.
+
+Image drafts: `tests/marketing/agent_service/test_image_generation.py` owns artifact/thread binding
+and `tests/marketing/channels/test_slack_images.py` exercises signed mention -> exact approval
+-> configured image tool -> PNG verification -> original-thread file attachment. It also covers DM
+denial, invalid output, path/symlink/digest rejection, upload URL origin and credential isolation,
+uncertain completion and restart deduplication. Run with service/channels, Codex reasoning/cancellation
+and onboarding owners; repeat the image/progress/process cases against a fresh non-editable wheel.
+Fixture PNGs and HTTP transports do not establish live image entitlement or Slack upload permission.
+Operator acceptance uses the server's actual login, one approved image brief and a visible draft in
+its originating thread after adding files:write and reinstalling the Slack app. A human reviews the
+result's visual correctness before use.

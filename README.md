@@ -682,3 +682,29 @@ reconciliation; stopping does not undo a GitHub issue that was already created. 
 keeps verified issue links and reports uncertain effects explicitly. Cancellation survives restart,
 and a delayed old button cannot stop a newer request. `종료` still closes conversation auto-replies;
 the button stops the current execution without closing the conversation.
+
+### Generate an image from Slack with the server's Codex login
+
+In an allowed shared channel, mention the bot with a visual brief, for example
+`@Trace Marketing Agent 파란 배경의 미니멀한 Trace 앱 광고 이미지 한 장 만들어줘`.
+Review the proposed `creative.image.generate` prompt and approve its exact hash. The installed
+server runs one dedicated official Codex image-generation turn with its existing ChatGPT login and
+configured model; no image API key or Mac/Appium worker is required. The account/model must support
+Codex's `image_generation` feature. Authentication alone does not prove image-generation entitlement.
+
+A validated PNG draft is attached to the originating Slack thread for human visual review. Generated
+files are private, digest-addressed artifacts under the service state's `images/` directory, outside
+release directories. Results include image/prompt/invocation digests and dimensions. This first
+version generates one new PNG from text; reference-image editing and private-DM generation are not
+exposed. It does not publish the draft to a marketing channel.
+
+For an existing Slack app add the Bot Token Scope **files:write** under **OAuth & Permissions**, then
+**Reinstall to Workspace** and approve the added permission. Both manifests include the scope. If Slack
+issues a replacement bot token, enter it through server setup's hidden prompt and restart the idle
+agent; never paste it in chat. Keep the previously configured interaction callback for the stop button.
+
+Working status includes generation and image validation. Stopping cancels the owned Codex process;
+if generation was already admitted the run can require reconciliation because usage/results may be
+uncertain. It never automatically reruns an uncertain generation. Slack attachment failures preserve
+the local draft, report the unconfirmed upload and do not upload again automatically. A generated
+image requires human review; a PNG/digest check is not visual approval.

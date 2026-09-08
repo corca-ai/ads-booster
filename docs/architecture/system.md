@@ -838,3 +838,22 @@ structured jobs terminate and reap their owned process group when cancelled; oth
 services are untouched. The service appends an explicit STOP step after the execution yields.
 Already-started external effects retain normal receipt/readback or awaiting-reconciliation handling,
 then subsequent work stops. Canonical history and completed side-effect receipts are preserved.
+
+### Codex image drafts in Slack
+
+The installed composition registers approval-required `creative.image.generate` as a local-artifact
+tool. Its dedicated ephemeral Codex turn uses the service user's official login, enables image
+generation and disables shell, apps and browser tools. User/project configuration is ignored. The
+visual brief cannot select paths or delivery destinations. The adapter reads the CLI JSON thread.started ID and selects the latest PNG from a bounded set of up to four variants in that runtime
+thread’s generated_images directory, never from model-provided paths. It validates the bounded PNG
+and persists a private copy by SHA-256, recording prompt/invocation provenance in the
+canonical receipt/evidence stream. Cancellation uses the shared owned-process control; interrupted
+admitted generation retains the runtime's uncertain-effect state without regeneration.
+
+Mention-thread result delivery projects only matching successful receipt/evidence pairs. After
+current member/channel authorization it reads the digest-bound file and shares a review draft in that
+exact channel/thread through Slack's external upload protocol. `slack_image_deliveries` records
+admission before upload, keyed by conversation/run/digest; unknown completion is never reposted.
+The bot credential goes only to fixed Slack API endpoints, never to the signed file upload URL.
+Private conversations remain public-search-only. Slash/API callers can generate local artifacts,
+but automatic image attachment is the mention-thread delivery surface.
