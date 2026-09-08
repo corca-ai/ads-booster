@@ -75,6 +75,15 @@ provide a correction, or send a human-made result. `어디까지 됐어?` reads 
 `새 작업 <request>` starts independent work. A stopped external action is never claimed
 undone. Existing `/trace` commands and server onboarding continue to work.
 
+The agent can discover installed procedures with `skills.list` and load one exact version with
+`skills.read`. Marketing opportunity research, strategy, copywriting and experiment analysis are
+reusable skills; their full instructions are loaded only when selected. Skill reads use the same
+Run receipts and call budget as other tools. They grant no integration access or execution approval.
+Small writing requests can be answered directly. When a creative plan has an available execution
+tool, the agent is guided to continue through that tool and inspect its result before handing back.
+Slack follow-ups receive the current bounded conversation, including earlier assistant answers,
+so selections such as “use the second option” can resolve within the same work after restart.
+
 Creative skills can prepare mood/reference/font/color, background review/partial-edit,
 capture/localization/mockup/QA instructions without a campaign. If Appium or editing is
 unavailable, the answer specifies what to do and what to return. A preparation receipt

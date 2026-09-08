@@ -7,6 +7,48 @@ Last reviewed: 2026-09-07
 
 Choose the boundary that changed. Source tests are not installed-worker or hosted-runtime proof.
 
+### Discoverable marketing procedures and Slack follow-ups
+
+Select these tests for `skill_tools.py`, the skill catalog, discovery wiring, generic reasoning
+guidance or current Slack dialogue projection:
+
+```bash
+python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/marketing/agent_service/test_skill_tools.py \
+  tests/marketing/agent_service/test_integrations.py \
+  tests/marketing/agent_service/test_creative_procedures.py \
+  tests/marketing/agent_service/test_daily_slack.py \
+  tests/marketing/agent_service/test_http_api.py \
+  tests/marketing/channels/test_slack_continuation.py \
+  tests/marketing/channels/test_slack_events.py \
+  tests/providers/test_codex_reasoning.py
+```
+
+Use a dependency-complete development environment. The September 8 candidate passed 66 tests in
+an isolated `uv sync --frozen` environment. The new signed Slack regression failed before the
+dialogue fix, then passed with service restart and cross-thread exclusion. Skill tests cover
+canonical list/read receipts, exact versions, recoverable unknown IDs and unchanged action policy.
+Run scoped Ruff and BasedPyright for modified Python files; no full-suite run is required.
+
+For actual model behavior, install a fresh wheel outside the checkout, confirm its import path,
+and invoke the opt-in harness with that installed interpreter:
+
+```bash
+/absolute/fresh-venv/bin/trace-marketing service run --help
+/absolute/fresh-venv/bin/python -I \
+  /absolute/repo/tests/marketing/agent_service/colleague_canary.py \
+  --output-root /absolute/new-rehearsal-directory \
+  --codex /absolute/path/to/codex --model gpt-6-astra
+```
+
+The output directory must not exist. This runs four real-model scenarios with synthetic search
+and only skill discovery, creative preparation and search adapters. It does not use real Slack,
+image generation, Appium or publication. Review the emitted decisions against each scenario's
+recorded criteria: concrete copy, attributed opportunity analysis, confound-aware performance
+comparison and search execution after creative procedure loading. `completed` is a runtime state,
+not a quality grade. Retain actual provider receipts and disclose model/trial count and fixture
+limitations. Do not turn prompt-substring assertions into claims of model competence.
+
 For acknowledged asynchronous tool work, select `tests/marketing/test_runtime_deferred.py`,
 `tests/marketing/agent_service/test_application_deferred.py` and
 `tests/marketing/channels/test_slack_deferred.py`. Include existing `test_agent_runtime.py`,

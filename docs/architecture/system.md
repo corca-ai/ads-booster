@@ -57,6 +57,21 @@ publication approval remain human checkpoints in the hosted workflow.
 
 ## Browser and Slack admission (candidate implementation)
 
+The installed service exposes read-only `skills.list` / `skills.read` tools alongside action
+tools. The planner discovers purpose/version metadata, reads a selected procedure, then chooses
+each subsequent action against its current capability snapshot and observed receipts. Procedure
+loading neither executes a skill Run nor grants production/publication authority. Reads cost zero
+operation units but consume the existing tool-call budget. Skills cover opportunity research,
+strategy, copy and experiments as well as creative procedures. Creative v2 guidance follows
+available execution tools after preparation; human assistance is conditional on an actual blocker.
+Existing persisted goals keep their recorded procedure; new creative skill Runs use version 2.
+
+Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
+completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after
+restart. This projection is reference data, not verified product knowledge or approval. It is
+re-read from the authorized inbox rather than persisted as another reusable knowledge record.
+Private DMs may read the server-owned skill catalog; their action allowlist remains read-only.
+
 The installed service accepts one configured tenant; OAuth identities for other tenants cannot use
 that instance's shared integration credentials. Browser /auth/login uses authorization code with
 PKCE and a one-use, browser-bound state; /auth/callback exchanges the code at pinned HTTPS
