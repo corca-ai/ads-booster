@@ -430,7 +430,21 @@ def register_evidence_source(
                 extraction_version=segment.extraction_version,
                 admission_revision=1,
             ),
-            prepared_files=(prepared,),
+            prepared_files=(
+                prepared,
+                repository.files.prepare(
+                    RevisionFileDraft(
+                        operation_id=f"operation.{source_id}",
+                        target=SourceRevisionTarget(
+                            source_id=source_id,
+                            revision_id=revision_id,
+                            file_kind=SourceFileKind.EXTRACTED,
+                        ),
+                        content=body,
+                        sha256=source.sha256,
+                    )
+                ),
+            ),
             conversation_event=event,
         )
     )
