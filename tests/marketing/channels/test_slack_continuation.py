@@ -56,6 +56,24 @@ def test_followup_can_resolve_the_agents_previous_alternatives(tmp_path: Path) -
     assert "퇴근 후 내 시간 찾기" not in provider.requests[-1].model_dump_json()
 
 
+def test_latest_question_is_task_input_not_buried_in_old_goal(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    provider = RecordingReasoning()
+    owner.commands.application.service.reasoning = provider
+    receive(owner, text="<@UBOT> 지원하는 기능을 설명해줘")
+    assert owner.work_once(now=NOW)
+    for index, question in enumerate(("검색도 돼?", "한 문장으로만 답해줘"), start=2):
+        # Restart must retain the latest admitted request without replacing the original goal.
+        owner, _ = setup_events(tmp_path)
+        owner.commands.application.service.reasoning = provider
+        receive(owner, type="message", text=question, ts=f"100.00{index}", thread_ts="100.001")
+        assert owner.work_once(now=NOW)
+        request = provider.requests[-1]
+        assert request.model_dump().get("current_user_message") == question
+        assert request.goal.objective == "지원하는 기능을 설명해줘"
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+
 def test_natural_status_and_pause_do_not_create_new_work(tmp_path: Path) -> None:
     owner, messages = setup_events(tmp_path)
     provider = RecordingReasoning()

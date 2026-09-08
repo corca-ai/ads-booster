@@ -43,6 +43,7 @@ from ads_booster.marketing.agent_service.sqlite_repository import (
     RepositoryAdmission,
     SqliteAgentRunRepository,
 )
+from ads_booster.marketing.agent_service.task_input import current_user_message
 from ads_booster.marketing.runtime import (
     AgentSession,
     ApprovalGrant,
@@ -439,6 +440,7 @@ class MarketingAgentService:
         # All callers, including restart recovery, project the same canonical history.
         # The caller's last observation is only a trigger, never the whole context.
         evidence, context_selection = self._select_context(run)
+        user_message = current_user_message(run, self.repository.records(run.tenant_id, run.run_id))
         snapshot = self.registry.snapshot_for_plan(
             snapshot_id=f"{run.run_id}:capabilities:{run.revision}",
             run_id=run.run_id,
@@ -451,19 +453,9 @@ class MarketingAgentService:
             policy=self.capability_policy,
             now=now,
         )
-        # Reuse only bounded, authority-filtered canonical conversation evidence.
-        latest_note = next(
-            (
-                item["note"]
-                for item in reversed(evidence)
-                if item.get("schema_version")
-                in {"trace.work-continuation.v1", "trace.work-interruption.v1"}
-                and isinstance(item.get("note"), str)
-            ),
-            "",
-        )
-        knowledge_query = run.goal.objective[:4000] + (
-            "\n" + str(latest_note)[:4000] if latest_note else ""
+        # Retrieval follows admitted intent too, even when its evidence was compacted.
+        knowledge_query = user_message[:4000] + (
+            "\n" + run.goal.objective[:4000] if user_message != run.goal.objective else ""
         )
         prepared_context: PreparedKnowledgeContext | None = None
         if self.knowledge is not None:
@@ -529,6 +521,7 @@ class MarketingAgentService:
             run_id=run.run_id,
             phase="plan" if not evidence else "replan",
             goal=run.goal,
+            current_user_message=user_message,
             capability_snapshot=snapshot,
             evidence=evidence,
             remaining_tool_calls=max(
