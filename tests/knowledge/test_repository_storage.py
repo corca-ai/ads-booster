@@ -34,20 +34,25 @@ def test_fresh_catalog_has_normalized_schema_and_private_database(tmp_path: Path
         "access_scopes",
         "claims",
         "context_dependencies",
+        "deletion_dependency_blocks",
+        "deletion_manifest_entries",
+        "deletion_requests",
         "evidence_edges",
+        "history_redactions",
         "jobs",
         "knowledge_heads",
         "knowledge_revisions",
         "memory_documents",
         "memory_revisions",
         "operations",
+        "replica_purge_receipts",
         "segments",
         "source_revisions",
         "sources",
         "wiki_pages",
     } <= tables
     assert version is not None
-    assert version == (1, 64)
+    assert version == (2, 64)
 
 
 def test_scope_and_memory_identity_constraints_reject_cross_tenant_rows(tmp_path: Path) -> None:
