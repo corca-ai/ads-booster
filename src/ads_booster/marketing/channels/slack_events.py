@@ -39,6 +39,10 @@ from ads_booster.marketing.channels.slack_conversations import (
 from ads_booster.marketing.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.marketing.channels.slack_delivery import delivery_command
 from ads_booster.marketing.channels.slack_memory import memory_command
+from ads_booster.marketing.channels.slack_performance import (
+    is_performance_command,
+    performance_command,
+)
 from ads_booster.marketing.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
@@ -64,6 +68,7 @@ DM에서도 텍스트로 대화할 수 있습니다. DM은 공개 검색과 답�
 잠깐 멈춰줘 — 다음 작업을 멈추고 사람 입력 대기
 수정·사람 작업 결과는 같은 업무에서 이어받습니다.
 작업 기록 제작 12분 설명 / 작업 요약 — 사람이 들인 시간을 업무에 기록
+성과 도움말 — 게시물별 사람이 보고한 수치 기록·정정·비교·학습
 검토 1 — 승인할 전체 내용 확인 (페이지 번호 변경 가능)
 승인 승인해시 / 거절 승인해시 — 정확한 실행 승인 또는 거절
 계속 — 중단된 실행의 안전한 재개 시도
@@ -146,6 +151,7 @@ class SlackEvents:
                 or command
                 in {"검토", "review", "승인", "approve", "거절", "reject", "기억", "실행안"}
                 or is_work_observation_command(message.text)
+                or is_performance_command(message.text)
                 or message.text
                 in {"도움말", "help", "종료", "close", "계속", "resume", "다시 시작", "reopen"}
             ):
@@ -358,7 +364,7 @@ class SlackEvents:
             return MessagePlan(action="reply", reply="")
         if action == "실행안":
             return MessagePlan(action="delivery", run_id=conversation.current_run)
-        if is_work_observation_command(text):
+        if is_work_observation_command(text) or is_performance_command(text):
             return MessagePlan(action="observation", run_id=conversation.current_run)
         if action == "기억":
             return MessagePlan(action="memory", run_id=conversation.current_run)
@@ -451,6 +457,8 @@ class SlackEvents:
         if plan.action == "observation":
             if conversation.current_run != plan.run_id:
                 return "기록 대상 업무가 바뀌었습니다. 원래 업무에서 작업 기록을 다시 요청하세요."
+            if is_performance_command(message.text):
+                return performance_command(service, conversation, message, identity, now=now)
             return work_observation_command(service, conversation, message, identity, now=now)
         if plan.action == "memory":
             return memory_command(
