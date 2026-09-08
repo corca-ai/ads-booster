@@ -2,31 +2,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Event
 from typing import TYPE_CHECKING, Protocol, cast
 
-from ads_booster.knowledge.curation import CurationRunner
+from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
 from ads_booster.knowledge.curation_contracts import (
     CurationExcerpt,
     CurationRequest,
     CurationResult,
     CurationRunStatus,
 )
-from ads_booster.knowledge.contracts import KnowledgeJob
-from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
 from ads_booster.knowledge.jobs import JobProcessResult
-from ads_booster.knowledge.memory_consolidation import MemoryConsolidationProcessor
-from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
+from ads_booster.knowledge.repository_tool_state import RepositoryToolState
 from ads_booster.knowledge.tool_contracts import (
     TrustedInvocationContext,
     TrustedSourceCapability,
 )
 
 if TYPE_CHECKING:
+    from threading import Event
+
+    from ads_booster.knowledge.contracts import KnowledgeJob
+    from ads_booster.knowledge.curation import CurationRunner
+    from ads_booster.knowledge.memory_consolidation import MemoryConsolidationProcessor
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
     from ads_booster.knowledge.repository_types import JobLease
     from ads_booster.knowledge.scope_contracts import ActorContext
+    from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
 
 
 class CancellationEvent(Protocol):
@@ -81,18 +83,25 @@ class CanonicalJobProcessor:
         source_id, revision_id = self._source_for_job(job.job_id)
         source = self.repository.read_source(scoped_actor, source_id)
         if source is None or source.source.revision_id != revision_id:
-            raise ValueError("curation_source_unavailable")
+            msg = "curation_source_unavailable"
+            raise ValueError(msg)
+        extracted = RepositoryToolState(self.repository).read_source_extract(
+            scoped_actor, source_id, revision_id
+        )
+        if extracted is None:
+            msg = "curation_source_unavailable"
+            raise ValueError(msg)
+        body = extracted.body.decode("utf-8")
         excerpts = tuple(
             CurationExcerpt(
                 source_id=source_id,
                 revision_id=revision_id,
                 segment_id=segment.segment_id,
                 locator=segment.locator.model_dump_json(),
-                text=source.body[segment.quote_range.start : segment.quote_range.end]
-                .decode("utf-8", errors="replace")[:20_000],
+                text=body[segment.quote_range.start : segment.quote_range.end][:20_000],
                 completeness=segment.completeness,
             )
-            for segment in source.segments[:20]
+            for segment in extracted.segments[:20]
         )
         request = CurationRequest(
             schema="knowledge.curation-request.v1",
@@ -100,8 +109,7 @@ class CanonicalJobProcessor:
             event_id=job.root_event_id,
             event_revision=source.source.revision,
             policy_version=job.policy_version,
-            objective=source.body.decode("utf-8", errors="replace")[:20_000]
-            or "Review the source disposition.",
+            objective=body[:20_000] or "Review the source disposition.",
             excerpts=excerpts,
             started_at=datetime.now(UTC),
         )
@@ -119,7 +127,7 @@ class CanonicalJobProcessor:
                     actor_ref=scoped_actor.actor_id,
                     source_id=source_id,
                     revision_id=revision_id,
-                    segment_ids=tuple(segment.segment_id for segment in source.segments),
+                    segment_ids=tuple(segment.segment_id for segment in extracted.segments),
                     allows_unadmitted_read=True,
                 ),
             ),
@@ -167,7 +175,8 @@ class CanonicalJobProcessor:
                 ).fetchone(),
             )
         if row is None:
-            raise ValueError("curation_delivery_receipt_missing")
+            msg = "curation_delivery_receipt_missing"
+            raise ValueError(msg)
         return str(row[0]), str(row[1])
 
 
