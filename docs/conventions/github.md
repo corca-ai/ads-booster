@@ -14,7 +14,8 @@ for code changes and inspect the current branch and remote state before starting
 - Use a Merge commit by default to preserve individual responsibility commits on `main`, including
   for `feature/`, `fix/`, and `hotfix/` branches deleted after merge. Use Squash Merge only when the
   user explicitly requests it for that Pull Request.
-- After a change lands on `main`, update the tag and GitHub Release for that commit.
+- After a change lands on `main`, verify the applicable server update or managed Mac release path
+  described in [Post-merge verification](#post-merge-verification).
 
 ## Authorization and existing work
 
@@ -228,44 +229,25 @@ git switch main
 git pull --ff-only origin main
 ```
 
-## Tag and GitHub Release after `main` changes
+## Post-merge verification
 
-A change on `main` is not released until its tag and GitHub Release are updated. This is a mandatory
-post-merge step, not an optional follow-up. Target the actual remote `main` commit, not another
-branch or an arbitrary local HEAD. Never move or overwrite an existing published tag; choose the
-next version, and update package metadata/lockfiles in an issue-linked commit before tagging when
-the release version changes.
+A merged commit, a server update and a Mac release are separate results. Report only the result
+actually verified for the affected path:
 
-1. Determine the next version and release notes from the final `main` change set.
-2. Read remote `main` again and confirm the target SHA.
-3. Create an annotated `v<version>` tag on that SHA and push it.
-4. Create a GitHub Release for the same new tag.
-5. Confirm that the remote tag's peeled SHA matches the target `origin/main` SHA and that the
-   GitHub Release uses the intended `v<version>` tag.
-6. Only then report the main change as released.
+- On-prem server updates follow the exact `main` SHA's successful `Verify on-prem agent` check and
+  the installed server updater. Use the [server operation guide](../operations/agent-server/slack-launch-guide.md)
+  to verify the installed SHA; a passing CI run alone does not prove activation.
+- Mac releases follow the [managed release procedure](../contracts/mac-worker-auto-update.md#managed-release-publication).
+  An unchanged package version does not require a new Mac release. The workflow owns tags, release
+  assets, attestations and publication; do not create or edit those manually.
 
-```bash
-git fetch origin main --tags
-git rev-parse origin/main
-git tag -a v<version> <main-sha> -m "v<version>"
-git push origin v<version>
-# When creating a GitHub Release
-gh release create v<version> --target <main-sha> --title "v<version>" --notes-file <release-notes-file>
-# When the GitHub Release already exists
-gh release edit v<version> --title "v<version>" --notes-file <release-notes-file>
-git ls-remote --tags origin refs/tags/v<version> refs/tags/v<version>^{}
-gh release view v<version> --json tagName,targetCommitish,url
-```
+Only trigger release publication within an explicit `main` merge or release request. A permission
+to merge does not authorize rewriting existing published tags or release history. If a new version
+is needed, update package metadata and lockfiles in an issue-linked commit before merging.
 
-After the required tag/release verification succeeds, close the completed issue(s):
-
-```bash
-gh issue close <issue-number> --comment "Completed in PR #<pr-number> and release v<version>."
-```
-
-Pushing tags and creating or editing GitHub Releases mutate external state. Perform them only when
-the user explicitly requests a `main` merge or release. Do not claim release completion before
-verification.
+After the requested delivery and its applicable verification are complete, close the owning Issue
+within the authorized GitHub scope with the PR reference and, when applicable, the verified release
+reference. Do not require a fictitious Mac release for a server-only change or close deferred scope.
 
 ## Pre-merge checklist
 
@@ -277,4 +259,4 @@ verification.
 - [ ] No secrets or unrelated changes are included.
 - [ ] Merge commit is selected to preserve individual commits, or the user explicitly requested
   Squash Merge for this Pull Request.
-- [ ] After landing on `main`, the new tag and GitHub Release point to the same `main` commit.
+- [ ] The applicable post-merge server or Mac verification path is identified.
