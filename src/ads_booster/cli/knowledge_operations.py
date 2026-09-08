@@ -397,8 +397,11 @@ def _retraction_target(
     with repository.connection() as connection:
         row = _TARGET_ROW.validate_python(
             connection.execute(
-                """SELECT target_kind,target_id,target_revision_id FROM tombstones
-                WHERE workspace_id=? AND operation_id=? ORDER BY sequence LIMIT 1""",
+                """SELECT json_extract(receipt_json,'$.target_kind'),
+                    json_extract(receipt_json,'$.target_id'),
+                    coalesce(json_extract(receipt_json,'$.target_revision_id'),'')
+                FROM operations WHERE workspace_id=? AND operation_id=?
+                    AND operation_kind='retract' AND status='applied' """,
                 (actor.workspace_id, operation_id),
             ).fetchone()
         )
