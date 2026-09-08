@@ -41,6 +41,26 @@ _CANDIDATE_ROW: TypeAdapter[CandidateRow] = TypeAdapter(CandidateRow)
 _EPOCH_ROW: TypeAdapter[EpochRow] = TypeAdapter(EpochRow)
 _ITEM_ROW: TypeAdapter[ItemRow] = TypeAdapter(ItemRow)
 _JOB_ROW: TypeAdapter[JobRow] = TypeAdapter(JobRow)
+_COUNT_ROW: TypeAdapter[tuple[int]] = TypeAdapter(tuple[int])
+
+
+def curation_batch_generation(
+    repository: KnowledgeRepository,
+    actor: ActorContext,
+    event_id: str,
+) -> int:
+    with repository.connection() as connection:
+        _require_current_actor(connection, actor)
+        row = _COUNT_ROW.validate_python(
+            connection.execute(
+                """SELECT COUNT(*) FROM batch_items AS item
+                JOIN curation_batches AS batch USING(batch_id)
+                WHERE batch.workspace_id=? AND batch.scope_key=? AND item.event_id=?
+                    AND batch.state IN ('completed','cancelled')""",
+                (actor.workspace_id, scope_key(actor.conversation_scope), event_id),
+            ).fetchone()
+        )
+    return row[0]
 
 
 def collect_curation_item(
@@ -561,6 +581,7 @@ __all__ = [
     "collect_curation_item",
     "collecting_curation_batch",
     "curation_batch",
+    "curation_batch_generation",
     "finish_curation_batch",
     "ready_curation_batch",
 ]
