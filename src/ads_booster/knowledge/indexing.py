@@ -292,7 +292,7 @@ class KnowledgeIndexWorker:
 
     @staticmethod
     def _draft(chunk_id: str, content: str) -> IndexChunk:
-        return IndexChunk(chunk_id, content, _index_content(content))
+        return IndexChunk(chunk_id, content, index_content(content))
 
     def _replace_chunks_and_finish(
         self,
@@ -444,7 +444,7 @@ def korean_compact_bigrams(text: str) -> str:
     return " ".join(compact[index : index + 2] for index in range(max(0, len(compact) - 1)))
 
 
-def _index_content(content: str) -> str:
+def index_content(content: str) -> str:
     normalized = normalized_text(content)
     return f"{normalized} {korean_compact_bigrams(normalized)}"
 
@@ -454,6 +454,7 @@ __all__ = [
     "IndexRunResult",
     "IndexTarget",
     "KnowledgeIndexWorker",
+    "index_content",
     "korean_compact_bigrams",
     "normalized_text",
 ]
