@@ -140,7 +140,7 @@ def test_skill_catalog_reports_real_runtime_blockers(tmp_path: Path) -> None:
     assert isinstance(first, dict)
     assert first["skill_id"] == "research.daily_slack"
     assert first["ready"] is False
-    assert first["blockers"] == ["research.web", "deliver.slack", "store.notion.daily"]
+    assert first["blockers"] == ["research.web", "deliver.slack"]
 
 
 def test_ready_skill_creates_canonical_run_with_versioned_procedure(tmp_path: Path) -> None:

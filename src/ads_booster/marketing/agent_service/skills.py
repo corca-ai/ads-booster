@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from ads_booster.contracts.agent_run import AgentGoal
+from ads_booster.marketing.agent_service.creative_procedures import PROCEDURES
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -36,11 +37,27 @@ class MarketingSkill:
         )
 
 
-SKILLS = (
+_BASE_SKILLS = (
     MarketingSkill(
         skill_id="research.daily_slack",
+        version="2",
+        purpose="오늘의 근거 기반 Trace 마케팅 기회를 조사해 Slack으로 전달한다.",
+        required_capabilities=("research.web", "deliver.slack"),
+        success_criteria=(
+            "출처와 반증 질문을 포함한 오늘의 마케팅 브리프가 완성된다.",
+            "Slack 전달 receipt가 확인된다. Notion은 별도 명시 요청이 있을 때만 정리한다.",
+        ),
+        procedure=(
+            "1. input의 immutable research_request를 research.web에 그대로 전달한다.\n"
+            "2. 확인한 조사 receipt로 출처·불확실성·반증 질문을 포함한 브리프를 작성한다.\n"
+            "3. deliver.slack으로 전달하고 receipt 확인 뒤 완료한다.\n"
+            "4. Notion 기록은 이 스킬의 필수 단계나 승인 범위가 아니다."
+        ),
+    ),
+    MarketingSkill(
+        skill_id="research.daily_slack_and_notion",
         version="1",
-        purpose="오늘의 근거 기반 Trace 마케팅 기회를 조사해 팀에 전달하고 일별 기록을 남긴다.",
+        purpose="명시적으로 요청한 Slack 전달과 Notion 일별 기록을 함께 준비한다.",
         required_capabilities=("research.web", "deliver.slack", "store.notion.daily"),
         success_criteria=(
             "출처와 반증 질문을 포함한 오늘의 마케팅 브리프가 완성된다.",
@@ -90,6 +107,27 @@ SKILLS = (
         ),
     ),
 )
+
+CREATIVE_SKILLS = tuple(
+    MarketingSkill(
+        skill_id=f"creative.{procedure.task}",
+        version="1",
+        purpose=procedure.purpose,
+        required_capabilities=("creative.prepare",),
+        success_criteria=(
+            "작은 요청에 필요한 절차·보존 조건·검수·반환물을 준비한다.",
+            "도구가 없으면 구체적인 사람 작업과 같은 업무 재개에 필요한 입력을 안내한다.",
+        ),
+        procedure=(
+            f"1. creative.prepare에 task={procedure.task}와 이미 확인된 input 정보를 전달한다.\n"
+            "2. inputs, preserve, change, locales를 전달한다. 캠페인 전체 설정은 불필요하다.\n"
+            "3. brief는 제작·검수 완료가 아니다. 도구와 정확한 승인을 확인한다.\n"
+            "4. 사람에게 절차·보존 조건·반환물을 request_input으로 안내하고 같은 업무에서 재개한다."
+        ),
+    )
+    for procedure in PROCEDURES
+)
+SKILLS = (*_BASE_SKILLS, *CREATIVE_SKILLS)
 
 
 class MarketingSkillCatalog:

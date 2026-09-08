@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import shutil
+import signal
 import sys
 import time
 from contextlib import suppress
@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING, Annotated, Never, Protocol, cast
 import typer
 from pydantic import ValidationError
 
-from ads_booster.cli.server import app as server_app
 from ads_booster.cli.knowledge import app as knowledge_app
+from ads_booster.cli.remote_capture import capture_remote_doctor, capture_remote_run
+from ads_booster.cli.server import app as server_app
 from ads_booster.knowledge.configuration import KnowledgeSettings, validate_settings
 from ads_booster.knowledge.maintenance import inspect_owner
 from ads_booster.marketing.agent_service.channel_setup import (
@@ -32,6 +33,10 @@ from ads_booster.marketing.agent_service.http_api import (
     MarketingAgentApi,
     serve_marketing_agent_api,
 )
+from ads_booster.marketing.agent_service.image_edit_setup import (
+    connect_image_edit,
+    run_image_edit_worker,
+)
 from ads_booster.marketing.agent_service.integrations import AgentServiceIntegrationConfig
 from ads_booster.marketing.agent_service.jobs import AgentJobs
 from ads_booster.marketing.agent_service.lifecycle import (
@@ -41,6 +46,7 @@ from ads_booster.marketing.agent_service.lifecycle import (
 )
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.oauth import OAuthTokenIntrospector
+from ads_booster.marketing.agent_service.remote_capture import connect_remote_capture
 from ads_booster.marketing.agent_service.scheduler import (
     AgentSkillScheduler,
     DailySkillSchedule,
@@ -133,6 +139,8 @@ service_app = typer.Typer(
     no_args_is_help=True,
     help="Operate the canonical on-premises Marketing Agent Service.",
 )
+_ = worker_app.command("capture-remote-run")(capture_remote_run)
+_ = worker_app.command("capture-remote-doctor")(capture_remote_doctor)
 app.add_typer(worker_app, name="worker")
 app.add_typer(agent_app, name="agent")
 app.add_typer(service_app, name="service")
@@ -162,7 +170,6 @@ def service_doctor(
     """Report service readiness without requiring or inspecting Appium."""
     executable = resolve_codex_executable()
     paths = InstalledServicePaths(_home(home) / "marketing-agent" / "service")
-    paths.prepare()
     try:
         knowledge_settings = KnowledgeSettings.from_env(os.environ)
         if knowledge_settings.enabled:
@@ -193,7 +200,7 @@ def service_doctor(
 
 
 @service_app.command("run")
-def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator configuration.
+def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit optional worker lifecycle.
     model: Annotated[str, typer.Option(help="Pinned Codex reasoning model.")],
     home: Annotated[Path | None, typer.Option(help="Agent state root.")] = None,
     host: Annotated[
@@ -256,11 +263,43 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
             notion_token=os.environ.get("TRACE_MARKETING_NOTION_TOKEN"),
             notion_parent_page_id=os.environ.get("TRACE_MARKETING_NOTION_PARENT_PAGE_ID"),
         ),
+        capture_config=(
+            Path(os.environ["TRACE_MARKETING_CAPTURE_CONFIG"])
+            if os.environ.get("TRACE_MARKETING_CAPTURE_CONFIG")
+            else None
+        ),
         knowledge=None if knowledge_runtime is None else knowledge_runtime.adapter,
     )
     browser_login = browser_from_env(os.environ, oauth)
     slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
     slack_events = events_from_env(os.environ, slack_commands)
+
+    def notify_remote_completion(tenant_id: str, run_id: str, event_id: str) -> None:
+        if slack_events is not None:
+            _ = slack_events.enqueue_run_update(tenant_id, run_id, event_id=event_id)
+
+    remote_path = os.environ.get("TRACE_MARKETING_REMOTE_CAPTURE_CONFIG")
+    remote_capture = (
+        None
+        if remote_path is None
+        else connect_remote_capture(
+            service,
+            config_path=Path(remote_path),
+            now=datetime.now(UTC),
+            on_completed=notify_remote_completion,
+        )
+    )
+    image_edit_path = os.environ.get("TRACE_MARKETING_IMAGE_EDIT_CONFIG")
+    image_edit = (
+        None
+        if image_edit_path is None
+        else connect_image_edit(
+            service,
+            config_path=Path(image_edit_path),
+            now=datetime.now(UTC),
+            on_completed=notify_remote_completion,
+        )
+    )
     if slack_only and slack_commands is None:
         message = "Slack-only mode requires a configured Slack installation"
         raise typer.BadParameter(message)
@@ -304,7 +343,20 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
         )
     )
 
+    image_edit_thread = (
+        None
+        if image_edit is None
+        else Thread(
+            target=run_image_edit_worker,
+            args=(image_edit, scheduler_stop, gate),
+            name="trace-marketing-image-edit",
+            daemon=True,
+        )
+    )
+
     def start_background() -> None:
+        if image_edit_thread is not None:
+            image_edit_thread.start()
         jobs_thread.start()
         if scheduler_thread is not None:
             scheduler_thread.start()
@@ -339,6 +391,7 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
                 allowed_tenant_id=tenant,
                 slack_only=slack_only,
                 maintenance=gate,
+                remote_capture=remote_capture,
                 knowledge_ingress=None
                 if knowledge_runtime is None
                 else knowledge_runtime.adapter.ingress,
@@ -353,6 +406,8 @@ def service_run(  # noqa: C901,PLR0913,PLR0915,PLR0917 - explicit operator confi
     finally:
         _ = signal.signal(signal.SIGTERM, previous_sigterm)
         scheduler_stop.set()
+        if image_edit_thread is not None and image_edit_thread.is_alive():
+            image_edit_thread.join(timeout=5)
         if knowledge_runtime is not None:
             knowledge_runtime.runtime.request_stop()
         if jobs_thread.is_alive():

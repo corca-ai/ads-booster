@@ -53,6 +53,7 @@ _SESSION_HEADER_SCHEMA_VERSION = "trace.marketing-session-header.v1"
 _TERMINAL_STATES = frozenset(
     {RuntimeState.STOPPED, RuntimeState.INCONCLUSIVE, RuntimeState.COMPLETED}
 )
+_MAX_OPERATION_ID = 160
 _KNOWN_EFFECT_CLASSES = frozenset({"observe", "local_artifact", "control_plane_write", "external"})
 
 
@@ -203,6 +204,20 @@ class ToolReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class DeferredToolExecution:
+    """Durable acknowledgement of an operation; neither receipt nor completion."""
+
+    call_id: str
+    call_sha256: str
+    operation_id: str
+
+    def __post_init__(self) -> None:
+        """Bound opaque operation identifiers before persisting acknowledgement."""
+        if not self.operation_id or len(self.operation_id) > _MAX_OPERATION_ID:
+            raise MarketingRuntimeError("deferred_operation_id_invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class ToolAdmission:
     capability: ToolCapability
     invocation: BoundToolInvocation
@@ -262,7 +277,7 @@ class _DerivedRuntimeCheckpoint:
 
 
 class ToolBackend(Protocol):
-    def execute(self, invocation: BoundToolInvocation) -> ToolReceipt: ...
+    def execute(self, invocation: BoundToolInvocation) -> ToolReceipt | DeferredToolExecution: ...
 
 
 class SessionStore(Protocol):
@@ -287,6 +302,32 @@ def tool_receipt_from_event(event: SessionEvent) -> ToolReceipt:
         disposition=EffectDisposition(_string(payload, "disposition")),
         actual_cost_units=_integer(payload, "actual_cost_units"),
         receipt_sha256=_string(payload, "receipt_sha256"),
+    )
+
+
+def pending_deferred_execution(session: AgentSession) -> DeferredToolExecution | None:
+    """Read only the acknowledgement bound to the currently pending canonical call."""
+    if session.pending_call is None:
+        return None
+    _validate_event_ledger_checkpoint(session)
+    for event in reversed(session.events):
+        if event.event_type == "tool_execution_deferred":
+            deferred = _deferred_from_event(event)
+            if deferred.call_sha256 == session.pending_call.digest:
+                return deferred
+        if event.event_type == "tool_dispatched":
+            break
+    return None
+
+
+def _deferred_from_event(event: SessionEvent) -> DeferredToolExecution:
+    payload = _as_object(event.payload)
+    if set(payload) != {"call_id", "call_sha256", "operation_id"}:
+        raise MarketingRuntimeError("deferred_event_payload_invalid")
+    return DeferredToolExecution(
+        _string(payload, "call_id"),
+        _string(payload, "call_sha256"),
+        _string(payload, "operation_id"),
     )
 
 
@@ -645,7 +686,7 @@ class MarketingAgentRuntime:
             now,
         )
 
-    def _execute_tool(
+    def _execute_tool(  # noqa: PLR0911 - receipt, deferred and ambiguous result boundaries.
         self, session: AgentSession, backend: ToolBackend, *, now: datetime
     ) -> AgentSession:
         if session.state is not RuntimeState.EXECUTING or session.pending_call is None:
@@ -673,6 +714,29 @@ class MarketingAgentRuntime:
                 session,
                 "tool_backend_exception",
                 _reference_payload(session.pending_call.digest),
+                now,
+            )
+        if isinstance(receipt, DeferredToolExecution):
+            if (
+                not session.execution_started
+                or receipt.call_id != session.pending_call.call_id
+                or receipt.call_sha256 != session.pending_call.digest
+            ):
+                return self._reconciliation_required(
+                    session,
+                    "tool_receipt_rejected",
+                    _reference_payload(session.pending_call.digest),
+                    now,
+                )
+            return self._append(
+                session,
+                RuntimeState.EXECUTING,
+                "tool_execution_deferred",
+                {
+                    "call_id": receipt.call_id,
+                    "call_sha256": receipt.call_sha256,
+                    "operation_id": receipt.operation_id,
+                },
                 now,
             )
         try:
@@ -752,6 +816,8 @@ class MarketingAgentRuntime:
             or not started.execution_started
         ):
             raise MarketingRuntimeError("tool_execution_not_durably_started")
+        if pending_deferred_execution(started) is not None:
+            raise MarketingRuntimeError("tool_execution_already_deferred")
         result = self._execute_tool(started, backend, now=now)
         try:
             self._persist_transition(store, started, result)
@@ -772,6 +838,8 @@ class MarketingAgentRuntime:
             or not session.execution_started
         ):
             raise MarketingRuntimeError("no_interrupted_tool_execution")
+        if pending_deferred_execution(session) is not None:
+            return session
         reconciled = self._reconciliation_required(
             session,
             "tool_execution_interrupted",
@@ -780,6 +848,60 @@ class MarketingAgentRuntime:
         )
         self._persist_transition(store, session, reconciled)
         return reconciled
+
+    def mark_persisted_deferred_uncertain(
+        self,
+        store: SessionStore,
+        session: AgentSession,
+        operation_id: str,
+        *,
+        now: datetime,
+    ) -> AgentSession:
+        """Record explicit loss of an acknowledged operation; never infer a retry."""
+        self._require_current_session(store, session)
+        deferred = pending_deferred_execution(session)
+        if (
+            session.state is not RuntimeState.EXECUTING
+            or deferred is None
+            or deferred.operation_id != operation_id
+        ):
+            raise MarketingRuntimeError("deferred_uncertainty_invalid")
+        updated = self._append(
+            session,
+            RuntimeState.AWAITING_RECONCILIATION,
+            "tool_deferred_uncertain",
+            {
+                "call_id": deferred.call_id,
+                "call_sha256": deferred.call_sha256,
+                "operation_id": deferred.operation_id,
+            },
+            now,
+        )
+        self._persist_transition(store, session, updated)
+        return updated
+
+    def resolve_persisted_deferred(
+        self,
+        store: SessionStore,
+        session: AgentSession,
+        operation_id: str,
+        receipt: ToolReceipt,
+        *,
+        now: datetime,
+    ) -> AgentSession:
+        """Persist a terminal result for the exact acknowledged operation without dispatch."""
+        self._require_current_session(store, session)
+        deferred = pending_deferred_execution(session)
+        if (
+            session.state is not RuntimeState.EXECUTING
+            or deferred is None
+            or deferred.operation_id != operation_id
+            or receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT
+        ):
+            raise MarketingRuntimeError("deferred_receipt_invalid")
+        updated = self._record_receipt(session, receipt, now=now)
+        self._persist_transition(store, session, updated)
+        return updated
 
     def resolve_persisted_reconciliation(
         self,
@@ -851,6 +973,8 @@ class MarketingAgentRuntime:
     ) -> AgentSession:
         if session.state is not RuntimeState.EXECUTING or session.pending_call is None:
             raise MarketingRuntimeError("receipt_without_executing_session")
+        if pending_deferred_execution(session) is not None:
+            raise MarketingRuntimeError("deferred_operation_resolution_required")
         return self._record_receipt(session, receipt, now=now)
 
     def _record_receipt(
@@ -1243,6 +1367,7 @@ def _replay_runtime_events(events: tuple[SessionEvent, ...]) -> _DerivedRuntimeC
         consumed_grant_sha256s=[],
         finalized=False,
         last_occurred_at=None,
+        deferred_execution=None,
     )
     for expected_sequence, event in enumerate(events, start=1):
         if event.sequence != expected_sequence:
@@ -1267,6 +1392,7 @@ class _RuntimeReplay:
     consumed_grant_sha256s: list[str]
     finalized: bool
     last_occurred_at: datetime | None
+    deferred_execution: DeferredToolExecution | None
 
     def checkpoint(self) -> _DerivedRuntimeCheckpoint:
         if self.session_id is None or self.budget is None:
@@ -1330,6 +1456,8 @@ def _runtime_event_handler(
         "tool_approval_required": _apply_approval_required,
         "tool_dispatched": _apply_dispatch,
         "tool_execution_started": _apply_execution_started,
+        "tool_execution_deferred": _apply_execution_deferred,
+        "tool_deferred_uncertain": _apply_deferred_uncertain,
         "budget_tool_calls_exhausted": _apply_budget_stop,
         "budget_cost_exhausted": _apply_budget_stop,
         "session_finalized": _apply_finalization,
@@ -1386,6 +1514,33 @@ def _apply_execution_started(replay: _RuntimeReplay, event: SessionEvent) -> Non
     replay.state = RuntimeState.EXECUTING
 
 
+def _apply_execution_deferred(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    deferred = _deferred_from_event(event)
+    if (
+        replay.pending_invocation is None
+        or not replay.execution_started
+        or replay.state is not RuntimeState.EXECUTING
+        or replay.deferred_execution is not None
+        or deferred.call_id != replay.pending_invocation.call.call_id
+        or deferred.call_sha256 != replay.pending_invocation.call.digest
+    ):
+        raise MarketingRuntimeError("session_event_deferred_invalid")
+    replay.deferred_execution = deferred
+
+
+def _apply_deferred_uncertain(replay: _RuntimeReplay, event: SessionEvent) -> None:
+    deferred = _deferred_from_event(event)
+    if (
+        replay.state is not RuntimeState.EXECUTING
+        or replay.pending_invocation is None
+        or not replay.execution_started
+        or replay.deferred_execution is None
+        or deferred != replay.deferred_execution
+    ):
+        raise MarketingRuntimeError("session_event_deferred_uncertainty_invalid")
+    replay.state = RuntimeState.AWAITING_RECONCILIATION
+
+
 def _apply_receipt(replay: _RuntimeReplay, event: SessionEvent) -> None:
     receipt = tool_receipt_from_event(event)
     if (
@@ -1397,11 +1552,16 @@ def _apply_receipt(replay: _RuntimeReplay, event: SessionEvent) -> None:
         or receipt.actual_cost_units < 0
         or receipt.actual_cost_units > replay.reserved_cost_units
         or event.event_type != f"tool_{receipt.disposition}"
+        or (
+            replay.deferred_execution is not None
+            and receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT
+        )
     ):
         raise MarketingRuntimeError("session_event_receipt_invalid")
     replay.spent_cost_units += receipt.actual_cost_units
     replay.reserved_cost_units = 0
     replay.pending_invocation = None
+    replay.deferred_execution = None
     replay.pending_grant_sha256 = None
     replay.execution_started = False
     replay.state = (
@@ -1412,7 +1572,11 @@ def _apply_receipt(replay: _RuntimeReplay, event: SessionEvent) -> None:
 
 
 def _apply_reconciliation_required(replay: _RuntimeReplay, event: SessionEvent) -> None:
-    if replay.pending_invocation is None or not replay.execution_started:
+    if (
+        replay.pending_invocation is None
+        or not replay.execution_started
+        or replay.deferred_execution is not None
+    ):
         raise MarketingRuntimeError("session_event_transition_invalid")
     _ = _reference_from_event(event)
     replay.state = RuntimeState.AWAITING_RECONCILIATION

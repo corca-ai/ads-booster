@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
+from ads_booster.contracts.agent_run import AgentRecordKind, ToolInvocation
 from ads_booster.knowledge.batch_runtime import CurationBatchRuntime
 from ads_booster.knowledge.change_publication import ChangePublisher
 from ads_booster.knowledge.configuration import KnowledgeSettings, load_local_actor
@@ -33,6 +34,11 @@ from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
 from ads_booster.knowledge.tools import ToolHost
 from ads_booster.marketing.agent_core.registry import ToolRegistry
 from ads_booster.marketing.agent_service.application import MarketingAgentService
+from ads_booster.marketing.agent_service.capture_setup import connect_local_capture
+from ads_booster.marketing.agent_service.creative_asset_verifier import CreativeAssetVerifier
+from ads_booster.marketing.agent_service.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.marketing.agent_service.delivery_review import DeliveryReviewStore
+from ads_booster.marketing.agent_service.delivery_tools import DeliveryPreparationTool
 from ads_booster.marketing.agent_service.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -42,9 +48,14 @@ from ads_booster.marketing.agent_service.knowledge_ingress import CanonicalKnowl
 from ads_booster.marketing.agent_service.knowledge_ingress_authority import (
     KnowledgeIngressAuthority,
 )
+from ads_booster.marketing.agent_service.managed_image_review import (
+    ManagedImageReviewCatalog,
+    ManagedImageReviewTool,
+)
 from ads_booster.marketing.agent_service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.marketing.dynamic_evidence_research import DynamicEvidenceResearchRunner
 from ads_booster.marketing.runtime import SqliteSessionStore
+from ads_booster.marketing.tool_adapters.compatibility import DelegatingToolAdapter
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from ads_booster.providers.codex_reasoning import CodexReasoningProvider
@@ -73,13 +84,14 @@ class InstalledServicePaths:
         self.root.chmod(0o700)
 
 
-def build_installed_marketing_agent_service(  # noqa: PLR0913 - installed dependencies are explicit.
+def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit installed composition inputs.
     *,
     paths: InstalledServicePaths,
     codex_executable: Path,
     model_id: str,
     timeout_seconds: float,
     integrations: AgentServiceIntegrationConfig | None = None,
+    capture_config: Path | None = None,
     knowledge: KnowledgeServiceAdapter | None = None,
 ) -> MarketingAgentService:
     """Build the canonical service independently from every Mac/Appium lifecycle."""
@@ -88,6 +100,15 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - installed depend
     codex = CodexCli(executable=codex_executable, model=model_id)
     configured = ConfiguredAgentTools(
         config=integrations or AgentServiceIntegrationConfig(),
+        delivery_tool=DeliveryPreparationTool(
+            DeliveryReviewStore(
+                paths.database,
+                asset_verifier=CreativeAssetVerifier(
+                    SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts")
+                ),
+            ),
+            repository=repository,
+        ),
         research_runner=DynamicEvidenceResearchRunner(
             codex=codex,
             state_root=paths.root / "research",
@@ -98,7 +119,7 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - installed depend
     )
     adapters = configured.adapters()
     initial_descriptors = configured.descriptors(now=datetime.now(UTC))
-    return MarketingAgentService(
+    service = MarketingAgentService(
         repository=repository,
         registry=ToolRegistry(initial_descriptors, provider=configured),
         reasoning=CodexReasoningProvider(
@@ -111,6 +132,65 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - installed depend
         runtime_store=SqliteSessionStore(paths.database),
         knowledge=knowledge,
     )
+
+    managed_review = ManagedImageReviewTool(
+        repository=repository,
+        assets=SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts"),
+        codex=codex,
+    )
+    review_catalog = ManagedImageReviewCatalog(service.registry, managed_review)
+    service.registry = ToolRegistry(
+        review_catalog.descriptors(now=datetime.now(UTC)), provider=review_catalog
+    )
+    service.tools = {
+        **service.tools,
+        "creative.asset.review": DelegatingToolAdapter(
+            capability_id="creative.asset.review",
+            version="1",
+            executor_id="managed-image-review",
+            executor=managed_review.execute,
+        ),
+    }
+    configured.creative_capabilities = lambda invocation, now: _creative_capabilities(
+        service, invocation, now
+    )
+    if capture_config is not None:
+        connect_local_capture(
+            service, config_path=capture_config, codex=codex, now=datetime.now(UTC)
+        )
+    return service
+
+
+def _creative_capabilities(
+    service: MarketingAgentService, invocation: ToolInvocation, now: datetime
+) -> frozenset[str]:
+    # Resolve each invocation from canonical authority, then read the registry lazily:
+    # Slack may wrap the catalog after this composition root has returned.
+    run = (
+        service.repository.get(invocation.tenant_id, invocation.run_id)
+        if invocation.tenant_id is not None
+        else None
+    )
+    if run is None:
+        raise ValueError("creative_run_context_required")
+    records = service.repository.records(run.tenant_id, run.run_id)
+    calls = sum(record.kind is AgentRecordKind.INVOCATION for record in records)
+    spent = 0
+    for record in records:
+        if record.kind is AgentRecordKind.RECEIPT:
+            cost = record.payload.get("actual_cost_units")
+            if not isinstance(cost, int) or isinstance(cost, bool):
+                raise ValueError("tool_receipt_cost_invalid")
+            spent += cost
+    snapshot = service.registry.snapshot_for_plan(
+        snapshot_id=f"{invocation.invocation_id}:creative-readiness",
+        run_id=run.run_id,
+        remaining_tool_calls=max(0, run.budget.max_tool_calls - calls),
+        remaining_cost_units=max(0, run.budget.max_cost_units - spent),
+        policy=service.capability_policy,
+        now=now,
+    )
+    return frozenset(item.capability_id for item in snapshot.descriptors)
 
 
 @dataclass(frozen=True, slots=True)

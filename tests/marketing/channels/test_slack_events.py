@@ -125,8 +125,8 @@ def test_ack_dedupe_restart_and_thread_followup_preserve_context(tmp_path: Path)
     assert "첫 질문" in reasoning.requests[-1].model_dump_json()
     assert "둘째 질문" in reasoning.requests[-1].model_dump_json()
     runs = owner.commands.application.service.repository.list_runs("team")
-    assert len(runs) == 2
-    assert runs[0].run_id != runs[1].run_id
+    assert len(runs) == 1
+    assert reasoning.requests[0].run_id == reasoning.requests[1].run_id
 
 
 def test_reply_to_input_uses_same_canonical_run(tmp_path: Path) -> None:
@@ -282,7 +282,7 @@ def test_close_reopen_and_queued_messages_are_ordered(tmp_path: Path) -> None:
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text="재개 질문", ts="100.006", thread_ts="100.001")
     assert owner.work_once(now=NOW)
-    assert len(owner.commands.application.service.repository.list_runs("team")) == 2
+    assert len(owner.commands.application.service.repository.list_runs("team")) == 1
 
 
 def test_http_challenge_signature_and_maintenance_boundary(tmp_path: Path) -> None:
@@ -437,7 +437,7 @@ def test_nonapprover_cannot_approve_and_dm_member_scope_is_separate(tmp_path: Pa
     assert "U1 전용" not in reasoning.requests[-1].model_dump_json()
 
 
-def test_interrupted_mutation_does_not_replay_on_recovery(tmp_path: Path) -> None:
+def test_interrupted_continuation_replays_through_canonical_idempotency(tmp_path: Path) -> None:
     owner, messages = setup_events(tmp_path)
     owner.commands.application.service.reasoning = AskThenStopReasoning()
     receive(owner)
@@ -449,14 +449,14 @@ def test_interrupted_mutation_does_not_replay_on_recovery(tmp_path: Path) -> Non
     conversation = owner.store.conversation(message.conversation_id)
     assert conversation is not None
     plan = owner._plan(conversation, message)  # pyright: ignore[reportPrivateUsage]
-    assert plan.action == "input"
+    assert plan.action == "revise"
     owner.store.save_plan(message, plan)
     owner.recover()
-    assert owner.work_once(now=NOW)  # Only sends the conservative recovery notification.
-    assert "재시작" in str(messages[-1]["text"])
+    assert owner.work_once(now=NOW)
+    assert "completed" in str(messages[-1]["text"])
     assert (
         owner.commands.application.service.repository.list_runs("team")[0].state
-        is AgentRunState.AWAITING_INPUT
+        is AgentRunState.COMPLETED
     )
     assert not owner.work_once(now=NOW)
 

@@ -28,6 +28,9 @@ from ads_booster.marketing.agent_service.application import (
     MarketingAgentService,
 )
 from ads_booster.marketing.agent_service.browser_login import BrowserLogin
+from ads_booster.marketing.agent_service.creative_api import dispatch_creative
+from ads_booster.marketing.agent_service.delivery_api import dispatch_delivery
+from ads_booster.marketing.agent_service.image_edit_api import dispatch_image_edit
 from ads_booster.marketing.agent_service.jobs import AgentJobs, WebJob
 from ads_booster.marketing.agent_service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
@@ -39,10 +42,19 @@ from ads_booster.marketing.agent_service.knowledge_ingress_api import (
 )
 from ads_booster.marketing.agent_service.knowledge_transfer import KnowledgeTransferProvider
 from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
+from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
+from ads_booster.marketing.agent_service.memory_api import dispatch_memory
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
+from ads_booster.marketing.agent_service.performance_api import dispatch_performance
+from ads_booster.marketing.agent_service.remote_capture_api import (
+    CaptureApiOwner,
+    capture_body_limit,
+    dispatch_remote_capture,
+)
 from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
 from ads_booster.marketing.agent_service.sqlite_repository import RepositoryAdmission
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
+from ads_booster.marketing.agent_service.work_continuation import continue_work
 from ads_booster.marketing.channels.slack_commands import SlackCommands
 from ads_booster.marketing.channels.slack_conversations import SlackInboxFullError
 from ads_booster.marketing.channels.slack_events import SlackEvents
@@ -62,6 +74,12 @@ class ApiCreateRunRequest(ContractModel):
     run_id: str
     goal: AgentGoal
     budget: AgentBudget
+
+
+class ApiContinuationRequest(ContractModel):
+    event_id: str
+    note: str
+    action: Literal["revise", "pause"]
 
 
 class ApiInputRequest(ContractModel):
@@ -106,11 +124,16 @@ class MarketingAgentApi:
     allowed_tenant_id: str | None = None
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
+    approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    remote_capture: CaptureApiOwner | None = None
+
     knowledge_ingress: CanonicalKnowledgeIngress | None = None
     knowledge_transfers: KnowledgeTransferProvider | None = None
 
     def __post_init__(self) -> None:
-        """Install canonical ingress beside the existing Run ledger."""
+        """Install current approval authority and canonical ingress on the same Run ledger."""
+        if self.jobs is not None:
+            self.jobs.approval_authorizer = self._can_approve
         if self.knowledge_ingress is None:
             object.__setattr__(
                 self,
@@ -169,6 +192,16 @@ class MarketingAgentApi:
         headers: dict[str, str] | None = None,
     ) -> ApiResponse:
         path = urlsplit(target).path
+        worker_response = dispatch_remote_capture(
+            method,
+            target,
+            body,
+            authorization=authorization,
+            owner=self.remote_capture,
+            now=now or datetime.now(UTC),
+        )
+        if worker_response is not None:
+            return ApiResponse(*worker_response)
         headers = headers or {}
         if (
             method == "POST"
@@ -240,6 +273,47 @@ class MarketingAgentApi:
             )
         occurred_at = datetime.now(UTC) if now is None else now
         try:
+            image_edit_response = dispatch_image_edit(
+                method,
+                path,
+                body,
+                identity=identity,
+                service=self.service,
+                review_authorizer=self._can_approve,
+            )
+            if image_edit_response is not None:
+                return ApiResponse(*image_edit_response)
+            performance_response = dispatch_performance(
+                method, target, identity=identity, service=self.service
+            )
+            if performance_response is not None:
+                return ApiResponse(*performance_response)
+            creative_response = dispatch_creative(
+                method,
+                path,
+                body,
+                identity=identity,
+                service=self.service,
+                artifact_root=self.service.repository.database_path.parent / "artifacts",
+                now=occurred_at,
+            )
+            if creative_response is not None:
+                return ApiResponse(*creative_response)
+            delivery_response = dispatch_delivery(
+                method, path, body, identity=identity, service=self.service
+            )
+            if delivery_response is not None:
+                return ApiResponse(*delivery_response)
+            memory_response = dispatch_memory(
+                method,
+                target,
+                body,
+                identity=identity,
+                store=SQLiteMemoryStore(self.service.repository.database_path),
+                now=occurred_at,
+            )
+            if memory_response is not None:
+                return ApiResponse(*memory_response)
             transfer_id = _context_transfer_validation_target(path)
             if method == "POST" and transfer_id is not None:
                 if self.knowledge_transfers is None:
@@ -255,6 +329,8 @@ class MarketingAgentApi:
                 return ApiResponse(200, result.model_dump(mode="json", by_alias=True))
             if self.jobs is not None and method == "POST" and path == "/v1/jobs":
                 job = WebJob.model_validate(_body_json(body))
+                if job.action == "approval" and not self._can_approve(identity):
+                    return ApiResponse(403, {"error": "agent_approval_permission_required"})
                 return ApiResponse(
                     202,
                     self.jobs.enqueue(
@@ -354,6 +430,19 @@ class MarketingAgentApi:
             run = self.service.repository.get(identity.tenant_id, run_id)
             if run is None:
                 return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "agent_run_not_found"})
+            if method == "POST" and suffix == "/continuation":
+                continuation = ApiContinuationRequest.model_validate(_body_json(body))
+                _ = continue_work(
+                    self.service,
+                    identity.tenant_id,
+                    run_id,
+                    event_id=continuation.event_id,
+                    actor_id=identity.principal_id,
+                    note=continuation.note,
+                    action=continuation.action,
+                    now=occurred_at,
+                )
+                return ApiResponse(200, self._run_view(identity.tenant_id, run_id))
             if method == "GET" and suffix == "":
                 return ApiResponse(HTTPStatus.OK, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/input":
@@ -400,6 +489,8 @@ class MarketingAgentApi:
                 )
                 return ApiResponse(HTTPStatus.ACCEPTED, self._run_view(identity.tenant_id, run_id))
             if method == "POST" and suffix == "/approval":
+                if not self._can_approve(identity):
+                    return ApiResponse(403, {"error": "agent_approval_permission_required"})
                 request = ApiApprovalRequest.model_validate(_body_json(body))
                 _ = self.service.decide_approval(
                     identity.tenant_id,
@@ -421,6 +512,22 @@ class MarketingAgentApi:
                 {"error": "reasoning_provider_unavailable", "retryable": True},
             )
         return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "route_not_found"})
+
+    def _can_approve(self, identity: OAuthIdentity) -> bool:
+        """Authentication is not reviewer membership; only server policy can grant it."""
+        if self.approval_authorizer is not None:
+            try:
+                return self.approval_authorizer(identity) is True
+            except Exception:  # noqa: BLE001 - role lookup failure cannot grant execution authority.
+                return False
+        # A deliberately configured loopback token is the local operator surface.
+        # OAuth/browser subjects need an explicit trusted reviewer mapping instead.
+        return (
+            self.oauth_authenticator is None
+            and self.browser_login is None
+            and bool(self.bearer_token)
+            and identity == OAuthIdentity(self.tenant_id, self.principal_id)
+        )
 
     def _identity(self, authorization: str | None) -> OAuthIdentity | None:
         if self.oauth_authenticator is not None:
@@ -483,8 +590,14 @@ def serve_marketing_agent_api(
             _ = format, args
 
         def _dispatch(self, method: str) -> None:
-            length = _content_length(self.headers.get("content-length"))
-            if length > _MAX_BODY_BYTES:
+            maximum = (
+                capture_body_limit(
+                    method, self.path, api.remote_capture, self.headers.get("authorization")
+                )
+                or _MAX_BODY_BYTES
+            )
+            length = _content_length(self.headers.get("content-length"), maximum=maximum)
+            if length > maximum:
                 self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
                 return
             body = self.rfile.read(length) if length else b""
@@ -573,14 +686,14 @@ def _context_transfer_validation_target(path: str) -> str | None:
     return transfer_id
 
 
-def _content_length(value: str | None) -> int:
+def _content_length(value: str | None, *, maximum: int = _MAX_BODY_BYTES) -> int:
     if value is None:
         return 0
     try:
         length = int(value)
     except ValueError:
-        return _MAX_BODY_BYTES + 1
-    return max(0, length)
+        return maximum + 1
+    return length if length >= 0 else maximum + 1
 
 
 def _safe_error(error: ValidationError | ValueError) -> str:

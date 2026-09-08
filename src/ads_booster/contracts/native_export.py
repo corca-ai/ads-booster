@@ -5,7 +5,7 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
-from ads_booster.contracts.models import ContractModel, RelativePath, Sha256Digest
+from ads_booster.contracts.models import ContractModel, Identifier, RelativePath, Sha256Digest
 
 _PREPARED_BACKGROUND_PROVENANCE_MISMATCH = "prepared_background_provenance_mismatch"
 _PREPARED_BACKGROUND_PROVENANCE_MISMATCH_MESSAGE = (
@@ -27,10 +27,27 @@ class TraceBackgroundSearchProvenance(NativeExportContract):
     source_url: Annotated[str, Field(min_length=1, max_length=4_096)]
 
 
+class TraceSuppliedBackgroundProvenance(NativeExportContract):
+    """Lineage for supplied bytes; declared terms do not independently prove usage rights."""
+
+    schema_version: Literal["trace.supplied-background.v1"]
+    artifact_path: RelativePath
+    artifact_sha256: Sha256Digest
+    asset_id: Identifier
+    asset_revision: Annotated[int, Field(ge=1)]
+    source: Annotated[str, Field(min_length=1, max_length=2000)]
+    use_terms: Annotated[str, Field(min_length=1, max_length=2000)]
+    data_permission: Literal["synthetic", "explicitly_permitted"]
+    permission_evidence: Annotated[str, Field(min_length=1, max_length=2000)]
+
+
 class PreparedBackground(NativeExportContract):
     path: RelativePath
     sha256: Sha256Digest
-    provenance: TraceBackgroundSearchProvenance
+    provenance: Annotated[
+        TraceBackgroundSearchProvenance | TraceSuppliedBackgroundProvenance,
+        Field(discriminator="schema_version"),
+    ]
 
     @model_validator(mode="after")
     def require_provenance_matches_prepared_artifact(self) -> PreparedBackground:
@@ -75,5 +92,6 @@ __all__ = [
     "NativeExportContract",
     "PreparedBackground",
     "TraceBackgroundSearchProvenance",
+    "TraceSuppliedBackgroundProvenance",
     "WallpaperExportManifest",
 ]

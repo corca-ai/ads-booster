@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
 
 if TYPE_CHECKING:
-    from ads_booster.contracts.agent_run import ToolInvocation
+    from ads_booster.contracts.agent_run import ToolExecutionDeferred, ToolInvocation
     from ads_booster.contracts.tool_capability import ToolDescriptor, ToolExecutionResult
 
 
@@ -20,7 +20,7 @@ class ToolAdapter(Protocol):
         self,
         invocation: ToolInvocation,
         descriptor: ToolDescriptor,
-    ) -> ToolExecutionResult: ...
+    ) -> ToolExecutionResult | ToolExecutionDeferred: ...
 
 
 __all__ = ["ReasoningProvider", "ToolAdapter"]

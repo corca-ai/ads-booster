@@ -49,10 +49,13 @@ from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.contracts import (
     ActorContext,
     GrantCapability,
+    ScopeGrant,
     ScopeKind,
     TaskBinding,
     TaskBindingState,
 )
+from ads_booster.knowledge.errors import KnowledgePolicyError
+from ads_booster.knowledge.grant_policy import authorize_read
 from ads_booster.knowledge.repository_context import active_task_binding, context_receipt_is_current
 from ads_booster.knowledge.tool_contracts import (
     KnowledgeToolName,
@@ -64,6 +67,7 @@ from ads_booster.marketing.agent_service.knowledge_transfer import TransferConte
 from ads_booster.transport.json_types import JsonObject
 
 _RECORD_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+_CURRENT_IDENTITY: TypeAdapter[tuple[str, int] | None] = TypeAdapter(tuple[str, int] | None)
 
 if TYPE_CHECKING:
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
@@ -132,7 +136,7 @@ class KnowledgeServiceAdapter:
     host: ToolHost
     assembler: KnowledgeContextAssembler
 
-    def prepare(
+    def prepare(  # noqa: PLR0913 - trusted task and current query are independent context inputs.
         self,
         run: AgentRun,
         snapshot: CapabilitySnapshot,
@@ -140,6 +144,7 @@ class KnowledgeServiceAdapter:
         now: datetime,
         action_kind: KnowledgeActionKind | None = None,
         brand_id: str | None = None,
+        query: str | None = None,
     ) -> PreparationResult:
         binding = self.ingress.binding_for_run(run.run_id)
         if binding is None:
@@ -168,7 +173,7 @@ class KnowledgeServiceAdapter:
         return self.assembler.prepare(
             actor,
             task,
-            query=run.goal.objective,
+            query=(run.goal.objective if query is None else query)[:8000],
             tool_catalog=self.host.catalog(),
             capability_snapshot=filtered,
             now=now,
@@ -194,12 +199,62 @@ class KnowledgeServiceAdapter:
         )
 
     def is_current(self, run_id: str, prepared: PreparedKnowledgeContext) -> bool:
+        if self.ingress.pending_fence_for_run(run_id):
+            return False
         binding = self.ingress.binding_for_run(run_id)
-        return binding is not None and context_receipt_is_current(
-            self.repository,
-            binding.actor,
-            prepared.receipt,
+        if binding is None:
+            return False
+        try:
+            actor = self._current_read_actor(binding.actor, now=datetime.now(UTC))
+            return actor is not None and context_receipt_is_current(
+                self.repository,
+                actor,
+                prepared.receipt,
+            )
+        except KnowledgePolicyError, ValueError:
+            return False
+
+    def _current_read_actor(self, actor: ActorContext, *, now: datetime) -> ActorContext | None:
+        """Read persisted authority without recreating removed grants during execution."""
+        with self.repository.connection() as db:
+            _ = db.execute("BEGIN")
+            identity = _CURRENT_IDENTITY.validate_python(
+                db.execute(
+                    """SELECT member.actor_id,workspace.policy_epoch FROM members AS member
+                JOIN workspaces AS workspace USING(workspace_id)
+                JOIN memberships AS membership USING(workspace_id,member_id)
+                JOIN sessions AS session USING(workspace_id,member_id)
+                WHERE member.workspace_id=? AND member.member_id=? AND session.session_id=?
+                AND workspace.state='active' AND member.state='active'
+                AND membership.state='active' AND session.state='active'""",
+                    (actor.workspace_id, actor.member_id, actor.session_id),
+                ).fetchone()
+            )
+            if identity != (actor.actor_id, actor.policy_epoch):
+                return None
+            rows = _RECORD_ROWS.validate_python(
+                db.execute(
+                    """SELECT grant_json FROM scope_grants
+                WHERE workspace_id=? AND member_id=? AND policy_epoch=? ORDER BY grant_id""",
+                    (actor.workspace_id, actor.member_id, actor.policy_epoch),
+                ).fetchall()
+            )
+        current = actor.model_copy(
+            update={
+                "grants": tuple(
+                    grant
+                    for row in rows
+                    for grant in (ScopeGrant.model_validate_json(row[0]),)
+                    if grant.grant_id in {bound.grant_id for bound in actor.grants}
+                ),
+                "authenticated_at": now,
+            }
         )
+        _ = authorize_read(actor=current, target_scope=actor.conversation_scope, at=now)
+        for grant in actor.grants:
+            if grant.capability is GrantCapability.READ:
+                _ = authorize_read(actor=current, target_scope=grant.scope, at=now)
+        return current
 
     def resolve_invocation(self, run_id: str, invocation_id: str) -> TrustedInvocationContext:
         binding = self.ingress.binding_for_run(run_id)

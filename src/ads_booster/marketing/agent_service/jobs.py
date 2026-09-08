@@ -32,7 +32,7 @@ from ads_booster.marketing.agent_service.oauth import OAuthIdentity
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
     from ads_booster.marketing.agent_service.application import MarketingAgentService
 
@@ -53,11 +53,17 @@ class WebJob(ContractModel):
 _MAX_ID = 160
 _ROW: TypeAdapter[tuple[str, ...] | None] = TypeAdapter(tuple[str, ...] | None)
 _ROWS: TypeAdapter[list[tuple[str, ...]]] = TypeAdapter(list[tuple[str, ...]])
+_APPROVAL_PERMISSION_REQUIRED = "agent_approval_permission_required"
+
+
+class ApprovalPermissionError(ValueError):
+    """A persisted approval request no longer has trusted reviewer authority."""
 
 
 @dataclass(slots=True)
 class AgentJobs:
     service: MarketingAgentService
+    approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
     knowledge_sink: KnowledgeIngressSink | None = None
     knowledge_ingress: CanonicalKnowledgeIngress = field(init=False)
 
@@ -182,7 +188,7 @@ class AgentJobs:
                     ),
                 )
 
-    def work_once(self, *, now: datetime) -> bool:
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ingress and execution have distinct recovery guards.
         if self.knowledge_ingress.dispatch_once():
             return True
         with self._db() as db:
@@ -219,6 +225,7 @@ class AgentJobs:
                 elif job.action == "resume":
                     _ = self.service.drive(tenant, job.run_id, now=now)
                 else:
+                    self._require_approval(OAuthIdentity(tenant, principal))
                     records = self.service.repository.records(tenant, job.run_id)
                     latest = next(
                         (r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION), None
@@ -239,6 +246,8 @@ class AgentJobs:
                         expected_invocation_sha256=job.invocation_sha256,
                     )
             state, error = "done", None
+        except ApprovalPermissionError:
+            state, error = "blocked", _APPROVAL_PERMISSION_REQUIRED
         except Exception:  # noqa: BLE001 - persist a sanitized blocked outcome.
             state, error = "blocked", "agent_job_failed_check_run"
         with self._db() as db:
@@ -247,3 +256,13 @@ class AgentJobs:
                 (state, error, tenant, job_id),
             )
         return True
+
+    def _require_approval(self, identity: OAuthIdentity) -> None:
+        allowed = False
+        if self.approval_authorizer is not None:
+            try:
+                allowed = self.approval_authorizer(identity) is True
+            except Exception:  # noqa: BLE001 - unavailable role lookup must fail closed.
+                allowed = False
+        if not allowed:
+            raise ApprovalPermissionError(_APPROVAL_PERMISSION_REQUIRED)
