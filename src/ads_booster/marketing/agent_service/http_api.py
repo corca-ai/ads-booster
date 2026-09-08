@@ -33,6 +33,11 @@ from ads_booster.marketing.agent_service.maintenance import MaintenanceGate
 from ads_booster.marketing.agent_service.memory import SQLiteMemoryStore
 from ads_booster.marketing.agent_service.memory_api import dispatch_memory
 from ads_booster.marketing.agent_service.oauth import AccessTokenAuthenticator, OAuthIdentity
+from ads_booster.marketing.agent_service.remote_capture_api import (
+    CaptureApiOwner,
+    capture_body_limit,
+    dispatch_remote_capture,
+)
 from ads_booster.marketing.agent_service.skills import MarketingSkillCatalog
 from ads_booster.marketing.agent_service.web_ui import AGENT_RUN_UI
 from ads_booster.marketing.agent_service.work_continuation import continue_work
@@ -102,6 +107,7 @@ class MarketingAgentApi:
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
     approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    remote_capture: CaptureApiOwner | None = None
 
     def __post_init__(self) -> None:
         """Use the same current reviewer policy at admission and queued execution."""
@@ -145,6 +151,16 @@ class MarketingAgentApi:
         headers: dict[str, str] | None = None,
     ) -> ApiResponse:
         path = urlsplit(target).path
+        worker_response = dispatch_remote_capture(
+            method,
+            target,
+            body,
+            authorization=authorization,
+            owner=self.remote_capture,
+            now=now or datetime.now(UTC),
+        )
+        if worker_response is not None:
+            return ApiResponse(*worker_response)
         headers = headers or {}
         if (
             method == "POST"
@@ -443,8 +459,14 @@ def serve_marketing_agent_api(
             _ = format, args
 
         def _dispatch(self, method: str) -> None:
-            length = _content_length(self.headers.get("content-length"))
-            if length > _MAX_BODY_BYTES:
+            maximum = (
+                capture_body_limit(
+                    method, self.path, api.remote_capture, self.headers.get("authorization")
+                )
+                or _MAX_BODY_BYTES
+            )
+            length = _content_length(self.headers.get("content-length"), maximum=maximum)
+            if length > maximum:
                 self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
                 return
             body = self.rfile.read(length) if length else b""
@@ -522,14 +544,14 @@ def _skill_run_target(path: str) -> str | None:
     return skill_id
 
 
-def _content_length(value: str | None) -> int:
+def _content_length(value: str | None, *, maximum: int = _MAX_BODY_BYTES) -> int:
     if value is None:
         return 0
     try:
         length = int(value)
     except ValueError:
-        return _MAX_BODY_BYTES + 1
-    return max(0, length)
+        return maximum + 1
+    return length if length >= 0 else maximum + 1
 
 
 def _safe_error(error: ValidationError | ValueError) -> str:
