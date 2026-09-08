@@ -243,6 +243,13 @@ def build_creative_brief(  # noqa: PLR0913 - explicit preservation and locale in
     missing = _missing_inputs(procedure, inputs, preserve, change, locales)
     capability = procedure.capability_id
     guidance = procedure.guidance
+    if (
+        task in {"background_review", "final_qa"}
+        and inputs.asset_ids
+        and "creative.asset.review" in ready_capabilities
+    ):
+        capability = "creative.asset.review"
+        guidance += ("같은 업무의 asset ID·revision·digest를 확인해 등록된 원본을 직접 검토한다.",)
     if task == "localization" and inputs.require_product_proof:
         capability = "capture.appium"
         guidance += ("실제 앱의 언어별 캡처가 필요하다. 이미지 텍스트 가공으로 대체하지 않는다.",)

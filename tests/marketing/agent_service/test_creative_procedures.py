@@ -23,6 +23,7 @@ from ads_booster.marketing.agent_service.creative_procedures import (
     PROCEDURES,
     CreativeBriefRequest,
     CreativeInputs,
+    Task,
     build_creative_brief,
 )
 from ads_booster.marketing.agent_service.integrations import (
@@ -231,3 +232,28 @@ class PrepareThenWait:
                 decision_sha256=contract_sha256(decision),
             ),
         )
+
+
+@pytest.mark.parametrize("task", ["background_review", "final_qa"])
+def test_managed_asset_review_does_not_require_slack_file_upload(task: Task) -> None:
+    brief = build_creative_brief(
+        task, _inputs(), ready_capabilities=frozenset({"creative.asset.review"})
+    )
+    assert brief.route == "automatic"
+    assert brief.capability_id == "creative.asset.review"
+    assert brief.status == "prepared_not_executed"
+
+
+def test_review_without_managed_assets_preserves_existing_input_boundary() -> None:
+    brief = build_creative_brief(
+        "final_qa",
+        _inputs(asset_ids=[]),
+        ready_capabilities=frozenset({"creative.asset.review", "creative.image.review"}),
+    )
+    assert brief.route == "awaiting_input"
+    assert brief.missing_inputs == ("source_asset",)
+    slack = build_creative_brief(
+        "final_qa", _inputs(), ready_capabilities=frozenset({"creative.image.review"})
+    )
+    assert slack.capability_id == "creative.image.review"
+    assert build_creative_brief("final_qa", _inputs()).route == "human_assisted"
