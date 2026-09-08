@@ -1075,3 +1075,23 @@ Slack callback URLs retain HTTPS without an internal port suffix. The updater ne
 secrets to learn the port. The standalone `service run --port` remains an independent explicit CLI.
 Older fixed-8765 managers require an idle/offline reinstall with preserved configuration/state/current
 link backup before the new channel can take over; ordinary self-update cannot bridge that change.
+
+### Combined work continuity and team knowledge
+
+The service keeps two complementary context owners: scoped work memory for feedback/learning and
+optional TEAM/SOUL/wiki knowledge for attributed cross-conversation facts. Both feed the same
+canonical Run; neither can issue approval. Historical prepared knowledge stays in the ledger but
+is excluded from generic conversation projection and is selected again under current authority.
+Context selection uses the latest canonical follow-up together with the original goal.
+
+Slack intake preserves its immutable source admission. Before executing a queued message, an
+additive execution binding links its authenticated actor/message to the actual continuing Run;
+queued messages received before the first Run exists cannot invent independent knowledge Runs.
+Corrections/deletions fence that execution alias as well as the original source binding.
+
+Image and remote capture queues recheck knowledge immediately before starting. A prestart
+change settles without effect; an already-started result retains its actual receipt and cost.
+A stale context discovered after runtime admission retains the pending invocation/reservation in
+reconciliation, since no schema-safe prestart cancellation contract exists. It never silently
+replans over the admitted invocation. Knowledge and image worker lifecycles coexist with the
+managed server's persistent8090 port and existing maintenance/shutdown boundaries.

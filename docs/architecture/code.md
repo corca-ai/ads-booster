@@ -705,3 +705,12 @@ status. The dependency-free Linux manager independently validates and reads the 
 for process launch and health checks; both default to 8090. Cross-boundary regression coverage binds
 launch argv, update health and status to the same configured port. The standalone manager remains
 Python 3.10 compatible and does not import the Python 3.14 application to discover its port.
+
+`CanonicalKnowledgeIngress` owns additive `knowledge_execution_bindings`: immutable Slack source
+admission remains separate from message-to-actual-Run execution binding. Its current binding and
+pending-fence queries resolve aliases before knowledge preparation. `MarketingAgentService` owns
+the bounded canonical follow-up query, distinct work/knowledge context record IDs, exclusion of
+old prepared knowledge from generic evidence, and `knowledge_is_current` for deferred workers.
+Image-edit and remote-capture owners use that public authority check before effects.
+The composition root and API retain both knowledge ingress and current production reviewer hooks;
+service doctor remains read-only and does not prepare state directories.

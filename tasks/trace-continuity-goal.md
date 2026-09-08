@@ -499,3 +499,26 @@ usageLimited; no duplicate Goal, budget change or unsupported complete/blocked t
 Independent local implementation/verification and review packet are finished for this increment;
 remaining operational acceptance and Draft integrations are explicitly not claimed complete.
 Resume by reading this checkpoint, git status in both checkouts and PR134 head before acting.
+
+## Authorized combined merge of PR134 and PR136
+
+User explicitly requested review and merge of both PRs. Preserve original checkout/install/login,
+use the same continuity worktree. Latest main42ee711 includes port8090. PR1366d8ef12 includes
+team knowledge, runtime tzdata and successful Ubuntu/Mac/Worker CI; its older failure prose was
+corrected. Both PRs were merged locally before GitHub mutation to expose actual conflicts.
+
+Owners: main CLI/lifecycle/API/provider/docs/release; baseline Slack+ingress aliases+query contract;
+patterns core planning/admission/knowledge validity and independent boundary review; requirements
+image/remote prestart guards, then fresh install. Independent review found mismatched follow-up Run
+binding, historical prepared knowledge re-entry and deferred knowledge authorization gaps; fail-first
+regressions fix them. Doctor's accidental state creation was reproduced and removed. Main preserves
+all server port changes. Existing affected service selection529 and Cloudflare64 passed; final
+knowledge-fence review/fresh0.5.0/remote CI and exact release readback still pending at this checkpoint.
+
+Release decision: additive continuing-work and team-knowledge capabilities justify0.5.0. Use the
+repository's existing release-mac-worker workflow and exactSHA attestation/tag/public-readback
+owner, not charness's inferred plugin-manifest defaults (no applicable plugin adapter exists here).
+No manual tag collision or duplicate publisher. Merge136 first, then current main into134, wait
+for final candidate CI, squash134 and verify main CI plus exact0.5.0 tag/release. Existing automatic
+Cloudflare/worker release side effects follow the user-authorized merge workflow; no manual server
+login/setup or marketing content publication. Full operational Goal acceptance remains separate.
