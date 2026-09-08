@@ -315,3 +315,9 @@ Evidence and reproducible standalone harness are retained locally under
 `/private/tmp/trace-image-performance-installed-proof/` (`proof.py`, `evidence.json`,
 `installed-source-manifest.json`). This is a local wheel proof, not public installer,
 service-manager, real device, real Slack or operational image-generation acceptance.
+
+Port selection uses `tests/cli/test_agent_server_update.py`: default/missing port, explicit 8090,
+custom port, invalid values, and agreement across actual launch argv, update health and CLI status.
+The installed Ubuntu lifecycle fixture occupies 8765 with an unrelated HTTP service, starts the
+agent on 8090, performs real systemd update/restart and verifies the unrelated service and persistent
+port survive. This does not prove the live on-prem port migration or Cloudflare route change.

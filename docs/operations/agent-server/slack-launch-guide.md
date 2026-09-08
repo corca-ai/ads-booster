@@ -103,7 +103,7 @@ Cloudflare에 저장한 hostname route는 아래여야 한다. setup은 Cloudfla
 변경하지 않는다. 현재 자원을 재사용한다.
 
 ```text
-agent.example.com → http://localhost:8765
+agent.example.com → http://localhost:8090
 ```
 
 ## 4. 서비스 시작 — 서버 Codex
@@ -192,3 +192,28 @@ local health의 새 SHA로 확인한다. GitHub API 제한이나 네트워크 �
 
 Corca의 기존 환경에서는 이 문서의 `agent.example.com`을 `marketing-agent.borca.ai`로,
 터널을 `marketing-agent-onprem`으로 선택하면 된다. 기존 `cloudflared-ear.service`는 그대로 둔다.
+
+
+## 기존 8765 설치에서 8090으로 전환
+
+이 변경이 main에 병합되고 서버 CI가 성공한 뒤 서버 담당 Codex가 한 번 수행한다.
+구버전 업데이터는 8765로 고정되어 있어 일반 `server update`만으로 이번 전환을 맡기지 않는다.
+
+1. 8090 포트가 비어 있는지 확인한다. 8765를 점유한 다른 서비스와 EAR 터널은 유지한다.
+2. 마케팅 업데이트 timer를 멈추고, 실행 중인 updater/transaction/작업이 없는지 확인한다.
+   진행 중이라면 정상 종료·복구를 먼저 완료한다. 진행 중인 작업을 강제 종료하지 않는다.
+3. 마케팅 agent 서비스만 정지한다. 상태 DB와 설정을 백업하고, 기존 `current` 심볼릭 링크를
+   충돌하지 않는 백업 이름으로 보존한다. 릴리스 디렉터리·설정·대화 기록은 삭제하지 않는다.
+4. `~/.config/trace-marketing/server.json`의 나머지 값은 보존하고 `"port": 8090`을 저장한다.
+   구버전 설치기에 새 포트 옵션이 있는 것으로 가정하거나 전체 설정을 다시 만들지 않는다.
+5. 최신 main의 공식 설치기를 다시 받아 같은 일반 계정에서 실행한다. `current`가 없으므로
+   CI를 통과한 새 버전을 격리 설치하고 연결한다. 실패하면 백업해 둔 링크를 복구하고
+   서비스를 정지한 상태에서 원인을 확인한다. 잘못된 8765 서비스로 연결하지 않는다.
+6. 마케팅 Cloudflare route를 `http://localhost:8090`으로 바꾸고 `server doctor`,
+   `server start`, `server status`를 실행한다. 내부·공개 health에 `owner: on_prem_agent`와
+   같은 release가 있어야 한다. `{"status":"ok"}`만으로 연결 성공이라고 판단하지 않는다.
+7. Slack Event Subscriptions의 Retry로 Verified를 확인한 뒤 실제 멘션/스레드/DM을 확인한다.
+   Slack 공개 URL에는 `:8090`을 붙이지 않는다. 자동 업데이트 timer의 active도 확인한다.
+
+새 버전은 실행·업데이트·상태 확인 모두 같은 `server.json.port`를 사용하므로 이후 main
+업데이트에도 포트 설정이 유지된다. 이 파일이 없거나 port가 없으면 기본값은 8090이다.

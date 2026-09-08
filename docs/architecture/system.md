@@ -984,3 +984,14 @@ this is not a no-effect or verified provider failure receipt. Identical requests
 completion/outbox projection without re-entering generation. The original start ledger and
 artifacts remain available. Queued, unrelated or changed operations cannot be abandoned by
 that decision. No automatic timeout abandonment is introduced.
+
+### Managed server port
+
+The default agent listener is loopback port 8090. New setup persists `port: 8090` in the
+credential-free `~/.config/trace-marketing/server.json` outside the selected release. The process
+launcher, updater health/drain/activation and operator status use this same integer setting
+(1–65535, default 8090). Cloudflare independently routes the public HTTPS hostname to localhost:8090;
+Slack callback URLs retain HTTPS without an internal port suffix. The updater need not load agent
+secrets to learn the port. The standalone `service run --port` remains an independent explicit CLI.
+Older fixed-8765 managers require an idle/offline reinstall with preserved configuration/state/current
+link backup before the new channel can take over; ordinary self-update cannot bridge that change.
