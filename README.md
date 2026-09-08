@@ -166,7 +166,7 @@ never preapprove Appium or Threads publication. Existing Cloudflare/D1 hosted ru
 compatibility effect owner until projection cutover. Fake adapter tests do not count as live Slack,
 Notion, Meta, or platform-review evidence.
 
-## Team knowledge context (implemented source; verification deferred)
+## Team knowledge context
 
 The on-premises `MarketingAgentService` can own a server-local team knowledge store. The knowledge
 owner keeps immutable source and Markdown revisions under `TRACE_MARKETING_KNOWLEDGE_ROOT`, its
@@ -187,11 +187,13 @@ With all three unset, knowledge is disabled. A partial set fails configuration. 
 directory must be owned by the service user with mode `0700`; the policy and control identity file
 must be mode `0600`. When configured, `trace-marketing service run` builds the knowledge ingress,
 curation provider, bounded jobs, index worker, memory-view worker, owner lock, and continuous runtime
-alongside the canonical service. This source wiring is implemented, but fresh installed-service and
-deployment verification is still deferred.
+alongside the canonical service. Fresh installed-service behavior and deployment require separate
+verification.
 
 Authenticated Agent Service and Slack adapters provide the actor, workspace, member, session, and
-grants. Shared Slack threads use workspace scope. Private Slack DMs use member and conversation
+grants. The service binds these identities to existing knowledge members and conversation sessions,
+preserving stored roles and revocations; replay and context preparation recheck that authority.
+Shared Slack threads use workspace scope. Private Slack DMs use member and conversation
 scope; the service filters them to read-only knowledge tools (`knowledge_search`, `knowledge_get`,
 `memory_get`, `memory_explain`, and `source_read`) and does not grant shared-memory writes or
 external delivery. Edits, deletes, and corrections enter a pending fence before the affected Run is
@@ -209,14 +211,20 @@ commands are `init`, `doctor`, `ingest --envelope <file> [--attachment ORDINAL=/
 `--entry`, `--request`, `--task`, and `--id` as applicable. `memory consolidate` requires
 `--until-idle`; `run` accepts `--flush-batches` only with `--until-idle`.
 
-These commands are source-implemented reference operations for one private store. Installed help,
-fresh installation, live Codex/Slack, hosted validation, remote purge, and deployment verification
-remain deferred.
+Routine curation batches default to a 60-second window from the first event. `--flush-batches` makes collected
+routine work ready immediately. Cancellation releases unfinished events for a new batch while
+preserving completed event receipts. `brand register` replays an identical operation and name under
+the same authority; reusing the operation ID with another name conflicts and replay still requires
+current write permission. Verify installed commands, live Codex/Slack, hosted validation, remote purge,
+and deployment separately from source tests.
 
 Deletion writes an immutable control-root erase-ledger entry before local blocking and purge. Source,
 Wiki, memory, derived context, and transfer dependencies are blocked through tombstones and reverse
 dependency records. Hosted or Mac transfer replicas remain `purge_pending` until their deletion
 receipts arrive; an external acknowledgement gap is not reported as global purge completion.
+`purge --request ID` takes the operation ID returned by `retract`; repeating it resolves the same
+stored target and purge request. Restore requires a new target root, validates the backup manifest
+and file digests, applies the current erase ledger, and rebuilds search before activating the root.
 
 ## Legacy compatibility path
 
