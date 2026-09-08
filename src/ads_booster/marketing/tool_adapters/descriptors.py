@@ -268,6 +268,23 @@ def notion_daily_descriptor(
     )
 
 
+def github_issue_descriptor(
+    *, installation_id: str, observed_at: datetime, ready: bool, reason_code: str | None = None
+) -> ToolDescriptor:
+    return _descriptor(
+        _DescriptorSpec(
+            capability_id="github.issue.create",
+            owner="github.issues",
+            effect_class=EffectClass.EXTERNAL,
+            worst_case_units=1,
+            cost_unit="issue",
+            credential_boundary="adapter_owner",
+            reconciliation_mode="manual",
+        ),
+        _InstallationState(installation_id, observed_at, ready, reason_code, "1"),
+    )
+
+
 def _descriptor(
     spec: _DescriptorSpec,
     state: _InstallationState,
