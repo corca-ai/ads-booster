@@ -2,18 +2,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol, cast
 
 from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
+from ads_booster.knowledge.contract_types import (
+    AuthorityClass,
+    ConversationRole,
+    EvidenceKind,
+    InstructionAuthority,
+    Provenance,
+    SourceKind,
+)
 from ads_booster.knowledge.curation_contracts import (
     CurationExcerpt,
     CurationRequest,
     CurationResult,
     CurationRunStatus,
+    CurationUserEvent,
 )
+from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
 from ads_booster.knowledge.jobs import JobProcessResult
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
 from ads_booster.knowledge.repository_tool_state import RepositoryToolState
+from ads_booster.knowledge.source_contracts import ConversationEvent
 from ads_booster.knowledge.tool_contracts import (
     TrustedInvocationContext,
     TrustedSourceCapability,
@@ -26,7 +38,7 @@ if TYPE_CHECKING:
     from ads_booster.knowledge.curation import CurationRunner
     from ads_booster.knowledge.memory_consolidation import MemoryConsolidationProcessor
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
-    from ads_booster.knowledge.repository_types import JobLease
+    from ads_booster.knowledge.repository_types import JobLease, StoredSource
     from ads_booster.knowledge.scope_contracts import ActorContext
     from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
 
@@ -111,6 +123,7 @@ class CanonicalJobProcessor:
             policy_version=job.policy_version,
             objective=body[:20_000] or "Review the source disposition.",
             excerpts=excerpts,
+            authenticated_user_event=self._authenticated_user_event(scoped_actor, source),
             started_at=datetime.now(UTC),
         )
         context = TrustedInvocationContext(
@@ -134,6 +147,38 @@ class CanonicalJobProcessor:
             invoked_at=datetime.now(UTC),
         )
         return CurationBatchWork(request=request, trusted_context=context)
+
+    def _authenticated_user_event(
+        self, actor: ActorContext, source: StoredSource
+    ) -> CurationUserEvent | None:
+        if source.source.source_kind is not SourceKind.MESSAGE:
+            return None
+        original = ConversationEvent.model_validate_json(source.body)
+        if original.role is not ConversationRole.USER or original.quoted_spans:
+            return None
+        event = self.repository.canonical_event(actor, original.message_id)
+        if event != original:
+            msg = "curation_event_binding_mismatch"
+            raise ValueError(msg)
+        return CurationUserEvent(
+            evidence_ref=EvidenceRef(
+                evidence_kind=EvidenceKind.CONVERSATION_EVENT,
+                evidence_id=event.message_id,
+                revision_id=str(event.revision),
+                quote_sha256=sha256(event.text.encode()).hexdigest(),
+                scope=event.scope,
+                instruction_authority=InstructionAuthority.AUTHORIZED_USER,
+                provenance=Provenance.HUMAN_DIRECT,
+            ),
+            authority_ref=AuthorityRef(
+                event_id=event.message_id,
+                authority_class=AuthorityClass.AUTHORIZED_TASK_INSTRUCTION,
+                actor_ref=event.speaker_ref,
+                workspace_id=event.scope.workspace_id,
+                scope=event.scope,
+                policy_epoch=actor.policy_epoch,
+            ),
+        )
 
     def run_curation_work(
         self,
