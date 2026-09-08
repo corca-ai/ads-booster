@@ -25,6 +25,7 @@ from ads_booster.knowledge.memory import MemorySnapshot, ValidationCatalog, Wiki
 from ads_booster.knowledge.memory_contracts import MemoryEntry
 from ads_booster.knowledge.policy import require_claim_authority
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+from ads_booster.knowledge.repository_tool_state import RepositoryToolState
 from ads_booster.knowledge.source_contracts import ConversationEvent, SourceSegment
 from ads_booster.knowledge.wiki_contracts import Claim
 
@@ -104,12 +105,22 @@ class RepositoryEvidenceResolver:
                 quote = resolved_value.text
                 scope = resolved_value.scope
             case SourceSegment():
-                source = self._repository.read_source(actor, resolved_value.source_id)
+                source = RepositoryToolState(self._repository).read_source_extract(
+                    actor, resolved_value.source_id, resolved_value.revision_id
+                )
                 if source is None:
                     raise ChangeValidationError("evidence_source_missing", resolved_value.source_id)
-                quote = source.body[
-                    resolved_value.quote_range.start : resolved_value.quote_range.end
-                ].decode()
+                body = source.body.decode("utf-8")
+                if resolved_value.quote_range.end > len(body):
+                    raise ChangeValidationError("evidence_pointer_mismatch", ref.evidence_id)
+                quote = body[resolved_value.quote_range.start : resolved_value.quote_range.end]
+                if sha256(
+                    quote.encode()
+                ).hexdigest() != resolved_value.content_sha256 or ref.segment_id not in (
+                    None,
+                    resolved_value.segment_id,
+                ):
+                    raise ChangeValidationError("evidence_pointer_mismatch", ref.evidence_id)
                 scope = source.source.scope
                 authority = InstructionAuthority.DATA
                 provenance = Provenance.EXTERNAL
