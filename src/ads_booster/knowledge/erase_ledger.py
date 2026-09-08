@@ -226,6 +226,7 @@ class EraseLedger:
         previous = _ZERO_DIGEST
         for expected_sequence, entry in enumerate(entries, start=1):
             unsigned = entry.model_dump(mode="json", exclude={"entry_sha256"})
+            unsigned["created_at"] = entry.created_at.isoformat()
             if (
                 entry.sequence != expected_sequence
                 or entry.previous_entry_sha256 != previous
