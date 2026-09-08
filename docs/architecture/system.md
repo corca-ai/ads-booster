@@ -105,7 +105,11 @@ Each later round receives the actual guarded tool observations from earlier roun
 job decisions become receipts bound to their original event and revision. Explicit flush updates
 the indexed and serialized batch state in one transaction. Cancelled unfinished jobs re-enter
 collection with a deterministic generation derived from persisted terminal batch history; earlier
-receipts remain intact. The runtime starts as a daemon loop with the service and stops before the
+receipts remain intact. Startup recovers abandoned running batches only after acquiring the exclusive
+owner lock; completed per-event receipts remain terminal and unfinished jobs return to collection.
+Private batches reload their registered actor and current private grants from the catalog rather
+than inheriting the local administrator's identity or workspace grants. Revoked private jobs and
+unclaimed batches fail durably without preventing later authorized work. The runtime starts as a daemon loop with the service and stops before the
 service releases its owner lock. Standalone
 knowledge CLI ownership is separate from the service owner and must not share a live root. The
 registered local-admin surface covers `init`, `doctor`,
@@ -126,7 +130,11 @@ read-only capability set. The DM projection permits knowledge search/get, memory
 source read; it excludes knowledge or memory writes, scheduling, purge, and external delivery. The
 canonical ingress stores the binding, conversation event, and durable outbox before dispatch. Edited,
 deleted, or correcting events create a pending fence; context preparation blocks the affected Run
-until the new source state is admitted.
+until the new source state is admitted. A dispatch that durably records a classified item failure
+returns progress without acknowledging or automatically retrying that item, so later ingress and
+maintenance continue. Unknown receipt outcomes and persistence errors still propagate.
+Source fetching admits only 2xx or 304 after redirect handling. HTTP 408/429 and server errors are
+retryable; other unsuccessful statuses fail before their body can enter extraction or curation.
 
 `source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
 memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment
@@ -141,7 +149,10 @@ rechecks that receipt immediately before tool dispatch. Hosted generation receiv
 digest-bound `trace.knowledge-context.v1` transfer with selected editorial blocks and evidence
 excerpts. The hosted broker validates tenant/account/task/run/action binding before dispatch and the
 callback must return the matching transfer, digest, and receipt. Missing or mismatched required
-context fails closed; it does not silently fall back to legacy context.
+context fails closed; it does not silently fall back to legacy context. Generation checks the same
+required worker capability used for leasing before consuming its cooldown or publishing a task.
+An identical callback retry returns duplicate success only after current authority, context receipt,
+callback identity and result equality are checked again; altered or revoked callbacks remain rejected.
 Cached validation acceptance is reused only after current authentication, binding, expiry, grant,
 head and tombstone checks pass. Required constraints retain their constraint role in the transfer.
 
