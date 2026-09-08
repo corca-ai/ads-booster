@@ -15,6 +15,54 @@ inspection: the updater defers; it never changes, completes, or resumes an old r
 
 On failure the updater restores the prior `current` release and verifies the last known good worker.
 
+## Managed release publication
+
+This is the canonical operator procedure for Mac release publication. The
+[release workflow](../../.github/workflows/release-mac-worker.yml) and its
+[release policy](../../scripts/mac-release-policy.py) define the executable conditions:
+
+- A package version change on `main` requests a new release. Shared package changes with an
+  unchanged version still run the applicable Mac compatibility checks without publishing.
+- An explicitly authorized workflow dispatch on `main` can publish or resume the current version,
+  subject to the exact SHA and ownership checks. Pull Requests never publish.
+- On-prem server updates track verified `main` SHAs independently; they do not require a Mac tag.
+  See the [server operation guide](../operations/agent-server/slack-launch-guide.md).
+
+When a new Mac version is required, update `pyproject.toml` and its lockfile in the work branch before
+merging. The workflow builds and checks the release bytes, creates its owned annotated tag and Draft
+Release, uploads the bundle, manifest and bootstrap, attests and verifies all three assets, then
+publishes and reads back the stable release. Control-plane changes must pass the matching deployed
+health check before publication. The stable-release signal below follows public readback.
+
+Do not manually create or edit tags, release bodies or assets. The
+[release-state guard](../../scripts/github-release-state.py) requires workflow ownership markers and
+rejects conflicting or unowned state. Never move a published tag to a newer `main` SHA. Reuse an
+existing version only when the workflow accepts its exact target SHA and owned state; otherwise
+prepare a new version through the normal work-branch flow.
+
+For an explicitly requested release or resume that needs a manual trigger:
+
+```bash
+gh workflow run release-mac-worker.yml --repo corca-ai/ads-booster --ref main
+```
+
+Identify the resulting run and verify its exact target rather than assuming the latest run belongs
+to this request:
+
+```bash
+gh run list --repo corca-ai/ads-booster --workflow release-mac-worker.yml --branch main
+gh run view <run-id> --repo corca-ai/ads-booster --json headSha,event,conclusion,url
+gh release view v<version> --repo corca-ai/ads-booster --json tagName,targetCommitish,isDraft,isPrerelease,assets,url
+git ls-remote --tags origin refs/tags/v<version> 'refs/tags/v<version>^{}'
+```
+
+Require the publication job's success, a stable non-Draft release with all three expected assets,
+and the tag's peeled SHA matching that run's `headSha`. A compatibility-only run is not a release.
+Follow the [verified bootstrap](../../README.md#bootstrap-a-verified-mac-worker-release) to verify
+attestations and install. Confirm `trace-marketing version --json` and `trace-marketing worker doctor`
+on the installed Mac before claiming activation; GitHub publication alone is not installed-product
+proof.
+
 ## Immediate stable-release signal
 
 When a release includes control-plane paths, the release workflow waits for the matching Cloudflare

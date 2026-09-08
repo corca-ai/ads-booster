@@ -26,9 +26,12 @@ satisfy this completion definition.
 
 ## 1. Verify the release before installation
 
-The merge commit must have a new annotated tag and GitHub Release. The release workflow must have
-deployed the matching Cloudflare revision before publishing the stable worker manifest. Follow the
-verified bootstrap in the repository README and then check:
+For this hosted control-plane and Mac worker dogfood, select the stable release produced by the
+[managed release procedure](../contracts/mac-worker-auto-update.md#managed-release-publication).
+When that release changes the control plane, its workflow must verify the matching deployed
+Cloudflare revision before publishing the stable worker manifest. This scenario does not require
+a new Mac release for every unrelated `main` change. Follow the verified bootstrap in the repository
+README and then check:
 
 ```bash
 trace-marketing version --json

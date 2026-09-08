@@ -6,18 +6,18 @@
 ## 프로젝트 개요
 
 `ads-booster`는 Trace 마케팅 에이전트, 팀 워크스페이스와 Appium 이미지 파이프라인을
-제공합니다. 진입점은 `trace-marketing`, `trace-capture`, `trace-compose`, `trace-run`입니다.
+제공합니다. 설치된 CLI 진입점은 `trace-marketing`입니다.
 
 ## 제품 기준 환경
 
 - 제품 동작의 최우선 기준은 현재 worktree가 아니라 처음 설치한 격리된 `trace-marketing`
-  환경입니다.
+환경입니다.
 - 설치, PATH, CLI 노출, 기본 설정, 상태 디렉터리와 service lifecycle은 fresh install에서
-  확인합니다.
+확인합니다.
 - worktree의 source, `uv run`, local venv 성공은 후보 변경의 개발 근거이며 설치된 제품이
-  작동한다는 증거가 아닙니다.
+작동한다는 증거가 아닙니다.
 - public installer나 원격 설치 명령은 실제 배포된 URL과 ref를 fresh environment에서 실행한
-  경우에만 작동한다고 주장합니다.
+경우에만 작동한다고 주장합니다.
 
 ## 기준 문서와 읽기 순서
 
@@ -39,22 +39,21 @@
 - 먼저 `git status --short`로 현재 브랜치와 작업트리 변경을 확인합니다.
 - 기존 변경과 untracked 파일은 사용자의 작업으로 간주하고 보존합니다.
 - 요청 범위 밖의 파일을 정리, 복원, 이동, 삭제하지 않습니다.
-- `.codegraph/`가 있으면 코드 위치와 호출 경로를 이해할 때 CodeGraph를 먼저 사용합니다.
 - CodeGraph가 없거나 stale, lock, 동기화 실패를 보고하면 해당 결과를 현재 코드로 간주하지
-  않고 필요한 live source만 직접 확인합니다.
+않고 필요한 live source만 직접 확인합니다.
 - 읽기 전용 분석, 설명, 리뷰 요청은 사용자가 변경도 요청하지 않은 이상 코드나 문서를
-  수정하지 않습니다.
+수정하지 않습니다.
 
 ## 문서 동기화
 
 - 진입점, 프로세스 구성, 실행 흐름, 상태 저장, 인증·승인 또는 외부 시스템 경계를 바꾸면
-  같은 변경에서 `docs/architecture/system.md`를 갱신합니다.
+같은 변경에서 `docs/architecture/system.md`를 갱신합니다.
 - package 책임, 의존 방향, composition root, type owner 또는 코드 배치 규칙을 바꾸면 같은
-  변경에서 `docs/architecture/code.md`를 갱신합니다.
+변경에서 `docs/architecture/code.md`를 갱신합니다.
 - 테스트 위치, 선택 기준, 공식 검증 명령 또는 실제 QA 기준을 바꾸면 같은 변경에서
-  `docs/development/testing.md`를 갱신합니다.
+`docs/development/testing.md`를 갱신합니다.
 - 사용자 명령, 환경변수, 설치 또는 운영 절차를 바꾸면 같은 변경에서 `README.md`를
-  갱신합니다.
+갱신합니다.
 - 아직 구현되지 않은 설계 문서는 `Status: Draft`와 미구현 범위를 표시합니다.
 
 필요한 문서가 빠진 구조 변경은 완료한 것으로 간주하지 않습니다.
@@ -62,16 +61,18 @@
 ## 핵심 불변식
 
 - Mac production model 경로는 같은 macOS 사용자의 공식 Codex CLI 로그인 세션을 사용하며
-  `trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
+`trace-agent`/`trace-ads` custom agent 진입점을 다시 도입하지 않습니다.
 - canonical conversation history를 보존하고 compaction은 provider projection만 줄입니다.
 - shared workspace context는 private chat에서 read-only입니다.
 - private session은 workspace, member, session scope를 모두 적용합니다.
 - secret을 로그나 테스트 산출물에 기록하지 않고 외부 side effect는 승인 또는 worker 경계를
-  통과합니다.
+통과합니다.
 - artifact는 설정된 root와 digest provenance를 유지하며 확인할 수 없는 side effect를
-  무조건 재시도하지 않습니다.
+무조건 재시도하지 않습니다.
 - 생성 결과는 artifact 검증과 사람의 review 승인을 거쳐야 합니다.
-- 현재 런타임은 Notion, Threads 또는 다른 외부 마케팅 채널에 자동 게시하지 않습니다.
+- 외부 게시·전달은 [시스템 아키텍처](./docs/architecture/system.md)의 채널별 승인 경계를
+  따릅니다. Mac worker는 게시하지 않으며, Cloudflare Threads 게시에는 사람의 이미지 승인과
+  운영자의 프로필 연결·자동 게시 활성화가 필요합니다.
 
 ## 검증
 
@@ -92,22 +93,6 @@ test selection, authoring gate, focused command와 실제 표면 QA는
 
 ## Git과 GitHub
 
-Git 작업을 시작하기 전에 `docs/conventions/github.md` 전체를 읽고 적용합니다.
-
-- 커밋은 사용자가 요청할 때만 합니다.
-- 푸시는 사용자가 명시적으로 요청할 때만 합니다.
-- Pull Request 생성, 병합과 GitHub 상태 변경은 사용자가 요청할 때만 합니다.
-- Issue나 기능 전체를 하나의 커밋 단위로 삼지 않습니다. enum·공유 type, contract, controller·
-  route, service 동작, repository·migration·adapter, test-only 변경, 문서를 독립적으로 리뷰하고
-  되돌릴 수 있는 최소 책임 단위로 나눕니다.
-- 커밋 메시지는 `기능 개발`처럼 전체 작업을 요약하지 않고 추가한 enum, 정의한 contract,
-  연결한 controller 또는 구현한 동작을 구체적으로 적습니다.
-- 서로 분리해도 build와 focused verification이 유효하면 같은 Issue와 기능에 속해도 별도
-  커밋합니다. 분리하면 build가 깨지거나 구현을 증명하는 직접 회귀 테스트가 빠질 때만 함께
-  둡니다. 의존성이 있으면 enum → contract → implementation → controller wiring처럼 기반에서
-  소비자 순으로 커밋합니다.
-- stage할 때 요청 범위의 파일이나 hunk만 포함합니다. 커밋을 구성할 때 `git add .`와
-  `git add -A`를 사용하지 않습니다.
-- 매 커밋 전에 `git diff --cached` 전체와 `git diff --cached --check`를 확인하고, staged diff에
-  두 개 이상의 독립 책임이 있으면 다시 나눕니다.
-- 기존 dirty worktree와 `tasks/` 변경을 임의로 stash, restore, 삭제하지 않습니다.
+Git 작업 전에 [GitHub 컨벤션](./docs/conventions/github.md) 전체를 읽고 적용합니다.
+사용자가 요청한 범위에서만 실행하며, 독립적으로 리뷰·되돌릴 수 있는 개별 커밋을 보존합니다.
+승인 범위, 커밋 분리·staging, 병합 방식과 릴리스 절차의 기준은 해당 문서입니다.

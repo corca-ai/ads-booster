@@ -46,6 +46,10 @@ root로 접속했다면 설치 명령에 `--user trace-marketing`을 추가한�
 수동 PATH 명령은 현재 셸용이며, 이후 셸에도 쓰려면 사용자 shell 설정에 같은 경로를 반영한다.
 서버 서비스의 PATH는 setup이 실제 도구 경로로 생성한다.
 
+`server` 명령이 없으면 [설치된 CLI 확인 절차](../../../README.md#check-which-cli-installation-is-running)로
+현재 셸이 이전 uv 설치본을 선택했는지 확인한다. checkout 갱신만으로 설치본은 바뀌지 않으며,
+기존 CLI 충돌을 해결하려고 링크나 상태 디렉터리를 임의로 덮어쓰지 않는다.
+
 ## 2. Slack 앱 만들기 — 본인
 
 서버에서 다음 명령을 실행해 나온 JSON 전체를 복사한다. 비밀값은 없다.
@@ -146,6 +150,7 @@ Verified 실패 시 서버 Codex에게 공개 health와 Signing Secret, Cloudfla
 - 테스트 채널에서 `@Trace Marketing Agent 일본 대학생 대상 마케팅 사례를 조사해줘`.
 - 같은 스레드에 멘션 없이 `그중 두 개만 자세히 알려줘`.
 - 봇 DM에서 별도 질문, DM 내용이 채널에 나타나지 않는지 확인.
+- `/trace` 요청과 허용되지 않은 사용자·다른 채널·위조 서명 거절 확인.
 - 승인이 필요한 경우 `검토 1`부터 필요한 페이지를 읽고 `승인 표시된해시` 또는
   `거절 표시된해시`. 단순 조사에는 승인 요청이 없을 수 있다.
 - 서비스 재시작 뒤 같은 스레드의 상태와 후속 질문, 중복 실행 방지 확인.
@@ -171,6 +176,12 @@ Ceal 형태의 멘션/스레드/DM 대화를 제공하지만 첨부파일, Slack
 스트리밍, AI 사이드패널은 아직 포함하지 않는다. DM 도구는 공개 검색 중심이다.
 수동 대화가 확인된 후에만 선택 사항인 일일 연구 설정을 별도로 활성화한다.
 
+일일 연구를 사용할 때는 [환경 예시](agent.env.example)의 daily 항목을 확인하고,
+[입력 예시](daily-research.example.json)의 query에 조사 주제를 지정한다.
+`research.daily_slack_only`에는 Notion이 필요 없다. 설정한 시간 이후 당일 한 번 실행하며
+재시작·중복 tick은 동일 Run을 사용한다. 이 설정은 해당 스킬의 Slack 전달만 승인한다.
+활성화한 뒤 실제 결과가 지정한 Slack 채널에 도착하는지 확인한다.
+
 공식 Slack 기준: [manifest](https://docs.slack.dev/app-manifests/),
 [Events API](https://docs.slack.dev/apis/events-api/),
 [auth.test](https://docs.slack.dev/reference/methods/auth.test/).
@@ -189,6 +200,8 @@ local health의 새 SHA로 확인한다. GitHub API 제한이나 네트워크 �
 - updater 실패 원인은 `journalctl --user -u trace-marketing-update.service -n 30 --no-pager`로 확인한다.
   앱 설정 파일과 토큰을 로그나 채팅에 붙여 넣지 않는다.
 - 기존 수동 설정 때문에 setup이 멈추면 파일을 임의 삭제하지 말고 기존 운영 상태를 먼저 확인한다.
+  당시 wheel·서비스·설정과 복구 절차는 [수동 설치 기록](legacy-wheel-recovery.md)에 보존되어
+  있다. 이 기록의 후보 버전과 실제 설치 SHA를 대조한 뒤 참고한다.
 
 Corca의 기존 환경에서는 이 문서의 `agent.example.com`을 `marketing-agent.borca.ai`로,
 터널을 `marketing-agent-onprem`으로 선택하면 된다. 기존 `cloudflared-ear.service`는 그대로 둔다.

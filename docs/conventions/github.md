@@ -11,8 +11,20 @@ for code changes and inspect the current branch and remote state before starting
 - Use `<type>: <specific-responsibility> (#<issue-number>)` for commit messages.
 - Create every Pull Request as Draft, then mark it `Ready for review` when review preparation is
   complete.
-- Squash Merge approved Pull Requests.
-- After a change lands on `main`, update the tag and GitHub Release for that commit.
+- Use a Merge commit by default to preserve individual responsibility commits on `main`, including
+  for `feature/`, `fix/`, and `hotfix/` branches deleted after merge. Use Squash Merge only when the
+  user explicitly requests it for that Pull Request.
+- After a change lands on `main`, verify the applicable server update or managed Mac release path
+  described in [Post-merge verification](#post-merge-verification).
+
+## Authorization and existing work
+
+Commit only when the user requests it. Push, create or merge Pull Requests, and change GitHub state
+only within the user's explicit request. Reading an existing Issue is preparation; creating or closing
+one changes GitHub state. A request to edit local files does not authorize publication.
+
+Preserve existing dirty files, untracked files and `tasks/` records. Do not stash, restore, delete or
+mix them into the requested change without authorization. Stage only the requested paths or hunks.
 
 ## Branches
 
@@ -169,6 +181,28 @@ user-visible flow and verify the change without reading the commit history. Incl
 - `## Verification`: exact focused commands and observed results;
 - `## Deployment`: environment variables, data migrations, release/tag impact, and rollback notes.
 
+#### Write for a first-time reviewer
+
+Assume the reviewer has not read the originating conversation or worked on this feature before.
+
+- Lead with the problem and the user-visible outcome. Give a concrete usage example and explain
+  what happens before and after the change before introducing implementation details.
+- Explain unfamiliar domain terms, abbreviations, and component names when they first appear.
+  Use a short glossary when several terms are needed to understand the flow.
+- Include Mermaid flowcharts or sequence diagrams for multi-stage or cross-component behavior.
+  Show the real participants, data movement, and relevant authority or asynchronous boundaries.
+  Split distinct flows, such as storing knowledge and using it in generation, into separate diagrams
+  instead of one oversized graph. Pure copy or metadata changes do not require a diagram.
+- Render and inspect Mermaid diagrams before publishing. Use short labels and deliberate line
+  breaks so text remains readable; verify that the diagram agrees with the implemented flow.
+- For changes spanning multiple areas, provide an ordered review guide: the question each area
+  answers and links to its main code entry points. Follow the user or data flow, not commit order.
+- Separate local tests, installed-product checks, actual provider calls, CI, and deployed external
+  behavior. State the observed result and verification scope; keep failed, pending, and unverified
+  items visible. A passing subset or local run must not imply that CI or deployment passed.
+- Keep the main narrative focused on behavior and decisions. Put lengthy reproduction commands
+  and supporting logs in collapsible details, while leaving key results and blockers visible.
+
 Do not paste a commit hash list or a commit-by-commit diary into the PR body. The commit history
 should remain the atomic implementation record; the PR description explains the delivered behavior,
 evidence, and operational impact.
@@ -179,7 +213,13 @@ evidence, and operational impact.
 2. Confirm that changed files and the Pull Request description match the current head.
 3. Mark the Pull Request `Ready for review` when review preparation is complete.
 4. Apply feedback and push to the same branch.
-5. Squash Merge after approval.
+5. After approval, use **Create a merge commit** on GitHub or `gh pr merge <number> --merge`.
+   - Preserve the individual responsibility commits regardless of branch prefix or whether the
+     source branch will be deleted after merge.
+   - Use Squash Merge only when the user explicitly requests it for this Pull Request. General
+     permission to merge does not authorize squashing.
+   - If repository settings block Merge commits, report the blocker; do not silently switch to
+     Squash Merge or Rebase Merge.
 6. Synchronize local `main` immediately after the merge.
 7. After the merged work and any required release steps are verified, close each completed owning
    issue with a short PR/release reference. Do not close an issue when it still has deferred scope.
@@ -189,44 +229,25 @@ git switch main
 git pull --ff-only origin main
 ```
 
-## Tag and GitHub Release after `main` changes
+## Post-merge verification
 
-A change on `main` is not released until its tag and GitHub Release are updated. This is a mandatory
-post-merge step, not an optional follow-up. Target the actual remote `main` commit, not another
-branch or an arbitrary local HEAD. Never move or overwrite an existing published tag; choose the
-next version, and update package metadata/lockfiles in an issue-linked commit before tagging when
-the release version changes.
+A merged commit, a server update and a Mac release are separate results. Report only the result
+actually verified for the affected path:
 
-1. Determine the next version and release notes from the final `main` change set.
-2. Read remote `main` again and confirm the target SHA.
-3. Create an annotated `v<version>` tag on that SHA and push it.
-4. Create a GitHub Release for the same new tag.
-5. Confirm that the remote tag's peeled SHA matches the target `origin/main` SHA and that the
-   GitHub Release uses the intended `v<version>` tag.
-6. Only then report the main change as released.
+- On-prem server updates follow the exact `main` SHA's successful `Verify on-prem agent` check and
+  the installed server updater. Use the [server operation guide](../operations/agent-server/slack-launch-guide.md)
+  to verify the installed SHA; a passing CI run alone does not prove activation.
+- Mac releases follow the [managed release procedure](../contracts/mac-worker-auto-update.md#managed-release-publication).
+  An unchanged package version does not require a new Mac release. The workflow owns tags, release
+  assets, attestations and publication; do not create or edit those manually.
 
-```bash
-git fetch origin main --tags
-git rev-parse origin/main
-git tag -a v<version> <main-sha> -m "v<version>"
-git push origin v<version>
-# When creating a GitHub Release
-gh release create v<version> --target <main-sha> --title "v<version>" --notes-file <release-notes-file>
-# When the GitHub Release already exists
-gh release edit v<version> --title "v<version>" --notes-file <release-notes-file>
-git ls-remote --tags origin refs/tags/v<version> refs/tags/v<version>^{}
-gh release view v<version> --json tagName,targetCommitish,url
-```
+Only trigger release publication within an explicit `main` merge or release request. A permission
+to merge does not authorize rewriting existing published tags or release history. If a new version
+is needed, update package metadata and lockfiles in an issue-linked commit before merging.
 
-After the required tag/release verification succeeds, close the completed issue(s):
-
-```bash
-gh issue close <issue-number> --comment "Completed in PR #<pr-number> and release v<version>."
-```
-
-Pushing tags and creating or editing GitHub Releases mutate external state. Perform them only when
-the user explicitly requests a `main` merge or release. Do not claim release completion before
-verification.
+After the requested delivery and its applicable verification are complete, close the owning Issue
+within the authorized GitHub scope with the PR reference and, when applicable, the verified release
+reference. Do not require a fictitious Mac release for a server-only change or close deferred scope.
 
 ## Pre-merge checklist
 
@@ -234,7 +255,8 @@ verification.
 - [ ] `git status --short` and `git diff --stat` show the intended scope.
 - [ ] `git diff --check` passes.
 - [ ] Focused tests and checks for the changed behavior pass.
-- [ ] The Pull Request is Draft and its description matches the actual change.
+- [ ] The Pull Request is Ready for review, approved, and its description matches the actual change.
 - [ ] No secrets or unrelated changes are included.
-- [ ] The Pull Request is ready for Squash Merge after approval.
-- [ ] After landing on `main`, the new tag and GitHub Release point to the same `main` commit.
+- [ ] Merge commit is selected to preserve individual commits, or the user explicitly requested
+  Squash Merge for this Pull Request.
+- [ ] The applicable post-merge server or Mac verification path is identified.

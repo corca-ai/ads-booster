@@ -4,14 +4,16 @@
 
 Trace Workspace is a utilitarian marketing workbench. Its primary job is to make the live pipeline
 legible: choose an account-scoped country/persona context, generate candidates, review caption and
-topic, review the image, then leave approved work in `submitted` for manual publication.
+topic, review the image, then mark approved work as `submitted`. Image approval alone does not prove
+publication; the separate [Threads publication flow](docs/contracts/cloudflare-marketing-loop.md)
+depends on the connected profile, operator toggle and scheduled slot.
 
 `DESIGN_VARIANCE: 4`, `MOTION_INTENSITY: 2`, `VISUAL_DENSITY: 5`.
 
 ## Tokens
 
-The canonical tokens live in `src/trace_capture/web/static/design-tokens.css`; root `tokens.css`
-is the Hallmark-compatible entrypoint that imports that source of truth.
+The canonical tokens live in [cloudflare/static/design-tokens.css](cloudflare/static/design-tokens.css).
+Root [tokens.css](tokens.css) is the Hallmark-compatible entrypoint that imports that source of truth.
 
 - Dark OKLCH surfaces create hierarchy without ornamental gradients or glow.
 - Indigo accent is reserved for the primary generation action, focus, and submitted state.
@@ -21,7 +23,7 @@ is the Hallmark-compatible entrypoint that imports that source of truth.
 
 ## Macrostructure: Workbench
 
-The work surface has eight stable regions.
+The workbench is organized as follows.
 
 1. `workspace-toolbar` names the product and shows one live status line without an explanatory hero.
 2. `account-console` keeps only the logical account selector visible.
@@ -30,12 +32,11 @@ The work surface has eight stable regions.
    account-scoped execution timeline stays collapsed until a teammate opens `실행 기록`.
 4. `threads-console` keeps only the safe ON/OFF state visible and opens a distinct protected manager
    for OAuth profiles, default selection, and the auto-publish toggle.
-5. `pipeline-summary` exposes compact counts for caption review, image work, and publication-ready
-   results.
-6. The two-tab rail separates candidate preparation from human review.
-7. `generation-workbench` keeps only the four-candidate generation action.
-8. The candidate list follows the generation action immediately and can be filtered by operational
-   state without hiding the canonical total.
+5. The tab rail separates `후보` and `검수`, with a third `배경 자산` tab on the hosted surface.
+6. `generation-workbench` keeps only the four-candidate generation action.
+7. The candidate list follows the generation action immediately and can be filtered by operational
+   state without hiding the canonical total. Counts belong to their candidate, caption-review,
+   image-review and background-asset panels; there is no separate pipeline summary region.
 
 The Cloudflare build removes the entry form and opens directly into the last selected public logical
 account scope. Account switching changes settings, context, candidates, and feedback together; it is
