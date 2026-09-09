@@ -196,6 +196,7 @@ def collecting_curation_batch(
         if (
             batch.read_grant_sha256 == read_grant_sha256
             and batch.write_capability_sha256 == write_capability_sha256
+            and _submitter_matches(actor, batch)
         ):
             _require_batch_binding(actor, batch, actor.authenticated_at)
             return batch
@@ -231,6 +232,8 @@ def ready_curation_batch(
     repository: KnowledgeRepository,
     actor: ActorContext,
     now: datetime,
+    *,
+    batch_id: str | None = None,
 ) -> CurationBatch | None:
     with repository.connection() as connection:
         _ = connection.execute("BEGIN IMMEDIATE")
@@ -242,11 +245,18 @@ def ready_curation_batch(
                 WHERE workspace_id=? AND scope_key=? AND (
                     state='ready' OR (state='collecting' AND batch_deadline<=?)
                 )
+                AND (? IS NULL OR batch_id=?)
                 ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,
                     batch_deadline,batch_id
                 LIMIT 1
                 """,
-                (actor.workspace_id, scope_key(actor.conversation_scope), now.isoformat()),
+                (
+                    actor.workspace_id,
+                    scope_key(actor.conversation_scope),
+                    now.isoformat(),
+                    batch_id,
+                    batch_id,
+                ),
             ).fetchone()
         )
         if row is None:
@@ -296,8 +306,7 @@ def finish_curation_batch(
         if not results.keys() <= known:
             conflict("curation_batch_result_unknown", batch_id)
         merged = tuple(
-            results.get((item.event_id, item.event_revision), item)
-            for item in batch.event_receipts
+            results.get((item.event_id, item.event_revision), item) for item in batch.event_receipts
         )
         finished = batch.model_copy(update={"state": state, "event_receipts": merged})
         _update_batch(connection, finished, BatchState.RUNNING)
@@ -390,7 +399,11 @@ def _require_batch_binding(
     batch: CurationBatch,
     at: datetime,
 ) -> None:
-    if batch.workspace_id != actor.workspace_id or batch.scope != actor.conversation_scope:
+    if (
+        batch.workspace_id != actor.workspace_id
+        or batch.scope != actor.conversation_scope
+        or not _submitter_matches(actor, batch)
+    ):
         conflict("curation_batch_scope_conflict", batch.batch_id)
     read_grant = authorize_read(actor=actor, target_scope=batch.scope, at=at)
     write_grant = authorize_write(actor=actor, target_scope=batch.scope, at=at)
@@ -400,10 +413,21 @@ def _require_batch_binding(
         conflict("curation_batch_write_capability_conflict", batch.batch_id)
 
 
+def _submitter_matches(actor: ActorContext, batch: CurationBatch) -> bool:
+    submitter = batch.submitter_actor
+    return submitter is None or (
+        actor.actor_id == submitter.actor_id
+        and actor.member_id == submitter.member_id
+        and actor.session_id == submitter.session_id
+        and actor.policy_epoch == submitter.policy_epoch
+    )
+
+
 def _same_batch_configuration(left: CurationBatch, right: CurationBatch) -> bool:
-    return left.model_copy(
-        update={"state": right.state, "event_receipts": right.event_receipts}
-    ) == right
+    return (
+        left.model_copy(update={"state": right.state, "event_receipts": right.event_receipts})
+        == right
+    )
 
 
 def _require_collectable_job(
@@ -541,9 +565,7 @@ def _release_job(
     job = _job_for_batch_event(connection, batch_id, event_id)
     _update_job(
         connection,
-        job.model_copy(
-            update={"state": JobState.QUEUED, "batch_id": None, "reason_code": None}
-        ),
+        job.model_copy(update={"state": JobState.QUEUED, "batch_id": None, "reason_code": None}),
     )
 
 

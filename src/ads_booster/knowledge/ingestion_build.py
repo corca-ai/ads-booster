@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contract_types import (
     ConversationEventKind,
+    ScopeKind,
     SourceDisposition,
     SourceKind,
 )
@@ -92,7 +93,7 @@ def build_registration(
         segments=_segments(source, extraction),
         receipt=receipt,
         job=JobRegistration(
-            job=_job(request.event, source, receipt, extraction),
+            job=_job(request.event, source, receipt, extraction, request.actor),
             unique_key=(
                 f"{source.workspace_id}:{source.revision_id}:"
                 f"{EXTRACTOR_VERSION}:{CURATION_POLICY_VERSION}"
@@ -183,6 +184,7 @@ def _job(
     source: Source,
     receipt: IngestReceipt,
     extraction: ExtractionResult,
+    actor: ActorContext,
 ) -> KnowledgeJob:
     ready = bool(extraction.segments) or event.event_kind is ConversationEventKind.MESSAGE_DELETED
     urgent = event.event_kind in {
@@ -207,6 +209,7 @@ def _job(
         due_at=source.fetched_at,
         created_at=source.fetched_at,
         reason_code=None if ready else "extraction_unavailable",
+        submitter_actor=actor if source.scope.kind is ScopeKind.CHANNEL else None,
     )
 
 

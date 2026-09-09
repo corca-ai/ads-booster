@@ -123,6 +123,9 @@ class BatchCurationCoordinator:
                 state=BatchState.COLLECTING,
                 first_event_at=item.occurred_at,
                 batch_deadline=deadline,
+                submitter_actor=item.actor
+                if item.actor.conversation_scope.channel_id is not None
+                else None,
             )
         else:
             batch = existing
@@ -139,8 +142,10 @@ class BatchCurationCoordinator:
             ),
         )
 
-    def claim(self, actor: ActorContext, now: datetime) -> CurationBatch | None:
-        return ready_curation_batch(self.repository, actor, now)
+    def claim(
+        self, actor: ActorContext, now: datetime, *, batch_id: str | None = None
+    ) -> CurationBatch | None:
+        return ready_curation_batch(self.repository, actor, now, batch_id=batch_id)
 
     def execute_claimed(
         self,
