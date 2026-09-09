@@ -11,14 +11,16 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import Field
 
+from ads_booster.contracts.agent_run import BoundedId  # noqa: TC001 -- Pydantic runtime type
 from ads_booster.contracts.models import ContractModel
+from ads_booster.knowledge.change_publication import ChangeGroup, ChangePublisher, MemoryPublication
 from ads_booster.knowledge.contract_types import GrantCapability, MemoryKind, ScopeKind
 from ads_booster.knowledge.memory import MemorySnapshot
 from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryRevision
 from ads_booster.knowledge.operation_contracts import MemoryOperation
 from ads_booster.knowledge.operation_enums import MemoryOperationKind
-from ads_booster.knowledge.change_publication import ChangeGroup, ChangePublisher, MemoryPublication
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
+from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext, ScopeGrant
 
 if TYPE_CHECKING:
@@ -38,12 +40,17 @@ class LocalKnowledgeIdentity(ContractModel):
     session_id: Annotated[str, Field(min_length=1, max_length=160)]
 
 
+def _missing_channel(value: str | None) -> bool:
+    return value is None
+
+
 class LocalKnowledgePolicy(ContractModel):
     schema_version: Literal["trace.knowledge-local-policy.v1"] = Field(alias="schema")
     workspace_id: Annotated[str, Field(min_length=1, max_length=160)]
     policy_epoch: Annotated[int, Field(ge=1)]
     capabilities: tuple[GrantCapability, ...]
     brand_voice_brand_ids: tuple[str, ...] = ()
+    channel_id: BoundedId | None = Field(default=None, exclude_if=_missing_channel)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +114,9 @@ def initialize_local_configuration(
         ),
         brand_voice_brand_ids=(),
     )
-    _write_private_json(control_root / IDENTITY_FILE, identity.model_dump(mode="json", by_alias=True))
+    _write_private_json(
+        control_root / IDENTITY_FILE, identity.model_dump(mode="json", by_alias=True)
+    )
     _write_private_json(policy_path, policy.model_dump(mode="json", by_alias=True))
     return identity, policy
 
@@ -124,10 +133,24 @@ def load_local_actor(settings: KnowledgeSettings, *, now: datetime | None = None
     if identity.workspace_id != policy.workspace_id:
         raise ValueError("knowledge_identity_policy_workspace_mismatch")
     timestamp = now or datetime.now(UTC)
-    scope = AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=identity.workspace_id)
+    scope = AccessScope(
+        kind=ScopeKind.WORKSPACE if policy.channel_id is None else ScopeKind.CHANNEL,
+        workspace_id=identity.workspace_id,
+        channel_id=policy.channel_id,
+    )
+    channel_namespace = None if policy.channel_id is None else scope_key(scope)
+    grant_suffix = "" if channel_namespace is None else f"-{channel_namespace}"
+    session_id = (
+        identity.session_id
+        if channel_namespace is None
+        else (
+            "local-channel-session-"
+            + sha256(f"{identity.session_id}:{channel_namespace}".encode()).hexdigest()[:40]
+        )
+    )
     grants = tuple(
         ScopeGrant(
-            grant_id=f"local-{capability.value}-{policy.policy_epoch}",
+            grant_id=f"local-{capability.value}-{policy.policy_epoch}{grant_suffix}",
             capability=capability,
             workspace_id=identity.workspace_id,
             scope=scope,
@@ -139,7 +162,14 @@ def load_local_actor(settings: KnowledgeSettings, *, now: datetime | None = None
     )
     grants += tuple(
         ScopeGrant(
-            grant_id=f"local-brand-voice-{brand_id}-{policy.policy_epoch}",
+            grant_id=(
+                f"local-brand-voice-{brand_id}-{policy.policy_epoch}"
+                if channel_namespace is None
+                else "local-channel-brand-voice-"
+                + sha256(
+                    f"{brand_id}:{channel_namespace}:{policy.policy_epoch}".encode()
+                ).hexdigest()[:40]
+            ),
             capability=GrantCapability.BRAND_VOICE_EDIT,
             workspace_id=identity.workspace_id,
             scope=scope,
@@ -153,7 +183,7 @@ def load_local_actor(settings: KnowledgeSettings, *, now: datetime | None = None
         actor_id=identity.actor_id,
         workspace_id=identity.workspace_id,
         member_id=identity.member_id,
-        session_id=identity.session_id,
+        session_id=session_id,
         conversation_scope=scope,
         grants=grants,
         policy_epoch=policy.policy_epoch,
@@ -170,11 +200,18 @@ def initialize_knowledge_store(settings: KnowledgeSettings) -> ActorContext:
     actor = load_local_actor(settings)
     repository = SqliteKnowledgeRepository(root)
     repository.register_actor(actor, MembershipRole.ADMIN)
+    namespace = (
+        f".{scope_key(actor.conversation_scope)}"
+        if actor.conversation_scope.kind is ScopeKind.CHANNEL
+        else ""
+    )
+    document_scope = actor.conversation_scope if namespace else None
+    operation_id = f"operation.knowledge.init{namespace}"
     body = b""
     snapshots: list[MemorySnapshot] = []
     operations: list[MemoryOperation] = []
     for kind in (MemoryKind.TEAM, MemoryKind.CORE):
-        document_id = f"memory.{kind.value}"
+        document_id = f"memory.{kind.value}{namespace}"
         revision_id = f"{document_id}.initial"
         document = MemoryDocument(
             document_id=document_id,
@@ -182,6 +219,7 @@ def initialize_knowledge_store(settings: KnowledgeSettings) -> ActorContext:
             kind=kind,
             timezone="UTC",
             head_revision_id=revision_id,
+            scope=document_scope,
         )
         revision = MemoryRevision(
             document_id=document_id,
@@ -194,7 +232,7 @@ def initialize_knowledge_store(settings: KnowledgeSettings) -> ActorContext:
         snapshots.append(MemorySnapshot(document, revision, (), body))
         operations.append(
             MemoryOperation(
-                operation_id="operation.knowledge.init",
+                operation_id=operation_id,
                 kind=MemoryOperationKind.ADD,
                 document_id=document_id,
                 entry_id=f"{document_id}.empty",
@@ -206,7 +244,7 @@ def initialize_knowledge_store(settings: KnowledgeSettings) -> ActorContext:
     _ = ChangePublisher(repository).publish(
         actor=actor,
         group=ChangeGroup(
-            operation_id="operation.knowledge.init",
+            operation_id=operation_id,
             memory_operations=tuple(operations),
         ),
         pages=None,
@@ -260,8 +298,8 @@ __all__ = [
     "KnowledgeSettings",
     "LocalKnowledgeIdentity",
     "LocalKnowledgePolicy",
-    "initialize_local_configuration",
     "initialize_knowledge_store",
+    "initialize_local_configuration",
     "load_local_actor",
     "validate_settings",
 ]
