@@ -43,6 +43,7 @@ from ads_booster.knowledge.tool_contracts import (
     ToolResultStatus,
     TrustedInvocationContext,
 )
+from ads_booster.knowledge.tool_support import error_result
 from ads_booster.transport.json_types import JsonObject
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -372,7 +373,7 @@ class CurationRunner:
                 match outcome:
                     case CurationTerminal():
                         return _CurationAdvance(step.progress, outcome)
-                    case (CurationProgress() as progress, CurationTerminal() as terminal):
+                    case (CurationProgress() as progress, terminal):
                         return _CurationAdvance(progress, terminal)
             case CurationDecisionAction.FINISH:
                 progress = step.progress
@@ -482,13 +483,23 @@ class CurationRunner:
         self,
         step: _CurationStep,
         encoded: str | None,
-    ) -> tuple[CurationProgress, CurationTerminal] | CurationTerminal:
+    ) -> tuple[CurationProgress, CurationTerminal | None] | CurationTerminal:
         if encoded is None:
             return CurationTerminal(CurationRunStatus.FAILED, "curation_decision_fields_invalid")
         try:
             arguments = _JSON_OBJECT.validate_json(encoded)
         except ValidationError:
-            return CurationTerminal(CurationRunStatus.FAILED, "curation_question_arguments_invalid")
+            return (
+                step.progress.record(
+                    step.decision_index,
+                    KnowledgeToolName.KNOWLEDGE_QUESTION,
+                    error_result(
+                        stable_id("curation-question", step.request.job_id),
+                        "curation_question_arguments_invalid",
+                    ),
+                ),
+                None,
+            )
         invocation = step.context.model_copy(
             update={"invocation_id": stable_id("curation-question", step.request.job_id)}
         )
@@ -504,6 +515,12 @@ class CurationRunner:
         )
         if result.status in {ToolResultStatus.PENDING, ToolResultStatus.REPLAYED}:
             return updated, CurationTerminal(CurationRunStatus.AWAITING_ANSWER)
+        if result.status is ToolResultStatus.REJECTED and result.error_code in {
+            "tool_input_invalid",
+            "tool_input_schema_mismatch",
+            "question_evidence_not_found",
+        }:
+            return updated, None
         return updated, CurationTerminal(
             CurationRunStatus.FAILED,
             result.error_code or "curation_question_failed",

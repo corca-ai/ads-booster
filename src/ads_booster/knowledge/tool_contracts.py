@@ -347,7 +347,16 @@ class KnowledgeQuestionInput(KnowledgeContractModel):
     schema_version: Literal["knowledge.tool.question.v1"] = Field(alias="schema")
     question_id: BoundedId
     problem: BoundedText
-    evidence_ids: Annotated[tuple[BoundedId, ...], Field(max_length=20)] = ()
+    evidence_ids: Annotated[
+        tuple[BoundedId, ...],
+        Field(
+            max_length=20,
+            description=(
+                "Existing references readable in the current scope, preferably source_id, "
+                "page_id or canonical message_id. Do not use segment_id or ingestion event_id."
+            ),
+        ),
+    ] = ()
     checks_tried: Annotated[tuple[BoundedReason, ...], Field(max_length=20)] = ()
     recommendation: BoundedReason
     pending_proposal: PendingProposal | None = None
