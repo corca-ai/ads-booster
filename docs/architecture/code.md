@@ -156,8 +156,11 @@ built-in when an override's base digest no longer matches. `repository_skills.py
 `skill_contracts.py`, `schema_skills.py`, and `schema_learning.py` remain leaves of the existing
 repository, migration, file-publication, CAS, and receipt owners. `learning_contracts.py` carries
 typed terminal experience references and review requests; it never grants user authority. A
-protected skill changes only from a current authenticated foreground request. No separate skill
-store, learning provider, daemon, or verifier is composed.
+protected skill changes only from a current authenticated foreground request.
+`repository_learning_recovery.py` checks the persisted learning partition against current authority;
+its `repository_learning_recovery_write.py` leaf atomically reattaches released jobs and admissions
+to the same sealed round, or records terminal failure. No separate skill store, learning provider,
+daemon, or verifier is composed.
 
 `LearningReviewCoordinator.consume_target` fences each foreground-applied target by source revision
 and target ID. The fence removes only the consumed target from later learning review and preserves
