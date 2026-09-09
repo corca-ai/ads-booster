@@ -57,6 +57,20 @@ def install_ingress_schema(db: sqlite3.Connection) -> None:
             delivery_id TEXT NOT NULL,
             state TEXT NOT NULL DEFAULT 'pending'
         );
+        CREATE TABLE IF NOT EXISTS agent_learning_experience_outbox (
+            experience_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            receipt_id TEXT NOT NULL UNIQUE,
+            binding_json TEXT NOT NULL,
+            event_json TEXT NOT NULL,
+            source_receipt_json TEXT NOT NULL,
+            experience_json TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending'
+                CHECK(state IN ('pending','acked')),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS agent_learning_experience_pending
+            ON agent_learning_experience_outbox(state,created_at,experience_id);
         """
     )
     columns = {

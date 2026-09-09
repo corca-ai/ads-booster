@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.service.knowledge_ingress_schema import (
+    KnowledgeIngressConflictError,
+    install_ingress_schema,
+    validate_ingress,
+)
 from ads_booster.contracts.agent_run import BoundedId, contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.knowledge.contracts import (
@@ -18,16 +23,13 @@ from ads_booster.knowledge.contracts import (
     ConversationEvent,
     ConversationEventKind,
     IngestEnvelope,
+    IngestReceipt,
 )
 from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.ingest_receipts import (
     IngestDeliveryReceipt,
+    IngestUnitKind,
     validate_ingest_delivery_receipt,
-)
-from ads_booster.agent.service.knowledge_ingress_schema import (
-    KnowledgeIngressConflictError,
-    install_ingress_schema,
-    validate_ingress,
 )
 
 if TYPE_CHECKING:
@@ -82,6 +84,15 @@ class PendingKnowledgeIngress:
     binding: TrustedRunBinding
     event: ConversationEvent
     envelope: IngestEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedLearningSource:
+    """An acknowledged message source bound to its canonical run and actor."""
+
+    binding: TrustedRunBinding
+    event: ConversationEvent
+    receipt: IngestReceipt
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,6 +403,44 @@ class CanonicalKnowledgeIngress:
                 )
         return None if row is None else TrustedRunBinding.model_validate_json(row[0])
 
+    def source_for_run(self, run_id: str) -> TrustedLearningSource | None:
+        """Resolve the current acknowledged message source for a stored run binding."""
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT binding.binding_json,event.event_json,outbox.envelope_json,
+                        outbox.receipt_json
+                    FROM knowledge_ingress_outbox AS outbox
+                    JOIN knowledge_run_bindings AS binding USING(binding_id)
+                    JOIN knowledge_conversation_events AS event USING(event_key)
+                    LEFT JOIN knowledge_execution_bindings AS execution
+                        ON execution.message_id=event.message_id
+                    WHERE outbox.state='acked' AND outbox.receipt_json IS NOT NULL
+                        AND (binding.run_id=? OR execution.run_id=?)
+                    ORDER BY event.revision DESC,outbox.rowid DESC LIMIT 1""",
+                    (run_id, run_id),
+                ).fetchone()
+            )
+        if row is None:
+            return None
+        event = ConversationEvent.model_validate_json(row[1])
+        envelope = IngestEnvelope.model_validate_json(row[2])
+        delivery = IngestDeliveryReceipt.model_validate_json(row[3])
+        validate_ingest_delivery_receipt(envelope, delivery)
+        message_receipts = tuple(
+            unit.receipt for unit in delivery.unit_receipts if unit.kind is IngestUnitKind.MESSAGE
+        )
+        if len(message_receipts) != 1:
+            raise KnowledgeIngressConflictError("knowledge_learning_message_receipt_missing")
+        execution_binding = self.binding_for_run(run_id)
+        if execution_binding is None:
+            return None
+        return TrustedLearningSource(
+            binding=execution_binding,
+            event=event,
+            receipt=message_receipts[0],
+        )
+
     def pending_fence_for_run(self, run_id: str) -> bool:
         with self.connect() as db:
             row = _PRESENCE_ROW.validate_python(
@@ -448,5 +497,6 @@ __all__ = [
     "KnowledgeIngressConflictError",
     "KnowledgeIngressSink",
     "PendingKnowledgeIngress",
+    "TrustedLearningSource",
     "TrustedRunBinding",
 ]
