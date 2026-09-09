@@ -674,6 +674,7 @@ def _descriptor(
     now: datetime,
 ) -> ToolDescriptor:
     observe = item.required_capability is GrantCapability.READ
+    receipt_schema = _JSON_OBJECT.validate_python(ToolExecutionResult.model_json_schema())
     return ToolDescriptor(
         schema_version="trace.tool-descriptor.v1",
         capability_id=item.name.value,
@@ -686,8 +687,8 @@ def _descriptor(
         output_schema_sha256=contract_sha256(output_schema),
         config_schema=empty_schema,
         config_schema_sha256=contract_sha256(empty_schema),
-        receipt_schema=output_schema,
-        receipt_schema_sha256=contract_sha256(output_schema),
+        receipt_schema=receipt_schema,
+        receipt_schema_sha256=contract_sha256(receipt_schema),
         credential_boundary="adapter_owner",
         effect_class=EffectClass.OBSERVE if observe else EffectClass.CONTROL_PLANE_WRITE,
         approval_policy=ToolApprovalPolicy(mode="none" if observe else "required"),
