@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 from multiprocessing import get_context
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from pydantic import TypeAdapter
 
-from ads_booster.knowledge.batch_curation import BatchCurationCoordinator
+from ads_booster.knowledge.batch_curation import BatchCurationCoordinator, CurationBatchWork
 from ads_booster.knowledge.change_publication import ChangePublisher
 from ads_booster.knowledge.curation import CurationRunner
 from ads_booster.knowledge.curation_disposition import RepositorySourceDisposition
@@ -33,10 +33,26 @@ from tests.knowledge.feedback_learning_support import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.knowledge.contracts import ActorContext
+    from ads_booster.knowledge.contracts import ActorContext, CurationBatch
 
 _STRING_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
 _TEXT_PAIRS: TypeAdapter[list[tuple[str, str]]] = TypeAdapter(list[tuple[str, str]])
+
+
+class FailFirstWorkRuntime(FixtureBatchRuntime):
+    fail_next_work: bool = True
+
+    @override
+    def _work_for(
+        self,
+        batch: CurationBatch,
+        actor: ActorContext,
+    ) -> tuple[CurationBatchWork, ...]:
+        if self.fail_next_work:
+            self.fail_next_work = False
+            message = "controlled_learning_work_failure"
+            raise ValueError(message)
+        return super()._work_for(batch, actor)
 
 
 def _seal_round(fixture: LearningFixture) -> tuple[str, str, ActorContext]:
@@ -191,3 +207,21 @@ def test_recovery_terminalizes_learning_round_when_bound_session_closed(tmp_path
             connection.execute("SELECT state,reason_code FROM jobs ORDER BY job_id").fetchall()
         )
     assert jobs == [("failed", "learning_recovery_knowledge_batch_actor_unavailable")] * 10
+
+
+def test_work_build_failure_reattaches_released_learning_round(tmp_path: Path) -> None:
+    fixture = learning_fixture(tmp_path)
+    round_id, old_batch_id, actor = _seal_round(fixture)
+    processor, provider = _runtime_parts(fixture, actor)
+    runtime = FailFirstWorkRuntime(fixture.knowledge, actor, processor)
+    try:
+        assert runtime.tick(now=NOW + timedelta(seconds=60))
+        provider.release.set()
+        assert runtime.tick(now=NOW + timedelta(seconds=60))
+        runtime.reap(NOW + timedelta(seconds=60))
+        _assert_recovered_round(fixture, round_id, old_batch_id)
+    finally:
+        runtime.shutdown()
+        provider.calls.close()
+        provider.calls.join_thread()
+        runtime.close_queue()

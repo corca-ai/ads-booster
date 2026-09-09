@@ -124,6 +124,11 @@ the indexed and serialized batch state in one transaction. Cancelled unfinished 
 collection with a deterministic generation derived from persisted terminal batch history; earlier
 receipts remain intact. Startup recovers abandoned running batches only after acquiring the exclusive
 owner lock; completed per-event receipts remain terminal and unfinished jobs return to collection.
+For a sealed learning round, the batch runtime reattaches released queued jobs to a new ready attempt
+in the original round and actor/grant partition. This also covers work-construction exceptions;
+it does not increment the learning counter or admit an unsealed round. The old attempt remains
+terminal. If current authority or the persisted binding cannot be restored, the jobs fail with a
+specific recovery reason and the round is reconciled instead of remaining queued indefinitely.
 Private batches reload their registered actor and current private grants from the catalog rather
 than inheriting the local administrator's identity or workspace grants. Revoked private jobs and
 unclaimed batches fail durably without preventing later authorized work. The runtime starts as a daemon loop with the service and stops before the

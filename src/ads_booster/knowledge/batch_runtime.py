@@ -32,6 +32,7 @@ from ads_booster.knowledge.operation_enums import (
     JobPriority,
     OperationStatus,
 )
+from ads_booster.knowledge.repository_learning_recovery import recover_released_learning_batches
 from ads_booster.knowledge.scope_contracts import ActorContext
 
 if TYPE_CHECKING:
@@ -143,6 +144,11 @@ class CurationBatchRuntime:
         self._finish_active()
 
     def _collect_pending(self, now: datetime) -> bool:
+        recovered = recover_released_learning_batches(
+            self.repository,
+            self.actor.workspace_id,
+            now,
+        )
         with self.repository.connection() as connection:
             rows = _JOB_ROWS.validate_python(
                 connection.execute(
@@ -174,7 +180,7 @@ class CurationBatchRuntime:
                 )
             except KnowledgePolicyError as error:
                 fail_unbatched_job(self.repository, job, error.code)
-        return bool(rows)
+        return bool(rows) or recovered > 0
 
     def _work_for(
         self,
