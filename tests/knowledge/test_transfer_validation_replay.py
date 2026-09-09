@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
 
 
-def _accepted(
+def accepted_transfer(
     root: Path, stage: ValidationStage
 ) -> tuple[
     KnowledgeServiceAdapter,
@@ -168,7 +168,7 @@ def test_cached_acceptance_does_not_bypass_current_fence(
     change: str,
 ) -> None:
     # Given: a real SQLite transfer has an accepted immutable validation receipt.
-    adapter, request, accepted, source_id = _accepted(tmp_path, stage)
+    adapter, request, accepted, source_id = accepted_transfer(tmp_path, stage)
     with adapter.repository.connection() as db:
         if change == "blocked":
             _ = db.execute(
@@ -217,7 +217,7 @@ def test_cached_acceptance_does_not_bypass_current_fence(
 
 def test_cached_acceptance_expiry_cannot_outlive_its_own_validity(tmp_path: Path) -> None:
     # Given: a still-live transfer with a historical validation's narrower validity window.
-    adapter, request, accepted, _ = _accepted(tmp_path, ValidationStage.PRE_DISPATCH)
+    adapter, request, accepted, _ = accepted_transfer(tmp_path, ValidationStage.PRE_DISPATCH)
     expired = accepted.model_copy(
         update={
             "checked_at": accepted.checked_at - timedelta(minutes=2),

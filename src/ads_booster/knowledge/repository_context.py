@@ -202,7 +202,11 @@ def context_receipt_is_current(
     actor: ActorContext,
     receipt: ContextReceipt,
 ) -> bool:
-    if current_policy_epoch(repository, actor.workspace_id) != actor.policy_epoch:
+    if (
+        receipt.team_id != actor.workspace_id
+        or receipt.scoped_actor_ref != actor.actor_id
+        or current_policy_epoch(repository, actor.workspace_id) != actor.policy_epoch
+    ):
         return False
     task = active_task_binding(
         repository,
@@ -215,24 +219,28 @@ def context_receipt_is_current(
         return False
     with repository.connection() as connection:
         for selected in receipt.selected_memory_revisions:
-            row = _OPTIONAL_INTEGER_ROW.validate_python(
+            row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
-                    """SELECT 1 FROM memory_heads WHERE workspace_id=? AND document_id=?
-                    AND revision_id=?""",
+                    """SELECT scope.scope_json FROM memory_heads AS head
+                    JOIN memory_documents AS document USING(workspace_id,document_id)
+                    JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
+                    WHERE head.workspace_id=? AND head.document_id=? AND head.revision_id=?""",
                     (actor.workspace_id, selected.document_id, selected.revision_id),
                 ).fetchone()
             )
-            if row is None:
+            if row is None or not _scope_readable(actor, row[0]):
                 return False
         for selected in receipt.selected_wiki_claims:
-            row = _OPTIONAL_INTEGER_ROW.validate_python(
+            row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
-                    """SELECT 1 FROM knowledge_heads WHERE workspace_id=? AND page_id=?
-                    AND revision_id=?""",
+                    """SELECT scope.scope_json FROM knowledge_heads AS head
+                    JOIN wiki_pages AS page USING(workspace_id,page_id)
+                    JOIN access_scopes AS scope ON scope.scope_key=page.scope_key
+                    WHERE head.workspace_id=? AND head.page_id=? AND head.revision_id=?""",
                     (actor.workspace_id, selected.page_id, selected.revision_id),
                 ).fetchone()
             )
-            if row is None:
+            if row is None or not _scope_readable(actor, row[0]):
                 return False
             if any(
                 repository.claim_dependency_state(actor, claim_id, selected.revision_id) is not None
@@ -240,10 +248,11 @@ def context_receipt_is_current(
             ):
                 return False
         for selected in receipt.selected_source_revisions:
-            row = _OPTIONAL_INTEGER_ROW.validate_python(
+            row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
-                    """SELECT 1 FROM source_heads AS head
+                    """SELECT scope.scope_json FROM source_heads AS head
                     JOIN sources AS source USING(workspace_id,source_id)
+                    JOIN access_scopes AS scope ON scope.scope_key=source.scope_key
                     WHERE head.workspace_id=? AND head.source_id=? AND head.revision_id=?
                     AND source.visibility='searchable'
                     AND NOT EXISTS (
@@ -254,33 +263,37 @@ def context_receipt_is_current(
                     (actor.workspace_id, selected.source_id, selected.revision_id),
                 ).fetchone()
             )
-            if row is None:
+            if row is None or not _scope_readable(actor, row[0]):
                 return False
         for selected in receipt.required_constraints:
-            row = _OPTIONAL_INTEGER_ROW.validate_python(
+            row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
-                    """SELECT 1 FROM constraint_bindings AS binding
+                    """SELECT scope.scope_json FROM constraint_bindings AS binding
                     JOIN memory_heads AS head ON head.workspace_id=binding.workspace_id
                         AND head.document_id=binding.document_id
                         AND head.revision_id=binding.memory_revision_id
+                    JOIN memory_documents AS document ON document.workspace_id=head.workspace_id
+                        AND document.document_id=head.document_id
+                    JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
                     WHERE binding.workspace_id=? AND binding.constraint_id=?
                     AND binding.memory_revision_id=?""",
                     (actor.workspace_id, selected.constraint_id, selected.revision_id),
                 ).fetchone()
             )
-            if row is None:
+            if row is None or not _scope_readable(actor, row[0]):
                 return False
         if receipt.soul_revision_id is not None:
-            row = _OPTIONAL_INTEGER_ROW.validate_python(
+            row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
-                    """SELECT 1 FROM memory_heads AS head
+                    """SELECT scope.scope_json FROM memory_heads AS head
                     JOIN memory_documents AS document USING(workspace_id,document_id)
+                    JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
                     WHERE head.workspace_id=? AND document.kind='soul'
                     AND document.brand_id IS ? AND head.revision_id=?""",
                     (actor.workspace_id, receipt.resolved_brand_ref, receipt.soul_revision_id),
                 ).fetchone()
             )
-            if row is None:
+            if row is None or not _scope_readable(actor, row[0]):
                 return False
     return True
 
