@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # ruff: noqa: EM101, TC001
-from typing import Annotated, Self
+from typing import Annotated, Self, assert_never
 
 from pydantic import Field, model_validator
 from pydantic_core import PydanticCustomError
@@ -15,28 +15,66 @@ from ads_booster.knowledge.contract_types import (
 )
 
 
+def _missing_channel(value: str | None) -> bool:
+    return value is None
+
+
 class AccessScope(KnowledgeContractModel):
     kind: ScopeKind
     workspace_id: BoundedId
     member_id: BoundedId | None = None
     session_id: BoundedId | None = None
+    channel_id: BoundedId | None = Field(default=None, exclude_if=_missing_channel)
 
     @model_validator(mode="after")
     def require_scope_identity(self) -> Self:
         match self.kind:  # noqa: MATCH_OK
             case ScopeKind.WORKSPACE:
-                if self.member_id is not None or self.session_id is not None:
+                if any(
+                    value is not None
+                    for value in (self.member_id, self.session_id, self.channel_id)
+                ):
                     raise PydanticCustomError(
                         "invalid_workspace_scope",
-                        "workspace scope cannot contain member or session identity",
+                        "workspace scope cannot contain channel, member or session identity",
+                    )
+            case ScopeKind.CHANNEL:
+                if (
+                    self.channel_id is None
+                    or self.member_id is not None
+                    or self.session_id is not None
+                ):
+                    raise PydanticCustomError(
+                        "invalid_channel_scope",
+                        "channel scope requires a channel and forbids member and session identity",
+                    )
+            case ScopeKind.CHANNEL_MEMBER:
+                if self.channel_id is None or self.member_id is None or self.session_id is not None:
+                    raise PydanticCustomError(
+                        "invalid_channel_member_scope",
+                        "personal scope requires channel and member and forbids session identity",
                     )
             case ScopeKind.MEMBER:
-                if self.member_id is None or self.session_id is None:
+                if self.member_id is None or self.session_id is None or self.channel_id is not None:
                     raise PydanticCustomError(
                         "invalid_member_scope",
                         "member scope requires workspace, member, and session identity",
                     )
         return self
+
+    def contains(self, other: AccessScope) -> bool:
+        if self.workspace_id != other.workspace_id:
+            return False
+        match self.kind:
+            case ScopeKind.WORKSPACE:
+                return True
+            case ScopeKind.CHANNEL:
+                return self == other or (
+                    other.kind is ScopeKind.CHANNEL_MEMBER and self.channel_id == other.channel_id
+                )
+            case ScopeKind.CHANNEL_MEMBER | ScopeKind.MEMBER:
+                return self == other
+        assert_never(self.kind)
 
 
 class ScopeGrant(KnowledgeContractModel):
@@ -97,6 +135,11 @@ class ActorContext(KnowledgeContractModel):
 
     @model_validator(mode="after")
     def require_actor_binding(self) -> Self:
+        if self.conversation_scope.kind is ScopeKind.CHANNEL_MEMBER:
+            raise PydanticCustomError(
+                "actor_personal_scope_not_conversation",
+                "channel member scope owns personal memory, not conversations",
+            )
         if self.conversation_scope.workspace_id != self.workspace_id:
             raise PydanticCustomError(
                 "actor_workspace_mismatch",
@@ -116,3 +159,17 @@ class ActorContext(KnowledgeContractModel):
                 "actor grants must belong to the actor workspace",
             )
         return self
+
+
+def channel_member_scope(actor: ActorContext) -> AccessScope | None:
+    match actor.conversation_scope.kind:
+        case ScopeKind.CHANNEL:
+            return AccessScope(
+                kind=ScopeKind.CHANNEL_MEMBER,
+                workspace_id=actor.workspace_id,
+                channel_id=actor.conversation_scope.channel_id,
+                member_id=actor.member_id,
+            )
+        case ScopeKind.WORKSPACE | ScopeKind.MEMBER | ScopeKind.CHANNEL_MEMBER:
+            return None
+    assert_never(actor.conversation_scope.kind)

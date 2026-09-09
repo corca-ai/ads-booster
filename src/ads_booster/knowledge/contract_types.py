@@ -65,6 +65,8 @@ IanaTimeZone = Annotated[
 @unique
 class ScopeKind(StrEnum):
     WORKSPACE = "workspace"
+    CHANNEL = "channel"
+    CHANNEL_MEMBER = "channel_member"
     MEMBER = "member"
 
 
