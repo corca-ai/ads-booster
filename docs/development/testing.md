@@ -7,6 +7,42 @@ Last reviewed: 2026-09-08
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+### Adaptive skill discovery
+
+For bounded catalog queries, learned-skill ranking, context budgets, scoped provider guidance and
+private tool filtering, select:
+
+```bash
+python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/marketing/agent_service/test_skill_tools.py \
+  tests/knowledge/test_procedural_skills.py \
+  tests/knowledge/test_context_skill_provenance.py \
+  tests/knowledge/test_installed_service_context.py \
+  tests/providers/test_codex_reasoning.py \
+  tests/marketing/agent_service/test_creative_procedures.py \
+  tests/marketing/agent_service/test_feedback_learning.py \
+  tests/marketing/agent_service/test_integrations.py
+```
+
+Use a dependency-complete frozen development environment and run scoped Ruff/BasedPyright for the
+changed Python files. The regressions cover query/limit acceptance, Unicode matching, exact revision
+readback, independent skill budget admission, source invalidation, and DM exclusion of `skill_apply`.
+Prompt assertions verify advertised tool contracts, not model competence.
+
+Build a non-editable wheel in a fresh environment and run the existing
+`installed_learning_model_canary.py --scenario minimal-skill-reuse` command described under shared
+feedback learning. Its U1 deliberately allows only the write tool; U1 readback is unavailable and
+must be reported honestly. U2 reads the exact persisted revision after restart. This verifies a
+fixed synthetic rule, not automatic discovery quality, arbitrary tool creation or live Slack.
+Run the installed fixture harness from a sibling working directory outside both the checkout and
+the installed environment's ancestor directory; its path guard rejects an ancestor as well as the
+checkout. Loopback HTTP checks require permission to bind a local socket.
+
+The September 9 final-wheel model canary passed all 11 checks with `gpt-6-astra`, four foreground
+calls, no background/search calls and captured Slack output. The earlier candidate also passed;
+these are two executions of one synthetic scenario, not a benchmark. Research and the remaining
+executable-tool boundary are recorded in [adaptive skills](../research/adaptive-skills.md).
+
 ### Package-boundary migration
 
 Source owners move to `agent/{core,service,runtime.py}`, `channels/http`, `tools`, `bootstrap` and

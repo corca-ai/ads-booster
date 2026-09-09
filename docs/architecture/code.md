@@ -46,6 +46,15 @@ loads arbitrary files/URLs nor creates another Run. The canonical runtime owns i
 receipt and budget accounting. `providers/codex_reasoning.py` owns generic discover/act/inspect guidance;
 marketing procedure bodies remain in the skill catalog rather than the initial prompt.
 
+`knowledge/skill_discovery.py` owns deterministic metadata-only ranking used by both catalog
+adapters and the scoped context assembler. It has no persistence, tool execution or authority
+logic. Knowledge scope, applicability and source-currentness are resolved before ranking.
+`knowledge/tool_read_operations.py` pages effective catalog results; the built-in adapter retains
+its versioned read contract. `knowledge/context_selection.py` admits independent ranked skill
+records within a separate bounded share of context, rather than treating the entire catalog as
+one indivisible evidence group. The provider chooses discovery/authoring guidance from the
+filtered snapshot; private filtering checks `KnowledgeToolName` membership instead of prefixes.
+
 `agent/service/task_input.py` projects the latest direct, host-admitted continuation into
 `ReasoningRequest.current_user_message`; `agent/service/application.py` supplies it independently of evidence
 compaction and uses it for retrieval. The original goal and canonical history remain unchanged.

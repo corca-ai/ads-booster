@@ -103,6 +103,21 @@ reusable skills; their full instructions are loaded only when selected. Skill re
 Run receipts and call budget as other tools. They grant no integration access or execution approval.
 Small writing requests can be answered directly. When a creative plan has an available execution
 tool, the agent is guided to continue through that tool and inspect its result before handing back.
+
+With scoped team knowledge available, discovery prefers `skill_list` / `skill_get`, which include
+effective learned revisions and built-ins. Both list routes accept `query`, `limit` (1–100,
+default 50), and `offset`; `next_offset` continues the same query and filters. Search uses Unicode
+keywords and exact skill IDs, not semantic similarity. Read the returned exact revision/version.
+The prepared index ranks relevant metadata before spending at most 2,400 token-budget units and
+half the remaining context capacity, leaving room for team evidence. Missing capabilities are
+reported as unavailable in the current snapshot; they do not prevent reading useful guidance.
+
+For example, in an authorized shared conversation, ask “이번에 검증한 카피 검수 절차를
+재사용할 스킬로 저장해줘.” `marketing.skill_learning` guides discovery, a source-bound semantic
+draft through `skill_apply`, and receipt/readback verification. Private DMs expose shared skill
+reads only. Skills can compose existing tools as procedures; creating or saving one does not
+install executable code or register a new tool. See the
+[comparison and next extension boundary](docs/research/adaptive-skills.md).
 Slack follow-ups receive the current bounded conversation, including earlier assistant answers,
 so selections such as “use the second option” can resolve within the same work after restart.
 The latest admitted request is also passed separately from the original goal and reference data,

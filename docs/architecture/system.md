@@ -206,6 +206,20 @@ neither the learning tools nor this context.
 Private DMs may read shared skill metadata and bodies under their current grants, but cannot write
 skills.
 
+The scoped skill catalog is preferred over built-in-only discovery when both read tools are
+available. Both catalogs support bounded keyword queries and offset pages; each read binds the
+returned version/revision. Prepared skill metadata is ranked by the current task query and admitted
+individually within at most 2,400 budget units and half the post-required-context capacity. Budget
+exclusions remain in the receipt. Required capabilities missing from the filtered snapshot are
+listed as unavailable, not inferred to be uninstalled or newly authorized. Unrelated evidence
+groups retain their atomic budgeting rules.
+
+`marketing.skill_learning` guides source-bound procedure creation/update, current-revision CAS
+and readback through the existing knowledge owner. The reasoning provider advertises authoring
+only when `skill_apply` is present; private filtering excludes every non-read knowledge tool,
+including skill mutations. Stored procedures do not install code, register tools, expand the
+capability snapshot or grant external delivery authority.
+
 `source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
 memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment
 identity. Curation uses the extracted text and character offsets. Its optional
