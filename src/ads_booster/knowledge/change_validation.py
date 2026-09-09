@@ -6,8 +6,6 @@ from hashlib import sha256
 from json import dumps
 from typing import TYPE_CHECKING, override
 
-from ads_booster.knowledge.contract_types import ScopeKind
-
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
@@ -38,7 +36,7 @@ class EvidenceRecord:
 def require_scope_not_wider(*, source: AccessScope, target: AccessScope, target_id: str) -> None:
     if source.workspace_id != target.workspace_id:
         raise ChangeValidationError("workspace_scope_mismatch", target_id)
-    if source.kind is ScopeKind.MEMBER and target != source:
+    if not source.contains(target):
         raise ChangeValidationError("scope_expansion_forbidden", target_id)
 
 

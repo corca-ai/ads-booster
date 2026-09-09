@@ -11,7 +11,12 @@ from ads_booster.knowledge.errors import (
     ScopeIntersectionError,
 )
 from ads_booster.knowledge.governance_contracts import BrandTarget
-from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext, ScopeGrant
+from ads_booster.knowledge.scope_contracts import (
+    AccessScope,
+    ActorContext,
+    ScopeGrant,
+    channel_member_scope,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,9 +44,9 @@ def authorize_read(*, actor: ActorContext, target_scope: AccessScope, at: dateti
 
 
 def authorize_write(*, actor: ActorContext, target_scope: AccessScope, at: datetime) -> ScopeGrant:
-    if (
-        actor.conversation_scope.kind is ScopeKind.MEMBER
-        and target_scope.kind is ScopeKind.WORKSPACE
+    if actor.conversation_scope.kind is ScopeKind.MEMBER and target_scope.kind in (
+        ScopeKind.WORKSPACE,
+        ScopeKind.CHANNEL,
     ):
         raise AccessDeniedError(
             code="private_shared_write_forbidden",
@@ -104,16 +109,13 @@ def intersect_lineage_scopes(scopes: tuple[AccessScope, ...]) -> AccessScope:
             code="lineage_scope_empty",
             workspace_ids=workspace_ids,
         )
-    private_scopes = tuple(item for item in scopes if item.kind is ScopeKind.MEMBER)
-    if not private_scopes:
-        return AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=workspace_ids[0])
-    first = private_scopes[0]
-    if any(item != first for item in private_scopes[1:]):
-        raise ScopeIntersectionError(
-            code="lineage_scope_empty",
-            workspace_ids=workspace_ids,
-        )
-    return first
+    result = scopes[0]
+    for scope in scopes[1:]:
+        if result.contains(scope):
+            result = scope
+        elif not scope.contains(result):
+            raise ScopeIntersectionError(code="lineage_scope_empty", workspace_ids=workspace_ids)
+    return result
 
 
 def _require_shared_actor(
@@ -133,6 +135,15 @@ def _require_grant(actor: ActorContext, requirement: _GrantRequirement) -> Scope
     if actor.workspace_id != requirement.target_scope.workspace_id:
         raise AccessDeniedError(
             code="workspace_scope_mismatch",
+            actor_id=actor.actor_id,
+            target_workspace_id=requirement.target_scope.workspace_id,
+        )
+    if (
+        requirement.target_scope.kind is ScopeKind.CHANNEL_MEMBER
+        and requirement.target_scope != channel_member_scope(actor)
+    ):
+        raise AccessDeniedError(
+            code="personal_scope_actor_mismatch",
             actor_id=actor.actor_id,
             target_workspace_id=requirement.target_scope.workspace_id,
         )
