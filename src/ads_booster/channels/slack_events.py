@@ -63,6 +63,7 @@ from ads_booster.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
 )
+from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -83,6 +84,7 @@ from ads_booster.knowledge.contract_types import (
 from ads_booster.knowledge.contracts import AuthenticatedEvent
 from ads_booster.knowledge.questions import QuestionError
 from ads_booster.knowledge.tool_contracts import TrustedQuestionAnswer
+from ads_booster.learning.memory import SQLiteMemoryStore
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
@@ -209,12 +211,33 @@ class SlackEvents:
                     break
         knowledge = self._service(conversation).knowledge
         if knowledge is None:
-            return None
-        selection = knowledge.select_legacy_memory(
-            run,
-            query=query[:8000],
-            now=now,
-        )
+            installation = self.commands.application.store.resolve_installation(
+                ChannelKind.SLACK,
+                self.commands.team_id,
+            )
+            access = MemoryAccess(
+                scope=MemoryScope(
+                    workspace_id=installation.tenant_id,
+                    product_id="trace",
+                    work_id=run.run_id,
+                    member_id=conversation.owner_id if conversation.private else "",
+                    session_id=conversation.conversation_id if conversation.private else "",
+                ),
+                actor_id=conversation.owner_id if conversation.private else "trace-agent",
+                private=conversation.private,
+            )
+            selection = SQLiteMemoryStore(self.store.database_path).select(
+                access=access,
+                query=query[:8000],
+                run_id=run.run_id,
+                now=now,
+            )
+        else:
+            selection = knowledge.select_legacy_memory(
+                run,
+                query=query[:8000],
+                now=now,
+            )
         if selection is None or not selection.notes:
             return None
         return {
