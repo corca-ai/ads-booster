@@ -13,20 +13,6 @@ from urllib.parse import parse_qs, quote
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
-from ads_booster.contracts.agent_run import (
-    AgentBudget,
-    AgentGoal,
-    AgentRecordKind,
-    AgentRun,
-    AgentRunState,
-    CapabilitySnapshot,
-    ToolInvocation,
-    contract_sha256,
-)
-from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.execution_control import ExecutionCancelledError, ExecutionControl, execution_scope
-from ads_booster.knowledge.contract_types import ConversationEventKind
 from ads_booster.agent.core.registry import CapabilityPolicy
 from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
@@ -37,8 +23,6 @@ from ads_booster.agent.service.knowledge_ingress import (
     KnowledgeIngressSink,
     PendingKnowledgeIngress,
 )
-from ads_booster.learning.memory import SQLiteMemoryStore
-from ads_booster.channels.slack_image_review import bind_files
 from ads_booster.agent.service.work_continuation import continue_work
 from ads_booster.channels.contracts import ChannelIdentityBinding, ChannelKind
 from ads_booster.channels.github_results import issue_results
@@ -62,7 +46,13 @@ from ads_booster.channels.slack_conversations import (
 )
 from ads_booster.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.channels.slack_delivery import delivery_command
+from ads_booster.channels.slack_image_review import bind_files
 from ads_booster.channels.slack_images import SlackImageDelivery
+from ads_booster.channels.slack_learning_questions import (
+    has_learning_correction_signal,
+    is_ambiguous_learning_affirmation,
+    learning_question_answer,
+)
 from ads_booster.channels.slack_memory import memory_command
 from ads_booster.channels.slack_performance import (
     is_performance_command,
@@ -73,10 +63,34 @@ from ads_booster.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
 )
+from ads_booster.contracts.agent_run import (
+    AgentBudget,
+    AgentGoal,
+    AgentRecordKind,
+    AgentRun,
+    AgentRunState,
+    CapabilitySnapshot,
+    ToolInvocation,
+    contract_sha256,
+)
+from ads_booster.contracts.tool_capability import EffectClass
+from ads_booster.execution_control import ExecutionCancelledError, ExecutionControl, execution_scope
+from ads_booster.knowledge.contract_types import (
+    AuthorityClass,
+    ConversationEventKind,
+    Provenance,
+)
+from ads_booster.knowledge.contracts import AuthenticatedEvent
+from ads_booster.knowledge.questions import QuestionError
+from ads_booster.knowledge.tool_contracts import TrustedQuestionAnswer
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
+
+    from ads_booster.agent.service.knowledge_ingress import TrustedLearningSource
+    from ads_booster.knowledge.tool_contracts import QuestionRecord, TrustedInvocationContext
+    from ads_booster.knowledge.tools import ToolHost
 
 _PROGRESS_INTERVAL_SECONDS = 5
 _MAX_CHALLENGE = 4096
@@ -85,6 +99,16 @@ _MAX_FIELD = 100000
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _TIMESTAMP = re.compile(r"[0-9]{1,16}\.[0-9]{1,8}")
 _HASH = re.compile(r"[a-f0-9]{64}")
+
+
+@dataclass(frozen=True, slots=True)
+class _LearningQuestionAnswerContext:
+    source: TrustedLearningSource
+    context: TrustedInvocationContext
+    pending: tuple[QuestionRecord, ...]
+    host: ToolHost
+
+
 _STATUS_TEXTS = frozenset(
     {"상태", "status", "어디까지 됐어", "어디까지 됐어요", "진행 상황", "진행상황 알려줘"}
 )
@@ -174,21 +198,6 @@ class SlackEvents:
         conversation = self.store.conversation_for_run(run.tenant_id, run.run_id)
         if conversation is None:
             return None
-        installation = self.commands.application.store.resolve_installation(
-            ChannelKind.SLACK,
-            self.commands.team_id,
-        )
-        access = MemoryAccess(
-            scope=MemoryScope(
-                workspace_id=installation.tenant_id,
-                product_id="trace",
-                work_id=run.run_id,
-                member_id=conversation.owner_id if conversation.private else "",
-                session_id=conversation.conversation_id if conversation.private else "",
-            ),
-            actor_id=conversation.owner_id if conversation.private else "trace-agent",
-            private=conversation.private,
-        )
         query = run.goal.objective
         for record in reversed(
             self._service(conversation).repository.records(run.tenant_id, run.run_id)
@@ -198,13 +207,15 @@ class SlackEvents:
                 if isinstance(note, str):
                     query = note + " " + query
                     break
-        selection = SQLiteMemoryStore(self.store.database_path).select(
-            access=access,
+        knowledge = self._service(conversation).knowledge
+        if knowledge is None:
+            return None
+        selection = knowledge.select_legacy_memory(
+            run,
             query=query[:8000],
-            run_id=run.run_id,
             now=now,
         )
-        if not selection.notes:
+        if selection is None or not selection.notes:
             return None
         return {
             "schema_version": "trace.current-memory-context.v1",
@@ -508,9 +519,7 @@ class SlackEvents:
         return identity
 
     def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ordered ingress, notification and cancellable run boundaries.
-        if self.store.knowledge_ingress.dispatch_once():
-            return True
-        if self._notify():
+        if self._advance_background(now=now):
             return True
         claimed = self.store.claim()
         if claimed is None:
@@ -527,7 +536,7 @@ class SlackEvents:
                 if plan is None:
                     plan = self._plan(conversation, message)
                     self.store.save_plan(message, plan)
-                if plan.run_id and plan.action != "reply":
+                if plan.run_id and (plan.action != "reply" or plan.learning_urgent):
                     self.store.knowledge_ingress.bind_execution(
                         message.message_id, plan.run_id, actor_id=identity.member_id
                     )
@@ -543,6 +552,9 @@ class SlackEvents:
                 else:
                     result = self._execute(conversation, message, plan, identity, now=now)
                 self.store.finish(message, result)
+                if plan.learning_urgent:
+                    self._admit_urgent_learning(plan.run_id, now=now)
+                self._admit_shared_turn(conversation, plan, now=now)
         except Exception:  # noqa: BLE001 - never repeat an uncertain effect; no provider secrets.
             self.store.finish(
                 message,
@@ -554,8 +566,13 @@ class SlackEvents:
                 ),
                 blocked=True,
             )
-        _ = self._notify()
         return True
+
+    def _advance_background(self, *, now: datetime) -> bool:
+        if self.store.knowledge_ingress.dispatch_once():
+            self._invalidate_learning_sources(now=now)
+            return True
+        return self._enqueue_learning_questions() or self._notify()
 
     def interact(self, body: bytes, headers: dict[str, str], *, now: datetime) -> JsonObject:
         """Persist cancellation without waiting for the active execution lock or Slack API."""
@@ -733,6 +750,15 @@ class SlackEvents:
             if run is not None and run.state is AgentRunState.AWAITING_INPUT:
                 return MessagePlan(action="revise", run_id=run.run_id)
             return MessagePlan(action="resume", run_id=conversation.current_run)
+        if (
+            run is not None
+            and not conversation.private
+            and (
+                learning_question_answer(text) is not None
+                or is_ambiguous_learning_affirmation(text)
+            )
+        ):
+            return MessagePlan(action="learning_answer", run_id=run.run_id)
         context = self.store.transcript(conversation.conversation_id)
         context["current_attachments"] = [a.model_dump(mode="json") for a in message.attachments]
         context["attachment_verification"] = "reference_only_not_visually_inspected"
@@ -752,12 +778,18 @@ class SlackEvents:
             return MessagePlan(action="revise", run_id=run.run_id)
         if text.startswith("새 작업 "):
             text = text.removeprefix("새 작업 ").strip() or text
+        correction_signal = not conversation.private and has_learning_correction_signal(text)
         if run is not None and run.state not in {
             AgentRunState.COMPLETED,
             AgentRunState.STOPPED,
             AgentRunState.FAILED,
         }:
-            return MessagePlan(action="reply", reply=self.summary(conversation))
+            return MessagePlan(
+                action="reply",
+                run_id=run.run_id if correction_signal else "",
+                reply=self.summary(conversation),
+                learning_urgent=correction_signal,
+            )
         return MessagePlan(
             action="create",
             run_id="slack-talk-"
@@ -849,6 +881,8 @@ class SlackEvents:
         if plan.action == "reply":
             self.store.update_conversation(conversation)
             return plan.reply
+        if plan.action == "learning_answer":
+            return self._answer_learning_question(conversation, message, plan, now=now)
         conversation = conversation.model_copy(update={"current_run": plan.run_id})
         self.store.update_conversation(conversation)
         if message.attachments and not conversation.private:
@@ -922,6 +956,158 @@ class SlackEvents:
         elif plan.action == "resume":
             _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
         return self.summary(conversation)
+
+    def _answer_learning_question(
+        self,
+        conversation: Conversation,
+        message: Message,
+        plan: MessagePlan,
+        *,
+        now: datetime,
+    ) -> str:
+        """Resolve an explicit source-thread question without using ToolApproval."""
+        resolved = self._learning_question_answer_context(conversation, message, plan)
+        if resolved is None:
+            return "이 스레드에는 답변할 학습 질문이 없습니다."
+        source, context, pending = resolved.source, resolved.context, resolved.pending
+        parsed = learning_question_answer(message.text)
+        if parsed is None:
+            if not pending:
+                return "이 스레드에는 답변할 학습 질문이 없습니다."
+            if len(pending) != 1:
+                choices = ", ".join(question.question_id for question in pending)
+                return f"답변할 질문 ID를 지정해주세요: {choices}"
+            question_id = pending[0].question_id
+            answer_text = message.text
+        else:
+            question_id = parsed.question_id
+            answer_text = parsed.answer
+        if not any(question.question_id == question_id for question in pending):
+            return "지정한 질문은 이 스레드에서 더 이상 답변할 수 없습니다."
+        capabilities = tuple(
+            grant.capability
+            for grant in source.binding.actor.grants
+            if grant.scope == source.event.scope and grant.policy_epoch == context.capability_epoch
+        )
+        try:
+            _ = resolved.host.answer_question(
+                TrustedQuestionAnswer(
+                    question_id=question_id,
+                    authenticated_event=AuthenticatedEvent(
+                        event_id=source.event.message_id,
+                        actor_ref=source.binding.actor.actor_id,
+                        workspace_id=source.binding.actor.workspace_id,
+                        scope=source.event.scope,
+                        provenance=Provenance.HUMAN_DIRECT,
+                        authority_class=AuthorityClass.DELEGATED_TEAM_RULE,
+                        capabilities=capabilities,
+                        policy_epoch=context.capability_epoch,
+                        occurred_at=source.event.edited_at or source.event.created_at,
+                    ),
+                    answer=answer_text,
+                    explicitly_adopts=False,
+                    answered_at=now,
+                ),
+                context,
+            )
+        except QuestionError:
+            return "지정한 질문은 현재 출처나 권한으로 답변할 수 없습니다."
+        return f"{question_id}에 대한 답변을 기록했습니다."
+
+    def _learning_question_answer_context(
+        self, conversation: Conversation, message: Message, plan: MessagePlan
+    ) -> _LearningQuestionAnswerContext | None:
+        knowledge = self._service(conversation).knowledge
+        if knowledge is None or conversation.private:
+            return None
+        source = self.store.knowledge_ingress.source_for_run(plan.run_id)
+        if source is None:
+            return None
+        try:
+            context = knowledge.resolve_question_answer(
+                plan.run_id, f"{message.message_id}.learning-question-answer"
+            )
+        except ValueError:
+            return None
+        return _LearningQuestionAnswerContext(
+            source=source,
+            context=context,
+            pending=knowledge.host.questions.pending_for_conversation(
+                conversation.conversation_id, context
+            ),
+            host=knowledge.host,
+        )
+
+    def _admit_urgent_learning(self, run_id: str, *, now: datetime) -> None:
+        """Mark one summary-only correction source urgent without deciding its outcome."""
+        if not run_id:
+            return
+        knowledge = self.commands.application.service.knowledge
+        if knowledge is None:
+            return
+        source = self.store.knowledge_ingress.source_for_run(run_id)
+        if source is None:
+            return
+        if knowledge.learning is None:
+            return
+        _ = knowledge.learning.admit_turn(
+            source.binding,
+            source.event,
+            source.receipt,
+            at=now,
+            urgent=True,
+        )
+
+    def _admit_shared_turn(
+        self,
+        conversation: Conversation,
+        plan: MessagePlan,
+        *,
+        now: datetime,
+    ) -> None:
+        """Count a completed shared conversational turn through its stored source receipt."""
+        if conversation.private or plan.action not in {"create", "input", "resume", "revise"}:
+            return
+        knowledge = self.commands.application.service.knowledge
+        if knowledge is None or knowledge.learning is None:
+            return
+        source = self.store.knowledge_ingress.source_for_run(plan.run_id)
+        if source is None:
+            return
+        _ = knowledge.learning.admit_turn(
+            source.binding,
+            source.event,
+            source.receipt,
+            at=now,
+        )
+
+    def _invalidate_learning_sources(self, *, now: datetime) -> None:
+        """Invalidate superseded shared learning sources after their canonical acknowledgement."""
+        for conversation in self.store.conversations():
+            if conversation.private or not conversation.current_run:
+                continue
+            knowledge = self._service(conversation).knowledge
+            if knowledge is None or knowledge.learning is None:
+                continue
+            source = self.store.knowledge_ingress.source_for_run(conversation.current_run)
+            if source is None or source.event.event_kind not in {
+                ConversationEventKind.MESSAGE_EDITED,
+                ConversationEventKind.MESSAGE_DELETED,
+            }:
+                continue
+            _ = knowledge.learning.invalidate_source(
+                source.binding.actor,
+                source_id=source.receipt.source_id,
+                source_revision_id=source.receipt.source_revision_id,
+            )
+            if source.event.event_kind is ConversationEventKind.MESSAGE_EDITED:
+                _ = knowledge.learning.admit_turn(
+                    source.binding,
+                    source.event,
+                    source.receipt,
+                    at=now,
+                    urgent=True,
+                )
 
     def enqueue_run_update(self, tenant_id: str, run_id: str, *, event_id: str) -> bool:
         """Queue a canonical completion projection; delivery rechecks Slack membership."""
@@ -1011,6 +1197,32 @@ class SlackEvents:
             return "delivered" if response.get("ok") is True and response.get("ts") else "failed"
         except Exception:  # noqa: BLE001 - write-ahead outbox forbids retry after lost response.
             return "unknown"
+
+    def _enqueue_learning_questions(self) -> bool:
+        """Project only source-bound pending questions into the durable Slack outbox."""
+        queued = False
+        for conversation in self.store.conversations():
+            if conversation.private or not conversation.current_run:
+                continue
+            knowledge = self._service(conversation).knowledge
+            if knowledge is None:
+                continue
+            source = self.store.knowledge_ingress.source_for_run(conversation.current_run)
+            if source is None:
+                continue
+            try:
+                context = knowledge.resolve_question_answer(
+                    conversation.current_run,
+                    f"{source.binding.binding_id}.learning-question-notification",
+                )
+            except ValueError:
+                continue
+            for question in knowledge.host.questions.pending_for_conversation(
+                conversation.conversation_id,
+                context,
+            ):
+                queued = self.store.enqueue_learning_question(question) or queued
+        return queued
 
     def _notify(self) -> bool:
         claimed = self.store.claim_notification()
