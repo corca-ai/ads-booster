@@ -75,7 +75,7 @@ def insert_memory_shell(
     if write.expected.expected_revision_id is not None:
         return
     document = write.document
-    shared_scope = AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=document.workspace_id)
+    shared_scope = document.owned_scope
     _ = connection.execute(
         """
         INSERT INTO memory_documents(

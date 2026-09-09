@@ -12,11 +12,11 @@ from ads_booster.knowledge.contracts import (
     KnowledgeOperation,
     MemoryOperation,
     OperationReceipt,
-    ScopeKind,
 )
 from ads_booster.knowledge.file_store import KnowledgeRevisionTarget, MemoryRevisionTarget
 from ads_booster.knowledge.grant_policy import authorize_write
 from ads_booster.knowledge.repository_dependency import append_dependency_invalidations
+from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.repository_memory import (
     assert_memory_head,
     insert_memory_revision,
@@ -120,10 +120,17 @@ def _authorize_commit(connection: sqlite3.Connection, command: CatalogCommit) ->
     for write in command.page_writes:
         _ = authorize_write(actor=command.actor, target_scope=write.page.scope, at=at)
     for write in command.memory_writes:
-        target_scope = AccessScope(
-            kind=ScopeKind.WORKSPACE,
-            workspace_id=write.document.workspace_id,
+        target_scope = write.document.owned_scope
+        persisted = _OPTIONAL_STRING_ROW.validate_python(
+            connection.execute(
+                "SELECT scope_key FROM memory_documents WHERE workspace_id=? AND document_id=?",
+                (write.document.workspace_id, write.document.document_id),
+            ).fetchone()
         )
+        if persisted is not None and persisted[0] != scope_key(target_scope):
+            conflict("memory_document_scope_immutable", write.document.document_id)
+        if any(entry.scope != target_scope for entry in write.entries):
+            conflict("memory_entry_scope_mismatch", write.document.document_id)
         _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
     for invalidation in command.dependency_invalidations:
         row = _OPTIONAL_STRING_ROW.validate_python(
