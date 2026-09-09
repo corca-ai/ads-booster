@@ -11,6 +11,7 @@ from ads_booster.knowledge.contracts import (
     Brand,
     MemoryDocument,
     MemoryEntry,
+    MemoryKind,
     MemoryRevision,
     OperationReceipt,
     ScopeKind,
@@ -216,6 +217,16 @@ def register_brand(
     repository: KnowledgeRepository,
     command: BrandRegistration,
 ) -> OperationReceipt:
+    owned_scope = command.brand.owned_scope
+    if (
+        command.event.authority_ref.scope != owned_scope
+        or command.document.owned_scope != owned_scope
+        or command.event.workspace_id != command.brand.workspace_id
+        or command.event.brand_id != command.brand.brand_id
+        or command.document.brand_id != command.brand.brand_id
+        or command.document.kind is not MemoryKind.SOUL
+    ):
+        conflict("brand_scope_binding_conflict", command.brand.brand_id)
     existing = _operation_receipt(repository, command.receipt.operation_id, command.payload_sha256)
     if existing is not None:
         return OperationReceipt.model_validate_json(existing)
@@ -242,8 +253,8 @@ def register_brand(
                 return OperationReceipt.model_validate_json(replay)
             _ = connection.execute(
                 """
-                INSERT INTO brands(workspace_id,brand_id,name,revision,state,brand_json)
-                VALUES (?,?,?,?,?,?)
+                INSERT INTO brands(workspace_id,brand_id,name,revision,state,brand_json,scope_key)
+                VALUES (?,?,?,?,?,?,?)
                 """,
                 (
                     command.brand.workspace_id,
@@ -252,6 +263,7 @@ def register_brand(
                     command.brand.revision,
                     command.brand.state.value,
                     command.brand.model_dump_json(),
+                    scope_key(owned_scope),
                 ),
             )
             _ = connection.execute(

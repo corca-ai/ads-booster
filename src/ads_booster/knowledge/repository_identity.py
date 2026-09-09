@@ -50,8 +50,8 @@ def register_actor(
         _ = connection.execute(
             """
             INSERT INTO access_scopes(
-                scope_key,kind,workspace_id,member_id,session_id,scope_json
-            ) VALUES (?,?,?,?,?,?)
+                scope_key,kind,workspace_id,member_id,session_id,scope_json,channel_id
+            ) VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(scope_key) DO NOTHING
             """,
             (
@@ -61,6 +61,7 @@ def register_actor(
                 scope.member_id,
                 scope.session_id,
                 scope.model_dump_json(),
+                scope.channel_id,
             ),
         )
     _ = connection.execute(

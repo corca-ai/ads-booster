@@ -27,7 +27,10 @@ def test_fresh_catalog_has_normalized_schema_and_private_database(tmp_path: Path
         )
         tables = {row[0] for row in table_rows}
         version = _VERSION_ROW.validate_python(
-            connection.execute("SELECT version, length(checksum) FROM knowledge_schema").fetchone()
+            connection.execute(
+                """SELECT version, length(checksum) FROM knowledge_schema
+                ORDER BY version DESC LIMIT 1"""
+            ).fetchone()
         )
 
     assert {
@@ -52,7 +55,7 @@ def test_fresh_catalog_has_normalized_schema_and_private_database(tmp_path: Path
         "wiki_pages",
     } <= tables
     assert version is not None
-    assert version == (2, 64)
+    assert version == (4, 64)
 
 
 def test_scope_and_memory_identity_constraints_reject_cross_tenant_rows(tmp_path: Path) -> None:
@@ -68,13 +71,14 @@ def test_scope_and_memory_identity_constraints_reject_cross_tenant_rows(tmp_path
             """
             INSERT INTO access_scopes(
                 scope_key,kind,workspace_id,member_id,session_id,scope_json
-            ) VALUES ('workspace:workspace.a','workspace','workspace.a',NULL,NULL,'{}')
+            ) VALUES ('workspace:workspace.a','workspace','workspace.a',NULL,NULL,'{}'),
+                ('workspace:workspace.b','workspace','workspace.b',NULL,NULL,'{}')
             """
         )
         _ = connection.execute(
             """
-            INSERT INTO brands(workspace_id,brand_id,name,revision,state,brand_json)
-            VALUES ('workspace.b','brand.b','Brand B',1,'active','{}')
+            INSERT INTO brands(workspace_id,brand_id,name,revision,state,brand_json,scope_key)
+            VALUES ('workspace.b','brand.b','Brand B',1,'active','{}','workspace:workspace.b')
             """
         )
         with pytest.raises(sqlite3.IntegrityError):
