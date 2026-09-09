@@ -107,6 +107,8 @@ def _batch_wire_schema() -> JsonObject:
 def _require_properties(value: JsonValue) -> None:
     match value:
         case dict() as item:
+            if "$ref" in item:
+                _ = item.pop("default", None)
             properties = item.get("properties")
             if isinstance(properties, dict):
                 item["required"] = list(properties)
