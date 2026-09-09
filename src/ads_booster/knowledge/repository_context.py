@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
@@ -12,8 +13,6 @@ from ads_booster.knowledge.memory_contracts import MemoryEntry
 from ads_booster.knowledge.scope_contracts import AccessScope
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from ads_booster.contracts.knowledge_selection import ContextReceipt, KnowledgeActionKind
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
     from ads_booster.knowledge.scope_contracts import ActorContext
@@ -23,6 +22,7 @@ type ReceiptDependency = tuple[str, str, str, str | None]
 _OPTIONAL_INTEGER_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
 _OPTIONAL_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 _STRING_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+_STRING_PAIR_ROWS: TypeAdapter[list[tuple[str, str]]] = TypeAdapter(list[tuple[str, str]])
 _STRING_TRIPLE_ROWS: TypeAdapter[list[tuple[str, str, str]]] = TypeAdapter(
     list[tuple[str, str, str]]
 )
@@ -78,14 +78,29 @@ def memory_document_ids(
     actor: ActorContext,
 ) -> tuple[str, ...]:
     with repository.connection() as connection:
-        rows = _STRING_ROWS.validate_python(
+        rows = _STRING_PAIR_ROWS.validate_python(
             connection.execute(
-                """SELECT document_id FROM memory_documents
-                WHERE workspace_id=? ORDER BY kind,document_id""",
+                """SELECT document_id,scope.scope_json FROM memory_documents AS document
+                JOIN access_scopes AS scope USING(scope_key)
+                WHERE document.workspace_id=?
+                ORDER BY CASE document.kind WHEN 'user' THEN 0 ELSE 1 END,
+                    document.kind,document_id""",
                 (actor.workspace_id,),
             ).fetchall(),
         )
-    return tuple(row[0] for row in rows)
+    return tuple(row[0] for row in rows if _scope_readable(actor, row[1]))
+
+
+def _scope_readable(actor: ActorContext, scope_json: str) -> bool:
+    try:
+        _ = authorize_read(
+            actor=actor,
+            target_scope=AccessScope.model_validate_json(scope_json),
+            at=datetime.now(UTC),
+        )
+    except KnowledgePolicyError:
+        return False
+    return True
 
 
 def applicable_constraints(

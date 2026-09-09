@@ -11,10 +11,10 @@ from ads_booster.contracts.knowledge_selection import ContextReceipt
 from ads_booster.knowledge.adoption_contracts import ExplicitAdoptionReceipt
 from ads_booster.knowledge.contract_types import (
     MemoryKind,
-    ScopeKind,
     SourceDisposition,
     SourceKind,
 )
+from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.file_paths import SourceFileKind, SourceRevisionTarget
 from ads_booster.knowledge.governance_contracts import TaskBinding, TaskOverlay
 from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
@@ -23,6 +23,7 @@ from ads_booster.knowledge.messages import require_actor_event_binding
 from ads_booster.knowledge.operation_contracts import KnowledgeJob, MemoryExplanation
 from ads_booster.knowledge.operation_enums import TaskBindingState
 from ads_booster.knowledge.repository_conversation_deletion import READABLE_CONVERSATION_EVENT
+from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.repository_source import _insert_job, _require_read
 from ads_booster.knowledge.repository_types import (
     IndexOutboxItem,
@@ -30,7 +31,7 @@ from ads_booster.knowledge.repository_types import (
     SourceAdmissionChange,
     StoredSource,
 )
-from ads_booster.knowledge.scope_contracts import AccessScope
+from ads_booster.knowledge.scope_contracts import AccessScope, channel_member_scope
 from ads_booster.knowledge.source_contracts import ConversationEvent, Source, SourceSegment
 from ads_booster.knowledge.tool_contracts import (
     ProposalTargetKind,
@@ -323,16 +324,23 @@ class RepositoryToolState:
         brand_id: str | None,
         local_date: date | None,
     ) -> str | None:
+        selected_scope = (
+            channel_member_scope(actor) if kind is MemoryKind.USER else actor.conversation_scope
+        )
+        if selected_scope is None:
+            return None
         with self.repository.connection() as connection:
             _require_read(connection, actor)
             row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
                     """
                     SELECT document_id FROM memory_documents
-                    WHERE workspace_id=? AND kind=? AND brand_id IS ? AND local_date IS ?
+                    WHERE workspace_id=? AND scope_key=? AND kind=?
+                        AND brand_id IS ? AND local_date IS ?
                     """,
                     (
                         actor.workspace_id,
+                        scope_key(selected_scope),
                         kind.value,
                         brand_id,
                         None if local_date is None else local_date.isoformat(),
@@ -948,11 +956,11 @@ class RepositoryToolState:
 
     @staticmethod
     def _may_disclose_scope(actor: ActorContext, scope: AccessScope) -> bool:
-        if scope.kind is ScopeKind.WORKSPACE:
-            return True
-        return actor.conversation_scope.kind is ScopeKind.MEMBER and (
-            scope.member_id == actor.member_id and scope.session_id == actor.session_id
-        )
+        try:
+            _ = authorize_read(actor=actor, target_scope=scope, at=datetime.now(UTC))
+        except KnowledgePolicyError:
+            return False
+        return True
 
     @staticmethod
     def _selection_reason(
