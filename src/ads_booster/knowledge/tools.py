@@ -11,10 +11,12 @@ from ads_booster.knowledge.corrections import CorrectionError, KnowledgeCorrecti
 from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.ingestion_sources import IngestionError
+from ads_booster.knowledge.legacy_memory import LegacyMemoryGuard, LegacyMemoryGuardError
 from ads_booster.knowledge.questions import KnowledgeQuestions, QuestionAnswerResult, QuestionError
 from ads_booster.knowledge.repository_tool_state import RepositoryToolState, ToolStateError
 from ads_booster.knowledge.repository_types import RepositoryConflictError
 from ads_booster.knowledge.retrieval import KnowledgeRetriever
+from ads_booster.knowledge.skills import KnowledgeSkills
 from ads_booster.knowledge.source_fetch import SourceFetchError
 from ads_booster.knowledge.tool_contracts import (
     KnowledgeApplyInput,
@@ -74,7 +76,7 @@ if TYPE_CHECKING:
 
 @final
 class ToolHost:
-    def __init__(  # noqa: D107
+    def __init__(  # noqa: D107, PLR0913
         self,
         repository: SqliteKnowledgeRepository,
         *,
@@ -82,9 +84,10 @@ class ToolHost:
         retriever: KnowledgeRetriever | None = None,
         publisher: ChangePublisher | None = None,
         source_search: SourceSearch | None = None,
+        legacy_memory: LegacyMemoryGuard | None = None,
     ) -> None:
         state = RepositoryToolState(repository)
-        questions = KnowledgeQuestions(state)
+        questions = KnowledgeQuestions(state, legacy_memory)
         self._dependencies = ToolDependencies(
             repository=repository,
             state=state,
@@ -93,7 +96,9 @@ class ToolHost:
             publisher=publisher or ChangePublisher(repository, adoption_resolver=state),
             source_search=source_search,
             questions=questions,
-            corrections=KnowledgeCorrections(state, questions),
+            corrections=KnowledgeCorrections(state, questions, legacy_memory),
+            skills=KnowledgeSkills(repository),
+            legacy_memory=legacy_memory,
         )
 
     def execute(  # noqa: C901, PLR0911
@@ -121,7 +126,7 @@ class ToolHost:
                 error.code,
                 retryable=error.retryable,
             )
-        except (CorrectionError, QuestionError, ToolStateError) as error:
+        except (CorrectionError, LegacyMemoryGuardError, QuestionError, ToolStateError) as error:
             return error_result(trusted_context.invocation_id, error.code)
         except KnowledgePolicyError as error:
             return error_result(trusted_context.invocation_id, error.code)
@@ -191,7 +196,7 @@ class ToolHost:
     def state(self) -> RepositoryToolState:
         return self._dependencies.state
 
-    def _execute(  # noqa: C901, PLR0911
+    def _execute(  # noqa: C901, PLR0911, PLR0912
         self,
         request: ToolInput,
         context: TrustedInvocationContext,
