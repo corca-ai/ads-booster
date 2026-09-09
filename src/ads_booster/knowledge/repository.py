@@ -295,7 +295,11 @@ class SqliteKnowledgeRepository:
     def task_binding(self, actor: ActorContext, task_id: str) -> TaskBinding | None:
         return RepositoryToolState(self).task_binding(actor, task_id)
 
-    def put_task_overlay(self, actor: ActorContext, overlay: TaskOverlay) -> TaskOverlay:
+    def put_task_overlay(
+        self,
+        actor: ActorContext,
+        overlay: TaskOverlay,
+    ) -> tuple[TaskOverlay, bool]:
         return RepositoryToolState(self).put_task_overlay(actor, overlay)
 
     def active_task_overlays(
