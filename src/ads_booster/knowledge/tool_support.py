@@ -18,6 +18,9 @@ from ads_booster.knowledge.tool_contracts import (
     MemoryCorrectInput,
     MemoryExplainInput,
     MemoryGetInput,
+    SkillApplyInput,
+    SkillGetInput,
+    SkillListInput,
     SourceFetchInput,
     SourceReadInput,
     SourceSearchInput,
@@ -43,7 +46,7 @@ class KnowledgeToolError(Exception):
         return self.code
 
 
-def request_tool_name(request: ToolInput) -> KnowledgeToolName:  # noqa: C901, PLR0911
+def request_tool_name(request: ToolInput) -> KnowledgeToolName:  # noqa: C901, PLR0911, PLR0912
     match request:
         case KnowledgeSearchInput():
             return KnowledgeToolName.KNOWLEDGE_SEARCH
@@ -69,6 +72,12 @@ def request_tool_name(request: ToolInput) -> KnowledgeToolName:  # noqa: C901, P
             return KnowledgeToolName.KNOWLEDGE_SCHEDULE
         case KnowledgeQuestionInput():
             return KnowledgeToolName.KNOWLEDGE_QUESTION
+        case SkillListInput():
+            return KnowledgeToolName.SKILL_LIST
+        case SkillGetInput():
+            return KnowledgeToolName.SKILL_GET
+        case SkillApplyInput():
+            return KnowledgeToolName.SKILL_APPLY
     assert_never(request)
 
 
@@ -82,6 +91,8 @@ def required_capability(name: KnowledgeToolName) -> GrantCapability:
             | KnowledgeToolName.SOURCE_READ
             | KnowledgeToolName.SOURCE_SEARCH
             | KnowledgeToolName.KNOWLEDGE_QUESTION
+            | KnowledgeToolName.SKILL_LIST
+            | KnowledgeToolName.SKILL_GET
         ):
             return GrantCapability.READ
         case (
@@ -89,6 +100,7 @@ def required_capability(name: KnowledgeToolName) -> GrantCapability:
             | KnowledgeToolName.MEMORY_CORRECT
             | KnowledgeToolName.SOURCE_FETCH
             | KnowledgeToolName.KNOWLEDGE_APPLY
+            | KnowledgeToolName.SKILL_APPLY
         ):
             return GrantCapability.WRITE
         case KnowledgeToolName.KNOWLEDGE_SCHEDULE:
@@ -117,15 +129,12 @@ def authorize_tool(name: KnowledgeToolName, context: TrustedInvocationContext) -
                 target_scope=context.actor.conversation_scope,
                 at=context.invoked_at,
             )
-        case (
-            GrantCapability.BRAND_VOICE_EDIT
-            | GrantCapability.SHARE
-            | GrantCapability.PURGE
-        ):
-            raise KnowledgeToolError("tool_capability_unsupported")
+        case GrantCapability.BRAND_VOICE_EDIT | GrantCapability.SHARE | GrantCapability.PURGE:
+            code = "tool_capability_unsupported"
+            raise KnowledgeToolError(code)
 
 
-def schema(name: KnowledgeToolName) -> JsonObject:  # noqa: C901
+def schema(name: KnowledgeToolName) -> JsonObject:  # noqa: C901, PLR0912
     match name:
         case KnowledgeToolName.KNOWLEDGE_SEARCH:
             raw = KnowledgeSearchInput.model_json_schema()
@@ -151,6 +160,12 @@ def schema(name: KnowledgeToolName) -> JsonObject:  # noqa: C901
             raw = KnowledgeScheduleInput.model_json_schema()
         case KnowledgeToolName.KNOWLEDGE_QUESTION:
             raw = KnowledgeQuestionInput.model_json_schema()
+        case KnowledgeToolName.SKILL_LIST:
+            raw = SkillListInput.model_json_schema()
+        case KnowledgeToolName.SKILL_GET:
+            raw = SkillGetInput.model_json_schema()
+        case KnowledgeToolName.SKILL_APPLY:
+            raw = SkillApplyInput.model_json_schema()
     return JSON_OBJECT_ADAPTER.validate_python(raw)
 
 

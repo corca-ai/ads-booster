@@ -12,6 +12,7 @@ from ads_booster.knowledge.operation_contracts import KnowledgeJob, KnowledgeOpe
 from ads_booster.knowledge.operation_enums import JobState, OperationStatus
 from ads_booster.knowledge.pages import PageChangeSet, PageSnapshot
 from ads_booster.knowledge.repository_types import JobRegistration, RepositoryConflictError
+from ads_booster.knowledge.skill_drafts import normalize_skill_operations
 from ads_booster.knowledge.tool_contracts import (
     ApplyData,
     KnowledgeApplyInput,
@@ -27,6 +28,8 @@ from ads_booster.knowledge.tool_contracts import (
     QuestionData,
     ScheduleData,
     ScheduledKnowledgeRequest,
+    SkillApplyData,
+    SkillApplyInput,
     ToolResult,
     ToolResultStatus,
     TrustedInvocationContext,
@@ -153,6 +156,62 @@ def knowledge_apply(
         memory_changes=request.memory_changes,
         adoption_receipt_ids=request.adoption_receipt_ids,
         context=context,
+    )
+
+
+def skill_apply(
+    dependencies: ToolDependencies,
+    request: SkillApplyInput,
+    context: TrustedInvocationContext,
+) -> ToolResult:
+    conflicts = _legacy_conflicts(dependencies, context, request.legacy_memory_assessments)
+    if conflicts:
+        operation = request.operations[0]
+        return _hold_legacy_conflict(
+            dependencies,
+            context,
+            operation_id=request.operation_id,
+            target_kind=ProposalTargetKind.SKILL,
+            target_id=operation.skill_id,
+            expected_revision_id=operation.expected_revision_id or "none",
+            conflicts=conflicts,
+        )
+    operations = normalize_skill_operations(
+        dependencies,
+        request.operations,
+        context,
+        request.operation_id,
+    )
+    receipt = dependencies.publisher.publish(
+        actor=context.actor,
+        group=ChangeGroup(
+            operation_id=request.operation_id,
+            skill_operations=operations,
+        ),
+        pages=None,
+        memories=(),
+        at=context.invoked_at,
+        trusted_context=context,
+    )
+    match receipt.status:
+        case OperationStatus.APPLIED:
+            status = ToolResultStatus.APPLIED
+        case OperationStatus.REPLAYED:
+            status = ToolResultStatus.REPLAYED
+        case OperationStatus.CONFLICT:
+            status = ToolResultStatus.CONFLICT
+        case OperationStatus.PENDING:
+            status = ToolResultStatus.PENDING
+        case OperationStatus.REJECTED | OperationStatus.FAILED:
+            status = ToolResultStatus.REJECTED
+    return success(
+        request.operation_id,
+        status,
+        SkillApplyData(
+            operation_id=request.operation_id,
+            target_ids=tuple(operation.skill_id for operation in operations),
+            receipt=receipt,
+        ),
     )
 
 
@@ -366,4 +425,5 @@ __all__ = [
     "knowledge_schedule",
     "memory_apply",
     "memory_correct",
+    "skill_apply",
 ]

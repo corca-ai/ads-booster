@@ -8,6 +8,7 @@ from ads_booster.knowledge.change_validation import ChangeValidationError
 if TYPE_CHECKING:
     from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryRevision
     from ads_booster.knowledge.operation_contracts import KnowledgeOperation, MemoryOperation
+    from ads_booster.knowledge.skill_contracts import SkillOperation
     from ads_booster.knowledge.wiki_contracts import KnowledgeRevision, WikiPage
 
 
@@ -20,6 +21,9 @@ class ChangeGroupLike(Protocol):
 
     @property
     def memory_operations(self) -> tuple[MemoryOperation, ...]: ...
+
+    @property
+    def skill_operations(self) -> tuple[SkillOperation, ...]: ...
 
 
 class PageSnapshotLike(Protocol):
@@ -48,8 +52,10 @@ def require_group_bindings(
     pages: tuple[PageSnapshotLike, ...],
     memories: tuple[MemoryPublicationLike, ...],
 ) -> None:
-    records = (() if group.page_operation is None else (group.page_operation,)) + tuple(
-        group.memory_operations
+    records = (
+        (() if group.page_operation is None else (group.page_operation,))
+        + tuple(group.memory_operations)
+        + tuple(group.skill_operations)
     )
     if not records or any(record.operation_id != group.operation_id for record in records):
         raise ChangeValidationError("operation_group_binding_mismatch", group.operation_id)

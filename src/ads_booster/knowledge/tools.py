@@ -29,6 +29,9 @@ from ads_booster.knowledge.tool_contracts import (
     MemoryCorrectInput,
     MemoryExplainInput,
     MemoryGetInput,
+    SkillApplyInput,
+    SkillGetInput,
+    SkillListInput,
     SourceFetchInput,
     SourceReadInput,
     SourceSearchInput,
@@ -45,6 +48,8 @@ from ads_booster.knowledge.tool_read_operations import (
     knowledge_search,
     memory_explain,
     memory_get,
+    skill_get,
+    skill_list,
 )
 from ads_booster.knowledge.tool_source_operations import source_fetch, source_read, source_search
 from ads_booster.knowledge.tool_support import (
@@ -62,6 +67,7 @@ from ads_booster.knowledge.tool_write_operations import (
     knowledge_schedule,
     memory_apply,
     memory_correct,
+    skill_apply,
 )
 
 if TYPE_CHECKING:
@@ -227,6 +233,12 @@ class ToolHost:
                 return knowledge_schedule(dependencies, request, context)
             case KnowledgeQuestionInput():
                 return knowledge_question(dependencies, request, context)
+            case SkillListInput():
+                return skill_list(dependencies, request, context)
+            case SkillGetInput():
+                return skill_get(dependencies, request, context)
+            case SkillApplyInput():
+                return skill_apply(dependencies, request, context)
         assert_never(request)
 
 
