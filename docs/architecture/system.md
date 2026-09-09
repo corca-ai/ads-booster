@@ -169,7 +169,9 @@ currently admitted actor. A stable selection fingerprint binds note IDs and dige
 incidental selection time. SQLite selection receipts retain canonical JSON alongside indexed run,
 full scope, actor, and UTC selection-time columns. An additive, transactional migration backfills
 valid existing receipts once; malformed or actorless legacy receipts cannot satisfy a current actor
-binding. Every global learned-memory or skill mutation must assess every selected
+binding. Latest selection reads one exact-binding row ordered by UTC time and selection ID, then
+revalidates the receipt through the existing current-selection guard. Every global learned-memory or
+skill mutation must assess every selected
 note as compatible, unrelated, or conflicting. Missing, mismatched, or stale assessments reject the
 write; a declared conflict preserves the proposed head and creates a source-thread question whose
 external note references are rechecked before display or answer. Task-only overlays do not publish a

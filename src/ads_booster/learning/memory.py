@@ -370,20 +370,30 @@ class SQLiteMemoryStore:
         """Return the newest server selection for this exact run, scope, and actor."""
         require_aware(now)
         with self.connect() as db:
-            rows = _ROWS.validate_python(
-                db.execute("SELECT data_json FROM agent_memory_selections").fetchall()
+            row = _OPTIONAL_STRING_ROW.validate_python(
+                db.execute(
+                    """
+                    SELECT data_json FROM agent_memory_selections
+                    WHERE run_id=? AND workspace_id=? AND product_id=? AND campaign_id=?
+                        AND work_id=? AND member_id=? AND session_id=? AND actor_id=?
+                    ORDER BY selected_at DESC, selection_id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        run_id,
+                        access.scope.workspace_id,
+                        access.scope.product_id,
+                        access.scope.campaign_id,
+                        access.scope.work_id,
+                        access.scope.member_id,
+                        access.scope.session_id,
+                        access.actor_id,
+                    ),
+                ).fetchone()
             )
-        receipts = tuple(
-            receipt
-            for row in rows
-            for receipt in (MemorySelectionReceipt.model_validate_json(row[0]),)
-            if receipt.run_id == run_id
-            and receipt.scope == access.scope
-            and receipt.actor_id == access.actor_id
-        )
-        if not receipts:
+        if row is None:
             return None
-        receipt = max(receipts, key=lambda item: (item.selected_at, item.selection_id))
+        receipt = MemorySelectionReceipt.model_validate_json(row[0])
         return self.current_selection(access, receipt, now=now)
 
     def current_selection(
