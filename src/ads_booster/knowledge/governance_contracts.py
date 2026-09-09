@@ -12,6 +12,7 @@ from ads_booster.knowledge.contract_types import (
     AuthorityClass,
     BoundedReason,
     KnowledgeContractModel,
+    ScopeKind,
     UtcDatetime,
 )
 from ads_booster.knowledge.evidence_contracts import AuthorityRef
@@ -22,6 +23,10 @@ from ads_booster.knowledge.operation_enums import (
     TaskBindingState,
 )
 from ads_booster.knowledge.scope_contracts import AccessScope
+
+
+def _scope_absent(value: AccessScope | None) -> bool:
+    return value is None
 
 
 class AppliesTo(KnowledgeContractModel):
@@ -63,6 +68,23 @@ class Brand(KnowledgeContractModel):
     name: Annotated[str, Field(min_length=1, max_length=200)]
     revision: Annotated[int, Field(ge=1)]
     state: BrandState
+    scope: AccessScope | None = Field(default=None, exclude_if=_scope_absent)
+
+    @property
+    def owned_scope(self) -> AccessScope:
+        return self.scope or AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=self.workspace_id)
+
+    @model_validator(mode="after")
+    def require_shared_owner(self) -> Self:
+        if self.owned_scope.workspace_id != self.workspace_id:
+            raise PydanticCustomError(
+                "brand_scope_workspace_mismatch", "brand scope must match its workspace"
+            )
+        if self.owned_scope.kind is ScopeKind.MEMBER:
+            raise PydanticCustomError(
+                "brand_scope_private", "brands require workspace or channel ownership"
+            )
+        return self
 
 
 class BrandEvent(KnowledgeContractModel):
