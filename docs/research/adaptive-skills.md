@@ -115,3 +115,8 @@ fixture. Previously it relied on automatic inclusion of every skill. Its exact-p
 now requests `learned.fixture-receipt-procedure` explicitly; revision/source assertions are retained.
 This fixture correction does not prove semantic retrieval. Early attempts also encountered its
 working-directory guard and sandbox loopback restrictions; neither was treated as product failure.
+
+The corrected final installed fixture passed all six cases: source-linked learning, restart/new
+member, shared/private isolation, built-in protection, conflict/unknown-send recovery and normal
+learning silence. Evidence: `/private/tmp/trace-adaptive-152/fixture-exact.json`. It uses fixed
+provider output and captured Slack sends, separately from the real-model canary above.
