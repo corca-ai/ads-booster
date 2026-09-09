@@ -156,7 +156,7 @@ def test_reviewed_memory_enters_next_plan_but_expired_note_does_not(tmp_path: Pa
     owner.commands.application.service.reasoning = provider
     store = SQLiteMemoryStore(owner.store.database_path)
     access = MemoryAccess(
-        scope=MemoryScope(workspace_id="team", product_id="trace"),
+        scope=MemoryScope(workspace_id="team", product_id="trace", channel_id="C1"),
         actor_id="member",
         can_review=True,
     )
