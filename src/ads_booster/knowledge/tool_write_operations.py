@@ -4,11 +4,13 @@ from typing import TYPE_CHECKING
 
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.change_publication import ChangeGroup, MemoryPublication
+from ads_booster.knowledge.contract_types import ScopeKind
 from ads_booster.knowledge.grant_policy import authorize_schedule
 from ads_booster.knowledge.memory import MemorySnapshot
 from ads_booster.knowledge.operation_contracts import KnowledgeJob, KnowledgeOperation
 from ads_booster.knowledge.operation_enums import JobState, OperationStatus
 from ads_booster.knowledge.pages import PageChangeSet, PageSnapshot
+from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.repository_types import JobRegistration
 from ads_booster.knowledge.tool_contracts import (
     ApplyData,
@@ -161,6 +163,11 @@ def knowledge_schedule(
     unique_key = contract_sha256(
         {
             "workspace_id": context.actor.workspace_id,
+            **(
+                {"scope_key": scope_key(context.actor.conversation_scope)}
+                if context.actor.conversation_scope.kind is ScopeKind.CHANNEL
+                else {}
+            ),
             "kind": request.kind.value,
             "targets": list(request.targets),
             "purpose": request.purpose,
@@ -175,6 +182,9 @@ def knowledge_schedule(
         job_id=job_id,
         workspace_id=context.actor.workspace_id,
         scope=context.actor.conversation_scope,
+        submitter_actor=(
+            context.actor if context.actor.conversation_scope.kind is ScopeKind.CHANNEL else None
+        ),
         kind=request.kind,
         state=JobState.QUEUED,
         priority=request.priority,
