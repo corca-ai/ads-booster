@@ -50,6 +50,7 @@ from ads_booster.contracts.tool_capability import (
 from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.contracts import (
     ActorContext,
+    BrandState,
     GrantCapability,
     ScopeGrant,
     ScopeKind,
@@ -182,6 +183,10 @@ class KnowledgeServiceAdapter:
                 brand_ref=selected_brand,
                 error_code=RequiredContextErrorCode.CORRECTION_PENDING,
             )
+        if selected_brand is not None:
+            brand = self.repository.brand(actor, selected_brand)
+            if brand is None or brand.state is not BrandState.ACTIVE:
+                return _unresolved(run.run_id, selected_action, selected_brand)
         task = self._task(actor, run.run_id, selected_action, selected_brand, now)
         filtered = self.filter_snapshot(run.run_id, snapshot)
         return self.assembler.prepare(
