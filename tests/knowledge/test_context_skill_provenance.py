@@ -106,12 +106,17 @@ def test_selected_skill_retains_current_source_dependency_and_excludes_stale_hea
     prepared = assembler.prepare(
         processor.actor,
         task,
-        query="Use the learned source procedure.",
+        query="Use learned.context-source",
         tool_catalog=host.catalog(),
         capability_snapshot=snapshot,
         now=NOW,
     )
     assert isinstance(prepared, PreparedKnowledgeContext)
+    assert prepared.receipt.selected_skill_revisions[0].skill_id == record.skill_id
+    skill_blocks = [block for block in prepared.blocks if block.block_id.startswith("skill.")]
+    assert "unavailable_capability_ids: knowledge_search" in skill_blocks[0].text
+    assert sum(len(block.text.encode()) for block in skill_blocks) <= 2400
+    assert prepared.receipt.exclusions
     selected = next(
         item
         for item in prepared.receipt.selected_skill_revisions

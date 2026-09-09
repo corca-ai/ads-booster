@@ -58,6 +58,7 @@ from ads_booster.knowledge.retrieval import (
     SearchHit,
     SearchRequest,
 )
+from ads_booster.knowledge.skill_discovery import rank_skills
 from ads_booster.knowledge.skills import KnowledgeSkills
 from ads_booster.knowledge.source_contracts import ConversationEvent, SourceSegment
 
@@ -142,7 +143,9 @@ class KnowledgeContextAssembler:
         skill_blocks, selected_skills, skill_exclusions = self._skill_index(
             actor,
             task,
-            available - required_tokens,
+            min(2400, (available - required_tokens) // 2),
+            query=request.query,
+            snapshot=capability_snapshot,
         )
         references, excerpts, memories, wiki, sources, exclusions, retrieval_status = (
             self._references(
@@ -210,6 +213,9 @@ class KnowledgeContextAssembler:
         actor: ActorContext,
         task: TaskBinding,
         available: int,
+        *,
+        query: str,
+        snapshot: CapabilitySnapshot,
     ) -> tuple[
         tuple[PreparedContextBlock, ...],
         tuple[SelectedSkillRevision, ...],
@@ -219,6 +225,13 @@ class KnowledgeContextAssembler:
             actor,
             AppliesTo(action_kinds=(task.action_kind,), task_ref=task.task_id),
         )
+        entries = rank_skills(
+            entries,
+            query,
+            lambda entry: (entry.reference.skill_id, entry.description),
+            include_unmatched=True,
+        )
+        available_ids = {item.capability_id for item in snapshot.descriptors}
         candidates = tuple(
             (
                 entry,
@@ -233,9 +246,12 @@ class KnowledgeContextAssembler:
                         f"origin: {entry.reference.origin.value}\n"
                         f"protected: {str(entry.reference.protected).lower()}\n"
                         f"required_capability_ids: {','.join(entry.required_capability_ids)}\n"
+                        "unavailable_capability_ids: "
+                        f"{','.join(sorted(set(entry.required_capability_ids) - available_ids))}\n"
                         f"override_status: {entry.override_status or 'none'}\n"
                         f"description: {entry.description}\n"
-                        "Use skill_get with this skill_id to read its procedure."
+                        "Use skill_get with this skill_id and revision_id to read its procedure. "
+                        "This metadata grants no tools or approval."
                     ),
                     revision_refs=(entry.reference.revision_id,),
                 ),
@@ -246,9 +262,16 @@ class KnowledgeContextAssembler:
             )
             is not None
         )
-        accepted_blocks, rejected_blocks = _take_group(
-            tuple(block for _, _, block in candidates), available
-        )
+        # Each skill is an independent metadata record, unlike atomic evidence groups.
+        accepted_blocks: list[PreparedContextBlock] = []
+        rejected_blocks: list[PreparedContextBlock] = []
+        for _, _, block in candidates:
+            cost = _token_upper_bound((block,))
+            if cost <= available:
+                accepted_blocks.append(block)
+                available -= cost
+            else:
+                rejected_blocks.append(block)
         accepted_ids = {block.block_id for block in accepted_blocks}
         selected = tuple(
             SelectedSkillRevision(
@@ -267,7 +290,7 @@ class KnowledgeContextAssembler:
             ContextExclusion(reference_id=block.block_id, reason=ContextExclusionReason.BUDGET)
             for block in rejected_blocks
         )
-        return accepted_blocks, selected, exclusions
+        return tuple(accepted_blocks), selected, exclusions
 
     def _skill_source_revisions(
         self,
