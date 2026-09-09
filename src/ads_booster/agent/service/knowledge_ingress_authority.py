@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Never
+from typing import TYPE_CHECKING, Never, assert_never
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.service.knowledge_ingress_grants import admit_channel_grant, stored_grant
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contracts import ActorContext, GrantCapability, ScopeGrant, ScopeKind
 from ads_booster.knowledge.errors import AccessDeniedError
 from ads_booster.knowledge.grant_policy import require_current_policy_epoch
-from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.repository_identity import register_actor, scope_key
 from ads_booster.knowledge.repository_types import MembershipRole
+from ads_booster.knowledge.scope_contracts import channel_member_scope
+
+if TYPE_CHECKING:
+    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 
 _WORKSPACE: TypeAdapter[tuple[int, str] | None] = TypeAdapter(tuple[int, str] | None)
 _MEMBER: TypeAdapter[tuple[str, str, str, str] | None] = TypeAdapter(
@@ -70,7 +74,6 @@ class KnowledgeIngressAuthority:
             actor = self._conversation_actor(actor, member_id)
             if member is None:
                 register_actor(db, actor, MembershipRole.EDITOR)
-                return actor
             session = _SESSION.validate_python(
                 db.execute(
                     """SELECT state FROM sessions
@@ -87,7 +90,9 @@ class KnowledgeIngressAuthority:
             for grant in actor.grants:
                 grant_scope = grant.scope
                 _ = db.execute(
-                    "INSERT OR IGNORE INTO access_scopes VALUES (?,?,?,?,?,?)",
+                    """INSERT OR IGNORE INTO access_scopes(
+                    scope_key,kind,workspace_id,member_id,session_id,scope_json,channel_id)
+                    VALUES (?,?,?,?,?,?,?)""",
                     (
                         scope_key(grant_scope),
                         grant_scope.kind.value,
@@ -95,8 +100,10 @@ class KnowledgeIngressAuthority:
                         grant_scope.member_id,
                         grant_scope.session_id,
                         grant_scope.model_dump_json(),
+                        grant_scope.channel_id,
                     ),
                 )
+                admit_channel_grant(db, actor, grant, fresh=fresh)
                 _ = db.execute(
                     """INSERT OR IGNORE INTO scope_grants(
                     workspace_id,grant_id,member_id,scope_key,capability,brand_id,
@@ -115,7 +122,13 @@ class KnowledgeIngressAuthority:
                         grant.model_dump_json(),
                     ),
                 )
-            return actor
+            return actor.model_copy(
+                update={
+                    "grants": tuple(
+                        stored_grant(db, actor, grant.grant_id) for grant in actor.grants
+                    ),
+                }
+            )
 
     @staticmethod
     def _conversation_actor(actor: ActorContext, member_id: str) -> ActorContext:
@@ -126,7 +139,21 @@ class KnowledgeIngressAuthority:
         for grant in actor.grants:
             if grant.capability not in {GrantCapability.READ, GrantCapability.WRITE}:
                 KnowledgeIngressAuthority._deny(actor)
-            grant_scope = scope if grant.scope.kind is ScopeKind.MEMBER else grant.scope
+            match grant.scope.kind:
+                case ScopeKind.MEMBER:
+                    if grant.scope != actor.conversation_scope:
+                        KnowledgeIngressAuthority._deny(actor)
+                    grant_scope = scope
+                case ScopeKind.CHANNEL_MEMBER:
+                    if grant.scope != channel_member_scope(actor):
+                        KnowledgeIngressAuthority._deny(actor)
+                    grant_scope = grant.scope.model_copy(update={"member_id": member_id})
+                case ScopeKind.WORKSPACE | ScopeKind.CHANNEL:
+                    grant_scope = grant.scope
+                    if grant_scope != scope:
+                        KnowledgeIngressAuthority._deny(actor)
+                case _:
+                    assert_never(grant.scope.kind)
             grant_id = (
                 "conversation-grant-"
                 + contract_sha256(

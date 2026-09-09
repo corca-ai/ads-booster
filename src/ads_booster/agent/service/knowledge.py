@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.core.registry import ToolRegistration
+from ads_booster.agent.service.knowledge_transfer import TransferContextMaterial
 from ads_booster.contracts.agent_run import (
     AgentRecord,
     AgentRecordKind,
@@ -63,18 +65,16 @@ from ads_booster.knowledge.tool_contracts import (
     ToolResult,
     TrustedInvocationContext,
 )
-from ads_booster.agent.core.registry import ToolRegistration
-from ads_booster.agent.service.knowledge_transfer import TransferContextMaterial
 from ads_booster.transport.json_types import JsonObject
 
 _RECORD_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
 _CURRENT_IDENTITY: TypeAdapter[tuple[str, int] | None] = TypeAdapter(tuple[str, int] | None)
 
 if TYPE_CHECKING:
-    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
-    from ads_booster.knowledge.tools import ToolHost
     from ads_booster.agent.core.ports import ToolAdapter
     from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
+    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from ads_booster.knowledge.tools import ToolHost
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 READ_ONLY_DM_TOOLS = frozenset(
@@ -248,8 +248,17 @@ class KnowledgeServiceAdapter:
                 return None
             rows = _RECORD_ROWS.validate_python(
                 db.execute(
-                    """SELECT grant_json FROM scope_grants
-                WHERE workspace_id=? AND member_id=? AND policy_epoch=? ORDER BY grant_id""",
+                    """SELECT grant_json FROM scope_grants AS current
+                WHERE workspace_id=? AND member_id=? AND policy_epoch=?
+                AND NOT EXISTS (
+                    SELECT 1 FROM channel_grant_admissions AS admission
+                    WHERE admission.workspace_id=current.workspace_id
+                        AND admission.member_id=current.member_id
+                        AND admission.scope_key=current.scope_key
+                        AND admission.capability=current.capability
+                        AND (admission.state!='active' OR admission.grant_id!=current.grant_id
+                            OR admission.policy_epoch!=current.policy_epoch)
+                ) ORDER BY grant_id""",
                     (actor.workspace_id, actor.member_id, actor.policy_epoch),
                 ).fetchall()
             )
