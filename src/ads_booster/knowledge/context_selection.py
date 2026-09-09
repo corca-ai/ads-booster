@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+from pydantic import TypeAdapter
+
 from ads_booster.contracts.agent_run import CapabilitySnapshot, contract_sha256
 from ads_booster.contracts.knowledge_context import EvidenceExcerpt
 from ads_booster.contracts.knowledge_preparation import (
@@ -34,6 +36,7 @@ from ads_booster.knowledge.change_validation import ChangeValidationError
 from ads_booster.knowledge.changes import resolve_constraints
 from ads_booster.knowledge.contracts import (
     ActorContext,
+    BrandState,
     DependencyState,
     MemoryKind,
     MemoryStatus,
@@ -46,6 +49,7 @@ from ads_booster.knowledge.repository_context import (
     memory_document_ids,
     persist_context_receipt,
 )
+from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.retrieval import (
     KnowledgeRetriever,
     SearchCorpus,
@@ -71,6 +75,8 @@ _CONTENT_ACTIONS = frozenset(
 type ContextBuildResult = (
     PreparedKnowledgeContext | RequiredContextPreparationError | BrandUnresolvedPreparation
 )
+_BRAND_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+_SOUL_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,21 +538,28 @@ class KnowledgeContextAssembler:
 
     def _active_brands(self, actor: ActorContext) -> tuple[str, ...]:
         with self.repository.connection() as connection:
-            rows = connection.execute(
-                """SELECT brand_id FROM brands
+            rows = _BRAND_ROWS.validate_python(
+                connection.execute(
+                    """SELECT brand_id FROM brands
                 WHERE workspace_id=? AND state='active' ORDER BY brand_id""",
-                (actor.workspace_id,),
-            ).fetchall()
-        return tuple(str(row[0]) for row in rows)
+                    (actor.workspace_id,),
+                ).fetchall()
+            )
+        return tuple(row[0] for row in rows if self.repository.brand(actor, row[0]) is not None)
 
     def _soul_memory(self, actor: ActorContext, brand_id: str) -> StoredMemory | None:
+        brand = self.repository.brand(actor, brand_id)
+        if brand is None or brand.state is not BrandState.ACTIVE:
+            return None
         with self.repository.connection() as connection:
-            row = connection.execute(
-                """SELECT document_id FROM memory_documents
-                WHERE workspace_id=? AND kind='soul' AND brand_id=?""",
-                (actor.workspace_id, brand_id),
-            ).fetchone()
-        return None if row is None else self.repository.read_memory(actor, str(row[0]))
+            row = _SOUL_ROW.validate_python(
+                connection.execute(
+                    """SELECT document_id FROM memory_documents
+                WHERE workspace_id=? AND kind='soul' AND brand_id=? AND scope_key=?""",
+                    (actor.workspace_id, brand_id, scope_key(brand.owned_scope)),
+                ).fetchone()
+            )
+        return None if row is None else self.repository.read_memory(actor, row[0])
 
 
 class _ConstraintConflictError(Exception):

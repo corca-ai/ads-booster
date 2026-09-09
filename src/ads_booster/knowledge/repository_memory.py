@@ -16,6 +16,7 @@ from ads_booster.knowledge.contracts import (
     OperationReceipt,
     ScopeKind,
 )
+from ads_booster.knowledge.errors import AccessDeniedError
 from ads_booster.knowledge.file_store import MemoryRevisionTarget, PublishedRevisionFile
 from ads_booster.knowledge.grant_policy import authorize_read
 from ads_booster.knowledge.repository_evidence import insert_memory_entry
@@ -332,7 +333,19 @@ def brand(
                 (actor.workspace_id, brand_id),
             ).fetchone(),
         )
-    return None if row is None else Brand.model_validate_json(_STRING.validate_python(row[0]))
+    if row is None:
+        return None
+    selected = Brand.model_validate_json(_STRING.validate_python(row[0]))
+    if (
+        actor.conversation_scope.kind is not ScopeKind.MEMBER
+        and selected.owned_scope != actor.conversation_scope
+    ):
+        return None
+    try:
+        _ = authorize_read(actor=actor, target_scope=selected.owned_scope, at=datetime.now(UTC))
+    except AccessDeniedError:
+        return None
+    return selected
 
 
 def read_memory(
