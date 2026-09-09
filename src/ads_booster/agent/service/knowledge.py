@@ -618,9 +618,18 @@ class KnowledgeServiceAdapter:
             _ = self.host.close_task(actor, current.task_id, actor.policy_epoch, now)
         task_id = (
             "task."
-            + sha256(f"{run_id}:{action_kind.value}:{brand_id or 'general'}".encode()).hexdigest()[
-                :40
-            ]
+            + contract_sha256(
+                {
+                    "run_id": run_id,
+                    "workspace_id": actor.workspace_id,
+                    "actor_id": actor.actor_id,
+                    "member_id": actor.member_id,
+                    "session_id": actor.session_id,
+                    "policy_epoch": actor.policy_epoch,
+                    "action_kind": action_kind.value,
+                    "brand_id": brand_id,
+                }
+            )[:40]
         )
         brand = None if brand_id is None else self.repository.brand(actor, brand_id)
         task = TaskBinding(
