@@ -155,7 +155,8 @@ def memory_dependents(
                 JOIN memory_heads AS head ON head.workspace_id=reference.workspace_id
                 AND head.document_id=reference.document_id
                 AND head.revision_id=reference.memory_revision_id
-                WHERE reference.workspace_id=? AND reference.upstream_id IN (
+                WHERE reference.workspace_id=? AND reference.upstream_kind='wiki_claim'
+                    AND reference.upstream_id IN (
                     SELECT value FROM json_each(?)
                 )
                 ORDER BY reference.document_id
