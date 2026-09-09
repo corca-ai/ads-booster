@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum, unique
-from typing import Annotated, ClassVar, Final, Literal, Self
+from typing import Annotated, ClassVar, Final, Literal, Self, cast
 
-from pydantic import AfterValidator, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from ads_booster.contracts.agent_run import BoundedId  # noqa: TC001
 from ads_booster.contracts.models import ContractModel, Sha256Digest
+from ads_booster.knowledge.evidence_contracts import EvidenceRef  # noqa: TC001
+from ads_booster.knowledge.operation_enums import SkillOrigin  # noqa: TC001
 
 
 def _require_utc(value: datetime) -> datetime:
@@ -130,6 +139,36 @@ class SelectedSourceRevision(KnowledgeSelectionModel):
     content_sha256: Sha256Digest
 
 
+class SelectedSkillSourceRevision(KnowledgeSelectionModel):
+    """Current source head retained by a selected skill without making it retrieved context."""
+
+    source_id: BoundedId
+    revision_id: BoundedId
+    content_sha256: Sha256Digest
+
+
+class SelectedSkillRevision(KnowledgeSelectionModel):
+    """Metadata-only effective skill selection; full procedure text remains behind skill_get."""
+
+    skill_id: BoundedId
+    revision_id: BoundedId
+    content_sha256: Sha256Digest
+    origin: SkillOrigin
+    protected: bool
+    source_refs: Annotated[tuple[EvidenceRef, ...], Field(max_length=128)] = ()
+    source_revisions: Annotated[tuple[SelectedSkillSourceRevision, ...], Field(max_length=128)] = ()
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        """Omit empty additive source dependencies from existing selected-skill digests."""
+        result = cast("dict[str, object]", handler(self))
+        if not self.source_refs:
+            _ = result.pop("source_refs", None)
+        if not self.source_revisions:
+            _ = result.pop("source_revisions", None)
+        return result
+
+
 class SelectedConstraint(KnowledgeSelectionModel):
     constraint_id: BoundedId
     authority_ref: BoundedId
@@ -186,12 +225,23 @@ class ContextReceipt(KnowledgeSelectionModel):
     selected_source_revisions: Annotated[
         tuple[SelectedSourceRevision, ...], Field(max_length=256)
     ] = ()
+    selected_skill_revisions: Annotated[
+        tuple[SelectedSkillRevision, ...], Field(max_length=256)
+    ] = ()
     canonical_dedup_ids: Annotated[tuple[BoundedId, ...], Field(max_length=512)] = ()
     exclusions: Annotated[tuple[ContextExclusion, ...], Field(max_length=512)] = ()
     summary_pending_ids: Annotated[tuple[BoundedId, ...], Field(max_length=128)] = ()
     token_counts: ContextTokenCounts
     retrieval_status: RetrievalStatus
     created_at: UtcDatetime
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        """Omit an empty additive selection from persisted v1 receipt digests."""
+        result = cast("dict[str, object]", handler(self))
+        if not self.selected_skill_revisions:
+            _ = result.pop("selected_skill_revisions", None)
+        return result
 
 
 __all__ = [
@@ -205,6 +255,8 @@ __all__ = [
     "RetrievalStatus",
     "SelectedConstraint",
     "SelectedMemoryRevision",
+    "SelectedSkillRevision",
+    "SelectedSkillSourceRevision",
     "SelectedSoulExample",
     "SelectedSourceRevision",
     "SelectedWikiClaim",
