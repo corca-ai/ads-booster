@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING, override
 
 import pytest
 
-from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
-from ads_booster.contracts.reasoning import ReasoningDecision
-from ads_booster.contracts.tool_capability import ToolExecutionResult
 from ads_booster.agent.core.registry import CapabilityPolicy, ToolRegistry
 from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
+from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
+from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.contracts.tool_capability import ToolExecutionResult
 from tests.marketing.agent_service.test_application import (
     NOW,
     AskThenStopReasoning,
@@ -124,3 +124,21 @@ def test_unknown_skill_or_version_is_recoverable_without_loading_external_conten
     assert result.output["status"] == "not_found"
     assert "procedure" not in result.output
     assert result.actual_cost_units == 0
+
+
+def test_skill_discovery_query_is_bounded_and_does_not_load_bodies() -> None:
+    configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
+    descriptor = next(
+        d for d in configured.descriptors(now=NOW) if d.capability_id == "skills.list"
+    )
+    result = configured.adapters()["skills.list"].execute(
+        _invocation(descriptor, {"query": "marketing.copy", "limit": 1}), descriptor
+    )
+    assert isinstance(result, ToolExecutionResult)
+    entries = result.output["skills"]
+    assert isinstance(entries, list)
+    assert len(entries) == 1
+    assert isinstance(entries[0], dict)
+    assert entries[0]["skill_id"] == "marketing.copy"
+    assert "procedure" not in entries[0]
+    assert "next_offset" in result.output

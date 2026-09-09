@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, TypeAdapter
 
+from ads_booster.agent.service.skills import SKILLS
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.models import ContractModel
-from ads_booster.agent.service.skills import SKILLS
+from ads_booster.knowledge.skill_discovery import rank_skills
 from ads_booster.tools.compatibility import DelegatedToolResult
 from ads_booster.tools.descriptors import research_descriptor
 from ads_booster.transport.json_types import JsonObject
@@ -25,6 +26,10 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 class ListSkillsRequest(ContractModel):
     """List compact discovery metadata; procedure bodies are loaded separately."""
 
+    query: str = Field(default="", max_length=2000)
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
 
 class ReadSkillRequest(ContractModel):
     skill_id: str = Field(min_length=1, max_length=160)
@@ -34,7 +39,9 @@ class ReadSkillRequest(ContractModel):
 def execute(invocation: ToolInvocation, descriptor: ToolDescriptor) -> DelegatedToolResult:
     """Never load caller-selected files, URLs, credentials, or another Run's context."""
     if descriptor.capability_id == "skills.list":
-        _ = ListSkillsRequest.model_validate(invocation.input)
+        request = ListSkillsRequest.model_validate(invocation.input)
+        matches = rank_skills(SKILLS, request.query, lambda s: (s.skill_id, s.purpose))
+        end = request.offset + request.limit
         output: JsonObject = {
             "schema_version": "trace.skill-index.v1",
             "skills": [
@@ -44,8 +51,10 @@ def execute(invocation: ToolInvocation, descriptor: ToolDescriptor) -> Delegated
                     "purpose": skill.purpose,
                     "required_capabilities": list(skill.required_capabilities),
                 }
-                for skill in SKILLS
+                for skill in matches[request.offset : end]
             ],
+            "total_matches": len(matches),
+            "next_offset": end if end < len(matches) else None,
             "note": "Read a relevant skill's exact version. This index grants no tools.",
         }
     elif descriptor.capability_id == "skills.read":
@@ -80,7 +89,8 @@ def execute(invocation: ToolInvocation, descriptor: ToolDescriptor) -> Delegated
                 }
             )
     else:
-        raise ValueError("skill_capability_mismatch")
+        message = "skill_capability_mismatch"
+        raise ValueError(message)
     return DelegatedToolResult(disposition="no_effect", actual_cost_units=0, output=output)
 
 

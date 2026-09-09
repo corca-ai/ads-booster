@@ -203,6 +203,9 @@ class SkillListInput(KnowledgeContractModel):
     schema_version: Literal["knowledge.tool.skill-list.v1"] = Field(alias="schema")
     applicability: AppliesTo | None = None
     include_protected: bool = True
+    query: Annotated[str, Field(max_length=2000)] = ""
+    limit: Annotated[int, Field(ge=1, le=100)] = 50
+    offset: Annotated[int, Field(ge=0)] = 0
 
 
 class SkillGetInput(KnowledgeContractModel):
@@ -276,6 +279,8 @@ class SkillCatalogEntry(KnowledgeContractModel):
 class SkillListData(KnowledgeContractModel):
     kind: Literal["skill_list"] = "skill_list"
     entries: Annotated[tuple[SkillCatalogEntry, ...], Field(max_length=512)]
+    total_matches: Annotated[int, Field(ge=0)] = 0
+    next_offset: Annotated[int, Field(ge=0)] | None = None
 
 
 class SkillData(KnowledgeContractModel):

@@ -19,6 +19,7 @@ from ads_booster.knowledge.repository import MembershipRole
 from ads_booster.knowledge.skill_contracts import (
     SkillData,
     SkillGetInput,
+    SkillListData,
     SkillOperation,
 )
 from ads_booster.knowledge.skills import KnowledgeSkills
@@ -488,3 +489,66 @@ def test_skill_selection_tracks_exact_source_currentness(
     assert builtin is not None
     assert not builtin.source_refs
     assert catalog.is_current(reader, builtin)
+
+
+def test_scoped_discovery_finds_learned_revision_and_pages_builtin_metadata(
+    curation_input: CurationInput,
+) -> None:
+    repository, processor, job, _, _ = curation_input
+    context = processor.build_curation_work(job).trusted_context
+    host = ToolHost(repository)
+    result = host.execute(
+        "skill_apply",
+        {
+            "schema": "knowledge.tool.skill-apply.v1",
+            "operation_id": "operation.discovery",
+            "operations": [
+                {
+                    "kind": "create",
+                    "skill_id": "learned.orchid",
+                    "draft": {
+                        "description": "난초 캠페인 검수 절차",
+                        "procedure": "Read evidence before drafting.",
+                        "required_capability_ids": [],
+                    },
+                    "reason": "Keep the current source procedure.",
+                }
+            ],
+        },
+        context,
+    )
+    assert result.status is ToolResultStatus.APPLIED
+    found = host.execute(
+        "skill_list",
+        {"schema": "knowledge.tool.skill-list.v1", "query": "난초", "limit": 1},
+        context,
+    )
+    assert isinstance(found.data, SkillListData)
+    assert found.data.total_matches == 1
+    assert found.data.next_offset is None
+    reference = found.data.entries[0].reference
+    assert reference.skill_id == "learned.orchid"
+    loaded = host.execute(
+        "skill_get",
+        {
+            "schema": "knowledge.tool.skill-get.v1",
+            "skill_id": reference.skill_id,
+            "revision_id": reference.revision_id,
+        },
+        context,
+    )
+    assert isinstance(loaded.data, SkillData)
+    assert loaded.data.record.digest == reference.content_sha256
+    first = host.execute(
+        "skill_list", {"schema": "knowledge.tool.skill-list.v1", "limit": 1}, context
+    )
+    assert isinstance(first.data, SkillListData)
+    assert first.data.next_offset == 1
+    second = host.execute(
+        "skill_list",
+        {"schema": "knowledge.tool.skill-list.v1", "limit": 1, "offset": 1},
+        context,
+    )
+    assert isinstance(second.data, SkillListData)
+    assert first.data.entries[0].reference != second.data.entries[0].reference
+    assert first.data.total_matches == second.data.total_matches
