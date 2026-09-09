@@ -92,6 +92,34 @@ _BASE_SKILLS = (
 
 _MARKETING_SKILLS = (
     MarketingSkill(
+        skill_id="marketing.skill_learning",
+        version="1",
+        purpose="검증된 마케팅 작업을 재사용할 스킬로 만들거나 현재 스킬을 개선한다.",
+        required_capabilities=("skill_list", "skill_get", "skill_apply"),
+        success_criteria=(
+            "적용 범위·절차·실패 조건·검증 방법이 근거 있는 revision으로 저장된다.",
+            "저장 receipt와 정확한 revision을 다시 읽어 확인한다.",
+        ),
+        procedure=(
+            "1. 현재 요청이 재사용 절차 저장인지, 이번 작업만의 수정인지 확인한다. "
+            "이번 작업만의 지시를 팀 전체 규칙으로 바꾸지 않는다.\n"
+            "2. skill_list의 query로 같은 목적의 스킬을 찾고 skill_get으로 반환된 "
+            "skill_id와 revision_id를 읽는다. 검색에 없으면 표현을 넓히거나 페이지를 탐색한다.\n"
+            "3. 성공을 관찰한 도구 조합과 사용자에게 확인된 절차만 일반화한다. "
+            "description에는 사용할 상황을, procedure에는 입력·단계·중단 조건을, "
+            "pitfalls에는 실제 실패를, verification에는 결과 확인 방법을 적는다. "
+            "applicability와 required_capability_ids를 명시하고 제품 사실·인증정보는 넣지 않는다.\n"
+            "4. skill_apply의 현재 스키마에 맞는 semantic draft로 create 또는 update한다. "
+            "update는 읽은 expected_revision_id에 묶는다. 출처·digest·작성자·시각을 꾸미지 않는다. "
+            "충돌이면 최신 내용을 다시 읽고 차이를 판단한다. 무조건 재시도하지 않는다. "
+            "기본 스킬 변경은 사용자가 현재 요청에서 정확한 스킬을 지정한 경우에만 시도한다.\n"
+            "5. 적용 receipt와 skill_get readback을 확인한 뒤 저장 결과를 알린다. "
+            "다른 작업에서 재사용할 때에도 필요한 도구·권한·출처의 현재 유효성을 확인한다. "
+            "스킬 저장은 실행 도구 등록이나 외부 게시 승인이 아니다. "
+            "새 실행 도구가 필요하면 입력·출력·효과·권한·검증 사례를 갖춘 구현 제안을 만든다."
+        ),
+    ),
+    MarketingSkill(
         skill_id="marketing.context",
         version="1",
         purpose="팀 위키·기억·이전 근거를 조회해 현재 마케팅 요청에 필요한 맥락을 복원한다.",
@@ -230,12 +258,14 @@ SKILLS = (*_BASE_SKILLS, *_MARKETING_SKILLS, *CREATIVE_SKILLS)
 
 class MarketingSkillCatalog:
     def __init__(self, registry: ToolRegistry) -> None:
+        """Bind readiness to the installed registry."""
         self._registry: ToolRegistry = registry
 
     def get(self, skill_id: str) -> MarketingSkill:
         skill = next((item for item in SKILLS if item.skill_id == skill_id), None)
         if skill is None:
-            raise ValueError("agent_skill_not_found")
+            message = "agent_skill_not_found"
+            raise ValueError(message)
         return skill
 
     def list(self, *, now: datetime) -> list[JsonObject]:
@@ -269,7 +299,8 @@ class MarketingSkillCatalog:
         skill = self.get(skill_id)
         view = next(item for item in self.list(now=now) if item["skill_id"] == skill_id)
         if view["ready"] is not True:
-            raise ValueError("agent_skill_not_ready")
+            message = "agent_skill_not_ready"
+            raise ValueError(message)
         return skill
 
 
