@@ -173,7 +173,9 @@ external note references are rechecked before display or answer. Task-only overl
 global change and stay outside this guard.
 
 The knowledge owner derives the full built-in skill catalog as protected records and stores only
-source-bound learned revisions or explicit foreground overrides. Background learning cannot edit a
+source-bound learned revisions or explicit foreground overrides. Every `skill_apply` operation,
+including a complete strict record, must cite only evidence admitted to its trusted invocation:
+the current foreground event or the background source capabilities. Background learning cannot edit a
 built-in or override. If a built-in release digest changes, the current built-in is the effective
 fallback and the override remains pending review. Normal learning emits no Slack notification. An
 unresolved same-applicability conflict creates one durable question in the original thread; the

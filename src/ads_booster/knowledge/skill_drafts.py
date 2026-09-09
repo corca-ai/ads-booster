@@ -41,12 +41,16 @@ def normalize_skill_operations(
     context: TrustedInvocationContext,
     canonical_operation_id: str,
 ) -> tuple[SkillOperation, ...]:
-    """Normalize semantic drafts while leaving strict record payloads unchanged."""
+    """Bind all mutations to admitted evidence and normalize semantic drafts."""
     source_refs: tuple[EvidenceRef, ...] | None = None
     normalized: list[SkillOperation] = []
     for operation in operations:
         match operation:
             case SkillOperation():
+                if source_refs is None:
+                    source_refs = _trusted_source_refs(dependencies, context)
+                if any(reference not in source_refs for reference in operation.source_refs):
+                    _reject("skill_operation_source_mismatch", operation.skill_id)
                 normalized.append(operation)
             case SkillDraftOperation():
                 if source_refs is None:
