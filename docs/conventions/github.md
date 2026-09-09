@@ -254,3 +254,20 @@ observed installed result. Do not close deferred scope.
 - [ ] Merge commit is selected to preserve individual commits, or the user explicitly requested
   Squash Merge for this Pull Request.
 - [ ] The applicable post-merge server verification path is identified.
+
+## On-prem package releases
+
+`Release on-prem agent` publishes a new stable `vX.Y.Z` version after the exact main SHA passes
+`Verify on-prem agent` on push. Release intent is the reviewed version bump in `pyproject.toml`
+and `uv.lock`. Unchanged published versions are skipped; published tags/assets are never rewritten.
+Only the current main SHA is eligible. A stale completion defers to the newer main check.
+
+The workflow builds the wheel and sdist, smoke-tests the wheel in a fresh environment, and uploads
+both with `SOURCE_COMMIT` and `SHA256SUMS` to a draft before publication. If upload/publication fails,
+rerun the workflow on the same main SHA; only a draft with that exact target can resume. A conflicting
+tag/draft fails closed. If main advanced after a failed draft, inspect it and resolve the draft
+explicitly before retrying; do not retarget published history.
+
+For recovery, run `gh workflow run release-on-prem.yml --ref main`; it still requires successful
+push verification of that exact SHA. The workflow has no server credentials and does not activate
+an installation. Verify server health separately through the post-merge operator path above.

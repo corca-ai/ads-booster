@@ -1,0 +1,119 @@
+name: Release on-prem agent
+
+on:
+  workflow_run:
+    workflows: [Verify on-prem agent]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-on-prem
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Require verified main and an unpublished version
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          main_sha=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          if [[ "$main_sha" != "$RELEASE_SHA" ]]; then
+            echo 'Main has advanced; the newer verification run owns publication.'
+            exit 0
+          fi
+          gh api "repos/$GH_REPO/actions/workflows/verify-agent-server.yml/runs?head_sha=$RELEASE_SHA&branch=main&event=push&status=success" > "$RUNNER_TEMP/verification.json"
+          jq -e --arg sha "$RELEASE_SHA" '.workflow_runs | any(.head_sha == $sha and .conclusion == "success")' "$RUNNER_TEMP/verification.json"
+          version=$(uv run --no-project --python 3.14 python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[]' | jq -s . > "$RUNNER_TEMP/releases.json"
+          existing=$(jq -c --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$RUNNER_TEMP/releases.json")
+          if [[ -n "$existing" ]]; then
+            if [[ "$(jq -r .draft <<< "$existing")" == false ]]; then
+              git merge-base --is-ancestor "$tag" "$RELEASE_SHA"
+              echo "$tag is already published; bump pyproject.toml and uv.lock for a new release."
+              exit 0
+            fi
+            test "$(jq -r .target_commitish <<< "$existing")" = "$RELEASE_SHA"
+          fi
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            test "$(git rev-parse "$tag^{commit}")" = "$RELEASE_SHA"
+          fi
+          latest=$(jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' "$RUNNER_TEMP/releases.json" | sort -V | tail -1)
+          if [[ -n "$latest" ]]; then
+            test "$(printf '%s\n' "$latest" "$tag" | sort -V | tail -1)" = "$tag"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo 'publish=true' >> "$GITHUB_OUTPUT"
+      - name: Build release distributions
+        if: steps.candidate.outputs.publish == 'true'
+        run: |
+          uv lock --check
+          uv build --out-dir dist
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/requirements.txt"
+      - name: Smoke test the installed release wheel
+        if: steps.candidate.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python 3.14 "$RUNNER_TEMP/release-installed"
+          uv pip install --python "$RUNNER_TEMP/release-installed/bin/python" -r "$RUNNER_TEMP/requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/release-installed/bin/python" --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          release_cli="$RUNNER_TEMP/release-installed/bin/trace-marketing"
+          "$release_cli" version --json
+          "$release_cli" --help
+          "$release_cli" server --help
+          "$release_cli" service doctor
+      - name: Publish verified distributions
+        if: steps.candidate.outputs.publish == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$RELEASE_SHA" > dist/SOURCE_COMMIT
+          (cd dist && sha256sum ./*.whl ./*.tar.gz SOURCE_COMMIT > SHA256SUMS)
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF_NOTES
+          Trace on-prem agent package release.
+
+          Verified source: $RELEASE_SHA
+          Validation: exact main SHA passed Verify on-prem agent; release wheel passed fresh-install CLI smoke checks.
+          Assets: Python wheel, source distribution, SOURCE_COMMIT and SHA256SUMS.
+
+          Server installation and automatic updates continue to follow verified main via install-server.sh and trace-marketing server update. Publishing this release does not prove server activation. The package name remains trace-appium-capture for compatibility; Mac/Appium execution is retired.
+          EOF_NOTES
+          existing=$(jq -c --arg tag "$RELEASE_TAG" '.[] | select(.tag_name == $tag)' "$RUNNER_TEMP/releases.json")
+          if [[ -z "$existing" ]]; then
+            gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" --title "$RELEASE_TAG — Trace on-prem agent" --draft --generate-notes --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz dist/SOURCE_COMMIT dist/SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          gh release view "$RELEASE_TAG" --json url,tagName,targetCommitish,assets
