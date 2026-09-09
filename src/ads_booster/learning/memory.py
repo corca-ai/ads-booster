@@ -37,6 +37,7 @@ _MAX_NOTES = 24
 _MAX_CHARS = 24000
 _MAX_QUERY = 8000
 _ROWS = TypeAdapter(list[tuple[str]])
+_OPTIONAL_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,12 +257,119 @@ class SQLiteMemoryStore:
                 ),
                 query_sha256=contract_sha256({"query": query}),
                 selected_at=now,
+                actor_id=access.actor_id,
             )
+            receipt = receipt.model_copy(update={"selection_sha256": receipt.canonical_sha256()})
             _ = db.execute(
                 "INSERT INTO agent_memory_selections VALUES (?,?)",
                 (receipt.selection_id, receipt.model_dump_json()),
             )
             return MemorySelection(notes=tuple(selected), receipt=receipt)
+
+    def latest_selection(
+        self,
+        access: MemoryAccess,
+        *,
+        run_id: str,
+        now: datetime,
+    ) -> MemorySelection | None:
+        """Return the newest server selection for this exact run, scope, and actor."""
+        require_aware(now)
+        with self.connect() as db:
+            rows = _ROWS.validate_python(
+                db.execute("SELECT data_json FROM agent_memory_selections").fetchall()
+            )
+        receipts = tuple(
+            receipt
+            for row in rows
+            for receipt in (MemorySelectionReceipt.model_validate_json(row[0]),)
+            if receipt.run_id == run_id
+            and receipt.scope == access.scope
+            and receipt.actor_id == access.actor_id
+        )
+        if not receipts:
+            return None
+        receipt = max(receipts, key=lambda item: (item.selected_at, item.selection_id))
+        return self.current_selection(access, receipt, now=now)
+
+    def current_selection(
+        self,
+        access: MemoryAccess,
+        receipt: MemorySelectionReceipt,
+        *,
+        now: datetime,
+    ) -> MemorySelection:
+        """Rebuild a persisted selection only while every approved reference stays current."""
+        require_aware(now)
+        if (
+            receipt.scope != access.scope
+            or receipt.actor_id != access.actor_id
+            or receipt.selection_sha256 is None
+            or receipt.selection_sha256 != receipt.canonical_sha256()
+        ):
+            message = "memory_selection_binding_changed"
+            raise ValueError(message)
+        with self.connect() as db:
+            stored_row = _ROWS.validate_python(
+                db.execute(
+                    "SELECT data_json FROM agent_memory_selections WHERE selection_id=?",
+                    (receipt.selection_id,),
+                ).fetchall()
+            )
+            if len(stored_row) != 1:
+                message = "memory_selection_not_found"
+                raise ValueError(message)
+            stored = MemorySelectionReceipt.model_validate_json(stored_row[0][0])
+            if stored != receipt:
+                message = "memory_selection_binding_changed"
+                raise ValueError(message)
+            notes: list[MemoryNote] = []
+            for reference in receipt.selected:
+                note = self._get(db, reference.note_id, access)
+                retired = _OPTIONAL_STRING_ROW.validate_python(
+                    db.execute(
+                        "SELECT successor FROM agent_memory_retirements WHERE note_id=?",
+                        (reference.note_id,),
+                    ).fetchone()
+                )
+                if (
+                    note is None
+                    or note.stage != "approved"
+                    or retired is not None
+                    or not note.created_at <= now < note.expires_at
+                    or not work_learning_source_is_current(db, note, access)
+                    or not performance_learning_source_is_current(db, note, access)
+                    or contract_sha256(note) != reference.sha256
+                ):
+                    message = "memory_selection_not_current"
+                    raise ValueError(message)
+                notes.append(note)
+        return MemorySelection(notes=tuple(notes), receipt=receipt)
+
+    def references_are_current(
+        self,
+        access: MemoryAccess,
+        receipt: MemorySelectionReceipt,
+        references: tuple[MemoryReference, ...],
+        *,
+        now: datetime,
+    ) -> bool:
+        """Recheck conflict-question references for a current actor in the same scope."""
+        if (
+            receipt.scope != access.scope
+            or receipt.actor_id is None
+            or receipt.selection_sha256 != receipt.canonical_sha256()
+        ):
+            return False
+        if access.private and receipt.actor_id != access.actor_id:
+            return False
+        try:
+            original_access = access.model_copy(update={"actor_id": receipt.actor_id})
+            current = self.current_selection(original_access, receipt, now=now)
+        except ValueError:
+            return False
+        selected = {item.note_id: item for item in current.receipt.selected}
+        return all(selected.get(item.note_id) == item for item in references)
 
     @staticmethod
     def _visible(db: sqlite3.Connection, access: MemoryAccess) -> list[MemoryNote]:
