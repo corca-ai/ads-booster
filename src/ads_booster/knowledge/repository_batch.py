@@ -250,6 +250,7 @@ def collecting_curation_batch(
         if (
             batch.read_grant_sha256 == read_grant_sha256
             and batch.write_capability_sha256 == write_capability_sha256
+            and _submitter_matches(actor, batch)
         ):
             _require_batch_binding(actor, batch, actor.authenticated_at)
             return batch
@@ -300,6 +301,8 @@ def ready_curation_batch(
     repository: KnowledgeRepository,
     actor: ActorContext,
     now: datetime,
+    *,
+    batch_id: str | None = None,
 ) -> CurationBatch | None:
     with repository.connection() as connection:
         _ = connection.execute("BEGIN IMMEDIATE")
@@ -313,6 +316,7 @@ def ready_curation_batch(
                         state='collecting' AND policy_version!=? AND batch_deadline<=?
                     )
                 )
+                AND (? IS NULL OR batch_id=?)
                 ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,
                     batch_deadline,batch_id
                 LIMIT 1
@@ -322,6 +326,8 @@ def ready_curation_batch(
                     scope_key(actor.conversation_scope),
                     LEARNING_POLICY_VERSION,
                     now.isoformat(),
+                    batch_id,
+                    batch_id,
                 ),
             ).fetchone()
         )
@@ -467,7 +473,11 @@ def _require_batch_binding(
     batch: CurationBatch,
     at: datetime,
 ) -> None:
-    if batch.workspace_id != actor.workspace_id or batch.scope != actor.conversation_scope:
+    if (
+        batch.workspace_id != actor.workspace_id
+        or batch.scope != actor.conversation_scope
+        or not _submitter_matches(actor, batch)
+    ):
         conflict("curation_batch_scope_conflict", batch.batch_id)
     read_grant = authorize_read(actor=actor, target_scope=batch.scope, at=at)
     write_grant = authorize_write(actor=actor, target_scope=batch.scope, at=at)
@@ -475,6 +485,16 @@ def _require_batch_binding(
         conflict("curation_batch_read_grant_conflict", batch.batch_id)
     if batch.write_capability_sha256 != contract_sha256(write_grant):
         conflict("curation_batch_write_capability_conflict", batch.batch_id)
+
+
+def _submitter_matches(actor: ActorContext, batch: CurationBatch) -> bool:
+    submitter = batch.submitter_actor
+    return submitter is None or (
+        actor.actor_id == submitter.actor_id
+        and actor.member_id == submitter.member_id
+        and actor.session_id == submitter.session_id
+        and actor.policy_epoch == submitter.policy_epoch
+    )
 
 
 def _same_batch_configuration(left: CurationBatch, right: CurationBatch) -> bool:
@@ -629,11 +649,13 @@ def _finish_job(
     receipt: EventReceipt,
 ) -> None:
     job = _job_for_batch_event(connection, batch_id, receipt.event_id)
+    reason_code: str | None = None
     match receipt.status:
         case OperationStatus.PENDING:
             state = JobState.AWAITING_ANSWER
         case OperationStatus.FAILED:
             state = JobState.FAILED
+            reason_code = receipt.reason[:160] if receipt.reason else "curation_failed"
         case (
             OperationStatus.APPLIED
             | OperationStatus.REPLAYED
@@ -641,14 +663,15 @@ def _finish_job(
             | OperationStatus.REJECTED
         ):
             state = JobState.COMPLETED
-    finished = job.model_copy(update={"state": state, "reason_code": None})
+    finished = job.model_copy(update={"state": state, "reason_code": reason_code})
     cursor = connection.execute(
         """
-        UPDATE jobs SET state=?,reason_code=NULL,result_sha256=?,job_json=?
+        UPDATE jobs SET state=?,reason_code=?,result_sha256=?,job_json=?
         WHERE job_id=? AND batch_id=? AND state='running'
         """,
         (
             state.value,
+            reason_code,
             contract_sha256(receipt),
             finished.model_dump_json(),
             job.job_id,

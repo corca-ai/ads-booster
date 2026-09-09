@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
@@ -13,7 +14,6 @@ from ads_booster.knowledge.scope_contracts import AccessScope
 
 if TYPE_CHECKING:
     import sqlite3
-    from datetime import datetime
 
     from ads_booster.contracts.knowledge_selection import ContextReceipt, KnowledgeActionKind
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
@@ -26,6 +26,7 @@ type ReceiptDependency = tuple[str, str, str, str | None]
 _OPTIONAL_INTEGER_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
 _OPTIONAL_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 _STRING_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+_STRING_PAIR_ROWS: TypeAdapter[list[tuple[str, str]]] = TypeAdapter(list[tuple[str, str]])
 _STRING_TRIPLE_ROWS: TypeAdapter[list[tuple[str, str, str]]] = TypeAdapter(
     list[tuple[str, str, str]]
 )
@@ -81,14 +82,29 @@ def memory_document_ids(
     actor: ActorContext,
 ) -> tuple[str, ...]:
     with repository.connection() as connection:
-        rows = _STRING_ROWS.validate_python(
+        rows = _STRING_PAIR_ROWS.validate_python(
             connection.execute(
-                """SELECT document_id FROM memory_documents
-                WHERE workspace_id=? ORDER BY kind,document_id""",
+                """SELECT document_id,scope.scope_json FROM memory_documents AS document
+                JOIN access_scopes AS scope USING(scope_key)
+                WHERE document.workspace_id=?
+                ORDER BY CASE document.kind WHEN 'user' THEN 0 ELSE 1 END,
+                    document.kind,document_id""",
                 (actor.workspace_id,),
             ).fetchall(),
         )
-    return tuple(row[0] for row in rows)
+    return tuple(row[0] for row in rows if _scope_readable(actor, row[1]))
+
+
+def _scope_readable(actor: ActorContext, scope_json: str) -> bool:
+    try:
+        _ = authorize_read(
+            actor=actor,
+            target_scope=AccessScope.model_validate_json(scope_json),
+            at=datetime.now(UTC),
+        )
+    except KnowledgePolicyError:
+        return False
+    return True
 
 
 def applicable_constraints(
@@ -190,7 +206,11 @@ def context_receipt_is_current(
     actor: ActorContext,
     receipt: ContextReceipt,
 ) -> bool:
-    if current_policy_epoch(repository, actor.workspace_id) != actor.policy_epoch:
+    if (
+        receipt.team_id != actor.workspace_id
+        or receipt.scoped_actor_ref != actor.actor_id
+        or current_policy_epoch(repository, actor.workspace_id) != actor.policy_epoch
+    ):
         return False
     task = active_task_binding(
         repository,
@@ -202,27 +222,18 @@ def context_receipt_is_current(
     if task is None or task.task_id != receipt.task_ref:
         return False
     with repository.connection() as connection:
-        stored_current = _stored_dependencies_current(connection, repository, actor, receipt)
+        stored_current = (
+            _memory_dependencies_current(connection, actor, receipt)
+            and _wiki_dependencies_current(connection, repository, actor, receipt)
+            and _source_dependencies_current(connection, actor, receipt)
+            and _constraint_dependencies_current(connection, actor, receipt)
+            and _soul_dependency_current(connection, actor, receipt)
+            and _skill_source_dependencies_current(connection, actor, receipt)
+        )
     if not stored_current:
         return False
     skills = KnowledgeSkills(repository)
     return all(skills.is_current(actor, selected) for selected in receipt.selected_skill_revisions)
-
-
-def _stored_dependencies_current(
-    connection: sqlite3.Connection,
-    repository: SqliteKnowledgeRepository,
-    actor: ActorContext,
-    receipt: ContextReceipt,
-) -> bool:
-    return (
-        _memory_dependencies_current(connection, actor, receipt)
-        and _wiki_dependencies_current(connection, repository, actor, receipt)
-        and _source_dependencies_current(connection, actor, receipt)
-        and _skill_source_dependencies_current(connection, actor, receipt)
-        and _constraint_dependencies_current(connection, actor, receipt)
-        and _soul_dependency_current(connection, actor, receipt)
-    )
 
 
 def _memory_dependencies_current(
@@ -230,17 +241,19 @@ def _memory_dependencies_current(
     actor: ActorContext,
     receipt: ContextReceipt,
 ) -> bool:
-    return all(
-        _OPTIONAL_INTEGER_ROW.validate_python(
+    for selected in receipt.selected_memory_revisions:
+        row = _OPTIONAL_STRING_ROW.validate_python(
             connection.execute(
-                """SELECT 1 FROM memory_heads WHERE workspace_id=? AND document_id=?
-                AND revision_id=?""",
+                """SELECT scope.scope_json FROM memory_heads AS head
+                JOIN memory_documents AS document USING(workspace_id,document_id)
+                JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
+                WHERE head.workspace_id=? AND head.document_id=? AND head.revision_id=?""",
                 (actor.workspace_id, selected.document_id, selected.revision_id),
             ).fetchone()
         )
-        is not None
-        for selected in receipt.selected_memory_revisions
-    )
+        if row is None or not _scope_readable(actor, row[0]):
+            return False
+    return True
 
 
 def _wiki_dependencies_current(
@@ -249,21 +262,24 @@ def _wiki_dependencies_current(
     actor: ActorContext,
     receipt: ContextReceipt,
 ) -> bool:
-    return all(
-        _OPTIONAL_INTEGER_ROW.validate_python(
+    for selected in receipt.selected_wiki_claims:
+        row = _OPTIONAL_STRING_ROW.validate_python(
             connection.execute(
-                """SELECT 1 FROM knowledge_heads WHERE workspace_id=? AND page_id=?
-                AND revision_id=?""",
+                """SELECT scope.scope_json FROM knowledge_heads AS head
+                JOIN wiki_pages AS page USING(workspace_id,page_id)
+                JOIN access_scopes AS scope ON scope.scope_key=page.scope_key
+                WHERE head.workspace_id=? AND head.page_id=? AND head.revision_id=?""",
                 (actor.workspace_id, selected.page_id, selected.revision_id),
             ).fetchone()
         )
-        is not None
-        and all(
-            repository.claim_dependency_state(actor, claim_id, selected.revision_id) is None
+        if row is None or not _scope_readable(actor, row[0]):
+            return False
+        if any(
+            repository.claim_dependency_state(actor, claim_id, selected.revision_id) is not None
             for claim_id in selected.claim_ids
-        )
-        for selected in receipt.selected_wiki_claims
-    )
+        ):
+            return False
+    return True
 
 
 def _source_dependencies_current(
@@ -271,11 +287,12 @@ def _source_dependencies_current(
     actor: ActorContext,
     receipt: ContextReceipt,
 ) -> bool:
-    return all(
-        _OPTIONAL_INTEGER_ROW.validate_python(
+    for selected in receipt.selected_source_revisions:
+        row = _OPTIONAL_STRING_ROW.validate_python(
             connection.execute(
-                """SELECT 1 FROM source_heads AS head
+                """SELECT scope.scope_json FROM source_heads AS head
                 JOIN sources AS source USING(workspace_id,source_id)
+                JOIN access_scopes AS scope ON scope.scope_key=source.scope_key
                 WHERE head.workspace_id=? AND head.source_id=? AND head.revision_id=?
                 AND source.visibility='searchable'
                 AND NOT EXISTS (
@@ -286,9 +303,55 @@ def _source_dependencies_current(
                 (actor.workspace_id, selected.source_id, selected.revision_id),
             ).fetchone()
         )
-        is not None
-        for selected in receipt.selected_source_revisions
-    )
+        if row is None or not _scope_readable(actor, row[0]):
+            return False
+    return True
+
+
+def _constraint_dependencies_current(
+    connection: sqlite3.Connection,
+    actor: ActorContext,
+    receipt: ContextReceipt,
+) -> bool:
+    for selected in receipt.required_constraints:
+        row = _OPTIONAL_STRING_ROW.validate_python(
+            connection.execute(
+                """SELECT scope.scope_json FROM constraint_bindings AS binding
+                JOIN memory_heads AS head ON head.workspace_id=binding.workspace_id
+                    AND head.document_id=binding.document_id
+                    AND head.revision_id=binding.memory_revision_id
+                JOIN memory_documents AS document ON document.workspace_id=head.workspace_id
+                    AND document.document_id=head.document_id
+                JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
+                WHERE binding.workspace_id=? AND binding.constraint_id=?
+                AND binding.memory_revision_id=?""",
+                (actor.workspace_id, selected.constraint_id, selected.revision_id),
+            ).fetchone()
+        )
+        if row is None or not _scope_readable(actor, row[0]):
+            return False
+    return True
+
+
+def _soul_dependency_current(
+    connection: sqlite3.Connection,
+    actor: ActorContext,
+    receipt: ContextReceipt,
+) -> bool:
+    if receipt.soul_revision_id is not None:
+        row = _OPTIONAL_STRING_ROW.validate_python(
+            connection.execute(
+                """SELECT scope.scope_json FROM memory_heads AS head
+                JOIN memory_documents AS document USING(workspace_id,document_id)
+                JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
+                WHERE head.workspace_id=? AND document.kind='soul'
+                AND document.brand_id IS ? AND head.revision_id=?""",
+                (actor.workspace_id, receipt.resolved_brand_ref, receipt.soul_revision_id),
+            ).fetchone()
+        )
+        if row is None or not _scope_readable(actor, row[0]):
+            return False
+    return True
 
 
 def _skill_source_dependencies_current(
@@ -315,49 +378,6 @@ def _skill_source_dependencies_current(
         is not None
         for selected_skill in receipt.selected_skill_revisions
         for source in selected_skill.source_revisions
-    )
-
-
-def _constraint_dependencies_current(
-    connection: sqlite3.Connection,
-    actor: ActorContext,
-    receipt: ContextReceipt,
-) -> bool:
-    return all(
-        _OPTIONAL_INTEGER_ROW.validate_python(
-            connection.execute(
-                """SELECT 1 FROM constraint_bindings AS binding
-                JOIN memory_heads AS head ON head.workspace_id=binding.workspace_id
-                    AND head.document_id=binding.document_id
-                    AND head.revision_id=binding.memory_revision_id
-                WHERE binding.workspace_id=? AND binding.constraint_id=?
-                AND binding.memory_revision_id=?""",
-                (actor.workspace_id, selected.constraint_id, selected.revision_id),
-            ).fetchone()
-        )
-        is not None
-        for selected in receipt.required_constraints
-    )
-
-
-def _soul_dependency_current(
-    connection: sqlite3.Connection,
-    actor: ActorContext,
-    receipt: ContextReceipt,
-) -> bool:
-    if receipt.soul_revision_id is None:
-        return True
-    return (
-        _OPTIONAL_INTEGER_ROW.validate_python(
-            connection.execute(
-                """SELECT 1 FROM memory_heads AS head
-                JOIN memory_documents AS document USING(workspace_id,document_id)
-                WHERE head.workspace_id=? AND document.kind='soul'
-                AND document.brand_id IS ? AND head.revision_id=?""",
-                (actor.workspace_id, receipt.resolved_brand_ref, receipt.soul_revision_id),
-            ).fetchone()
-        )
-        is not None
     )
 
 

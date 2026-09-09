@@ -98,8 +98,10 @@ class RepositoryEvidenceResolver:
     def _resolve(self, actor: ActorContext, ref: EvidenceRef) -> EvidenceRecord:
         resolved = self._resolve_value(actor, ref)
         resolved_value = cast("ResolvedEvidence | str", resolved)
+        canonical_event: ConversationEvent | None = None
         match resolved_value:
             case ConversationEvent():
+                canonical_event = resolved_value
                 authority = (
                     InstructionAuthority.AUTHORIZED_USER
                     if resolved_value.role is ConversationRole.USER
@@ -156,7 +158,7 @@ class RepositoryEvidenceResolver:
         )
         if actual != ref:
             raise ChangeValidationError("evidence_pointer_mismatch", ref.evidence_id)
-        return EvidenceRecord(ref=actual, quote=quote)
+        return EvidenceRecord(ref=actual, quote=quote, canonical_event=canonical_event)
 
     def _wiki_claim_record(self, actor: ActorContext, entry: MemoryEntry) -> WikiClaimRecord:
         wiki_ref = entry.wiki_ref

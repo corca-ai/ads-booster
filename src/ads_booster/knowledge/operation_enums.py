@@ -155,6 +155,7 @@ class CurationTarget(StrEnum):
     TEAM = "team"
     SOUL = "soul"
     CORE = "core"
+    USER = "user"
     DAILY = "daily"
     WIKI = "wiki"
 

@@ -218,6 +218,7 @@ class SlackEvents:
             access = MemoryAccess(
                 scope=MemoryScope(
                     workspace_id=installation.tenant_id,
+                    channel_id=conversation.channel_id,
                     product_id="trace",
                     work_id=run.run_id,
                     member_id=conversation.owner_id if conversation.private else "",
@@ -455,6 +456,7 @@ class SlackEvents:
                 event_kind=event_kind,
                 identity=identity,
                 private=private,
+                channel_id=conversation.channel_id,
                 reply_to=self._message_id(channel, thread) if thread and thread != ts else None,
                 attachments=attachments,
                 observed_at=now,
@@ -512,6 +514,7 @@ class SlackEvents:
                 event_kind=event_kind,
                 identity=identity,
                 private=conversation.private,
+                channel_id=conversation.channel_id,
                 reply_to=previous_event.reply_to,
                 attachments=(),
                 observed_at=now,

@@ -28,6 +28,15 @@ class MemoryScope(ContractModel):
     work_id: str = ""
     member_id: str = ""
     session_id: str = ""
+    channel_id: Identifier | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        """Preserve persisted observation keys and source hashes when no channel was recorded."""
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.channel_id is None:
+            _ = result.pop("channel_id", None)
+        return result
 
     @model_validator(mode="after")
     def complete_private_scope(self) -> Self:

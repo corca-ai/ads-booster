@@ -483,6 +483,7 @@ class SQLiteMemoryStore:
                 """
             SELECT data_json FROM agent_memory_notes
             WHERE workspace=? AND product IN ('',?) AND campaign IN ('',?) AND deleted=0
+            AND json_extract(data_json,'$.scope.channel_id') IS ?
             AND COALESCE(json_extract(data_json,'$.scope.work_id'),'') IN ('',?)
             AND ((member='' AND session='') OR (?=1 AND member=? AND session=?))
         """,
@@ -490,6 +491,7 @@ class SQLiteMemoryStore:
                     scope.workspace_id,
                     scope.product_id,
                     scope.campaign_id,
+                    scope.channel_id,
                     scope.work_id,
                     int(access.private),
                     scope.member_id,
@@ -510,7 +512,8 @@ class SQLiteMemoryStore:
         if scope.workspace_id != current.workspace_id:
             raise ValueError("memory_write_scope_denied")
         if (
-            scope.product_id != current.product_id
+            scope.channel_id != current.channel_id
+            or scope.product_id != current.product_id
             or scope.campaign_id != current.campaign_id
             or scope.work_id != current.work_id
         ):

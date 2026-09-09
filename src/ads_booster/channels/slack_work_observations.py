@@ -63,6 +63,7 @@ def work_observation_command(  # noqa: PLR0911 - scoped command responses.
     access = MemoryAccess(
         scope=MemoryScope(
             workspace_id=identity.tenant_id,
+            channel_id=conversation.channel_id,
             product_id="trace",
             work_id=run.run_id,
             member_id=identity.member_id if conversation.private else "",

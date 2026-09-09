@@ -26,6 +26,7 @@ from ads_booster.knowledge.contract_types import (
 )
 from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
 from ads_booster.knowledge.learning_contracts import LearningReviewRequest
+from ads_booster.knowledge.memory_contracts import MemoryEntry
 from ads_booster.knowledge.operation_contracts import EventReceipt
 from ads_booster.knowledge.operation_enums import CurationTarget, LearningPurpose
 from ads_booster.knowledge.tool_contracts import KnowledgeToolName, ToolResult
@@ -39,6 +40,7 @@ class CurationDecisionAction(StrEnum):
     TOOL_CALL = "tool_call"
     FINISH = "finish"
     QUESTION = "question"
+    REMEMBER = "remember"
 
 
 @unique
@@ -70,6 +72,25 @@ class CurationUserEvent(KnowledgeContractModel):
     authority_ref: AuthorityRef
 
 
+class CurationConversationEvidence(KnowledgeContractModel):
+    text: BoundedText
+    occurred_at: UtcDatetime
+    evidence: CurationUserEvent
+
+
+@unique
+class CurationMemoryDestination(StrEnum):
+    CHANNEL = "channel"
+    USER = "user"
+
+
+class CurationMemoryIntent(KnowledgeContractModel):
+    destination: CurationMemoryDestination = CurationMemoryDestination.CHANNEL
+    subject_key: Annotated[str, Field(min_length=1, max_length=500)]
+    text: BoundedText
+    evidence_ids: Annotated[tuple[BoundedId, ...], Field(min_length=1, max_length=12)]
+
+
 class CurationRequest(KnowledgeContractModel):
     schema_version: Literal["knowledge.curation-request.v1"] = Field(alias="schema")
     job_id: BoundedId
@@ -78,6 +99,11 @@ class CurationRequest(KnowledgeContractModel):
     policy_version: BoundedId
     objective: BoundedText
     authenticated_user_event: CurationUserEvent | None = None
+    conversation_evidence: Annotated[
+        tuple[CurationConversationEvidence, ...], Field(max_length=12)
+    ] = ()
+    known_memory: Annotated[tuple[MemoryEntry, ...], Field(max_length=16)] = ()
+    auto_memory_enabled: bool = False
     learning_purpose: LearningPurpose | None = None
     learning_review: LearningReviewRequest | None = None
     legacy_memory_selection: MemorySelection | None = None
@@ -117,6 +143,7 @@ class CurationDecision(KnowledgeContractModel):
     tool_arguments_json: Annotated[str, Field(max_length=200_000)] | None = None
     question_arguments_json: Annotated[str, Field(max_length=20_000)] | None = None
     disposition_intent: SourceDispositionIntent | None = None
+    memory_intent: CurationMemoryIntent | None = None
     targets: Annotated[tuple[CurationTarget, ...], Field(max_length=8)] = ()
     finish_summary: BoundedReason | None = None
 
@@ -129,6 +156,7 @@ class CurationDecision(KnowledgeContractModel):
                     and self.tool_arguments_json is not None
                     and self.question_arguments_json is None
                     and self.finish_summary is None
+                    and self.memory_intent is None
                 )
             case CurationDecisionAction.QUESTION:
                 valid = (
@@ -136,6 +164,7 @@ class CurationDecision(KnowledgeContractModel):
                     and self.tool_arguments_json is None
                     and self.question_arguments_json is not None
                     and self.finish_summary is None
+                    and self.memory_intent is None
                 )
             case CurationDecisionAction.FINISH:
                 valid = (
@@ -143,6 +172,16 @@ class CurationDecision(KnowledgeContractModel):
                     and self.tool_arguments_json is None
                     and self.question_arguments_json is None
                     and self.finish_summary is not None
+                    and self.memory_intent is None
+                )
+            case CurationDecisionAction.REMEMBER:
+                valid = (
+                    self.memory_intent is not None
+                    and self.tool_name is None
+                    and self.tool_arguments_json is None
+                    and self.question_arguments_json is None
+                    and self.disposition_intent is None
+                    and self.finish_summary is None
                 )
         if not valid:
             raise PydanticCustomError(
@@ -229,6 +268,8 @@ __all__ = [
     "CurationDecisionAction",
     "CurationExcerpt",
     "CurationLimits",
+    "CurationMemoryDestination",
+    "CurationMemoryIntent",
     "CurationObservation",
     "CurationProviderError",
     "CurationRequest",

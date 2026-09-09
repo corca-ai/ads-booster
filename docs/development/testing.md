@@ -120,7 +120,7 @@ The context-transfer checks must cover both required and disabled policies, exac
 workspace/account/run/task/action/brand matching, expiry, stale head/grant/tombstone rejection,
 pre-dispatch and callback validation, and the callback use receipt. A cached acceptance must fail
 after expiry, revocation, stale heads or tombstones; replay cannot bypass current checks. Slack checks
-must cover shared workspace scope, private member/conversation scope, read-only DM capability filtering, pending edit/
+must cover exact shared channel scope, private member/conversation scope, read-only DM capability filtering, pending edit/
 delete/correction fences, and replayed outbox delivery. Deletion checks must assert the erase-ledger
 sequence, local tombstones and reverse dependency blocks, clean restore, and remote replica
 `purge_pending` until separately reconciled. Local purge must not execute or acknowledge
@@ -464,6 +464,89 @@ installed composition, new users/channels, distinct identity, preserved approver
 foreign/shared workspaces, disabled/revoked users and non-approver effects. Run this owner together
 with Slack progress and installed knowledge ingress checks; actual multi-user Slack delivery
 requires live workspace verification.
+
+## Isolated local Docker environment
+
+Use [dev/local-agent](../../dev/local-agent/README.md) to build the current source into a
+non-editable Linux installation with an isolated persistent knowledge and service store.
+The Compose API binds to host loopback port 18090. It uses real Codex authentication but no
+production Slack credentials. Health, capability readiness and persistence are environment
+checks; memory and feedback acceptance still require actual conversation scenarios.
+
+`tests/marketing/agent_service/slack_memory_canary.py` exercises signed synthetic Slack events
+with the installed knowledge runtime and real model. The local Docker guide documents setup,
+turn sequencing and restart. It preserves preparation/curation failures in its output and uses
+explicit post-turn curation draining by default. Use `--natural-drain` for scheduler timing;
+neither mode is a live Slack acceptance test.
+
+For maintenance-versus-message-author handling, select `tests/knowledge/test_curation_inputs.py`
+and `test_curation_user_authority.py`; these preserve direct-author validation and private-event
+read exclusion. `tests/knowledge/test_tool_receipts.py` drives all registered knowledge tools'
+structured errors and a valid empty search through the real service backend receipt validator.
+
+Automatic conversation memory selects `test_curation_context.py`, `test_curation_memory.py` and
+`test_curation_remember.py`, plus affected installed-context, private-batch and curation-authority
+cases. They cover source-backed publication without model-authored hashes, correction/replay,
+current provenance, protected ownership, retention/applicability, nondefault CORE identity and
+new-session retrieval. Actual acceptance still requires the installed real-model Slack rehearsal:
+automatic initial save, corrected new-thread recall, restart recall and unrelated-project exclusion.
+
+For source retraction of conversation-derived memory, select `test_conversation_retraction.py`
+and `test_conversation_deletion_scope.py` with `test_deletion.py` and `test_backup_restore.py`;
+verify both original and edited messages,
+independent surviving evidence, current/historical read denial and erase-ledger restore.
+`test_memory_schedule.py` covers publicly scheduled consolidation/summary/view targets.
+`test_memory_expiry_search.py` covers immediate expiry in normal search and explicit historical
+access. These focused regressions complement installed CLI and public API replay.
+`test_unknown_brand.py` verifies unavailable brand errors preserve the previous task.
+`test_curation_question_recovery.py` covers bounded input correction in single/batch curation,
+successful pending/replayed questions, terminal authorization denial and decision-budget limits.
+
+Use the Slack canary's `--natural-drain` option to observe ordinary collection deadlines without
+forced flush. Record wall-clock batch transitions and a post-drain search: a response-time
+`index_pending` receipt is a historical snapshot, not proof that the completed index remains pending.
+
+Channel isolation selects `test_channel_scope.py`, `test_channel_memory_storage.py` and the
+channel curation/ingress/brand tests with directly affected policy, memory, batch, retrieval and
+transfer owners. Verify v1/v2 migration keeps original hashes and bytes, A/B identical memory kinds
+coexist, foreign IDs and legacy workspace receipts are denied, and revocation survives background
+processing. Secondary memory tests verify Slack response context and observation keys across
+channels and after reopen. Run the installed signed Slack canary with `--channel-id` and
+`--message-text`: same project with conflicting facts in A/B, new threads, restart, DM and legacy
+workspace exclusion. Inspect actual answers and context receipts; local synthetic delivery does
+not establish production Slack deployment or live membership synchronization.
+
+`test_channel_brand_cli.py` verifies operator policy selection, same-name channel brands,
+channel-specific admin sessions and initial documents, replay, and rejected request-body scope
+overrides. Run it with `test_brand_cli.py` after changes to local policy or brand administration.
+
+Persistent member preferences select `test_personal_scope.py`, `test_personal_migration.py`,
+`test_personal_publication.py`, `test_channel_member_ingress.py`, `test_user_curation_memory.py`,
+`test_user_memory_selection.py` and `test_user_memory_maintenance.py`, with directly affected channel,
+authority, curation, retrieval, context-transfer, deletion and backup owners. Verify historical-schema
+provenance preservation; two users in one channel; owner correction across sessions; common facts
+plus only the requester's USER profile; hidden raw personal sources after mixed-message publication
+and replay; current grant revocation; and isolated USER.md materialization after reopening storage.
+
+The installed signed Slack canary accepts `--slack-user-id` and `--thread-ts` as synthetic fixture
+controls. Exercise different users in fresh and shared threads, the same user in another channel,
+lasting correction versus a one-time override, actual container restart and DM exclusion. Match
+each assertion to the current channel, speaker, message and run; historical runs included in a
+capture do not represent the current selection. Inspect answers, selected USER/CORE revisions,
+source visibility and generated files. These local tests do not establish production delivery.
+
+`test_shared_thread_personal_context.py` exercises two signed members continuing the same Run.
+`test_personal_evidence_freshness.py` rejects quoted and superseded USER evidence, including replay.
+`test_user_memory_deletion.py` verifies generated-view cleanup on retract, purge and old-backup
+restore while preserving other members and newer clean views.
+`test_curation_wire_schema.py` checks both public provider entrypoints keep required enum fields
+without unsupported reference/default combinations. Batch policy failures must settle as failed
+receipts with a reason instead of repeated assignment; ordinary cancellation remains resumable.
+
+`test_merged_schema_migration.py` covers convergence to v6 from both published skill/learning v3/v4
+and pre-merge channel/USER v3/v4, retaining historical rows and evidence. Reopen is idempotent and
+an unknown checksum is rejected. Workspace learning fixtures use workspace API ingress; Slack
+fixtures must retain channel authority rather than manufacturing workspace grants.
 
 ## Release workflow
 

@@ -468,3 +468,47 @@ preserves existing approval, disable and revocation state. `SlackEvents.workspac
 by installed `events_from_env`, removes static channel/member admission limits after
 app/team/signature validation. Worker execution and notification re-check current identity
 authority.
+
+`knowledge/curation_context.py` projects bounded canonical conversation evidence and matching CORE
+reference entries for the existing curation worker. `CurationMemoryIntent` is the semantic provider
+contract; `curation_memory.py` and its payload/admission helpers compile it into existing canonical
+memory publication, source admission and indexing. `bootstrap/lifecycle.py` injects this writer into
+`CurationDependencies`; no alternate conversation runtime or memory database is introduced.
+
+`knowledge/repository_conversation_deletion.py` owns message-source linkage for canonical evidence
+denial and payload erasure. Deletion traversal and evidence readers use that same linkage.
+
+`knowledge/scope_contracts.py` owns workspace, channel and private scope identities.
+`schema_channel.py` and `migrations.py` own the v5 channel transition without editing historical schema
+strings or immutable provenance. MemoryDocument and Brand own their persisted scope; repository
+commit checks prevent owner changes and context receipt checks reauthorize dependencies.
+`channels/knowledge_ingress_slack.py` accepts the signed conversation channel; `batch_actor.py`
+reloads the persisted submitting actor for channel maintenance. `contracts/agent_memory.py`
+separately carries the same channel boundary for learning memory and observations.
+`agent/service/knowledge_ingress_grants.py` owns durable channel grant admission markers.
+`channel_grant_admissions` preserves revocation after a grant row is removed; ingress, prepared
+context and batch actor reload check it. Job and batch submitter fields are omitted from legacy
+JSON when absent. Batch claims select their exact batch ID and submitting session.
+
+`LocalKnowledgePolicy.channel_id` is the explicit local-operator selector for channel administration.
+`load_local_actor` namespaces channel grants and admin sessions; CLI brand and initial memory IDs
+include channel identity while workspace defaults preserve their historical values.
+
+`AccessScope.CHANNEL_MEMBER` and `channel_member_scope(actor)` identify the requester's persistent
+personal scope; session-scoped MEMBER retains its private-chat meaning. `MemoryKind.USER` uses the
+existing document, entry, revision and head tables. `schema_personal.py` owns the v6 transition.
+`migrations.py` selects upgrades by version and checksum, preserving published skill/learning v3/v4
+and supporting pre-merge channel/USER candidates without rewriting their recorded checksums.
+
+The curation intent destination selects personal versus common memory. Generic publication and
+catalog commit guards validate USER authorship and reference-only semantics. The source visibility
+fence in `repository_personal_sources.py` is shared by publication and source admission; it follows
+canonical event dependencies rather than parsing message text. Context selection and memory_get
+resolve USER ownership from the authenticated actor. Consolidation and generated USER.md views
+reuse existing workers with exact personal job scopes and the original submitting actor.
+
+New knowledge task IDs include the authenticated actor, member, session and policy epoch so two
+participants can use one shared Slack Run without colliding on task ownership. Existing active
+bindings remain valid. Provider wire schemas remove default metadata beside references while
+runtime contract defaults remain intact. Batch settlement persists provider/budget failures as
+terminal receipts and job reasons; cancellation retains its separate resumable path.

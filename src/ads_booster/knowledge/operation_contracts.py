@@ -27,7 +27,11 @@ from ads_booster.knowledge.operation_enums import (
     MemoryOperationKind,
     OperationStatus,
 )
-from ads_booster.knowledge.scope_contracts import AccessScope
+from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
+
+
+def _missing_submitter(value: ActorContext | None) -> bool:
+    return value is None
 
 
 class SemanticFingerprint(KnowledgeContractModel):
@@ -50,10 +54,36 @@ class KnowledgeOperation(KnowledgeContractModel):
     operation_id: BoundedId
     kind: KnowledgeOperationKind
     target_page_ids: Annotated[tuple[BoundedId, ...], Field(min_length=1, max_length=128)]
-    expected_revision_ids: Annotated[tuple[BoundedId, ...], Field(min_length=1, max_length=128)]
+    expected_revision_ids: Annotated[
+        tuple[BoundedId, ...],
+        Field(
+            min_length=1,
+            max_length=128,
+            description=(
+                "One expected head revision per target_page_ids entry, in the same order. "
+                "For each new page use the literal string 'none' and set its revision's "
+                "previous_revision_id to null. For an existing page, read its actual current "
+                "head with knowledge_get and use that revision ID; never guess a revision."
+            ),
+        ),
+    ]
     claim_ids: Annotated[tuple[BoundedId, ...], Field(max_length=256)] = ()
     evidence_refs: Annotated[tuple[BoundedId, ...], Field(max_length=256)] = ()
     reason: BoundedReason
+
+    @model_validator(mode="after")
+    def require_page_revision_mapping(self) -> Self:
+        if len(self.target_page_ids) != len(self.expected_revision_ids):
+            raise PydanticCustomError(
+                "page_revision_mapping_length_mismatch",
+                "each target page requires exactly one expected revision",
+            )
+        if len(set(self.target_page_ids)) != len(self.target_page_ids):
+            raise PydanticCustomError(
+                "page_revision_mapping_duplicate_target",
+                "target page IDs must be unique",
+            )
+        return self
 
 
 class MemoryOperation(KnowledgeContractModel):
@@ -61,7 +91,12 @@ class MemoryOperation(KnowledgeContractModel):
     kind: MemoryOperationKind
     document_id: BoundedId
     entry_id: BoundedId
-    expected_revision_id: BoundedId
+    expected_revision_id: BoundedId = Field(
+        description=(
+            "For a new memory document use the literal 'none' and previous_revision_id=null. "
+            "For an existing document use its actual current head from memory_get; never guess."
+        )
+    )
     replacement_entry_id: BoundedId | None = None
     reason: BoundedReason
     evidence_refs: Annotated[tuple[BoundedId, ...], Field(min_length=1, max_length=128)]
@@ -123,6 +158,7 @@ class KnowledgeJob(KnowledgeContractModel):
     batch_id: BoundedId | None = None
     reason_code: Annotated[str, Field(min_length=1, max_length=160)] | None = None
     lease_generation: Annotated[int, Field(ge=0)] = 0
+    submitter_actor: ActorContext | None = Field(default=None, exclude_if=_missing_submitter)
 
 
 class EventReceipt(KnowledgeContractModel):
@@ -155,6 +191,7 @@ class CurationBatch(KnowledgeContractModel):
     first_event_at: UtcDatetime
     batch_deadline: UtcDatetime
     event_receipts: Annotated[tuple[EventReceipt, ...], Field(max_length=20)] = ()
+    submitter_actor: ActorContext | None = Field(default=None, exclude_if=_missing_submitter)
 
     @model_validator(mode="after")
     def require_batch_window(self) -> Self:

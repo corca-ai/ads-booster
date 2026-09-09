@@ -11,10 +11,12 @@ from ads_booster.knowledge.contracts import (
     Brand,
     MemoryDocument,
     MemoryEntry,
+    MemoryKind,
     MemoryRevision,
     OperationReceipt,
     ScopeKind,
 )
+from ads_booster.knowledge.errors import AccessDeniedError
 from ads_booster.knowledge.file_store import MemoryRevisionTarget, PublishedRevisionFile
 from ads_booster.knowledge.grant_policy import authorize_read
 from ads_booster.knowledge.repository_evidence import insert_memory_entry
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
 
 _STRING = TypeAdapter(str)
 _INTEGER = TypeAdapter(int)
+_OPTIONAL_INTEGER_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
 
 
 def assert_memory_head(
@@ -74,7 +77,7 @@ def insert_memory_shell(
     if write.expected.expected_revision_id is not None:
         return
     document = write.document
-    shared_scope = AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=document.workspace_id)
+    shared_scope = document.owned_scope
     _ = connection.execute(
         """
         INSERT INTO memory_documents(
@@ -216,6 +219,16 @@ def register_brand(
     repository: KnowledgeRepository,
     command: BrandRegistration,
 ) -> OperationReceipt:
+    owned_scope = command.brand.owned_scope
+    if (
+        command.event.authority_ref.scope != owned_scope
+        or command.document.owned_scope != owned_scope
+        or command.event.workspace_id != command.brand.workspace_id
+        or command.event.brand_id != command.brand.brand_id
+        or command.document.brand_id != command.brand.brand_id
+        or command.document.kind is not MemoryKind.SOUL
+    ):
+        conflict("brand_scope_binding_conflict", command.brand.brand_id)
     existing = _operation_receipt(repository, command.receipt.operation_id, command.payload_sha256)
     if existing is not None:
         return OperationReceipt.model_validate_json(existing)
@@ -242,8 +255,8 @@ def register_brand(
                 return OperationReceipt.model_validate_json(replay)
             _ = connection.execute(
                 """
-                INSERT INTO brands(workspace_id,brand_id,name,revision,state,brand_json)
-                VALUES (?,?,?,?,?,?)
+                INSERT INTO brands(workspace_id,brand_id,name,revision,state,brand_json,scope_key)
+                VALUES (?,?,?,?,?,?,?)
                 """,
                 (
                     command.brand.workspace_id,
@@ -252,6 +265,7 @@ def register_brand(
                     command.brand.revision,
                     command.brand.state.value,
                     command.brand.model_dump_json(),
+                    scope_key(owned_scope),
                 ),
             )
             _ = connection.execute(
@@ -320,7 +334,19 @@ def brand(
                 (actor.workspace_id, brand_id),
             ).fetchone(),
         )
-    return None if row is None else Brand.model_validate_json(_STRING.validate_python(row[0]))
+    if row is None:
+        return None
+    selected = Brand.model_validate_json(_STRING.validate_python(row[0]))
+    if (
+        actor.conversation_scope.kind is not ScopeKind.MEMBER
+        and selected.owned_scope != actor.conversation_scope
+    ):
+        return None
+    try:
+        _ = authorize_read(actor=actor, target_scope=selected.owned_scope, at=datetime.now(UTC))
+    except AccessDeniedError:
+        return None
+    return selected
 
 
 def read_memory(
@@ -343,18 +369,21 @@ def read_memory(
             if head is None:
                 return None
             selected = _STRING.validate_python(head[0])
-        redacted = connection.execute(
-            """
+        redacted = _OPTIONAL_INTEGER_ROW.validate_python(
+            connection.execute(
+                """
             SELECT 1 FROM history_redactions
             WHERE workspace_id=? AND entity_kind='memory_document'
                 AND entity_id=? AND revision_id=?
             """,
-            (actor.workspace_id, document_id, selected),
-        ).fetchone()
+                (actor.workspace_id, document_id, selected),
+            ).fetchone()
+        )
         if redacted is not None:
             return None
-        blocked_entry = connection.execute(
-            """
+        blocked_entry = _OPTIONAL_INTEGER_ROW.validate_python(
+            connection.execute(
+                """
             SELECT 1 FROM memory_entries AS entry
             JOIN tombstones AS tomb ON tomb.workspace_id=entry.workspace_id
                 AND tomb.target_kind='memory_entry' AND tomb.target_id=entry.entry_id
@@ -363,8 +392,9 @@ def read_memory(
                 AND entry.memory_revision_id=?
                 AND tomb.state IN ('blocked','purge_pending','purged') LIMIT 1
             """,
-            (actor.workspace_id, document_id, selected),
-        ).fetchone()
+                (actor.workspace_id, document_id, selected),
+            ).fetchone()
+        )
         if blocked_entry is not None:
             return None
         row = cast(

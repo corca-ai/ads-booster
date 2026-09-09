@@ -10,6 +10,8 @@ from pydantic import TypeAdapter
 from ads_booster.channels.http.http_api import MarketingAgentApi
 from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.channels.slack_conversations import Conversation
+from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
+from ads_booster.learning.performance_observations import PerformanceObservationStore
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 from tests.marketing.channels.test_slack_performance import payload
@@ -18,7 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_signed_report_is_readable_only_in_authenticated_run_scope(tmp_path: Path) -> None:
+def test_workspace_http_authority_cannot_read_signed_channel_report(tmp_path: Path) -> None:
     events, _ = setup_events(tmp_path)
     receive(events)
     assert events.work_once(now=NOW)
@@ -42,10 +44,16 @@ def test_signed_report_is_readable_only_in_authenticated_run_scope(tmp_path: Pat
     assert response.body["evidence_status"] == "human_reported"
     observations = response.body["observations"]
     assert isinstance(observations, list)
-    assert len(observations) == 1
-    assert isinstance(observations[0], dict)
-    assert observations[0]["views"] == 100
-    assert observations[0]["installs"] is None
+    assert observations == []
+    channel_access = MemoryAccess(
+        scope=MemoryScope(
+            workspace_id="team", product_id="trace", work_id=run.run_id, channel_id="C1"
+        ),
+        actor_id="member",
+    )
+    recorded = PerformanceObservationStore(events.store.database_path).list(channel_access)
+    assert len(recorded) == 1
+    assert recorded[0].views == 100
     other = replace(api, tenant_id="other")
     assert other.dispatch("GET", path, authorization="Bearer fixture-token").status == 404
     assert (
@@ -58,6 +66,10 @@ def test_signed_report_is_readable_only_in_authenticated_run_scope(tmp_path: Pat
         api.dispatch(
             "GET", path + "?workspace_id=other", authorization="Bearer fixture-token"
         ).status
+        == 400
+    )
+    assert (
+        api.dispatch("GET", path + "?channel_id=C1", authorization="Bearer fixture-token").status
         == 400
     )
     assert (

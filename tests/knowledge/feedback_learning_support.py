@@ -4,10 +4,16 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
 
-from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress, TrustedRunBinding
+from ads_booster.agent.service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    PendingKnowledgeIngress,
+    TrustedRunBinding,
+)
 from ads_booster.agent.service.learning_admission import TerminalExperienceAdmission
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.channels.contracts import ChannelIdentityBinding
+from ads_booster.channels.http.knowledge_ingress_api import ApiIngressRequest, build_api_ingress
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.channels.knowledge_ingress_slack import SlackIngressRequest, build_slack_ingress
 from ads_booster.contracts.agent_run import (
     AgentBudget,
@@ -90,7 +96,45 @@ def learning_fixture(root: Path) -> LearningFixture:
 
 
 def admit_shared_source(fixture: LearningFixture, message: SharedMessage) -> AdmittedSource:
-    pending = build_slack_ingress(
+    pending = _private_pending(message) if message.private else _workspace_pending(message)
+    fixture.knowledge.register_actor(pending.binding.actor, MembershipRole.EDITOR)
+    assert fixture.ingress.admit_standalone(pending)
+    assert fixture.ingress.dispatch_once()
+    acknowledged = fixture.ingress.source_for_run(pending.binding.run_id)
+    assert acknowledged is not None
+    return AdmittedSource(acknowledged.binding, acknowledged.event, acknowledged.receipt)
+
+
+def _workspace_pending(message: SharedMessage) -> PendingKnowledgeIngress:
+    pending = build_api_ingress(
+        ApiIngressRequest(
+            request_id=f"{message.message_id}.{message.revision}",
+            run_id=message.run_id,
+            action="input",
+            text="Use a cited workflow.",
+            identity=OAuthIdentity(tenant_id="workspace.alpha", principal_id=message.member_id),
+            revision=message.revision,
+            occurred_at=NOW,
+        )
+    )
+    actor = pending.binding.actor.model_copy(update={"session_id": message.conversation_id})
+    event = pending.event.model_copy(
+        update={"conversation_id": message.conversation_id, "message_id": message.message_id}
+    )
+    original_message = pending.envelope.message_event
+    assert original_message is not None
+    message_event = original_message.model_copy(
+        update={"conversation_ref": message.conversation_id, "message_ref": message.message_id}
+    )
+    return PendingKnowledgeIngress(
+        binding=pending.binding.model_copy(update={"actor": actor}),
+        event=event,
+        envelope=pending.envelope.model_copy(update={"message_event": message_event}),
+    )
+
+
+def _private_pending(message: SharedMessage) -> PendingKnowledgeIngress:
+    return build_slack_ingress(
         SlackIngressRequest(
             conversation_id=message.conversation_id,
             message_id=message.message_id,
@@ -111,17 +155,12 @@ def admit_shared_source(fixture: LearningFixture, message: SharedMessage) -> Adm
                 created_at=NOW,
             ),
             private=message.private,
+            channel_id="D1",
             reply_to=None,
             attachments=(),
             observed_at=NOW,
         )
     )
-    fixture.knowledge.register_actor(pending.binding.actor, MembershipRole.EDITOR)
-    assert fixture.ingress.admit_standalone(pending)
-    assert fixture.ingress.dispatch_once()
-    acknowledged = fixture.ingress.source_for_run(pending.binding.run_id)
-    assert acknowledged is not None
-    return AdmittedSource(acknowledged.binding, acknowledged.event, acknowledged.receipt)
 
 
 def canonical_run(source: AdmittedSource) -> AgentRun:

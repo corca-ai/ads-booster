@@ -170,11 +170,11 @@ class MemoryGetInput(KnowledgeContractModel):
                         "memory_tool_daily_selector_invalid",
                         "daily selection requires a date and forbids a brand",
                     )
-            case MemoryKind.TEAM | MemoryKind.CORE:
+            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.USER:
                 if self.brand_id is not None or self.local_date is not None:
                     raise PydanticCustomError(
                         "memory_tool_selector_invalid",
-                        "team and core selection forbid brand and date",
+                        "team, core and user selection forbid brand and date",
                     )
         return self
 
@@ -452,7 +452,16 @@ class KnowledgeQuestionInput(KnowledgeContractModel):
     schema_version: Literal["knowledge.tool.question.v1"] = Field(alias="schema")
     question_id: BoundedId
     problem: BoundedText
-    evidence_ids: Annotated[tuple[BoundedId, ...], Field(max_length=20)] = ()
+    evidence_ids: Annotated[
+        tuple[BoundedId, ...],
+        Field(
+            max_length=20,
+            description=(
+                "Existing references readable in the current scope, preferably source_id, "
+                "page_id or canonical message_id. Do not use segment_id or ingestion event_id."
+            ),
+        ),
+    ] = ()
     checks_tried: Annotated[tuple[BoundedReason, ...], Field(max_length=20)] = ()
     recommendation: BoundedReason
     pending_proposal: PendingProposal | None = None

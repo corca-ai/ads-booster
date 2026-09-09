@@ -120,7 +120,7 @@ class ContextRequest(KnowledgeSelectionModel):
 class SelectedMemoryRevision(KnowledgeSelectionModel):
     document_id: BoundedId
     revision_id: BoundedId
-    kind: Literal["team", "soul", "core", "daily"]
+    kind: Literal["team", "soul", "core", "daily", "user"]
     entry_ids: Annotated[tuple[BoundedId, ...], Field(max_length=256)] = ()
     content_sha256: Sha256Digest
 

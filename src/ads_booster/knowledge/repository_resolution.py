@@ -19,6 +19,7 @@ from ads_booster.knowledge.contracts import (
     WikiPage,
 )
 from ads_booster.knowledge.grant_policy import authorize_read
+from ads_booster.knowledge.repository_conversation_deletion import READABLE_CONVERSATION_EVENT
 from ads_booster.knowledge.repository_source import _require_read
 
 if TYPE_CHECKING:
@@ -117,12 +118,12 @@ def resolve_evidence(
                 row = cast(
                     "tuple[object, ...] | None",
                     connection.execute(
-                        """
+                        f"""
                     SELECT event.event_json,scope.scope_json FROM conversation_events AS event
                     JOIN access_scopes AS scope ON scope.scope_key=event.scope_key
                     WHERE event.workspace_id=? AND event.message_id=?
-                    AND CAST(event.revision AS TEXT)=? LIMIT 1
-                    """,
+                    AND CAST(event.revision AS TEXT)=? AND {READABLE_CONVERSATION_EVENT} LIMIT 1
+                    """,  # noqa: S608 - static SQL predicate; all input values are bound
                         (actor.workspace_id, reference.evidence_id, reference.revision_id),
                     ).fetchone(),
                 )
@@ -154,7 +155,8 @@ def memory_dependents(
                 JOIN memory_heads AS head ON head.workspace_id=reference.workspace_id
                 AND head.document_id=reference.document_id
                 AND head.revision_id=reference.memory_revision_id
-                WHERE reference.workspace_id=? AND reference.upstream_id IN (
+                WHERE reference.workspace_id=? AND reference.upstream_kind='wiki_claim'
+                    AND reference.upstream_id IN (
                     SELECT value FROM json_each(?)
                 )
                 ORDER BY reference.document_id

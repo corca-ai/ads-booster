@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -14,7 +15,7 @@ from ads_booster.knowledge.contracts import (
 )
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.messages import MessageValidationError
-from ads_booster.knowledge.repository import JobClaim
+from ads_booster.knowledge.repository import JobClaim, MembershipRole
 from ads_booster.knowledge.source_contracts import QuotedSpan
 from ads_booster.knowledge.tool_contracts import (
     MemoryApplyInput,
@@ -38,12 +39,27 @@ if TYPE_CHECKING:
 curation_input = fixture_curation_input
 
 
+@pytest.mark.parametrize("maintenance", [False, True])
 @pytest.mark.parametrize("forged", [False, True])
 def test_canonical_user_authority_applies_direct_team_decision(
-    curation_input: CurationInput, forged: bool
+    curation_input: CurationInput, forged: bool, maintenance: bool
 ) -> None:
     # Given
     repository, processor, job, event, _ = curation_input
+    if maintenance:
+        maintainer = processor.actor.model_copy(
+            update={
+                "actor_id": "actor.maintenance",
+                "member_id": "member.maintenance",
+                "session_id": "session.maintenance",
+                "grants": tuple(
+                    grant.model_copy(update={"grant_id": "maintenance." + grant.grant_id})
+                    for grant in processor.actor.grants
+                ),
+            }
+        )
+        repository.register_actor(maintainer, MembershipRole.ADMIN)
+        processor = replace(processor, actor=maintainer)
     work = processor.build_curation_work(job)
     host = ToolHost(repository)
     authenticated = work.request.authenticated_user_event

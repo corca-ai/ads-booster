@@ -166,6 +166,7 @@ class LegacyMemoryGuard:
         return MemoryAccess(
             scope=MemoryScope(
                 workspace_id=actor.workspace_id,
+                channel_id=actor.conversation_scope.channel_id,
                 product_id="trace",
                 work_id=run_id,
                 member_id=actor.member_id if private else "",

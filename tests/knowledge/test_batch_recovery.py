@@ -250,7 +250,8 @@ def test_private_actor_excludes_other_session_grants(tmp_path: Path) -> None:
             )
         loaded = load_batch_actor(fixture.repository, scope, NOW)
         assert authorize_read(actor=loaded, target_scope=scope, at=NOW)
-        assert authorize_read(actor=loaded, target_scope=fixture.actor.conversation_scope, at=NOW)
+        with pytest.raises(AccessDeniedError):
+            _ = authorize_read(actor=loaded, target_scope=fixture.actor.conversation_scope, at=NOW)
         with pytest.raises(AccessDeniedError, match="required_grant_missing"):
             _ = authorize_read(actor=loaded, target_scope=other, at=NOW)
         with pytest.raises(AccessDeniedError, match="private_shared_write_forbidden"):

@@ -36,6 +36,7 @@ from ads_booster.knowledge.change_publication import ChangePublisher
 from ads_booster.knowledge.configuration import KnowledgeSettings, load_local_actor
 from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.curation import CurationRunner
+from ads_booster.knowledge.curation_memory import CurationMemoryWriter
 from ads_booster.knowledge.curation_disposition import RepositorySourceDisposition
 from ads_booster.knowledge.curation_runtime import CurationDependencies
 from ads_booster.knowledge.indexing import KnowledgeIndexWorker
@@ -244,6 +245,7 @@ def build_installed_knowledge_runtime(
             provider=CodexKnowledgeProvider(codex, root / "curation", model_id),
             tool_host=host,
             dispositions=RepositorySourceDisposition(repository),
+            memory=CurationMemoryWriter(repository, host),
         )
     )
     owner = KnowledgeOwner(root, f"service-{actor.actor_id}")

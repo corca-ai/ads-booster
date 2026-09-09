@@ -50,6 +50,7 @@ from ads_booster.contracts.tool_capability import (
 )
 from ads_booster.knowledge.contracts import (
     ActorContext,
+    BrandState,
     GrantCapability,
     ScopeGrant,
     ScopeKind,
@@ -226,6 +227,10 @@ class KnowledgeServiceAdapter:
                 brand_ref=selected_brand,
                 error_code=RequiredContextErrorCode.CORRECTION_PENDING,
             )
+        if selected_brand is not None:
+            brand = self.repository.brand(actor, selected_brand)
+            if brand is None or brand.state is not BrandState.ACTIVE:
+                return _unresolved(run.run_id, selected_action, selected_brand)
         task = self._task(actor, run.run_id, selected_action, selected_brand, now)
         if self.legacy_memory is not None:
             _ = self.legacy_memory.select(
@@ -246,11 +251,11 @@ class KnowledgeServiceAdapter:
         if not isinstance(prepared, PreparedKnowledgeContext):
             return prepared
         source = self.ingress.source_for_run(run.run_id)
-        if source is None:
-            return prepared
-        if source.binding != binding:
-            return _unresolved(run.run_id, selected_action, selected_brand)
-        return self._with_foreground_correction_priority(prepared, source.event.message_id)
+        if source is not None:
+            if source.binding != binding:
+                return _unresolved(run.run_id, selected_action, selected_brand)
+            prepared = self._with_foreground_correction_priority(prepared, source.event.message_id)
+        return prepared
 
     @staticmethod
     def _with_foreground_correction_priority(
@@ -347,8 +352,17 @@ class KnowledgeServiceAdapter:
                 return None
             rows = _RECORD_ROWS.validate_python(
                 db.execute(
-                    """SELECT grant_json FROM scope_grants
-                WHERE workspace_id=? AND member_id=? AND policy_epoch=? ORDER BY grant_id""",
+                    """SELECT grant_json FROM scope_grants AS current
+                WHERE workspace_id=? AND member_id=? AND policy_epoch=?
+                AND NOT EXISTS (
+                    SELECT 1 FROM channel_grant_admissions AS admission
+                    WHERE admission.workspace_id=current.workspace_id
+                        AND admission.member_id=current.member_id
+                        AND admission.scope_key=current.scope_key
+                        AND admission.capability=current.capability
+                        AND (admission.state!='active' OR admission.grant_id!=current.grant_id
+                            OR admission.policy_epoch!=current.policy_epoch)
+                ) ORDER BY grant_id""",
                     (actor.workspace_id, actor.member_id, actor.policy_epoch),
                 ).fetchall()
             )
@@ -821,9 +835,18 @@ class KnowledgeServiceAdapter:
             _ = self.host.close_task(actor, current.task_id, actor.policy_epoch, now)
         task_id = (
             "task."
-            + sha256(f"{run_id}:{action_kind.value}:{brand_id or 'general'}".encode()).hexdigest()[
-                :40
-            ]
+            + contract_sha256(
+                {
+                    "run_id": run_id,
+                    "workspace_id": actor.workspace_id,
+                    "actor_id": actor.actor_id,
+                    "member_id": actor.member_id,
+                    "session_id": actor.session_id,
+                    "policy_epoch": actor.policy_epoch,
+                    "action_kind": action_kind.value,
+                    "brand_id": brand_id,
+                }
+            )[:40]
         )
         brand = None if brand_id is None else self.repository.brand(actor, brand_id)
         task = TaskBinding(
