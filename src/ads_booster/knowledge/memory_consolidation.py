@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from threading import Event
+from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
+
+from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.change_publication import ChangeGroup, ChangePublisher, MemoryPublication
+from ads_booster.knowledge.change_validation import claim_semantic_fingerprint
 from ads_booster.knowledge.contract_types import (
     ClaimStatus,
     DependencyState,
@@ -19,13 +21,14 @@ from ads_booster.knowledge.contract_types import (
     ScopeKind,
     WikiPageStatus,
 )
-from ads_booster.knowledge.change_validation import claim_semantic_fingerprint
 from ads_booster.knowledge.ingestion_build import stable_id
 from ads_booster.knowledge.jobs import JobProcessResult
 from ads_booster.knowledge.memory import MemorySnapshot
 from ads_booster.knowledge.memory_consolidation_views import (
     MemoryViewDispatcher,
     MemoryViewDispatchResult,
+    memory_maintenance_scope_keys,
+    memory_maintenance_scopes,
 )
 from ads_booster.knowledge.memory_contracts import MemoryEntry, MemoryRevision
 from ads_booster.knowledge.operation_contracts import KnowledgeJob, MemoryOperation
@@ -35,17 +38,25 @@ from ads_booster.knowledge.operation_enums import (
     JobState,
     MemoryOperationKind,
 )
-from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.repository_types import (
     JobLease,
     JobRegistration,
     RepositoryConflictError,
     StoredMemory,
 )
-from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
 
+if TYPE_CHECKING:
+    from datetime import datetime
+    from threading import Event
+
+    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
+
+_HEAD_ROWS = TypeAdapter(list[tuple[str, str]])
+_OPTIONAL_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
+_TARGET_KEY_PARTS = 4
 _CONSOLIDATION_POLICY_VERSION = "memory-consolidation.v1"
-_REFRESH_KINDS = ("team", "core", "daily")
+_REFRESH_KINDS = ("team", "core", "daily", "user")
 _MAX_REFRESH_TARGETS = 128
 
 
@@ -69,7 +80,7 @@ class MemoryConsolidationProcessor:
         priority: JobPriority = JobPriority.ROUTINE,
         policy_version: str = _CONSOLIDATION_POLICY_VERSION,
     ) -> KnowledgeJob | None:
-        heads = self._shared_memory_heads()
+        heads = self._memory_heads()
         if not heads:
             return None
         input_digest = _input_revision_set_digest(
@@ -86,7 +97,10 @@ class MemoryConsolidationProcessor:
             schema="knowledge.job.v1",
             job_id=stable_id("job", unique_key),
             workspace_id=self.actor.workspace_id,
-            scope=_workspace_scope(self.actor.workspace_id),
+            scope=self.actor.conversation_scope,
+            submitter_actor=self.actor
+            if self.actor.conversation_scope.kind is ScopeKind.CHANNEL
+            else None,
             kind=JobKind.MEMORY_CONSOLIDATE,
             state=JobState.QUEUED,
             priority=priority,
@@ -103,18 +117,61 @@ class MemoryConsolidationProcessor:
             return _result(JobState.CANCELLED, "memory_refresh_cancelled")
         if lease.job.workspace_id != self.actor.workspace_id:
             return _result(JobState.FAILED, "memory_refresh_workspace_mismatch")
+        if lease.job.scope not in memory_maintenance_scopes(self.actor):
+            return _result(JobState.FAILED, "memory_refresh_scope_mismatch")
+        scheduled = self.repository.scheduled_job_request(self.actor, lease.job.job_id)
+        if scheduled is not None:
+            return self._process_scheduled(lease, cancellation, scheduled.targets)
         match lease.job.kind:
             case JobKind.MEMORY_CONSOLIDATE:
-                return self._consolidate(lease, cancellation)
+                result = self._consolidate(lease, cancellation)
             case JobKind.MEMORY_SUMMARY_REFRESH:
-                return self._refresh_summary(lease, cancellation)
+                result = self._refresh_summary(lease, cancellation)
             case JobKind.MEMORY_VIEW_REFRESH:
-                return self._refresh_view(lease, cancellation)
+                result = self._refresh_view(lease, cancellation)
             case _:
-                return _result(JobState.FAILED, "memory_refresh_kind_unsupported")
+                result = _result(JobState.FAILED, "memory_refresh_kind_unsupported")
+        return result
 
-    def _consolidate(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
-        heads = self._shared_memory_heads()
+    def _process_scheduled(
+        self,
+        lease: JobLease,
+        cancellation: Event,
+        targets: tuple[str, ...],
+    ) -> JobProcessResult:
+        heads: list[_MemoryHead] = []
+        for document_id in dict.fromkeys(targets):
+            stored = self.repository.read_memory(self.actor, document_id)
+            if (
+                stored is None
+                or stored.document.kind is MemoryKind.SOUL
+                or stored.document.owned_scope not in memory_maintenance_scopes(self.actor)
+                or any(entry.scope != stored.document.owned_scope for entry in stored.entries)
+            ):
+                return _result(JobState.FAILED, "memory_refresh_target_invalid")
+            heads.append(_MemoryHead(document_id, stored.revision.revision_id))
+        if lease.job.kind is JobKind.MEMORY_CONSOLIDATE:
+            return self._consolidate(lease, cancellation, tuple(heads))
+        for target in heads:
+            match lease.job.kind:
+                case JobKind.MEMORY_SUMMARY_REFRESH:
+                    result = self._refresh_summary(lease, cancellation, target)
+                case JobKind.MEMORY_VIEW_REFRESH:
+                    result = self._refresh_view(lease, cancellation, target)
+                case _:
+                    return _result(JobState.FAILED, "memory_refresh_kind_unsupported")
+            if result.state is not JobState.COMPLETED:
+                return result
+        return _result(JobState.COMPLETED, "memory_scheduled_refresh_completed")
+
+    def _consolidate(
+        self,
+        lease: JobLease,
+        cancellation: Event,
+        heads: tuple[_MemoryHead, ...] | None = None,
+    ) -> JobProcessResult:
+        if heads is None:
+            heads = self._memory_heads()
         if cancellation.is_set():
             return _result(JobState.CANCELLED, "memory_consolidation_cancelled")
         published = 0
@@ -131,11 +188,13 @@ class MemoryConsolidationProcessor:
                     stored,
                     entries,
                     purpose="consolidate",
-                    reason="Supersede expired or duplicate canonical shared memory entries.",
+                    reason="Supersede expired or duplicate canonical memory entries.",
                 )
             )
-            current = head if snapshot is None else _MemoryHead(
-                snapshot.document.document_id, snapshot.revision.revision_id
+            current = (
+                head
+                if snapshot is None
+                else _MemoryHead(snapshot.document.document_id, snapshot.revision.revision_id)
             )
             if snapshot is not None:
                 published += 1
@@ -145,19 +204,26 @@ class MemoryConsolidationProcessor:
                 kind=JobKind.MEMORY_SUMMARY_REFRESH,
                 unique_key=unique_key,
                 reason_code="memory_summary_refresh",
+                scope=stored.document.owned_scope,
             )
             _ = self._put_job(job, unique_key)
         return _result(JobState.COMPLETED, f"memory_consolidated:{published}")
 
-    def _refresh_summary(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
-        target = _target_from_key(
-            lease.job.kind, self._unique_key(lease.job.job_id), lease.job.policy_version
-        )
+    def _refresh_summary(
+        self,
+        lease: JobLease,
+        cancellation: Event,
+        target: _MemoryHead | None = None,
+    ) -> JobProcessResult:
+        if target is None:
+            target = _target_from_key(
+                lease.job.kind, self._unique_key(lease.job.job_id), lease.job.policy_version
+            )
         if target is None:
             return _result(JobState.FAILED, "memory_summary_target_invalid")
         if cancellation.is_set():
             return _result(JobState.CANCELLED, "memory_summary_refresh_cancelled")
-        if target not in self._shared_memory_heads():
+        if target not in self._memory_heads():
             return _result(JobState.COMPLETED, "memory_summary_input_superseded")
         stored = self.repository.read_memory(self.actor, target.document_id, target.revision_id)
         if stored is None or stored.document.kind is MemoryKind.SOUL:
@@ -180,14 +246,21 @@ class MemoryConsolidationProcessor:
             kind=JobKind.MEMORY_VIEW_REFRESH,
             unique_key=unique_key,
             reason_code="memory_view_refresh",
+            scope=stored.document.owned_scope,
         )
         _ = self._put_job(job, unique_key)
         return _result(JobState.COMPLETED, "memory_summary_refresh_queued_view")
 
-    def _refresh_view(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
-        target = _target_from_key(
-            lease.job.kind, self._unique_key(lease.job.job_id), lease.job.policy_version
-        )
+    def _refresh_view(
+        self,
+        lease: JobLease,
+        cancellation: Event,
+        target: _MemoryHead | None = None,
+    ) -> JobProcessResult:
+        if target is None:
+            target = _target_from_key(
+                lease.job.kind, self._unique_key(lease.job.job_id), lease.job.policy_version
+            )
         if target is None:
             return _result(JobState.FAILED, "memory_view_target_invalid")
         if cancellation.is_set():
@@ -207,7 +280,11 @@ class MemoryConsolidationProcessor:
         reason: str,
     ) -> MemorySnapshot | None:
         changed = next(
-            (entry for entry, previous in zip(entries, stored.entries, strict=True) if entry != previous),
+            (
+                entry
+                for entry, previous in zip(entries, stored.entries, strict=True)
+                if entry != previous
+            ),
             None,
         )
         if changed is None:
@@ -258,9 +335,7 @@ class MemoryConsolidationProcessor:
 
     def _refreshed_entries(self, entries: tuple[MemoryEntry, ...]) -> tuple[MemoryEntry, ...]:
         return tuple(
-            self._refresh_entry(entry)
-            if entry.origin is MemoryOrigin.WIKI_SUMMARY
-            else entry
+            self._refresh_entry(entry) if entry.origin is MemoryOrigin.WIKI_SUMMARY else entry
             for entry in entries
         )
 
@@ -310,7 +385,7 @@ class MemoryConsolidationProcessor:
             }
         )
 
-    def _shared_memory_heads(self) -> tuple[_MemoryHead, ...]:
+    def _memory_heads(self) -> tuple[_MemoryHead, ...]:
         with self.repository.connection() as connection:
             rows = connection.execute(
                 """
@@ -320,8 +395,8 @@ class MemoryConsolidationProcessor:
                     ON head.workspace_id=document.workspace_id
                     AND head.document_id=document.document_id
                 JOIN access_scopes AS scope ON scope.scope_key=document.scope_key
-                WHERE document.workspace_id=? AND document.kind IN (?,?,?)
-                    AND scope.kind='workspace' AND scope.workspace_id=?
+                WHERE document.workspace_id=? AND document.kind IN (?,?,?,?)
+                    AND document.scope_key IN (SELECT value FROM json_each(?))
                     AND EXISTS (
                         SELECT 1 FROM memory_entries AS entry
                         WHERE entry.workspace_id=head.workspace_id
@@ -336,17 +411,21 @@ class MemoryConsolidationProcessor:
                 (
                     self.actor.workspace_id,
                     *_REFRESH_KINDS,
-                    self.actor.workspace_id,
+                    memory_maintenance_scope_keys(self.actor),
                     _MAX_REFRESH_TARGETS,
                 ),
             ).fetchall()
-        return tuple(_MemoryHead(str(row[0]), str(row[1])) for row in rows)
+        return tuple(
+            _MemoryHead(str(row[0]), str(row[1])) for row in _HEAD_ROWS.validate_python(rows)
+        )
 
     def _unique_key(self, job_id: str) -> str:
         with self.repository.connection() as connection:
-            row = connection.execute(
-                "SELECT unique_key FROM jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
+            row = _OPTIONAL_STRING_ROW.validate_python(
+                connection.execute(
+                    "SELECT unique_key FROM jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+            )
         return "" if row is None else str(row[0])
 
     def _put_job(self, job: KnowledgeJob, unique_key: str) -> KnowledgeJob:
@@ -364,20 +443,19 @@ class MemoryConsolidationProcessor:
 
     def _existing_job(self, unique_key: str) -> KnowledgeJob | None:
         with self.repository.connection() as connection:
-            row = connection.execute(
-                """SELECT job_json FROM jobs WHERE workspace_id=? AND unique_key=?
-                ORDER BY job_id LIMIT 1""",
-                (self.actor.workspace_id, unique_key),
-            ).fetchone()
+            row = _OPTIONAL_STRING_ROW.validate_python(
+                connection.execute(
+                    """SELECT job_json FROM jobs WHERE workspace_id=? AND unique_key=?
+                    ORDER BY job_id LIMIT 1""",
+                    (self.actor.workspace_id, unique_key),
+                ).fetchone()
+            )
         return None if row is None else KnowledgeJob.model_validate_json(str(row[0]))
 
 
-def _workspace_scope(workspace_id: str) -> AccessScope:
-    return AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=workspace_id)
-
-
 def _input_revision_set_digest(
-    *, workspace_id: str,
+    *,
+    workspace_id: str,
     heads: tuple[_MemoryHead, ...],
     policy_version: str,
 ) -> str:
@@ -405,12 +483,12 @@ def _view_key(head: _MemoryHead, policy_version: str) -> str:
 
 
 def _target_key(prefix: str, head: _MemoryHead, policy_version: str) -> str:
-    return ":".join((prefix, _encode(head.document_id), _encode(head.revision_id), _encode(policy_version)))
+    return ":".join(
+        (prefix, _encode(head.document_id), _encode(head.revision_id), _encode(policy_version))
+    )
 
 
-def _target_from_key(
-    kind: JobKind, unique_key: str, policy_version: str
-) -> _MemoryHead | None:
+def _target_from_key(kind: JobKind, unique_key: str, policy_version: str) -> _MemoryHead | None:
     prefix = {
         JobKind.MEMORY_SUMMARY_REFRESH: "memory-summary-refresh",
         JobKind.MEMORY_VIEW_REFRESH: "memory-view-refresh",
@@ -418,7 +496,7 @@ def _target_from_key(
     if prefix is None:
         return None
     parts = unique_key.split(":")
-    if len(parts) != 4 or parts[0] != prefix:
+    if len(parts) != _TARGET_KEY_PARTS or parts[0] != prefix:
         return None
     document_id, revision_id, encoded_policy = (
         _decode(parts[1]),
@@ -436,12 +514,14 @@ def _descendant_job(
     kind: JobKind,
     unique_key: str,
     reason_code: str,
+    scope: AccessScope,
 ) -> KnowledgeJob:
     return KnowledgeJob(
         schema="knowledge.job.v1",
         job_id=stable_id("job", unique_key),
         workspace_id=parent.workspace_id,
-        scope=_workspace_scope(parent.workspace_id),
+        scope=scope,
+        submitter_actor=parent.submitter_actor,
         kind=kind,
         state=JobState.QUEUED,
         priority=parent.priority,
@@ -487,7 +567,9 @@ def _consolidated_entries(
                 "text": entry.text,
                 "usage_role": entry.usage_role.value,
                 "source_refs": [ref.model_dump(mode="json") for ref in entry.source_refs],
-                "wiki_ref": None if entry.wiki_ref is None else entry.wiki_ref.model_dump(mode="json"),
+                "wiki_ref": None
+                if entry.wiki_ref is None
+                else entry.wiki_ref.model_dump(mode="json"),
                 "applicability": None
                 if entry.applicability is None
                 else entry.applicability.model_dump(mode="json"),
