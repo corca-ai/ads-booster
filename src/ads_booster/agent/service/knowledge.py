@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.core.registry import ToolRegistration
+from ads_booster.agent.service.knowledge_transfer import TransferContextMaterial
 from ads_booster.contracts.agent_run import (
     AgentRecord,
     AgentRecordKind,
@@ -44,8 +46,8 @@ from ads_booster.contracts.tool_capability import (
     ToolIdempotencyPolicy,
     ToolReadiness,
     ToolReconciliationPolicy,
+    allows_authenticated_source_approval,
 )
-from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.contracts import (
     ActorContext,
     GrantCapability,
@@ -56,25 +58,34 @@ from ads_booster.knowledge.contracts import (
 )
 from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.grant_policy import authorize_read
+from ads_booster.knowledge.operation_enums import CorrectionStatus
 from ads_booster.knowledge.repository_context import active_task_binding, context_receipt_is_current
+from ads_booster.knowledge.skill_contracts import SkillApplyData
 from ads_booster.knowledge.tool_contracts import (
+    ApplyData,
+    CorrectionData,
     KnowledgeToolName,
+    MemoryApplyInput,
     ToolCatalogEntry,
     ToolResult,
+    ToolResultStatus,
     TrustedInvocationContext,
 )
-from ads_booster.agent.core.registry import ToolRegistration
-from ads_booster.agent.service.knowledge_transfer import TransferContextMaterial
 from ads_booster.transport.json_types import JsonObject
 
 _RECORD_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
 _CURRENT_IDENTITY: TypeAdapter[tuple[str, int] | None] = TypeAdapter(tuple[str, int] | None)
 
 if TYPE_CHECKING:
-    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
-    from ads_booster.knowledge.tools import ToolHost
     from ads_booster.agent.core.ports import ToolAdapter
     from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
+    from ads_booster.agent.service.learning_admission import TerminalExperienceAdmission
+    from ads_booster.contracts.agent_memory import MemorySelection
+    from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
+    from ads_booster.knowledge.legacy_memory import LegacyMemoryGuard
+    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from ads_booster.knowledge.repository_learning import LearningReviewCoordinator
+    from ads_booster.knowledge.tools import ToolHost
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 READ_ONLY_DM_TOOLS = frozenset(
@@ -84,8 +95,29 @@ READ_ONLY_DM_TOOLS = frozenset(
         KnowledgeToolName.MEMORY_GET.value,
         KnowledgeToolName.MEMORY_EXPLAIN.value,
         KnowledgeToolName.SOURCE_READ.value,
+        KnowledgeToolName.SKILL_LIST.value,
+        KnowledgeToolName.SKILL_GET.value,
     }
 )
+_UNBOUND_LEARNING_TOOLS = frozenset(
+    {
+        KnowledgeToolName.MEMORY_CORRECT.value,
+        KnowledgeToolName.SKILL_LIST.value,
+        KnowledgeToolName.SKILL_GET.value,
+        KnowledgeToolName.SKILL_APPLY.value,
+    }
+)
+_DESCRIPTOR_MISMATCH: Final = "knowledge_tool_descriptor_mismatch"
+_LEARNING_SOURCE_CONTEXT_MISMATCH: Final = "knowledge_learning_source_context_mismatch"
+_RUN_BINDING_MISSING: Final = "knowledge_run_binding_missing"
+_RUN_ACTOR_INACTIVE: Final = "knowledge_run_actor_inactive"
+_TASK_BINDING_MISSING: Final = "knowledge_task_binding_missing"
+_QUESTION_SOURCE_MISSING: Final = "knowledge_question_source_missing"
+_RUN_SOURCE_BINDING_MISMATCH: Final = "knowledge_run_source_binding_mismatch"
+_TRANSFER_RECEIPT_INVALID: Final = "knowledge_transfer_receipt_invalid"
+_TRANSFER_CONSTRAINT_INVALID: Final = "knowledge_transfer_constraint_invalid"
+_TRANSFER_CONTEXT_MISSING: Final = "knowledge_transfer_context_missing"
+_TRANSFER_SHARING_AUTHORITY_MISMATCH: Final = "knowledge_transfer_sharing_authority_mismatch"
 type PreparationResult = (
     PreparedKnowledgeContext | RequiredContextPreparationError | BrandUnresolvedPreparation
 )
@@ -98,6 +130,14 @@ _TRANSFER_LIFETIME = timedelta(minutes=15)
 
 class TrustedInvocationResolver(Protocol):
     def resolve_invocation(self, run_id: str, invocation_id: str) -> TrustedInvocationContext: ...
+
+    def consume_foreground_result(
+        self,
+        name: KnowledgeToolName,
+        context: TrustedInvocationContext,
+        invocation: ToolInvocation,
+        result: ToolResult,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,9 +152,10 @@ class KnowledgeToolAdapter:
         descriptor: ToolDescriptor,
     ) -> ToolExecutionResult:
         if descriptor.capability_id != self.name.value:
-            raise ValueError("knowledge_tool_descriptor_mismatch")
+            raise ValueError(_DESCRIPTOR_MISMATCH)
         trusted = self.resolver.resolve_invocation(invocation.run_id, invocation.invocation_id)
         result = self.host.execute(self.name.value, invocation.input, trusted)
+        self.resolver.consume_foreground_result(self.name, trusted, invocation, result)
         disposition = (
             "no_effect"
             if descriptor.effect_class is EffectClass.OBSERVE
@@ -149,6 +190,9 @@ class KnowledgeServiceAdapter:
     repository: SqliteKnowledgeRepository
     host: ToolHost
     assembler: KnowledgeContextAssembler
+    learning: LearningReviewCoordinator | None = None
+    terminal: TerminalExperienceAdmission | None = None
+    legacy_memory: LegacyMemoryGuard | None = None
 
     def prepare(  # noqa: PLR0913 - trusted task and current query are independent context inputs.
         self,
@@ -183,8 +227,15 @@ class KnowledgeServiceAdapter:
                 error_code=RequiredContextErrorCode.CORRECTION_PENDING,
             )
         task = self._task(actor, run.run_id, selected_action, selected_brand, now)
+        if self.legacy_memory is not None:
+            _ = self.legacy_memory.select(
+                actor,
+                run_id=run.run_id,
+                query=run.goal.objective if query is None else query,
+                now=now,
+            )
         filtered = self.filter_snapshot(run.run_id, snapshot)
-        return self.assembler.prepare(
+        prepared = self.assembler.prepare(
             actor,
             task,
             query=(run.goal.objective if query is None else query)[:8000],
@@ -192,6 +243,44 @@ class KnowledgeServiceAdapter:
             capability_snapshot=filtered,
             now=now,
         )
+        if not isinstance(prepared, PreparedKnowledgeContext):
+            return prepared
+        source = self.ingress.source_for_run(run.run_id)
+        if source is None:
+            return prepared
+        if source.binding != binding:
+            return _unresolved(run.run_id, selected_action, selected_brand)
+        return self._with_foreground_correction_priority(prepared, source.event.message_id)
+
+    @staticmethod
+    def _with_foreground_correction_priority(
+        prepared: PreparedKnowledgeContext,
+        event_id: str,
+    ) -> PreparedKnowledgeContext:
+        """Bind foreground correction guidance to the one acknowledged current source event."""
+        blocks = tuple(
+            block.model_copy(
+                update={
+                    "text": (
+                        block.text
+                        + " Current authenticated source event is "
+                        + event_id
+                        + (
+                            ". If its request explicitly corrects a current shared CORE rule or "
+                            "named skill, prioritize memory_correct or skill_apply before ordinary "
+                            "work. Bind that operation to this exact source; host validation still "
+                            "controls authority, scope, heads, and effects. For every selected "
+                            "approved legacy memory note, include one exact compatible, unrelated, "
+                            "or conflict assessment in a global memory or skill mutation."
+                        )
+                    )
+                }
+            )
+            if block.block_id == "required.authority"
+            else block
+            for block in prepared.blocks
+        )
+        return prepared.model_copy(update={"blocks": blocks})
 
     def filter_snapshot(
         self,
@@ -199,7 +288,17 @@ class KnowledgeServiceAdapter:
         snapshot: CapabilitySnapshot,
     ) -> CapabilitySnapshot:
         binding = self.ingress.binding_for_run(run_id)
-        if binding is None or binding.actor.conversation_scope.kind is not ScopeKind.MEMBER:
+        if binding is None:
+            return snapshot.model_copy(
+                update={
+                    "descriptors": tuple(
+                        descriptor
+                        for descriptor in snapshot.descriptors
+                        if descriptor.capability_id not in _UNBOUND_LEARNING_TOOLS
+                    )
+                }
+            )
+        if binding.actor.conversation_scope.kind is not ScopeKind.MEMBER:
             return snapshot
         return snapshot.model_copy(
             update={
@@ -271,22 +370,137 @@ class KnowledgeServiceAdapter:
         return current
 
     def resolve_invocation(self, run_id: str, invocation_id: str) -> TrustedInvocationContext:
+        return self._trusted_invocation_context(run_id, invocation_id, require_task=True)
+
+    def resolve_question_answer(self, run_id: str, invocation_id: str) -> TrustedInvocationContext:
+        """Resolve a shared learning-question reply without opening a planning task."""
+        return self._trusted_invocation_context(run_id, invocation_id, require_task=False)
+
+    def select_legacy_memory(
+        self,
+        run: AgentRun,
+        *,
+        query: str,
+        now: datetime,
+    ) -> MemorySelection | None:
+        """Select legacy context through the current admitted actor."""
+        if self.legacy_memory is None:
+            return None
+        binding = self.ingress.binding_for_run(run.run_id)
+        if binding is None:
+            return None
+        actor = self._current_read_actor(binding.actor, now=now)
+        if actor is None:
+            return None
+        return self.legacy_memory.select(
+            actor,
+            run_id=run.run_id,
+            query=query,
+            now=now,
+        )
+
+    def consume_foreground_result(
+        self,
+        name: KnowledgeToolName,
+        context: TrustedInvocationContext,
+        invocation: ToolInvocation,
+        result: ToolResult,
+    ) -> None:
+        """Fence actual foreground writes so later learning retains only other source evidence."""
+        if self.learning is None or result.status not in {
+            ToolResultStatus.APPLIED,
+            ToolResultStatus.REPLAYED,
+        }:
+            return
+        target_ids, operation_id = self._consumed_targets(name, invocation, result)
+        if not target_ids:
+            return
+        source = self.ingress.source_for_run(context.run_id)
+        if source is None:
+            return
+        if (
+            source.binding.binding_id != context.run_binding_id
+            or source.binding.actor.actor_id != context.actor.actor_id
+            or source.event != context.source_fetch_event
+        ):
+            raise ValueError(_LEARNING_SOURCE_CONTEXT_MISMATCH)
+        for target_id in target_ids:
+            _ = self.learning.consume_target(
+                source,
+                target_id=target_id,
+                operation_id=operation_id,
+                at=context.invoked_at,
+            )
+
+    @staticmethod
+    def _consumed_targets(
+        name: KnowledgeToolName,
+        invocation: ToolInvocation,
+        result: ToolResult,
+    ) -> tuple[tuple[str, ...], str]:
+        match result.data:
+            case CorrectionData(
+                status=CorrectionStatus.APPLIED,
+                correction_id=operation_id,
+                target_id=target_id,
+            ) if target_id is not None:
+                return (target_id,), operation_id
+            case CorrectionData(correction_id=operation_id):
+                return (), operation_id
+            case SkillApplyData(operation_id=operation_id, target_ids=target_ids):
+                return target_ids, operation_id
+            case ApplyData() if name is KnowledgeToolName.MEMORY_APPLY:
+                request = MemoryApplyInput.model_validate(invocation.input)
+                return (
+                    request.target_ids,
+                    result.operation_id,
+                )
+            case _:
+                return (), result.operation_id
+
+    def _trusted_invocation_context(
+        self,
+        run_id: str,
+        invocation_id: str,
+        *,
+        require_task: bool,
+    ) -> TrustedInvocationContext:
         binding = self.ingress.binding_for_run(run_id)
         if binding is None:
-            raise ValueError("knowledge_run_binding_missing")
-        actor = binding.actor
+            raise ValueError(_RUN_BINDING_MISSING)
+        now = datetime.now(UTC)
+        actor = self._current_read_actor(binding.actor, now=now)
+        if actor is None:
+            raise ValueError(_RUN_ACTOR_INACTIVE)
         task = active_task_binding(self.repository, actor)
-        if task is None:
-            raise ValueError("knowledge_task_binding_missing")
+        if require_task and task is None:
+            raise ValueError(_TASK_BINDING_MISSING)
+        source = self.ingress.source_for_run(run_id)
+        if source is None and not require_task:
+            raise ValueError(_QUESTION_SOURCE_MISSING)
+        if source is not None and source.binding != binding:
+            raise ValueError(_RUN_SOURCE_BINDING_MISMATCH)
+        legacy_selection = None
+        if self.legacy_memory is not None:
+            legacy_selection = self.legacy_memory.latest(actor, run_id=run_id, now=now)
+            if legacy_selection is None:
+                legacy_selection = self.legacy_memory.select(
+                    actor,
+                    run_id=run_id,
+                    query="" if source is None else source.event.text,
+                    now=now,
+                )
         return TrustedInvocationContext(
             invocation_id=invocation_id,
             actor=actor,
             run_binding_id=binding.binding_id,
             run_id=run_id,
-            task_id=task.task_id,
-            brand_id=task.brand_id,
+            task_id=None if task is None else task.task_id,
+            brand_id=None if task is None else task.brand_id,
             capability_epoch=actor.policy_epoch,
-            invoked_at=datetime.now(UTC),
+            source_fetch_event=None if source is None else source.event,
+            legacy_memory_selection=legacy_selection,
+            invoked_at=now,
         )
 
     def registrations(self) -> tuple[ToolRegistration, ...]:
@@ -308,13 +522,11 @@ class KnowledgeServiceAdapter:
         }
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
-        return tuple(
-            registration.descriptor(now=now) for registration in self.registrations()
-        )
+        return tuple(registration.descriptor(now=now) for registration in self.registrations())
 
     def transfer_material(self, prepared: PreparedKnowledgeContext) -> TransferContextMaterial:
         if contract_sha256(prepared.receipt) != prepared.receipt_sha256:
-            raise ValueError("knowledge_transfer_receipt_invalid")
+            raise ValueError(_TRANSFER_RECEIPT_INVALID)
         selected = {
             item.constraint_id: item.revision_id for item in prepared.receipt.required_constraints
         }
@@ -331,7 +543,7 @@ class KnowledgeServiceAdapter:
             )
             or len({block.block_id for block in constraints}) != len(constraints)
         ):
-            raise ValueError("knowledge_transfer_constraint_invalid")
+            raise ValueError(_TRANSFER_CONSTRAINT_INVALID)
         editorial = tuple(
             EditorialContextBlock(
                 block_id=block.block_id,
@@ -372,7 +584,7 @@ class KnowledgeServiceAdapter:
         prepared = self._prepared_context_for_run(invocation.run_id)
         run_binding = self.ingress.binding_for_run(invocation.run_id)
         if prepared is None or run_binding is None:
-            raise ValueError("knowledge_transfer_context_missing")
+            raise ValueError(_TRANSFER_CONTEXT_MISSING)
         binding = TrustedKnowledgeContextBinding(
             workspace_id=run_binding.actor.workspace_id,
             account_id=account_id,
@@ -426,7 +638,7 @@ class KnowledgeServiceAdapter:
         external_sharing_authority_ref: str,
     ) -> KnowledgeContextTransfer:
         if external_sharing_authority_ref != material.receipt.policy_version:
-            raise ValueError("knowledge_transfer_sharing_authority_mismatch")
+            raise ValueError(_TRANSFER_SHARING_AUTHORITY_MISMATCH)
         transfer_id = (
             "transfer."
             + sha256(
@@ -639,7 +851,14 @@ def knowledge_descriptors(
     output_schema = _JSON_OBJECT.validate_python(ToolResult.model_json_schema())
     empty_schema: JsonObject = {"type": "object", "properties": {}, "additionalProperties": False}
     return tuple(
-        _descriptor(item, schemas[item.name], output_schema, empty_schema, now) for item in catalog
+        _descriptor(
+            item,
+            schemas[item.name],
+            output_schema,
+            empty_schema,
+            now,
+        )
+        for item in catalog
     )
 
 
@@ -651,6 +870,12 @@ def _descriptor(
     now: datetime,
 ) -> ToolDescriptor:
     observe = item.required_capability is GrantCapability.READ
+    receipt_schema = _JSON_OBJECT.validate_python(ToolExecutionResult.model_json_schema())
+    source_bound_foreground_write = allows_authenticated_source_approval(
+        capability_id=item.name.value,
+        owner="knowledge",
+        installation_id="configured:knowledge",
+    )
     return ToolDescriptor(
         schema_version="trace.tool-descriptor.v1",
         capability_id=item.name.value,
@@ -663,11 +888,16 @@ def _descriptor(
         output_schema_sha256=contract_sha256(output_schema),
         config_schema=empty_schema,
         config_schema_sha256=contract_sha256(empty_schema),
-        receipt_schema=output_schema,
-        receipt_schema_sha256=contract_sha256(output_schema),
+        receipt_schema=receipt_schema,
+        receipt_schema_sha256=contract_sha256(receipt_schema),
         credential_boundary="adapter_owner",
         effect_class=EffectClass.OBSERVE if observe else EffectClass.CONTROL_PLANE_WRITE,
-        approval_policy=ToolApprovalPolicy(mode="none" if observe else "required"),
+        approval_policy=ToolApprovalPolicy(
+            mode="none" if observe or source_bound_foreground_write else "required",
+            authority="authenticated_source"
+            if source_bound_foreground_write
+            else "workspace_member",
+        ),
         cost=ToolCost(worst_case_units=1, unit="knowledge_operation"),
         readiness=ToolReadiness(ready=True, observed_at=now, max_age_seconds=300),
         idempotency=ToolIdempotencyPolicy(key_scope="run_tool_input"),
