@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from multiprocessing import get_context
 from queue import Empty
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from pydantic import TypeAdapter
 
@@ -50,15 +50,21 @@ class CanonicalBatchProcessor:
     def process(self, run: ClaimedBatchRun) -> tuple[EventReceipt, ...]:
         receipts: list[EventReceipt] = []
         for result in self.jobs.run_curation_batch(run):
-            if result.status in {
-                CurationRunStatus.CANCELLED,
-                CurationRunStatus.BUDGET_EXHAUSTED,
-                CurationRunStatus.PROVIDER_UNAVAILABLE,
-            }:
-                continue
-            receipt = result.event_receipt
-            if result.status is CurationRunStatus.FAILED:
-                receipt = receipt.model_copy(update={"status": OperationStatus.FAILED})
+            match result.status:
+                case CurationRunStatus.CANCELLED:
+                    continue
+                case (
+                    CurationRunStatus.FAILED
+                    | CurationRunStatus.BUDGET_EXHAUSTED
+                    | CurationRunStatus.PROVIDER_UNAVAILABLE
+                ):
+                    receipt = result.event_receipt.model_copy(
+                        update={"status": OperationStatus.FAILED}
+                    )
+                case CurationRunStatus.FINISHED | CurationRunStatus.AWAITING_ANSWER:
+                    receipt = result.event_receipt
+                case _:
+                    assert_never(result.status)
             receipts.append(receipt)
         return tuple(receipts)
 

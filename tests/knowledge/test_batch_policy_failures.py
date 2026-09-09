@@ -1,13 +1,129 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from tests.knowledge.batch_runtime_support import batch_fixture
+from pydantic import TypeAdapter
+
+from ads_booster.knowledge.curation_contracts import (
+    CurationBatchDecision,
+    CurationBatchJobContext,
+    CurationBatchJobDecision,
+    CurationDecision,
+    CurationDecisionAction,
+    CurationProviderError,
+)
+from ads_booster.knowledge.tool_contracts import KnowledgeToolName
+from tests.knowledge.batch_runtime_support import ControlledProvider, batch_fixture
 from tests.knowledge.change_test_fixtures import NOW
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
+
+
+def test_provider_failure_persists_failed_receipt_without_requeue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(
+        _self: ControlledProvider,
+        _batch_id: str,
+        _jobs: tuple[CurationBatchJobContext, ...],
+        *,
+        timeout_seconds: float,
+    ) -> CurationBatchDecision:
+        assert timeout_seconds > 0
+        raise CurationProviderError(code="invalid_json_schema")
+
+    monkeypatch.setattr(ControlledProvider, "decide_batch", unavailable)
+    fixture = batch_fixture(tmp_path)
+    try:
+        fixture.put("provider-failure")
+        assert fixture.runtime.tick(now=NOW + timedelta(seconds=60))
+        fixture.runtime.reap(NOW + timedelta(seconds=60))
+
+        assert fixture.states() == (("job.provider-failure", "failed"),)
+        with fixture.repository.connection() as db:
+            receipts = TypeAdapter(list[tuple[str, str]]).validate_python(
+                db.execute(
+                    "SELECT result_status,json_extract(receipt_json,'$.reason') FROM batch_items",
+                ).fetchall()
+            )
+        assert receipts == [("failed", "knowledge_provider_batch_result_invalid")]
+        with fixture.repository.connection() as db:
+            assert TypeAdapter(tuple[str | None]).validate_python(
+                db.execute("SELECT reason_code FROM jobs").fetchone()
+            ) == (
+                "knowledge_provider_batch_result_invalid",
+            )
+        assert not fixture.runtime.tick(now=NOW + timedelta(seconds=120))
+    finally:
+        fixture.close()
+
+
+def test_budget_exhaustion_persists_failed_receipt_without_requeue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def search(
+        _self: ControlledProvider,
+        batch_id: str,
+        jobs: tuple[CurationBatchJobContext, ...],
+        *,
+        timeout_seconds: float,
+    ) -> CurationBatchDecision:
+        assert timeout_seconds > 0
+        return CurationBatchDecision(
+            schema="knowledge.curation-batch-decision.v1",
+            batch_id=batch_id,
+            decisions=tuple(
+                CurationBatchJobDecision(
+                    job_id=job.request.job_id,
+                    decision=CurationDecision(
+                        schema="knowledge.curation-decision.v1",
+                        action=CurationDecisionAction.TOOL_CALL,
+                        tool_name=KnowledgeToolName.SOURCE_SEARCH,
+                        tool_arguments_json="{}",
+                    ),
+                )
+                for job in jobs
+            ),
+        )
+
+    monkeypatch.setattr(ControlledProvider, "decide_batch", search)
+    fixture = batch_fixture(tmp_path)
+    fixture.runtime.jobs = replace(
+        fixture.runtime.jobs,
+        curation=replace(
+            fixture.runtime.jobs.curation,
+            limits=fixture.runtime.jobs.curation.limits.model_copy(update={"max_search_calls": 0}),
+        ),
+    )
+    try:
+        fixture.put("budget-failure")
+        assert fixture.runtime.tick(now=NOW + timedelta(seconds=60))
+        fixture.runtime.reap(NOW + timedelta(seconds=60))
+
+        assert fixture.states() == (("job.budget-failure", "failed"),)
+        with fixture.repository.connection() as db:
+            receipts = TypeAdapter(list[tuple[str, str]]).validate_python(
+                db.execute(
+                    "SELECT result_status,json_extract(receipt_json,'$.reason') FROM batch_items",
+                ).fetchall()
+            )
+        assert receipts == [("failed", "curation_search_budget_exhausted")]
+        with fixture.repository.connection() as db:
+            assert TypeAdapter(tuple[str | None]).validate_python(
+                db.execute("SELECT reason_code FROM jobs").fetchone()
+            ) == (
+                "curation_search_budget_exhausted",
+            )
+        assert not fixture.runtime.tick(now=NOW + timedelta(seconds=120))
+    finally:
+        fixture.close()
 
 
 def test_collection_denial_settles_item_and_continues(tmp_path: Path) -> None:

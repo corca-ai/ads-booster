@@ -575,11 +575,13 @@ def _finish_job(
     receipt: EventReceipt,
 ) -> None:
     job = _job_for_batch_event(connection, batch_id, receipt.event_id)
+    reason_code: str | None = None
     match receipt.status:
         case OperationStatus.PENDING:
             state = JobState.AWAITING_ANSWER
         case OperationStatus.FAILED:
             state = JobState.FAILED
+            reason_code = receipt.reason[:160] if receipt.reason else "curation_failed"
         case (
             OperationStatus.APPLIED
             | OperationStatus.REPLAYED
@@ -587,14 +589,15 @@ def _finish_job(
             | OperationStatus.REJECTED
         ):
             state = JobState.COMPLETED
-    finished = job.model_copy(update={"state": state, "reason_code": None})
+    finished = job.model_copy(update={"state": state, "reason_code": reason_code})
     cursor = connection.execute(
         """
-        UPDATE jobs SET state=?,reason_code=NULL,result_sha256=?,job_json=?
+        UPDATE jobs SET state=?,reason_code=?,result_sha256=?,job_json=?
         WHERE job_id=? AND batch_id=? AND state='running'
         """,
         (
             state.value,
+            reason_code,
             contract_sha256(receipt),
             finished.model_dump_json(),
             job.job_id,
