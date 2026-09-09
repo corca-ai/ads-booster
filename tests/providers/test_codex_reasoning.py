@@ -171,3 +171,46 @@ def test_provider_wire_preserves_open_tool_input_without_open_schema_objects(
 ) -> None:
     result = CodexReasoningProvider(ToolInputRunner(), tmp_path, model_id="fake").plan(_request())
     assert result.decision.tool_input == {"query": "app marketing", "nested": {"limit": 5}}
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "discovery", "can_write"),
+    [
+        (("skills.list", "skills.read"), "built-in procedures", False),
+        (
+            ("skill_list", "skill_get", "skills.list", "skills.read"),
+            "effective built-in and learned procedures",
+            False,
+        ),
+        (
+            ("skill_list", "skill_get", "skill_apply"),
+            "effective built-in and learned procedures",
+            True,
+        ),
+        ((), "No skill discovery route is available", False),
+    ],
+)
+def test_skill_guidance_matches_the_current_scoped_tool_surface(
+    tmp_path: Path,
+    capabilities: tuple[str, ...],
+    discovery: str,
+    can_write: bool,
+) -> None:
+    request = _request()
+    template = request.capability_snapshot.descriptors[0]
+    request = request.model_copy(
+        update={
+            "capability_snapshot": request.capability_snapshot.model_copy(
+                update={
+                    "descriptors": tuple(
+                        template.model_copy(update={"capability_id": name}) for name in capabilities
+                    ),
+                }
+            ),
+        }
+    )
+    runner = StructuredRunner()
+    provider = CodexReasoningProvider(runner, tmp_path, model_id="test", timeout_seconds=30)
+    _ = provider.plan(request)
+    assert discovery in runner.prompts[0]
+    assert ("use skill_apply with a semantic draft" in runner.prompts[0]) is can_write

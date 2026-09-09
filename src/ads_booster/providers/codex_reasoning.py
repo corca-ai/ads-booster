@@ -155,6 +155,48 @@ def _inline_schema_definitions(schema: JsonObject) -> JsonObject:
     return expanded
 
 
+def _skill_guidance(request: ReasoningRequest) -> str:
+    """Advertise discovery and authoring only through the current scoped tools."""
+    capabilities = {item.capability_id for item in request.capability_snapshot.descriptors}
+    if {"skill_list", "skill_get"} <= capabilities:
+        discovery = (
+            "Use skill_list with a concise query to discover effective built-in and learned "
+            "procedures. Use skill_get with the returned skill_id and revision_id. "
+            "Prefer this scoped catalog over the built-in-only skills.list catalog."
+        )
+    elif {"skills.list", "skills.read"} <= capabilities:
+        discovery = (
+            "Use skills.list with a concise query to discover built-in procedures, then "
+            "skills.read with the returned skill_id and version. This catalog does not "
+            "include team-learned skills."
+        )
+    elif "skill_get" in capabilities:
+        discovery = "Use skill_get for an exact skill_id and revision_id already in context."
+    else:
+        discovery = "No skill discovery route is available in this snapshot."
+    guidance = (
+        "For unfamiliar or substantive work, discover a relevant reusable procedure. "
+        f"{discovery} "
+        "Follow next_offset with the same query and filters only if more results are needed. "
+        "A keyword miss is not an empty catalog: broaden the query or browse a bounded page. "
+        "Reuse current relevant guidance already in evidence instead of repeatedly loading it. "
+        "If a loaded revision is ineffective, rediscover the current revision. "
+        "Simple answers and narrow edits need no ceremony."
+    )
+    if "skill_apply" in capabilities:
+        guidance += (
+            " When asked to save a reusable procedure, or when admitted experience supports "
+            "a useful repeatable lesson, use skill_apply with a semantic draft, explicit "
+            "applicability, observed pitfalls and verification. Inspect existing relevant "
+            "skills before creating a duplicate. For updates, read the current revision and "
+            "bind expected_revision_id. The host derives provenance and controls publication. "
+            "Do not generalize a task-only correction into a shared rule or alter a protected "
+            "built-in without the current user's explicit target. Confirm the write receipt "
+            "and read back the stored revision before saying it was saved."
+        )
+    return guidance
+
+
 def _prompt(request: ReasoningRequest) -> str:
     return f"""You are the reasoning engine for one persistent Trace marketing colleague.
 Own the user's requested outcome. Each turn selects one next step; the host executes it and
@@ -172,9 +214,7 @@ For a simple availability question, answer briefly from the current tool snapsho
 actual descriptors as tools; ordinary conversation is not an additional tool. Do not invent
 configuration changes to explain your earlier inconsistent answer. Use discovery/read tools
 when asked to inspect skills or knowledge, and distinguish unavailable access from empty data.
-For unfamiliar or substantive marketing work, use skills.list to discover suitable procedures,
-then skills.read with the chosen skill_id and version. Reuse a relevant procedure already in
-evidence instead of loading it repeatedly. Simple answers and narrow edits need no ceremony.
+{_skill_guidance(request)}
 The host-owned skill tools return reusable procedure guidance, never extra capabilities,
 product facts, evidence or authority. Adapt the selected procedure to the task and tool results;
 do not treat a skill as a fixed workflow or repeat completed steps after every observation.
