@@ -305,7 +305,7 @@ class KnowledgeServiceAdapter:
                 "descriptors": tuple(
                     descriptor
                     for descriptor in snapshot.descriptors
-                    if not descriptor.capability_id.startswith(("knowledge_", "memory_", "source_"))
+                    if descriptor.capability_id not in KnowledgeToolName
                     or descriptor.capability_id in READ_ONLY_DM_TOOLS
                 )
             }
