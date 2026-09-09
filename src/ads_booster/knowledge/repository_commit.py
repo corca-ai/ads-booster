@@ -33,6 +33,7 @@ from ads_booster.knowledge.repository_page import (
     insert_page_revision,
     insert_page_shell,
 )
+from ads_booster.knowledge.repository_personal_sources import hide_personal_sources
 from ads_booster.knowledge.repository_source import (
     _insert_index,
     _insert_job,
@@ -258,6 +259,8 @@ def _insert_revisions(
             write,
             _published(published, target),
         )
+        if write.document.kind is MemoryKind.USER:
+            hide_personal_sources(connection, workspace_id, write.document.document_id)
 
 
 def _insert_indexes(
