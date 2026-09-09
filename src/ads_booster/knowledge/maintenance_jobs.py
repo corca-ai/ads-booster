@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol, cast
 
+from ads_booster.knowledge.batch_actor import load_job_actor
 from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
 from ads_booster.knowledge.contract_types import (
     AuthorityClass,
@@ -71,12 +72,14 @@ class CanonicalJobProcessor:
             JobKind.MEMORY_SUMMARY_REFRESH,
             JobKind.MEMORY_VIEW_REFRESH,
         }:
-            return self.memory.process(lease, cancellation)
+            actor = load_job_actor(self.repository, lease.job, self.actor, datetime.now(UTC))
+            return replace(self.memory, actor=actor).process(lease, cancellation)
         if lease.job.kind is JobKind.SOURCE_REVIEW:
             processor = self.source_review
             if processor is None:
                 return JobProcessResult(JobState.WAITING_DEPENDENCY, b"source_review_unavailable")
-            return processor.process(lease, cancellation)
+            actor = load_job_actor(self.repository, lease.job, self.actor, datetime.now(UTC))
+            return replace(processor, actor=actor).process(lease, cancellation)
         if lease.job.kind is not JobKind.CURATION:
             return JobProcessResult(JobState.WAITING_DEPENDENCY, b"job_handler_unavailable")
         result = self.run_curation_work(
@@ -91,7 +94,7 @@ class CanonicalJobProcessor:
         job: KnowledgeJob,
         actor: ActorContext | None = None,
     ) -> CurationBatchWork:
-        scoped_actor = actor or self.actor
+        scoped_actor = actor or load_job_actor(self.repository, job, self.actor, datetime.now(UTC))
         source_id, revision_id = self._source_for_job(job.job_id)
         source = self.repository.read_source(scoped_actor, source_id)
         if source is None or source.source.revision_id != revision_id:
@@ -188,7 +191,7 @@ class CanonicalJobProcessor:
     ) -> CurationResult:
         result = self.curation.run(work.request, work.trusted_context, cancellation)
         if result.applied_operation_ids:
-            _ = self.memory.schedule(
+            _ = replace(self.memory, actor=work.trusted_context.actor).schedule(
                 root_event_id=work.request.event_id,
                 due_at=datetime.now(UTC),
                 priority=priority,
@@ -201,9 +204,10 @@ class CanonicalJobProcessor:
             run.items,
             run.cancellation,
         )
+        contexts = {item.request.job_id: item.trusted_context for item in run.items}
         for result in results:
             if result.applied_operation_ids:
-                _ = self.memory.schedule(
+                _ = replace(self.memory, actor=contexts[result.job_id].actor).schedule(
                     root_event_id=result.event_receipt.event_id,
                     due_at=datetime.now(UTC),
                     priority=run.batch.priority,

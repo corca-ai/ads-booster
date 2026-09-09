@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from ads_booster.knowledge.batch_actor import load_batch_actor
+from ads_booster.knowledge.batch_actor import load_batch_actor, load_job_actor
 from ads_booster.knowledge.batch_curation import (
     BatchCurationCoordinator,
     ClaimedBatchRun,
@@ -155,7 +155,7 @@ class CurationBatchRuntime:
         for (encoded,) in rows:
             job = KnowledgeJob.model_validate_json(encoded)
             try:
-                actor = self._actor_for_scope(job.scope, now)
+                actor = load_job_actor(self.repository, job, self.actor, now)
                 work = self.jobs.build_curation_work(job, actor)
                 _ = coordinator.collect(
                     CurationBatchItem(
@@ -209,8 +209,10 @@ class CurationBatchRuntime:
         for (encoded,) in rows:
             batch = CurationBatch.model_validate_json(encoded)
             try:
-                actor = self._actor_for_scope(batch.scope, now)
-                claimed = BatchCurationCoordinator(self.repository).claim(actor, now)
+                actor = self._actor_for_scope(batch.scope, now, submitter=batch.submitter_actor)
+                claimed = BatchCurationCoordinator(self.repository).claim(
+                    actor, now, batch_id=batch.batch_id
+                )
             except KnowledgePolicyError as error:
                 fail_unclaimed_batch(self.repository, batch, error.code)
                 continue
@@ -218,7 +220,11 @@ class CurationBatchRuntime:
                 return claimed, actor
         return None
 
-    def _actor_for_scope(self, scope: AccessScope, now: datetime) -> ActorContext:
+    def _actor_for_scope(
+        self, scope: AccessScope, now: datetime, *, submitter: ActorContext | None = None
+    ) -> ActorContext:
+        if submitter is not None:
+            return load_batch_actor(self.repository, scope, now, submitter=submitter)
         if scope == self.actor.conversation_scope:
             return self.actor
         return load_batch_actor(self.repository, scope, now)
