@@ -34,6 +34,7 @@ from ads_booster.knowledge.deletion import (
 from ads_booster.knowledge.erase_ledger import EraseLedgerEntry, EraseTarget
 from ads_booster.knowledge.file_paths import MemoryRevisionTarget, RevisionFileDraft
 from ads_booster.knowledge.grant_policy import authorize_purge, authorize_write
+from ads_booster.knowledge.memory_consolidation_views import remove_redacted_memory_view
 from ads_booster.knowledge.repository_conversation_deletion import (
     scrub_source_conversation_events,
     source_conversation_event_ids,
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
 _PURGE_ARTIFACT_ROWS: Final = TypeAdapter(
     list[tuple[int, str, str, str, str | None, str | None, str]]
 )
+_REDACTED_VIEW_ROWS: Final = TypeAdapter(list[tuple[str, str]])
 _REDACTED_JSON: Final = '{"redacted":true}'
 
 
@@ -334,6 +336,7 @@ def _clean_workspace_memory_revisions(
             """,
             (request_id,),
         ).fetchall()
+    _remove_redacted_memory_views(repository, workspace_id, request_id)
     clean_ids: list[str] = []
     for row in rows:
         document_id = str(row[0])
@@ -347,6 +350,27 @@ def _clean_workspace_memory_revisions(
         )
         clean_ids.append(clean_id)
     return tuple(clean_ids)
+
+
+def _remove_redacted_memory_views(
+    repository: KnowledgeRepository, workspace_id: str, request_id: str
+) -> None:
+    with repository.connection() as connection:
+        rows = _REDACTED_VIEW_ROWS.validate_python(connection.execute(
+            """SELECT document.document_json,revision.body_sha256
+            FROM history_redactions AS redaction
+            JOIN memory_documents AS document ON document.workspace_id=redaction.workspace_id
+                AND document.document_id=redaction.entity_id
+            JOIN memory_revisions AS revision ON revision.workspace_id=redaction.workspace_id
+                AND revision.document_id=redaction.entity_id
+                AND revision.revision_id=redaction.revision_id
+            WHERE redaction.workspace_id=? AND redaction.request_id=?
+                AND redaction.entity_kind='memory_document'""",
+            (workspace_id, request_id),
+        ).fetchall())
+    for document_json, digest in rows:
+        document = MemoryDocument.model_validate_json(document_json)
+        remove_redacted_memory_view(repository.files.root, document, (digest,))
 
 
 def purge_local_artifacts(repository: KnowledgeRepository, request_id: str) -> None:

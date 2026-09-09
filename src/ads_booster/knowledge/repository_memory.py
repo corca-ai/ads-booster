@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 _STRING = TypeAdapter(str)
 _INTEGER = TypeAdapter(int)
+_OPTIONAL_INTEGER_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
 
 
 def assert_memory_head(
@@ -368,18 +369,21 @@ def read_memory(
             if head is None:
                 return None
             selected = _STRING.validate_python(head[0])
-        redacted = connection.execute(
-            """
+        redacted = _OPTIONAL_INTEGER_ROW.validate_python(
+            connection.execute(
+                """
             SELECT 1 FROM history_redactions
             WHERE workspace_id=? AND entity_kind='memory_document'
                 AND entity_id=? AND revision_id=?
             """,
-            (actor.workspace_id, document_id, selected),
-        ).fetchone()
+                (actor.workspace_id, document_id, selected),
+            ).fetchone()
+        )
         if redacted is not None:
             return None
-        blocked_entry = connection.execute(
-            """
+        blocked_entry = _OPTIONAL_INTEGER_ROW.validate_python(
+            connection.execute(
+                """
             SELECT 1 FROM memory_entries AS entry
             JOIN tombstones AS tomb ON tomb.workspace_id=entry.workspace_id
                 AND tomb.target_kind='memory_entry' AND tomb.target_id=entry.entry_id
@@ -388,8 +392,9 @@ def read_memory(
                 AND entry.memory_revision_id=?
                 AND tomb.state IN ('blocked','purge_pending','purged') LIMIT 1
             """,
-            (actor.workspace_id, document_id, selected),
-        ).fetchone()
+                (actor.workspace_id, document_id, selected),
+            ).fetchone()
+        )
         if blocked_entry is not None:
             return None
         row = cast(
