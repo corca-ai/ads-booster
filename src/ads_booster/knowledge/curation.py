@@ -7,11 +7,13 @@ from typing import Final
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.knowledge.batch_curation import CurationBatchWork
+from ads_booster.knowledge.contract_types import ScopeKind
 from ads_booster.knowledge.curation_contracts import (
     CurationBatchJobContext,
     CurationDecision,
     CurationDecisionAction,
     CurationLimits,
+    CurationMemoryIntent,
     CurationProviderError,
     CurationRequest,
     CurationResult,
@@ -32,8 +34,8 @@ from ads_booster.knowledge.curation_runtime import (
     finish_result,
     tool_budget_error,
 )
-from ads_booster.knowledge.ingestion_build import stable_id
 from ads_booster.knowledge.errors import KnowledgePolicyError
+from ads_booster.knowledge.ingestion_build import stable_id
 from ads_booster.knowledge.repository_types import RepositoryConflictError
 from ads_booster.knowledge.tool_contracts import (
     KnowledgeToolName,
@@ -74,6 +76,16 @@ class _CurationExecution:
 class _CurationAdvance:
     progress: CurationProgress
     terminal: CurationTerminal | None = None
+
+
+def _tool_advance(
+    progress: CurationProgress, outcome: CurationProgress | CurationTerminal
+) -> _CurationAdvance:
+    match outcome:
+        case CurationTerminal():
+            return _CurationAdvance(progress, outcome)
+        case CurationProgress():
+            return _CurationAdvance(outcome)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,10 +137,7 @@ class CurationRunner:
                 )
                 for item in prepared
             )
-        active = {
-            item.request.job_id: _BatchJobState(item)
-            for item in prepared
-        }
+        active = {item.request.job_id: _BatchJobState(item) for item in prepared}
         completed: dict[str, CurationResult] = {}
         total_seconds = min(self.limits.total_timeout_seconds, _MAX_BATCH_TOTAL_SECONDS)
         round_count = min(self.limits.max_decisions, _MAX_BATCH_ROUNDS)
@@ -273,10 +282,16 @@ class CurationRunner:
     def _with_tool_catalog(self, request: CurationRequest) -> CurationRequest:
         return request.model_copy(
             update={
+                "auto_memory_enabled": (
+                    self.dependencies.memory is not None
+                    and request.authenticated_user_event is not None
+                    and request.authenticated_user_event.evidence_ref.scope.kind
+                    in (ScopeKind.WORKSPACE, ScopeKind.CHANNEL)
+                ),
                 "tool_catalog": tuple(
                     CurationToolDefinition(name=name, input_schema=schema)
                     for name, schema in self.dependencies.tool_host.schemas().items()
-                )
+                ),
             }
         )
 
@@ -302,8 +317,7 @@ class CurationRunner:
                 or actor.session_id != first_actor.session_id
                 or actor.conversation_scope != first_actor.conversation_scope
                 or actor.policy_epoch != first_actor.policy_epoch
-                or item.trusted_context.capability_epoch
-                != first.trusted_context.capability_epoch
+                or item.trusted_context.capability_epoch != first.trusted_context.capability_epoch
             ):
                 return "curation_batch_scope_policy_mismatch"
         return None
@@ -349,11 +363,10 @@ class CurationRunner:
                     decision.tool_name,
                     decision.tool_arguments_json,
                 )
-                match outcome:
-                    case CurationTerminal():
-                        return _CurationAdvance(step.progress, outcome)
-                    case CurationProgress():
-                        return _CurationAdvance(outcome)
+                return _tool_advance(step.progress, outcome)
+            case CurationDecisionAction.REMEMBER:
+                outcome = self._execute_remember(step, decision.memory_intent)
+                return _tool_advance(step.progress, outcome)
             case CurationDecisionAction.QUESTION:
                 outcome = self._execute_question(step, decision.question_arguments_json)
                 match outcome:
@@ -448,6 +461,22 @@ class CurationRunner:
                 "curation_conflict_budget_exhausted",
             )
         return updated
+
+    def _execute_remember(
+        self, step: _CurationStep, intent: CurationMemoryIntent | None
+    ) -> CurationProgress | CurationTerminal:
+        writer = self.dependencies.memory
+        if writer is None or not step.request.auto_memory_enabled:
+            return CurationTerminal(CurationRunStatus.FAILED, "curation_memory_unavailable")
+        if intent is None:
+            return CurationTerminal(CurationRunStatus.FAILED, "curation_memory_intent_missing")
+        result = writer.write(step.request, intent, step.context)
+        progress = step.progress.record(step.decision_index, KnowledgeToolName.MEMORY_APPLY, result)
+        if progress.conflict_count > self.limits.max_conflict_redecisions:
+            return CurationTerminal(
+                CurationRunStatus.BUDGET_EXHAUSTED, "curation_conflict_budget_exhausted"
+            )
+        return progress
 
     def _execute_question(
         self,

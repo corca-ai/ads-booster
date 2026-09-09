@@ -9,6 +9,7 @@ from ads_booster.knowledge.curation_contracts import (
     CurationBatchJobContext,
     CurationDecision,
     CurationLimits,
+    CurationMemoryIntent,
     CurationObservation,
     CurationRequest,
     CurationResult,
@@ -61,11 +62,21 @@ class CancellationSignal(Protocol):
     def cancelled(self) -> bool: ...
 
 
+class CurationMemoryPort(Protocol):
+    def write(
+        self,
+        request: CurationRequest,
+        intent: CurationMemoryIntent,
+        context: TrustedInvocationContext,
+    ) -> ToolResult: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CurationDependencies:
     provider: CurationBatchDecisionProvider
     tool_host: CurationToolHost
     dispositions: SourceDispositionPort
+    memory: CurationMemoryPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,11 +108,9 @@ class CurationProgress:
             ),
             applied_operation_ids=applied,
             decision_count=decision_index,
-            search_calls=self.search_calls
-            + int(tool_name is KnowledgeToolName.SOURCE_SEARCH),
+            search_calls=self.search_calls + int(tool_name is KnowledgeToolName.SOURCE_SEARCH),
             fetch_calls=self.fetch_calls + int(tool_name is KnowledgeToolName.SOURCE_FETCH),
-            conflict_count=self.conflict_count
-            + int(result.status is ToolResultStatus.CONFLICT),
+            conflict_count=self.conflict_count + int(result.status is ToolResultStatus.CONFLICT),
         )
 
     def record_disposition(self, operation_id: str, decision_index: int) -> CurationProgress:
@@ -129,9 +138,7 @@ def finish_result(
     terminal: CurationTerminal,
 ) -> CurationResult:
     event_status = (
-        OperationStatus.APPLIED
-        if progress.applied_operation_ids
-        else OperationStatus.REJECTED
+        OperationStatus.APPLIED if progress.applied_operation_ids else OperationStatus.REJECTED
     )
     if terminal.status is CurationRunStatus.AWAITING_ANSWER:
         event_status = OperationStatus.PENDING
