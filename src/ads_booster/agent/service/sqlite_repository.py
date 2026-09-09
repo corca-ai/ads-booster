@@ -37,6 +37,10 @@ class RepositoryAdmission(Protocol):
     def __call__(self, connection: sqlite3.Connection) -> None: ...
 
 
+class RepositoryAfterCommit(Protocol):
+    def __call__(self, database_path: Path) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class SqliteAgentRunRepository:
     database_path: Path
@@ -308,7 +312,7 @@ class SqliteAgentRunRepository:
             AgentRecord.model_validate_json(_STRING.validate_python(row[0])) for row in rows
         )
 
-    def append_step(  # noqa: PLR0913 - append-only CAS boundary keeps authority explicit.
+    def append_step(  # noqa: C901,PLR0913 - append-only CAS boundary keeps authority explicit.
         self,
         run: AgentRun,
         step: AgentStep,
@@ -318,6 +322,7 @@ class SqliteAgentRunRepository:
         records: tuple[AgentRecord, ...] = (),
         blocked_reason: str | None = None,
         admission: RepositoryAdmission | None = None,
+        after_commit: RepositoryAfterCommit | None = None,
     ) -> AgentRun:
         if step.run_id != run.run_id:
             raise AgentRunConflictError("agent_step_run_conflict")
@@ -421,6 +426,8 @@ class SqliteAgentRunRepository:
                 )
         except sqlite3.IntegrityError as error:
             raise AgentRunConflictError("agent_step_append_conflict") from error
+        if after_commit is not None:
+            after_commit(self.database_path)
         return updated
 
     def claim_tool_idempotency(
@@ -504,4 +511,9 @@ class SqliteAgentRunRepository:
             connection.close()
 
 
-__all__ = ["AgentRunConflictError", "RepositoryAdmission", "SqliteAgentRunRepository"]
+__all__ = [
+    "AgentRunConflictError",
+    "RepositoryAdmission",
+    "RepositoryAfterCommit",
+    "SqliteAgentRunRepository",
+]
