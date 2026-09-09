@@ -653,3 +653,13 @@ first use without replacing existing grants or revocations. New bindings can cre
 approve effects. Shared threads remain channel/thread scoped; DMs remain member/session scoped.
 Slack Connect events are excluded. Legacy channel/member lists still constrain slash commands, not
 installed Events conversations.
+
+## Package release publication
+
+The GitHub Actions `Release on-prem agent` workflow runs after a successful main push verification
+(or an explicit main recovery dispatch that rechecks verification). It binds checkout, tag and
+artifacts to the exact verified SHA, and publishes only a new stable package version. Build and
+fresh-wheel CLI checks precede draft upload and publication. Published versions are preserved;
+concurrent publishers are serialized. GitHub write permission is confined to the release job.
+It does not consume PR artifacts or server credentials. The on-prem updater above continues to
+select verified main independently; release publication is not installed-server activation.

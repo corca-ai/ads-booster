@@ -537,3 +537,13 @@ separate durable identity without approval rights; configured approvers retain t
 Revoked/disabled identities and Slack Connect channels remain rejected. `/trace` slash commands
 retain their configured channel/member restrictions. No additional Slack scope or setup reset is
 required for mention access after updating the server.
+
+### Package releases
+
+[GitHub Releases](https://github.com/corca-ai/ads-booster/releases) provides versioned wheels,
+source distributions, the source commit and SHA-256 checksums. A reviewed version bump is published
+automatically after verification of that exact main commit. Maintainers follow the
+[release procedure](docs/conventions/github.md#on-prem-package-releases).
+The Python package keeps the compatibility name `trace-appium-capture`; its CLI is `trace-marketing`.
+The server installer/updater continues to follow verified main. A GitHub release is a downloadable
+package snapshot; check the server's health release SHA to confirm an installed update.

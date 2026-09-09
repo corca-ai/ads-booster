@@ -464,3 +464,13 @@ installed composition, new users/channels, distinct identity, preserved approver
 foreign/shared workspaces, disabled/revoked users and non-approver effects. Run this owner together
 with Slack progress and installed knowledge ingress checks; actual multi-user Slack delivery
 requires live workspace verification.
+
+## Release workflow
+
+For `.github/workflows/release-on-prem.yml`, run `actionlint` against that file and build wheel/sdist
+with `uv build`. Install the wheel into a fresh venv outside the checkout and run `trace-marketing
+version --json`, `--help`, `server --help` and `service doctor`. Audit the exact-SHA push-verification
+gate, stale-main skip, published-version skip and conflicting draft/tag rejection. These checks do
+not require the full repository suite. After delivery, observe the real Actions run, resolve the tag
+to its commit, download the release assets and run `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c
+SHA256SUMS` on macOS). A rerun of a published version must skip artifact mutation.
