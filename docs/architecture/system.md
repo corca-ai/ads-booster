@@ -166,7 +166,10 @@ the source/Run binding. Existing reviewed SQLite work and performance notes may 
 evidence, but the knowledge owner does not dual-write or auto-approve them. The service selects
 those notes through the existing SQLite owner for the exact knowledge workspace, source Run, and
 currently admitted actor. A stable selection fingerprint binds note IDs and digests without binding
-incidental selection time. Every global learned-memory or skill mutation must assess every selected
+incidental selection time. SQLite selection receipts retain canonical JSON alongside indexed run,
+full scope, actor, and UTC selection-time columns. An additive, transactional migration backfills
+valid existing receipts once; malformed or actorless legacy receipts cannot satisfy a current actor
+binding. Every global learned-memory or skill mutation must assess every selected
 note as compatible, unrelated, or conflicting. Missing, mismatched, or stale assessments reject the
 write; a declared conflict preserves the proposed head and creates a source-thread question whose
 external note references are rechecked before display or answer. Task-only overlays do not publish a

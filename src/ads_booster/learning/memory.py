@@ -6,10 +6,11 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.contracts.agent_memory import (
     MemoryAccess,
@@ -38,6 +39,22 @@ _MAX_CHARS = 24000
 _MAX_QUERY = 8000
 _ROWS = TypeAdapter(list[tuple[str]])
 _OPTIONAL_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
+_OPTIONAL_INT_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
+_SELECTION_ROWS: TypeAdapter[list[tuple[str, str]]] = TypeAdapter(list[tuple[str, str]])
+_TABLE_INFO_ROWS: TypeAdapter[list[tuple[int, str, str, int, str | None, int]]] = TypeAdapter(
+    list[tuple[int, str, str, int, str | None, int]]
+)
+_SELECTION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("run_id", "TEXT"),
+    ("workspace_id", "TEXT"),
+    ("product_id", "TEXT"),
+    ("campaign_id", "TEXT"),
+    ("work_id", "TEXT"),
+    ("member_id", "TEXT"),
+    ("session_id", "TEXT"),
+    ("actor_id", "TEXT"),
+    ("selected_at", "TEXT"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +77,77 @@ class SQLiteMemoryStore:
                     data_json TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS agent_memory_selections (
                     selection_id TEXT PRIMARY KEY, data_json TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS agent_memory_selection_schema (
+                    schema_version INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS agent_memory_retirements (
                     note_id TEXT PRIMARY KEY, successor TEXT NOT NULL);
             """)
+            self._migrate_selection_bindings(db)
+
+    @staticmethod
+    def _selection_binding_values(receipt: MemorySelectionReceipt) -> tuple[str, ...]:
+        """Project a receipt's durable identity into indexed SQLite columns."""
+        require_aware(receipt.selected_at)
+        scope = receipt.scope
+        return (
+            receipt.run_id,
+            scope.workspace_id,
+            scope.product_id,
+            scope.campaign_id,
+            scope.work_id,
+            scope.member_id,
+            scope.session_id,
+            "" if receipt.actor_id is None else receipt.actor_id,
+            receipt.selected_at.astimezone(UTC).isoformat(),
+        )
+
+    def _migrate_selection_bindings(self, db: sqlite3.Connection) -> None:
+        """Add indexed receipt bindings once while retaining legacy payloads verbatim."""
+        _ = db.execute("BEGIN IMMEDIATE")
+        schema = _OPTIONAL_INT_ROW.validate_python(
+            db.execute(
+                "SELECT schema_version FROM agent_memory_selection_schema LIMIT 1"
+            ).fetchone()
+        )
+        if schema is not None:
+            return
+        existing_columns = {
+            column[1]
+            for column in _TABLE_INFO_ROWS.validate_python(
+                db.execute("PRAGMA table_info(agent_memory_selections)").fetchall()
+            )
+        }
+        for column, type_name in _SELECTION_BINDING_COLUMNS:
+            if column not in existing_columns:
+                _ = db.execute(
+                    f"ALTER TABLE agent_memory_selections ADD COLUMN {column} {type_name}"
+                )
+        rows = _SELECTION_ROWS.validate_python(
+            db.execute("SELECT selection_id, data_json FROM agent_memory_selections").fetchall()
+        )
+        for selection_id, data_json in rows:
+            try:
+                receipt = MemorySelectionReceipt.model_validate_json(data_json)
+            except ValidationError:
+                continue
+            _ = db.execute(
+                """
+                UPDATE agent_memory_selections
+                SET run_id=?, workspace_id=?, product_id=?, campaign_id=?, work_id=?, member_id=?,
+                    session_id=?, actor_id=?, selected_at=?
+                WHERE selection_id=?
+                """,
+                (*self._selection_binding_values(receipt), selection_id),
+            )
+        _ = db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS agent_memory_selection_latest ON agent_memory_selections(
+                run_id, workspace_id, product_id, campaign_id, work_id, member_id, session_id,
+                actor_id, selected_at DESC, selection_id DESC
+            )
+            """
+        )
+        _ = db.execute("INSERT INTO agent_memory_selection_schema VALUES (1)")
 
     @contextmanager
     def connect(self) -> Generator[sqlite3.Connection]:
@@ -261,8 +346,17 @@ class SQLiteMemoryStore:
             )
             receipt = receipt.model_copy(update={"selection_sha256": receipt.canonical_sha256()})
             _ = db.execute(
-                "INSERT INTO agent_memory_selections VALUES (?,?)",
-                (receipt.selection_id, receipt.model_dump_json()),
+                """
+                INSERT INTO agent_memory_selections(
+                    selection_id, data_json, run_id, workspace_id, product_id, campaign_id, work_id,
+                    member_id, session_id, actor_id, selected_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    receipt.selection_id,
+                    receipt.model_dump_json(),
+                    *self._selection_binding_values(receipt),
+                ),
             )
             return MemorySelection(notes=tuple(selected), receipt=receipt)
 
