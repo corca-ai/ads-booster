@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from ads_booster.knowledge.evidence_contracts import EvidenceRef
     from ads_booster.knowledge.scope_contracts import AccessScope
+    from ads_booster.knowledge.source_contracts import ConversationEvent
     from ads_booster.knowledge.wiki_contracts import Claim, EvidenceEdge
 
 
@@ -31,6 +32,7 @@ class EvidenceRecord:
     ref: EvidenceRef
     quote: str | None
     ancestry: tuple[EvidenceEdge, ...] = ()
+    canonical_event: ConversationEvent | None = None
 
 
 def require_scope_not_wider(*, source: AccessScope, target: AccessScope, target_id: str) -> None:
