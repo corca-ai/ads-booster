@@ -22,6 +22,7 @@ from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryEntry
 from ads_booster.knowledge.messages import require_actor_event_binding
 from ads_booster.knowledge.operation_contracts import KnowledgeJob, MemoryExplanation
 from ads_booster.knowledge.operation_enums import TaskBindingState
+from ads_booster.knowledge.repository_conversation_deletion import READABLE_CONVERSATION_EVENT
 from ads_booster.knowledge.repository_source import _insert_job, _require_read
 from ads_booster.knowledge.repository_types import (
     IndexOutboxItem,
@@ -249,22 +250,29 @@ class RepositoryToolState:
         )
 
     def canonical_event(self, actor: ActorContext, event_ref: str) -> ConversationEvent:
+        event = self.read_canonical_event(actor, event_ref)
+        require_actor_event_binding(actor, event)
+        return event
+
+    def read_canonical_event(self, actor: ActorContext, event_ref: str) -> ConversationEvent:
+        """Read admitted evidence without treating the reader as its author."""
         with self.repository.connection() as connection:
             _require_read(connection, actor)
             row = _OPTIONAL_STRING_ROW.validate_python(
                 connection.execute(
-                    """
-                    SELECT event_json FROM conversation_events
-                    WHERE workspace_id=? AND message_id=?
-                    ORDER BY revision DESC LIMIT 1
-                    """,
+                    f"""
+                    SELECT event_json FROM conversation_events AS event
+                    WHERE event.workspace_id=? AND event.message_id=?
+                    AND {READABLE_CONVERSATION_EVENT}
+                    ORDER BY event.revision DESC LIMIT 1
+                    """,  # noqa: S608 - static SQL predicate; all input values are bound
                     (actor.workspace_id, event_ref),
                 ).fetchone()
             )
         if row is None:
             _fail("authenticated_event_not_found", event_ref)
         event = ConversationEvent.model_validate_json(_STRING.validate_python(row[0]))
-        require_actor_event_binding(actor, event)
+        _ = authorize_read(actor=actor, target_scope=event.scope, at=datetime.now(UTC))
         return event
 
     def mark_event_source_use_only(
@@ -663,7 +671,7 @@ class RepositoryToolState:
         if row is not None:
             return True
         try:
-            _ = self.canonical_event(actor, reference_id)
+            _ = self.read_canonical_event(actor, reference_id)
         except ToolStateError as error:
             if error.code == "authenticated_event_not_found":
                 return False

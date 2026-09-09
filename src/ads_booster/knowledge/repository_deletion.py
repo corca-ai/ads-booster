@@ -8,6 +8,8 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
+from pydantic import TypeAdapter
+
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contracts import (
     AccessScope,
@@ -32,6 +34,10 @@ from ads_booster.knowledge.deletion import (
 from ads_booster.knowledge.erase_ledger import EraseLedgerEntry, EraseTarget
 from ads_booster.knowledge.file_paths import MemoryRevisionTarget, RevisionFileDraft
 from ads_booster.knowledge.grant_policy import authorize_purge, authorize_write
+from ads_booster.knowledge.repository_conversation_deletion import (
+    scrub_source_conversation_events,
+    source_conversation_event_ids,
+)
 from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.repository_memory import assert_memory_head, insert_memory_revision
 from ads_booster.knowledge.repository_source import _require_read
@@ -44,6 +50,9 @@ from ads_booster.knowledge.repository_types import (
 if TYPE_CHECKING:
     from ads_booster.knowledge.repository_protocol import KnowledgeRepository
 
+_PURGE_ARTIFACT_ROWS: Final = TypeAdapter(
+    list[tuple[int, str, str, str, str | None, str | None, str]]
+)
 _REDACTED_JSON: Final = '{"redacted":true}'
 
 
@@ -342,14 +351,16 @@ def _clean_workspace_memory_revisions(
 
 def purge_local_artifacts(repository: KnowledgeRepository, request_id: str) -> None:
     with repository.connection() as connection:
-        rows = connection.execute(
+        rows = _PURGE_ARTIFACT_ROWS.validate_python(connection.execute(
             """
-            SELECT ordinal,artifact_kind,entity_id,revision_id,relative_path,content_sha256
-            FROM deletion_manifest_entries
-            WHERE request_id=? AND state='purge_pending' ORDER BY ordinal
+            SELECT ordinal,artifact_kind,entity_id,revision_id,relative_path,content_sha256,
+                request.workspace_id
+            FROM deletion_manifest_entries AS artifact
+            JOIN deletion_requests AS request USING(request_id)
+            WHERE artifact.request_id=? AND artifact.state='purge_pending' ORDER BY ordinal
             """,
             (request_id,),
-        ).fetchall()
+        ).fetchall())
     for row in rows:
         ordinal = int(row[0])
         kind = str(row[1])
@@ -361,7 +372,7 @@ def purge_local_artifacts(repository: KnowledgeRepository, request_id: str) -> N
             _purge_exact_file(repository.root, relative_path, content_digest)
         with repository.connection() as connection:
             _ = connection.execute("BEGIN IMMEDIATE")
-            _scrub_manifest_entity(connection, kind, entity_id, revision_id)
+            _scrub_manifest_entity(connection, str(row[6]), kind, entity_id, revision_id)
             _ = connection.execute(
                 """
                 UPDATE deletion_manifest_entries SET state='purged'
@@ -547,6 +558,7 @@ def apply_erase_entries(
                 _ = connection.execute("BEGIN IMMEDIATE")
                 _scrub_manifest_entity(
                     connection,
+                    entry.workspace_id,
                     artifact.kind,
                     artifact.entity_id,
                     artifact.revision_id or "",
@@ -717,6 +729,7 @@ def _dependent_nodes(
                 (workspace_id, target.entity_id),
             ).fetchall()
         )
+        seed_ids.extend(source_conversation_event_ids(connection, workspace_id, target.entity_id))
     placeholders = ",".join("?" for _ in seed_ids)
     rows = connection.execute(
         f"""
@@ -1131,56 +1144,67 @@ def _purge_exact_file(root: Path, relative_path: str, expected_sha256: str | Non
 
 def _scrub_manifest_entity(
     connection: sqlite3.Connection,
+    workspace_id: str,
     kind: str,
     entity_id: str,
     revision_id: str,
 ) -> None:
     match kind:
         case "source_file":
+            scrub_source_conversation_events(connection, workspace_id, entity_id)
             _ = connection.execute(
-                "DELETE FROM source_files WHERE source_id=? AND revision_id=?",
-                (entity_id, revision_id),
+                "DELETE FROM source_files WHERE workspace_id=? AND source_id=? AND revision_id=?",
+                (workspace_id, entity_id, revision_id),
             )
             _ = connection.execute(
-                "UPDATE sources SET source_json=? WHERE source_id=?",
-                (_REDACTED_JSON, entity_id),
+                "UPDATE sources SET source_json=? WHERE workspace_id=? AND source_id=?",
+                (_REDACTED_JSON, workspace_id, entity_id),
             )
             _ = connection.execute(
-                "UPDATE source_revisions SET revision_json=? WHERE source_id=? AND revision_id=?",
-                (_REDACTED_JSON, entity_id, revision_id),
+                "UPDATE source_revisions SET revision_json=? WHERE workspace_id=? AND "
+                "source_id=? AND revision_id=?",
+                (_REDACTED_JSON, workspace_id, entity_id, revision_id),
             )
         case "segment":
             _ = connection.execute(
-                "UPDATE segments SET segment_json=?,locator_json=? WHERE segment_id=? AND revision_id=?",
-                (_REDACTED_JSON, _REDACTED_JSON, entity_id, revision_id),
+                "UPDATE segments SET segment_json=?,locator_json=? WHERE workspace_id=? AND "
+                "segment_id=? AND revision_id=?",
+                (_REDACTED_JSON, _REDACTED_JSON, workspace_id, entity_id, revision_id),
             )
         case "knowledge_revision_file":
             _ = connection.execute(
-                "UPDATE knowledge_revisions SET revision_json=? WHERE page_id=? AND revision_id=?",
-                (_REDACTED_JSON, entity_id, revision_id),
+                "UPDATE knowledge_revisions SET revision_json=? WHERE workspace_id=? AND "
+                "page_id=? AND revision_id=?",
+                (_REDACTED_JSON, workspace_id, entity_id, revision_id),
             )
         case "memory_revision_file":
             _ = connection.execute(
-                "UPDATE memory_entries SET entry_json=? WHERE document_id=? AND memory_revision_id=? AND EXISTS (SELECT 1 FROM tombstones AS tomb WHERE tomb.workspace_id=memory_entries.workspace_id AND tomb.target_kind='memory_entry' AND tomb.target_id=memory_entries.entry_id)",
-                (_REDACTED_JSON, entity_id, revision_id),
+                "UPDATE memory_entries SET entry_json=? WHERE workspace_id=? AND "
+                "document_id=? AND memory_revision_id=? AND EXISTS (SELECT 1 FROM tombstones "
+                "AS tomb WHERE tomb.workspace_id=memory_entries.workspace_id AND "
+                "tomb.target_kind='memory_entry' AND tomb.target_id=memory_entries.entry_id)",
+                (_REDACTED_JSON, workspace_id, entity_id, revision_id),
             )
         case "claim_record":
             _ = connection.execute(
-                "UPDATE claim_versions SET claim_json=? WHERE claim_id=? AND revision_id=?",
-                (_REDACTED_JSON, entity_id, revision_id),
+                "UPDATE claim_versions SET claim_json=? WHERE workspace_id=? AND claim_id=? "
+                "AND revision_id=?",
+                (_REDACTED_JSON, workspace_id, entity_id, revision_id),
             )
         case "memory_entry_record":
             _ = connection.execute(
-                "UPDATE memory_entries SET entry_json=? WHERE entry_id=? AND memory_revision_id=?",
-                (_REDACTED_JSON, entity_id, revision_id),
+                "UPDATE memory_entries SET entry_json=? WHERE workspace_id=? AND entry_id=? "
+                "AND memory_revision_id=?",
+                (_REDACTED_JSON, workspace_id, entity_id, revision_id),
             )
         case "search_chunk":
             _ = connection.execute("DELETE FROM chunks_fts WHERE chunk_id=?", (entity_id,))
             _ = connection.execute("DELETE FROM chunks WHERE chunk_id=?", (entity_id,))
         case "context_transfer":
             _ = connection.execute(
-                "UPDATE context_transfers SET transfer_json=?,state='purge_pending' WHERE transfer_id=?",
-                (_REDACTED_JSON, entity_id),
+                "UPDATE context_transfers SET transfer_json=?,state='purge_pending' WHERE "
+                "workspace_id=? AND transfer_id=?",
+                (_REDACTED_JSON, workspace_id, entity_id),
             )
         case "replica":
             pass
