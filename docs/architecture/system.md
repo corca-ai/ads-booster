@@ -108,6 +108,16 @@ retrieval and tool host, Codex curation provider, owner lock, bounded job runner
 memory-view dispatcher. `CurationBatchRuntime` defaults to collecting compatible routine jobs until
 60 seconds after their first event, without extending the deadline for later arrivals. It claims
 urgent work immediately and runs one shared bounded model round at a time for every active job.
+Shared feedback learning uses a separate durable workspace readiness counter: the tenth admitted
+shared conversation turn or terminal tool receipt seals one logical review round. This wake-up rule
+does not combine member, session, scope, grant, or policy partitions; the existing curation owner
+still processes each compatible partition. Immediate corrections bypass that routine threshold at
+the next safe foreground boundary. The existing 60-second collection window remains in force for
+other routine curation jobs.
+The live `KnowledgeRuntime` dispatcher drains ingress, terminal experience, curation, index, and
+memory-view work under the existing owner and maintenance activity gates. Terminal experience
+outbox recovery runs before normal processing, so a committed terminal receipt can resume delivery
+without replaying the foreground tool.
 Each later round receives the actual guarded tool observations from earlier rounds; terminal
 job decisions become receipts bound to their original event and revision. Explicit flush updates
 the indexed and serialized batch state in one transaction. Cancelled unfinished jobs re-enter
@@ -142,6 +152,47 @@ returns progress without acknowledging or automatically retrying that item, so l
 maintenance continue. Unknown receipt outcomes and persistence errors still propagate.
 Source fetching admits only 2xx or 304 after redirect handling. HTTP 408/429 and server errors are
 retryable; other unsuccessful statuses fail before their body can enter extraction or curation.
+
+Only authenticated members admitted to shared Slack threads contribute turns or terminal experience
+receipts to workspace learning. Private DMs keep member and conversation scope, remain read-only for
+shared knowledge, and do not increment the shared counter. A terminal tool result enters learning
+through its stored Run, invocation, receipt, and source binding; tool text never becomes a synthetic
+user event. All eligible terminal outcomes count toward readiness. Reviewed complete successful or
+observed evidence can support a reusable procedure; failed, unknown-side-effect, and invalidated
+outcomes stay evidence without promotion. A completed `no_effect` receipt is terminal work for
+readiness, not effect success. Actual
+experience evidence retains typed invocation input and typed output, their digests, the receipt, and
+the source/Run binding. Existing reviewed SQLite work and performance notes may provide read-only
+evidence, but the knowledge owner does not dual-write or auto-approve them. The service selects
+those notes through the existing SQLite owner for the exact knowledge workspace, source Run, and
+currently admitted actor. A stable selection fingerprint binds note IDs and digests without binding
+incidental selection time. Every global learned-memory or skill mutation must assess every selected
+note as compatible, unrelated, or conflicting. Missing, mismatched, or stale assessments reject the
+write; a declared conflict preserves the proposed head and creates a source-thread question whose
+external note references are rechecked before display or answer. Task-only overlays do not publish a
+global change and stay outside this guard.
+
+The knowledge owner derives the full built-in skill catalog as protected records and stores only
+source-bound learned revisions or explicit foreground overrides. Background learning cannot edit a
+built-in or override. If a built-in release digest changes, the current built-in is the effective
+fallback and the override remains pending review. Normal learning emits no Slack notification. An
+unresolved same-applicability conflict creates one durable question in the original thread; the
+answer follows the knowledge-question path and is separate from ToolApproval. This extension reuses
+the existing repository, curation provider, ingress, and lifecycle; it adds no provider, daemon,
+store, or verifier.
+
+Foreground learning records a consumed target by source revision and target ID after an applied or
+replayed `memory_correct` or `skill_apply` result. Later review skips that exact target while keeping
+other evidence from the source. This prevents a foreground correction and a background round from
+applying the same target twice.
+
+The enabled knowledge tool host exposes `skill_list`, `skill_get`, and `skill_apply`. Prepared
+context carries metadata for the effective skill index and selected revision receipt; `skill_get`
+loads the procedure body. Each `selected_skill_revisions` entry carries nested `source_refs` and
+`source_revisions`; these are separate from generic retrieval references. Binding-free Runs receive
+neither the learning tools nor this context.
+Private DMs may read shared skill metadata and bodies under their current grants, but cannot write
+skills.
 
 `source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
 memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment
@@ -321,6 +372,13 @@ member's ongoing DM session. Private services share the canonical lock/ledger bu
 public search, skill discovery and registered scoped knowledge/memory/source reads, with no
 shared-context mutation or delivery tool authority. Knowledge must be configured for those reads
 to appear; current actor/session grants are still checked by the knowledge owner.
+Shared-thread corrections remain bound to the admitted source and current Run, including while a Run
+awaits input. Clear CORE corrections do not wait for the 10/10 review threshold. Routine learning
+stays silent; only an unresolved same-scope conflict sends a durable question to the original
+thread. Private messages never contribute to the shared counter or shared writes.
+Completed shared create, input, resume, and revise plans admit their turn through the stored source
+receipt. Edited or deleted source events invalidate superseded learning admissions after canonical
+acknowledgement; an edited current source may then enter the urgent correction path.
 Ordinary completed/input-wait answers omit diagnostic footers. Explicit status requests and
 exceptional runtime states retain diagnostics. Enabled shared work links use a separate Slack
 context block; private conversations never receive that shared Web projection.

@@ -139,6 +139,76 @@ and `--policy` on every command. Focused CLI checks should cover `init`, `doctor
 reference operations until the installed `knowledge --help` and a fresh installation are checked;
 do not claim operator usability or deployment proof from source alone.
 
+### Shared feedback-learning checks
+
+The authored regression owners cover the new boundaries without replacing the existing knowledge
+checks:
+
+| Boundary | Focused owner |
+| --- | --- |
+| Skill revisions, built-in protection, explicit overrides, CORE correction and task-only overlays | `tests/knowledge/test_procedural_skills.py`, `tests/knowledge/test_feedback_correction.py` |
+| Workspace 10-turn/10-receipt readiness, durable watermarks, replay, source invalidation and grant partitions | `tests/knowledge/test_feedback_learning.py` |
+| New-thread reuse, nonterminal correction, classifier-call bounds, silence and DM exclusion | `tests/marketing/channels/test_slack_learning.py` |
+| Conflict-answer separation, built-in release fallback and unbound context/tool filtering | `tests/marketing/agent_service/test_feedback_learning.py` |
+
+The shared 10/10 readiness rule is separate from the existing 60-second routine curation window.
+The counter wakes one logical review round; the existing member, session, scope and grant partitions
+still determine the actual curation batches. Terminal experience tests must use stored invocation
+and receipt bindings, so a tool result cannot become a synthetic `ConversationEvent(role=USER)`. A
+completed `no_effect` receipt counts as terminal work for readiness, but it is separate from effect
+success. Reviewed complete observed evidence can support a reusable procedure; failed, unknown, and
+invalidated outcomes cannot promote one. Actual experience evidence must retain the typed invocation
+input, typed tool/provider output, receipt, and source/Run binding.
+Selected skills must assert the nested `source_refs` and `source_revisions` inside each
+`selected_skill_revisions` entry; generic retrieval references do not prove skill provenance.
+The authored fixtures reconcile the additive schema expectation and the actual canonical
+`ack`/`after_commit` seams. The reduced evidence covers the bounded repair, installed basic CLI/API
+smoke, and one external installed minimal reuse canary; the expanded matrix remains unexecuted.
+
+The original F1/F2 matrix remains excluded from the reduced release. F1 is the broader focused
+behavior pass if that matrix is enabled later:
+
+```bash
+uv run pytest -q tests/knowledge/test_procedural_skills.py tests/knowledge/test_feedback_correction.py tests/knowledge/test_feedback_learning.py tests/marketing/channels/test_slack_learning.py tests/marketing/agent_service/test_feedback_learning.py tests/knowledge/test_changes.py tests/knowledge/test_curation_user_authority.py tests/knowledge/test_private_batch_ingress.py tests/knowledge/test_batch_recovery.py tests/knowledge/test_slack_continuity_binding.py tests/marketing/channels/test_slack_memory.py tests/marketing/channels/test_slack_progress.py
+```
+
+F2 is scoped static and documentation review. Pass only the final changed source/test files to
+Ruff and BasedPyright, then check the approved documentation paths:
+
+```bash
+uv run ruff check <final changed source and test files>
+uv run ruff format --check <final changed source and test files>
+uv run basedpyright <final changed source and test files>
+git diff --check -- README.md docs/architecture/system.md docs/architecture/code.md docs/development/testing.md docs/operations/agent-server/README.md tasks/todo.md
+```
+
+F3 builds and installs a fresh wheel, then runs the installed harness from outside the checkout. The
+three absolute knowledge paths and fixture identity/policy must use a new isolated home. The sender
+and provider are fixtures, while the installed HTTP router, signed ingress, service, and knowledge
+runtime remain real:
+
+```bash
+uv build --wheel --out-dir .omo/evidence/agent-feedback-learning/dist
+uv venv .omo/evidence/agent-feedback-learning/venv
+uv pip install --python .omo/evidence/agent-feedback-learning/venv/bin/python <exact wheel path>
+cd /absolute/outside/checkout
+/absolute/checkout/.omo/evidence/agent-feedback-learning/venv/bin/python -I /absolute/checkout/tests/operations/installed_learning_smoke.py --mode fixture --home /absolute/new-learning-home --output /absolute/checkout/.omo/evidence/agent-feedback-learning/f3-installed.json
+```
+
+The reduced F4 canary uses a separately installed non-editable interpreter outside the checkout and
+the minimal reuse scenario. Preserve the official `HOME`, `CODEX_HOME`, and logged-in Codex session.
+Only the Slack sender is fake; the configured Codex path supplies the model. The old
+`installed_learning_smoke.py --mode real-model` route is not the reduced F4 command:
+
+```bash
+/absolute/fresh-installed-venv/bin/python -I /absolute/checkout/tests/operations/installed_learning_model_canary.py --scenario minimal-skill-reuse --home /absolute/fresh-model-home --output /absolute/checkout/.omo/evidence/agent-feedback-learning/f4-model-reuse.json
+```
+
+The canary must record actual typed input/output provenance and distinguish terminal `no_effect`
+completion from effect success. The reduced canary is bounded evidence for the core reuse path, not
+general learning quality or the original full matrix. No local command establishes live Slack
+delivery, a deployed server, or a marketing result.
+
 ## Source and installed-service checks
 
 | Changed boundary | Focused owners |
@@ -244,6 +314,12 @@ Mac candidate vision was exercised with a synthetic low-contrast calendar (gpt-6
 model findings are not human final approval, actual Trace capture, editing, or marketing lift.
 Live Slack requires optional files:read grant/reinstallation and permission probe; no test
 may infer this from fake HTTP. Existing deployed app manifests are not edited by these tests.
+
+Approved legacy-memory learning guards select `tests/knowledge/test_legacy_memory_guard.py` with
+`tests/knowledge/test_feedback_correction.py`. These use the real SQLite review and selection owner,
+exercise foreground and background trusted bindings, require exhaustive note assessments, and check
+conflict hold, stale-question filtering, current continuation actor scope, task-only isolation, and
+unchanged legacy notes. They do not call a model or treat fixture judgments as semantic-quality proof.
 
 Human-effort changes use `test_work_observations.py`, `test_slack_work_observations.py`,
 memory/API and Slack continuation/event tests. Cover correction/restart totals, author/reviewer
