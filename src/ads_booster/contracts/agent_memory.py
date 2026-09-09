@@ -5,9 +5,18 @@ from __future__ import annotations
 from datetime import datetime  # noqa: TC003 - Pydantic resolves runtime field annotations.
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 
 from ads_booster.contracts.models import ContractModel, Identifier, Sha256Digest
+from ads_booster.transport.json_types import JsonObject
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class MemoryScope(ContractModel):
@@ -17,6 +26,15 @@ class MemoryScope(ContractModel):
     work_id: str = ""
     member_id: str = ""
     session_id: str = ""
+    channel_id: Identifier | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        """Preserve persisted observation keys and source hashes when no channel was recorded."""
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.channel_id is None:
+            _ = result.pop("channel_id", None)
+        return result
 
     @model_validator(mode="after")
     def complete_private_scope(self) -> Self:
