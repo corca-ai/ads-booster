@@ -10,6 +10,8 @@ from ads_booster.knowledge.contracts import OperationReceipt
 from ads_booster.knowledge.file_store import ImmutableFileStore
 from ads_booster.knowledge.migrations import connect_database, initialize_database
 from ads_booster.knowledge.repository_batch import (
+    BatchItemWrite,
+    CollectingBatchQuery,
     collect_curation_item,
     collecting_curation_batch,
     curation_batch,
@@ -443,7 +445,12 @@ class SqliteKnowledgeRepository:
         job_id: str,
         receipt: EventReceipt,
     ) -> CurationBatch:
-        return collect_curation_item(self, actor, batch, job_id, receipt)
+        return collect_curation_item(
+            self,
+            actor,
+            batch,
+            BatchItemWrite(job_id=job_id, receipt=receipt),
+        )
 
     def curation_batch(self, actor: ActorContext, batch_id: str) -> CurationBatch | None:
         return curation_batch(self, actor, batch_id)
@@ -459,10 +466,12 @@ class SqliteKnowledgeRepository:
         return collecting_curation_batch(
             self,
             actor,
-            priority,
-            policy_version,
-            read_grant_sha256,
-            write_capability_sha256,
+            CollectingBatchQuery(
+                priority=priority,
+                policy_version=policy_version,
+                read_grant_sha256=read_grant_sha256,
+                write_capability_sha256=write_capability_sha256,
+            ),
         )
 
     def ready_curation_batch(

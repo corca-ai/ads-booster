@@ -71,3 +71,53 @@ def load_batch_actor(
     _ = authorize_read(actor=actor, target_scope=scope, at=now)
     _ = authorize_write(actor=actor, target_scope=scope, at=now)
     return actor
+
+
+def load_partition_actor(
+    repository: SqliteKnowledgeRepository,
+    bound: ActorContext,
+    now: datetime,
+) -> ActorContext:
+    """Reload the exact member and session retained by a learning partition."""
+    with repository.connection() as connection:
+        _ = connection.execute("BEGIN")
+        identity = _IDENTITY.validate_python(
+            connection.execute(
+                """SELECT member.actor_id,workspace.policy_epoch FROM members AS member
+                JOIN workspaces AS workspace USING(workspace_id)
+                JOIN memberships AS membership USING(workspace_id,member_id)
+                JOIN sessions AS session USING(workspace_id,member_id)
+                WHERE member.workspace_id=? AND member.member_id=? AND session.session_id=?
+                    AND workspace.state='active' AND member.state='active'
+                    AND membership.state='active' AND session.state='active'""",
+                (bound.workspace_id, bound.member_id, bound.session_id),
+            ).fetchone()
+        )
+        if identity is None or identity != (bound.actor_id, bound.policy_epoch):
+            raise KnowledgePolicyError(code="knowledge_batch_actor_unavailable")
+        rows = _GRANTS.validate_python(
+            connection.execute(
+                """SELECT grant_json FROM scope_grants
+                WHERE workspace_id=? AND member_id=? AND policy_epoch=?
+                ORDER BY grant_id""",
+                (bound.workspace_id, bound.member_id, bound.policy_epoch),
+            ).fetchall()
+        )
+    bound_grant_ids = frozenset(grant.grant_id for grant in bound.grants)
+    actor = bound.model_copy(
+        update={
+            "grants": tuple(
+                grant
+                for (encoded,) in rows
+                for grant in (ScopeGrant.model_validate_json(encoded),)
+                if grant.grant_id in bound_grant_ids
+            ),
+            "authenticated_at": now,
+        }
+    )
+    _ = authorize_read(actor=actor, target_scope=actor.conversation_scope, at=now)
+    _ = authorize_write(actor=actor, target_scope=actor.conversation_scope, at=now)
+    return actor
+
+
+__all__ = ["load_batch_actor", "load_partition_actor"]
