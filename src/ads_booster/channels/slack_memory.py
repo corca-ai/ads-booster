@@ -36,6 +36,7 @@ def memory_command(  # noqa: C901,PLR0911 - explicit scoped reviewer command res
     access = MemoryAccess(
         scope=MemoryScope(
             workspace_id=identity.tenant_id,
+            channel_id=conversation.channel_id,
             product_id="trace",
             work_id="" if shared else conversation.current_run or conversation.conversation_id,
             member_id=identity.member_id if conversation.private else "",

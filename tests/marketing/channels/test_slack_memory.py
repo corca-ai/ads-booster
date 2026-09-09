@@ -34,10 +34,14 @@ def test_shared_learning_requires_explicit_scope_and_review(tmp_path: Path) -> N
         created_at=NOW,
     )
 
-    def send(text: str, event: str, *, private: bool = False, run: str = "run-a") -> str:
+    def send(
+        text: str, event: str, *, private: bool = False, run: str = "run-a", channel: str = "C1"
+    ) -> str:
         return memory_command(
             tmp_path / "memory.sqlite",
-            conversation.model_copy(update={"private": private, "current_run": run}),
+            conversation.model_copy(
+                update={"private": private, "current_run": run, "channel_id": channel}
+            ),
             Message(message_id=event, conversation_id="thread", user_id="U1", text=text),
             identity,
             now=NOW,
@@ -55,6 +59,7 @@ def test_shared_learning_requires_explicit_scope_and_review(tmp_path: Path) -> N
     approved = send(reviewed.splitlines()[-1], "approve")
     assert "approved" in approved
     assert "팀 합성" in send("기억 목록", "next-work", run="run-b")
+    assert "기억이 없습니다" in send("기억 목록", "other-channel", run="run-b", channel="C2")
     assert "만들거나 변경할 수 없습니다" in send(
         "기억 공용 제안 개인 일정", "private", private=True
     )

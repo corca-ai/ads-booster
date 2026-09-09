@@ -181,6 +181,7 @@ class SlackEvents:
         access = MemoryAccess(
             scope=MemoryScope(
                 workspace_id=installation.tenant_id,
+                channel_id=conversation.channel_id,
                 product_id="trace",
                 work_id=run.run_id,
                 member_id=conversation.owner_id if conversation.private else "",
