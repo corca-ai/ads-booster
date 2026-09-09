@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     )
     from ads_booster.knowledge.file_store import PreparedRevisionFile
     from ads_booster.knowledge.operation_enums import JobState
+    from ads_booster.knowledge.skill_contracts import SkillOperation, SkillRecord
 
 
 @unique
@@ -115,6 +116,14 @@ class MemoryRevisionWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillRevisionWrite:
+    operation: SkillOperation
+    expected: HeadExpectation
+    record: SkillRecord | None = None
+    prepared_file: PreparedRevisionFile | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceDependencyInvalidation:
     upstream_kind: Literal["memory_entry"]
     upstream_id: str
@@ -129,7 +138,7 @@ class JobRegistration:
     unique_key: str
 
 
-type AuditRecord = KnowledgeOperation | MemoryOperation
+type AuditRecord = KnowledgeOperation | MemoryOperation | SkillOperation
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +150,7 @@ class CatalogCommit:
     operation_records: tuple[AuditRecord, ...] = ()
     page_writes: tuple[PageRevisionWrite, ...] = ()
     memory_writes: tuple[MemoryRevisionWrite, ...] = ()
+    skill_writes: tuple[SkillRevisionWrite, ...] = ()
     index_items: tuple[IndexOutboxItem, ...] = ()
     jobs: tuple[JobRegistration, ...] = ()
     redirects: tuple[PageRedirect, ...] = ()
@@ -226,6 +236,13 @@ class StoredSource:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredSkill:
+    record: SkillRecord
+    body: bytes
+    display_pending: bool
+
+
+@dataclass(frozen=True, slots=True)
 class JobClaim:
     worker_id: str
     now: datetime
@@ -294,11 +311,13 @@ __all__ = [
     "RepositoryConflictError",
     "RunBinding",
     "RunBindingState",
+    "SkillRevisionWrite",
     "SourceAdmissionChange",
     "SourceObservationWrite",
     "SourceRegistration",
     "StoredMemory",
     "StoredPage",
+    "StoredSkill",
     "StoredSource",
     "StoredTransfer",
     "conflict",

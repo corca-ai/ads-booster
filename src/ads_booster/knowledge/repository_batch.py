@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from pydantic import TypeAdapter
@@ -11,6 +12,7 @@ from ads_booster.knowledge.grant_policy import (
     authorize_write,
     require_current_policy_epoch,
 )
+from ads_booster.knowledge.learning_policy import LEARNING_POLICY_VERSION
 from ads_booster.knowledge.operation_enums import (
     BatchState,
     JobKind,
@@ -18,6 +20,10 @@ from ads_booster.knowledge.operation_enums import (
     OperationStatus,
 )
 from ads_booster.knowledge.repository_identity import scope_key
+from ads_booster.knowledge.repository_learning_state import (
+    finish_learning_rounds,
+    start_learning_rounds,
+)
 from ads_booster.knowledge.repository_types import conflict
 
 if TYPE_CHECKING:
@@ -44,6 +50,22 @@ _JOB_ROW: TypeAdapter[JobRow] = TypeAdapter(JobRow)
 _COUNT_ROW: TypeAdapter[tuple[int]] = TypeAdapter(tuple[int])
 
 
+@dataclass(frozen=True, slots=True)
+class BatchItemWrite:
+    job_id: str
+    receipt: EventReceipt
+    isolation_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CollectingBatchQuery:
+    priority: JobPriority
+    policy_version: str
+    read_grant_sha256: str
+    write_capability_sha256: str
+    isolation_key: str | None = None
+
+
 def curation_batch_generation(
     repository: KnowledgeRepository,
     actor: ActorContext,
@@ -67,9 +89,11 @@ def collect_curation_item(
     repository: KnowledgeRepository,
     actor: ActorContext,
     batch: CurationBatch,
-    job_id: str,
-    receipt: EventReceipt,
+    write: BatchItemWrite,
 ) -> CurationBatch:
+    job_id = write.job_id
+    receipt = write.receipt
+    isolation_key = write.isolation_key
     with repository.connection() as connection:
         _ = connection.execute("BEGIN IMMEDIATE")
         _require_current_actor(connection, actor)
@@ -111,8 +135,27 @@ def collect_curation_item(
         if stored is None:
             if batch.state is not BatchState.COLLECTING or batch.event_receipts:
                 conflict("curation_batch_initial_state_conflict", batch.batch_id)
-            current = batch.model_copy(update={"event_receipts": (receipt,)})
+            current = batch.model_copy(
+                update={
+                    "state": (
+                        BatchState.READY
+                        if (
+                            batch.priority.value == "urgent"
+                            and batch.policy_version != LEARNING_POLICY_VERSION
+                        )
+                        else BatchState.COLLECTING
+                    ),
+                    "event_receipts": (receipt,),
+                }
+            )
             _insert_batch(connection, current)
+            if isolation_key is not None:
+                _ = connection.execute(
+                    """INSERT INTO learning_batch_partitions(
+                        batch_id,partition_key,actor_json
+                    ) VALUES (?,?,?)""",
+                    (batch.batch_id, isolation_key, actor.model_dump_json()),
+                )
         else:
             if stored.state is not BatchState.COLLECTING:
                 conflict("curation_batch_closed", batch.batch_id)
@@ -120,6 +163,8 @@ def collect_curation_item(
             state = BatchState.READY if len(receipts) == _BATCH_LIMIT else stored.state
             current = stored.model_copy(update={"state": state, "event_receipts": receipts})
             _update_batch(connection, current, BatchState.COLLECTING)
+            if isolation_key is not None:
+                _require_partition(connection, batch.batch_id, isolation_key)
         _ = connection.execute(
             """
             INSERT INTO batch_items(
@@ -163,11 +208,13 @@ def curation_batch(
 def collecting_curation_batch(
     repository: KnowledgeRepository,
     actor: ActorContext,
-    priority: JobPriority,
-    policy_version: str,
-    read_grant_sha256: str,
-    write_capability_sha256: str,
+    query: CollectingBatchQuery,
 ) -> CurationBatch | None:
+    priority = query.priority
+    policy_version = query.policy_version
+    read_grant_sha256 = query.read_grant_sha256
+    write_capability_sha256 = query.write_capability_sha256
+    isolation_key = query.isolation_key
     with repository.connection() as connection:
         _require_current_actor(connection, actor)
         rows = _BATCH_ROWS.validate_python(
@@ -176,6 +223,11 @@ def collecting_curation_batch(
                 SELECT batch.batch_json FROM curation_batches AS batch
                 WHERE batch.workspace_id=? AND batch.scope_key=? AND batch.priority=?
                     AND batch.policy_version=? AND batch.state='collecting'
+                    AND (? IS NULL OR EXISTS (
+                        SELECT 1 FROM learning_batch_partitions AS partition
+                        WHERE partition.batch_id=batch.batch_id
+                            AND partition.partition_key=?
+                    ))
                     AND (
                         SELECT COUNT(*) FROM batch_items AS item
                         WHERE item.batch_id=batch.batch_id
@@ -187,6 +239,8 @@ def collecting_curation_batch(
                     scope_key(actor.conversation_scope),
                     priority.value,
                     policy_version,
+                    isolation_key,
+                    isolation_key,
                     _BATCH_LIMIT,
                 ),
             ).fetchall()
@@ -202,6 +256,21 @@ def collecting_curation_batch(
     return None
 
 
+def _require_partition(
+    connection: sqlite3.Connection,
+    batch_id: str,
+    isolation_key: str,
+) -> None:
+    row = _CANDIDATE_ROW.validate_python(
+        connection.execute(
+            "SELECT partition_key FROM learning_batch_partitions WHERE batch_id=?",
+            (batch_id,),
+        ).fetchone()
+    )
+    if row is None or row[0] != isolation_key:
+        conflict("curation_batch_partition_conflict", batch_id)
+
+
 def flush_curation_batches(
     repository: KnowledgeRepository,
     workspace_id: str,
@@ -213,8 +282,8 @@ def flush_curation_batches(
             connection.execute(
                 """SELECT batch_json FROM curation_batches
                 WHERE workspace_id=? AND state='collecting' AND priority='routine'
-                    AND first_event_at<=?""",
-                (workspace_id, now.isoformat()),
+                    AND policy_version!=? AND first_event_at<=?""",
+                (workspace_id, LEARNING_POLICY_VERSION, now.isoformat()),
             ).fetchall()
         )
         for (encoded,) in rows:
@@ -240,13 +309,20 @@ def ready_curation_batch(
                 """
                 SELECT batch_id FROM curation_batches
                 WHERE workspace_id=? AND scope_key=? AND (
-                    state='ready' OR (state='collecting' AND batch_deadline<=?)
+                    state='ready' OR (
+                        state='collecting' AND policy_version!=? AND batch_deadline<=?
+                    )
                 )
                 ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,
                     batch_deadline,batch_id
                 LIMIT 1
                 """,
-                (actor.workspace_id, scope_key(actor.conversation_scope), now.isoformat()),
+                (
+                    actor.workspace_id,
+                    scope_key(actor.conversation_scope),
+                    LEARNING_POLICY_VERSION,
+                    now.isoformat(),
+                ),
             ).fetchone()
         )
         if row is None:
@@ -257,6 +333,7 @@ def ready_curation_batch(
         _require_batch_binding(actor, batch, now)
         running = batch.model_copy(update={"state": BatchState.RUNNING})
         _update_batch(connection, running, batch.state)
+        start_learning_rounds(connection, batch.batch_id)
         jobs = _jobs_for_batch(connection, batch.batch_id)
         if len(jobs) != len(batch.event_receipts):
             conflict("curation_batch_job_count_conflict", batch.batch_id)
@@ -296,8 +373,7 @@ def finish_curation_batch(
         if not results.keys() <= known:
             conflict("curation_batch_result_unknown", batch_id)
         merged = tuple(
-            results.get((item.event_id, item.event_revision), item)
-            for item in batch.event_receipts
+            results.get((item.event_id, item.event_revision), item) for item in batch.event_receipts
         )
         finished = batch.model_copy(update={"state": state, "event_receipts": merged})
         _update_batch(connection, finished, BatchState.RUNNING)
@@ -320,6 +396,7 @@ def finish_curation_batch(
                         result.event_revision,
                     ),
                 )
+        finish_learning_rounds(connection, batch_id)
         return finished
 
 
@@ -401,9 +478,10 @@ def _require_batch_binding(
 
 
 def _same_batch_configuration(left: CurationBatch, right: CurationBatch) -> bool:
-    return left.model_copy(
-        update={"state": right.state, "event_receipts": right.event_receipts}
-    ) == right
+    return (
+        left.model_copy(update={"state": right.state, "event_receipts": right.event_receipts})
+        == right
+    )
 
 
 def _require_collectable_job(
@@ -541,9 +619,7 @@ def _release_job(
     job = _job_for_batch_event(connection, batch_id, event_id)
     _update_job(
         connection,
-        job.model_copy(
-            update={"state": JobState.QUEUED, "batch_id": None, "reason_code": None}
-        ),
+        job.model_copy(update={"state": JobState.QUEUED, "batch_id": None, "reason_code": None}),
     )
 
 
@@ -603,6 +679,8 @@ def _job_for_batch_event(
 
 
 __all__ = [
+    "BatchItemWrite",
+    "CollectingBatchQuery",
     "collect_curation_item",
     "collecting_curation_batch",
     "curation_batch",

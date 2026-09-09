@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 _STRING = TypeAdapter(str)
 type ValidationResult = ContextTransferValidationAccepted | ContextTransferValidationRejected
 type Dependency = tuple[str, str, str, str | None]
-_VALIDATION_RESULT = TypeAdapter(ValidationResult)
+_VALIDATION_RESULT: TypeAdapter[ValidationResult] = TypeAdapter(ValidationResult)
 
 
 def record_context_transfer(
@@ -132,6 +132,11 @@ def _dependencies(transfer: KnowledgeContextTransfer) -> tuple[Dependency, ...]:
     values.extend(
         ("source", item.source_id, item.revision_id, item.content_sha256)
         for item in receipt.selected_source_revisions
+    )
+    values.extend(
+        ("source", item.source_id, item.revision_id, item.content_sha256)
+        for skill in receipt.selected_skill_revisions
+        for item in skill.source_revisions
     )
     values.extend(
         ("constraint", item.constraint_id, item.revision_id, None)

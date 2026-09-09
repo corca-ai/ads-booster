@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves runtime field annotations.
+from enum import StrEnum, unique
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 
+from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.models import ContractModel, Identifier, Sha256Digest
+from ads_booster.transport.json_types import JsonObject
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class MemoryScope(ContractModel):
@@ -87,6 +98,21 @@ class MemoryReference(ContractModel):
     sha256: Sha256Digest
 
 
+@unique
+class LegacyMemoryAssessmentKind(StrEnum):
+    COMPATIBLE = "compatible"
+    UNRELATED = "unrelated"
+    CONFLICT = "conflict"
+
+
+class LegacyMemoryAssessment(ContractModel):
+    """One model judgment bound to a server-selected approved legacy note."""
+
+    selection_sha256: Sha256Digest
+    reference: MemoryReference
+    assessment: LegacyMemoryAssessmentKind
+
+
 class MemorySelectionReceipt(ContractModel):
     selection_id: Identifier
     run_id: Identifier
@@ -95,6 +121,30 @@ class MemorySelectionReceipt(ContractModel):
     query_sha256: Sha256Digest
     selected_at: datetime
     authority: Literal["data_only_not_execution_approval"] = "data_only_not_execution_approval"
+    actor_id: Identifier | None = None
+    selection_sha256: Sha256Digest | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.actor_id is None:
+            _ = result.pop("actor_id", None)
+        if self.selection_sha256 is None:
+            _ = result.pop("selection_sha256", None)
+        return result
+
+    def canonical_sha256(self) -> Sha256Digest:
+        """Bind semantic selection identity without timestamps or random receipt IDs."""
+        return contract_sha256(
+            {
+                "run_id": self.run_id,
+                "scope": self.scope.model_dump(mode="json", exclude_defaults=True),
+                "actor_id": self.actor_id,
+                "selected": [item.model_dump(mode="json") for item in self.selected],
+                "query_sha256": self.query_sha256,
+                "authority": self.authority,
+            }
+        )
 
 
 class MemorySelection(ContractModel):

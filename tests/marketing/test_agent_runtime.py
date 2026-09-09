@@ -104,6 +104,78 @@ def test_external_tool_waits_for_exact_unrevoked_grant() -> None:
     assert dispatched.events[-1].event_type == "tool_dispatched"
 
 
+@pytest.mark.parametrize("effect_class", ["local_artifact", "control_plane_write", "external"])
+def test_effect_tool_without_frozen_source_authorization_waits_for_approval(
+    effect_class: str,
+) -> None:
+    capability = ToolCapability("effect.tool", "a" * 64, "b" * 64, effect_class, 1)
+    invocation = bind_tool_invocation(
+        capability,
+        call_id=f"call-{effect_class}",
+        idempotency_key=f"effect:{effect_class}",
+        request={"operation": "write"},
+    )
+
+    waiting = MarketingAgentRuntime()._request_tool(
+        AgentSession(f"session-{effect_class}", Budget(1, 2)),
+        capability,
+        invocation,
+        now=NOW,
+    )
+
+    assert waiting.state is RuntimeState.AWAITING_HUMAN
+    assert waiting.events[-1].event_type == "tool_approval_required"
+
+
+def test_source_authorized_control_write_dispatches_and_replays_without_grant(
+    tmp_path: Path,
+) -> None:
+    capability = ToolCapability(
+        "skill_apply",
+        "a" * 64,
+        "b" * 64,
+        "control_plane_write",
+        1,
+        approval_required=False,
+    )
+    invocation = bind_tool_invocation(
+        capability,
+        call_id="call-source-authorized",
+        idempotency_key="source-authorized:skill-apply",
+        request={"operation": "apply"},
+    )
+    runtime = MarketingAgentRuntime()
+    store = JsonSessionStore(tmp_path)
+
+    dispatched = runtime.request_persisted_tool(
+        store,
+        AgentSession("session-source-authorized", Budget(1, 2)),
+        ToolAdmission(capability, invocation),
+        now=NOW,
+    )
+
+    assert dispatched.state is RuntimeState.EXECUTING
+    assert dispatched.pending_grant_sha256 is None
+    assert dispatched.events[-1].event_type == "tool_dispatched"
+    assert JsonSessionStore(tmp_path).load("session-source-authorized") == dispatched
+
+    started = runtime.start_persisted_tool_execution(store, dispatched, now=NOW)
+    backend = RecordingBackend(
+        ToolReceipt(
+            invocation.call.call_id,
+            invocation.call.digest,
+            None,
+            EffectDisposition.SUCCEEDED,
+            1,
+            "c" * 64,
+        )
+    )
+    completed = runtime.finish_persisted_tool_execution(store, started, backend, now=NOW)
+
+    assert backend.calls == [invocation]
+    assert completed.events[-1].event_type == "tool_succeeded"
+
+
 def test_unknown_external_effect_requires_reconciliation_not_retry() -> None:
     runtime = MarketingAgentRuntime()
     grant = _grant()

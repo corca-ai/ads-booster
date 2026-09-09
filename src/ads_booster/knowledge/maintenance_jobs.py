@@ -6,6 +6,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol, cast
 
 from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
+from ads_booster.knowledge.batch_actor import load_partition_actor
 from ads_booster.knowledge.contract_types import (
     AuthorityClass,
     ConversationRole,
@@ -24,6 +25,7 @@ from ads_booster.knowledge.curation_contracts import (
 from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
 from ads_booster.knowledge.jobs import JobProcessResult
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
+from ads_booster.knowledge.repository_learning import LearningReviewCoordinator
 from ads_booster.knowledge.repository_tool_state import RepositoryToolState
 from ads_booster.knowledge.source_contracts import ConversationEvent
 from ads_booster.knowledge.tool_contracts import (
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 
     from ads_booster.knowledge.contracts import KnowledgeJob
     from ads_booster.knowledge.curation import CurationRunner
+    from ads_booster.knowledge.legacy_memory import LegacyMemoryGuard
     from ads_booster.knowledge.memory_consolidation import MemoryConsolidationProcessor
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
     from ads_booster.knowledge.repository_types import JobLease, StoredSource
@@ -64,6 +67,7 @@ class CanonicalJobProcessor:
     curation: CurationRunner
     memory: MemoryConsolidationProcessor
     source_review: SourceReviewJobProcessor | None = None
+    legacy_memory: LegacyMemoryGuard | None = None
 
     def process(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
         if lease.job.kind in {
@@ -91,7 +95,26 @@ class CanonicalJobProcessor:
         job: KnowledgeJob,
         actor: ActorContext | None = None,
     ) -> CurationBatchWork:
-        scoped_actor = actor or self.actor
+        started_at = datetime.now(UTC)
+        learning = LearningReviewCoordinator(self.repository)
+        learning_review = learning.review_for_job(job.job_id)
+        bound_actor = None if learning_review is None else learning.source_actor_for_job(job.job_id)
+        if learning_review is not None and bound_actor is None:
+            msg = "learning_job_actor_binding_missing"
+            raise ValueError(msg)
+        scoped_actor = actor or (
+            self.actor
+            if bound_actor is None
+            else load_partition_actor(self.repository, bound_actor, started_at)
+        )
+        if bound_actor is not None and (
+            scoped_actor.actor_id != bound_actor.actor_id
+            or scoped_actor.workspace_id != bound_actor.workspace_id
+            or scoped_actor.member_id != bound_actor.member_id
+            or scoped_actor.session_id != bound_actor.session_id
+        ):
+            msg = "learning_job_actor_binding_mismatch"
+            raise ValueError(msg)
         source_id, revision_id = self._source_for_job(job.job_id)
         source = self.repository.read_source(scoped_actor, source_id)
         if source is None or source.source.revision_id != revision_id:
@@ -115,6 +138,26 @@ class CanonicalJobProcessor:
             )
             for segment in extracted.segments[:20]
         )
+        authenticated_user_event = self._authenticated_user_event(scoped_actor, source)
+        source_event = (
+            None
+            if authenticated_user_event is None
+            else self.repository.canonical_event(
+                scoped_actor, authenticated_user_event.evidence_ref.evidence_id
+            )
+        )
+        legacy_selection = None
+        if learning_review is not None and self.legacy_memory is not None:
+            source_run_id = learning.source_run_id_for_job(job.job_id)
+            if source_run_id is None:
+                msg = "learning_job_run_binding_missing"
+                raise ValueError(msg)
+            legacy_selection = self.legacy_memory.select(
+                scoped_actor,
+                run_id=source_run_id,
+                query=body,
+                now=started_at,
+            )
         request = CurationRequest(
             schema="knowledge.curation-request.v1",
             job_id=job.job_id,
@@ -123,14 +166,21 @@ class CanonicalJobProcessor:
             policy_version=job.policy_version,
             objective=body[:20_000] or "Review the source disposition.",
             excerpts=excerpts,
-            authenticated_user_event=self._authenticated_user_event(scoped_actor, source),
-            started_at=datetime.now(UTC),
+            authenticated_user_event=authenticated_user_event,
+            learning_purpose=(None if learning_review is None else learning_review.purpose),
+            learning_review=learning_review,
+            legacy_memory_selection=legacy_selection,
+            started_at=started_at,
         )
         context = TrustedInvocationContext(
             invocation_id=f"curation.{job.job_id}",
             actor=scoped_actor,
             run_binding_id=f"background.{job.job_id}",
-            run_id=f"background.{job.job_id}",
+            run_id=(
+                f"background.{job.job_id}"
+                if legacy_selection is None
+                else legacy_selection.receipt.run_id
+            ),
             job_id=job.job_id,
             capability_epoch=scoped_actor.policy_epoch,
             source_capabilities=(
@@ -144,7 +194,9 @@ class CanonicalJobProcessor:
                     allows_unadmitted_read=True,
                 ),
             ),
-            invoked_at=datetime.now(UTC),
+            source_fetch_event=source_event,
+            legacy_memory_selection=legacy_selection,
+            invoked_at=started_at,
         )
         return CurationBatchWork(request=request, trusted_context=context)
 

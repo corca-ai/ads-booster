@@ -5,11 +5,11 @@ from datetime import UTC, datetime
 from threading import Event
 from typing import TYPE_CHECKING, Protocol
 
-from ads_booster.knowledge.jobs import BoundedJobRunner
 from ads_booster.knowledge.maintenance import KnowledgeActivity, KnowledgeOwner
 from ads_booster.knowledge.repository_batch import flush_curation_batches
 
 if TYPE_CHECKING:
+    from ads_booster.knowledge.jobs import BoundedJobRunner
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 
 
@@ -50,6 +50,7 @@ class KnowledgeRuntime:
     owner: KnowledgeOwner
     jobs: BoundedJobRunner
     ingress: WorkDispatcher | None = None
+    experiences: WorkDispatcher | None = None
     index: IndexDispatcher | None = None
     memory_views: WorkDispatcher | None = None
     batches: BatchFlusher | None = None
@@ -72,6 +73,7 @@ class KnowledgeRuntime:
         worked = False
         for kind, dispatcher in (
             ("ingress", self.ingress),
+            ("experience", self.experiences),
             ("memory_view", self.memory_views),
         ):
             if dispatcher is not None and self.activity.claim(kind):
@@ -106,7 +108,8 @@ class KnowledgeRuntime:
     def run_until_idle(self, *, flush_batches: bool = False) -> None:
         if flush_batches:
             if self.batches is None:
-                raise ValueError("knowledge_batch_flush_unavailable")
+                message = "knowledge_batch_flush_unavailable"
+                raise ValueError(message)
             _ = self.run_once()
             _ = self.batches.flush_ready_batches(self.workspace_id, datetime.now(UTC))
         while not self.stop.is_set():

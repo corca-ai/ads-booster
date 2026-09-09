@@ -16,12 +16,14 @@ from ads_booster.knowledge.file_paths import (
     PublishedRevisionFile,
     RevisionFileDraft,
     RevisionTarget,
+    SkillRevisionTarget,
     SourceFileKind,
     SourceRevisionTarget,
     bounded_id,
     digest,
     fail,
     revision_relative_path,
+    skill_display_relative_path,
     store_error,
 )
 
@@ -147,6 +149,39 @@ class ImmutableFileStore:
         path = self.root.joinpath(*PurePosixPath(relative_path).parts)
         return self._private_file_exists(path)
 
+    def publish_skill_display(
+        self,
+        workspace_id: str,
+        skill_id: str,
+        content: bytes,
+    ) -> RelativePath:
+        relative_path = skill_display_relative_path(workspace_id, skill_id)
+        destination = self.root.joinpath(*PurePosixPath(relative_path).parts)
+        self._ensure_private_directories(destination.parent)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".skill-", dir=destination.parent)
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, _PRIVATE_FILE_MODE)
+            with os.fdopen(descriptor, "wb") as stream:
+                descriptor = -1
+                _ = stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            _ = temporary.replace(destination)
+            self._fsync_directory(destination.parent)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
+        return relative_path
+
+    def remove_skill_display(self, workspace_id: str, skill_id: str) -> None:
+        relative_path = skill_display_relative_path(workspace_id, skill_id)
+        destination = self.root.joinpath(*PurePosixPath(relative_path).parts)
+        destination.unlink(missing_ok=True)
+        if destination.parent.exists():
+            self._fsync_directory(destination.parent)
+
     def _published(
         self,
         prepared: PreparedRevisionFile,
@@ -269,6 +304,7 @@ __all__ = [
     "PublishedRevisionFile",
     "RevisionFileDraft",
     "RevisionTarget",
+    "SkillRevisionTarget",
     "SourceFileKind",
     "SourceRevisionTarget",
 ]

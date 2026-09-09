@@ -24,7 +24,7 @@ from ads_booster.knowledge.file_paths import (
 )
 
 if TYPE_CHECKING:
-    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from ads_booster.knowledge.repository_protocol import KnowledgeRepository
 
 _TEXT = TypeAdapter(str)
 _INT = TypeAdapter(int)
@@ -65,7 +65,7 @@ class _IndexCommit:
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeIndexWorker:
-    _repository: SqliteKnowledgeRepository
+    _repository: KnowledgeRepository
 
     def run_once(
         self,

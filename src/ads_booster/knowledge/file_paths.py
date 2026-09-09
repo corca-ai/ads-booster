@@ -41,7 +41,16 @@ class MemoryRevisionTarget:
     revision_id: BoundedId
 
 
-type RevisionTarget = SourceRevisionTarget | KnowledgeRevisionTarget | MemoryRevisionTarget
+@dataclass(frozen=True, slots=True)
+class SkillRevisionTarget:
+    workspace_id: BoundedId
+    skill_id: BoundedId
+    revision_id: BoundedId
+
+
+type RevisionTarget = (
+    SourceRevisionTarget | KnowledgeRevisionTarget | MemoryRevisionTarget | SkillRevisionTarget
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +130,21 @@ def revision_relative_path(target: RevisionTarget) -> RelativePath:
             document_id = bounded_id("document_id", document_id)
             revision_id = bounded_id("revision_id", revision_id)
             return f"teams/{workspace_id}/revisions/{document_id}/{revision_id}.md"
+        case SkillRevisionTarget(
+            workspace_id=workspace_id,
+            skill_id=skill_id,
+            revision_id=revision_id,
+        ):
+            workspace_id = bounded_id("workspace_id", workspace_id)
+            skill_id = bounded_id("skill_id", skill_id)
+            revision_id = bounded_id("revision_id", revision_id)
+            return f"teams/{workspace_id}/skills/{skill_id}/{revision_id}.md"
+
+
+def skill_display_relative_path(workspace_id: str, skill_id: str) -> RelativePath:
+    workspace_id = bounded_id("workspace_id", workspace_id)
+    skill_id = bounded_id("skill_id", skill_id)
+    return f"teams/{workspace_id}/skills/{skill_id}/SKILL.md"
 
 
 __all__ = [
@@ -131,11 +155,13 @@ __all__ = [
     "PublishedRevisionFile",
     "RevisionFileDraft",
     "RevisionTarget",
+    "SkillRevisionTarget",
     "SourceFileKind",
     "SourceRevisionTarget",
     "bounded_id",
     "digest",
     "fail",
     "revision_relative_path",
+    "skill_display_relative_path",
     "store_error",
 ]

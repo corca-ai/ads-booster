@@ -70,6 +70,7 @@ class ToolCapability:
     request_schema_sha256: str
     effect_class: str
     worst_case_cost_units: int
+    approval_required: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,21 +82,23 @@ class ToolCall:
     request_schema_sha256: str
     input_sha256: str
     effect_class: str
+    approval_required: bool | None = None
 
     @property
     def digest(self) -> str:
-        return _json_digest(
-            {
-                "schema_version": "trace.tool-call.v1",
-                "call_id": self.call_id,
-                "idempotency_key": self.idempotency_key,
-                "capability_id": self.capability_id,
-                "descriptor_sha256": self.descriptor_sha256,
-                "request_schema_sha256": self.request_schema_sha256,
-                "input_sha256": self.input_sha256,
-                "effect_class": self.effect_class,
-            }
-        )
+        payload: JsonObject = {
+            "schema_version": "trace.tool-call.v1",
+            "call_id": self.call_id,
+            "idempotency_key": self.idempotency_key,
+            "capability_id": self.capability_id,
+            "descriptor_sha256": self.descriptor_sha256,
+            "request_schema_sha256": self.request_schema_sha256,
+            "input_sha256": self.input_sha256,
+            "effect_class": self.effect_class,
+        }
+        if self.approval_required is not None:
+            payload["approval_required"] = self.approval_required
+        return _json_digest(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +131,7 @@ class BoundToolInvocation:
             self.request,
         ):
             raise MarketingRuntimeError("tool_invocation_input_digest_mismatch")
+        _validate_approval_requirement(self.call.effect_class, self.call.approval_required)
 
 
 def bind_tool_invocation(
@@ -153,6 +157,7 @@ def bind_tool_invocation(
                 _JSON_OBJECT.validate_json(request_json),
             ),
             effect_class=capability.effect_class,
+            approval_required=capability.approval_required,
         ),
         request_json,
     )
@@ -620,7 +625,7 @@ class MarketingAgentRuntime:
         self._validate_dispatch_state(session)
         self._validate_invocation(capability, invocation)
         grant_digest: str | None = None
-        if _effect_requires_approval(call.effect_class):
+        if _tool_requires_approval(call):
             if grant is None:
                 return self._append(
                     session,
@@ -1022,6 +1027,8 @@ class MarketingAgentRuntime:
             or capability.descriptor_sha256 != call.descriptor_sha256
             or capability.request_schema_sha256 != call.request_schema_sha256
             or capability.effect_class != call.effect_class
+            or _approval_required(capability.effect_class, capability.approval_required)
+            != _tool_requires_approval(call)
         ):
             raise MarketingRuntimeError("tool_call_capability_mismatch")
 
@@ -1117,7 +1124,7 @@ def _session_json(session: AgentSession) -> dict[str, object]:
         "reserved_cost_units": session.reserved_cost_units,
         "tool_calls": session.tool_calls,
         "pending_call": (
-            None if session.pending_call is None else _tool_call_json(session.pending_call)
+            None if session.pending_call is None else tool_call_payload(session.pending_call)
         ),
         "pending_invocation": (
             None
@@ -1146,18 +1153,20 @@ def _stored_session_json(session: AgentSession) -> dict[str, object]:
     return {**payload, "session_sha256": _json_digest(payload)}
 
 
-def _tool_call_json(call: ToolCall) -> JsonObject:
-    return _JSON_OBJECT.validate_python(
-        {
-            "call_id": call.call_id,
-            "idempotency_key": call.idempotency_key,
-            "capability_id": call.capability_id,
-            "descriptor_sha256": call.descriptor_sha256,
-            "request_schema_sha256": call.request_schema_sha256,
-            "input_sha256": call.input_sha256,
-            "effect_class": call.effect_class,
-        }
-    )
+def tool_call_payload(call: ToolCall) -> JsonObject:
+    """Return the canonical persisted call shape, omitting an absent legacy override."""
+    payload: JsonObject = {
+        "call_id": call.call_id,
+        "idempotency_key": call.idempotency_key,
+        "capability_id": call.capability_id,
+        "descriptor_sha256": call.descriptor_sha256,
+        "request_schema_sha256": call.request_schema_sha256,
+        "input_sha256": call.input_sha256,
+        "effect_class": call.effect_class,
+    }
+    if call.approval_required is not None:
+        payload["approval_required"] = call.approval_required
+    return payload
 
 
 def _tool_invocation_json(invocation: BoundToolInvocation) -> JsonObject:
@@ -1165,7 +1174,7 @@ def _tool_invocation_json(invocation: BoundToolInvocation) -> JsonObject:
     return _JSON_OBJECT.validate_python(
         {
             "schema_version": invocation.schema_version,
-            "call": _tool_call_json(invocation.call),
+            "call": tool_call_payload(invocation.call),
             "request": invocation.request,
         }
     )
@@ -1211,6 +1220,9 @@ def _tool_call_from_json(value: dict[str, object]) -> ToolCall:
         request_schema_sha256=_string(value, "request_schema_sha256"),
         input_sha256=_string(value, "input_sha256"),
         effect_class=_string(value, "effect_class"),
+        approval_required=(
+            None if "approval_required" not in value else _boolean(value, "approval_required")
+        ),
     )
 
 
@@ -1616,7 +1628,7 @@ def _require_dispatchable(replay: _RuntimeReplay) -> None:
 def _validate_replayed_grant(
     replay: _RuntimeReplay, invocation: BoundToolInvocation, grant_sha256: str | None
 ) -> None:
-    requires_approval = _effect_requires_approval(invocation.call.effect_class)
+    requires_approval = _tool_requires_approval(invocation.call)
     if requires_approval and grant_sha256 is None:
         raise MarketingRuntimeError("session_event_approval_missing")
     if not requires_approval and grant_sha256 is not None:
@@ -1635,6 +1647,23 @@ def _validate_effect_class(effect_class: str) -> None:
 def _effect_requires_approval(effect_class: str) -> bool:
     _validate_effect_class(effect_class)
     return effect_class != "observe"
+
+
+def _approval_required(effect_class: str, override: bool | None) -> bool:
+    _validate_approval_requirement(effect_class, override)
+    return _effect_requires_approval(effect_class) if override is None else override
+
+
+def _tool_requires_approval(call: ToolCall) -> bool:
+    return _approval_required(call.effect_class, call.approval_required)
+
+
+def _validate_approval_requirement(effect_class: str, override: bool | None) -> None:
+    _validate_effect_class(effect_class)
+    if override is False and effect_class not in {"observe", "control_plane_write"}:
+        raise MarketingRuntimeError("tool_approval_policy_invalid")
+    if override is True and effect_class == "observe":
+        raise MarketingRuntimeError("tool_approval_policy_invalid")
 
 
 def _is_runtime_reserved_event(event_type: str) -> bool:

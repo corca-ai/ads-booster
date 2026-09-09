@@ -9,9 +9,14 @@ if TYPE_CHECKING:
 
     from ads_booster.knowledge.contracts import (
         ActorContext,
+        Claim,
+        ConversationEvent,
         DependencyState,
+        EvidenceRef,
+        MemoryEntry,
         Source,
         SourceKind,
+        SourceSegment,
     )
     from ads_booster.knowledge.file_store import ImmutableFileStore
     from ads_booster.knowledge.repository_types import (
@@ -19,6 +24,7 @@ if TYPE_CHECKING:
         SourceAdmissionChange,
         StoredMemory,
         StoredPage,
+        StoredSkill,
         StoredSource,
     )
 
@@ -67,6 +73,23 @@ class KnowledgeRepository(Protocol):
     ) -> StoredPage | None: ...
 
     def page_head(self, actor: ActorContext, page_id: str) -> str | None: ...
+
+    def resolve_page_id(self, actor: ActorContext, page_id: str) -> str: ...
+
+    def resolve_evidence(
+        self,
+        actor: ActorContext,
+        reference: EvidenceRef,
+    ) -> SourceSegment | Claim | MemoryEntry | ConversationEvent: ...
+
+    def read_skill(
+        self,
+        actor: ActorContext,
+        skill_id: str,
+        revision_id: str | None = None,
+    ) -> StoredSkill | None: ...
+
+    def skill_head(self, actor: ActorContext, skill_id: str) -> str | None: ...
 
     def claim_dependency_state(
         self,

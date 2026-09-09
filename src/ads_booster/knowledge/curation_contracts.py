@@ -5,9 +5,16 @@ from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import Annotated, Literal, Self, override
 
-from pydantic import Field, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
+from ads_booster.contracts.agent_memory import MemorySelection
 from ads_booster.contracts.agent_run import BoundedId
 from ads_booster.knowledge.contract_types import (
     BoundedReason,
@@ -18,10 +25,13 @@ from ads_booster.knowledge.contract_types import (
     UtcDatetime,
 )
 from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
+from ads_booster.knowledge.learning_contracts import LearningReviewRequest
 from ads_booster.knowledge.operation_contracts import EventReceipt
-from ads_booster.knowledge.operation_enums import CurationTarget
+from ads_booster.knowledge.operation_enums import CurationTarget, LearningPurpose
 from ads_booster.knowledge.tool_contracts import KnowledgeToolName, ToolResult
 from ads_booster.transport.json_types import JsonObject
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 @unique
@@ -68,9 +78,19 @@ class CurationRequest(KnowledgeContractModel):
     policy_version: BoundedId
     objective: BoundedText
     authenticated_user_event: CurationUserEvent | None = None
+    learning_purpose: LearningPurpose | None = None
+    learning_review: LearningReviewRequest | None = None
+    legacy_memory_selection: MemorySelection | None = None
     excerpts: Annotated[tuple[CurationExcerpt, ...], Field(max_length=20)] = ()
     tool_catalog: Annotated[tuple[CurationToolDefinition, ...], Field(max_length=12)] = ()
     started_at: UtcDatetime
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.legacy_memory_selection is None:
+            _ = result.pop("legacy_memory_selection", None)
+        return result
 
 
 class SourceDispositionIntent(KnowledgeContractModel):

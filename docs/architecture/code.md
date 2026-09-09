@@ -24,7 +24,7 @@ an existing service-to-domain or canonical-repository bridge remains permitted.
 | `channels/`, `channels/http/` | signed Slack and authenticated HTTP input/output boundaries | canonical Run state or tool effects |
 | `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs | Run/approval/recovery ownership |
 | `bootstrap/` | composition of the configured service and concrete integrations | a second execution path |
-| `knowledge/` | team knowledge, scoped retrieval and curation | Agent, channel, bootstrap, tool or workload dependencies |
+| `knowledge/` | team knowledge, scoped retrieval, curation, learned skills and workspace learning readiness | Agent, channel, bootstrap, tool or workload dependencies |
 | `creative/`, `delivery/`, `learning/`, `research/`, `workflows/`, `evaluation/` | their named domain policies and implementations | Agent Core or channel admission; their established service bridge remains explicit |
 | `contracts/`, `providers/`, `transport/`, `cli/` | data-only contracts, external provider clients, shared transport and installed commands | another domain's mutable runtime state |
 
@@ -117,13 +117,17 @@ completed receipts; the batch runtime then continues to other authorized work.
 
 `knowledge/` is the server-owned domain. It owns contracts, scope and grant policy, immutable source
 and Wiki/memory files, SQLite catalog migrations, ingestion, retrieval/index outbox, curation jobs,
-backup/restore, tombstones, the control-root erase ledger, and transfer dependency records. It does
-not import Slack, HTTP, Mac, Cloudflare, or UI modules.
+source-bound skill revisions, workspace learning counters and admissions, backup/restore, tombstones,
+the control-root erase ledger, and transfer dependency records. It does not import Slack, HTTP, Mac,
+Cloudflare, or UI modules.
 
 `bootstrap/lifecycle.py` is the composition root for the enabled runtime. It injects
 the configured `KnowledgeSettings`, local actor, `SqliteKnowledgeRepository`, canonical ingress,
 `KnowledgeServiceAdapter`, `KnowledgeContextAssembler`, `CodexKnowledgeProvider`, `BoundedJobRunner`,
-`KnowledgeIndexWorker`, `MemoryViewDispatcher`, and `CurationBatchRuntime`. The batch runtime groups
+`KnowledgeIndexWorker`, `MemoryViewDispatcher`, `CurationBatchRuntime`, `LearningReviewCoordinator`,
+`TerminalExperienceAdmission`, and a read-only `LegacyMemoryGuard` backed by the existing service
+`SQLiteMemoryStore`. The guard contract lives in `knowledge/legacy_memory.py`; the knowledge domain
+depends on its typed reader protocol and does not own or duplicate the legacy store. The batch runtime groups
 scope- and policy-compatible jobs, honors collection deadlines and urgent interruption, and drives
 one shared provider call per bounded round. `knowledge/curation.py` executes each job-bound decision
 through the trusted tool host, feeds its actual observation into the next shared round, and returns
@@ -131,7 +135,9 @@ one receipt per original event revision. `cli/marketing.py` starts and stops the
 with `service run`; the existing Agent Service still owns Runs, approvals, and execution records.
 `repository_batch.py` owns atomic batch state/JSON updates and persisted retry generations;
 `runtime.py` delegates explicit flush to that owner. `batch_curation.py` derives new collection IDs
-from those generations while preserving event deduplication and the first-event deadline.
+from those generations while preserving event deduplication and the first-event deadline. The shared
+learning readiness counter is only a wake-up signal; the existing batch isolation key remains the
+authority for member, session, scope, grant, and policy partitioning.
 
 `agent/service/knowledge_ingress.py` owns the service-database outbox and trusted Run
 binding. `knowledge_ingress_authority.py` maps authenticated channel actors to existing knowledge
@@ -143,6 +149,31 @@ preparation, read-only DM capability filtering, tool adapters, receipt freshness
 typed context boundary. `contracts/knowledge_context.py`, `contracts/knowledge_preparation.py`,
 and `contracts/knowledge_selection.py` own transfer, preparation, action and receipt contracts.
 Historic replica records retain provenance without an active hosted transport.
+
+`knowledge/skills.py` projects every current `agent/service/skills.py` procedure into a protected
+built-in record, resolves source-bound agent-created revisions, and falls back to the current
+built-in when an override's base digest no longer matches. `repository_skills.py`,
+`skill_contracts.py`, `schema_skills.py`, and `schema_learning.py` remain leaves of the existing
+repository, migration, file-publication, CAS, and receipt owners. `learning_contracts.py` carries
+typed terminal experience references and review requests; it never grants user authority. A
+protected skill changes only from a current authenticated foreground request.
+`repository_learning_recovery.py` checks the persisted learning partition against current authority;
+its `repository_learning_recovery_write.py` leaf atomically reattaches released jobs and admissions
+to the same sealed round, or records terminal failure. No separate skill store, learning provider,
+daemon, or verifier is composed.
+
+`LearningReviewCoordinator.consume_target` fences each foreground-applied target by source revision
+and target ID. The fence removes only the consumed target from later learning review and preserves
+the rest of the source. `TerminalExperienceAdmission` writes receipt-grounded experiences through
+the existing Agent Service `append_step` after-commit seam and replays its outbox through the live
+runtime dispatcher.
+
+`agent/service/knowledge.py` registers `skill_list`, `skill_get`, and `skill_apply` through the
+existing knowledge tool host. Prepared context includes metadata-only effective skill references and
+`ContextReceipt.selected_skill_revisions`; each selected entry carries nested `source_refs` and
+`source_revisions`, separate from generic retrieval references. `skill_get` loads the body.
+Binding-free Runs hide these tools and references. The DM projection may read skill metadata and
+bodies, subject to current grants, but cannot write skills.
 
 `knowledge/tool_source_operations.py` returns verified segment evidence references and quote hashes.
 `maintenance_jobs.py` builds curation inputs from extracted text and attaches authenticated user-event

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from threading import RLock
 from typing import TYPE_CHECKING
 
@@ -11,6 +11,35 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
+from ads_booster.agent.core.registry import (
+    CapabilityPolicy,
+    ToolRegistrationCatalog,
+    ToolRegistry,
+)
+from ads_booster.agent.runtime import (
+    AgentSession,
+    ApprovalGrant,
+    BoundToolInvocation,
+    Budget,
+    DeferredToolExecution,
+    EffectDisposition,
+    MarketingAgentRuntime,
+    RuntimeState,
+    SqliteSessionStore,
+    ToolAdmission,
+    ToolCapability,
+    ToolReceipt,
+    bind_tool_invocation,
+    pending_deferred_execution,
+    tool_call_payload,
+    tool_receipt_from_event,
+)
+from ads_booster.agent.service.sqlite_repository import (
+    AgentRunConflictError,
+    RepositoryAdmission,
+    SqliteAgentRunRepository,
+)
+from ads_booster.agent.service.task_input import current_user_message
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -35,37 +64,14 @@ from ads_booster.contracts.knowledge_preparation import (
 )
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
-from ads_booster.contracts.tool_capability import ToolExecutionResult
+from ads_booster.contracts.tool_capability import (
+    AUTHENTICATED_SOURCE_AUTHORITY,
+    EffectClass,
+    ToolDescriptor,
+    ToolExecutionResult,
+    allows_authenticated_source_approval,
+)
 from ads_booster.execution_control import checkpoint
-from ads_booster.agent.core.registry import (
-    CapabilityPolicy,
-    ToolRegistrationCatalog,
-    ToolRegistry,
-)
-from ads_booster.agent.service.sqlite_repository import (
-    AgentRunConflictError,
-    RepositoryAdmission,
-    SqliteAgentRunRepository,
-)
-from ads_booster.agent.service.task_input import current_user_message
-from ads_booster.agent.runtime import (
-    AgentSession,
-    ApprovalGrant,
-    BoundToolInvocation,
-    Budget,
-    DeferredToolExecution,
-    EffectDisposition,
-    MarketingAgentRuntime,
-    RuntimeState,
-    SqliteSessionStore,
-    ToolAdmission,
-    ToolCapability,
-    ToolReceipt,
-    bind_tool_invocation,
-    pending_deferred_execution,
-    tool_receipt_from_event,
-)
-from ads_booster.transport.json_types import JsonObject
 
 _CONTEXT_SELECTION_SCHEMA = "trace.reasoning-context-selection.v1"
 _MAX_CONTEXT_RECORDS = 32
@@ -73,14 +79,15 @@ _MAX_CONTEXT_BYTES = 48 * 1024
 _MAX_STEERING_EVENT_ID = 512
 _MAX_STEERING_ACTOR_ID = 160
 _MAX_STEERING_NOTE = 20_000
+_RUNTIME_SOURCE_AUTHORIZED_DESCRIPTOR_INVALID = "runtime_source_authorized_descriptor_invalid"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from datetime import datetime
 
-    from ads_booster.contracts.tool_capability import ToolDescriptor
     from ads_booster.agent.core.ports import ReasoningProvider, ToolAdapter
     from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
+    from ads_booster.transport.json_types import JsonObject
 
 
 class CreateAgentRunRequest(ContractModel):
@@ -1004,6 +1011,7 @@ class MarketingAgentService:
             contract_sha256(descriptor.input_schema),
             descriptor.effect_class,
             descriptor.cost.worst_case_units,
+            approval_required=_runtime_approval_override(descriptor),
         )
         bound = bind_tool_invocation(
             runtime_capability,
@@ -1120,6 +1128,17 @@ class MarketingAgentService:
             "receipt_sha256": receipt_sha256,
             "output": result.output,
         }
+        admission = None
+        after_commit = None
+        if self.knowledge is not None and self.knowledge.terminal is not None:
+            source = self.knowledge.ingress.source_for_run(run.run_id)
+            if source is not None:
+                admission = self.knowledge.terminal.for_receipt(
+                    source,
+                    receipt,
+                    capability_id=descriptor.capability_id,
+                )
+                after_commit = self.knowledge.terminal.after_commit
         verified = self.repository.append_step(
             admitted,
             _step(
@@ -1147,6 +1166,8 @@ class MarketingAgentService:
                     now=now,
                 ),
             ),
+            admission=admission,
+            after_commit=after_commit,
         )
         self._fault("verify_committed")
         return self._evaluate_tool_result(verified, receipt, evidence_payload, now=now)
@@ -1456,7 +1477,7 @@ class MarketingAgentService:
             if event.event_type != "tool_dispatched" or not isinstance(value, dict):
                 continue
             call = value.get("call")
-            if call == asdict(bound.call) and value.get("request") == bound.request:
+            if call == tool_call_payload(bound.call) and value.get("request") == bound.request:
                 dispatch = event
                 break
         if dispatch is None:
@@ -1761,6 +1782,7 @@ def _runtime_bound(invocation: ToolInvocation, descriptor: ToolDescriptor) -> Bo
         contract_sha256(descriptor.input_schema),
         descriptor.effect_class,
         descriptor.cost.worst_case_units,
+        approval_required=_runtime_approval_override(descriptor),
     )
     return bind_tool_invocation(
         capability,
@@ -1768,6 +1790,27 @@ def _runtime_bound(invocation: ToolInvocation, descriptor: ToolDescriptor) -> Bo
         idempotency_key=invocation.idempotency_key,
         request=invocation.input,
     )
+
+
+def _runtime_approval_override(descriptor: ToolDescriptor) -> bool | None:
+    """Project the one validated no-approval effect policy into the durable runtime call."""
+    if (
+        descriptor.approval_policy.mode == "required"
+        or descriptor.effect_class is EffectClass.OBSERVE
+    ):
+        return None
+    if (
+        descriptor.effect_class is EffectClass.CONTROL_PLANE_WRITE
+        and descriptor.credential_boundary == "adapter_owner"
+        and descriptor.approval_policy.authority == AUTHENTICATED_SOURCE_AUTHORITY
+        and allows_authenticated_source_approval(
+            capability_id=descriptor.capability_id,
+            owner=descriptor.owner,
+            installation_id=descriptor.installation_id,
+        )
+    ):
+        return False
+    raise ValueError(_RUNTIME_SOURCE_AUTHORIZED_DESCRIPTOR_INVALID)
 
 
 def _validate_terminal_result(

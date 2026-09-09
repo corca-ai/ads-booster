@@ -62,6 +62,7 @@ class PreparedContextSlot(StrEnum):
     TASK_OVERLAY = "task_overlay"
     MEMORY = "memory"
     WIKI = "wiki"
+    SKILL = "skill"
 
 
 @unique

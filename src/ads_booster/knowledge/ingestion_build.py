@@ -7,11 +7,14 @@ from typing import TYPE_CHECKING
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contract_types import (
     ConversationEventKind,
+    ScopeKind,
     SourceDisposition,
     SourceKind,
 )
 from ads_booster.knowledge.extractors import EXTRACTOR_VERSION, ExtractionResult, extract
+from ads_booster.knowledge.identifiers import stable_id
 from ads_booster.knowledge.ingestion_files import SourceFileSet, prepare_source_files
+from ads_booster.knowledge.learning_policy import LEARNING_POLICY_VERSION
 from ads_booster.knowledge.operation_contracts import KnowledgeJob
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
 from ads_booster.knowledge.repository_types import (
@@ -72,8 +75,14 @@ def build_registration(
     original_sha256 = sha256(request.source_input.original).hexdigest()
     revision_id = stable_id("revision", source_id, original_sha256)
     operation_id = stable_id("ingest", request.actor.workspace_id, request.envelope.delivery_id)
-    receipt = _receipt(request.envelope.delivery_id, source_id, revision_id)
     source = _source(request, extraction, source_id, revision_id)
+    policy_version = _policy_version(source)
+    receipt = _receipt(
+        request.envelope.delivery_id,
+        source_id,
+        revision_id,
+        policy_version,
+    )
     prepared_files = prepare_source_files(
         repository.files,
         SourceFileSet(
@@ -94,8 +103,7 @@ def build_registration(
         job=JobRegistration(
             job=_job(request.event, source, receipt, extraction),
             unique_key=(
-                f"{source.workspace_id}:{source.revision_id}:"
-                f"{EXTRACTOR_VERSION}:{CURATION_POLICY_VERSION}"
+                f"{source.workspace_id}:{source.revision_id}:{EXTRACTOR_VERSION}:{policy_version}"
             ),
         ),
         index_item=IndexOutboxItem(
@@ -166,13 +174,18 @@ def _segments(source: Source, extraction: ExtractionResult) -> tuple[SourceSegme
     )
 
 
-def _receipt(delivery_id: str, source_id: str, revision_id: str) -> IngestReceipt:
+def _receipt(
+    delivery_id: str,
+    source_id: str,
+    revision_id: str,
+    policy_version: str,
+) -> IngestReceipt:
     return IngestReceipt(
         schema="knowledge.ingest-receipt.v1",
         delivery_id=delivery_id,
         source_id=source_id,
         source_revision_id=revision_id,
-        curation_job_id=stable_id("job", revision_id, CURATION_POLICY_VERSION),
+        curation_job_id=stable_id("job", revision_id, policy_version),
         index_operation_id=stable_id("index", revision_id, "0", INDEXER_VERSION),
         replayed=False,
     )
@@ -203,7 +216,7 @@ def _job(
             event.message_id,
             str(event.revision),
         ),
-        policy_version=CURATION_POLICY_VERSION,
+        policy_version=_policy_version(source),
         due_at=source.fetched_at,
         created_at=source.fetched_at,
         reason_code=None if ready else "extraction_unavailable",
@@ -238,23 +251,28 @@ def _observation(
     )
 
 
-def stable_id(prefix: str, *parts: str) -> str:
-    digest = sha256("\x00".join(parts).encode()).hexdigest()
-    return f"{prefix}.{digest[:32]}"
-
-
 def receipt_for_existing(
     delivery_id: str,
     source: Source,
     *,
     replayed: bool,
 ) -> IngestReceipt:
-    return _receipt(delivery_id, source.source_id, source.revision_id).model_copy(
-        update={"replayed": replayed}
-    )
+    return _receipt(
+        delivery_id,
+        source.source_id,
+        source.revision_id,
+        _policy_version(source),
+    ).model_copy(update={"replayed": replayed})
+
+
+def _policy_version(source: Source) -> str:
+    if source.source_kind is SourceKind.MESSAGE and source.scope.kind is ScopeKind.WORKSPACE:
+        return LEARNING_POLICY_VERSION
+    return CURATION_POLICY_VERSION
 
 
 __all__ = [
+    "LEARNING_POLICY_VERSION",
     "IngestionBuildRequest",
     "SourceInput",
     "build_registration",

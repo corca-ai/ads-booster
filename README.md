@@ -343,6 +343,46 @@ scope; the service filters them to read-only knowledge tools (`knowledge_search`
 external delivery. Edits, deletes, and corrections enter a pending fence before the affected Run is
 prepared again.
 
+### Shared feedback and procedural learning
+
+When knowledge is enabled, authenticated members admitted to shared Slack threads contribute to
+one workspace learning stream. A clear correction can update CORE immediately at the next safe
+foreground boundary. Terminal tool receipts count toward a bounded review round; nine shared turns
+or receipts leave the round collecting, and the tenth of either kind seals one logical round. A
+reviewed complete observed receipt can support a reusable procedure; failed, unknown, or invalidated
+receipts remain evidence without promotion. The wake-up counter does not merge authority:
+existing member, session, scope, grant, and policy partitions still produce separate curation work.
+
+Private DMs do not add shared-learning turns or receipts and cannot write shared memory or skills.
+The same knowledge repository stores agent-created procedural skills. The complete built-in catalog
+and its overrides stay protected from background learning. An authenticated member may change a
+protected procedure only through an explicit current foreground request; a changed built-in release
+causes the stored override to fall back to the current built-in until it is reviewed.
+
+Normal learning is silent. An unresolved conflict for the same applicability remains pending and
+creates one question in the original Slack thread. That question is a learning input, not a
+`ToolApproval`. Existing reviewed SQLite work and performance notes remain read-only evidence; the
+automatic path does not dual-write them or change their review gate. No additional provider,
+daemon, store, or verifier is introduced for this path.
+
+The enabled runtime exposes `skill_list`, `skill_get`, and `skill_apply` through the existing
+knowledge tool host. Prepared context carries only the effective skill index and its selected
+revision receipt. Each selected skill keeps nested `source_refs` and `source_revisions`; these are
+skill provenance and are distinct from generic retrieval references. The procedure body is loaded
+by `skill_get`. Binding-free Runs hide these tools and this context. Private DMs may read shared
+skill metadata and bodies under their current grants, but cannot write them.
+
+Completed shared message plans and terminal receipts enter learning only through their canonical
+stored source or Run receipt. Message edits and deletes invalidate dependent pending learning; an
+edited source can enter the urgent correction path. After a foreground correction applies, its exact
+target is fenced by source revision so a later review cannot apply it twice while other source
+evidence remains available. A completed `no_effect` receipt counts as terminal work for the learning
+cadence, while effect success is recorded separately. Any reusable procedure requires reviewed
+typed input/output provenance bound to the invocation, receipt, source, and Run.
+
+The reduced verification evidence covers the bounded repair, installed basic CLI/API smoke, and one
+external installed minimal reuse canary. The expanded verification matrix remains unexecuted.
+
 The `trace-marketing knowledge` CLI group is registered as a local admin surface. Every command
 requires `--root`, `--control-root`, and `--policy`; `init` also requires `--workspace`. The current
 commands are `init`, `doctor`, `ingest --envelope <file> [--attachment ORDINAL=/absolute/path]`,

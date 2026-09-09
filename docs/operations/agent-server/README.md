@@ -30,7 +30,7 @@ Status: Candidate — 문서는 설치 절차를 설명하며 실제 배포 완�
 [포트 전환 절차](slack-launch-guide.md#기존-8765-설치에서-8090으로-전환)를 따른다.
 모델 예시는 `gpt-6-astra`이며, 실제 서버 Codex 계정에서 사용 가능한 모델을 확인한다.
 
-## Team knowledge configuration (source wiring; verification deferred)
+## Team knowledge configuration
 
 The on-premises service can enable the server-owned knowledge store by setting all three absolute
 paths together:
@@ -51,6 +51,62 @@ Authenticated Slack shared threads enter workspace scope. Private DMs retain mem
 scope and expose read-only knowledge search/get, memory get/explain, and source read capabilities;
 they cannot write shared memory, schedule jobs, purge data, or send external effects. Corrections and
 message edits/deletes create a pending fence before the affected Run is prepared again.
+
+## Shared feedback learning
+
+Authenticated members admitted to shared Slack threads share one workspace learning counter. The
+tenth admitted conversation turn or terminal tool receipt seals one review round; every eligible
+terminal outcome counts toward readiness. Reviewed complete observed evidence can support a reusable
+procedure; failed, unknown, or invalidated outcomes remain evidence without promotion. The counter
+only wakes work, while existing member, session, scope, grant, and policy partitions remain separate.
+Clear CORE corrections apply at the next safe foreground boundary without waiting for that threshold.
+Private DMs add no shared turns or receipts and cannot write shared memory or learned skills.
+
+The knowledge owner stores source-bound agent-created procedural skills. Background learning cannot
+edit built-in procedures or their overrides. An explicit current foreground request may create a
+protected override for any authenticated admitted member. If the built-in release digest changes,
+the current built-in remains effective until the override is reviewed. Normal learning produces no
+Slack notification. Only an unresolved same-scope conflict creates a durable question in the
+original thread, and the question is separate from `ToolApproval`.
+
+Existing reviewed SQLite work and performance notes remain read-only evidence. The learning path does
+not dual-write them and does not alter their review gate. It reuses the existing knowledge repository,
+ingress, curation provider, and service lifecycle; it adds no provider, daemon, store, or verifier.
+
+The reduced verification evidence covers the bounded repair, installed basic CLI/API smoke, and one
+external installed minimal reuse canary. The expanded matrix remains unexecuted. The final-source
+installed manifest records `doctor_ready: true`, `doctor_exit_code: 0`, and `run_help_exit_code: 0`;
+the earlier F3 wheel remains historical.
+
+```bash
+/absolute/checkout/.omo/evidence/agent-feedback-learning/venv/bin/python -I /absolute/checkout/tests/operations/installed_learning_smoke.py --mode fixture --home /absolute/new-learning-home --output /absolute/checkout/.omo/evidence/agent-feedback-learning/f3-installed.json
+```
+
+The command above is the fixture-mode F3 route. It does not establish live Slack, Codex, or
+deployment success.
+
+F3 uses the fixture-mode `installed_learning_smoke.py` command above. F4 uses the separately named
+installed model canary with a fresh absolute home and a non-editable interpreter outside the checkout,
+while preserving the
+official `HOME`, `CODEX_HOME`, and logged-in Codex session. Only the Slack sender is fake; the
+configured Codex path supplies the model. The previous `installed_learning_smoke.py --mode
+real-model` invocation is not the reduced F4 route:
+
+```bash
+/absolute/fresh-installed-venv/bin/python -I /absolute/checkout/tests/operations/installed_learning_model_canary.py --scenario minimal-skill-reuse --home /absolute/fresh-model-home --output /absolute/checkout/.omo/evidence/agent-feedback-learning/f4-model-reuse.json
+```
+
+A completed `no_effect` receipt counts as terminal work for readiness but remains separate from
+effect success. Reviewed complete observed evidence can support a reusable procedure; failed,
+unknown, and invalidated outcomes cannot promote one. Review evidence must retain the typed
+invocation input, typed output, receipt, and source/Run binding. Selected skills carry nested
+`source_refs` and `source_revisions`; generic retrieval references are insufficient provenance.
+
+The running knowledge dispatcher recovers terminal experience receipts before it processes new
+learning work. Completed shared message plans contribute through their canonical source receipt;
+edited or deleted messages invalidate superseded learning, and edited sources can take the urgent
+correction path. A foreground-applied target is consumed by source revision and target ID so a later
+review cannot apply it twice.
 
 The service assembles bounded revision- and digest-bound context for the canonical Run.
 Preexisting transfer replicas remain `purge_pending` until separately reconciled. No remote purge
