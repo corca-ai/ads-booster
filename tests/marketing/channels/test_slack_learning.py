@@ -347,7 +347,7 @@ def test_summary_branch_has_at_most_one_classifier_call(
 def test_normal_learning_is_silent_and_dm_does_not_increment_shared_learning(
     tmp_path: Path,
 ) -> None:
-    # Given: installed shared learning and a sender that records only Slack deliveries.
+    # Given: installed shared learning and a sender that records Slack posts and updates.
     owner, installed, messages = _installed_events(tmp_path)
 
     try:
@@ -370,7 +370,13 @@ def test_normal_learning_is_silent_and_dm_does_not_increment_shared_learning(
 
         # Then: successful background learning is silent and the DM adds no shared turn.
         counter = _learning_counter(installed)
-        assert len(messages) == delivered_before_dm + 2
+        dm_deliveries = messages[delivered_before_dm:]
+        assert dm_deliveries
+        assert all(payload["channel"] == "D1" for payload in dm_deliveries)
+        assert sum("ts" not in payload for payload in dm_deliveries) == 1
+        assert all(payload.get("ts") == "123.456" for payload in dm_deliveries[1:])
+        assert all(str(payload["text"]).startswith("⏳ ") for payload in dm_deliveries[:-1])
+        assert dm_deliveries[-1]["text"] == "No execution tool is needed"
         assert counter.conversation_turns == counter_before_dm.conversation_turns
     finally:
         installed.runtime.close()
