@@ -50,7 +50,9 @@ def test_human_effort_commands_continue_work_without_model_or_double_count(tmp_p
     assert "비용 단위 합계 0" in str(messages[-1])
     assert "통화 금액 아님" in str(messages[-1])
     access = MemoryAccess(
-        scope=MemoryScope(workspace_id="team", product_id="trace", work_id=run.run_id),
+        scope=MemoryScope(
+            workspace_id="team", product_id="trace", work_id=run.run_id, channel_id="C1"
+        ),
         actor_id="member",
     )
     summary = WorkObservationStore(owner.store.database_path).summarize(access)
