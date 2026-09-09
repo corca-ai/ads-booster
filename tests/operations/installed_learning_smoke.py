@@ -771,7 +771,8 @@ def _run(mode: str, home: Path) -> JsonObject:
                         event_id="EvU2",
                         user="U2",
                         channel="C1",
-                        text="<@UBOT> recall the launch rule",
+                        # This fixture checks exact revision/source retention, not semantic search.
+                        text="<@UBOT> use learned.fixture-receipt-procedure",
                         timestamp="200.001",
                     ),
                 )
