@@ -8,6 +8,25 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
+from ads_booster.agent.service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    TrustedRunBinding,
+)
+from ads_booster.agent.service.knowledge_ingress_authority import (
+    KnowledgeIngressAuthority,
+)
+from ads_booster.bootstrap.lifecycle import (
+    InstalledServicePaths,
+    build_installed_knowledge_runtime,
+    build_installed_marketing_agent_service,
+)
+from ads_booster.channels.contracts import ChannelIdentityBinding
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.knowledge_ingress_slack import (
+    SlackIngressRequest,
+    build_slack_ingress,
+)
+from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.contracts.knowledge_preparation import PreparedKnowledgeContext
 from ads_booster.knowledge.configuration import (
     KnowledgeSettings,
@@ -31,25 +50,6 @@ from ads_booster.knowledge.errors import AccessDeniedError, PolicyEpochStaleErro
 from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
-from ads_booster.channels.http.http_api import MarketingAgentApi
-from ads_booster.agent.service.knowledge_ingress import (
-    CanonicalKnowledgeIngress,
-    TrustedRunBinding,
-)
-from ads_booster.agent.service.knowledge_ingress_authority import (
-    KnowledgeIngressAuthority,
-)
-from ads_booster.bootstrap.lifecycle import (
-    InstalledServicePaths,
-    build_installed_knowledge_runtime,
-    build_installed_marketing_agent_service,
-)
-from ads_booster.channels.contracts import ChannelIdentityBinding
-from ads_booster.channels.knowledge_ingress_slack import (
-    SlackIngressRequest,
-    build_slack_ingress,
-)
-from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from tests.knowledge.change_test_fixtures import actor as catalog_actor
@@ -287,6 +287,7 @@ def test_private_slack_ingress_keeps_members_and_sessions_separate(tmp_path: Pat
                     created_at=now,
                 ),
                 private=True,
+                channel_id="D1",
                 reply_to=None,
                 attachments=(),
                 observed_at=now,
@@ -298,13 +299,14 @@ def test_private_slack_ingress_keeps_members_and_sessions_separate(tmp_path: Pat
         binding = owner.binding_for_run(f"run-{member}")
         assert binding is not None
         bindings.append(binding)
-    # Then: private writes stay local, shared context is read-only, and stale epochs fail closed.
+    # Then: private context stays local and stale epochs fail closed.
     alice, bob = (binding.actor for binding in bindings)
     assert {grant.capability for grant in alice.grants} == {
         GrantCapability.READ,
         GrantCapability.WRITE,
     }
-    _ = authorize_read(actor=alice, target_scope=catalog_actor().conversation_scope, at=now)
+    with pytest.raises(AccessDeniedError):
+        _ = authorize_read(actor=alice, target_scope=catalog_actor().conversation_scope, at=now)
     with pytest.raises(AccessDeniedError):
         _ = authorize_write(actor=alice, target_scope=catalog_actor().conversation_scope, at=now)
     with pytest.raises(AccessDeniedError):
