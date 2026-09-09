@@ -27,7 +27,11 @@ from ads_booster.knowledge.operation_enums import (
     MemoryOperationKind,
     OperationStatus,
 )
-from ads_booster.knowledge.scope_contracts import AccessScope
+from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
+
+
+def _missing_submitter(value: ActorContext | None) -> bool:
+    return value is None
 
 
 class SemanticFingerprint(KnowledgeContractModel):
@@ -154,6 +158,7 @@ class KnowledgeJob(KnowledgeContractModel):
     batch_id: BoundedId | None = None
     reason_code: Annotated[str, Field(min_length=1, max_length=160)] | None = None
     lease_generation: Annotated[int, Field(ge=0)] = 0
+    submitter_actor: ActorContext | None = Field(default=None, exclude_if=_missing_submitter)
 
 
 class EventReceipt(KnowledgeContractModel):
@@ -186,6 +191,7 @@ class CurationBatch(KnowledgeContractModel):
     first_event_at: UtcDatetime
     batch_deadline: UtcDatetime
     event_receipts: Annotated[tuple[EventReceipt, ...], Field(max_length=20)] = ()
+    submitter_actor: ActorContext | None = Field(default=None, exclude_if=_missing_submitter)
 
     @model_validator(mode="after")
     def require_batch_window(self) -> Self:
