@@ -14,7 +14,11 @@ from ads_booster.knowledge.contracts import (
     OperationReceipt,
     ScopeKind,
 )
-from ads_booster.knowledge.file_store import KnowledgeRevisionTarget, MemoryRevisionTarget
+from ads_booster.knowledge.file_store import (
+    KnowledgeRevisionTarget,
+    MemoryRevisionTarget,
+    SkillRevisionTarget,
+)
 from ads_booster.knowledge.grant_policy import authorize_write
 from ads_booster.knowledge.repository_dependency import append_dependency_invalidations
 from ads_booster.knowledge.repository_memory import (
@@ -26,6 +30,10 @@ from ads_booster.knowledge.repository_page import (
     assert_page_head,
     insert_page_revision,
     insert_page_shell,
+)
+from ads_booster.knowledge.repository_skills import (
+    assert_skill_head,
+    insert_skill_revision,
 )
 from ads_booster.knowledge.repository_source import (
     _insert_index,
@@ -43,6 +51,7 @@ from ads_booster.knowledge.repository_types import (
     RepositoryCommitBoundary,
     conflict,
 )
+from ads_booster.knowledge.skill_contracts import SkillOperation
 
 if TYPE_CHECKING:
     from ads_booster.knowledge.file_store import PublishedRevisionFile, RevisionTarget
@@ -63,8 +72,10 @@ def commit_catalog(
     published = {
         item.target: item
         for item in (
-            repository.files.publish(write.prepared_file)
-            for write in (*command.page_writes, *command.memory_writes)
+            repository.files.publish(prepared)
+            for write in (*command.page_writes, *command.memory_writes, *command.skill_writes)
+            for prepared in (write.prepared_file,)
+            if prepared is not None
         )
     }
     repository.reach_commit_boundary(RepositoryCommitBoundary.AFTER_FILE_PUBLISH)
@@ -125,6 +136,12 @@ def _authorize_commit(connection: sqlite3.Connection, command: CatalogCommit) ->
             workspace_id=write.document.workspace_id,
         )
         _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
+    if command.skill_writes:
+        target_scope = AccessScope(
+            kind=ScopeKind.WORKSPACE,
+            workspace_id=command.actor.workspace_id,
+        )
+        _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
     for invalidation in command.dependency_invalidations:
         row = _OPTIONAL_STRING_ROW.validate_python(
             connection.execute(
@@ -157,6 +174,8 @@ def _assert_heads(
         assert_page_head(connection, workspace_id, write)
     for write in command.memory_writes:
         assert_memory_head(connection, workspace_id, write)
+    for write in command.skill_writes:
+        assert_skill_head(connection, workspace_id, write)
 
 
 def _insert_shells(
@@ -200,6 +219,24 @@ def _insert_revisions(
             write,
             _published(published, target),
         )
+    for write in command.skill_writes:
+        target = (
+            None
+            if write.record is None
+            else SkillRevisionTarget(
+                workspace_id=workspace_id,
+                skill_id=write.record.skill_id,
+                revision_id=write.record.version,
+            )
+        )
+        item = None if target is None else _published(published, target)
+        insert_skill_revision(
+            connection,
+            workspace_id,
+            command.operation_id,
+            write,
+            item,
+        )
 
 
 def _insert_indexes(
@@ -221,7 +258,7 @@ def _insert_indexes(
 def _validate_commit(command: CatalogCommit) -> None:
     if command.receipt.operation_id != command.operation_id:
         conflict("operation_receipt_mismatch", command.operation_id)
-    writes = (*command.page_writes, *command.memory_writes)
+    writes = (*command.page_writes, *command.memory_writes, *command.skill_writes)
     resulting = tuple(write.expected.resulting_revision_id for write in writes)
     if tuple(command.receipt.resulting_revision_ids) != resulting:
         conflict("operation_result_mismatch", command.operation_id)
@@ -230,6 +267,8 @@ def _validate_commit(command: CatalogCommit) -> None:
     for record in command.operation_records:
         if record.operation_id != command.operation_id:
             conflict("operation_record_mismatch", command.operation_id)
+    if any(write.operation not in command.operation_records for write in command.skill_writes):
+        conflict("skill_operation_record_mismatch", command.operation_id)
     for invalidation in command.dependency_invalidations:
         if (
             invalidation.upstream_kind != "memory_entry"
@@ -243,6 +282,7 @@ def _workspace_id(command: CatalogCommit) -> str:
     workspace_ids = {
         *(write.page.scope.workspace_id for write in command.page_writes),
         *(write.document.workspace_id for write in command.memory_writes),
+        *(command.actor.workspace_id for _ in command.skill_writes),
     }
     if not workspace_ids and command.dependency_invalidations:
         workspace_ids.add(command.actor.workspace_id)
@@ -268,6 +308,8 @@ def _insert_audit(connection: sqlite3.Connection, command: CatalogCommit) -> Non
                 target_id = ",".join(targets)
             case MemoryOperation(document_id=document_id):
                 target_id = document_id
+            case SkillOperation(skill_id=skill_id):
+                target_id = skill_id
         _ = connection.execute(
             """
             INSERT INTO operation_records(

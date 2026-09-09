@@ -36,6 +36,11 @@ from ads_booster.knowledge.repository_run_binding import (
     put_run_binding,
     run_binding,
 )
+from ads_booster.knowledge.repository_skills import (
+    mark_skill_display_current,
+    read_skill,
+    skill_ids,
+)
 from ads_booster.knowledge.repository_source import (
     change_source_admission,
     latest_source_observation,
@@ -78,6 +83,7 @@ from ads_booster.knowledge.repository_types import (
     SourceRegistration,
     StoredMemory,
     StoredPage,
+    StoredSkill,
     StoredSource,
 )
 
@@ -240,6 +246,29 @@ class SqliteKnowledgeRepository:
         revision_id: str | None = None,
     ) -> StoredMemory | None:
         return read_memory(self, actor, document_id, revision_id)
+
+    def read_skill(
+        self,
+        actor: ActorContext,
+        skill_id: str,
+        revision_id: str | None = None,
+    ) -> StoredSkill | None:
+        return read_skill(self, actor, skill_id, revision_id)
+
+    def skill_ids(self, actor: ActorContext) -> tuple[str, ...]:
+        return skill_ids(self, actor)
+
+    def skill_head(self, actor: ActorContext, skill_id: str) -> str | None:
+        stored = read_skill(self, actor, skill_id)
+        return None if stored is None else stored.record.version
+
+    def mark_skill_display_current(
+        self,
+        workspace_id: str,
+        skill_id: str,
+        revision_id: str,
+    ) -> None:
+        mark_skill_display_current(self, workspace_id, skill_id, revision_id)
 
     def memory_history_redaction(
         self,
