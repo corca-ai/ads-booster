@@ -198,6 +198,7 @@ class MemoryKind(StrEnum):
     SOUL = "soul"
     CORE = "core"
     DAILY = "daily"
+    USER = "user"
 
 
 @unique

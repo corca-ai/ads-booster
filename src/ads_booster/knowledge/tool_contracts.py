@@ -143,11 +143,11 @@ class MemoryGetInput(KnowledgeContractModel):
                         "memory_tool_daily_selector_invalid",
                         "daily selection requires a date and forbids a brand",
                     )
-            case MemoryKind.TEAM | MemoryKind.CORE:
+            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.USER:
                 if self.brand_id is not None or self.local_date is not None:
                     raise PydanticCustomError(
                         "memory_tool_selector_invalid",
-                        "team and core selection forbid brand and date",
+                        "team, core and user selection forbid brand and date",
                     )
         return self
 

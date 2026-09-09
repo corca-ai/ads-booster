@@ -19,6 +19,7 @@ from ads_booster.knowledge.contract_types import (
     MemoryKind,
     MemoryOrigin,
     MemoryStatus,
+    ScopeKind,
     SoulSection,
     UsageRole,
     UtcDatetime,
@@ -26,6 +27,10 @@ from ads_booster.knowledge.contract_types import (
 from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
 from ads_booster.knowledge.governance_contracts import AppliesTo
 from ads_booster.knowledge.scope_contracts import AccessScope
+
+
+def _scope_absent(value: AccessScope | None) -> bool:
+    return value is None
 
 
 class MemoryDocument(KnowledgeContractModel):
@@ -36,6 +41,32 @@ class MemoryDocument(KnowledgeContractModel):
     local_date: date | None = None
     timezone: IanaTimeZone
     head_revision_id: BoundedId
+    scope: AccessScope | None = Field(default=None, exclude_if=_scope_absent)
+
+    @property
+    def owned_scope(self) -> AccessScope:
+        return self.scope or AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=self.workspace_id)
+
+    @model_validator(mode="after")
+    def require_owned_scope(self) -> Self:
+        if self.owned_scope.workspace_id != self.workspace_id:
+            raise PydanticCustomError(
+                "memory_scope_workspace_mismatch", "memory scope must match its workspace"
+            )
+        match self.kind:
+            case MemoryKind.USER:
+                if self.owned_scope.kind is not ScopeKind.CHANNEL_MEMBER:
+                    raise PydanticCustomError(
+                        "user_memory_scope_required",
+                        "user memory requires channel member ownership",
+                    )
+            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.DAILY | MemoryKind.SOUL:
+                if self.owned_scope.kind not in (ScopeKind.WORKSPACE, ScopeKind.CHANNEL):
+                    raise PydanticCustomError(
+                        "memory_scope_private",
+                        "shared memory requires workspace or channel ownership",
+                    )
+        return self
 
     @model_validator(mode="after")
     def require_kind_identity(self) -> Self:
@@ -52,16 +83,16 @@ class MemoryDocument(KnowledgeContractModel):
                         "invalid_memory_date",
                         "daily memory requires a date and forbids a brand",
                     )
-            case MemoryKind.TEAM | MemoryKind.CORE:
+            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.USER:
                 if self.brand_id is not None:
                     raise PydanticCustomError(
                         "invalid_memory_brand",
-                        "team and core memory forbid a brand",
+                        "team, core and user memory forbid a brand",
                     )
                 if self.local_date is not None:
                     raise PydanticCustomError(
                         "invalid_memory_date",
-                        "team and core memory forbid a date",
+                        "team, core and user memory forbid a date",
                     )
         return self
 
@@ -131,6 +162,23 @@ class MemoryEntry(KnowledgeContractModel):
         return self
 
     @model_validator(mode="after")
+    def require_personal_owner(self) -> Self:
+        match self.document_kind:
+            case MemoryKind.USER:
+                if self.scope.kind is not ScopeKind.CHANNEL_MEMBER:
+                    raise PydanticCustomError(
+                        "user_memory_scope_required",
+                        "user entries require channel member ownership",
+                    )
+            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.DAILY | MemoryKind.SOUL:
+                if self.scope.kind is ScopeKind.CHANNEL_MEMBER:
+                    raise PydanticCustomError(
+                        "personal_entry_requires_user_memory",
+                        "personal entries belong to user memory",
+                    )
+        return self
+
+    @model_validator(mode="after")
     def require_document_fields(self) -> Self:
         match self.document_kind:  # noqa: MATCH_OK
             case MemoryKind.SOUL:
@@ -152,7 +200,7 @@ class MemoryEntry(KnowledgeContractModel):
                             )
                     case MemoryStatus.CONTESTED | MemoryStatus.SUPERSEDED | MemoryStatus.RETRACTED:
                         pass
-            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.DAILY:
+            case MemoryKind.TEAM | MemoryKind.CORE | MemoryKind.DAILY | MemoryKind.USER:
                 if self.soul_section is not None or self.example_refs:
                     raise PydanticCustomError(
                         "non_soul_entry_forbids_soul_fields",
