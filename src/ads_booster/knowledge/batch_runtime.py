@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from multiprocessing import get_context
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from ads_booster.knowledge.batch_actor import load_batch_actor
+from ads_booster.knowledge.batch_actor import load_batch_actor, load_partition_actor
 from ads_booster.knowledge.batch_curation import (
     BatchCurationCoordinator,
     ClaimedBatchRun,
@@ -20,6 +21,7 @@ from ads_booster.knowledge.batch_failure import fail_unbatched_job, fail_unclaim
 from ads_booster.knowledge.contracts import CurationBatch, EventReceipt, KnowledgeJob
 from ads_booster.knowledge.curation_contracts import CurationRunStatus
 from ads_booster.knowledge.errors import KnowledgePolicyError
+from ads_booster.knowledge.learning_policy import LEARNING_POLICY_VERSION
 from ads_booster.knowledge.maintenance_jobs import (
     CancellationEvent,
     CanonicalJobProcessor,
@@ -30,6 +32,7 @@ from ads_booster.knowledge.operation_enums import (
     JobPriority,
     OperationStatus,
 )
+from ads_booster.knowledge.scope_contracts import ActorContext
 
 if TYPE_CHECKING:
     from multiprocessing.context import ForkContext
@@ -37,9 +40,10 @@ if TYPE_CHECKING:
     from multiprocessing.queues import Queue
 
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
-    from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
+    from ads_booster.knowledge.scope_contracts import AccessScope
 
 _READY_ROW: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
+_ACTOR_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 _JOB_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
 
 
@@ -70,7 +74,7 @@ class CurationBatchRuntime:
     jobs: CanonicalJobProcessor
     _context: ForkContext = field(init=False, repr=False)
     _process: BaseProcess | None = field(default=None, init=False, repr=False)
-    _queue: Queue[bool] = field(init=False, repr=False)
+    _queue: Queue[str] = field(init=False, repr=False)
     _cancel: CancellationEvent = field(default_factory=Event, init=False, repr=False)
     _batch: CurationBatch | None = field(default=None, init=False, repr=False)
     _batch_actor: ActorContext | None = field(default=None, init=False, repr=False)
@@ -105,7 +109,7 @@ class CurationBatchRuntime:
         coordinator = BatchCurationCoordinator(self.repository)
         try:
             work = self._work_for(batch, batch_actor)
-        except Exception:
+        except KeyError, KnowledgePolicyError, ValueError, sqlite3.Error:
             _ = coordinator.execute_claimed(
                 ClaimedBatchRun(batch_actor, batch, ()),
                 CanonicalBatchProcessor(self.jobs),
@@ -145,10 +149,10 @@ class CurationBatchRuntime:
                     """
                     SELECT job_json FROM jobs
                     WHERE workspace_id=? AND kind='curation' AND state='queued'
-                        AND batch_id IS NULL AND due_at<=?
+                        AND policy_version!=? AND batch_id IS NULL AND due_at<=?
                     ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,due_at,job_id
                     """,
-                    (self.actor.workspace_id, now.isoformat()),
+                    (self.actor.workspace_id, LEARNING_POLICY_VERSION, now.isoformat()),
                 ).fetchall()
             )
         coordinator = BatchCurationCoordinator(self.repository)
@@ -200,16 +204,18 @@ class CurationBatchRuntime:
                 connection.execute(
                     """SELECT batch_json FROM curation_batches
                 WHERE workspace_id=? AND (
-                    state='ready' OR (state='collecting' AND batch_deadline<=?)
+                    state='ready' OR (
+                        state='collecting' AND policy_version!=? AND batch_deadline<=?
+                    )
                 ) ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,
                     batch_deadline,batch_id""",
-                    (self.actor.workspace_id, now.isoformat()),
+                    (self.actor.workspace_id, LEARNING_POLICY_VERSION, now.isoformat()),
                 ).fetchall()
             )
         for (encoded,) in rows:
             batch = CurationBatch.model_validate_json(encoded)
             try:
-                actor = self._actor_for_scope(batch.scope, now)
+                actor = self._actor_for_batch(batch, now)
                 claimed = BatchCurationCoordinator(self.repository).claim(actor, now)
             except KnowledgePolicyError as error:
                 fail_unclaimed_batch(self.repository, batch, error.code)
@@ -223,14 +229,32 @@ class CurationBatchRuntime:
             return self.actor
         return load_batch_actor(self.repository, scope, now)
 
+    def _actor_for_batch(self, batch: CurationBatch, now: datetime) -> ActorContext:
+        with self.repository.connection() as connection:
+            row = _ACTOR_ROW.validate_python(
+                connection.execute(
+                    "SELECT actor_json FROM learning_batch_partitions WHERE batch_id=?",
+                    (batch.batch_id,),
+                ).fetchone()
+            )
+        if row is None:
+            return self._actor_for_scope(batch.scope, now)
+        return load_partition_actor(
+            self.repository,
+            ActorContext.model_validate_json(row[0]),
+            now,
+        )
+
     def _urgent_ready(self) -> bool:
         with self.repository.connection() as connection:
             row = _READY_ROW.validate_python(
                 connection.execute(
                     """SELECT 1 FROM curation_batches
                 WHERE workspace_id=? AND priority='urgent'
-                    AND state IN ('collecting','ready') LIMIT 1""",
-                    (self.actor.workspace_id,),
+                    AND (state='ready' OR (
+                        state='collecting' AND policy_version!=?
+                    )) LIMIT 1""",
+                    (self.actor.workspace_id, LEARNING_POLICY_VERSION),
                 ).fetchone()
             )
         return row is not None
@@ -241,7 +265,7 @@ class CurationBatchRuntime:
             return
         process.join()
         try:
-            completed = self._queue.get_nowait()
+            completed = self._queue.get_nowait() == "completed"
         except Empty:
             completed = False
         if not completed:
@@ -262,14 +286,10 @@ def _process_batch(
     coordinator: BatchCurationCoordinator,
     run: ClaimedBatchRun,
     processor: CanonicalBatchProcessor,
-    queue: Queue[bool],
+    queue: Queue[str],
 ) -> None:
-    try:
-        _ = coordinator.execute_claimed(run, processor)
-    except BaseException:
-        queue.put(False)
-    else:
-        queue.put(True)
+    _ = coordinator.execute_claimed(run, processor)
+    queue.put("completed")
 
 
 __all__ = ["CanonicalBatchProcessor", "CurationBatchRuntime"]
