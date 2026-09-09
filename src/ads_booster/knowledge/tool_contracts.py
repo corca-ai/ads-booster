@@ -5,9 +5,21 @@ from datetime import date
 from enum import StrEnum, unique
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
+from ads_booster.contracts.agent_memory import (
+    LegacyMemoryAssessment,
+    MemoryReference,
+    MemorySelection,
+    MemorySelectionReceipt,
+)
 from ads_booster.contracts.agent_run import BoundedId
 from ads_booster.contracts.models import Locale, Sha256Digest
 from ads_booster.knowledge.adoption_contracts import ExplicitAdoptionReceipt
@@ -16,13 +28,14 @@ from ads_booster.knowledge.contract_types import (
     BoundedText,
     GrantCapability,
     KnowledgeContractModel,
+    MemoryEntryKind,
     MemoryKind,
     SourceCompleteness,
     SourceDisposition,
     UtcDatetime,
 )
 from ads_booster.knowledge.evidence_contracts import AuthenticatedEvent, EvidenceRef
-from ads_booster.knowledge.governance_contracts import ConstraintBinding, TaskOverlay
+from ads_booster.knowledge.governance_contracts import AppliesTo, ConstraintBinding, TaskOverlay
 from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryEntry, MemoryRevision
 from ads_booster.knowledge.operation_contracts import (
     KnowledgeOperation,
@@ -37,14 +50,24 @@ from ads_booster.knowledge.operation_enums import (
     JobPriority,
 )
 from ads_booster.knowledge.retrieval import SearchCorpus
-from ads_booster.knowledge.scope_contracts import ActorContext
+from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
+from ads_booster.knowledge.skill_contracts import (
+    SkillApplyData,
+    SkillApplyInput,
+    SkillData,
+    SkillGetInput,
+    SkillListData,
+    SkillListInput,
+)
 from ads_booster.knowledge.source_contracts import ConversationEvent, SourceSegment
 from ads_booster.knowledge.web_search import ExternalSearchPolicy, SearchBudget, SearchDomain
 from ads_booster.knowledge.wiki_contracts import KnowledgeRevision, WikiPage
+from ads_booster.transport.json_types import JsonObject
 
 MAX_TOOL_CLAIMS = 20
 MAX_TOOL_RESULTS = 20
 MAX_SOURCE_RANGE = 20_000
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 @unique
@@ -61,6 +84,9 @@ class KnowledgeToolName(StrEnum):
     KNOWLEDGE_APPLY = "knowledge_apply"
     KNOWLEDGE_SCHEDULE = "knowledge_schedule"
     KNOWLEDGE_QUESTION = "knowledge_question"
+    SKILL_LIST = "skill_list"
+    SKILL_GET = "skill_get"
+    SKILL_APPLY = "skill_apply"
 
 
 @unique
@@ -88,6 +114,7 @@ class ProposalTargetKind(StrEnum):
     WIKI = "wiki"
     MEMORY = "memory"
     SOUL = "soul"
+    SKILL = "skill"
 
 
 class AttributeFilter(KnowledgeContractModel):
@@ -161,20 +188,65 @@ class MemoryRevisionPayload(KnowledgeContractModel):
     body: Annotated[str, Field(max_length=100_000)]
 
 
+class CoreMemoryDraft(KnowledgeContractModel):
+    """Semantic CORE entry content normalized by the trusted memory owner."""
+
+    document_id: BoundedId
+    entry_id: BoundedId
+    expected_revision_id: BoundedId = "none"
+    text: BoundedText
+    kind: MemoryEntryKind = MemoryEntryKind.FACT
+    applicability: AppliesTo | None = None
+    reason: BoundedReason
+
+    @model_validator(mode="after")
+    def require_canonical_core_target(self) -> Self:
+        if self.document_id != "memory.core":
+            raise PydanticCustomError(
+                "core_memory_draft_target_invalid",
+                "CORE drafts target only the canonical memory.core document",
+            )
+        return self
+
+
 class MemoryApplyInput(KnowledgeContractModel):
     schema_version: Literal["knowledge.tool.memory-apply.v1"] = Field(alias="schema")
     operation_id: BoundedId
-    changes: Annotated[tuple[MemoryRevisionPayload, ...], Field(min_length=1, max_length=20)]
+    changes: Annotated[tuple[MemoryRevisionPayload, ...], Field(max_length=20)] = ()
+    drafts: Annotated[tuple[CoreMemoryDraft, ...], Field(max_length=1)] = ()
     adoption_receipt_ids: Annotated[tuple[BoundedId, ...], Field(max_length=20)] = ()
+    legacy_memory_assessments: Annotated[
+        tuple[LegacyMemoryAssessment, ...], Field(max_length=6)
+    ] = ()
 
     @model_validator(mode="after")
     def require_operation_binding(self) -> Self:
+        if bool(self.changes) == bool(self.drafts):
+            raise PydanticCustomError(
+                "memory_apply_mode_invalid",
+                "memory apply requires exactly one strict change set or one CORE draft",
+            )
         if any(item.operation.operation_id != self.operation_id for item in self.changes):
             raise PydanticCustomError(
                 "memory_tool_operation_mismatch",
                 "every memory operation must match the request operation",
             )
         return self
+
+    @property
+    def target_ids(self) -> tuple[str, ...]:
+        strict_ids = tuple(change.document.document_id for change in self.changes)
+        draft_ids = tuple(draft.document_id for draft in self.drafts)
+        return tuple(dict.fromkeys((*strict_ids, *draft_ids)))
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if not self.drafts:
+            _ = result.pop("drafts", None)
+        if not self.legacy_memory_assessments:
+            _ = result.pop("legacy_memory_assessments", None)
+        return result
 
 
 class PageRevisionPayload(KnowledgeContractModel):
@@ -196,6 +268,9 @@ class KnowledgeApplyInput(KnowledgeContractModel):
     redirects: Annotated[tuple[PageRedirectPayload, ...], Field(max_length=20)] = ()
     memory_changes: Annotated[tuple[MemoryRevisionPayload, ...], Field(max_length=20)] = ()
     adoption_receipt_ids: Annotated[tuple[BoundedId, ...], Field(max_length=20)] = ()
+    legacy_memory_assessments: Annotated[
+        tuple[LegacyMemoryAssessment, ...], Field(max_length=6)
+    ] = ()
 
     @model_validator(mode="after")
     def require_bounded_change(self) -> Self:
@@ -223,6 +298,13 @@ class KnowledgeApplyInput(KnowledgeContractModel):
             )
         return self
 
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if not self.legacy_memory_assessments:
+            _ = result.pop("legacy_memory_assessments", None)
+        return result
+
 
 class MemoryExplainInput(KnowledgeContractModel):
     schema_version: Literal["knowledge.tool.memory-explain.v1"] = Field(alias="schema")
@@ -239,6 +321,11 @@ class MemoryCorrectInput(KnowledgeContractModel):
     brand_id: BoundedId | None = None
     task_id: BoundedId | None = None
     authenticated_event_ref: BoundedId
+    expected_revision_id: BoundedId | None = None
+    replacement_entry: MemoryEntry | None = None
+    legacy_memory_assessments: Annotated[
+        tuple[LegacyMemoryAssessment, ...], Field(max_length=6)
+    ] = ()
 
     @model_validator(mode="after")
     def require_scope_fields(self) -> Self:
@@ -252,7 +339,25 @@ class MemoryCorrectInput(KnowledgeContractModel):
                 "team_correction_forbids_task",
                 "team corrections cannot carry a task reference",
             )
+        if self.replacement_entry is not None:
+            if self.expected_revision_id is None:
+                raise PydanticCustomError(
+                    "structured_correction_requires_expected_revision",
+                    "a structured correction requires the current target revision",
+                )
+            if self.replacement_entry.entry_id not in self.target_ids:
+                raise PydanticCustomError(
+                    "structured_correction_target_mismatch",
+                    "a structured correction entry must be one of its exact targets",
+                )
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if not self.legacy_memory_assessments:
+            _ = result.pop("legacy_memory_assessments", None)
+        return result
 
 
 class TextRange(KnowledgeContractModel):
@@ -360,6 +465,36 @@ class KnowledgeQuestionInput(KnowledgeContractModel):
     checks_tried: Annotated[tuple[BoundedReason, ...], Field(max_length=20)] = ()
     recommendation: BoundedReason
     pending_proposal: PendingProposal | None = None
+    source_event_id: BoundedId | None = None
+    legacy_memory_receipt: MemorySelectionReceipt | None = None
+    legacy_memory_conflicts: Annotated[tuple[MemoryReference, ...], Field(max_length=6)] = ()
+
+    @model_validator(mode="after")
+    def require_legacy_memory_binding(self) -> Self:
+        if (self.legacy_memory_receipt is None) != (not self.legacy_memory_conflicts):
+            raise PydanticCustomError(
+                "question_legacy_memory_binding_invalid",
+                "legacy memory conflicts require their server selection receipt",
+            )
+        if self.legacy_memory_receipt is not None:
+            selected = {item.note_id: item for item in self.legacy_memory_receipt.selected}
+            if any(selected.get(item.note_id) != item for item in self.legacy_memory_conflicts):
+                raise PydanticCustomError(
+                    "question_legacy_memory_reference_mismatch",
+                    "legacy memory conflicts must be exact selected references",
+                )
+        return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.source_event_id is None:
+            _ = result.pop("source_event_id", None)
+        if self.legacy_memory_receipt is None:
+            _ = result.pop("legacy_memory_receipt", None)
+        if not self.legacy_memory_conflicts:
+            _ = result.pop("legacy_memory_conflicts", None)
+        return result
 
 
 class TrustedSourceCapability(KnowledgeContractModel):
@@ -389,6 +524,7 @@ class TrustedInvocationContext(KnowledgeContractModel):
     source_fetch_event: ConversationEvent | None = None
     search_policy: ExternalSearchPolicy | None = None
     search_budget: SearchBudget | None = None
+    legacy_memory_selection: MemorySelection | None = None
     invoked_at: UtcDatetime
 
     @model_validator(mode="after")
@@ -407,6 +543,13 @@ class TrustedInvocationContext(KnowledgeContractModel):
                 "source capabilities must match the authenticated actor and workspace",
             )
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.legacy_memory_selection is None:
+            _ = result.pop("legacy_memory_selection", None)
+        return result
 
 
 class KnowledgeSearchHit(KnowledgeContractModel):
@@ -463,9 +606,17 @@ class CorrectionData(KnowledgeContractModel):
     kind: Literal["correction"] = "correction"
     correction_id: BoundedId
     status: CorrectionStatus
+    target_id: BoundedId | None = None
     overlay: TaskOverlay | None = None
     question_id: BoundedId | None = None
     replayed: bool = False
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.target_id is None:
+            _ = result.pop("target_id", None)
+        return result
 
 
 class SourceExcerpt(KnowledgeContractModel):
@@ -525,11 +676,17 @@ class QuestionRecord(KnowledgeContractModel):
     checks_tried: Annotated[tuple[BoundedReason, ...], Field(max_length=20)] = ()
     recommendation: BoundedReason
     pending_proposal: PendingProposal | None = None
+    source_event_id: BoundedId | None = None
+    source_event_revision: Annotated[int, Field(ge=1)] | None = None
+    source_conversation_id: BoundedId | None = None
+    source_scope: AccessScope | None = None
     status: QuestionStatus
     created_at: UtcDatetime
     answer_event_id: BoundedId | None = None
     answer: BoundedText | None = None
     answered_at: UtcDatetime | None = None
+    legacy_memory_receipt: MemorySelectionReceipt | None = None
+    legacy_memory_conflicts: Annotated[tuple[MemoryReference, ...], Field(max_length=6)] = ()
 
     @model_validator(mode="after")
     def require_answer_lifecycle(self) -> Self:
@@ -544,7 +701,62 @@ class QuestionRecord(KnowledgeContractModel):
                 "question_answer_state_invalid",
                 "answered questions require a complete trusted answer binding",
             )
+        source_fields_present = (
+            self.source_event_id is not None
+            and self.source_event_revision is not None
+            and self.source_conversation_id is not None
+            and self.source_scope is not None
+        )
+        source_fields_absent = (
+            self.source_event_id is None
+            and self.source_event_revision is None
+            and self.source_conversation_id is None
+            and self.source_scope is None
+        )
+        if not source_fields_present and not source_fields_absent:
+            raise PydanticCustomError(
+                "question_source_binding_invalid",
+                "question source bindings must be complete when present",
+            )
+        if (
+            self.pending_proposal is not None
+            and self.pending_proposal.target_kind is ProposalTargetKind.SKILL
+            and not source_fields_present
+        ):
+            raise PydanticCustomError(
+                "skill_question_requires_source_binding",
+                "skill questions require a canonical source event and conversation",
+            )
+        if (self.legacy_memory_receipt is None) != (not self.legacy_memory_conflicts):
+            raise PydanticCustomError(
+                "question_legacy_memory_binding_invalid",
+                "legacy memory conflicts require their server selection receipt",
+            )
+        if self.legacy_memory_receipt is not None:
+            selected = {item.note_id: item for item in self.legacy_memory_receipt.selected}
+            if any(selected.get(item.note_id) != item for item in self.legacy_memory_conflicts):
+                raise PydanticCustomError(
+                    "question_legacy_memory_reference_mismatch",
+                    "legacy memory conflicts must be exact selected references",
+                )
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_payload(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.source_scope is None:
+            for key in (
+                "source_event_id",
+                "source_event_revision",
+                "source_conversation_id",
+                "source_scope",
+            ):
+                _ = result.pop(key, None)
+        if self.legacy_memory_receipt is None:
+            _ = result.pop("legacy_memory_receipt", None)
+        if not self.legacy_memory_conflicts:
+            _ = result.pop("legacy_memory_conflicts", None)
+        return result
 
 
 class QuestionData(KnowledgeContractModel):
@@ -574,6 +786,9 @@ type ToolData = (
     | SourceFetchData
     | ScheduleData
     | QuestionData
+    | SkillListData
+    | SkillData
+    | SkillApplyData
 )
 
 
@@ -599,6 +814,9 @@ type ToolInput = (
     | KnowledgeApplyInput
     | KnowledgeScheduleInput
     | KnowledgeQuestionInput
+    | SkillListInput
+    | SkillGetInput
+    | SkillApplyInput
 )
 
 
@@ -611,6 +829,7 @@ class ToolCatalogEntry(KnowledgeContractModel):
 __all__ = [
     "ApplyData",
     "AttributeFilter",
+    "CoreMemoryDraft",
     "CorrectionData",
     "ExplanationData",
     "ExplicitAdoptionReceipt",
@@ -638,6 +857,12 @@ __all__ = [
     "QuestionStatus",
     "ScheduleData",
     "ScheduledKnowledgeRequest",
+    "SkillApplyData",
+    "SkillApplyInput",
+    "SkillData",
+    "SkillGetInput",
+    "SkillListData",
+    "SkillListInput",
     "SourceDiscoveryCandidateData",
     "SourceExcerpt",
     "SourceFetchData",

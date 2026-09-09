@@ -15,10 +15,12 @@ from ads_booster.knowledge.change_reverse_invalidation import (
     derive_wiki_dependency_invalidations,
 )
 from ads_booster.knowledge.change_soul_validation import require_soul_adoptions
+from ads_booster.knowledge.change_validation import ChangeValidationError
 from ads_booster.knowledge.change_write_preparation import (
     prepare_memory_write,
     prepare_page_write,
 )
+from ads_booster.knowledge.file_store import KnowledgeFileStoreError
 from ads_booster.knowledge.governance_contracts import ConstraintBinding
 from ads_booster.knowledge.memory import (
     MemorySnapshot,
@@ -32,17 +34,22 @@ from ads_booster.knowledge.operation_contracts import (
 from ads_booster.knowledge.operation_enums import OperationStatus
 from ads_booster.knowledge.pages import PageChangeSet
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+from ads_booster.knowledge.repository_skills import prepare_skill_write
 from ads_booster.knowledge.repository_types import (
     CatalogCommit,
     IndexOutboxItem,
     PageRedirect,
 )
+from ads_booster.knowledge.skill_contracts import SkillOperation
+from ads_booster.knowledge.skill_publication_validation import validate_skill_operations
+from ads_booster.knowledge.skills import render_skill_markdown
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from ads_booster.knowledge.scope_contracts import ActorContext
+    from ads_booster.knowledge.tool_contracts import TrustedInvocationContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +58,7 @@ class ChangeGroup:
     page_operation: KnowledgeOperation | None = None
     memory_operations: tuple[MemoryOperation, ...] = ()
     adoption_receipt_ids: tuple[str, ...] = ()
+    skill_operations: tuple[SkillOperation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +76,7 @@ class ChangePublisher:
         self._repository: SqliteKnowledgeRepository = repository
         self._adoption_resolver: AdoptionReceiptResolver | None = adoption_resolver
 
-    def publish(
+    def publish(  # noqa: PLR0913 - existing owner receives content, actor, time, and context
         self,
         *,
         actor: ActorContext,
@@ -76,6 +84,7 @@ class ChangePublisher:
         pages: PageChangeSet | None,
         memories: tuple[MemoryPublication, ...],
         at: datetime,
+        trusted_context: TrustedInvocationContext | None = None,
     ) -> OperationReceipt:
         page_snapshots = () if pages is None else tuple(pages.current.values())
         require_current_actor(
@@ -118,6 +127,7 @@ class ChangePublisher:
                 *(item.operation for item in invalidations),
             ),
             adoption_receipt_ids=group.adoption_receipt_ids,
+            skill_operations=group.skill_operations,
         )
         require_group_bindings(group, page_snapshots, memories)
         require_soul_adoptions(
@@ -145,6 +155,16 @@ class ChangePublisher:
                 catalog=catalog,
                 at=at,
             )
+        if group.skill_operations:
+            if trusted_context is None:
+                code = "skill_trusted_context_required"
+                raise ChangeValidationError(code, group.operation_id)
+            validate_skill_operations(
+                self._repository,
+                actor,
+                group.skill_operations,
+                trusted_context,
+            )
         page_writes = tuple(
             prepare_page_write(self._repository, group.operation_id, snapshot)
             for snapshot in page_snapshots
@@ -158,8 +178,21 @@ class ChangePublisher:
             )
             for publication in memories
         )
-        resulting = tuple(snapshot.revision.revision_id for snapshot in page_snapshots) + tuple(
-            item.snapshot.revision.revision_id for item in memories
+        skill_writes = tuple(
+            prepare_skill_write(
+                self._repository,
+                actor.workspace_id,
+                operation,
+                None
+                if operation.record is None
+                else render_skill_markdown(operation.record).encode(),
+            )
+            for operation in group.skill_operations
+        )
+        resulting = (
+            tuple(snapshot.revision.revision_id for snapshot in page_snapshots)
+            + tuple(item.snapshot.revision.revision_id for item in memories)
+            + tuple(item.expected.resulting_revision_id for item in skill_writes)
         )
         receipt = OperationReceipt(
             schema="knowledge.operation-receipt.v1",
@@ -169,8 +202,10 @@ class ChangePublisher:
             retryable=False,
             occurred_at=at,
         )
-        records = (() if group.page_operation is None else (group.page_operation,)) + tuple(
-            group.memory_operations
+        records = (
+            (() if group.page_operation is None else (group.page_operation,))
+            + tuple(group.memory_operations)
+            + tuple(group.skill_operations)
         )
         payload: JsonObject = {
             "records": [record.model_dump(mode="json") for record in records],
@@ -206,7 +241,7 @@ class ChangePublisher:
             )
             for item in memories
         )
-        return self._repository.commit_catalog(
+        receipt = self._repository.commit_catalog(
             CatalogCommit(
                 operation_id=group.operation_id,
                 actor=actor,
@@ -215,6 +250,7 @@ class ChangePublisher:
                 operation_records=records,
                 page_writes=page_writes,
                 memory_writes=memory_writes,
+                skill_writes=skill_writes,
                 index_items=index_items,
                 redirects=()
                 if pages is None
@@ -225,6 +261,30 @@ class ChangePublisher:
                 dependency_invalidations=wiki_invalidations,
             )
         )
+        for write in skill_writes:
+            if write.record is None:
+                try:
+                    self._repository.files.remove_skill_display(
+                        actor.workspace_id,
+                        write.operation.skill_id,
+                    )
+                except KnowledgeFileStoreError:
+                    continue
+                continue
+            try:
+                _ = self._repository.files.publish_skill_display(
+                    actor.workspace_id,
+                    write.record.skill_id,
+                    render_skill_markdown(write.record).encode(),
+                )
+            except KnowledgeFileStoreError:
+                continue
+            self._repository.mark_skill_display_current(
+                actor.workspace_id,
+                write.record.skill_id,
+                write.record.version,
+            )
+        return receipt
 
 
 __all__ = ["ChangeGroup", "ChangePublisher", "MemoryPublication"]

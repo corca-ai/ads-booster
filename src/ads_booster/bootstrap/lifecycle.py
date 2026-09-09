@@ -8,7 +8,29 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
+from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
+from ads_booster.agent.service.knowledge_ingress_authority import (
+    KnowledgeIngressAuthority,
+)
+from ads_booster.agent.service.learning_admission import TerminalExperienceAdmission
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.bootstrap.integrations import (
+    AgentServiceIntegrationConfig,
+    ConfiguredAgentTools,
+)
 from ads_booster.contracts.agent_run import AgentRecordKind, ToolInvocation
+from ads_booster.creative.creative_asset_verifier import CreativeAssetVerifier
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.creative.managed_image_review import (
+    ManagedImageReviewCatalog,
+    ManagedImageReviewTool,
+)
+from ads_booster.delivery.delivery_review import DeliveryReviewStore
+from ads_booster.delivery.delivery_tools import DeliveryPreparationTool
 from ads_booster.knowledge.batch_runtime import CurationBatchRuntime
 from ads_booster.knowledge.change_publication import ChangePublisher
 from ads_booster.knowledge.configuration import KnowledgeSettings, load_local_actor
@@ -20,6 +42,7 @@ from ads_booster.knowledge.curation_runtime import CurationDependencies
 from ads_booster.knowledge.indexing import KnowledgeIndexWorker
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.jobs import BoundedJobRunner
+from ads_booster.knowledge.legacy_memory import LegacyMemoryGuard
 from ads_booster.knowledge.maintenance import KnowledgeOwner
 from ads_booster.knowledge.maintenance_jobs import CanonicalJobProcessor
 from ads_booster.knowledge.memory_consolidation import (
@@ -28,43 +51,34 @@ from ads_booster.knowledge.memory_consolidation import (
 )
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
 from ads_booster.knowledge.repository_batch_recovery import recover_running_batches
+from ads_booster.knowledge.repository_learning import LearningReviewCoordinator
 from ads_booster.knowledge.retrieval import KnowledgeRetriever
 from ads_booster.knowledge.runtime import KnowledgeRuntime, SqliteBatchFlusher
 from ads_booster.knowledge.source_fetch import ScopedSourceFetcher
 from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
 from ads_booster.knowledge.tools import ToolHost
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import MarketingAgentService
-from ads_booster.creative.creative_asset_verifier import CreativeAssetVerifier
-from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
-from ads_booster.delivery.delivery_review import DeliveryReviewStore
-from ads_booster.delivery.delivery_tools import DeliveryPreparationTool
-from ads_booster.tools.image_generation import CodexImages
-from ads_booster.bootstrap.integrations import (
-    AgentServiceIntegrationConfig,
-    ConfiguredAgentTools,
-)
-from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
-from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
-from ads_booster.agent.service.knowledge_ingress_authority import (
-    KnowledgeIngressAuthority,
-)
-from ads_booster.creative.managed_image_review import (
-    ManagedImageReviewCatalog,
-    ManagedImageReviewTool,
-)
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.research.dynamic_evidence_research import DynamicEvidenceResearchRunner
-from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.learning.memory import SQLiteMemoryStore
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from ads_booster.providers.codex_reasoning import CodexReasoningProvider
+from ads_booster.research.dynamic_evidence_research import DynamicEvidenceResearchRunner
+from ads_booster.tools.image_generation import CodexImages
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 _WORKSPACE_PRESENCE: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminalExperienceDispatcher:
+    terminal: TerminalExperienceAdmission
+    database_path: Path
+
+    def dispatch_once(self) -> bool:
+        """Drain at most one committed internal experience outbox row."""
+        return self.terminal.dispatch_once(self.database_path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +170,8 @@ def _creative_capabilities(
         else None
     )
     if run is None:
-        raise ValueError("creative_run_context_required")
+        message = "creative_run_context_required"
+        raise ValueError(message)
     records = service.repository.records(run.tenant_id, run.run_id)
     calls = sum(record.kind is AgentRecordKind.INVOCATION for record in records)
     spent = 0
@@ -164,7 +179,8 @@ def _creative_capabilities(
         if record.kind is AgentRecordKind.RECEIPT:
             cost = record.payload.get("actual_cost_units")
             if not isinstance(cost, int) or isinstance(cost, bool):
-                raise ValueError("tool_receipt_cost_invalid")
+                message = "tool_receipt_cost_invalid"
+                raise ValueError(message)
             spent += cost
     snapshot = service.registry.snapshot_for_plan(
         snapshot_id=f"{invocation.invocation_id}:creative-readiness",
@@ -206,12 +222,23 @@ def build_installed_knowledge_runtime(
         service_database, sink=ingestion, authority=KnowledgeIngressAuthority(repository)
     )
     retriever = KnowledgeRetriever(repository)
-    host = ToolHost(repository, ingestion=ingestion, retriever=retriever)
+    legacy_memory = LegacyMemoryGuard(SQLiteMemoryStore(service_database))
+    host = ToolHost(
+        repository,
+        ingestion=ingestion,
+        retriever=retriever,
+        legacy_memory=legacy_memory,
+    )
+    learning = LearningReviewCoordinator(repository)
+    terminal = TerminalExperienceAdmission(learning)
     adapter = KnowledgeServiceAdapter(
         ingress=ingress,
         repository=repository,
         host=host,
         assembler=KnowledgeContextAssembler(repository, retriever),
+        learning=learning,
+        terminal=terminal,
+        legacy_memory=legacy_memory,
     )
     curation = CurationRunner(
         CurationDependencies(
@@ -224,6 +251,7 @@ def build_installed_knowledge_runtime(
     owner = KnowledgeOwner(root, f"service-{actor.actor_id}")
     owner.acquire()
     try:
+        terminal.recover(service_database)
         _ = recover_running_batches(repository, actor.workspace_id, owner)
     except BaseException:
         owner.release()
@@ -234,6 +262,7 @@ def build_installed_knowledge_runtime(
         curation,
         MemoryConsolidationProcessor(repository, actor, ChangePublisher(repository, host.state)),
         SourceReviewJobProcessor(repository, actor, ScopedSourceFetcher()),
+        legacy_memory=legacy_memory,
     )
     jobs = BoundedJobRunner(repository, processor, owner.owner_id)
     runtime = KnowledgeRuntime(
@@ -241,6 +270,7 @@ def build_installed_knowledge_runtime(
         owner=owner,
         jobs=jobs,
         ingress=ingress,
+        experiences=_TerminalExperienceDispatcher(terminal, service_database),
         index=KnowledgeIndexWorker(repository),
         memory_views=MemoryViewDispatcher(repository, actor),
         batches=SqliteBatchFlusher(repository),

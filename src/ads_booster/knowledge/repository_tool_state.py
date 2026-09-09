@@ -11,12 +11,13 @@ from ads_booster.contracts.knowledge_selection import ContextReceipt
 from ads_booster.knowledge.adoption_contracts import ExplicitAdoptionReceipt
 from ads_booster.knowledge.contract_types import (
     MemoryKind,
+    ScopeKind,
     SourceDisposition,
     SourceKind,
 )
 from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.file_paths import SourceFileKind, SourceRevisionTarget
-from ads_booster.knowledge.governance_contracts import TaskBinding, TaskOverlay
+from ads_booster.knowledge.governance_contracts import ConstraintBinding, TaskBinding, TaskOverlay
 from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
 from ads_booster.knowledge.memory_contracts import MemoryDocument, MemoryEntry
 from ads_booster.knowledge.messages import require_actor_event_binding
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
     from ads_booster.knowledge.repository_protocol import KnowledgeRepository
     from ads_booster.knowledge.scope_contracts import ActorContext
+    from ads_booster.knowledge.tool_contracts import TrustedInvocationContext
     from ads_booster.transport.json_types import JsonObject
 
 _STRING: TypeAdapter[str] = TypeAdapter(str)
@@ -276,6 +278,95 @@ class RepositoryToolState:
         _ = authorize_read(actor=actor, target_scope=event.scope, at=datetime.now(UTC))
         return event
 
+    def event_is_bound_to_context(
+        self,
+        context: TrustedInvocationContext,
+        event: ConversationEvent,
+    ) -> bool:
+        if context.source_fetch_event == event:
+            return True
+        source = self.repository.source_by_identity(
+            context.actor,
+            SourceKind.MESSAGE,
+            f"message:{event.conversation_id}:{event.message_id}",
+        )
+        if source is None:
+            return False
+        return any(
+            capability.source_id == source.source_id
+            and capability.revision_id == source.revision_id
+            for capability in context.source_capabilities
+        )
+
+    def is_active_workspace_member(self, actor: ActorContext) -> bool:
+        with self.repository.connection() as connection:
+            _require_read(connection, actor)
+            row = _OPTIONAL_INTEGER_ROW.validate_python(
+                connection.execute(
+                    """
+                    SELECT 1 FROM members AS member
+                    JOIN memberships AS membership
+                        ON membership.workspace_id=member.workspace_id
+                        AND membership.member_id=member.member_id
+                    JOIN sessions AS session
+                        ON session.workspace_id=member.workspace_id
+                        AND session.member_id=member.member_id
+                    WHERE member.workspace_id=? AND member.member_id=? AND member.actor_id=?
+                        AND member.state='active' AND membership.state='active'
+                        AND session.session_id=? AND session.state='active'
+                    """,
+                    (actor.workspace_id, actor.member_id, actor.actor_id, actor.session_id),
+                ).fetchone()
+            )
+        return row is not None
+
+    def question_source_is_current(self, actor: ActorContext, question: QuestionRecord) -> bool:
+        if question.source_event_id is None:
+            return True
+        with self.repository.connection() as connection:
+            _require_read(connection, actor)
+            row = _OPTIONAL_STRING_ROW.validate_python(
+                connection.execute(
+                    """
+                    SELECT event_json FROM conversation_events
+                    WHERE workspace_id=? AND message_id=?
+                    ORDER BY revision DESC LIMIT 1
+                    """,
+                    (actor.workspace_id, question.source_event_id),
+                ).fetchone()
+            )
+        if row is None:
+            return False
+        event = ConversationEvent.model_validate_json(_STRING.validate_python(row[0]))
+        return (
+            event.revision == question.source_event_revision
+            and event.conversation_id == question.source_conversation_id
+            and event.scope == question.source_scope
+            and bool(event.text)
+        )
+
+    def memory_constraints(
+        self,
+        actor: ActorContext,
+        document_id: str,
+        revision_id: str,
+    ) -> tuple[ConstraintBinding, ...]:
+        with self.repository.connection() as connection:
+            _require_read(connection, actor)
+            rows = _STRING_ROWS.validate_python(
+                connection.execute(
+                    """
+                    SELECT binding_json FROM constraint_bindings
+                    WHERE workspace_id=? AND document_id=? AND memory_revision_id=?
+                    ORDER BY constraint_id
+                    """,
+                    (actor.workspace_id, document_id, revision_id),
+                ).fetchall()
+            )
+        return tuple(
+            ConstraintBinding.model_validate_json(_STRING.validate_python(row[0])) for row in rows
+        )
+
     def mark_event_source_use_only(
         self,
         actor: ActorContext,
@@ -356,6 +447,9 @@ class RepositoryToolState:
         document = self._memory_document_correction_target(actor, target_id)
         if document is not None:
             return document
+        skill = self._skill_correction_target(actor, target_id)
+        if skill is not None:
+            return skill
         page = self._page_correction_target(actor, target_id)
         if page is not None:
             return page
@@ -500,15 +594,48 @@ class RepositoryToolState:
                 connection.execute(
                     """
                     SELECT question_json FROM knowledge_questions
-                    WHERE workspace_id=? AND question_id=? AND actor_ref=?
+                    WHERE workspace_id=? AND question_id=?
                     """,
-                    (actor.workspace_id, question_id, actor.actor_id),
+                    (actor.workspace_id, question_id),
                 ).fetchone()
             )
-        return (
-            None
-            if row is None
-            else QuestionRecord.model_validate_json(_STRING.validate_python(row[0]))
+        if row is None:
+            return None
+        question = QuestionRecord.model_validate_json(_STRING.validate_python(row[0]))
+        return question if self._question_visible_to(actor, question) else None
+
+    def pending_questions_for_conversation(
+        self,
+        actor: ActorContext,
+        conversation_id: str,
+    ) -> tuple[QuestionRecord, ...]:
+        if (
+            actor.conversation_scope.kind is not ScopeKind.WORKSPACE
+            or not self.is_active_workspace_member(actor)
+        ):
+            return ()
+        with self.repository.connection() as connection:
+            rows = _STRING_ROWS.validate_python(
+                connection.execute(
+                    """
+                    SELECT question_json FROM knowledge_questions
+                    WHERE workspace_id=? AND status='pending'
+                        AND json_extract(question_json,'$.source_conversation_id')=?
+                    ORDER BY created_at,question_id
+                    """,
+                    (actor.workspace_id, conversation_id),
+                ).fetchall()
+            )
+        questions = tuple(
+            QuestionRecord.model_validate_json(_STRING.validate_python(row[0])) for row in rows
+        )
+        return tuple(
+            question
+            for question in questions
+            if question.source_scope is not None
+            and question.source_scope.kind is ScopeKind.WORKSPACE
+            and self.question_source_is_current(actor, question)
+            and self._question_proposal_is_current(actor, question)
         )
 
     def answer_question(
@@ -523,14 +650,16 @@ class RepositoryToolState:
                 connection.execute(
                     """
                     SELECT question_json FROM knowledge_questions
-                    WHERE workspace_id=? AND question_id=? AND actor_ref=?
+                    WHERE workspace_id=? AND question_id=?
                     """,
-                    (actor.workspace_id, answered.question_id, actor.actor_id),
+                    (actor.workspace_id, answered.question_id),
                 ).fetchone()
             )
             if row is None:
                 _fail("question_not_found", answered.question_id)
             current = QuestionRecord.model_validate_json(_STRING.validate_python(row[0]))
+            if not self._question_visible_to(actor, current):
+                _fail("question_not_found", answered.question_id)
             if current.status is QuestionStatus.ANSWERED:
                 if current != answered:
                     _fail("question_answer_conflict", answered.question_id)
@@ -912,6 +1041,22 @@ class RepositoryToolState:
             scope=scope,
         )
 
+    def _skill_correction_target(
+        self,
+        actor: ActorContext,
+        skill_id: str,
+    ) -> CorrectionTarget | None:
+        stored = self.repository.read_skill(actor, skill_id)
+        if stored is None:
+            return None
+        return CorrectionTarget(
+            target_kind=ProposalTargetKind.SKILL,
+            target_id=stored.record.skill_id,
+            expected_revision_id=stored.record.version,
+            brand_id=None,
+            scope=AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=actor.workspace_id),
+        )
+
     def _page_correction_target(
         self,
         actor: ActorContext,
@@ -940,6 +1085,33 @@ class RepositoryToolState:
             expected_revision_id=stored.revision.revision_id,
             brand_id=None,
             scope=stored.page.scope,
+        )
+
+    def _question_visible_to(self, actor: ActorContext, question: QuestionRecord) -> bool:
+        source_scope = question.source_scope
+        if source_scope is None or source_scope.kind is ScopeKind.MEMBER:
+            return question.actor_ref == actor.actor_id
+        return (
+            actor.conversation_scope.kind is ScopeKind.WORKSPACE
+            and self.is_active_workspace_member(actor)
+        )
+
+    def _question_proposal_is_current(self, actor: ActorContext, question: QuestionRecord) -> bool:
+        proposal = question.pending_proposal
+        if proposal is None:
+            return True
+        try:
+            target = self.correction_target(actor, proposal.target_id)
+        except ToolStateError:
+            return (
+                bool(question.legacy_memory_conflicts)
+                and proposal.expected_revision_id == "none"
+                and proposal.brand_id is None
+            )
+        return (
+            target.target_kind is proposal.target_kind
+            and target.expected_revision_id == proposal.expected_revision_id
+            and target.brand_id == proposal.brand_id
         )
 
     @staticmethod

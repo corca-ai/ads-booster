@@ -20,11 +20,17 @@ from ads_booster.agent.service.knowledge_ingress import (
     TrustedRunBinding,
 )
 from ads_booster.channels.slack_attachments import SlackAttachment
+from ads_booster.channels.slack_learning_questions import (
+    SlackLearningQuestionIntent,
+    learning_question_intent,
+)
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+
+    from ads_booster.knowledge.tool_contracts import QuestionRecord
 
 
 class Conversation(ContractModel):
@@ -44,6 +50,7 @@ class Message(ContractModel):
     user_id: str
     text: str
     notification_only: bool = False
+    learning_question_intent: SlackLearningQuestionIntent | None = None
     reopens: bool = False
     attachments: tuple[SlackAttachment, ...] = ()
 
@@ -62,6 +69,7 @@ class MessagePlan(ContractModel):
         "memory",
         "delivery",
         "observation",
+        "learning_answer",
     ]
     run_id: str = ""
     goal: AgentGoal | None = None
@@ -69,6 +77,7 @@ class MessagePlan(ContractModel):
     revision: int = -1
     digest: str = ""
     reply: str = ""
+    learning_urgent: bool = False
 
 
 _ROW: TypeAdapter[tuple[str, ...] | None] = TypeAdapter(tuple[str, ...] | None)
@@ -130,6 +139,16 @@ class SlackConversationStore:
                 ).fetchone()
             )
         return None if row is None else Conversation.model_validate_json(row[0])
+
+    def conversations(self) -> tuple[Conversation, ...]:
+        """Return durable Slack conversations for channel-local notification projection."""
+        with self.connect() as db:
+            rows = _ROWS.validate_python(
+                db.execute(
+                    "SELECT data_json FROM slack_conversations ORDER BY conversation_id"
+                ).fetchall()
+            )
+        return tuple(Conversation.model_validate_json(row[0]) for row in rows)
 
     def admit(
         self,
@@ -288,6 +307,60 @@ class SlackConversationStore:
                 ),
             )
             return cursor.rowcount == 1
+
+    def enqueue_learning_question(self, question: QuestionRecord) -> bool:
+        """Persist one original-thread notification for a source-bound learning question."""
+        intent = learning_question_intent(question)
+        if intent is None:
+            return False
+        with self.connect() as db:
+            _ = db.execute("BEGIN IMMEDIATE")
+            row = _ROW.validate_python(
+                db.execute(
+                    """SELECT data_json FROM slack_conversations
+                    WHERE conversation_id=?""",
+                    (intent.conversation_id,),
+                ).fetchone()
+            )
+            if row is None:
+                return False
+            conversation = Conversation.model_validate_json(row[0])
+            if (
+                conversation.private
+                or conversation.closed
+                or conversation.tenant_id != intent.workspace_id
+            ):
+                return False
+            source_row = _ROW.validate_python(
+                db.execute(
+                    """SELECT message_json FROM slack_message_jobs
+                    WHERE message_id=? AND conversation_id=?""",
+                    (intent.source_event_id, intent.conversation_id),
+                ).fetchone()
+            )
+            if source_row is None:
+                return False
+            source = Message.model_validate_json(source_row[0])
+            message = Message(
+                message_id=intent.intent_id,
+                conversation_id=intent.conversation_id,
+                user_id=source.user_id,
+                text="",
+                notification_only=True,
+                learning_question_intent=intent,
+            )
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO slack_message_jobs
+                (message_id,conversation_id,message_json,state,result,ack_state)
+                VALUES (?,?,?,'done',?,'skipped')""",
+                (
+                    message.message_id,
+                    message.conversation_id,
+                    message.model_dump_json(),
+                    intent.text,
+                ),
+            )
+        return cursor.rowcount == 1
 
     def pending_for_run(self, tenant_id: str, run_id: str) -> tuple[Message, ...]:
         with self.connect() as db:

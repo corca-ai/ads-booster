@@ -17,7 +17,9 @@ from ads_booster.knowledge.schema_authority import AUTHORITY_SCHEMA
 from ads_booster.knowledge.schema_channel import CHANNEL_SCHEMA
 from ads_booster.knowledge.schema_content import CONTENT_SCHEMA
 from ads_booster.knowledge.schema_deletion import DELETION_SCHEMA
+from ads_booster.knowledge.schema_learning import LEARNING_SCHEMA
 from ads_booster.knowledge.schema_personal import PERSONAL_SCHEMA
+from ads_booster.knowledge.schema_skills import SKILL_SCHEMA
 from ads_booster.knowledge.schema_work import WORK_SCHEMA
 from ads_booster.knowledge.scope_contracts import AccessScope
 
@@ -25,19 +27,58 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-_SCHEMA_VERSION: Final = 4
-_V3_VERSION: Final = 3
-_V2_VERSION: Final = 2
 _PRIVATE_FILE_MODE: Final = 0o600
 _BASE_SCHEMA = AUTHORITY_SCHEMA + CONTENT_SCHEMA + WORK_SCHEMA
-_BASE_SCHEMA_SHA256 = sha256(_BASE_SCHEMA.encode()).hexdigest()
 _V2_SCHEMA = _BASE_SCHEMA + DELETION_SCHEMA
-_V2_SCHEMA_SHA256 = sha256(_V2_SCHEMA.encode()).hexdigest()
-_V3_SCHEMA = _V2_SCHEMA + CHANNEL_SCHEMA
-_V3_SCHEMA_SHA256 = sha256(_V3_SCHEMA.encode()).hexdigest()
-_SCHEMA_SHA256 = sha256((_V3_SCHEMA + PERSONAL_SCHEMA).encode()).hexdigest()
+_SKILL_SCHEMA_FULL = _V2_SCHEMA + SKILL_SCHEMA
+_LEARNING_SCHEMA_FULL = _SKILL_SCHEMA_FULL + LEARNING_SCHEMA
+_CHANNEL_SCHEMA_FULL = _LEARNING_SCHEMA_FULL + CHANNEL_SCHEMA
+_SCHEMA = _CHANNEL_SCHEMA_FULL + PERSONAL_SCHEMA
+_SCHEMA_VERSION: Final = 6
+_SCHEMA_SHA256 = sha256(_SCHEMA.encode()).hexdigest()
 _SCHEMA_ROWS: TypeAdapter[list[tuple[int, str]]] = TypeAdapter(list[tuple[int, str]])
 _WORKSPACE_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+
+
+@dataclass(frozen=True, slots=True)
+class _Migration:
+    version: int
+    schema: str
+    checksum: str
+    initialize_channel_owners: bool = False
+
+
+_DELETION = _Migration(2, DELETION_SCHEMA, sha256(_V2_SCHEMA.encode()).hexdigest())
+_SKILLS = _Migration(3, SKILL_SCHEMA, sha256(_SKILL_SCHEMA_FULL.encode()).hexdigest())
+_LEARNING = _Migration(4, LEARNING_SCHEMA, sha256(_LEARNING_SCHEMA_FULL.encode()).hexdigest())
+_CHANNEL = _Migration(
+    5,
+    CHANNEL_SCHEMA,
+    sha256(_CHANNEL_SCHEMA_FULL.encode()).hexdigest(),
+    initialize_channel_owners=True,
+)
+_PERSONAL = _Migration(_SCHEMA_VERSION, PERSONAL_SCHEMA, _SCHEMA_SHA256)
+_UPGRADES: Final[dict[tuple[int, str], tuple[_Migration, ...]]] = {
+    (1, sha256(_BASE_SCHEMA.encode()).hexdigest()): (
+        _DELETION,
+        _SKILLS,
+        _LEARNING,
+        _CHANNEL,
+        _PERSONAL,
+    ),
+    (2, _DELETION.checksum): (_SKILLS, _LEARNING, _CHANNEL, _PERSONAL),
+    (3, _SKILLS.checksum): (_LEARNING, _CHANNEL, _PERSONAL),
+    (4, _LEARNING.checksum): (_CHANNEL, _PERSONAL),
+    (5, _CHANNEL.checksum): (_PERSONAL,),
+    (6, _SCHEMA_SHA256): (),
+    # Pre-merge channel/USER installations used v3/v4 independently of published main.
+    (3, sha256((_V2_SCHEMA + CHANNEL_SCHEMA).encode()).hexdigest()): (
+        _Migration(6, PERSONAL_SCHEMA + SKILL_SCHEMA + LEARNING_SCHEMA, _SCHEMA_SHA256),
+    ),
+    (4, sha256((_V2_SCHEMA + CHANNEL_SCHEMA + PERSONAL_SCHEMA).encode()).hexdigest()): (
+        _Migration(6, SKILL_SCHEMA + LEARNING_SCHEMA, _SCHEMA_SHA256),
+    ),
+}
 
 
 @dataclass(slots=True)
@@ -83,85 +124,32 @@ def initialize_database(root: Path) -> Path:
                 "SELECT version,checksum FROM knowledge_schema ORDER BY version"
             ).fetchall(),
         )
-        if rows:
-            version, checksum = rows[-1]
-            if version == 1 and checksum == _BASE_SCHEMA_SHA256:
-                _apply_deletion_schema(connection)
-                _apply_channel_schema(connection)
-                _apply_personal_schema(connection)
-            elif version == _V2_VERSION and checksum == _V2_SCHEMA_SHA256:
-                _apply_channel_schema(connection)
-                _apply_personal_schema(connection)
-            elif version == _V3_VERSION and checksum == _V3_SCHEMA_SHA256:
-                _apply_personal_schema(connection)
-            elif version != _SCHEMA_VERSION or checksum != _SCHEMA_SHA256:
-                code = "knowledge_schema_unsupported"
-                raise KnowledgeSchemaError(code, str(version))
-        else:
-            _apply_initial_schema(connection)
-            _apply_channel_schema(connection)
-            _apply_personal_schema(connection)
-        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
-        if violations:
-            code = "knowledge_schema_foreign_key_invalid"
-            raise KnowledgeSchemaError(code, repr(violations))
+        if not rows:
+            _apply_migration(connection, _Migration(2, _V2_SCHEMA, _DELETION.checksum))
+        identity = rows[-1] if rows else (2, _DELETION.checksum)
+        upgrades = _UPGRADES.get(identity)
+        if upgrades is None:
+            code = "knowledge_schema_unsupported"
+            raise KnowledgeSchemaError(code, str(identity[0]))
+        for migration in upgrades:
+            _apply_migration(connection, migration)
+        _require_foreign_keys(connection)
     database_path.chmod(_PRIVATE_FILE_MODE)
     return database_path
 
 
-def _apply_initial_schema(connection: sqlite3.Connection) -> None:
-    migration = (
-        "BEGIN EXCLUSIVE;\n"
-        + _V2_SCHEMA
-        + "\nINSERT INTO knowledge_schema(version,checksum,applied_at) VALUES ("
-        + f"2,'{_V2_SCHEMA_SHA256}',strftime('%Y-%m-%dT%H:%M:%fZ','now'));\n"
-        + "COMMIT;"
-    )
-    try:
-        _ = connection.executescript(migration)
-    except sqlite3.Error:
-        if connection.in_transaction:
-            connection.rollback()
-        raise
-
-
-def _apply_deletion_schema(connection: sqlite3.Connection) -> None:
-    migration = (
-        "BEGIN EXCLUSIVE;\n"
-        + DELETION_SCHEMA
-        + "\nINSERT INTO knowledge_schema(version,checksum,applied_at) VALUES ("
-        + f"2,'{_V2_SCHEMA_SHA256}',strftime('%Y-%m-%dT%H:%M:%fZ','now'));\n"
-        + "COMMIT;"
-    )
-    try:
-        _ = connection.executescript(migration)
-    except sqlite3.Error:
-        if connection.in_transaction:
-            connection.rollback()
-        raise
-
-
-def _apply_channel_schema(connection: sqlite3.Connection) -> None:
+def _apply_migration(connection: sqlite3.Connection, migration: _Migration) -> None:
     _ = connection.execute("PRAGMA foreign_keys=OFF")
     try:
         _ = connection.execute("BEGIN EXCLUSIVE")
-        workspaces = _WORKSPACE_ROWS.validate_python(
-            connection.execute("SELECT workspace_id FROM workspaces").fetchall()
-        )
-        for (workspace_id,) in workspaces:
-            scope = AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=workspace_id)
-            _ = connection.execute(
-                """INSERT OR IGNORE INTO access_scopes(
-                    scope_key,kind,workspace_id,member_id,session_id,scope_json
-                ) VALUES (?,'workspace',?,NULL,NULL,?)""",
-                (scope_key(scope), workspace_id, scope.model_dump_json()),
-            )
-        _execute_statements(connection, CHANNEL_SCHEMA)
+        if migration.initialize_channel_owners:
+            _initialize_channel_owners(connection)
+        _execute_statements(connection, migration.schema)
         _require_foreign_keys(connection)
         _ = connection.execute(
             """INSERT INTO knowledge_schema(version,checksum,applied_at)
             VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))""",
-            (_V3_VERSION, _V3_SCHEMA_SHA256),
+            (migration.version, migration.checksum),
         )
         connection.commit()
     except sqlite3.Error, KnowledgeSchemaError:
@@ -171,23 +159,18 @@ def _apply_channel_schema(connection: sqlite3.Connection) -> None:
         _ = connection.execute("PRAGMA foreign_keys=ON")
 
 
-def _apply_personal_schema(connection: sqlite3.Connection) -> None:
-    _ = connection.execute("PRAGMA foreign_keys=OFF")
-    try:
-        _ = connection.execute("BEGIN EXCLUSIVE")
-        _execute_statements(connection, PERSONAL_SCHEMA)
-        _require_foreign_keys(connection)
+def _initialize_channel_owners(connection: sqlite3.Connection) -> None:
+    workspaces = _WORKSPACE_ROWS.validate_python(
+        connection.execute("SELECT workspace_id FROM workspaces").fetchall()
+    )
+    for (workspace_id,) in workspaces:
+        scope = AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=workspace_id)
         _ = connection.execute(
-            """INSERT INTO knowledge_schema(version,checksum,applied_at)
-            VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))""",
-            (_SCHEMA_VERSION, _SCHEMA_SHA256),
+            """INSERT OR IGNORE INTO access_scopes(
+                scope_key,kind,workspace_id,member_id,session_id,scope_json
+            ) VALUES (?,'workspace',?,NULL,NULL,?)""",
+            (scope_key(scope), workspace_id, scope.model_dump_json()),
         )
-        connection.commit()
-    except sqlite3.Error, KnowledgeSchemaError:
-        connection.rollback()
-        raise
-    finally:
-        _ = connection.execute("PRAGMA foreign_keys=ON")
 
 
 def _execute_statements(connection: sqlite3.Connection, schema: str) -> None:

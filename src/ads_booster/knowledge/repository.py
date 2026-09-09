@@ -10,6 +10,8 @@ from ads_booster.knowledge.contracts import OperationReceipt
 from ads_booster.knowledge.file_store import ImmutableFileStore
 from ads_booster.knowledge.migrations import connect_database, initialize_database
 from ads_booster.knowledge.repository_batch import (
+    BatchItemWrite,
+    CollectingBatchQuery,
     collect_curation_item,
     collecting_curation_batch,
     curation_batch,
@@ -35,6 +37,11 @@ from ads_booster.knowledge.repository_resolution import (
 from ads_booster.knowledge.repository_run_binding import (
     put_run_binding,
     run_binding,
+)
+from ads_booster.knowledge.repository_skills import (
+    mark_skill_display_current,
+    read_skill,
+    skill_ids,
 )
 from ads_booster.knowledge.repository_source import (
     change_source_admission,
@@ -78,6 +85,7 @@ from ads_booster.knowledge.repository_types import (
     SourceRegistration,
     StoredMemory,
     StoredPage,
+    StoredSkill,
     StoredSource,
 )
 
@@ -241,6 +249,29 @@ class SqliteKnowledgeRepository:
     ) -> StoredMemory | None:
         return read_memory(self, actor, document_id, revision_id)
 
+    def read_skill(
+        self,
+        actor: ActorContext,
+        skill_id: str,
+        revision_id: str | None = None,
+    ) -> StoredSkill | None:
+        return read_skill(self, actor, skill_id, revision_id)
+
+    def skill_ids(self, actor: ActorContext) -> tuple[str, ...]:
+        return skill_ids(self, actor)
+
+    def skill_head(self, actor: ActorContext, skill_id: str) -> str | None:
+        stored = read_skill(self, actor, skill_id)
+        return None if stored is None else stored.record.version
+
+    def mark_skill_display_current(
+        self,
+        workspace_id: str,
+        skill_id: str,
+        revision_id: str,
+    ) -> None:
+        mark_skill_display_current(self, workspace_id, skill_id, revision_id)
+
     def memory_history_redaction(
         self,
         workspace_id: str,
@@ -264,7 +295,11 @@ class SqliteKnowledgeRepository:
     def task_binding(self, actor: ActorContext, task_id: str) -> TaskBinding | None:
         return RepositoryToolState(self).task_binding(actor, task_id)
 
-    def put_task_overlay(self, actor: ActorContext, overlay: TaskOverlay) -> TaskOverlay:
+    def put_task_overlay(
+        self,
+        actor: ActorContext,
+        overlay: TaskOverlay,
+    ) -> tuple[TaskOverlay, bool]:
         return RepositoryToolState(self).put_task_overlay(actor, overlay)
 
     def active_task_overlays(
@@ -414,7 +449,12 @@ class SqliteKnowledgeRepository:
         job_id: str,
         receipt: EventReceipt,
     ) -> CurationBatch:
-        return collect_curation_item(self, actor, batch, job_id, receipt)
+        return collect_curation_item(
+            self,
+            actor,
+            batch,
+            BatchItemWrite(job_id=job_id, receipt=receipt),
+        )
 
     def curation_batch(self, actor: ActorContext, batch_id: str) -> CurationBatch | None:
         return curation_batch(self, actor, batch_id)
@@ -430,10 +470,12 @@ class SqliteKnowledgeRepository:
         return collecting_curation_batch(
             self,
             actor,
-            priority,
-            policy_version,
-            read_grant_sha256,
-            write_capability_sha256,
+            CollectingBatchQuery(
+                priority=priority,
+                policy_version=policy_version,
+                read_grant_sha256=read_grant_sha256,
+                write_capability_sha256=write_capability_sha256,
+            ),
         )
 
     def ready_curation_batch(

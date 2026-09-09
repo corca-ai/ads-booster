@@ -16,12 +16,15 @@ from ads_booster.agent.service.knowledge_ingress_authority import (
     KnowledgeIngressAuthority,
 )
 from ads_booster.bootstrap.lifecycle import (
+    InstalledKnowledgeRuntime,
     InstalledServicePaths,
     build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
 from ads_booster.channels.contracts import ChannelIdentityBinding
 from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.knowledge_ingress_api import ApiIngressRequest, build_api_ingress
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.channels.knowledge_ingress_slack import (
     SlackIngressRequest,
     build_slack_ingress,
@@ -88,6 +91,53 @@ def reference_batch(
             for item in jobs
         ),
     )
+
+
+def _admit_shared_learning_turns(installed: InstalledKnowledgeRuntime) -> None:
+    learning = installed.adapter.learning
+    assert learning is not None
+    source = installed.adapter.ingress.source_for_run("run-one")
+    assert source is not None
+    assert (
+        learning.admit_turn(
+            source.binding,
+            source.event,
+            source.receipt,
+            at=source.event.created_at,
+        ).ready_batch_ids
+        == ()
+    )
+    now = datetime.now(UTC)
+    shared_identity = OAuthIdentity(
+        tenant_id="trace",
+        principal_id="learning-member",
+    )
+    for ordinal in range(2, 11):
+        ingress = build_api_ingress(
+            ApiIngressRequest(
+                request_id=f"learning-message-{ordinal}",
+                run_id="learning-run",
+                action="input",
+                text=f"Shared launch learning turn {ordinal}",
+                revision=1,
+                identity=shared_identity,
+                occurred_at=now,
+            )
+        )
+        assert installed.adapter.ingress.admit_standalone(ingress)
+        assert installed.adapter.ingress.dispatch_once()
+        source = installed.adapter.ingress.source_for_run(ingress.binding.run_id)
+        assert source is not None
+        ready_batch_ids = learning.admit_turn(
+            source.binding,
+            source.event,
+            source.receipt,
+            at=source.event.created_at,
+        ).ready_batch_ids
+        if ordinal < 10:
+            assert ready_batch_ids == ()
+        else:
+            assert len(ready_batch_ids) == 2
 
 
 def test_installed_service_admits_canonical_session_before_context(
@@ -157,6 +207,7 @@ def test_installed_service_admits_canonical_session_before_context(
         assert binding.actor.member_id == identity.member_id
         assert binding.actor.actor_id == identity.actor_id
         assert installed.adapter.ingress.dispatch_once()
+        _admit_shared_learning_turns(installed)
 
         installed.runtime.run_until_idle(flush_batches=True)
         second = api.dispatch(

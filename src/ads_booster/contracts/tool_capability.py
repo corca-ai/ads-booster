@@ -4,13 +4,31 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
 from pydantic import Field, model_validator
 
 from ads_booster.contracts.canonical import canonical_sha256
 from ads_booster.contracts.models import ContractModel, Identifier
 from ads_booster.transport.json_types import JsonObject  # noqa: TC001
+
+AUTHENTICATED_SOURCE_AUTHORITY: Final = "authenticated_source"
+
+# These identities are the only server-owned registrations whose foreground writes
+# are bound to an acknowledged authenticated source instead of a separate approval.
+AUTHENTICATED_SOURCE_REGISTRATIONS: Final[frozenset[tuple[str, str, str]]] = frozenset(
+    {
+        ("memory_correct", "knowledge", "configured:knowledge"),
+        ("skill_apply", "knowledge", "configured:knowledge"),
+    }
+)
+
+
+def allows_authenticated_source_approval(
+    *, capability_id: str, owner: str, installation_id: str
+) -> bool:
+    """Return whether this exact installed registration is source-authorized."""
+    return (capability_id, owner, installation_id) in AUTHENTICATED_SOURCE_REGISTRATIONS
 
 
 class EffectClass(StrEnum):
@@ -32,10 +50,13 @@ class ToolCost(ContractModel):
 
 class ToolReadiness(ContractModel):
     ready: bool
-    reason_code: Annotated[
-        str,
-        Field(min_length=1, max_length=120, pattern=r"^[a-z][a-z0-9_]*$"),
-    ] | None = None
+    reason_code: (
+        Annotated[
+            str,
+            Field(min_length=1, max_length=120, pattern=r"^[a-z][a-z0-9_]*$"),
+        ]
+        | None
+    ) = None
     observed_at: datetime
     max_age_seconds: Annotated[int, Field(ge=1, le=86_400)]
 
@@ -99,9 +120,7 @@ class ToolDescriptor(ContractModel):
     @property
     def execution_identity_sha256(self) -> str:
         """Bind immutable execution semantics while allowing readiness heartbeats to refresh."""
-        return canonical_sha256(
-            self.model_dump(mode="json", exclude={"readiness", "enabled"})
-        )
+        return canonical_sha256(self.model_dump(mode="json", exclude={"readiness", "enabled"}))
 
     @model_validator(mode="after")
     def require_safe_effect_policy(self) -> Self:
@@ -117,7 +136,22 @@ class ToolDescriptor(ContractModel):
         if self.effect_class is EffectClass.OBSERVE and self.approval_policy.mode != "none":
             message = "observe tools cannot require effect approval"
             raise ValueError(message)
-        if self.effect_class is not EffectClass.OBSERVE and self.approval_policy.mode != "required":
+        source_bound_control_write = (
+            self.effect_class is EffectClass.CONTROL_PLANE_WRITE
+            and self.credential_boundary == "adapter_owner"
+            and self.approval_policy.mode == "none"
+            and self.approval_policy.authority == AUTHENTICATED_SOURCE_AUTHORITY
+            and allows_authenticated_source_approval(
+                capability_id=self.capability_id,
+                owner=self.owner,
+                installation_id=self.installation_id,
+            )
+        )
+        if (
+            self.effect_class is not EffectClass.OBSERVE
+            and self.approval_policy.mode != "required"
+            and not source_bound_control_write
+        ):
             message = "effect tools require approval"
             raise ValueError(message)
         if self.effect_class is EffectClass.OBSERVE and self.reconciliation.mode != "none":
@@ -136,6 +170,8 @@ class ToolExecutionResult(ContractModel):
 
 
 __all__ = [
+    "AUTHENTICATED_SOURCE_AUTHORITY",
+    "AUTHENTICATED_SOURCE_REGISTRATIONS",
     "EffectClass",
     "ToolApprovalPolicy",
     "ToolCost",
@@ -144,4 +180,5 @@ __all__ = [
     "ToolIdempotencyPolicy",
     "ToolReadiness",
     "ToolReconciliationPolicy",
+    "allows_authenticated_source_approval",
 ]

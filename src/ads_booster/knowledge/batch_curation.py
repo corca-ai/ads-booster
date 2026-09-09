@@ -7,19 +7,23 @@ from typing import TYPE_CHECKING, Protocol
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contracts import CurationBatch, EventReceipt
 from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
-from ads_booster.knowledge.ingestion_build import stable_id
+from ads_booster.knowledge.identifiers import stable_id
+from ads_booster.knowledge.learning_policy import LEARNING_POLICY_VERSION
 from ads_booster.knowledge.operation_enums import (
     BatchState,
     JobPriority,
     OperationStatus,
 )
 from ads_booster.knowledge.repository_batch import (
+    BatchItemWrite,
+    CollectingBatchQuery,
     collect_curation_item,
     collecting_curation_batch,
     curation_batch_generation,
     finish_curation_batch,
     ready_curation_batch,
 )
+from ads_booster.knowledge.repository_types import conflict
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -45,6 +49,32 @@ class CurationBatchItem:
     policy_version: str
     priority: JobPriority
     occurred_at: datetime
+
+
+def curation_partition_key(item: CurationBatchItem) -> str:
+    """Bind a batch partition to its actor, grants, scope, policy, and epoch."""
+    read_grant = authorize_read(
+        actor=item.actor,
+        target_scope=item.actor.conversation_scope,
+        at=item.occurred_at,
+    )
+    write_grant = authorize_write(
+        actor=item.actor,
+        target_scope=item.actor.conversation_scope,
+        at=item.occurred_at,
+    )
+    return contract_sha256(
+        {
+            "workspace_id": item.actor.workspace_id,
+            "scope": item.actor.conversation_scope.model_dump(mode="json"),
+            "member_id": item.actor.member_id,
+            "session_id": item.actor.session_id,
+            "read_grant": contract_sha256(read_grant),
+            "write_grant": contract_sha256(write_grant),
+            "policy_version": item.policy_version,
+            "policy_epoch": item.actor.policy_epoch,
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,25 +113,20 @@ class BatchCurationCoordinator:
         )
         read_grant_sha256 = contract_sha256(read_grant)
         write_capability_sha256 = contract_sha256(write_grant)
-        isolation_key = contract_sha256(
-            {
-                "workspace_id": item.actor.workspace_id,
-                "scope": item.actor.conversation_scope.model_dump(mode="json"),
-                "member_id": item.actor.member_id,
-                "session_id": item.actor.session_id,
-                "read_grant": read_grant_sha256,
-                "write_grant": write_capability_sha256,
-                "policy_version": item.policy_version,
-                "policy_epoch": item.actor.policy_epoch,
-            }
+        isolation_key = curation_partition_key(item)
+        stored_partition_key = (
+            isolation_key if item.policy_version == LEARNING_POLICY_VERSION else None
         )
         existing = collecting_curation_batch(
             self.repository,
             item.actor,
-            item.priority,
-            item.policy_version,
-            read_grant_sha256,
-            write_capability_sha256,
+            CollectingBatchQuery(
+                priority=item.priority,
+                policy_version=item.policy_version,
+                read_grant_sha256=read_grant_sha256,
+                write_capability_sha256=write_capability_sha256,
+                isolation_key=stored_partition_key,
+            ),
         )
         if existing is None:
             generation = curation_batch_generation(self.repository, item.actor, item.event_id)
@@ -133,12 +158,15 @@ class BatchCurationCoordinator:
             self.repository,
             item.actor,
             batch,
-            item.job_id,
-            EventReceipt(
-                event_id=item.event_id,
-                event_revision=item.event_revision,
-                status=OperationStatus.PENDING,
-                reason="batch_assignment",
+            BatchItemWrite(
+                job_id=item.job_id,
+                receipt=EventReceipt(
+                    event_id=item.event_id,
+                    event_revision=item.event_revision,
+                    status=OperationStatus.PENDING,
+                    reason="batch_assignment",
+                ),
+                isolation_key=stored_partition_key,
             ),
         )
 
@@ -153,12 +181,8 @@ class BatchCurationCoordinator:
         processor: CurationBatchProcessor,
     ) -> CurationBatch:
         expected = {(item.event_id, item.event_revision) for item in run.batch.event_receipts}
-        supplied = {
-            (item.request.event_id, item.request.event_revision) for item in run.items
-        }
+        supplied = {(item.request.event_id, item.request.event_revision) for item in run.items}
         if not supplied <= expected:
-            from ads_booster.knowledge.repository_types import conflict
-
             conflict("curation_batch_work_unknown", run.batch.batch_id)
         results = processor.process(run)
         state = (
@@ -182,4 +206,5 @@ __all__ = [
     "CurationBatchPolicy",
     "CurationBatchProcessor",
     "CurationBatchWork",
+    "curation_partition_key",
 ]

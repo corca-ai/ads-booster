@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.contracts.canonical import canonical_json
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -16,6 +15,7 @@ from ads_booster.contracts.agent_run import (
     CapabilitySnapshot,
     contract_sha256,
 )
+from ads_booster.contracts.canonical import canonical_json
 from ads_booster.contracts.tool_capability import (
     EffectClass,
     ToolApprovalPolicy,
@@ -77,6 +77,64 @@ def test_capability_snapshot_freezes_complete_tool_descriptor() -> None:
     assert snapshot.descriptors[0].idempotency.key_scope == "run_tool_input"
     assert snapshot.descriptors[0].reconciliation.mode == "readback"
     assert snapshot.digest == contract_sha256(snapshot)
+
+
+def _source_authorized_write_payload() -> dict[str, object]:
+    payload = _descriptor("memory_correct", EffectClass.CONTROL_PLANE_WRITE).model_dump(mode="json")
+    payload.update(
+        owner="knowledge",
+        installation_id="configured:knowledge",
+        credential_boundary="adapter_owner",
+        approval_policy={"mode": "none", "authority": "authenticated_source"},
+    )
+    return payload
+
+
+def test_exact_source_authorized_registration_can_skip_tool_approval() -> None:
+    descriptor = ToolDescriptor.model_validate(_source_authorized_write_payload())
+
+    assert descriptor.approval_policy.mode == "none"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("capability_id", "arbitrary_control_plane_write"),
+        ("owner", "foreign.owner"),
+        ("installation_id", "foreign:installation"),
+    ],
+)
+def test_only_exact_source_authorized_registration_can_skip_tool_approval(
+    field: str, value: str
+) -> None:
+    payload = _source_authorized_write_payload()
+    payload[field] = value
+
+    with pytest.raises(ValueError, match="effect tools require approval"):
+        _ = ToolDescriptor.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("effect_class", "credential_boundary", "authority"),
+    [
+        (EffectClass.LOCAL_ARTIFACT, "adapter_owner", "authenticated_source"),
+        (EffectClass.EXTERNAL, "adapter_owner", "authenticated_source"),
+        (EffectClass.CONTROL_PLANE_WRITE, "none", "authenticated_source"),
+        (EffectClass.CONTROL_PLANE_WRITE, "adapter_owner", "workspace_member"),
+    ],
+)
+def test_effect_tool_rejects_unapproved_non_source_bound_shape(
+    effect_class: EffectClass,
+    credential_boundary: str,
+    authority: str,
+) -> None:
+    descriptor = _descriptor("guarded.write", effect_class)
+    payload = descriptor.model_dump(mode="json")
+    payload["credential_boundary"] = credential_boundary
+    payload["approval_policy"] = {"mode": "none", "authority": authority}
+
+    with pytest.raises(ValueError, match="effect tools require approval"):
+        _ = ToolDescriptor.model_validate(payload)
 
 
 def test_portable_digest_rejects_cross_runtime_float_ambiguity() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from pydantic import TypeAdapter, ValidationError
@@ -9,6 +9,7 @@ from pydantic import TypeAdapter, ValidationError
 from ads_booster.knowledge.batch_curation import CurationBatchWork
 from ads_booster.knowledge.contract_types import ScopeKind
 from ads_booster.knowledge.curation_contracts import (
+    CurationBatchDecision,
     CurationBatchJobContext,
     CurationDecision,
     CurationDecisionAction,
@@ -39,6 +40,9 @@ from ads_booster.knowledge.ingestion_build import stable_id
 from ads_booster.knowledge.repository_types import RepositoryConflictError
 from ads_booster.knowledge.tool_contracts import (
     KnowledgeToolName,
+    MemoryApplyInput,
+    MemoryCorrectInput,
+    SkillApplyInput,
     ToolResult,
     ToolResultStatus,
     TrustedInvocationContext,
@@ -50,6 +54,19 @@ _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _MAX_BATCH_ROUNDS: Final = 8
 _MAX_BATCH_ROUND_SECONDS: Final = 120.0
 _MAX_BATCH_TOTAL_SECONDS: Final = 900.0
+_MAX_BATCH_ITEMS: Final = 20
+_LEARNING_TOOL_NAMES: Final[frozenset[KnowledgeToolName]] = frozenset(
+    {
+        KnowledgeToolName.MEMORY_GET,
+        KnowledgeToolName.MEMORY_APPLY,
+        KnowledgeToolName.MEMORY_CORRECT,
+        KnowledgeToolName.SOURCE_READ,
+        KnowledgeToolName.SKILL_LIST,
+        KnowledgeToolName.SKILL_GET,
+        KnowledgeToolName.SKILL_APPLY,
+        KnowledgeToolName.KNOWLEDGE_QUESTION,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,13 +109,24 @@ def _tool_advance(
 @dataclass(frozen=True, slots=True)
 class _BatchJobState:
     work: CurationBatchWork
-    progress: CurationProgress = CurationProgress()
+    progress: CurationProgress = field(default_factory=CurationProgress)
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchRound:
+    batch_id: str
+    active: dict[str, _BatchJobState]
+    completed: dict[str, CurationResult]
+    cancellation: CancellationSignal | None
+    started: float
+    total_seconds: float
+    decision_index: int
 
 
 @dataclass(frozen=True, slots=True)
 class CurationRunner:
     dependencies: CurationDependencies
-    limits: CurationLimits = CurationLimits()
+    limits: CurationLimits = field(default_factory=CurationLimits)
 
     def run(
         self,
@@ -143,87 +171,16 @@ class CurationRunner:
         total_seconds = min(self.limits.total_timeout_seconds, _MAX_BATCH_TOTAL_SECONDS)
         round_count = min(self.limits.max_decisions, _MAX_BATCH_ROUNDS)
         for decision_index in range(1, round_count + 1):
-            terminal = self._batch_preflight(cancellation, started, total_seconds)
-            if terminal is not None:
-                self._finish_active(active, completed, terminal)
-                break
-            states = tuple(active.values())
-            remaining_seconds = total_seconds - (time.monotonic() - started)
-            if remaining_seconds <= 0:
-                self._finish_active(
-                    active,
-                    completed,
-                    CurationTerminal(
-                        CurationRunStatus.BUDGET_EXHAUSTED,
-                        "curation_total_timeout",
-                    ),
-                )
-                break
-            timeout_seconds = min(
-                self.limits.decision_timeout_seconds,
-                _MAX_BATCH_ROUND_SECONDS,
-                remaining_seconds,
+            round_ = _BatchRound(
+                batch_id,
+                active,
+                completed,
+                cancellation,
+                started,
+                total_seconds,
+                decision_index,
             )
-            try:
-                batch_decision = self.dependencies.provider.decide_batch(
-                    batch_id,
-                    tuple(
-                        CurationBatchJobContext(
-                            request=state.work.request,
-                            observations=state.progress.observations,
-                        )
-                        for state in states
-                    ),
-                    timeout_seconds=timeout_seconds,
-                )
-            except CurationProviderError:
-                self._finish_active(
-                    active,
-                    completed,
-                    CurationTerminal(
-                        CurationRunStatus.PROVIDER_UNAVAILABLE,
-                        "knowledge_provider_batch_result_invalid",
-                    ),
-                )
-                break
-            expected_job_ids = set(active)
-            decisions = {item.job_id: item.decision for item in batch_decision.decisions}
-            if (
-                batch_decision.batch_id != batch_id
-                or len(batch_decision.decisions) != len(active)
-                or set(decisions) != expected_job_ids
-            ):
-                self._finish_active(
-                    active,
-                    completed,
-                    CurationTerminal(
-                        CurationRunStatus.PROVIDER_UNAVAILABLE,
-                        "knowledge_provider_batch_result_invalid",
-                    ),
-                )
-                break
-            for job_id, state in tuple(active.items()):
-                terminal = self._batch_preflight(cancellation, started, total_seconds)
-                if terminal is not None:
-                    self._finish_active(active, completed, terminal)
-                    break
-                step = _CurationStep(
-                    state.work.request,
-                    state.work.trusted_context,
-                    state.progress,
-                    decision_index,
-                )
-                advance = self._advance(step, decisions[job_id])
-                if advance.terminal is None:
-                    active[job_id] = _BatchJobState(state.work, advance.progress)
-                    continue
-                completed[job_id] = finish_result(
-                    state.work.request,
-                    advance.progress,
-                    advance.terminal,
-                )
-                del active[job_id]
-            if not active:
+            if not self._run_batch_round(round_):
                 break
         if active:
             self._finish_active(
@@ -235,6 +192,99 @@ class CurationRunner:
                 ),
             )
         return tuple(completed[item.request.job_id] for item in prepared)
+
+    def _run_batch_round(self, round_: _BatchRound) -> bool:
+        terminal = self._batch_preflight(
+            round_.cancellation,
+            round_.started,
+            round_.total_seconds,
+        )
+        if terminal is not None:
+            self._finish_active(round_.active, round_.completed, terminal)
+            return False
+        outcome = self._batch_decision(round_)
+        match outcome:
+            case CurationTerminal():
+                self._finish_active(round_.active, round_.completed, outcome)
+                return False
+            case CurationBatchDecision():
+                terminal = self._advance_batch_jobs(round_, outcome)
+                if terminal is not None:
+                    self._finish_active(round_.active, round_.completed, terminal)
+                    return False
+                return bool(round_.active)
+
+    def _batch_decision(
+        self,
+        round_: _BatchRound,
+    ) -> CurationBatchDecision | CurationTerminal:
+        remaining_seconds = round_.total_seconds - (time.monotonic() - round_.started)
+        if remaining_seconds <= 0:
+            return CurationTerminal(CurationRunStatus.BUDGET_EXHAUSTED, "curation_total_timeout")
+        try:
+            decision = self.dependencies.provider.decide_batch(
+                round_.batch_id,
+                tuple(
+                    CurationBatchJobContext(
+                        request=state.work.request,
+                        observations=state.progress.observations,
+                    )
+                    for state in round_.active.values()
+                ),
+                timeout_seconds=min(
+                    self.limits.decision_timeout_seconds,
+                    _MAX_BATCH_ROUND_SECONDS,
+                    remaining_seconds,
+                ),
+            )
+        except CurationProviderError:
+            return CurationTerminal(
+                CurationRunStatus.PROVIDER_UNAVAILABLE,
+                "knowledge_provider_batch_result_invalid",
+            )
+        decisions = {item.job_id: item.decision for item in decision.decisions}
+        if (
+            decision.batch_id != round_.batch_id
+            or len(decision.decisions) != len(round_.active)
+            or set(decisions) != set(round_.active)
+        ):
+            return CurationTerminal(
+                CurationRunStatus.PROVIDER_UNAVAILABLE,
+                "knowledge_provider_batch_result_invalid",
+            )
+        return decision
+
+    def _advance_batch_jobs(
+        self,
+        round_: _BatchRound,
+        batch_decision: CurationBatchDecision,
+    ) -> CurationTerminal | None:
+        decisions = {item.job_id: item.decision for item in batch_decision.decisions}
+        for job_id, state in tuple(round_.active.items()):
+            terminal = self._batch_preflight(
+                round_.cancellation,
+                round_.started,
+                round_.total_seconds,
+            )
+            if terminal is not None:
+                return terminal
+            step = _CurationStep(
+                state.work.request,
+                state.work.trusted_context,
+                state.progress,
+                round_.decision_index,
+            )
+            advance = self._advance(step, decisions[job_id])
+            if advance.terminal is None:
+                round_.active[job_id] = _BatchJobState(state.work, advance.progress)
+                continue
+            round_.completed[job_id] = finish_result(
+                state.work.request,
+                advance.progress,
+                advance.terminal,
+            )
+            del round_.active[job_id]
+        return None
 
     def _run(self, execution: _CurationExecution) -> CurationResult:
         request = execution.work.request
@@ -281,18 +331,24 @@ class CurationRunner:
         )
 
     def _with_tool_catalog(self, request: CurationRequest) -> CurationRequest:
+        schemas = self.dependencies.tool_host.schemas()
+        if request.learning_purpose is not None:
+            schemas = {
+                name: schema for name, schema in schemas.items() if name in _LEARNING_TOOL_NAMES
+            }
         return request.model_copy(
             update={
                 "auto_memory_enabled": (
                     self.dependencies.memory is not None
+                    and request.learning_purpose is None
                     and request.authenticated_user_event is not None
                     and request.authenticated_user_event.evidence_ref.scope.kind
                     in (ScopeKind.WORKSPACE, ScopeKind.CHANNEL)
                 ),
                 "tool_catalog": tuple(
                     CurationToolDefinition(name=name, input_schema=schema)
-                    for name, schema in self.dependencies.tool_host.schemas().items()
-                ),
+                    for name, schema in schemas.items()
+                )
             }
         )
 
@@ -300,7 +356,7 @@ class CurationRunner:
     def _batch_binding_error(items: tuple[CurationBatchWork, ...]) -> str | None:
         if not items:
             return None
-        if len(items) > 20:
+        if len(items) > _MAX_BATCH_ITEMS:
             return "curation_batch_item_limit_exceeded"
         job_ids = tuple(item.request.job_id for item in items)
         if len(job_ids) != len(set(job_ids)):
@@ -359,56 +415,86 @@ class CurationRunner:
     ) -> _CurationAdvance:
         match decision.action:
             case CurationDecisionAction.TOOL_CALL:
-                outcome = self._execute_tool(
-                    step,
-                    decision.tool_name,
-                    decision.tool_arguments_json,
-                )
-                return _tool_advance(step.progress, outcome)
+                return self._advance_tool(step, decision)
             case CurationDecisionAction.REMEMBER:
                 outcome = self._execute_remember(step, decision.memory_intent)
                 return _tool_advance(step.progress, outcome)
             case CurationDecisionAction.QUESTION:
-                outcome = self._execute_question(step, decision.question_arguments_json)
-                match outcome:
-                    case CurationTerminal():
-                        return _CurationAdvance(step.progress, outcome)
-                    case (CurationProgress() as progress, terminal):
-                        return _CurationAdvance(progress, terminal)
+                return self._advance_question(step, decision)
             case CurationDecisionAction.FINISH:
-                progress = step.progress
-                if decision.disposition_intent is not None:
-                    outcome = self._apply_disposition(step, decision.disposition_intent)
-                    match outcome:
-                        case CurationTerminal():
-                            return _CurationAdvance(progress, outcome)
-                        case _DispositionConflict(error_code=error_code):
-                            progress = self._conflict_observation(
-                                progress,
-                                step.decision_index,
-                                error_code,
-                            )
-                            if progress.conflict_count <= self.limits.max_conflict_redecisions:
-                                return _CurationAdvance(progress)
-                            return _CurationAdvance(
-                                progress,
-                                CurationTerminal(
-                                    CurationRunStatus.BUDGET_EXHAUSTED,
-                                    "curation_conflict_budget_exhausted",
-                                ),
-                            )
-                        case CurationProgress():
-                            progress = outcome
-                return _CurationAdvance(
-                    progress,
-                    CurationTerminal(
-                        CurationRunStatus.FINISHED,
-                        targets=decision.targets,
-                        disposition=None
-                        if decision.disposition_intent is None
-                        else decision.disposition_intent.disposition,
-                    ),
-                )
+                return self._advance_finish(step, decision)
+
+    def _advance_tool(
+        self,
+        step: _CurationStep,
+        decision: CurationDecision,
+    ) -> _CurationAdvance:
+        outcome = self._execute_tool(step, decision.tool_name, decision.tool_arguments_json)
+        match outcome:
+            case CurationTerminal():
+                return _CurationAdvance(step.progress, outcome)
+            case CurationProgress():
+                return _CurationAdvance(outcome)
+
+    def _advance_question(
+        self,
+        step: _CurationStep,
+        decision: CurationDecision,
+    ) -> _CurationAdvance:
+        outcome = self._execute_question(step, decision.question_arguments_json)
+        match outcome:
+            case CurationTerminal():
+                return _CurationAdvance(step.progress, outcome)
+            case (CurationProgress() as progress, terminal):
+                return _CurationAdvance(progress, terminal)
+
+    def _advance_finish(
+        self,
+        step: _CurationStep,
+        decision: CurationDecision,
+    ) -> _CurationAdvance:
+        intent = decision.disposition_intent
+        if intent is None:
+            return self._finish_advance(step.progress, decision, None)
+        outcome = self._apply_disposition(step, intent)
+        match outcome:
+            case CurationTerminal():
+                return _CurationAdvance(step.progress, outcome)
+            case _DispositionConflict(error_code=error_code):
+                return self._advance_disposition_conflict(step, error_code)
+            case CurationProgress():
+                return self._finish_advance(outcome, decision, intent)
+
+    def _advance_disposition_conflict(
+        self,
+        step: _CurationStep,
+        error_code: str,
+    ) -> _CurationAdvance:
+        progress = self._conflict_observation(step.progress, step.decision_index, error_code)
+        if progress.conflict_count <= self.limits.max_conflict_redecisions:
+            return _CurationAdvance(progress)
+        return _CurationAdvance(
+            progress,
+            CurationTerminal(
+                CurationRunStatus.BUDGET_EXHAUSTED,
+                "curation_conflict_budget_exhausted",
+            ),
+        )
+
+    @staticmethod
+    def _finish_advance(
+        progress: CurationProgress,
+        decision: CurationDecision,
+        intent: SourceDispositionIntent | None,
+    ) -> _CurationAdvance:
+        return _CurationAdvance(
+            progress,
+            CurationTerminal(
+                CurationRunStatus.FINISHED,
+                targets=decision.targets,
+                disposition=None if intent is None else intent.disposition,
+            ),
+        )
 
     def _preflight(
         self,
@@ -436,8 +522,23 @@ class CurationRunner:
         name: KnowledgeToolName | None,
         encoded: str | None,
     ) -> CurationProgress | CurationTerminal:
+        outcome = self._tool_call(step, name, encoded)
+        match outcome:
+            case CurationTerminal():
+                return outcome
+            case (KnowledgeToolName() as name, dict() as arguments):
+                return self._record_tool_execution(step, name, arguments)
+
+    def _tool_call(
+        self,
+        step: _CurationStep,
+        name: KnowledgeToolName | None,
+        encoded: str | None,
+    ) -> tuple[KnowledgeToolName, JsonObject] | CurationTerminal:
         if name is None or encoded is None:
             return CurationTerminal(CurationRunStatus.FAILED, "curation_decision_fields_invalid")
+        if step.request.learning_purpose is not None and name not in _LEARNING_TOOL_NAMES:
+            return CurationTerminal(CurationRunStatus.FAILED, "curation_learning_tool_forbidden")
         budget_error = tool_budget_error(name, step.progress, self.limits)
         if budget_error is not None:
             return CurationTerminal(CurationRunStatus.BUDGET_EXHAUSTED, budget_error)
@@ -445,6 +546,16 @@ class CurationRunner:
             arguments = _JSON_OBJECT.validate_json(encoded)
         except ValidationError:
             return CurationTerminal(CurationRunStatus.FAILED, "curation_tool_arguments_invalid")
+        if learning_target_is_consumed(step.request, name, arguments):
+            return CurationTerminal(CurationRunStatus.FINISHED, "curation_learning_target_consumed")
+        return name, arguments
+
+    def _record_tool_execution(
+        self,
+        step: _CurationStep,
+        name: KnowledgeToolName,
+        arguments: JsonObject,
+    ) -> CurationProgress | CurationTerminal:
         invocation = step.context.model_copy(
             update={
                 "invocation_id": stable_id(
@@ -566,4 +677,51 @@ class CurationRunner:
         )
 
 
-__all__ = ["CurationRunner"]
+def learning_target_is_consumed(
+    request: CurationRequest,
+    name: KnowledgeToolName,
+    arguments: JsonObject,
+) -> bool:
+    review = request.learning_review
+    if request.learning_purpose is None or review is None or not review.consumed_target_ids:
+        return False
+    return bool(_learning_mutation_targets(name, arguments) & set(review.consumed_target_ids))
+
+
+def _learning_mutation_targets(
+    name: KnowledgeToolName,
+    arguments: JsonObject,
+) -> frozenset[str]:
+    try:
+        match name:
+            case KnowledgeToolName.SKILL_APPLY:
+                request = SkillApplyInput.model_validate(arguments)
+                return frozenset(operation.skill_id for operation in request.operations)
+            case KnowledgeToolName.MEMORY_APPLY:
+                request = MemoryApplyInput.model_validate(arguments)
+                return frozenset(request.target_ids)
+            case KnowledgeToolName.MEMORY_CORRECT:
+                request = MemoryCorrectInput.model_validate(arguments)
+                if request.replacement_entry is None:
+                    return frozenset()
+                return frozenset((request.replacement_entry.document_id,))
+            case (
+                KnowledgeToolName.KNOWLEDGE_SEARCH
+                | KnowledgeToolName.KNOWLEDGE_GET
+                | KnowledgeToolName.MEMORY_GET
+                | KnowledgeToolName.MEMORY_EXPLAIN
+                | KnowledgeToolName.SOURCE_READ
+                | KnowledgeToolName.SOURCE_SEARCH
+                | KnowledgeToolName.SOURCE_FETCH
+                | KnowledgeToolName.KNOWLEDGE_APPLY
+                | KnowledgeToolName.KNOWLEDGE_SCHEDULE
+                | KnowledgeToolName.KNOWLEDGE_QUESTION
+                | KnowledgeToolName.SKILL_LIST
+                | KnowledgeToolName.SKILL_GET
+            ):
+                return frozenset()
+    except ValidationError:
+        return frozenset()
+
+
+__all__ = ["CurationRunner", "learning_target_is_consumed"]

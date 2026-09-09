@@ -130,7 +130,7 @@ def test_v3_migration_preserves_documents_revisions_views_and_files(tmp_path: Pa
         assert current == previous
         assert TypeAdapter(tuple[int]).validate_python(
             connection.execute("SELECT MAX(version) FROM knowledge_schema").fetchone()
-        ) == (4,)
+        ) == (6,)
         assert not connection.execute("PRAGMA foreign_key_check").fetchall()
     assert (tmp_path / "teams/T1/revisions/legacy/rev1.md").read_bytes() == b"existing memory\n"
 

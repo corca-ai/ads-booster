@@ -46,6 +46,42 @@ class MemoryOperationKind(StrEnum):
 
 
 @unique
+class SkillOrigin(StrEnum):
+    BUILTIN = "builtin"
+    BUILTIN_OVERRIDE = "builtin_override"
+    AGENT_CREATED = "agent_created"
+
+
+@unique
+class SkillTargetKind(StrEnum):
+    LEARNED = "learned"
+    BUILTIN_OVERRIDE = "builtin_override"
+
+
+@unique
+class SkillOperationKind(StrEnum):
+    CREATE = "create"
+    UPDATE = "update"
+    SUPERSEDE = "supersede"
+    RETRACT = "retract"
+
+
+@unique
+class LearningPurpose(StrEnum):
+    CONVERSATIONAL_FEEDBACK = "conversational_feedback"
+    TERMINAL_EXPERIENCE_REVIEW = "terminal_experience_review"
+
+
+@unique
+class ExperienceOutcome(StrEnum):
+    SUCCEEDED = "succeeded"
+    OBSERVED = "observed"
+    FAILED = "failed"
+    UNKNOWN_SIDE_EFFECT = "unknown_side_effect"
+    INVALIDATED = "invalidated"
+
+
+@unique
 class KnowledgeOperationKind(StrEnum):
     CLAIM_ADD = "claim_add"
     CLAIM_UPDATE = "claim_update"

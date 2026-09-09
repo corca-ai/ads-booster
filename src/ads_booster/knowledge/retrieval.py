@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from datetime import datetime
 
-    from ads_booster.knowledge.repository import SqliteKnowledgeRepository
+    from ads_booster.knowledge.repository_protocol import KnowledgeRepository
     from ads_booster.knowledge.wiki_contracts import PageAttribute
 
 _TEXT = TypeAdapter(str)
@@ -125,7 +125,7 @@ class _CounterContext:
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeRetriever:
-    _repository: SqliteKnowledgeRepository
+    _repository: KnowledgeRepository
     _vector_port: VectorSearchPort | None = None
 
     def search(self, actor: ActorContext, request: SearchRequest, *, now: datetime) -> SearchResult:

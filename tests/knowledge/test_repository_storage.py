@@ -45,6 +45,11 @@ def test_fresh_catalog_has_normalized_schema_and_private_database(tmp_path: Path
         "jobs",
         "knowledge_heads",
         "knowledge_revisions",
+        "learning_admissions",
+        "learning_batch_partitions",
+        "learning_consumed_targets",
+        "learning_counters",
+        "learning_rounds",
         "memory_documents",
         "memory_revisions",
         "operations",
@@ -52,10 +57,13 @@ def test_fresh_catalog_has_normalized_schema_and_private_database(tmp_path: Path
         "segments",
         "source_revisions",
         "sources",
+        "skill_heads",
+        "skill_revisions",
+        "skills",
         "wiki_pages",
     } <= tables
     assert version is not None
-    assert version == (4, 64)
+    assert version == (6, 64)
 
 
 def test_scope_and_memory_identity_constraints_reject_cross_tenant_rows(tmp_path: Path) -> None:

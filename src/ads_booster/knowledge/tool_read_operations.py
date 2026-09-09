@@ -15,6 +15,10 @@ from ads_booster.knowledge.tool_contracts import (
     MemoryData,
     MemoryExplainInput,
     MemoryGetInput,
+    SkillData,
+    SkillGetInput,
+    SkillListData,
+    SkillListInput,
     ToolResult,
     ToolResultStatus,
     TrustedInvocationContext,
@@ -186,4 +190,53 @@ def memory_explain(
     )
 
 
-__all__ = ["knowledge_get", "knowledge_search", "memory_explain", "memory_get"]
+def skill_list(
+    dependencies: ToolDependencies,
+    request: SkillListInput,
+    context: TrustedInvocationContext,
+) -> ToolResult:
+    entries = dependencies.skills.list(
+        context.actor,
+        request.applicability,
+        include_protected=request.include_protected,
+    )
+    return success(
+        context.invocation_id,
+        ToolResultStatus.NO_RESULTS if not entries else ToolResultStatus.SUCCEEDED,
+        SkillListData(entries=entries),
+    )
+
+
+def skill_get(
+    dependencies: ToolDependencies,
+    request: SkillGetInput,
+    context: TrustedInvocationContext,
+) -> ToolResult:
+    selected = dependencies.skills.get(context.actor, request.skill_id, request.revision_id)
+    if selected is None:
+        return error_result(
+            context.invocation_id,
+            "skill_not_found",
+            status=ToolResultStatus.NOT_FOUND,
+        )
+    return success(
+        context.invocation_id,
+        ToolResultStatus.SUCCEEDED,
+        SkillData(
+            record=selected.record,
+            markdown=selected.markdown,
+            display_pending=selected.display_pending,
+            effective=selected.effective,
+            override_status=selected.override_status,
+        ),
+    )
+
+
+__all__ = [
+    "knowledge_get",
+    "knowledge_search",
+    "memory_explain",
+    "memory_get",
+    "skill_get",
+    "skill_list",
+]
