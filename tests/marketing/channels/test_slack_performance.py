@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
-from ads_booster.learning.performance_observations import PerformanceObservationStore
 from ads_booster.channels.slack_conversations import Conversation, Message
 from ads_booster.channels.slack_performance import (
     is_performance_command,
     performance_command,
 )
+from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
+from ads_booster.learning.performance_observations import PerformanceObservationStore
 from ads_booster.transport.json_types import JsonObject
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
@@ -80,7 +80,9 @@ def test_signed_same_thread_record_correction_compare_learning(tmp_path: Path) -
     service = events.commands.application.service
     run = service.repository.list_runs("team")[0]
     access = MemoryAccess(
-        scope=MemoryScope(workspace_id="team", product_id="trace", work_id=run.run_id),
+        scope=MemoryScope(
+            workspace_id="team", product_id="trace", work_id=run.run_id, channel_id="C1"
+        ),
         actor_id="member",
     )
     store = PerformanceObservationStore(service.repository.database_path)
@@ -187,7 +189,9 @@ def test_correction_requires_original_author_or_reviewer(tmp_path: Path) -> None
     )
     _ = performance_command(service, conversation, message, identity, now=NOW)
     access = MemoryAccess(
-        scope=MemoryScope(workspace_id="team", product_id="trace", work_id=run.run_id),
+        scope=MemoryScope(
+            workspace_id="team", product_id="trace", work_id=run.run_id, channel_id="C1"
+        ),
         actor_id="member",
     )
     store = PerformanceObservationStore(service.repository.database_path)
