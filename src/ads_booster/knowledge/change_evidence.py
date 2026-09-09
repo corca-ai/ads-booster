@@ -67,6 +67,14 @@ class RepositoryEvidenceResolver:
         )
         return ValidationCatalog(evidence=records, events=events, wiki_claims=wiki_claims)
 
+    def validate_references(
+        self,
+        actor: ActorContext,
+        references: tuple[EvidenceRef, ...],
+    ) -> tuple[EvidenceRecord, ...]:
+        """Resolve and authenticate exact evidence pointers without changing them."""
+        return tuple(self._resolve(actor, reference) for reference in references)
+
     def validate_page(self, actor: ActorContext, snapshot: PageSnapshot, at: datetime) -> None:
         _ = authorize_write(actor=actor, target_scope=snapshot.page.scope, at=at)
         for claim in snapshot.revision.claims:
