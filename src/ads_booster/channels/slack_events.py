@@ -566,6 +566,7 @@ class SlackEvents:
                 ),
                 blocked=True,
             )
+        _ = self._notify()
         return True
 
     def _advance_background(self, *, now: datetime) -> bool:
