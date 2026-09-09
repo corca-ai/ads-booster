@@ -2,18 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from hashlib import sha256
 from typing import TYPE_CHECKING, Protocol, cast
 
 from ads_booster.knowledge.batch_actor import load_job_actor
 from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
-from ads_booster.knowledge.contract_types import (
-    AuthorityClass,
-    ConversationRole,
-    EvidenceKind,
-    InstructionAuthority,
-    Provenance,
-    SourceKind,
+from ads_booster.knowledge.curation_context import (
+    authenticated_user_event,
+    conversation_evidence,
+    known_memory,
 )
 from ads_booster.knowledge.curation_contracts import (
     CurationExcerpt,
@@ -22,11 +18,9 @@ from ads_booster.knowledge.curation_contracts import (
     CurationRunStatus,
     CurationUserEvent,
 )
-from ads_booster.knowledge.evidence_contracts import AuthorityRef, EvidenceRef
 from ads_booster.knowledge.jobs import JobProcessResult
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
 from ads_booster.knowledge.repository_tool_state import RepositoryToolState
-from ads_booster.knowledge.source_contracts import ConversationEvent
 from ads_booster.knowledge.tool_contracts import (
     TrustedInvocationContext,
     TrustedSourceCapability,
@@ -118,6 +112,7 @@ class CanonicalJobProcessor:
             )
             for segment in extracted.segments[:20]
         )
+        user_context = conversation_evidence(self.repository, scoped_actor, source)
         request = CurationRequest(
             schema="knowledge.curation-request.v1",
             job_id=job.job_id,
@@ -127,6 +122,8 @@ class CanonicalJobProcessor:
             objective=body[:20_000] or "Review the source disposition.",
             excerpts=excerpts,
             authenticated_user_event=self._authenticated_user_event(scoped_actor, source),
+            conversation_evidence=user_context,
+            known_memory=known_memory(self.repository, scoped_actor, user_context),
             started_at=datetime.now(UTC),
         )
         context = TrustedInvocationContext(
@@ -154,34 +151,7 @@ class CanonicalJobProcessor:
     def _authenticated_user_event(
         self, actor: ActorContext, source: StoredSource
     ) -> CurationUserEvent | None:
-        if source.source.source_kind is not SourceKind.MESSAGE:
-            return None
-        original = ConversationEvent.model_validate_json(source.body)
-        if original.role is not ConversationRole.USER or original.quoted_spans:
-            return None
-        event = self.repository.canonical_event(actor, original.message_id)
-        if event != original:
-            msg = "curation_event_binding_mismatch"
-            raise ValueError(msg)
-        return CurationUserEvent(
-            evidence_ref=EvidenceRef(
-                evidence_kind=EvidenceKind.CONVERSATION_EVENT,
-                evidence_id=event.message_id,
-                revision_id=str(event.revision),
-                quote_sha256=sha256(event.text.encode()).hexdigest(),
-                scope=event.scope,
-                instruction_authority=InstructionAuthority.AUTHORIZED_USER,
-                provenance=Provenance.HUMAN_DIRECT,
-            ),
-            authority_ref=AuthorityRef(
-                event_id=event.message_id,
-                authority_class=AuthorityClass.AUTHORIZED_TASK_INSTRUCTION,
-                actor_ref=event.speaker_ref,
-                workspace_id=event.scope.workspace_id,
-                scope=event.scope,
-                policy_epoch=actor.policy_epoch,
-            ),
-        )
+        return authenticated_user_event(self.repository, actor, source)
 
     def run_curation_work(
         self,

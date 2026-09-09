@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -16,9 +17,14 @@ from ads_booster.knowledge.contracts import (
     MessageEventRef,
     ScopeKind,
 )
+from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.maintenance_jobs import CanonicalJobProcessor
+from ads_booster.knowledge.messages import MessageValidationError
 from ads_booster.knowledge.repository import JobClaim, MembershipRole, SqliteKnowledgeRepository
+from ads_booster.knowledge.repository_tool_state import RepositoryToolState
+from ads_booster.knowledge.tool_contracts import KnowledgeQuestionInput, ToolResultStatus
+from ads_booster.knowledge.tools import ToolHost
 from tests.knowledge.batch_runtime_support import batch_fixture
 from tests.knowledge.change_test_fixtures import NOW, actor
 
@@ -134,3 +140,78 @@ def test_curation_cannot_read_source_from_another_workspace(curation_input: Cura
     # When / Then
     with pytest.raises(ValueError, match="curation_source_unavailable"):
         _ = processor.build_curation_work(job, outsider)
+
+
+def test_workspace_maintenance_preserves_message_author(curation_input: CurationInput) -> None:
+    repository, processor, job, event, _ = curation_input
+    maintenance = processor.actor.model_copy(
+        update={
+            "actor_id": "actor.maintenance",
+            "member_id": "member.maintenance",
+            "session_id": "session.maintenance",
+            "grants": tuple(
+                grant.model_copy(update={"grant_id": "maintenance." + grant.grant_id})
+                for grant in processor.actor.grants
+            ),
+        }
+    )
+    repository.register_actor(maintenance, MembershipRole.ADMIN)
+    worker = replace(processor, actor=maintenance)
+    work = worker.build_curation_work(job)
+    assert work.trusted_context.actor == maintenance
+    assert work.request.authenticated_user_event is not None
+    assert work.request.authenticated_user_event.authority_ref.actor_ref == event.speaker_ref
+    assert work.request.objective == event.text
+    question = KnowledgeQuestionInput(
+        schema="knowledge.tool.question.v1",
+        question_id="question.maintenance",
+        problem="Clarify this member's statement",
+        evidence_ids=(event.message_id,),
+        recommendation="Ask the author to clarify",
+    )
+    result = ToolHost(repository).execute(
+        "knowledge_question", question.model_dump(mode="json", by_alias=True), work.trusted_context
+    )
+    assert result.status is ToolResultStatus.PENDING, result
+    with pytest.raises(MessageValidationError, match="event_speaker_binding_mismatch"):
+        _ = repository.canonical_event(maintenance, event.message_id)
+
+
+def test_curation_evidence_read_does_not_grant_private_access(
+    curation_input: CurationInput,
+) -> None:
+    repository, processor, _, event, _ = curation_input
+    scope = AccessScope(
+        kind=ScopeKind.MEMBER,
+        workspace_id=processor.actor.workspace_id,
+        member_id="member.private",
+        session_id="session.private",
+    )
+    private_actor = processor.actor.model_copy(
+        update={
+            "actor_id": "actor.private",
+            "conversation_scope": scope,
+            "member_id": scope.member_id,
+            "session_id": scope.session_id,
+            "grants": tuple(
+                grant.model_copy(update={"grant_id": "private." + grant.grant_id, "scope": scope})
+                for grant in processor.actor.grants
+            ),
+        }
+    )
+    repository.register_actor(private_actor, MembershipRole.EDITOR)
+    private_event = event.model_copy(
+        update={
+            "scope": scope,
+            "speaker_ref": private_actor.actor_id,
+            "message_id": "message.private",
+            "conversation_id": "conversation.private",
+        }
+    )
+    _ = KnowledgeIngestion(repository).ingest(
+        private_actor, private_event, envelope(private_event, "delivery.private")
+    )
+    with pytest.raises(KnowledgePolicyError):
+        _ = RepositoryToolState(repository).read_canonical_event(
+            processor.actor, private_event.message_id
+        )
