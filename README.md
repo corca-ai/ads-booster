@@ -327,12 +327,20 @@ export TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT='/private/path/to/knowledge-contro
 export TRACE_MARKETING_KNOWLEDGE_POLICY='/private/path/to/knowledge-control/policy.json'
 ```
 
-With all three unset, knowledge is disabled. A partial set fails configuration. The root and control
+Direct `service run` with all three unset leaves knowledge disabled. Managed server startup fills
+missing Knowledge configuration once using the existing tenant, including the first update from an
+older installation. It preserves Slack settings, existing identities, policy and knowledge; complete
+custom paths are retained and partial configuration fails instead of being replaced. Repeated
+updates reuse the same store. A partial set fails configuration. The root and control
 directory must be owned by the service user with mode `0700`; the policy and control identity file
 must be mode `0600`. When configured, `trace-marketing service run` builds the knowledge ingress,
 curation provider, bounded jobs, index worker, memory-view worker, owner lock, and continuous runtime
 alongside the canonical service. Fresh installed-service behavior and deployment require separate
 verification.
+
+For an enabled service, `/health` includes `knowledge_worker: running`; if that background thread
+exits, health returns HTTP 503 with `status: degraded` and `knowledge_worker: stopped`. This reports
+worker liveness, not completion of a particular memory write.
 
 Authenticated Agent Service and Slack adapters provide the actor, workspace, member, session, and
 grants. The service binds these identities to existing knowledge members and conversation sessions,

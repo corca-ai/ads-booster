@@ -102,6 +102,15 @@ absolute. With all three absent the feature is disabled; a partial set raises a 
 The service user owns root/control directories at mode `0700`; policy and `control_root/identity.json`
 are private mode `0600` files.
 
+Managed startup additionally runs the installed `cli/server_knowledge.py` migration before service
+exec. If the persistent service environment has no Knowledge settings, it initializes tenant-bound
+defaults and publishes only the three path assignments after initialization. Existing settings and
+knowledge are preserved; partial settings fail closed. The same startup receives the returned paths
+without waiting for another systemd restart. This candidate-startup boundary also runs when an older
+updater performs the first switch. Initialization is additive and retained on rollback; it does not
+rewrite prior identity or policy. The updater reads persistent Knowledge paths without importing
+Slack credentials into the update unit, so configured Knowledge participates in backup/restore.
+
 When enabled, `cli/marketing.py` builds `InstalledKnowledgeRuntime` beside the canonical service.
 It registers the local actor, creates the SQLite knowledge repository, canonical ingress, ingestion,
 retrieval and tool host, Codex curation provider, owner lock, bounded job runner, index worker, and
@@ -118,6 +127,17 @@ The live `KnowledgeRuntime` dispatcher drains ingress, terminal experience, cura
 memory-view work under the existing owner and maintenance activity gates. Terminal experience
 outbox recovery runs before normal processing, so a committed terminal receipt can resume delivery
 without replaying the foreground tool.
+Bounded job and curation workers start with a fresh spawned interpreter. They do not inherit the
+service's active thread locks, SQLite handles or other process-local state. Processor dependencies
+must therefore be serializable configuration and paths rather than open resources.
+Unavailable or superseded sources fail their individual queued curation jobs with a durable reason;
+they do not terminate collection of other jobs. Maintenance evidence reads preserve the source's
+original speaker while applying the current worker's read authority.
+The HTTP health route receives the configured Knowledge thread's actual liveness probe. An exited
+thread produces HTTP 503/degraded while release and maintenance fields remain available. A running
+thread is not a guarantee that every job has finished. The updater reads a degraded 503 body so the
+current service can drain and install a repair, while candidate activation still requires healthy
+status and fails closed on a stopped worker.
 Each later round receives the actual guarded tool observations from earlier rounds; terminal
 job decisions become receipts bound to their original event and revision. Explicit flush updates
 the indexed and serialized batch state in one transaction. Cancelled unfinished jobs re-enter
