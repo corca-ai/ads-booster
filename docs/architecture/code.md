@@ -470,7 +470,7 @@ for process launch and health checks; both default to 8090. Cross-boundary regre
 launch argv, update health and status to the same configured port. The standalone manager remains
 Python 3.10 compatible and does not import the Python 3.14 application to discover its port.
 
-`tools/github_issues.py` owns fixed-repository issue input validation, private token loading and GitHub
+`tools/github_issues.py` owns fixed-repository issue input validation, service credential resolution (private file, environment, fixed-host CLI login) and GitHub
 HTTP execution/readback. `tools/descriptors.py` supplies its external-effect
 approval descriptor; `ConfiguredAgentTools` registers it only with a configured credential.
 `cli/marketing.py` loads the token at service composition, while `cli/server.py` owns hidden operator

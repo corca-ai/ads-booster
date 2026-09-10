@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ads_booster.contracts.agent_run import AgentRunState
-from ads_booster.contracts.reasoning import ReasoningDecision
+import pytest
+
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.bootstrap import integrations
-from ads_booster.tools.github_issues import CAPABILITY, GitHubIssues
 from ads_booster.channels.slack_events import SlackEvents
+from ads_booster.contracts.agent_run import AgentRunState
+from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.tools.github_issues import CAPABILITY, GitHubIssues, token_from_env
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )
@@ -19,8 +21,6 @@ from tests.marketing.channels.test_slack_events import receive, setup_events
 if TYPE_CHECKING:
     from pathlib import Path
     from urllib.request import Request
-
-    import pytest
 
     from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
     from ads_booster.transport.json_types import JsonObject
@@ -51,8 +51,15 @@ class IssueReasoning:
 
 
 def configured_events(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, lost: bool = False
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, lost: bool = False, auth: str = "GH_TOKEN"
 ) -> tuple[SlackEvents, list[JsonObject], list[str]]:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env = {auth: "fixture_token"}
+    if auth == "gh":
+        binary = tmp_path / "gh"
+        _ = binary.write_text("#!/bin/sh\nprintf 'fixture_token\\n'\n")
+        binary.chmod(0o700)
+        env = {"PATH": str(tmp_path), "HOME": str(tmp_path)}
     calls: list[str] = []
 
     def opener(request: Request, *, timeout: float) -> Response:
@@ -71,7 +78,7 @@ def configured_events(
     monkeypatch.setattr(integrations, "GitHubIssues", factory)
     config = integrations.ConfiguredAgentTools(
         integrations.AgentServiceIntegrationConfig(
-            github_token="fixture_token",  # noqa: S106 - fixture credential
+            github_token=token_from_env(env),
         ),
         UnusedResearchRunner(),
     )
@@ -88,10 +95,11 @@ def approve(owner: SlackEvents, text: str) -> None:
     assert owner.work_once(now=NOW)
 
 
+@pytest.mark.parametrize("auth", ["GH_TOKEN", "GITHUB_TOKEN", "gh"])
 def test_signed_slack_issue_review_approval_readback_url_and_duplicate_delivery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth: str
 ) -> None:
-    owner, messages, calls = configured_events(tmp_path, monkeypatch)
+    owner, messages, calls = configured_events(tmp_path, monkeypatch, auth=auth)
     receive(owner, text="<@UBOT> ads-booster 저장소에 이 오류 이슈 올려줘")
     assert owner.work_once(now=NOW)
     assert not calls

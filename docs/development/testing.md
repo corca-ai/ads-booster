@@ -487,9 +487,12 @@ port survive. This does not prove the live on-prem port migration or Cloudflare 
 
 ## GitHub issues from Slack
 
-Focused owners: `tests/marketing/agent_service/test_github_issues.py`,
+Focused owners: `tests/marketing/agent_service/test_github_auth.py`,
+`tests/marketing/agent_service/test_github_issues.py`,
 `tests/marketing/channels/test_slack_github_issues.py`, and `tests/cli/test_github_setup.py`.
 For composition changes include the existing service/channels/provider/CLI selections above.
+Assert file/environment/CLI precedence, explicit disable, missing login, sanitized lookup failure,
+and signed Slack creation using environment tokens and a subprocess CLI fixture.
 The server CI includes these owners. Assert fixed repository and exact approved payload, no calls
 before approval, creation plus readback, receipt-backed URL rendering, duplicate Slack delivery,
 uncertain write no-retry after restart, private-DM denial, safe credential storage and secret-free

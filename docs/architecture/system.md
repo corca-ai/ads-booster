@@ -642,9 +642,16 @@ link backup before the new channel can take over; ordinary self-update cannot br
 ### Slack GitHub issue creation
 
 The optional `github.issue.create` integration writes only to `corca-ai/ads-booster`. A private
-operator token file is loaded at service startup, outside release state; `server github-setup`
+operator token file takes precedence at service startup, outside release state; `server github-setup`
 checks repository access and writes it atomically without rewriting Slack setup. Tokens never enter
-catalogs, reasoning requests or receipts. The GitHub REST adapter rejects redirects, POSTs only the
+catalogs, reasoning requests or receipts. When no default file exists, the same service process
+resolves `GH_TOKEN`, `GITHUB_TOKEN`, then its own `gh auth token --hostname github.com` login.
+The CLI receives fixed read-only argv, no shell or model input, closed stdin and a ten-second timeout;
+its output stays inside the credential adapter. Missing login/CLI leaves the integration absent.
+Explicit invalid file configuration never falls back. `TRACE_MARKETING_GITHUB_ENABLED=false`
+disables all sources. Startup resolution is shared by normal service starts and updater restarts;
+no developer credential is transferred and authentication alone does not prove issue-write permission.
+The GitHub REST adapter rejects redirects, POSTs only the
 approved title/body, GETs the created issue number and verifies its URL and exact text before returning
 a minimal receipt. Known HTTP rejections return sanitized failure; uncertain mutation or readback
 results use the canonical awaiting-reconciliation boundary with no blind retry.

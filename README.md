@@ -487,7 +487,21 @@ repository, title and body for review; use `검토 1` (and subsequent pages), th
 After creation and GitHub readback, the reply includes the actual issue URL. Private DMs do not
 have repository write authority. Labels, assignees, PRs and other repositories are not supported.
 
-After the update reaches your server, run as the service user:
+At service startup, authentication is resolved in this order:
+
+1. `TRACE_MARKETING_GITHUB_TOKEN_FILE`, or the existing default private `github.token` file.
+2. `GH_TOKEN`, then `GITHUB_TOKEN`, from the **service environment**.
+3. The service user's existing `github.com` login through `gh auth token --hostname github.com`,
+   with `gh` available on the service PATH.
+
+With an existing service credential that can write repository issues, the next main update/restart
+makes the tool available without a second token setup. The CLI lookup is noninteractive and bounded;
+a missing CLI or login leaves the tool disabled. An explicitly configured missing/invalid token file
+fails startup rather than silently switching accounts. Tokens never enter the model context.
+See [GitHub CLI token lookup](https://cli.github.com/manual/gh_auth_token) and
+[environment precedence](https://cli.github.com/manual/gh_help_environment).
+
+If the service user has no suitable authentication, run:
 
 ```bash
 trace-marketing server github-setup
@@ -511,8 +525,12 @@ trace-marketing server status
 The service reads that private file on startup. For a custom path, set
 `TRACE_MARKETING_GITHUB_TOKEN_FILE` in the service environment; it must name a private regular file.
 The default token file is outside the release directory and survives main updates. Rotate it with
-`server github-setup` and restart the idle service. Remove the credential file and restart to disable
-the tool. GitHub authentication for automatic main updates does not grant this write capability.
+`server github-setup` and restart the idle service. Set `TRACE_MARKETING_GITHUB_ENABLED=false` in the service environment and restart to disable
+the tool regardless of available credentials. Removing only the file enables the fallback lookup.
+An interactive shell's environment is not automatically inherited by systemd; configure its
+`~/.config/trace-marketing/agent.env` or use the service user's stored GitHub CLI login. Repository
+clone/update access alone does not establish Issues: write permission, and an unauthenticated
+server still requires setup. This change does not copy credentials from a developer machine.
 
 A timeout, malformed creation response or failed readback leaves the run awaiting reconciliation;
 creation is never blindly retried. Check the repository's recent issues before making another request.
