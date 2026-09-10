@@ -93,19 +93,21 @@ _BASE_SKILLS = (
 _MARKETING_SKILLS = (
     MarketingSkill(
         skill_id="marketing.skill_learning",
-        version="1",
-        purpose="검증된 마케팅 작업을 재사용할 스킬로 만들거나 현재 스킬을 개선한다.",
+        version="2",
+        purpose="사용자가 요청한 워크스페이스 공용 스킬을 생성하거나 수정한다.",
         required_capabilities=("skill_list", "skill_get", "skill_apply"),
         success_criteria=(
             "적용 범위·절차·실패 조건·검증 방법이 근거 있는 revision으로 저장된다.",
             "저장 receipt와 정확한 revision을 다시 읽어 확인한다.",
         ),
         procedure=(
-            "1. 현재 요청이 재사용 절차 저장인지, 이번 작업만의 수정인지 확인한다. "
+            "1. 현재 사용자가 스킬 생성·수정을 명시적으로 요청한 경우에만 저장한다. "
+            "일반 피드백, 작업 성공, 반복 패턴이나 백그라운드 학습으로 "
+            "스킬을 자동 생성·수정하지 않는다. "
             "이번 작업만의 지시를 팀 전체 규칙으로 바꾸지 않는다.\n"
             "2. skill_list의 query로 같은 목적의 스킬을 찾고 skill_get으로 반환된 "
             "skill_id와 revision_id를 읽는다. 검색에 없으면 표현을 넓히거나 페이지를 탐색한다.\n"
-            "3. 성공을 관찰한 도구 조합과 사용자에게 확인된 절차만 일반화한다. "
+            "3. 사용자가 요청한 절차를 작성한다. 아직 실행하지 않은 절차는 검증 전임을 표시한다. "
             "description에는 사용할 상황을, procedure에는 입력·단계·중단 조건을, "
             "pitfalls에는 실제 실패를, verification에는 결과 확인 방법을 적는다. "
             "applicability와 required_capability_ids를 명시하고 제품 사실·인증정보는 넣지 않는다.\n"
@@ -113,7 +115,11 @@ _MARKETING_SKILLS = (
             "update는 읽은 expected_revision_id에 묶는다. 출처·digest·작성자·시각을 꾸미지 않는다. "
             "충돌이면 최신 내용을 다시 읽고 차이를 판단한다. 무조건 재시도하지 않는다. "
             "기본 스킬 변경은 사용자가 현재 요청에서 정확한 스킬을 지정한 경우에만 시도한다.\n"
-            "5. 적용 receipt와 skill_get readback을 확인한 뒤 저장 결과를 알린다. "
+            "5. 적용 receipt와 skill_get readback을 확인한 뒤 "
+            "워크스페이스 공용 저장 결과를 알린다. "
+            "skill_explicit_request_required이면 저장됐다고 말하지 말고 "
+            "사용자에게 `스킬 만들기: 목적과 절차` 또는 `스킬 수정: 스킬 ID와 변경 내용`으로 "
+            "직접 요청하도록 안내한다. 애매한 발화를 임의로 저장 요청으로 바꾸지 않는다. "
             "다른 작업에서 재사용할 때에도 필요한 도구·권한·출처의 현재 유효성을 확인한다. "
             "스킬 저장은 실행 도구 등록이나 외부 게시 승인이 아니다. "
             "새 실행 도구가 필요하면 입력·출력·효과·권한·검증 사례를 갖춘 구현 제안을 만든다."
