@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -112,6 +113,26 @@ def test_selected_skill_retains_current_source_dependency_and_excludes_stale_hea
         now=NOW,
     )
     assert isinstance(prepared, PreparedKnowledgeContext)
+    replay = assembler.prepare(
+        processor.actor,
+        task,
+        query="Use learned.context-source",
+        tool_catalog=host.catalog(),
+        capability_snapshot=snapshot,
+        now=NOW,
+    )
+    assert isinstance(replay, PreparedKnowledgeContext)
+    assert replay.receipt == prepared.receipt
+    later = assembler.prepare(
+        processor.actor,
+        task,
+        query="Use learned.context-source",
+        tool_catalog=host.catalog(),
+        capability_snapshot=snapshot,
+        now=NOW + timedelta(seconds=1),
+    )
+    assert isinstance(later, PreparedKnowledgeContext)
+    assert later.receipt.receipt_id != prepared.receipt.receipt_id
     assert prepared.receipt.selected_skill_revisions[0].skill_id == record.skill_id
     skill_blocks = [block for block in prepared.blocks if block.block_id.startswith("skill.")]
     assert "unavailable_capability_ids: knowledge_search" in skill_blocks[0].text

@@ -234,7 +234,10 @@ def test_u2_new_thread_reads_u1_learning(tmp_path: Path) -> None:
         )
         assert committed is not None
         assert committed.record.version == "learned.u1.receipt-rules.r1"
-        receive(owner, user="U2", text="<@UBOT> 새 작업에서도 저장된 절차를 확인해줘", ts="100.002")
+        receive(
+            owner, user="U2",
+            text="<@UBOT> 새 작업에서 learned.u1.receipt-rules 절차를 확인해줘", ts="100.002",
+        )
         while owner.work_once(now=NOW):
             pass
 

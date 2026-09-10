@@ -158,17 +158,10 @@ class KnowledgeContextAssembler:
         )
         references = (*skill_blocks, *references)
         exclusions = (*skill_exclusions, *exclusions)
-        receipt_id = (
-            "receipt."
-            + sha256(
-                contract_sha256(request).encode()
-                + "".join(block.block_id for block in (*required, *references)).encode()
-            ).hexdigest()[:40]
-        )
         reference_tokens = _token_upper_bound(references)
         receipt = ContextReceipt(
             schema="knowledge.context-receipt.v1",
-            receipt_id=receipt_id,
+            receipt_id="receipt.pending",
             task_ref=task.task_id,
             scoped_actor_ref=actor.actor_id,
             team_id=actor.workspace_id,
@@ -198,6 +191,16 @@ class KnowledgeContextAssembler:
             retrieval_status=retrieval_status,
             created_at=now,
         )
+        # Selection exclusions, source revisions and observation time can change even
+        # when the visible block IDs do not. Bind the entire observation, not its labels.
+        identity = contract_sha256(
+            {
+                "request": request.model_dump(mode="json", by_alias=True),
+                "receipt": receipt.model_dump(mode="json", by_alias=True),
+                "blocks": [block.model_dump(mode="json") for block in (*required, *references)],
+            }
+        )
+        receipt = receipt.model_copy(update={"receipt_id": "receipt." + identity[:40]})
         persist_context_receipt(self.repository, receipt)
         return PreparedKnowledgeContext(
             schema="knowledge.prepared-context.v1",
