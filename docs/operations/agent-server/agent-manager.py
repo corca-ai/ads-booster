@@ -15,6 +15,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -305,14 +306,22 @@ def restore_state(backup: Path) -> None:
 
 
 def knowledge_paths() -> tuple[Path, Path, Path] | None:
-    values = tuple(
-        os.environ.get(name, "").strip()
-        for name in (
-            "TRACE_MARKETING_KNOWLEDGE_ROOT",
-            "TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT",
-            "TRACE_MARKETING_KNOWLEDGE_POLICY",
-        )
+    names = (
+        "TRACE_MARKETING_KNOWLEDGE_ROOT",
+        "TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT",
+        "TRACE_MARKETING_KNOWLEDGE_POLICY",
     )
+    configured: dict[str, str] = {}
+    environment = CONFIG.with_name("agent.env")
+    if environment.is_file():
+        for line in environment.read_text().splitlines():
+            name, separator, value = line.strip().partition("=")
+            if separator and name in names:
+                parsed = shlex.split(value, comments=False)
+                if len(parsed) != 1:
+                    raise RuntimeError("knowledge_configuration_invalid")
+                configured[name] = parsed[0]
+    values = tuple(configured.get(name, os.environ.get(name, "")).strip() for name in names)
     if not any(values):
         return None
     if not all(values):
@@ -343,10 +352,11 @@ def backup_knowledge(executable: Path, destination: Path) -> Path | None:
             str(destination),
         ]
     )
-    receipt = json.loads(output)
-    if not isinstance(receipt, dict) or not isinstance(receipt.get("path"), str):
-        raise RuntimeError("knowledge_backup_receipt_invalid")
-    return Path(receipt["path"])
+    receipt = cast("dict[str, Any]", json.loads(output))
+    path = receipt.get("path")
+    if not isinstance(path, str):
+        raise TypeError("knowledge_backup_receipt_invalid")
+    return Path(path)
 
 
 def restore_knowledge(executable: Path, backup: Path) -> None:
@@ -393,7 +403,9 @@ def recover(root: Path) -> None:
         _ = systemctl("stop", UNIT)
         restore_state(Path(journal["backup"]))
         if journal.get("knowledge_backup"):
-            restore_knowledge(previous / ".venv/bin/trace-marketing", Path(journal["knowledge_backup"]))
+            restore_knowledge(
+                previous / ".venv/bin/trace-marketing", Path(journal["knowledge_backup"])
+            )
         select(root, previous)
     # During draining/prepared the pointer and canonical state were never changed.
     _ = systemctl("start", UNIT)
@@ -535,6 +547,26 @@ def run(root: Path) -> NoReturn:
         TRACE_MARKETING_RELEASE=read_json(release / "release.json")["release"],
     )
     executable = str(release / ".venv/bin/trace-marketing")
+    if CONFIG.with_name("agent.env").is_file():
+        output = command(
+            [
+                str(release / ".venv/bin/python"),
+                "-m",
+                "ads_booster.cli.server_knowledge",
+                str(root),
+                str(CONFIG.parent),
+            ]
+        )
+        settings = cast("dict[str, Any]", json.loads(output))
+        for name in (
+            "TRACE_MARKETING_KNOWLEDGE_ROOT",
+            "TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT",
+            "TRACE_MARKETING_KNOWLEDGE_POLICY",
+        ):
+            value = settings.get(name)
+            if not isinstance(value, str):
+                raise TypeError("managed_knowledge_settings_invalid")
+            env[name] = value
     os.execve(  # noqa: S606 - exact installed executable, no shell.
         executable,
         [
