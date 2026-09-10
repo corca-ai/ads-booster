@@ -121,10 +121,11 @@ The prepared index ranks relevant metadata before spending at most 2,400 token-b
 half the remaining context capacity, leaving room for team evidence. Missing capabilities are
 reported as unavailable in the current snapshot; they do not prevent reading useful guidance.
 
-For example, in an authorized shared conversation, ask “이번에 검증한 카피 검수 절차를
+For example, in an authorized workspace-scoped API conversation, ask “이번에 검증한 카피 검수 절차를
 재사용할 스킬로 저장해줘.” `marketing.skill_learning` guides discovery, a source-bound semantic
-draft through `skill_apply`, and receipt/readback verification. Private DMs expose shared skill
-reads only. Skills can compose existing tools as procedures; creating or saving one does not
+draft through `skill_apply`, and receipt/readback verification. Slack channels use channel-owned
+learning memory; channel input cannot publish workspace-wide skills. Private DMs expose only
+scoped reads allowed by current grants. Skills can compose existing tools as procedures; creating or saving one does not
 install executable code or register a new tool. See the
 [comparison and next extension boundary](docs/research/adaptive-skills.md).
 Slack follow-ups receive the current bounded conversation, including earlier assistant answers,

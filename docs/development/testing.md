@@ -45,8 +45,8 @@ executable-tool boundary are recorded in [adaptive skills](../research/adaptive-
 
 ### Marketing decisions and finished deliverables
 
-The final focused selection passed 78 tests, including the shared-learning/context identity
-regression. Exact commands and installed results are recorded in PR #153.
+The pre-integration selection passed 78 tests; after merging current main, 87 focused tests
+passed including channel memory, requester isolation and context identity. Exact commands and installed results are recorded in PR #153.
 
 Select `tests/marketing/test_funnel_analysis.py` for nested counts, objective costs, missing data,
 mixed currencies and successful/failed canonical receipts. Registration, discovery and Slack policy

@@ -89,7 +89,7 @@ must have different states. Generated code cannot grant itself permissions by na
 This is the next tool-creation acceptance contract, not a claim that Hermes, OpenClaw and Ceal
 have been fully merged or that unattended self-modification is ready.
 
-## Verification record
+## Verification record (before channel-memory integration)
 
 Final local wheel: `0.6.0`, SHA-256
 `aaed4e4eeffe29064d00e40252cb5425ddc83bcd0d2796bd6114fa97482613dd`.
@@ -120,3 +120,11 @@ The corrected final installed fixture passed all six cases: source-linked learni
 member, shared/private isolation, built-in protection, conflict/unknown-send recovery and normal
 learning silence. Evidence: `/private/tmp/trace-adaptive-152/fixture-exact.json`. It uses fixed
 provider output and captured Slack sends, separately from the real-model canary above.
+
+## Current scope after main integration
+
+Main 0.7.0 admits Slack source evidence at channel scope. Such evidence can support
+channel-owned learning memory, but cannot publish workspace-wide skills. Workspace skill authoring
+requires workspace-scoped authenticated API ingress. Older Slack skill-writing fixture/model
+results above describe the preceding 0.6.0 authority contract, not current Slack permissions.
+See [marketing colleague](marketing-colleague.md) and PR #153 for integration verification.
