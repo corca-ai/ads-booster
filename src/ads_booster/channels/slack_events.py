@@ -163,6 +163,7 @@ class SlackEvents:
             capability_policy=CapabilityPolicy(
                 allowed_capability_ids=(
                     "research.search",
+                    "marketing.analyze",
                     "skills.list",
                     "skills.read",
                     *sorted(READ_ONLY_DM_TOOLS),

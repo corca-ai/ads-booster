@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
+from ads_booster.agent.core.registry import CapabilityPolicy, ToolRegistry
+from ads_booster.agent.service.knowledge import READ_ONLY_DM_TOOLS, KnowledgeServiceAdapter
 from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
     TrustedRunBinding,
@@ -36,6 +38,7 @@ from ads_booster.knowledge.configuration import (
     initialize_knowledge_store,
     initialize_local_configuration,
 )
+from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.contracts import (
     ConversationEventKind,
     GrantCapability,
@@ -53,6 +56,8 @@ from ads_booster.knowledge.errors import AccessDeniedError, PolicyEpochStaleErro
 from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
 from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepository
+from ads_booster.knowledge.retrieval import KnowledgeRetriever
+from ads_booster.knowledge.tools import ToolHost
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from tests.knowledge.change_test_fixtures import actor as catalog_actor
@@ -352,6 +357,22 @@ def test_private_slack_ingress_keeps_members_and_sessions_separate(tmp_path: Pat
         bindings.append(binding)
     # Then: private context stays local and stale epochs fail closed.
     alice, bob = (binding.actor for binding in bindings)
+    adapter = KnowledgeServiceAdapter(
+        owner,
+        repository,
+        ToolHost(repository),
+        KnowledgeContextAssembler(repository, KnowledgeRetriever(repository)),
+    )
+    snapshot = ToolRegistry(adapter.descriptors(now=now)).snapshot_for_plan(
+        snapshot_id="snapshot.private-tools",
+        run_id="run-alice",
+        remaining_tool_calls=4,
+        remaining_cost_units=20,
+        policy=CapabilityPolicy(),
+        now=now,
+    )
+    filtered = adapter.filter_snapshot("run-alice", snapshot)
+    assert {item.capability_id for item in filtered.descriptors} == READ_ONLY_DM_TOOLS
     assert {grant.capability for grant in alice.grants} == {
         GrantCapability.READ,
         GrantCapability.WRITE,

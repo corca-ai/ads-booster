@@ -40,6 +40,12 @@ type CurationInput = tuple[
 
 @pytest.fixture
 def curation_input(tmp_path: Path) -> Iterator[CurationInput]:
+    yield from curation_fixture(
+        tmp_path, "한국 팀의 확정 가격은 31,000원입니다.\n두 번째 문장도 온전히 보존합니다."
+    )
+
+
+def curation_fixture(tmp_path: Path, text: str) -> Iterator[CurationInput]:
     dependencies = batch_fixture(tmp_path / "dependencies")
     repository = SqliteKnowledgeRepository(tmp_path / "store")
     scoped_actor = actor()
@@ -54,7 +60,7 @@ def curation_input(tmp_path: Path) -> Iterator[CurationInput]:
         created_at=NOW,
         event_kind=ConversationEventKind.MESSAGE_FINALIZED,
         scope=scoped_actor.conversation_scope,
-        text="한국 팀의 확정 가격은 31,000원입니다.\n두 번째 문장도 온전히 보존합니다.",
+        text=text,
     )
     delivery = KnowledgeIngestion(repository).ingest(
         scoped_actor, event, envelope(event, "delivery.input")

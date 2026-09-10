@@ -1,11 +1,74 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 ## Focused checks
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
+
+### Adaptive skill discovery
+
+For bounded catalog queries, learned-skill ranking, context budgets, scoped provider guidance and
+private tool filtering, select:
+
+```bash
+python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/marketing/agent_service/test_skill_tools.py \
+  tests/knowledge/test_procedural_skills.py \
+  tests/knowledge/test_context_skill_provenance.py \
+  tests/knowledge/test_installed_service_context.py \
+  tests/providers/test_codex_reasoning.py \
+  tests/marketing/agent_service/test_creative_procedures.py \
+  tests/marketing/agent_service/test_feedback_learning.py \
+  tests/marketing/agent_service/test_integrations.py
+```
+
+Use a dependency-complete frozen development environment and run scoped Ruff/BasedPyright for the
+changed Python files. The regressions cover query/limit acceptance, Unicode matching, exact revision
+readback, independent skill budget admission, source invalidation, and DM exclusion of `skill_apply`.
+Prompt assertions verify advertised tool contracts, not model competence.
+
+Build a non-editable wheel in a fresh environment and run the existing
+`installed_learning_model_canary.py --scenario minimal-skill-reuse` command described under shared
+feedback learning. Its U1 deliberately allows only the write tool; U1 readback is unavailable and
+must be reported honestly. U2 reads the exact persisted revision after restart. This verifies a
+fixed synthetic rule, not automatic discovery quality, arbitrary tool creation or live Slack.
+Run the installed fixture harness from a sibling working directory outside both the checkout and
+the installed environment's ancestor directory; its path guard rejects an ancestor as well as the
+checkout. Loopback HTTP checks require permission to bind a local socket.
+
+The September 9 final-wheel model canary passed all 11 checks with `gpt-6-astra`, four foreground
+calls, no background/search calls and captured Slack output. The earlier candidate also passed;
+these are two executions of one synthetic scenario, not a benchmark. Research and the remaining
+executable-tool boundary are recorded in [adaptive skills](../research/adaptive-skills.md).
+
+### Marketing decisions and finished deliverables
+
+The pre-integration selection passed 78 tests; after merging current main, 87 focused tests
+passed including channel memory, requester isolation and context identity. The integrated fresh
+wheel passed 19 boundary tests and six actual-model marketing turns. Exact commands and current
+CI results are recorded in PR #153.
+
+Select `tests/marketing/test_funnel_analysis.py` for nested counts, objective costs, missing data,
+mixed currencies and successful/failed canonical receipts. Registration, discovery and Slack policy
+are covered by `test_integrations.py`, `test_skill_tools.py`, `test_creative_procedures.py`,
+`tests/knowledge/test_procedural_skills.py` and `tests/marketing/channels/test_slack_events.py`.
+
+After installing a non-editable wheel into a fresh Python 3.14 environment, run:
+
+```bash
+/absolute/fresh-venv/bin/python -I \
+  /absolute/checkout/tests/marketing/agent_service/slack_colleague_canary.py \
+  --scenario marketing --output-root /absolute/new-evidence-directory \
+  --codex /absolute/codex --model gpt-6-astra
+```
+
+Review the actual six replies against the preregistered task criteria in `rubric.json`.
+`completed` is a lifecycle state, not a quality verdict. Search and Slack sends are synthetic;
+provider calls and restart-persistent thread handling are real. Baseline/candidate comparisons,
+known weaknesses and marketing references are in [marketing colleague](../research/marketing-colleague.md).
+Do not infer competitive superiority, deployed Slack behavior or business lift from this rehearsal.
 
 ### Package-boundary migration
 
@@ -557,3 +620,14 @@ gate, stale-main skip, published-version skip and conflicting draft/tag rejectio
 not require the full repository suite. After delivery, observe the real Actions run, resolve the tag
 to its commit, download the release assets and run `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c
 SHA256SUMS` on macOS). A rerun of a published version must skip artifact mutation.
+
+## Explicit workspace skill authoring
+
+Select `tests/marketing/channels/test_slack_workspace_skills.py` for signed synthetic Slack
+create → other-channel discovery/context selection → explicit update → source deletion invalidation,
+including denied original-channel evidence reads. `test_slack_learning.py` keeps ordinary feedback
+from publishing a skill. `tests/knowledge/test_skill_authoring.py` owns direct request recognition
+and background rejection; procedural skill and context provenance owners retain CAS, protected
+overrides and stale-source checks. Repeat affected owners against a fresh non-editable wheel
+with `python -I -m pytest` from outside the checkout. Fixture reasoning and captured Slack sends
+do not establish real-model intent handling or live workspace deployment.

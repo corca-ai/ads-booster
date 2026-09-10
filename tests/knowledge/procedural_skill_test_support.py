@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+import pytest
 from pydantic import TypeAdapter
 
 from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
@@ -27,16 +29,19 @@ from ads_booster.knowledge.skill_contracts import SkillApplyInput, SkillOperatio
 from ads_booster.knowledge.tool_contracts import ToolResult, TrustedInvocationContext
 from ads_booster.transport.json_types import JsonObject
 from tests.knowledge.change_test_fixtures import NOW, PRIVATE_SCOPE
-from tests.knowledge.test_curation_inputs import envelope
+from tests.knowledge.test_curation_inputs import curation_fixture, envelope
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
+    from ads_booster.knowledge.batch_curation import CurationBatchWork
     from ads_booster.knowledge.operation_enums import SkillOrigin
     from ads_booster.knowledge.scope_contracts import ActorContext
     from ads_booster.knowledge.tools import ToolHost
+    from tests.knowledge.test_curation_inputs import CurationInput
 
 
 def skill_record(  # noqa: PLR0913 - test builder exposes independent contract fields
@@ -158,7 +163,7 @@ def foreground_override_context(
             request_id="message.builtin-override",
             run_id="run.builtin-override",
             action="input",
-            text=f"Please revise the procedure for {skill_id} in this request.",
+            text=f"Please update the skill {skill_id} in this request.",
             revision=1,
             identity=OAuthIdentity(
                 tenant_id="workspace.alpha",
@@ -192,3 +197,23 @@ def foreground_override_context(
         provenance=Provenance.HUMAN_DIRECT,
     )
     return context, source_ref
+
+
+@pytest.fixture
+def requested_skill_input(tmp_path: Path) -> Iterator[CurationInput]:
+    yield from curation_fixture(tmp_path, "스킬 만들기: 요청한 마케팅 절차를 공용 스킬로 저장")
+
+
+def requested_skill_work(inputs: CurationInput) -> CurationBatchWork:
+    """Use curation's extracted fixture evidence with a foreground user invocation."""
+    _, processor, job, event, _ = inputs
+    work = processor.build_curation_work(job)
+    return replace(
+        work,
+        trusted_context=work.trusted_context.model_copy(
+            update={
+                "run_id": "run.requested-skill",
+                "source_fetch_event": event,
+            }
+        ),
+    )

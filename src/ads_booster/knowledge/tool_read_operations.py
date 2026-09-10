@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ads_booster.knowledge.memory import MemorySnapshot
 from ads_booster.knowledge.retrieval import SearchRequest
+from ads_booster.knowledge.skill_discovery import rank_skills
 from ads_booster.knowledge.tool_contracts import (
     ExplanationData,
     KnowledgeGetInput,
@@ -200,10 +201,19 @@ def skill_list(
         request.applicability,
         include_protected=request.include_protected,
     )
+    entries = rank_skills(
+        entries, request.query, lambda entry: (entry.reference.skill_id, entry.description)
+    )
+    end = request.offset + request.limit
+    page = entries[request.offset : end]
     return success(
         context.invocation_id,
-        ToolResultStatus.NO_RESULTS if not entries else ToolResultStatus.SUCCEEDED,
-        SkillListData(entries=entries),
+        ToolResultStatus.NO_RESULTS if not page else ToolResultStatus.SUCCEEDED,
+        SkillListData(
+            entries=page,
+            total_matches=len(entries),
+            next_offset=end if end < len(entries) else None,
+        ),
     )
 
 

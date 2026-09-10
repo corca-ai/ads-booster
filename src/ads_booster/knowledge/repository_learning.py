@@ -323,7 +323,16 @@ class LearningReviewCoordinator:
         at: datetime,
     ) -> bool:
         """Fence one foreground-applied target without consuming the whole source."""
-        _ = self._source(source.binding, source.event, source.receipt, at)
+        # A foreground result consumes provenance; it does not admit a background job.
+        require_actor_event_binding(source.binding.actor, source.event)
+        current = self.repository.canonical_event(source.binding.actor, source.event.message_id)
+        stored = self.repository.read_source(source.binding.actor, source.receipt.source_id)
+        if (
+            current != source.event
+            or stored is None
+            or stored.source.revision_id != source.receipt.source_revision_id
+        ):
+            _fail("learning_source_revision_stale")
         with self.repository.connection() as connection:
             _ = connection.execute("BEGIN IMMEDIATE")
             row = _OPTIONAL_STRING_ROW.validate_python(

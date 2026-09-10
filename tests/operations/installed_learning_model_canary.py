@@ -115,7 +115,7 @@ _CONFLICT_SOURCE = (
 _MINIMAL_SKILL_ID = "learned.synthetic-fern-readiness"
 _MINIMAL_TOKEN = "MINT-CIRCLE"
 _MINIMAL_U1_SOURCE = (
-    "Create and save one reusable team procedure named "
+    "Create a reusable workspace skill named "
     f"`{_MINIMAL_SKILL_ID}` for future team chats. Its rule is: when a teammate asks "
     "'What is the synthetic fern readiness code?', answer only "
     f"`{_MINIMAL_TOKEN}`. Use the available skill_apply semantic draft. This is my explicit "
