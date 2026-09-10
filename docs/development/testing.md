@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 ## Focused checks
 
@@ -42,6 +42,31 @@ The September 9 final-wheel model canary passed all 11 checks with `gpt-6-astra`
 calls, no background/search calls and captured Slack output. The earlier candidate also passed;
 these are two executions of one synthetic scenario, not a benchmark. Research and the remaining
 executable-tool boundary are recorded in [adaptive skills](../research/adaptive-skills.md).
+
+### Marketing decisions and finished deliverables
+
+The final focused selection passed 78 tests, including the shared-learning/context identity
+regression. Exact commands and installed results are recorded in PR #153.
+
+Select `tests/marketing/test_funnel_analysis.py` for nested counts, objective costs, missing data,
+mixed currencies and successful/failed canonical receipts. Registration, discovery and Slack policy
+are covered by `test_integrations.py`, `test_skill_tools.py`, `test_creative_procedures.py`,
+`tests/knowledge/test_procedural_skills.py` and `tests/marketing/channels/test_slack_events.py`.
+
+After installing a non-editable wheel into a fresh Python 3.14 environment, run:
+
+```bash
+/absolute/fresh-venv/bin/python -I \
+  /absolute/checkout/tests/marketing/agent_service/slack_colleague_canary.py \
+  --scenario marketing --output-root /absolute/new-evidence-directory \
+  --codex /absolute/codex --model gpt-6-astra
+```
+
+Review the actual six replies against the preregistered task criteria in `rubric.json`.
+`completed` is a lifecycle state, not a quality verdict. Search and Slack sends are synthetic;
+provider calls and restart-persistent thread handling are real. Baseline/candidate comparisons,
+known weaknesses and marketing references are in [marketing colleague](../research/marketing-colleague.md).
+Do not infer competitive superiority, deployed Slack behavior or business lift from this rehearsal.
 
 ### Package-boundary migration
 

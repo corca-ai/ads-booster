@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 ## On-premises Marketing Agent
 
@@ -55,6 +55,11 @@ records within a separate bounded share of context, rather than treating the ent
 one indivisible evidence group. The provider chooses discovery/authoring guidance from the
 filtered snapshot; private filtering checks `KnowledgeToolName` membership instead of prefixes.
 
+Context receipt identity hashes the complete request, receipt observation and selected block
+content. Exclusions, provenance, policy or observation time may change while block labels remain
+the same; this is a new observation, not an idempotency conflict. Exact observation replay remains
+idempotent. Persistence still rejects two different receipts with the same ID.
+
 `agent/service/task_input.py` projects the latest direct, host-admitted continuation into
 `ReasoningRequest.current_user_message`; `agent/service/application.py` supplies it independently of evidence
 compaction and uses it for retrieval. The original goal and canonical history remain unchanged.
@@ -78,6 +83,15 @@ JSON text in tool_input_json, decoded immediately back into the portable Reasoni
 and validated against the selected ToolDescriptor by the service. The receipt binds the actual
 provider output schema digest. This avoids sending recursive open-object schemas that the live
 structured-output provider rejects; canonical invocation input and history remain structured JSON.
+
+## Marketing analysis
+
+`learning/funnel_analysis.py` owns bounded descriptive funnel contracts and decimal arithmetic.
+`tools/marketing_analysis.py` adapts them to the canonical `marketing.analyze` descriptor and
+receipts; `bootstrap/integrations.py` registers it. This observation-only tool imports no channel,
+provider or mutable agent state. Known semantic input errors return failed receipts without raw
+input values; successful ratios are decimal strings compatible with the portable ledger.
+`agent/service/skills.py` owns growth/customer-insight procedures and their readiness requirements.
 
 ## Web and Slack onboarding owners
 

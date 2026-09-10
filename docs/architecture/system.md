@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 ## Runtime ownership
 
@@ -44,7 +44,16 @@ Tunnel or Linux deployment acceptance. See the [server guide](../operations/agen
 ## Browser and Slack admission
 
 The installed service exposes read-only `skills.list` / `skills.read` tools alongside action
-tools. The planner discovers purpose/version metadata, reads a selected procedure, then chooses
+tools. `marketing.analyze` is a zero-cost observation of caller-supplied, bounded funnel counts,
+registered even without external credentials and allowed in admitted private Slack conversations.
+It returns arithmetic and limitations through canonical invocation/evidence/receipt records, without
+network calls or separate state. Decimal strings preserve exact portable receipt serialization;
+semantic input rejection is a known failed receipt, not an uncertain external effect.
+Growth/customer-insight procedures guide outcome selection, customer evidence and finished copy.
+Knowledge context receipts bind the complete selection observation, including exclusions and
+observation time. Stable block labels alone cannot identify a selection after a skill is learned.
+Existing receipts remain immutable; this identity change needs no data migration.
+The planner discovers purpose/version metadata, reads a selected procedure, then chooses
 each subsequent action against its current capability snapshot and observed receipts. Procedure
 loading neither executes a skill Run nor grants production/publication authority. Reads cost zero
 operation units but consume the existing tool-call budget. Skills cover opportunity research,

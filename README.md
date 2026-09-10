@@ -97,6 +97,15 @@ provide a correction, or send a human-made result. `어디까지 됐어?` reads 
 `새 작업 <request>` starts independent work. A stopped external action is never claimed
 undone. Existing `/trace` commands and server onboarding continue to work.
 
+For supplied funnel counts, `marketing.analyze` calculates stage conversion and cost per desired
+customer outcome, with explicit denominators and comparison limits. It needs no credentials and
+is available in admitted Slack channels and private conversations. Counts must be nested unique
+people from mature cohorts; spend is a decimal string such as `"300.00"`. Unknown spend and zero
+denominators remain undefined. The tool does not collect analytics or authorize budget changes.
+Growth and customer-interview skills connect these observations to experiments and finished copy.
+See the [marketing colleague evaluation](docs/research/marketing-colleague.md) for research,
+observed weaknesses and the limits of the synthetic Slack rehearsal.
+
 The agent can discover installed procedures with `skills.list` and load one exact version with
 `skills.read`. Marketing opportunity research, strategy, copywriting and experiment analysis are
 reusable skills; their full instructions are loaded only when selected. Skill reads use the same
