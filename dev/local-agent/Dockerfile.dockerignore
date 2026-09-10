@@ -1,0 +1,6 @@
+**
+!pyproject.toml
+!README.md
+!src/**
+!docs/operations/agent-server/**
+!dev/local-agent/start.sh

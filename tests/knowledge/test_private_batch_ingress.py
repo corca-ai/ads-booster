@@ -2,33 +2,35 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pytest
 from pydantic import TypeAdapter
 
-from ads_booster.knowledge.configuration import (
-    KnowledgeSettings,
-    initialize_knowledge_store,
-    initialize_local_configuration,
-)
-from ads_booster.knowledge.contracts import ConversationEventKind
 from ads_booster.bootstrap.lifecycle import build_installed_knowledge_runtime
 from ads_booster.channels.contracts import ChannelIdentityBinding
 from ads_booster.channels.knowledge_ingress_slack import (
     SlackIngressRequest,
     build_slack_ingress,
 )
+from ads_booster.knowledge.configuration import (
+    KnowledgeSettings,
+    initialize_knowledge_store,
+    initialize_local_configuration,
+)
+from ads_booster.knowledge.contracts import ConversationEventKind
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from tests.knowledge.test_installed_service_context import reference_batch
 
-if TYPE_CHECKING:
-    import pytest
 
-
+@pytest.mark.parametrize(
+    ("private", "same_channel"), [(True, False), (False, False), (False, True)]
+)
 def test_private_slack_messages_reach_curation_with_registered_actors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    private: bool,
+    same_channel: bool,
 ) -> None:
     # Given: the installed service composition with a controlled model and two private sessions.
     monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", reference_batch)
@@ -68,7 +70,8 @@ def test_private_slack_messages_reach_curation_with_registered_actors(
                         member_id="alice",
                         created_at=now - timedelta(days=1),
                     ),
-                    private=True,
+                    private=private,
+                    channel_id="D1" if private else ("C1" if same_channel else f"C{session}"),
                     reply_to=None,
                     attachments=(),
                     observed_at=now,
@@ -92,6 +95,11 @@ def test_private_slack_messages_reach_curation_with_registered_actors(
                 db.execute(
                     """SELECT count(DISTINCT scope_key) FROM curation_batches
                     WHERE state='completed'""",
+                ).fetchone()
+            ) == (1 if same_channel else 2,)
+            assert TypeAdapter(tuple[int]).validate_python(
+                db.execute(
+                    "SELECT count(*) FROM curation_batches WHERE state='completed'"
                 ).fetchone()
             ) == (2,)
     finally:

@@ -1,0 +1,22 @@
+name: trace-local-test
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: dev/local-agent/Dockerfile
+    init: true
+    ports:
+      - "127.0.0.1:18090:8090"
+    environment:
+      CODEX_HOME: /state/codex
+      TRACE_MARKETING_KNOWLEDGE_ROOT: /state/knowledge
+      TRACE_MARKETING_KNOWLEDGE_CONTROL_ROOT: /state/knowledge-control
+      TRACE_MARKETING_KNOWLEDGE_POLICY: /state/knowledge-policy.json
+    volumes:
+      - ../../.agent-workspace/docker-test:/state
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

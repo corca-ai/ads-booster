@@ -477,6 +477,8 @@ class KnowledgeRetriever:
         if not brand_target_matches(kind, brand_id, request.brand_id):
             return None
         entry = MemoryEntry.model_validate_json(_TEXT.validate_python(row[3]))
+        if not request.historical and entry.expires_at is not None and entry.expires_at <= now:
+            return None
         if not _readable(actor, entry.scope, now):
             return None
         stored_memory = self._repository.read_memory(

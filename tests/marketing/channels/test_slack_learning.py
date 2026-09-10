@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from pydantic import TypeAdapter
+
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.bootstrap.lifecycle import build_installed_knowledge_runtime
 from ads_booster.channels.slack_events import SlackEvents
@@ -20,13 +22,20 @@ from ads_booster.knowledge.configuration import (
     initialize_knowledge_store,
     initialize_local_configuration,
 )
-from ads_booster.knowledge.contracts import EvidenceKind, InstructionAuthority, Provenance
+from ads_booster.knowledge.contracts import (
+    EvidenceKind,
+    InstructionAuthority,
+    MemoryKind,
+    Provenance,
+    ScopeKind,
+)
 from ads_booster.knowledge.evidence_contracts import EvidenceRef
 from ads_booster.knowledge.operation_enums import SkillOperationKind, SkillOrigin
 from ads_booster.knowledge.skill_contracts import SkillApplyInput, SkillOperation
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from tests.knowledge.procedural_skill_test_support import skill_record
+from tests.knowledge.test_curation_remember import MemoryProvider
 from tests.marketing.agent_service.test_application import AskThenStopReasoning
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import (
@@ -206,11 +215,24 @@ class ApplyLearningThenStop:
         return _reasoning_result(request, decision)
 
 
-def test_u2_new_thread_reads_u1_learning(tmp_path: Path) -> None:
-    # Given: the installed three-path knowledge configuration and two admitted Slack members.
+class RequestMoreInput:
+    def plan(self, request: ReasoningRequest) -> ReasoningResult:
+        return _reasoning_result(
+            request,
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="request_input",
+                expected_outcome="Keep the ongoing task open while its correction is retained.",
+                reasoning_summary="Further task details are still needed.",
+            ),
+        )
+
+
+def test_channel_cannot_publish_workspace_skill(tmp_path: Path) -> None:
+    # Given: an installed runtime and an actor admitted only to the Slack channel.
     owner, installed, _ = _installed_events(tmp_path)
     try:
-        # When: U1 corrects a shared procedure, it commits, and U2 starts a different thread.
+        # When: U1 attempts a workspace skill write from the channel source.
         receive(owner, user="U1", text="<@UBOT> 앞으로는 완료된 도구 receipt만 절차로 남겨줘")
         assert owner.work_once(now=NOW)
         admitted = owner.store.latest_knowledge_event(owner._message_id("C1", "100.001"))  # pyright: ignore[reportPrivateUsage]
@@ -228,39 +250,102 @@ def test_u2_new_thread_reads_u1_learning(tmp_path: Path) -> None:
         invocation = next(item for item in u1_records if item.kind is AgentRecordKind.INVOCATION)
         tool_receipt = next(item for item in u1_records if item.kind is AgentRecordKind.RECEIPT)
         assert tool_receipt.payload["invocation_sha256"] == invocation.payload_sha256
-        assert tool_receipt.payload["disposition"] == "succeeded"
-        committed = installed.adapter.repository.read_skill(
-            admitted[1].actor, "learned.u1.receipt-rules"
+        assert tool_receipt.payload["disposition"] == "failed"
+        output_record = next(
+            item
+            for item in u1_records
+            if item.payload_schema_version == "trace.tool-output-evidence.v1"
         )
-        assert committed is not None
-        assert committed.record.version == "learned.u1.receipt-rules.r1"
+        output = output_record.payload["output"]
+        assert isinstance(output, dict)
+        assert output["error_code"] == "skill_shared_write_required"
+        assert installed.adapter.repository.read_skill(
+            admitted[1].actor, "learned.u1.receipt-rules"
+        ) is None
+        with installed.adapter.repository.connection() as connection:
+            row = TypeAdapter(tuple[int]).validate_python(
+                connection.execute(
+                    "SELECT COUNT(*) FROM skills WHERE workspace_id=? AND skill_id=?",
+                    ("team", "learned.u1.receipt-rules"),
+                ).fetchone()
+            )
+        assert row[0] == 0
+    finally:
+        installed.runtime.close()
+
+
+def _remember_channel_batch(
+    provider: CodexKnowledgeProvider,
+    batch_id: str,
+    jobs: tuple[CurationBatchJobContext, ...],
+    *,
+    timeout_seconds: float,
+) -> CurationBatchDecision:
+    _ = provider
+    return MemoryProvider().decide_batch(batch_id, jobs, timeout_seconds=timeout_seconds)
+
+
+def test_u2_new_thread_reads_u1_learning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: two admitted Slack users and the installed channel memory writer.
+    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _remember_channel_batch)
+    owner, installed, _ = _installed_events(tmp_path)
+    try:
+        # When: U1's source is committed as channel memory before U2 opens a new thread.
         receive(
-            owner, user="U2",
-            text="<@UBOT> 새 작업에서 learned.u1.receipt-rules 절차를 확인해줘", ts="100.002",
+            owner,
+            user="U1",
+            text="<@UBOT> 앞으로는 완료된 도구 receipt만 절차로 남겨줘",
+            ts=str(NOW.timestamp() - 2),
+        )
+        while owner.work_once(now=NOW):
+            pass
+        installed.runtime.run_until_idle(flush_batches=True)
+        u1_run = owner.commands.application.service.repository.list_runs("team")[0]
+        binding = installed.adapter.ingress.binding_for_run(u1_run.run_id)
+        assert binding is not None
+        document_id = installed.adapter.repository.find_memory_document_id(
+            binding.actor, MemoryKind.CORE, None, None
+        )
+        assert document_id is not None
+        committed = installed.adapter.repository.read_memory(binding.actor, document_id)
+        assert committed is not None
+        assert committed.document.owned_scope.kind is ScopeKind.CHANNEL
+        assert committed.document.owned_scope.channel_id == "C1"
+        assert any("완료된 도구 receipt" in entry.text for entry in committed.entries)
+        receive(
+            owner,
+            user="U2",
+            text="<@UBOT> 새 작업에서도 저장된 절차를 확인해줘",
+            ts=str(NOW.timestamp() - 1),
         )
         while owner.work_once(now=NOW):
             pass
 
-        # Then: U2's new canonical Run carries a committed learned-skill index, not U1's thread.
+        # Then: U2's different Run selects the exact committed channel memory revision.
         runs = owner.commands.application.service.repository.list_runs("team")
-        u2_run = next(run for run in runs if run.run_id != u1_run_id)
+        u2_run = next(run for run in runs if run.run_id != u1_run.run_id)
         receipt = _prepared_learning_receipt(owner, u2_run.run_id)
-        selected = receipt["selected_skill_revisions"]
+        selected = receipt["selected_memory_revisions"]
         assert isinstance(selected, list)
         assert any(
-            isinstance(item, dict) and item["skill_id"] == "learned.u1.receipt-rules"
+            isinstance(item, dict)
+            and item["document_id"] == document_id
+            and item["revision_id"] == committed.revision.revision_id
             for item in selected
         )
     finally:
         installed.runtime.close()
 
 
-def test_correction_during_nonterminal_run_keeps_the_bound_run(tmp_path: Path) -> None:
+def test_correction_during_nonterminal_run_keeps_the_bound_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _remember_channel_batch)
     # Given: a shared Slack Run that is still awaiting input and has installed learning.
     owner, installed, _ = _installed_events(tmp_path)
     owner.commands.application.service.reasoning = AskThenStopReasoning()
     try:
-        receive(owner)
+        receive(owner, ts=str(NOW.timestamp() - 2))
         while owner.work_once(now=NOW):
             pass
         run = owner.commands.application.service.repository.list_runs("team")[0]
@@ -270,28 +355,33 @@ def test_correction_during_nonterminal_run_keeps_the_bound_run(tmp_path: Path) -
             owner,
             type="message",
             text="완료되지 않은 시도는 성공 절차로 저장하지 마",
-            ts="100.002",
-            thread_ts="100.001",
+            ts=str(NOW.timestamp() - 1),
+            thread_ts=str(NOW.timestamp() - 2),
         )
-        assert owner.work_once(now=NOW)
-        admitted = owner.store.latest_knowledge_event(owner._message_id("C1", "100.002"))  # pyright: ignore[reportPrivateUsage]
-        assert admitted is not None
-        owner.commands.application.service.reasoning = ApplyLearningThenStop(
-            _skill_apply_input(admitted[0], created_by=admitted[1].actor.actor_id)
-        )
+        owner.commands.application.service.reasoning = RequestMoreInput()
         while owner.work_once(now=NOW):
             pass
+        installed.runtime.run_until_idle(flush_batches=True)
 
         # Then: the correction remains bound to that Run and does not require terminality first.
         bound = owner.store.knowledge_ingress.execution_run_for_message(
-            owner._message_id("C1", "100.002")  # pyright: ignore[reportPrivateUsage]
+            owner._message_id("C1", str(NOW.timestamp() - 1))  # pyright: ignore[reportPrivateUsage]
         )
         assert bound == run.run_id
         assert len(owner.commands.application.service.repository.list_runs("team")) == 1
         binding = owner.store.knowledge_ingress.binding_for_run(run.run_id)
         assert binding is not None
-        learned = installed.adapter.repository.read_skill(binding.actor, "learned.u1.receipt-rules")
+        document_id = installed.adapter.repository.find_memory_document_id(
+            binding.actor, MemoryKind.CORE, None, None
+        )
+        assert document_id is not None
+        learned = installed.adapter.repository.read_memory(binding.actor, document_id)
         assert learned is not None
+        assert learned.document.owned_scope == binding.actor.conversation_scope
+        assert any("완료되지 않은 시도" in entry.text for entry in learned.entries)
+        current_run = owner.commands.application.service.repository.get("team", run.run_id)
+        assert current_run is not None
+        assert current_run.state is AgentRunState.AWAITING_INPUT
     finally:
         installed.runtime.close()
 

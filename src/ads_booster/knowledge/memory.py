@@ -18,12 +18,17 @@ from ads_booster.knowledge.change_validation import (
     require_scope_not_wider,
 )
 from ads_booster.knowledge.contract_types import (
+    ConversationEventKind,
+    ConversationRole,
+    EvidenceKind,
     GrantCapability,
+    InstructionAuthority,
     MemoryEntryKind,
     MemoryKind,
     MemoryOrigin,
     Provenance,
     ScopeKind,
+    UsageRole,
 )
 from ads_booster.knowledge.errors import EvidenceResolutionError, KnowledgePolicyError
 from ads_booster.knowledge.evidence_contracts import AuthenticatedEvent, EvidenceRef
@@ -39,6 +44,7 @@ from ads_booster.knowledge.memory_contracts import (
     MemoryRevision,
 )
 from ads_booster.knowledge.policy import MemoryAuthorityContext, require_memory_authority
+from ads_booster.knowledge.scope_contracts import channel_member_scope
 from ads_booster.knowledge.wiki_contracts import Claim
 
 if TYPE_CHECKING:
@@ -90,8 +96,11 @@ def validate_memory_change(
     catalog: ValidationCatalog,
     at: datetime,
 ) -> MemorySnapshot:
-    target_scope = snapshot.entries[0].scope if snapshot.entries else actor.conversation_scope
-    if target_scope.kind is ScopeKind.MEMBER:
+    target_scope = snapshot.document.owned_scope
+    if target_scope.kind is ScopeKind.MEMBER or (
+        target_scope.kind is ScopeKind.CHANNEL_MEMBER
+        and snapshot.document.kind is not MemoryKind.USER
+    ):
         raise ChangeValidationError(
             "shared_memory_requires_workspace_scope", snapshot.document.document_id
         )
@@ -117,7 +126,7 @@ def validate_memory_change(
     if len({entry.entry_id for entry in entries}) != len(entries):
         raise ChangeValidationError("memory_entries_not_unique", snapshot.document.document_id)
     for entry in entries:
-        _validate_entry(snapshot.document, entry, actor, catalog)
+        _validate_entry(snapshot.document, entry, actor, catalog, at)
 
     revision = MemoryRevision(
         document_id=snapshot.document.document_id,
@@ -138,8 +147,11 @@ def validate_memory_snapshot(
     catalog: ValidationCatalog,
     at: datetime,
 ) -> None:
-    target_scope = snapshot.entries[0].scope if snapshot.entries else actor.conversation_scope
-    if target_scope.kind is ScopeKind.MEMBER:
+    target_scope = snapshot.document.owned_scope
+    if target_scope.kind is ScopeKind.MEMBER or (
+        target_scope.kind is ScopeKind.CHANNEL_MEMBER
+        and snapshot.document.kind is not MemoryKind.USER
+    ):
         raise ChangeValidationError(
             "shared_memory_requires_workspace_scope", snapshot.document.document_id
         )
@@ -160,7 +172,7 @@ def validate_memory_snapshot(
         )
         raise ChangeValidationError(code, snapshot.document.document_id) from error
     for entry in snapshot.entries:
-        _validate_entry(snapshot.document, entry, actor, catalog)
+        _validate_entry(snapshot.document, entry, actor, catalog, at)
 
 
 def _validate_entry(
@@ -168,6 +180,7 @@ def _validate_entry(
     entry: MemoryEntry,
     actor: ActorContext,
     catalog: ValidationCatalog,
+    at: datetime,
 ) -> None:
     if entry.document_id != document.document_id or entry.document_kind is not document.kind:
         raise ChangeValidationError("memory_entry_document_mismatch", entry.entry_id)
@@ -175,12 +188,30 @@ def _validate_entry(
         raise ChangeValidationError("scope_expansion_forbidden", entry.entry_id)
     if entry.scope.workspace_id != document.workspace_id:
         raise ChangeValidationError("workspace_scope_mismatch", entry.entry_id)
+    if entry.scope != document.owned_scope:
+        raise ChangeValidationError("memory_entry_scope_mismatch", entry.entry_id)
     records = tuple(_resolve_evidence(ref, catalog) for ref in entry.source_refs)
+    if document.kind is MemoryKind.USER:
+        require_user_memory_entry(entry=entry, actor=actor, records=records, at=at)
     scopes = tuple(record.ref.scope for record in records)
     lineage_scope = intersect_lineage_scopes(scopes)
     require_scope_not_wider(source=lineage_scope, target=entry.scope, target_id=entry.entry_id)
     for record in records:
         require_acyclic_ancestry(record.ancestry)
+    _require_entry_authority(document, entry, actor, catalog)
+    origin_value = cast("MemoryOrigin | str", entry.origin)
+    match origin_value:
+        case MemoryOrigin.DIRECT:
+            return
+        case MemoryOrigin.WIKI_SUMMARY:
+            _require_current_wiki_summary(entry, catalog)
+        case _ as unreachable:
+            assert_never(cast("Never", unreachable))
+
+
+def _require_entry_authority(
+    document: MemoryDocument, entry: MemoryEntry, actor: ActorContext, catalog: ValidationCatalog
+) -> None:
     if entry.kind is MemoryEntryKind.DECISION or entry.authority_ref is not None:
         try:
             _ = require_memory_authority(
@@ -192,14 +223,46 @@ def _validate_entry(
         except KnowledgePolicyError as error:
             raise ChangeValidationError(error.code, entry.entry_id) from error
         _require_decision_event(entry, catalog)
-    origin_value = cast("MemoryOrigin | str", entry.origin)
-    match origin_value:
-        case MemoryOrigin.DIRECT:
-            return
-        case MemoryOrigin.WIKI_SUMMARY:
-            _require_current_wiki_summary(entry, catalog)
-        case _ as unreachable:
-            assert_never(cast("Never", unreachable))
+
+
+def require_user_memory_entry(
+    *, entry: MemoryEntry, actor: ActorContext, records: tuple[EvidenceRecord, ...], at: datetime
+) -> None:
+    if entry.scope != channel_member_scope(actor):
+        raise ChangeValidationError("user_memory_owner_mismatch", entry.entry_id)
+    if (
+        entry.origin is not MemoryOrigin.DIRECT
+        or entry.usage_role is not UsageRole.REFERENCE
+        or entry.kind is not MemoryEntryKind.FACT
+        or entry.authority_ref is not None
+        or entry.wiki_ref is not None
+    ):
+        raise ChangeValidationError("user_memory_reference_only", entry.entry_id)
+    if len(records) != len(entry.source_refs):
+        raise ChangeValidationError("user_memory_owner_evidence_required", entry.entry_id)
+    for reference, record in zip(entry.source_refs, records, strict=True):
+        event = record.canonical_event
+        if (
+            event is None
+            or reference != record.ref
+            or reference.evidence_kind is not EvidenceKind.CONVERSATION_EVENT
+            or reference.instruction_authority is not InstructionAuthority.AUTHORIZED_USER
+            or reference.provenance is not Provenance.HUMAN_DIRECT
+            or reference.segment_id is not None
+            or event.role is not ConversationRole.USER
+            or event.quoted_spans
+            or event.speaker_ref != actor.actor_id
+            or event.scope != actor.conversation_scope
+            or reference.scope != event.scope
+            or reference.evidence_id != event.message_id
+            or reference.revision_id != str(event.revision)
+            or reference.quote_sha256 != sha256(event.text.encode()).hexdigest()
+            or record.quote != event.text
+            or event.event_kind
+            not in {ConversationEventKind.MESSAGE_FINALIZED, ConversationEventKind.MESSAGE_EDITED}
+            or (event.edited_at or event.created_at) > at
+        ):
+            raise ChangeValidationError("user_memory_owner_evidence_required", entry.entry_id)
 
 
 def _resolve_evidence(ref: EvidenceRef, catalog: ValidationCatalog) -> EvidenceRecord:
@@ -268,6 +331,7 @@ __all__ = [
     "WikiClaimRecord",
     "handover_direct_entry_to_wiki",
     "invalidate_wiki_dependencies",
+    "require_user_memory_entry",
     "validate_memory_change",
     "validate_memory_snapshot",
     "visible_memory_entries",

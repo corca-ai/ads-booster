@@ -6,13 +6,12 @@ from hashlib import sha256
 from json import dumps
 from typing import TYPE_CHECKING, override
 
-from ads_booster.knowledge.contract_types import ScopeKind
-
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from ads_booster.knowledge.evidence_contracts import EvidenceRef
     from ads_booster.knowledge.scope_contracts import AccessScope
+    from ads_booster.knowledge.source_contracts import ConversationEvent
     from ads_booster.knowledge.wiki_contracts import Claim, EvidenceEdge
 
 
@@ -33,12 +32,13 @@ class EvidenceRecord:
     ref: EvidenceRef
     quote: str | None
     ancestry: tuple[EvidenceEdge, ...] = ()
+    canonical_event: ConversationEvent | None = None
 
 
 def require_scope_not_wider(*, source: AccessScope, target: AccessScope, target_id: str) -> None:
     if source.workspace_id != target.workspace_id:
         raise ChangeValidationError("workspace_scope_mismatch", target_id)
-    if source.kind is ScopeKind.MEMBER and target != source:
+    if not source.contains(target):
         raise ChangeValidationError("scope_expansion_forbidden", target_id)
 
 

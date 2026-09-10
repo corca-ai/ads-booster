@@ -25,6 +25,8 @@ from ads_booster.bootstrap.lifecycle import (
 )
 from ads_booster.channels.contracts import ChannelIdentityBinding
 from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.knowledge_ingress_api import ApiIngressRequest, build_api_ingress
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.channels.knowledge_ingress_slack import (
     SlackIngressRequest,
     build_slack_ingress,
@@ -111,32 +113,20 @@ def _admit_shared_learning_turns(installed: InstalledKnowledgeRuntime) -> None:
         == ()
     )
     now = datetime.now(UTC)
-    shared_identity = ChannelIdentityBinding(
-        schema_version="trace.channel-identity-binding.v1",
-        binding_id="learning-shared-identity",
-        installation_id="learning-slack",
-        external_user_id="learning-external-user",
+    shared_identity = OAuthIdentity(
         tenant_id="trace",
-        member_id="learning-member",
-        created_at=now,
+        principal_id="learning-member",
     )
     for ordinal in range(2, 11):
-        ingress = build_slack_ingress(
-            SlackIngressRequest(
-                conversation_id="learning-shared",
-                message_id=f"learning-message-{ordinal}",
-                run_id=f"learning-run-{ordinal}",
+        ingress = build_api_ingress(
+            ApiIngressRequest(
+                request_id=f"learning-message-{ordinal}",
+                run_id="learning-run",
                 action="input",
                 text=f"Shared launch learning turn {ordinal}",
                 revision=1,
-                external_revision=str(ordinal),
-                created_revision=str(now.timestamp()),
-                event_kind=ConversationEventKind.MESSAGE_FINALIZED,
                 identity=shared_identity,
-                private=False,
-                reply_to=None,
-                attachments=(),
-                observed_at=now,
+                occurred_at=now,
             )
         )
         assert installed.adapter.ingress.admit_standalone(ingress)
@@ -353,6 +343,7 @@ def test_private_slack_ingress_keeps_members_and_sessions_separate(tmp_path: Pat
                     created_at=now,
                 ),
                 private=True,
+                channel_id="D1",
                 reply_to=None,
                 attachments=(),
                 observed_at=now,
@@ -364,7 +355,7 @@ def test_private_slack_ingress_keeps_members_and_sessions_separate(tmp_path: Pat
         binding = owner.binding_for_run(f"run-{member}")
         assert binding is not None
         bindings.append(binding)
-    # Then: private writes stay local, shared context is read-only, and stale epochs fail closed.
+    # Then: private context stays local and stale epochs fail closed.
     alice, bob = (binding.actor for binding in bindings)
     adapter = KnowledgeServiceAdapter(
         owner,
@@ -386,7 +377,8 @@ def test_private_slack_ingress_keeps_members_and_sessions_separate(tmp_path: Pat
         GrantCapability.READ,
         GrantCapability.WRITE,
     }
-    _ = authorize_read(actor=alice, target_scope=catalog_actor().conversation_scope, at=now)
+    with pytest.raises(AccessDeniedError):
+        _ = authorize_read(actor=alice, target_scope=catalog_actor().conversation_scope, at=now)
     with pytest.raises(AccessDeniedError):
         _ = authorize_write(actor=alice, target_scope=catalog_actor().conversation_scope, at=now)
     with pytest.raises(AccessDeniedError):

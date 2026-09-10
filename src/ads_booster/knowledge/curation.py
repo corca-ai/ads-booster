@@ -7,12 +7,14 @@ from typing import Final
 from pydantic import TypeAdapter, ValidationError
 
 from ads_booster.knowledge.batch_curation import CurationBatchWork
+from ads_booster.knowledge.contract_types import ScopeKind
 from ads_booster.knowledge.curation_contracts import (
     CurationBatchDecision,
     CurationBatchJobContext,
     CurationDecision,
     CurationDecisionAction,
     CurationLimits,
+    CurationMemoryIntent,
     CurationProviderError,
     CurationRequest,
     CurationResult,
@@ -45,6 +47,7 @@ from ads_booster.knowledge.tool_contracts import (
     ToolResultStatus,
     TrustedInvocationContext,
 )
+from ads_booster.knowledge.tool_support import error_result
 from ads_booster.transport.json_types import JsonObject
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -91,6 +94,16 @@ class _CurationExecution:
 class _CurationAdvance:
     progress: CurationProgress
     terminal: CurationTerminal | None = None
+
+
+def _tool_advance(
+    progress: CurationProgress, outcome: CurationProgress | CurationTerminal
+) -> _CurationAdvance:
+    match outcome:
+        case CurationTerminal():
+            return _CurationAdvance(progress, outcome)
+        case CurationProgress():
+            return _CurationAdvance(outcome)
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +338,13 @@ class CurationRunner:
             }
         return request.model_copy(
             update={
+                "auto_memory_enabled": (
+                    self.dependencies.memory is not None
+                    and request.learning_purpose is None
+                    and request.authenticated_user_event is not None
+                    and request.authenticated_user_event.evidence_ref.scope.kind
+                    in (ScopeKind.WORKSPACE, ScopeKind.CHANNEL)
+                ),
                 "tool_catalog": tuple(
                     CurationToolDefinition(name=name, input_schema=schema)
                     for name, schema in schemas.items()
@@ -396,6 +416,9 @@ class CurationRunner:
         match decision.action:
             case CurationDecisionAction.TOOL_CALL:
                 return self._advance_tool(step, decision)
+            case CurationDecisionAction.REMEMBER:
+                outcome = self._execute_remember(step, decision.memory_intent)
+                return _tool_advance(step.progress, outcome)
             case CurationDecisionAction.QUESTION:
                 return self._advance_question(step, decision)
             case CurationDecisionAction.FINISH:
@@ -422,7 +445,7 @@ class CurationRunner:
         match outcome:
             case CurationTerminal():
                 return _CurationAdvance(step.progress, outcome)
-            case (CurationProgress() as progress, CurationTerminal() as terminal):
+            case (CurationProgress() as progress, terminal):
                 return _CurationAdvance(progress, terminal)
 
     def _advance_finish(
@@ -551,17 +574,43 @@ class CurationRunner:
             )
         return updated
 
+    def _execute_remember(
+        self, step: _CurationStep, intent: CurationMemoryIntent | None
+    ) -> CurationProgress | CurationTerminal:
+        writer = self.dependencies.memory
+        if writer is None or not step.request.auto_memory_enabled:
+            return CurationTerminal(CurationRunStatus.FAILED, "curation_memory_unavailable")
+        if intent is None:
+            return CurationTerminal(CurationRunStatus.FAILED, "curation_memory_intent_missing")
+        result = writer.write(step.request, intent, step.context)
+        progress = step.progress.record(step.decision_index, KnowledgeToolName.MEMORY_APPLY, result)
+        if progress.conflict_count > self.limits.max_conflict_redecisions:
+            return CurationTerminal(
+                CurationRunStatus.BUDGET_EXHAUSTED, "curation_conflict_budget_exhausted"
+            )
+        return progress
+
     def _execute_question(
         self,
         step: _CurationStep,
         encoded: str | None,
-    ) -> tuple[CurationProgress, CurationTerminal] | CurationTerminal:
+    ) -> tuple[CurationProgress, CurationTerminal | None] | CurationTerminal:
         if encoded is None:
             return CurationTerminal(CurationRunStatus.FAILED, "curation_decision_fields_invalid")
         try:
             arguments = _JSON_OBJECT.validate_json(encoded)
         except ValidationError:
-            return CurationTerminal(CurationRunStatus.FAILED, "curation_question_arguments_invalid")
+            return (
+                step.progress.record(
+                    step.decision_index,
+                    KnowledgeToolName.KNOWLEDGE_QUESTION,
+                    error_result(
+                        stable_id("curation-question", step.request.job_id),
+                        "curation_question_arguments_invalid",
+                    ),
+                ),
+                None,
+            )
         invocation = step.context.model_copy(
             update={"invocation_id": stable_id("curation-question", step.request.job_id)}
         )
@@ -577,6 +626,12 @@ class CurationRunner:
         )
         if result.status in {ToolResultStatus.PENDING, ToolResultStatus.REPLAYED}:
             return updated, CurationTerminal(CurationRunStatus.AWAITING_ANSWER)
+        if result.status is ToolResultStatus.REJECTED and result.error_code in {
+            "tool_input_invalid",
+            "tool_input_schema_mismatch",
+            "question_evidence_not_found",
+        }:
+            return updated, None
         return updated, CurationTerminal(
             CurationRunStatus.FAILED,
             result.error_code or "curation_question_failed",

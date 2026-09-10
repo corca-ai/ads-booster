@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
-from ads_booster.channels.contracts import ChannelIdentityBinding
-from ads_booster.channels.knowledge_ingress_slack import SlackIngressRequest, build_slack_ingress
+from ads_booster.channels.http.knowledge_ingress_api import ApiIngressRequest, build_api_ingress
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contracts import (
     ConversationEvent,
@@ -153,30 +153,18 @@ def foreground_override_context(
     repository: SqliteKnowledgeRepository, database_path: Path, skill_id: str
 ) -> tuple[TrustedInvocationContext, EvidenceRef]:
     """Admit a current shared user event for one exact builtin override target."""
-    pending = build_slack_ingress(
-        SlackIngressRequest(
-            conversation_id="conversation.override",
-            message_id="message.builtin-override",
+    pending = build_api_ingress(
+        ApiIngressRequest(
+            request_id="message.builtin-override",
             run_id="run.builtin-override",
             action="input",
             text=f"Please revise the procedure for {skill_id} in this request.",
             revision=1,
-            external_revision="1",
-            created_revision=str(NOW.timestamp()),
-            event_kind=ConversationEventKind.MESSAGE_FINALIZED,
-            identity=ChannelIdentityBinding(
-                schema_version="trace.channel-identity-binding.v1",
-                binding_id="binding.member.override",
-                installation_id="installation.slack",
-                external_user_id="member.override",
+            identity=OAuthIdentity(
                 tenant_id="workspace.alpha",
-                member_id="member.override",
-                created_at=NOW,
+                principal_id="member.override",
             ),
-            private=False,
-            reply_to=None,
-            attachments=(),
-            observed_at=NOW,
+            occurred_at=NOW,
         )
     )
     repository.register_actor(pending.binding.actor, MembershipRole.EDITOR)

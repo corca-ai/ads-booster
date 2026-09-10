@@ -26,6 +26,7 @@ from ads_booster.knowledge.grant_policy import (
     require_current_policy_epoch,
 )
 from ads_booster.knowledge.repository_identity import scope_key
+from ads_booster.knowledge.repository_personal_sources import personal_source_is_restricted
 from ads_booster.knowledge.repository_types import (
     IndexOutboxItem,
     SourceAdmissionChange,
@@ -311,6 +312,10 @@ def change_source_admission(
     try:
         with repository.connection() as connection:
             _ = connection.execute("BEGIN IMMEDIATE")
+            if searchable and personal_source_is_restricted(
+                connection, command.workspace_id, command.source_id
+            ):
+                conflict("personal_source_not_shareable", command.source_id)
             existing = _operation_receipt_in(
                 connection,
                 command.operation_id,

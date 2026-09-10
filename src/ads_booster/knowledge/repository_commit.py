@@ -7,9 +7,13 @@ from typing import TYPE_CHECKING
 from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import contract_sha256
+from ads_booster.knowledge.change_validation import ChangeValidationError, EvidenceRecord
 from ads_booster.knowledge.contracts import (
     AccessScope,
+    ConversationEvent,
+    EvidenceKind,
     KnowledgeOperation,
+    MemoryKind,
     MemoryOperation,
     OperationReceipt,
     ScopeKind,
@@ -19,8 +23,11 @@ from ads_booster.knowledge.file_store import (
     MemoryRevisionTarget,
     SkillRevisionTarget,
 )
-from ads_booster.knowledge.grant_policy import authorize_write
+from ads_booster.knowledge.grant_policy import authorize_read, authorize_write
+from ads_booster.knowledge.memory import require_user_memory_entry
+from ads_booster.knowledge.repository_conversation_deletion import READABLE_CONVERSATION_EVENT
 from ads_booster.knowledge.repository_dependency import append_dependency_invalidations
+from ads_booster.knowledge.repository_identity import scope_key
 from ads_booster.knowledge.repository_memory import (
     assert_memory_head,
     insert_memory_revision,
@@ -31,6 +38,7 @@ from ads_booster.knowledge.repository_page import (
     insert_page_revision,
     insert_page_shell,
 )
+from ads_booster.knowledge.repository_personal_sources import hide_personal_sources
 from ads_booster.knowledge.repository_skills import (
     assert_skill_head,
     insert_skill_revision,
@@ -54,8 +62,10 @@ from ads_booster.knowledge.repository_types import (
 from ads_booster.knowledge.skill_contracts import SkillOperation
 
 if TYPE_CHECKING:
+    from ads_booster.knowledge.evidence_contracts import EvidenceRef
     from ads_booster.knowledge.file_store import PublishedRevisionFile, RevisionTarget
     from ads_booster.knowledge.repository_protocol import KnowledgeRepository
+    from ads_booster.knowledge.scope_contracts import ActorContext
 
 _OPTIONAL_STRING_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 
@@ -131,11 +141,27 @@ def _authorize_commit(connection: sqlite3.Connection, command: CatalogCommit) ->
     for write in command.page_writes:
         _ = authorize_write(actor=command.actor, target_scope=write.page.scope, at=at)
     for write in command.memory_writes:
-        target_scope = AccessScope(
-            kind=ScopeKind.WORKSPACE,
-            workspace_id=write.document.workspace_id,
+        target_scope = write.document.owned_scope
+        persisted = _OPTIONAL_STRING_ROW.validate_python(
+            connection.execute(
+                "SELECT scope_key FROM memory_documents WHERE workspace_id=? AND document_id=?",
+                (write.document.workspace_id, write.document.document_id),
+            ).fetchone()
         )
+        if persisted is not None and persisted[0] != scope_key(target_scope):
+            conflict("memory_document_scope_immutable", write.document.document_id)
+        if any(entry.scope != target_scope for entry in write.entries):
+            conflict("memory_entry_scope_mismatch", write.document.document_id)
         _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
+        if write.document.kind is MemoryKind.USER:
+            if write.constraints:
+                conflict("user_memory_constraints_forbidden", write.document.document_id)
+            for entry in write.entries:
+                records = tuple(
+                    _personal_record(connection, command.actor, reference, at)
+                    for reference in entry.source_refs
+                )
+                require_user_memory_entry(entry=entry, actor=command.actor, records=records, at=at)
     if command.skill_writes:
         target_scope = AccessScope(
             kind=ScopeKind.WORKSPACE,
@@ -163,6 +189,40 @@ def _authorize_commit(connection: sqlite3.Connection, command: CatalogCommit) ->
             conflict("dependency_upstream_missing", invalidation.upstream_id)
         target_scope = AccessScope.model_validate_json(row[0])
         _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
+
+
+def _personal_record(
+    connection: sqlite3.Connection, actor: ActorContext, reference: EvidenceRef, at: datetime
+) -> EvidenceRecord:
+    error_code = "user_memory_owner_evidence_required"
+    if reference.evidence_kind is not EvidenceKind.CONVERSATION_EVENT:
+        raise ChangeValidationError(error_code, reference.evidence_id)
+    _ = authorize_read(actor=actor, target_scope=reference.scope, at=at)
+    row = _OPTIONAL_STRING_ROW.validate_python(
+        connection.execute(
+            f"""SELECT event.event_json FROM conversation_events AS event
+            WHERE event.workspace_id=? AND event.message_id=? AND CAST(event.revision AS TEXT)=?
+                AND event.scope_key=? AND {READABLE_CONVERSATION_EVENT}
+                AND NOT EXISTS (
+                    SELECT 1 FROM conversation_events AS newer
+                    WHERE newer.workspace_id=event.workspace_id
+                        AND newer.scope_key=event.scope_key
+                        AND newer.conversation_id=event.conversation_id
+                        AND newer.message_id=event.message_id
+                        AND newer.revision>event.revision
+                )""",  # noqa: S608 -- static predicate, bound inputs
+            (
+                actor.workspace_id,
+                reference.evidence_id,
+                reference.revision_id,
+                scope_key(reference.scope),
+            ),
+        ).fetchone()
+    )
+    if row is None:
+        raise ChangeValidationError(error_code, reference.evidence_id)
+    event = ConversationEvent.model_validate_json(row[0])
+    return EvidenceRecord(ref=reference, quote=event.text, canonical_event=event)
 
 
 def _assert_heads(
@@ -219,6 +279,8 @@ def _insert_revisions(
             write,
             _published(published, target),
         )
+        if write.document.kind is MemoryKind.USER:
+            hide_personal_sources(connection, workspace_id, write.document.document_id)
     for write in command.skill_writes:
         target = (
             None

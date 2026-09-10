@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
+from ads_booster.agent.service.knowledge_ingress import (
+    PendingKnowledgeIngress,
+    TrustedRunBinding,
+)
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contracts import (
     AccessScope,
@@ -19,11 +24,9 @@ from ads_booster.knowledge.contracts import (
     ScopeGrant,
     ScopeKind,
 )
-from ads_booster.agent.service.knowledge_ingress import (
-    PendingKnowledgeIngress,
-    TrustedRunBinding,
-)
-from ads_booster.channels.contracts import ChannelIdentityBinding
+
+if TYPE_CHECKING:
+    from ads_booster.channels.contracts import ChannelIdentityBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +42,7 @@ class SlackIngressRequest:
     event_kind: ConversationEventKind
     identity: ChannelIdentityBinding
     private: bool
+    channel_id: str
     reply_to: str | None
     attachments: tuple[AttachmentCapability, ...]
     observed_at: datetime
@@ -47,10 +51,24 @@ class SlackIngressRequest:
 def build_slack_ingress(request: SlackIngressRequest) -> PendingKnowledgeIngress:
     revision = request.revision
     scope = AccessScope(
-        kind=ScopeKind.MEMBER if request.private else ScopeKind.WORKSPACE,
+        kind=ScopeKind.MEMBER if request.private else ScopeKind.CHANNEL,
         workspace_id=request.identity.tenant_id,
+        channel_id=None if request.private else request.channel_id,
         member_id=request.identity.member_id if request.private else None,
         session_id=request.conversation_id if request.private else None,
+    )
+    grant_scopes = (
+        (scope,)
+        if request.private
+        else (
+            scope,
+            AccessScope(
+                kind=ScopeKind.CHANNEL_MEMBER,
+                workspace_id=request.identity.tenant_id,
+                channel_id=request.channel_id,
+                member_id=request.identity.member_id,
+            ),
+        )
     )
     actor = ActorContext(
         actor_id=request.identity.member_id,
@@ -75,14 +93,8 @@ def build_slack_ingress(request: SlackIngressRequest) -> PendingKnowledgeIngress
                 policy_epoch=1,
                 effective_at=request.identity.created_at,
             )
-            for capability, grant_scope in (
-                (
-                    GrantCapability.READ,
-                    AccessScope(kind=ScopeKind.WORKSPACE, workspace_id=request.identity.tenant_id),
-                ),
-                *(((GrantCapability.READ, scope),) if request.private else ()),
-                (GrantCapability.WRITE, scope),
-            )
+            for grant_scope in grant_scopes
+            for capability in (GrantCapability.READ, GrantCapability.WRITE)
         ),
         policy_epoch=1,
         authenticated_at=request.observed_at,

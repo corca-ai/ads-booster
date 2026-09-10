@@ -361,8 +361,9 @@ verification.
 Authenticated Agent Service and Slack adapters provide the actor, workspace, member, session, and
 grants. The service binds these identities to existing knowledge members and conversation sessions,
 preserving stored roles and revocations; replay and context preparation recheck that authority.
-Shared Slack threads use workspace scope. Private Slack DMs use member and conversation
-scope; the service filters them to read-only knowledge tools (`knowledge_search`, `knowledge_get`,
+Shared Slack conversations use workspace plus channel ID scope: threads in one channel share
+knowledge, while other channels have separate memories, Wiki and brand settings. Private Slack DMs
+use member and conversation scope, without automatically reading channel or legacy workspace data; the service filters them to read-only knowledge tools (`knowledge_search`, `knowledge_get`,
 `memory_get`, `memory_explain`, and `source_read`) and does not grant shared-memory writes or
 external delivery. Edits, deletes, and corrections enter a pending fence before the affected Run is
 prepared again.
@@ -561,6 +562,40 @@ separate durable identity without approval rights; configured approvers retain t
 Revoked/disabled identities and Slack Connect channels remain rejected. `/trace` slash commands
 retain their configured channel/member restrictions. No additional Slack scope or setup reset is
 required for mention access after updating the server.
+
+When team knowledge is configured, project conditions and corrections in shared Slack conversations
+can be retained automatically as source-backed reference memory. Mention the same project in a new
+thread to retrieve its current conditions. The background curation worker preserves the subject's
+scope and correction history; temporary or QA facts are not general preferences for unrelated work.
+A storage claim still requires a successful stored-memory read or receipt. Private chat does not
+promote information into shared memory, and the explicit work-memory review commands retain their
+existing workflow. See the [local Docker rehearsal](dev/local-agent/README.md) for isolated testing.
+
+Channel isolation also applies to reviewed work memory and work/performance observations.
+`기억 공용` shares within the current channel. Existing workspace-scoped records are preserved,
+but are excluded from channel defaults; they are not automatically copied or reassigned. The
+workspace OAuth API retains its explicit workspace scope. The local admin CLI defaults to
+workspace scope; for channel administration, use a separate private policy JSON copy with
+`"channel_id": "C0123456789"` and pass its path as `--policy`. Keep the main service policy
+unchanged. The policy copy uses the same workspace and control identity, but creates channel-specific
+grants, sessions and document IDs. Brand registration returns the brand ID to add to that policy
+copy's `brand_voice_brand_ids` before editing SOUL. Request-body scope overrides do not grant access.
+
+Personal marketing preferences use a `USER` document owned by the workspace, channel and
+authenticated Slack member. For example, “I prefer short copy with images first” becomes that
+member's default in that channel; another member has a separate profile. The preference survives
+new threads, while a different channel and DM do not inherit it. Common project facts remain in
+channel CORE memory. Current instructions and established team/brand rules take precedence over
+personal defaults; a one-time request does not change the saved default.
+
+`memory_get` with `kind: user` resolves the authenticated requester's profile without accepting
+another user's identity. The existing SQLite store owns its entries, permissions and revision
+links. Versioned Markdown remains immutable, and the current readable view is generated at
+`teams/<workspace>/channels/<channel_scope_key>/users/<encoded_member_id>/USER.md`.
+Use the agent's memory operations to make corrections; editing the generated file alone does not
+change canonical memory. Source messages remain provenance, but a message supporting personal
+preferences is excluded from common reference search, including when it also supplied a separately
+stored common fact. Existing common memory is not automatically reclassified as personal.
 
 ### Package releases
 

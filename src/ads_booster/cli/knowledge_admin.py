@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 
+from pydantic import TypeAdapter
+
 from ads_booster.cli.knowledge_runtime import CliKnowledgeSession
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.knowledge_selection import KnowledgeActionKind
-from ads_booster.knowledge.contract_types import AuthorityClass, MemoryKind
+from ads_booster.knowledge.contract_types import AuthorityClass, MemoryKind, ScopeKind
 from ads_booster.knowledge.evidence_contracts import AuthorityRef
 from ads_booster.knowledge.file_paths import MemoryRevisionTarget, RevisionFileDraft
 from ads_booster.knowledge.governance_contracts import Brand, BrandEvent, TaskBinding
@@ -23,6 +25,9 @@ from ads_booster.knowledge.repository_types import BrandRegistration
 from ads_booster.transport.json_types import JsonObject
 
 
+_BRAND_ROWS: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
+
+
 def register_brand(session: CliKnowledgeSession, request: JsonObject) -> OperationReceipt:
     operation_id = str(request.get("operation_id") or request.get("request_id") or "")
     name = str(request.get("name") or "")
@@ -31,6 +36,21 @@ def register_brand(session: CliKnowledgeSession, request: JsonObject) -> Operati
     workspace_claim = request.get("workspace_id") or request.get("workspace_ref")
     if workspace_claim is not None and str(workspace_claim) != session.actor.workspace_id:
         raise ValueError("knowledge_brand_workspace_claim_rejected")
+    if any(key in request for key in ("channel_id", "channel_ref", "scope")):
+        message = "knowledge_brand_scope_claim_rejected"
+        raise ValueError(message)
+    channel_scope = (
+        session.actor.conversation_scope
+        if session.actor.conversation_scope.kind is ScopeKind.CHANNEL
+        else None
+    )
+    if channel_scope is not None:
+        operation_id = (
+            "operation.brand."
+            + contract_sha256(
+                {"operation_id": operation_id, "scope": channel_scope.model_dump(mode="json")}
+            )[:40]
+        )
     brand_id = f"brand.{sha256(operation_id.encode()).hexdigest()[:32]}"
     now = datetime.now(UTC)
     write_grant = authorize_write(
@@ -52,6 +72,7 @@ def register_brand(session: CliKnowledgeSession, request: JsonObject) -> Operati
         name=name,
         revision=1,
         state=BrandState.ACTIVE,
+        scope=channel_scope,
     )
     event = BrandEvent(
         event_id=authority.event_id,
@@ -78,6 +99,7 @@ def register_brand(session: CliKnowledgeSession, request: JsonObject) -> Operati
         brand_id=brand_id,
         timezone="UTC",
         head_revision_id=revision_id,
+        scope=channel_scope,
     )
     receipt = OperationReceipt(
         schema="knowledge.operation-receipt.v1",
@@ -118,11 +140,13 @@ def register_brand(session: CliKnowledgeSession, request: JsonObject) -> Operati
 
 def list_brands(session: CliKnowledgeSession) -> tuple[Brand, ...]:
     with session.repository.connection() as connection:
-        rows = connection.execute(
-            "SELECT brand_id FROM brands WHERE workspace_id=? ORDER BY brand_id",
-            (session.actor.workspace_id,),
-        ).fetchall()
-    brands = tuple(session.repository.brand(session.actor, str(row[0])) for row in rows)
+        rows = _BRAND_ROWS.validate_python(
+            connection.execute(
+                "SELECT brand_id FROM brands WHERE workspace_id=? ORDER BY brand_id",
+                (session.actor.workspace_id,),
+            ).fetchall()
+        )
+    brands = tuple(session.repository.brand(session.actor, row[0]) for row in rows)
     return tuple(item for item in brands if item is not None)
 
 

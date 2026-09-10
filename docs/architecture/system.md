@@ -155,9 +155,10 @@ adapters share the canonical ingress and its authority bridge. Before admission,
 authenticated actor to stored member, session and read/write grants at the current policy epoch,
 preserving revoked memberships, closed sessions and reader roles. Outbox replay and context
 preparation recheck the stored authority. Active task lookup includes member and session identity.
-A shared Slack thread maps to workspace scope. A Slack DM maps to member plus conversation scope and
-is projected through a
-read-only capability set. The DM projection permits knowledge search/get, memory get/explain, and
+A shared Slack conversation maps to `CHANNEL(workspace_id, channel_id)`, independently of its
+thread and speaker. The signed event or stored conversation supplies the channel ID. Each Run
+receives grants for only that channel. A Slack DM maps to member plus conversation scope and
+receives only private grants through a read-only capability set. The DM projection permits knowledge search/get, memory get/explain, and
 source read; it excludes knowledge or memory writes, scheduling, purge, and external delivery. The
 canonical ingress stores the binding, conversation event, and durable outbox before dispatch. Edited,
 deleted, or correcting events create a pending fence; context preparation blocks the affected Run
@@ -236,15 +237,24 @@ identity. Curation uses the extracted text and character offsets. Its optional
 user message with no quoted spans; imported documents and other conversation roles do not gain
 user-instruction authority.
 
+Side-effect-free question input errors are returned to the curation model as observations within
+the existing decision budget. A successfully stored question still waits for an answer;
+authorization, proposal-binding and conflict failures remain terminal. Question evidence IDs and
+new-page revision expectations are described in the tool schemas, rather than left for the model
+or operator to infer.
+
 Before reasoning, the service adapter assembles a bounded context receipt from current revisions,
 constraints, grants, and task/brand binding. It stores the selected immutable revision references and
+rejects unavailable or inactive brands before changing the current task. It
 rechecks that receipt immediately before tool dispatch. Image production rechecks current knowledge authority before effects. Generic transfer contracts
 retain digest and revision provenance; removing the former hosted transport does not clear historic
 replica records or supply an external purge receipt.
 
 Deletion records a manifest and chained erase-ledger entry in the control root before blocking live
 reads. Tombstones and reverse dependencies cover source, Wiki, memory, claims, context receipts, and
-transfer replicas. Preexisting remote replicas remain `purge_pending` until separately reconciled;
+transfer replicas. Retracting a message source also blocks its canonical conversation evidence and
+derived memories; purge scrubs those canonical message payloads, including earlier revisions.
+Independent sources and other workspaces retain their evidence. Preexisting remote replicas remain `purge_pending` until separately reconciled;
 the service has no remote purge transport and does not execute or acknowledge external deletion.
 CLI purge resolves its target from the applied retraction receipt, retaining request
 identity on replay. Restore validates the manifest and file digests, applies the current erase ledger
@@ -676,6 +686,110 @@ first use without replacing existing grants or revocations. New bindings can cre
 approve effects. Shared threads remain channel/thread scoped; DMs remain member/session scoped.
 Slack Connect events are excluded. Legacy channel/member lists still constrain slash commands, not
 installed Events conversations.
+
+Knowledge curation reads the latest admitted conversation event under the maintenance worker's
+current read scope while preserving the original speaker in its evidence and authority references.
+Reading another member's shared message does not turn the maintenance worker into that author;
+question evidence-existence checks use the same scoped read path, while direct user-instruction
+lookups still require the caller to be the speaker. Private event reads
+remain member/session scoped, and curation rejects a source that differs from the canonical event.
+Knowledge tools register separate schemas for their inner result and outer execution receipt,
+so successful reads and structured errors both pass the canonical backend's receipt validation.
+
+### Automatic conversation memory
+
+Configured shared-conversation curation receives up to 12 current canonical user messages from
+that same workspace, conversation and scope, plus bounded matching CORE reference entries.
+Quoted/assistant/deleted/future or unreadable evidence is excluded. The latest correction can
+therefore retain earlier conditions without inventing source links.
+
+The curation provider can propose a typed `remember` intent containing only subject, summary and
+canonical message evidence IDs. `CurationMemoryWriter` resolves the existing CORE document and
+compiles a complete revision through the existing `memory_apply`/ChangePublisher path. It computes
+IDs and digests, rechecks source capabilities/provenance, preserves unrelated entries and prior
+retention/applicability, and uses the current document head as the CAS expectation. Older evidence
+cannot replace newer memory; replay does not create duplicate revisions. Successful memory writes
+admit the current source and feed existing index/view/consolidation workers.
+
+These are ordinary subject-scoped reference facts, not global constraints or approvals. No manual
+adoption is required for their automatic curation. Private conversations cannot use this writer to
+promote data into shared CORE, and Wiki/constraint ownership is preserved. Explicit do-not-retain
+instructions and source scope remain applicable. Incomplete or disputed input can still produce a
+bounded clarification; only verified stored/selected memory establishes cross-conversation recall.
+
+An authenticated explicit storage destination takes precedence over automatic CORE selection;
+the corresponding Wiki or memory tools still enforce their normal authority and adoption rules.
+Ordinary memory search excludes expired entries immediately; explicit historical search can retain
+them. Public memory refresh schedules resolve their document targets from the persisted schedule
+request, while internally generated refresh jobs retain revision-specific targets.
+
+### Channel-owned knowledge
+
+Shared TEAM/CORE/DAILY documents, SOUL brands, Wiki and source evidence retain an explicit channel
+owner. A document cannot change owner in a revision, and lineage cannot widen channel evidence
+into workspace scope or another channel. Retrieval, direct reads, corrections, prepared receipts
+and transfer validation check the selected resource scope. Same-channel threads share knowledge;
+DMs and other channels do not inherit it. Legacy workspace records remain under their original
+scope and are excluded from Slack channel defaults. Workspace API/local admin authority remains
+an explicit separate surface.
+
+Channel ingestion jobs and curation batches persist the submitting actor separately from shared
+channel identity. Background execution reloads current stored grants for that actor and session.
+Consolidation and view jobs carry the same scope; generated views use
+`teams/<workspace>/channels/<scope_key>/` to prevent filename collisions. A member leaving Slack
+is not automatically detected by this local policy; signed ingress, stored member/session status
+and current grants are the enforced authority sources.
+
+The channel migration preserves historical scope keys, event/revision JSON and source bytes. It adds channel
+identity, scopes canonical memory uniqueness and assigns existing brands to their legacy workspace.
+Absent optional fields are omitted from serialization to retain existing hashes. Secondary
+work-memory and observation keys also include channel identity for new channel records, with no
+unscoped fallback. Workspace OAuth endpoints do not confer channel authority.
+
+Brand and SOUL ownership follows the exact shared scope. Channel catalogs exclude other channels
+and legacy workspace brands; the same brand names can exist independently in different channels.
+The public knowledge CLI defaults to workspace administration. An operator-owned separate policy
+file may specify `channel_id` to select exact channel authority; grants, admin sessions and new
+brand/document IDs are scoped accordingly. Main service policy remains workspace-scoped. Brand
+request bodies cannot override the policy scope.
+
+### Persistent member preferences within a channel
+
+`CHANNEL_MEMBER(workspace_id, channel_id, member_id)` owns USER memory independently of session.
+The conversation actor remains CHANNEL: trusted Slack identity supplies the canonical member,
+and ingress grants access to the common channel and only that member's personal scope. Background
+jobs retain the submitting CHANNEL actor and reauthorize a personal job's exact target. Other
+members, other channels and private DM sessions do not inherit these grants. Personal scope cannot
+be supplied as a conversation actor or expanded into common scope.
+
+Automatic curation classifies `memory_intent.destination` as `channel` or `user`. Common reference
+facts use CORE; personal defaults use USER. USER publication accepts only direct reference facts
+with the owner's canonical human message evidence. It cannot publish shared constraints or adopt
+another speaker's preferences. Publication and direct catalog commits verify this boundary, retain
+evidence and revisions, and atomically hide supporting messages from shared source search.
+Source admission checks historical USER dependencies before replay so mixed common/personal
+messages cannot be made globally searchable again; their common CORE facts can still be retrieved.
+
+Context assembly selects the requester's USER entries with current channel knowledge, labels them
+as defaults, and retains current-request, selected team-constraint and brand-voice precedence.
+Personal reference blocks are considered before other optional memory references within the
+existing budget. View and consolidation workers process only the channel and requester's own
+personal documents and recheck current authority before writing USER.md. Paths encode member IDs
+under the common channel's scope key; revision files retain the existing document/revision layout.
+Retraction and purge remove a generated view only when its bytes match a redacted revision.
+This removes deleted personal text without deleting another member's view or a newer clean view;
+erase-aware restore cannot recreate the removed view from an old backup.
+
+Published schema v3/v4 retain procedural skills and feedback learning. Channel ownership is v5 and
+personal ownership is v6. Pre-merge channel-v3 and USER-v4 candidates are recognized by their exact
+checksums and gain the missing skill/learning tables before converging on v6; their historical
+schema rows are not rewritten. Unknown checksums fail closed. Scope keys, canonical JSON, original
+files and existing memory ownership are preserved. No additional personal database or direct
+Markdown ingestion path is introduced.
+
+Workspace feedback-learning jobs retain their source-bound mutation and legacy-assessment path.
+Channel conversation curation uses the scoped remember path; it does not acquire workspace grants
+to publish global procedures. The remember shortcut is disabled for learning-purpose jobs.
 
 ## Package release publication
 

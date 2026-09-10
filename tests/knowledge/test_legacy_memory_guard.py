@@ -672,6 +672,7 @@ def test_slack_continuation_selection_binds_latest_u2_actor_and_canonical_worksp
         reviewer = MemoryAccess(
             scope=MemoryScope(
                 workspace_id="team",
+                channel_id="C1",
                 product_id="trace",
                 work_id=run.run_id,
             ),
@@ -733,5 +734,7 @@ def test_slack_continuation_selection_binds_latest_u2_actor_and_canonical_worksp
         assert selection.notes == (approved,)
         assert selection.receipt.actor_id == binding.actor.actor_id
         assert selection.receipt.scope.workspace_id == binding.actor.workspace_id
+        assert selection.receipt.scope.channel_id == binding.actor.conversation_scope.channel_id
+        assert selection.receipt.scope.channel_id == "C1"
     finally:
         installed.runtime.close()
