@@ -8,9 +8,11 @@ import sqlite3
 import sys
 import venv
 from contextlib import closing
+from email.message import Message
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, cast
+from urllib.error import HTTPError
 
 import pytest
 
@@ -18,7 +20,7 @@ from ads_booster.cli import server
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from urllib.request import Request
+    from urllib.request import ProxyHandler, Request
 
 MANAGER = Path(__file__).resolve().parents[2] / "docs/operations/agent-server/agent-manager.py"
 LEGACY_MAINTENANCE = "ads_booster.marketing.agent_service.maintenance"
@@ -38,6 +40,7 @@ class Manager(Protocol):
     def select(self, root: Path, release: Path) -> None: ...
     def probe(self, release: Path) -> None: ...
     def health(self) -> dict[str, object]: ...
+    def wait_health(self, release: str, *, drain: bool = False, seconds: int = 60) -> None: ...
     def server_port(self) -> int: ...
     def run(self, root: Path) -> NoReturn: ...
 
@@ -65,6 +68,42 @@ def setup(root: Path, manager: Manager) -> tuple[Path, Path]:
         _ = db.execute("CREATE TABLE records (value TEXT)")
         _ = db.execute("INSERT INTO records VALUES ('approved-and-sent')")
     return previous, candidate
+
+
+def test_degraded_worker_can_drain_but_cannot_activate(
+    manager: Manager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    degraded = {
+        "status": "degraded",
+        "owner": "on_prem_agent",
+        "update_protocol": 1,
+        "release": "candidate",
+        "maintenance": True,
+        "active": 0,
+        "knowledge_worker": "stopped",
+    }
+    monkeypatch.setattr(manager, "health", lambda: degraded)
+    manager.wait_health("candidate", drain=True, seconds=1)
+    with pytest.raises(RuntimeError, match="candidate_health_failed"):
+        manager.wait_health("candidate", seconds=1)
+
+
+def test_health_reads_degraded_response_body(
+    manager: Manager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b'{"status":"degraded","owner":"on_prem_agent"}'
+    error = HTTPError("http://127.0.0.1:8090/health", 503, "degraded", Message(), BytesIO(payload))
+
+    class Opener:
+        def open(self, _url: str, *, timeout: int) -> BytesIO:
+            assert timeout == 3
+            raise error
+
+    def opener(_handler: ProxyHandler) -> Opener:
+        return Opener()
+
+    monkeypatch.setattr(manager, "build_opener", opener)
+    assert manager.health() == {"status": "degraded", "owner": "on_prem_agent"}
 
 
 def records(state: Path) -> list[tuple[str]]:

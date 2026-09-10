@@ -20,9 +20,10 @@ import subprocess
 import sys
 import time
 import uuid
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, NoReturn, cast
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 PROTOCOL = 1
@@ -94,6 +95,17 @@ def health() -> dict[str, Any]:
         ) as response:
             value = json.load(response)
             return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+    except HTTPError as error:
+        if error.code != HTTPStatus.SERVICE_UNAVAILABLE:
+            error.close()
+            return {}
+        try:
+            value = json.load(error)
+        except (OSError, UnicodeError, ValueError):
+            return {}
+        finally:
+            error.close()
+        return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
     except (OSError, ValueError, URLError):
         return {}
 
@@ -108,6 +120,7 @@ def wait_health(release: str, *, drain: bool = False, seconds: int = 60) -> None
             and value.get("release") == release
             and value.get("maintenance") is True
             and value.get("active") == 0
+            and (drain or value.get("status") == "ok")
         ):
             return
         time.sleep(1)
