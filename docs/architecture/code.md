@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 ## On-premises Marketing Agent
 
@@ -46,6 +46,20 @@ loads arbitrary files/URLs nor creates another Run. The canonical runtime owns i
 receipt and budget accounting. `providers/codex_reasoning.py` owns generic discover/act/inspect guidance;
 marketing procedure bodies remain in the skill catalog rather than the initial prompt.
 
+`knowledge/skill_discovery.py` owns deterministic metadata-only ranking used by both catalog
+adapters and the scoped context assembler. It has no persistence, tool execution or authority
+logic. Knowledge scope, applicability and source-currentness are resolved before ranking.
+`knowledge/tool_read_operations.py` pages effective catalog results; the built-in adapter retains
+its versioned read contract. `knowledge/context_selection.py` admits independent ranked skill
+records within a separate bounded share of context, rather than treating the entire catalog as
+one indivisible evidence group. The provider chooses discovery/authoring guidance from the
+filtered snapshot; private filtering checks `KnowledgeToolName` membership instead of prefixes.
+
+Context receipt identity hashes the complete request, receipt observation and selected block
+content. Exclusions, provenance, policy or observation time may change while block labels remain
+the same; this is a new observation, not an idempotency conflict. Exact observation replay remains
+idempotent. Persistence still rejects two different receipts with the same ID.
+
 `agent/service/task_input.py` projects the latest direct, host-admitted continuation into
 `ReasoningRequest.current_user_message`; `agent/service/application.py` supplies it independently of evidence
 compaction and uses it for retrieval. The original goal and canonical history remain unchanged.
@@ -69,6 +83,15 @@ JSON text in tool_input_json, decoded immediately back into the portable Reasoni
 and validated against the selected ToolDescriptor by the service. The receipt binds the actual
 provider output schema digest. This avoids sending recursive open-object schemas that the live
 structured-output provider rejects; canonical invocation input and history remain structured JSON.
+
+## Marketing analysis
+
+`learning/funnel_analysis.py` owns bounded descriptive funnel contracts and decimal arithmetic.
+`tools/marketing_analysis.py` adapts them to the canonical `marketing.analyze` descriptor and
+receipts; `bootstrap/integrations.py` registers it. This observation-only tool imports no channel,
+provider or mutable agent state. Known semantic input errors return failed receipts without raw
+input values; successful ratios are decimal strings compatible with the portable ledger.
+`agent/service/skills.py` owns growth/customer-insight procedures and their readiness requirements.
 
 ## Web and Slack onboarding owners
 
@@ -156,14 +179,23 @@ built-in when an override's base digest no longer matches. `repository_skills.py
 `skill_contracts.py`, `schema_skills.py`, and `schema_learning.py` remain leaves of the existing
 repository, migration, file-publication, CAS, and receipt owners. `learning_contracts.py` carries
 typed terminal experience references and review requests; it never grants user authority. A
-protected skill changes only from a current authenticated foreground request.
+skill changes only from a current authenticated foreground request.
+`knowledge/skill_authoring.py` owns the bounded explicit-directive grammar;
+`skill_publication_validation.py` binds action and provenance to the trusted current user event.
+`repository_commit.py` rechecks channel/workspace write authority and request currentness in the
+transaction. `skill_source_currentness.py` projects only source revision/hash metadata for published
+channel-authored skills, allowing workspace reuse without granting channel history access.
+`context_selection.py` uses that projection for skill dependency receipts. Background `curation.py`
+excludes skill mutations from its catalog; normal feedback continues through scoped memory owners.
 `repository_learning_recovery.py` checks the persisted learning partition against current authority;
 its `repository_learning_recovery_write.py` leaf atomically reattaches released jobs and admissions
 to the same sealed round, or records terminal failure. No separate skill store, learning provider,
 daemon, or verifier is composed.
 
 `LearningReviewCoordinator.consume_target` fences each foreground-applied target by source revision
-and target ID. The fence removes only the consumed target from later learning review and preserves
+and target ID. Foreground consumption validates the canonical event and source revision without
+admitting a background batch or requiring its policy version. The fence removes only the consumed
+target from later learning review and preserves
 the rest of the source. `TerminalExperienceAdmission` writes receipt-grounded experiences through
 the existing Agent Service `append_step` after-commit seam and replays its outbox through the live
 runtime dispatcher.

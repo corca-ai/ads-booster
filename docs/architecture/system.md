@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 ## Runtime ownership
 
@@ -44,7 +44,16 @@ Tunnel or Linux deployment acceptance. See the [server guide](../operations/agen
 ## Browser and Slack admission
 
 The installed service exposes read-only `skills.list` / `skills.read` tools alongside action
-tools. The planner discovers purpose/version metadata, reads a selected procedure, then chooses
+tools. `marketing.analyze` is a zero-cost observation of caller-supplied, bounded funnel counts,
+registered even without external credentials and allowed in admitted private Slack conversations.
+It returns arithmetic and limitations through canonical invocation/evidence/receipt records, without
+network calls or separate state. Decimal strings preserve exact portable receipt serialization;
+semantic input rejection is a known failed receipt, not an uncertain external effect.
+Growth/customer-insight procedures guide outcome selection, customer evidence and finished copy.
+Knowledge context receipts bind the complete selection observation, including exclusions and
+observation time. Stable block labels alone cannot identify a selection after a skill is learned.
+Existing receipts remain immutable; this identity change needs no data migration.
+The planner discovers purpose/version metadata, reads a selected procedure, then chooses
 each subsequent action against its current capability snapshot and observed receipts. Procedure
 loading neither executes a skill Run nor grants production/publication authority. Reads cost zero
 operation units but consume the existing tool-call budget. Skills cover opportunity research,
@@ -206,8 +215,18 @@ global change and stay outside this guard.
 The knowledge owner derives the full built-in skill catalog as protected records and stores only
 source-bound learned revisions or explicit foreground overrides. Every `skill_apply` operation,
 including a complete strict record, must cite only evidence admitted to its trusted invocation:
-the current foreground event or the background source capabilities. Background learning cannot edit a
-built-in or override. If a built-in release digest changes, the current built-in is the effective
+the current authenticated foreground user event. Every creation, update and retraction requires an
+explicit skill directive in that event, a matching action, one target per call, and current source
+provenance. Background curation excludes `skill_apply` and host validation rejects background writes.
+Slack channel actors may publish workspace-owned procedures through this narrow authoring boundary;
+the commit transaction rechecks channel write authority and current human request provenance.
+No workspace data grant is added. Cross-channel skill reads use a server-only source revision/hash
+projection; original channel text remains protected by its existing source-read boundary. Edits,
+deletions and blocked sources invalidate the published procedure and selected context dependencies.
+Private/member sources cannot publish workspace skills. The explicit-directive recognizer accepts
+bounded first-line command forms and common direct Korean/English requests; ambiguous text requires
+a clarified user request. Built-in overrides additionally require the exact skill ID. If a built-in
+release digest changes, the current built-in is the effective
 fallback and the override remains pending review. Normal learning emits no Slack notification. An
 unresolved same-applicability conflict creates one durable question in the original thread; the
 answer follows the knowledge-question path and is separate from ToolApproval. This extension reuses
@@ -215,7 +234,9 @@ the existing repository, curation provider, ingress, and lifecycle; it adds no p
 store, or verifier.
 
 Foreground learning records a consumed target by source revision and target ID after an applied or
-replayed `memory_correct` or `skill_apply` result. Later review skips that exact target while keeping
+replayed `memory_correct` or `skill_apply` result. This validates the current source independently
+of background-job policy and does not enqueue curation. Later review skips that exact target while
+keeping
 other evidence from the source. This prevents a foreground correction and a background round from
 applying the same target twice.
 
@@ -226,6 +247,20 @@ loads the procedure body. Each `selected_skill_revisions` entry carries nested `
 neither the learning tools nor this context.
 Private DMs may read shared skill metadata and bodies under their current grants, but cannot write
 skills.
+
+The scoped skill catalog is preferred over built-in-only discovery when both read tools are
+available. Both catalogs support bounded keyword queries and offset pages; each read binds the
+returned version/revision. Prepared skill metadata is ranked by the current task query and admitted
+individually within at most 2,400 budget units and half the post-required-context capacity. Budget
+exclusions remain in the receipt. Required capabilities missing from the filtered snapshot are
+listed as unavailable, not inferred to be uninstalled or newly authorized. Unrelated evidence
+groups retain their atomic budgeting rules.
+
+`marketing.skill_learning` guides source-bound procedure creation/update, current-revision CAS
+and readback through the existing knowledge owner. The reasoning provider advertises authoring
+only when `skill_apply` is present; private filtering excludes every non-read knowledge tool,
+including skill mutations. Stored procedures do not install code, register tools, expand the
+capability snapshot or grant external delivery authority.
 
 `source_read` returns verified segment `evidence_ref` and `quote_sha256` values for reuse in guarded
 memory and Wiki writes; an arbitrary text range carries its quote hash without inventing a segment

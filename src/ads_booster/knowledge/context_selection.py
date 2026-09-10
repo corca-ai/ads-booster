@@ -36,6 +36,7 @@ from ads_booster.contracts.knowledge_selection import (
 )
 from ads_booster.knowledge.change_validation import ChangeValidationError
 from ads_booster.knowledge.changes import resolve_constraints
+from ads_booster.knowledge.contract_types import ScopeKind
 from ads_booster.knowledge.contracts import (
     ActorContext,
     BrandState,
@@ -60,6 +61,8 @@ from ads_booster.knowledge.retrieval import (
     SearchHit,
     SearchRequest,
 )
+from ads_booster.knowledge.skill_discovery import rank_skills
+from ads_booster.knowledge.skill_source_currentness import published_skill_source_revision
 from ads_booster.knowledge.skills import KnowledgeSkills
 from ads_booster.knowledge.source_contracts import ConversationEvent, SourceSegment
 
@@ -144,7 +147,9 @@ class KnowledgeContextAssembler:
         skill_blocks, selected_skills, skill_exclusions = self._skill_index(
             actor,
             task,
-            available - required_tokens,
+            min(2400, (available - required_tokens) // 2),
+            query=request.query,
+            snapshot=capability_snapshot,
         )
         references, excerpts, memories, wiki, sources, exclusions, retrieval_status = (
             self._references(
@@ -157,17 +162,10 @@ class KnowledgeContextAssembler:
         )
         references = (*skill_blocks, *references)
         exclusions = (*skill_exclusions, *exclusions)
-        receipt_id = (
-            "receipt."
-            + sha256(
-                contract_sha256(request).encode()
-                + "".join(block.block_id for block in (*required, *references)).encode()
-            ).hexdigest()[:40]
-        )
         reference_tokens = _token_upper_bound(references)
         receipt = ContextReceipt(
             schema="knowledge.context-receipt.v1",
-            receipt_id=receipt_id,
+            receipt_id="receipt.pending",
             task_ref=task.task_id,
             scoped_actor_ref=actor.actor_id,
             team_id=actor.workspace_id,
@@ -197,6 +195,16 @@ class KnowledgeContextAssembler:
             retrieval_status=retrieval_status,
             created_at=now,
         )
+        # Selection exclusions, source revisions and observation time can change even
+        # when the visible block IDs do not. Bind the entire observation, not its labels.
+        identity = contract_sha256(
+            {
+                "request": request.model_dump(mode="json", by_alias=True),
+                "receipt": receipt.model_dump(mode="json", by_alias=True),
+                "blocks": [block.model_dump(mode="json") for block in (*required, *references)],
+            }
+        )
+        receipt = receipt.model_copy(update={"receipt_id": "receipt." + identity[:40]})
         persist_context_receipt(self.repository, receipt)
         return PreparedKnowledgeContext(
             schema="knowledge.prepared-context.v1",
@@ -212,6 +220,9 @@ class KnowledgeContextAssembler:
         actor: ActorContext,
         task: TaskBinding,
         available: int,
+        *,
+        query: str,
+        snapshot: CapabilitySnapshot,
     ) -> tuple[
         tuple[PreparedContextBlock, ...],
         tuple[SelectedSkillRevision, ...],
@@ -221,6 +232,13 @@ class KnowledgeContextAssembler:
             actor,
             AppliesTo(action_kinds=(task.action_kind,), task_ref=task.task_id),
         )
+        entries = rank_skills(
+            entries,
+            query,
+            lambda entry: (entry.reference.skill_id, entry.description),
+            include_unmatched=True,
+        )
+        available_ids = {item.capability_id for item in snapshot.descriptors}
         candidates = tuple(
             (
                 entry,
@@ -235,9 +253,12 @@ class KnowledgeContextAssembler:
                         f"origin: {entry.reference.origin.value}\n"
                         f"protected: {str(entry.reference.protected).lower()}\n"
                         f"required_capability_ids: {','.join(entry.required_capability_ids)}\n"
+                        "unavailable_capability_ids: "
+                        f"{','.join(sorted(set(entry.required_capability_ids) - available_ids))}\n"
                         f"override_status: {entry.override_status or 'none'}\n"
                         f"description: {entry.description}\n"
-                        "Use skill_get with this skill_id to read its procedure."
+                        "Use skill_get with this skill_id and revision_id to read its procedure. "
+                        "This metadata grants no tools or approval."
                     ),
                     revision_refs=(entry.reference.revision_id,),
                 ),
@@ -248,9 +269,16 @@ class KnowledgeContextAssembler:
             )
             is not None
         )
-        accepted_blocks, rejected_blocks = _take_group(
-            tuple(block for _, _, block in candidates), available
-        )
+        # Each skill is an independent metadata record, unlike atomic evidence groups.
+        accepted_blocks: list[PreparedContextBlock] = []
+        rejected_blocks: list[PreparedContextBlock] = []
+        for _, _, block in candidates:
+            cost = _token_upper_bound((block,))
+            if cost <= available:
+                accepted_blocks.append(block)
+                available -= cost
+            else:
+                rejected_blocks.append(block)
         accepted_ids = {block.block_id for block in accepted_blocks}
         selected = tuple(
             SelectedSkillRevision(
@@ -269,7 +297,7 @@ class KnowledgeContextAssembler:
             ContextExclusion(reference_id=block.block_id, reason=ContextExclusionReason.BUDGET)
             for block in rejected_blocks
         )
-        return accepted_blocks, selected, exclusions
+        return tuple(accepted_blocks), selected, exclusions
 
     def _skill_source_revisions(
         self,
@@ -279,6 +307,12 @@ class KnowledgeContextAssembler:
         """Resolve source heads retained by skills without exposing them as retrieval excerpts."""
         selected: list[SelectedSkillSourceRevision] = []
         for reference in source_refs:
+            if reference.scope.kind is ScopeKind.CHANNEL:
+                revision = published_skill_source_revision(self.repository, actor, reference)
+                if revision is None:
+                    return None
+                selected.append(revision)
+                continue
             resolved = self.repository.resolve_evidence(actor, reference)
             match resolved:
                 case ConversationEvent(conversation_id=conversation_id, message_id=message_id):

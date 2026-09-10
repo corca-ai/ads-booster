@@ -58,6 +58,7 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
         "skills.read",
         "creative.prepare",
         "research.search",
+        "marketing.analyze",
         "research.web",
         "deliver.slack",
     ]
@@ -66,6 +67,7 @@ def test_configured_tools_refresh_only_integrations_with_complete_credentials() 
         "skills.read",
         "creative.prepare",
         "research.search",
+        "marketing.analyze",
         "research.web",
         "deliver.slack",
     }
