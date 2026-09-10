@@ -121,14 +121,19 @@ The prepared index ranks relevant metadata before spending at most 2,400 token-b
 half the remaining context capacity, leaving room for team evidence. Missing capabilities are
 reported as unavailable in the current snapshot; they do not prevent reading useful guidance.
 
-For example, in an authorized workspace-scoped API conversation, ask “이번에 검증한 카피 검수 절차를
-재사용할 스킬로 저장해줘.” `marketing.skill_learning` guides discovery, a source-bound semantic
-draft through `skill_apply`, and receipt/readback verification. Slack channels use channel-owned
-learning memory; channel input cannot publish workspace-wide skills. Private DMs expose only
-scoped reads allowed by current grants. Skills can compose existing tools as procedures;
-creating or saving one does not
-install executable code or register a new tool. See the
-[comparison and next extension boundary](docs/research/adaptive-skills.md).
+Slack에서 `@Trace 스킬 만들기: 고객 인터뷰를 광고 카피로 바꾸는 절차`처럼 요청하면,
+에이전트가 `marketing.skill_learning` 절차에 따라 기존 스킬을 검색하고 공용 스킬을 저장한 뒤
+저장 receipt와 정확한 revision을 다시 읽어 확인합니다. 저장한 스킬은 같은 워크스페이스의
+다른 채널에서도 검색·사용할 수 있습니다. 수정은 `@Trace 스킬 수정: 스킬 ID와 변경 내용`으로
+요청합니다. 일반 피드백이나 반복 작업만으로 스킬을 자동 생성·수정하지 않습니다.
+
+저장은 현재 사용자의 명시적 요청에서만 가능합니다. 첫 줄의 `스킬 만들기:` / `스킬 수정:` /
+`스킬 삭제:` 또는 지원되는 직접 요청형 문장을 확인하며, 애매한 표현은 다시 요청하도록
+안내합니다. 스킬은 공용 절차이므로 채널의 비공개 사실·인증정보를 넣지 않습니다.
+원본 채널 대화의 읽기 권한은 확대되지 않으며, 요청 원문이 수정·삭제되거나 차단되면
+그 근거에 연결된 스킬은 재사용에서 제외됩니다. 개인 DM에서는 공용 스킬을 수정할 수 없습니다.
+스킬 저장은 실행 코드 설치, 새 도구 등록, 외부 게시 승인이 아닙니다.
+[비교 자료와 확장 경계](docs/research/adaptive-skills.md)를 참고하세요.
 Slack follow-ups receive the current bounded conversation, including earlier assistant answers,
 so selections such as “use the second option” can resolve within the same work after restart.
 The latest admitted request is also passed separately from the original goal and reference data,

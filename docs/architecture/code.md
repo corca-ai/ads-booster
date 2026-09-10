@@ -179,14 +179,23 @@ built-in when an override's base digest no longer matches. `repository_skills.py
 `skill_contracts.py`, `schema_skills.py`, and `schema_learning.py` remain leaves of the existing
 repository, migration, file-publication, CAS, and receipt owners. `learning_contracts.py` carries
 typed terminal experience references and review requests; it never grants user authority. A
-protected skill changes only from a current authenticated foreground request.
+skill changes only from a current authenticated foreground request.
+`knowledge/skill_authoring.py` owns the bounded explicit-directive grammar;
+`skill_publication_validation.py` binds action and provenance to the trusted current user event.
+`repository_commit.py` rechecks channel/workspace write authority and request currentness in the
+transaction. `skill_source_currentness.py` projects only source revision/hash metadata for published
+channel-authored skills, allowing workspace reuse without granting channel history access.
+`context_selection.py` uses that projection for skill dependency receipts. Background `curation.py`
+excludes skill mutations from its catalog; normal feedback continues through scoped memory owners.
 `repository_learning_recovery.py` checks the persisted learning partition against current authority;
 its `repository_learning_recovery_write.py` leaf atomically reattaches released jobs and admissions
 to the same sealed round, or records terminal failure. No separate skill store, learning provider,
 daemon, or verifier is composed.
 
 `LearningReviewCoordinator.consume_target` fences each foreground-applied target by source revision
-and target ID. The fence removes only the consumed target from later learning review and preserves
+and target ID. Foreground consumption validates the canonical event and source revision without
+admitting a background batch or requiring its policy version. The fence removes only the consumed
+target from later learning review and preserves
 the rest of the source. `TerminalExperienceAdmission` writes receipt-grounded experiences through
 the existing Agent Service `append_step` after-commit seam and replays its outbox through the live
 runtime dispatcher.

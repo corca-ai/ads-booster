@@ -116,8 +116,9 @@ Slack usability, and this rehearsal does not establish live Slack delivery or ma
 
 During this work, main advanced to 0.7.0 with channel-owned and personal memory. The branch
 integrates that work without broadening its authority. Slack evidence supports channel learning;
-workspace skill publication requires workspace-scoped authenticated API evidence. Channel input
-cannot become a workspace-wide skill merely because a write tool is listed. Private reads retain
+the initial integration required workspace-scoped API evidence for skill publication. The current
+follow-up permits explicit foreground Slack requests to publish workspace procedures, with no
+automatic skill learning or expansion of original channel data access. Private reads retain
 the current grants. Earlier 0.6.0 Slack skill-writing fixtures are historical, not current proof.
 
 The merged source passed 87 focused tests, including channel memory and requester isolation.

@@ -620,3 +620,14 @@ gate, stale-main skip, published-version skip and conflicting draft/tag rejectio
 not require the full repository suite. After delivery, observe the real Actions run, resolve the tag
 to its commit, download the release assets and run `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c
 SHA256SUMS` on macOS). A rerun of a published version must skip artifact mutation.
+
+## Explicit workspace skill authoring
+
+Select `tests/marketing/channels/test_slack_workspace_skills.py` for signed synthetic Slack
+create → other-channel discovery/context selection → explicit update → source deletion invalidation,
+including denied original-channel evidence reads. `test_slack_learning.py` keeps ordinary feedback
+from publishing a skill. `tests/knowledge/test_skill_authoring.py` owns direct request recognition
+and background rejection; procedural skill and context provenance owners retain CAS, protected
+overrides and stale-source checks. Repeat affected owners against a fresh non-editable wheel
+with `python -I -m pytest` from outside the checkout. Fixture reasoning and captured Slack sends
+do not establish real-model intent handling or live workspace deployment.

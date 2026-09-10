@@ -195,8 +195,18 @@ global change and stay outside this guard.
 The knowledge owner derives the full built-in skill catalog as protected records and stores only
 source-bound learned revisions or explicit foreground overrides. Every `skill_apply` operation,
 including a complete strict record, must cite only evidence admitted to its trusted invocation:
-the current foreground event or the background source capabilities. Background learning cannot edit a
-built-in or override. If a built-in release digest changes, the current built-in is the effective
+the current authenticated foreground user event. Every creation, update and retraction requires an
+explicit skill directive in that event, a matching action, one target per call, and current source
+provenance. Background curation excludes `skill_apply` and host validation rejects background writes.
+Slack channel actors may publish workspace-owned procedures through this narrow authoring boundary;
+the commit transaction rechecks channel write authority and current human request provenance.
+No workspace data grant is added. Cross-channel skill reads use a server-only source revision/hash
+projection; original channel text remains protected by its existing source-read boundary. Edits,
+deletions and blocked sources invalidate the published procedure and selected context dependencies.
+Private/member sources cannot publish workspace skills. The explicit-directive recognizer accepts
+bounded first-line command forms and common direct Korean/English requests; ambiguous text requires
+a clarified user request. Built-in overrides additionally require the exact skill ID. If a built-in
+release digest changes, the current built-in is the effective
 fallback and the override remains pending review. Normal learning emits no Slack notification. An
 unresolved same-applicability conflict creates one durable question in the original thread; the
 answer follows the knowledge-question path and is separate from ToolApproval. This extension reuses
@@ -204,7 +214,9 @@ the existing repository, curation provider, ingress, and lifecycle; it adds no p
 store, or verifier.
 
 Foreground learning records a consumed target by source revision and target ID after an applied or
-replayed `memory_correct` or `skill_apply` result. Later review skips that exact target while keeping
+replayed `memory_correct` or `skill_apply` result. This validates the current source independently
+of background-job policy and does not enqueue curation. Later review skips that exact target while
+keeping
 other evidence from the source. This prevents a foreground correction and a background round from
 applying the same target twice.
 

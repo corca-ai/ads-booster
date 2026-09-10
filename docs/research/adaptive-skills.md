@@ -123,8 +123,29 @@ provider output and captured Slack sends, separately from the real-model canary 
 
 ## Current scope after main integration
 
-Main 0.7.0 admits Slack source evidence at channel scope. Such evidence can support
-channel-owned learning memory, but cannot publish workspace-wide skills. Workspace skill authoring
-requires workspace-scoped authenticated API ingress. Older Slack skill-writing fixture/model
-results above describe the preceding 0.6.0 authority contract, not current Slack permissions.
-See [marketing colleague](marketing-colleague.md) and PR #153 for integration verification.
+Main 0.7.0 admits Slack source evidence at channel scope. The initial integration therefore rejected
+workspace skill publication from Slack. The follow-up implements explicitly requested workspace
+procedures from channels, while retaining scoped channel memory and source reads. No background
+worker can create or modify a skill. See the README for supported direct request forms.
+Earlier 0.6.0 canary results above remain historical; they do not prove this new request gate.
+
+## Explicit-request follow-up verification
+
+The installed 0.7.0 baseline rejected the new signed Slack workspace-skill scenario. The first
+candidate persisted and shared the procedure, but actual-model verification exposed a missing
+completion receipt: foreground consumption incorrectly required background curation policy.
+A regression now asserts the completed Run and successful receipt, alongside other-channel
+selection, denied original-source reads, explicit updates and deletion invalidation. The owner
+now validates foreground provenance without admitting a background batch.
+
+The corrected fresh wheel passed the actual `gpt-6-astra` minimal reuse canary: 11 checks and four
+foreground calls, no background/research calls, captured Slack sends only. U1 received a write
+confirmation and honestly noted that its restricted fixture had no readback tool; U2 read the
+exact stored revision after restart and returned the synthetic answer. This proves the bounded
+model scenario, not arbitrary request recognition or live Slack deployment.
+
+Local evidence: `/private/tmp/trace-workspace-skills-152/final-model.json` and `installation.json`.
+Wheel SHA-256: `2ace80b050f143eb2c23fa8a36fcc869a3dd3e6a45161e21073f0163d3994256`.
+All eight changed production files match installed bytes; 54 focused installed tests passed. The auxiliary maintenance-author test
+`test_workspace_maintenance_preserves_message_author` fails with `event_speaker_binding_mismatch`
+on both the prior installed wheel and this source; it is a pre-existing failure outside this change.
