@@ -74,8 +74,7 @@ def test_explicit_channel_request_creates_workspace_skill(tmp_path: Path) -> Non
         )
         with pytest.raises(KnowledgePolicyError):
             _ = repository.resolve_evidence(other[1].actor, stored.record.source_refs[0])
-        run_id = other[1].run_id
-        selected = _prepared_learning_receipt(owner, run_id)["selected_skill_revisions"]
+        selected = _prepared_learning_receipt(owner, other[1].run_id)["selected_skill_revisions"]
         assert isinstance(selected, list)
         assert any(
             isinstance(item, dict) and item["skill_id"] == stored.record.skill_id
