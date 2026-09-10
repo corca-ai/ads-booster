@@ -19,8 +19,8 @@ from ads_booster.knowledge.configuration import (
 )
 from ads_booster.knowledge.contracts import ConversationEventKind
 from ads_booster.providers.codex_cli import CodexCli
-from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
-from tests.knowledge.test_installed_service_context import reference_batch
+from tests.knowledge.installed_runtime_support import install_curation_provider
+from tests.knowledge.test_installed_service_context import ReferenceProvider
 
 
 @pytest.mark.parametrize(
@@ -28,12 +28,10 @@ from tests.knowledge.test_installed_service_context import reference_batch
 )
 def test_private_slack_messages_reach_curation_with_registered_actors(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     private: bool,
     same_channel: bool,
 ) -> None:
     # Given: the installed service composition with a controlled model and two private sessions.
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", reference_batch)
     settings = KnowledgeSettings(
         root=tmp_path / "store",
         control_root=tmp_path / "control",
@@ -46,6 +44,14 @@ def test_private_slack_messages_reach_curation_with_registered_actors(
         service_database=tmp_path / "agent.db",
         codex=CodexCli(executable=Path("/unused/codex"), model="fixture"),
         model_id="fixture",
+    )
+    install_curation_provider(
+        installed,
+        ReferenceProvider(
+            CodexCli(executable=Path("/unused/codex"), model="fixture"),
+            tmp_path / "store",
+            "fixture",
+        ),
     )
     now = datetime.now(UTC)
     try:

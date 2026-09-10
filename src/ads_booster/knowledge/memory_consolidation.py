@@ -47,8 +47,8 @@ from ads_booster.knowledge.repository_types import (
 
 if TYPE_CHECKING:
     from datetime import datetime
-    from threading import Event
 
+    from ads_booster.knowledge.jobs import CancellationEvent
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
     from ads_booster.knowledge.scope_contracts import AccessScope, ActorContext
 
@@ -112,7 +112,7 @@ class MemoryConsolidationProcessor:
         )
         return self._put_job(job, unique_key)
 
-    def process(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
+    def process(self, lease: JobLease, cancellation: CancellationEvent) -> JobProcessResult:
         if cancellation.is_set():
             return _result(JobState.CANCELLED, "memory_refresh_cancelled")
         if lease.job.workspace_id != self.actor.workspace_id:
@@ -136,7 +136,7 @@ class MemoryConsolidationProcessor:
     def _process_scheduled(
         self,
         lease: JobLease,
-        cancellation: Event,
+        cancellation: CancellationEvent,
         targets: tuple[str, ...],
     ) -> JobProcessResult:
         heads: list[_MemoryHead] = []
@@ -167,7 +167,7 @@ class MemoryConsolidationProcessor:
     def _consolidate(
         self,
         lease: JobLease,
-        cancellation: Event,
+        cancellation: CancellationEvent,
         heads: tuple[_MemoryHead, ...] | None = None,
     ) -> JobProcessResult:
         if heads is None:
@@ -212,7 +212,7 @@ class MemoryConsolidationProcessor:
     def _refresh_summary(
         self,
         lease: JobLease,
-        cancellation: Event,
+        cancellation: CancellationEvent,
         target: _MemoryHead | None = None,
     ) -> JobProcessResult:
         if target is None:
@@ -254,7 +254,7 @@ class MemoryConsolidationProcessor:
     def _refresh_view(
         self,
         lease: JobLease,
-        cancellation: Event,
+        cancellation: CancellationEvent,
         target: _MemoryHead | None = None,
     ) -> JobProcessResult:
         if target is None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from pydantic import TypeAdapter
 
@@ -15,31 +15,42 @@ from ads_booster.knowledge.curation_contracts import (
     CurationProviderError,
 )
 from ads_booster.knowledge.tool_contracts import KnowledgeToolName
-from tests.knowledge.batch_runtime_support import ControlledProvider, batch_fixture
+from tests.knowledge.batch_runtime_support import BatchFixture, ControlledProvider, batch_fixture
 from tests.knowledge.change_test_fixtures import NOW
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
 
-
-def test_provider_failure_persists_failed_receipt_without_requeue(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def unavailable(
-        _self: ControlledProvider,
-        _batch_id: str,
-        _jobs: tuple[CurationBatchJobContext, ...],
+class UnavailableProvider(ControlledProvider):
+    @override
+    def decide_batch(
+        self,
+        batch_id: str,
+        jobs: tuple[CurationBatchJobContext, ...],
         *,
         timeout_seconds: float,
     ) -> CurationBatchDecision:
         assert timeout_seconds > 0
         raise CurationProviderError(code="invalid_json_schema")
 
-    monkeypatch.setattr(ControlledProvider, "decide_batch", unavailable)
+
+def _set_provider(fixture: BatchFixture, provider_type: type[ControlledProvider]) -> None:
+    provider = provider_type(
+        fixture.provider.started,
+        fixture.provider.release,
+        fixture.provider.calls,
+    )
+    curation = fixture.runtime.jobs.curation
+    fixture.runtime.jobs = replace(
+        fixture.runtime.jobs,
+        curation=replace(curation, dependencies=replace(curation.dependencies, provider=provider)),
+    )
+
+
+def test_provider_failure_persists_failed_receipt_without_requeue(tmp_path: Path) -> None:
     fixture = batch_fixture(tmp_path)
+    _set_provider(fixture, UnavailableProvider)
     try:
         fixture.put("provider-failure")
         assert fixture.runtime.tick(now=NOW + timedelta(seconds=60))
@@ -56,20 +67,16 @@ def test_provider_failure_persists_failed_receipt_without_requeue(
         with fixture.repository.connection() as db:
             assert TypeAdapter(tuple[str | None]).validate_python(
                 db.execute("SELECT reason_code FROM jobs").fetchone()
-            ) == (
-                "knowledge_provider_batch_result_invalid",
-            )
+            ) == ("knowledge_provider_batch_result_invalid",)
         assert not fixture.runtime.tick(now=NOW + timedelta(seconds=120))
     finally:
         fixture.close()
 
 
-def test_budget_exhaustion_persists_failed_receipt_without_requeue(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def search(
-        _self: ControlledProvider,
+class SearchProvider(ControlledProvider):
+    @override
+    def decide_batch(
+        self,
         batch_id: str,
         jobs: tuple[CurationBatchJobContext, ...],
         *,
@@ -93,8 +100,10 @@ def test_budget_exhaustion_persists_failed_receipt_without_requeue(
             ),
         )
 
-    monkeypatch.setattr(ControlledProvider, "decide_batch", search)
+
+def test_budget_exhaustion_persists_failed_receipt_without_requeue(tmp_path: Path) -> None:
     fixture = batch_fixture(tmp_path)
+    _set_provider(fixture, SearchProvider)
     fixture.runtime.jobs = replace(
         fixture.runtime.jobs,
         curation=replace(
@@ -118,9 +127,7 @@ def test_budget_exhaustion_persists_failed_receipt_without_requeue(
         with fixture.repository.connection() as db:
             assert TypeAdapter(tuple[str | None]).validate_python(
                 db.execute("SELECT reason_code FROM jobs").fetchone()
-            ) == (
-                "curation_search_budget_exhausted",
-            )
+            ) == ("curation_search_budget_exhausted",)
         assert not fixture.runtime.tick(now=NOW + timedelta(seconds=120))
     finally:
         fixture.close()

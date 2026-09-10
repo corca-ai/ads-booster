@@ -185,7 +185,7 @@ def batch_fixture(root: Path) -> BatchFixture:
     repository = SqliteKnowledgeRepository(root)
     actor = catalog_actor()
     repository.register_actor(actor, MembershipRole.ADMIN)
-    context = get_context("fork")
+    context = get_context("spawn")
     provider = ControlledProvider(context.Event(), context.Event(), context.Queue())
     processor = FixtureJobProcessor(
         repository,

@@ -82,7 +82,7 @@ def _runtime_parts(
     fixture: LearningFixture,
     actor: ActorContext,
 ) -> tuple[FixtureJobProcessor, ControlledProvider]:
-    context = get_context("fork")
+    context = get_context("spawn")
     provider = ControlledProvider(context.Event(), context.Event(), context.Queue())
     processor = FixtureJobProcessor(
         fixture.knowledge,

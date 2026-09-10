@@ -34,6 +34,7 @@ from ads_booster.knowledge.operation_enums import SkillOperationKind, SkillOrigi
 from ads_booster.knowledge.skill_contracts import SkillApplyInput, SkillOperation
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
+from tests.knowledge.installed_runtime_support import install_curation_provider
 from tests.knowledge.procedural_skill_test_support import skill_record
 from tests.knowledge.test_curation_remember import MemoryProvider
 from tests.marketing.agent_service.test_application import AskThenStopReasoning
@@ -259,9 +260,10 @@ def test_channel_cannot_publish_workspace_skill(tmp_path: Path) -> None:
         output = output_record.payload["output"]
         assert isinstance(output, dict)
         assert output["error_code"] == "skill_shared_write_required"
-        assert installed.adapter.repository.read_skill(
-            admitted[1].actor, "learned.u1.receipt-rules"
-        ) is None
+        assert (
+            installed.adapter.repository.read_skill(admitted[1].actor, "learned.u1.receipt-rules")
+            is None
+        )
         with installed.adapter.repository.connection() as connection:
             row = TypeAdapter(tuple[int]).validate_python(
                 connection.execute(
@@ -274,21 +276,10 @@ def test_channel_cannot_publish_workspace_skill(tmp_path: Path) -> None:
         installed.runtime.close()
 
 
-def _remember_channel_batch(
-    provider: CodexKnowledgeProvider,
-    batch_id: str,
-    jobs: tuple[CurationBatchJobContext, ...],
-    *,
-    timeout_seconds: float,
-) -> CurationBatchDecision:
-    _ = provider
-    return MemoryProvider().decide_batch(batch_id, jobs, timeout_seconds=timeout_seconds)
-
-
-def test_u2_new_thread_reads_u1_learning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_u2_new_thread_reads_u1_learning(tmp_path: Path) -> None:
     # Given: two admitted Slack users and the installed channel memory writer.
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _remember_channel_batch)
     owner, installed, _ = _installed_events(tmp_path)
+    install_curation_provider(installed, MemoryProvider())
     try:
         # When: U1's source is committed as channel memory before U2 opens a new thread.
         receive(
@@ -338,11 +329,11 @@ def test_u2_new_thread_reads_u1_learning(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_correction_during_nonterminal_run_keeps_the_bound_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _remember_channel_batch)
     # Given: a shared Slack Run that is still awaiting input and has installed learning.
     owner, installed, _ = _installed_events(tmp_path)
+    install_curation_provider(installed, MemoryProvider())
     owner.commands.application.service.reasoning = AskThenStopReasoning()
     try:
         receive(owner, ts=str(NOW.timestamp() - 2))

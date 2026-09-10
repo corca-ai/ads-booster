@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
+from ads_booster.channels.http.knowledge_ingress_api import (
+    ApiIngressRequest,
+    build_api_ingress,
+)
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.knowledge.contracts import (
     ActorContext,
@@ -20,16 +26,10 @@ from ads_booster.knowledge.ingest_receipts import (
     IngestUnitReceipt,
     ingest_unit_delivery_id,
 )
-from ads_booster.knowledge.jobs import BoundedJobRunner, JobProcessResult
+from ads_booster.knowledge.jobs import BoundedJobRunner, CancellationEvent, JobProcessResult
 from ads_booster.knowledge.maintenance import KnowledgeOwner
 from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 from ads_booster.knowledge.runtime import KnowledgeRuntime
-from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
-from ads_booster.channels.http.knowledge_ingress_api import (
-    ApiIngressRequest,
-    build_api_ingress,
-)
-from ads_booster.channels.http.oauth import OAuthIdentity
 from tests.marketing.agent_service.test_http_api import NOW
 
 if TYPE_CHECKING:
@@ -101,7 +101,7 @@ class FixtureJobRunner(BoundedJobRunner):
 
 
 class IdleProcessor:
-    def process(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
+    def process(self, lease: JobLease, cancellation: CancellationEvent) -> JobProcessResult:
         raise AssertionError((lease.job.job_id, cancellation.is_set()))
 
 

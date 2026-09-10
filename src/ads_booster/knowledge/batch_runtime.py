@@ -40,7 +40,7 @@ from ads_booster.knowledge.repository_learning_recovery import recover_released_
 from ads_booster.knowledge.scope_contracts import ActorContext
 
 if TYPE_CHECKING:
-    from multiprocessing.context import ForkContext
+    from multiprocessing.context import SpawnContext
     from multiprocessing.process import BaseProcess
     from multiprocessing.queues import Queue
 
@@ -83,7 +83,7 @@ class CurationBatchRuntime:
     repository: SqliteKnowledgeRepository
     actor: ActorContext
     jobs: CanonicalJobProcessor
-    _context: ForkContext = field(init=False, repr=False)
+    _context: SpawnContext = field(init=False, repr=False)
     _process: BaseProcess | None = field(default=None, init=False, repr=False)
     _queue: Queue[str] = field(init=False, repr=False)
     _cancel: CancellationEvent = field(default_factory=Event, init=False, repr=False)
@@ -92,7 +92,7 @@ class CurationBatchRuntime:
 
     def __post_init__(self) -> None:
         """Allocate the process channel owned by this runtime."""
-        self._context = get_context("fork")
+        self._context = get_context("spawn")
         self._queue = self._context.Queue(maxsize=1)
 
     @property

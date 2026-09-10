@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 from ads_booster.knowledge.batch_actor import load_job_actor, load_partition_actor
 from ads_booster.knowledge.batch_curation import ClaimedBatchRun, CurationBatchWork
@@ -18,7 +18,7 @@ from ads_booster.knowledge.curation_contracts import (
     CurationRunStatus,
     CurationUserEvent,
 )
-from ads_booster.knowledge.jobs import JobProcessResult
+from ads_booster.knowledge.jobs import CancellationEvent, JobProcessResult
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
 from ads_booster.knowledge.repository_learning import LearningReviewCoordinator
 from ads_booster.knowledge.repository_tool_state import RepositoryToolState
@@ -28,8 +28,6 @@ from ads_booster.knowledge.tool_contracts import (
 )
 
 if TYPE_CHECKING:
-    from threading import Event
-
     from ads_booster.knowledge.contracts import KnowledgeJob
     from ads_booster.knowledge.curation import CurationRunner
     from ads_booster.knowledge.legacy_memory import LegacyMemoryGuard
@@ -38,12 +36,6 @@ if TYPE_CHECKING:
     from ads_booster.knowledge.repository_types import JobLease, StoredSource
     from ads_booster.knowledge.scope_contracts import ActorContext
     from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
-
-
-class CancellationEvent(Protocol):
-    def is_set(self) -> bool: ...
-
-    def set(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +55,7 @@ class CanonicalJobProcessor:
     source_review: SourceReviewJobProcessor | None = None
     legacy_memory: LegacyMemoryGuard | None = None
 
-    def process(self, lease: JobLease, cancellation: Event) -> JobProcessResult:
+    def process(self, lease: JobLease, cancellation: CancellationEvent) -> JobProcessResult:
         if lease.job.kind in {
             JobKind.MEMORY_CONSOLIDATE,
             JobKind.MEMORY_SUMMARY_REFRESH,

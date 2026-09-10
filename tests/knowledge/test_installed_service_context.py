@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import override
 
 import pytest
 from pydantic import TypeAdapter
@@ -56,6 +57,7 @@ from ads_booster.knowledge.repository import MembershipRole, SqliteKnowledgeRepo
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from tests.knowledge.change_test_fixtures import actor as catalog_actor
+from tests.knowledge.installed_runtime_support import install_curation_provider
 from tests.marketing.agent_service.test_http_api import StopReasoning
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
@@ -140,11 +142,15 @@ def _admit_shared_learning_turns(installed: InstalledKnowledgeRuntime) -> None:
             assert len(ready_batch_ids) == 2
 
 
-def test_installed_service_admits_canonical_session_before_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", reference_batch)
+class ReferenceProvider(CodexKnowledgeProvider):
+    @override
+    def decide_batch(
+        self, batch_id: str, jobs: tuple[CurationBatchJobContext, ...], *, timeout_seconds: float
+    ) -> CurationBatchDecision:
+        return reference_batch(self, batch_id, jobs, timeout_seconds=timeout_seconds)
+
+
+def test_installed_service_admits_canonical_session_before_context(tmp_path: Path) -> None:
     # Given: the actual installed composition and a separately named local member.
     settings = KnowledgeSettings(
         root=tmp_path / "store",
@@ -163,6 +169,12 @@ def test_installed_service_admits_canonical_session_before_context(
         service_database=paths.database,
         codex=CodexCli(executable=Path("/unused/codex"), model="test"),
         model_id="test",
+    )
+    install_curation_provider(
+        installed,
+        ReferenceProvider(
+            CodexCli(executable=Path("/unused/codex"), model="test"), tmp_path / "store", "test"
+        ),
     )
     try:
         service = replace(
