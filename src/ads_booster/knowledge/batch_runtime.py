@@ -24,7 +24,7 @@ from ads_booster.knowledge.batch_curation import (
 from ads_booster.knowledge.batch_failure import fail_unbatched_job, fail_unclaimed_batch
 from ads_booster.knowledge.contracts import CurationBatch, EventReceipt, KnowledgeJob
 from ads_booster.knowledge.curation_contracts import CurationRunStatus
-from ads_booster.knowledge.errors import KnowledgePolicyError
+from ads_booster.knowledge.errors import CurationSourceUnavailableError, KnowledgePolicyError
 from ads_booster.knowledge.learning_policy import LEARNING_POLICY_VERSION
 from ads_booster.knowledge.maintenance_jobs import (
     CancellationEvent,
@@ -188,7 +188,7 @@ class CurationBatchRuntime:
                         occurred_at=job.created_at,
                     )
                 )
-            except KnowledgePolicyError as error:
+            except (KnowledgePolicyError, CurationSourceUnavailableError) as error:
                 fail_unbatched_job(self.repository, job, error.code)
         return bool(rows) or recovered > 0
 

@@ -4,8 +4,16 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, override
 
+import pytest
 from pydantic import TypeAdapter
 
+from ads_booster.knowledge.contracts import (
+    AccessScope,
+    ConversationEvent,
+    ConversationEventKind,
+    ConversationRole,
+    ScopeKind,
+)
 from ads_booster.knowledge.curation_contracts import (
     CurationBatchDecision,
     CurationBatchJobContext,
@@ -14,9 +22,13 @@ from ads_booster.knowledge.curation_contracts import (
     CurationDecisionAction,
     CurationProviderError,
 )
+from ads_booster.knowledge.ingestion import KnowledgeIngestion
+from ads_booster.knowledge.maintenance_jobs import CanonicalJobProcessor
+from ads_booster.knowledge.repository import MembershipRole
 from ads_booster.knowledge.tool_contracts import KnowledgeToolName
 from tests.knowledge.batch_runtime_support import BatchFixture, ControlledProvider, batch_fixture
 from tests.knowledge.change_test_fixtures import NOW
+from tests.knowledge.test_curation_inputs import envelope
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -156,5 +168,85 @@ def test_claim_denial_settles_only_unclaimed_batch(tmp_path: Path) -> None:
         _ = fixture.runtime.tick(now=NOW + timedelta(seconds=60))
         assert fixture.states() == (("job.stale", "failed"),)
         assert not fixture.runtime.active
+    finally:
+        fixture.close()
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_unavailable_source_settles_job_and_processes_current_revision(
+    tmp_path: Path,
+    blocked: bool,
+) -> None:
+    fixture = batch_fixture(tmp_path)
+    scope = AccessScope(
+        kind=ScopeKind.MEMBER,
+        workspace_id=fixture.actor.workspace_id,
+        member_id=fixture.actor.member_id,
+        session_id=fixture.actor.session_id,
+    )
+    actor = fixture.actor.model_copy(
+        update={
+            "conversation_scope": scope,
+            "grants": tuple(
+                grant.model_copy(update={"scope": scope}) for grant in fixture.actor.grants
+            ),
+        }
+    )
+    fixture.repository.register_actor(actor, MembershipRole.ADMIN)
+    fixture = replace(fixture, actor=actor)
+    fixture.runtime.actor = actor
+    fixture.runtime.jobs = CanonicalJobProcessor(
+        fixture.repository,
+        fixture.actor,
+        fixture.runtime.jobs.curation,
+        fixture.runtime.jobs.memory,
+    )
+    event = ConversationEvent(
+        conversation_id="conversation.superseded",
+        message_id="message.superseded",
+        revision=1,
+        sequence=1,
+        role=ConversationRole.USER,
+        speaker_ref=fixture.actor.actor_id,
+        created_at=NOW,
+        event_kind=ConversationEventKind.MESSAGE_FINALIZED,
+        scope=fixture.actor.conversation_scope,
+        text="Original preference",
+    )
+    ingestion = KnowledgeIngestion(fixture.repository)
+    try:
+        old = ingestion.ingest(fixture.actor, event, envelope(event, "delivery.old"))
+        edited = event.model_copy(
+            update={
+                "revision": 2,
+                "event_kind": ConversationEventKind.MESSAGE_EDITED,
+                "edited_at": NOW + timedelta(seconds=1),
+                "text": "Corrected preference",
+            }
+        )
+        if blocked:
+            with fixture.repository.connection() as connection:
+                _ = connection.execute(
+                    "UPDATE sources SET visibility='blocked' WHERE source_id=?",
+                    (old.unit_receipts[0].receipt.source_id,),
+                )
+            edited = event.model_copy(update={"message_id": "message.healthy"})
+        current = ingestion.ingest(fixture.actor, edited, envelope(edited, "delivery.current"))
+        fixture.provider.release.set()
+        instant = NOW + timedelta(seconds=120)
+        assert fixture.runtime.tick(now=instant)
+        fixture.runtime.reap(instant)
+        old_job = old.unit_receipts[0].receipt.curation_job_id
+        current_job = current.unit_receipts[0].receipt.curation_job_id
+        assert dict(fixture.states()) == {old_job: "failed", current_job: "completed"}
+        with fixture.repository.connection() as connection:
+            assert TypeAdapter(tuple[str]).validate_python(
+                connection.execute(
+                    "SELECT reason_code FROM jobs WHERE job_id=?",
+                    (old_job,),
+                ).fetchone()
+            ) == ("curation_source_unavailable",)
+        assert not fixture.runtime.tick(now=instant + timedelta(minutes=1))
+        assert dict(fixture.states()) == {old_job: "failed", current_job: "completed"}
     finally:
         fixture.close()

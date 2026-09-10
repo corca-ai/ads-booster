@@ -18,6 +18,7 @@ from ads_booster.knowledge.curation_contracts import (
     CurationRunStatus,
     CurationUserEvent,
 )
+from ads_booster.knowledge.errors import CurationSourceUnavailableError
 from ads_booster.knowledge.jobs import CancellationEvent, JobProcessResult
 from ads_booster.knowledge.operation_enums import JobKind, JobPriority, JobState
 from ads_booster.knowledge.repository_learning import LearningReviewCoordinator
@@ -106,14 +107,12 @@ class CanonicalJobProcessor:
         source_id, revision_id = self._source_for_job(job.job_id)
         source = self.repository.read_source(scoped_actor, source_id)
         if source is None or source.source.revision_id != revision_id:
-            msg = "curation_source_unavailable"
-            raise ValueError(msg)
+            raise CurationSourceUnavailableError(source_id, revision_id)
         extracted = RepositoryToolState(self.repository).read_source_extract(
             scoped_actor, source_id, revision_id
         )
         if extracted is None:
-            msg = "curation_source_unavailable"
-            raise ValueError(msg)
+            raise CurationSourceUnavailableError(source_id, revision_id)
         body = extracted.body.decode("utf-8")
         excerpts = tuple(
             CurationExcerpt(
@@ -131,7 +130,7 @@ class CanonicalJobProcessor:
         source_event = (
             None
             if authenticated_user_event is None
-            else self.repository.canonical_event(
+            else RepositoryToolState(self.repository).read_canonical_event(
                 scoped_actor, authenticated_user_event.evidence_ref.evidence_id
             )
         )
