@@ -82,6 +82,7 @@ from ads_booster.knowledge.contract_types import (
     Provenance,
 )
 from ads_booster.knowledge.contracts import AuthenticatedEvent
+from ads_booster.knowledge.errors import AccessDeniedError
 from ads_booster.knowledge.questions import QuestionError
 from ads_booster.knowledge.tool_contracts import TrustedQuestionAnswer
 from ads_booster.learning.memory import SQLiteMemoryStore
@@ -1054,7 +1055,7 @@ class SlackEvents:
             context = knowledge.resolve_question_answer(
                 plan.run_id, f"{message.message_id}.learning-question-answer"
             )
-        except ValueError:
+        except AccessDeniedError, ValueError:
             return None
         return _LearningQuestionAnswerContext(
             source=source,
@@ -1242,7 +1243,7 @@ class SlackEvents:
                     conversation.current_run,
                     f"{source.binding.binding_id}.learning-question-notification",
                 )
-            except ValueError:
+            except AccessDeniedError, ValueError:
                 continue
             for question in knowledge.host.questions.pending_for_conversation(
                 conversation.conversation_id,
