@@ -10,9 +10,8 @@ from urllib.request import urlopen
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
-from ads_booster.contracts.tool_capability import ToolDescriptor
 from ads_booster.agent.core.registry import ToolRegistration
+from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.creative.creative_procedures import (
     CreativeBrief,
     CreativeBriefRequest,
@@ -22,21 +21,6 @@ from ads_booster.delivery.delivery_tools import (
     DeliveryPreparationTool,
     delivery_prepare_descriptor,
 )
-from ads_booster.tools.github_issues import (
-    CAPABILITY,
-    GitHubIssues,
-)
-from ads_booster.tools.github_issues import (
-    descriptor as github_descriptor,
-)
-from ads_booster.tools.image_generation import CodexImages
-from ads_booster.tools.image_generation import descriptor as image_descriptor
-from ads_booster.tools._http_json import HttpResponse
-from ads_booster.tools.notion_daily import execute_notion_daily
-from ads_booster.tools.skill_tools import execute as execute_skill
-from ads_booster.tools.skill_tools import skill_descriptors
-from ads_booster.tools.slack_delivery import execute_slack_delivery
-from ads_booster.tools.web_search import WebSearch, search_descriptor
 from ads_booster.research.dynamic_evidence_research import (
     DynamicEvidenceResearchRequest,
     DynamicEvidenceResearchResult,
@@ -51,6 +35,22 @@ from ads_booster.tools.descriptors import (
     research_descriptor,
     slack_delivery_descriptor,
 )
+from ads_booster.tools.github_issues import (
+    CAPABILITY,
+    GitHubIssues,
+)
+from ads_booster.tools.github_issues import (
+    descriptor as github_descriptor,
+)
+from ads_booster.tools.image_generation import CodexImages
+from ads_booster.tools.image_generation import descriptor as image_descriptor
+from ads_booster.tools.marketing_analysis import descriptor as marketing_analysis_descriptor
+from ads_booster.tools.marketing_analysis import execute as analyze_marketing
+from ads_booster.tools.notion_daily import execute_notion_daily
+from ads_booster.tools.skill_tools import execute as execute_skill
+from ads_booster.tools.skill_tools import skill_descriptors
+from ads_booster.tools.slack_delivery import execute_slack_delivery
+from ads_booster.tools.web_search import WebSearch, search_descriptor
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -58,6 +58,8 @@ if TYPE_CHECKING:
 
     from ads_booster.agent.core.ports import ToolAdapter
     from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
+    from ads_booster.contracts.tool_capability import ToolDescriptor
+    from ads_booster.tools._http_json import HttpResponse
 
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
@@ -81,7 +83,8 @@ class AgentServiceIntegrationConfig:
             (self.notion_token, self.notion_parent_page_id),
         )
         if any((left is None) != (right is None) for left, right in pairs):
-            raise ValueError("agent_integration_config_incomplete")
+            msg = "agent_integration_config_incomplete"
+            raise ValueError(msg)
 
 
 @dataclass(slots=True)
@@ -119,6 +122,12 @@ class ConfiguredAgentTools:
             ),
             _registration(
                 "research.search", "public_search", WebSearch().execute, search_descriptor
+            ),
+            _registration(
+                "marketing.analyze",
+                "trace.marketing_analysis",
+                analyze_marketing,
+                marketing_analysis_descriptor,
             ),
             _registration(
                 "research.web",
@@ -194,9 +203,7 @@ class ConfiguredAgentTools:
         }
 
     def descriptors(self, *, now: datetime) -> tuple[ToolDescriptor, ...]:
-        return tuple(
-            registration.descriptor(now=now) for registration in self.registrations()
-        )
+        return tuple(registration.descriptor(now=now) for registration in self.registrations())
 
     def _creative(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor
@@ -244,6 +251,7 @@ class ConfiguredAgentTools:
             actual_cost_units=result.spent_cost_units,
         )
 
+
 def creative_prepare_descriptor(*, now: datetime) -> ToolDescriptor:
     template = research_descriptor(
         installation_id="installed:creative.prepare",
@@ -286,9 +294,7 @@ def _registration(
 
 
 def _skill_descriptor(capability_id: str, *, now: datetime) -> ToolDescriptor:
-    return next(
-        item for item in skill_descriptors(now=now) if item.capability_id == capability_id
-    )
+    return next(item for item in skill_descriptors(now=now) if item.capability_id == capability_id)
 
 
 def _research_descriptor(*, now: datetime) -> ToolDescriptor:
@@ -304,14 +310,13 @@ def _slack_delivery_descriptor(*, now: datetime) -> ToolDescriptor:
 
 
 def _notion_daily_descriptor(*, now: datetime) -> ToolDescriptor:
-    return notion_daily_descriptor(
-        installation_id="configured:notion", observed_at=now, ready=True
-    )
+    return notion_daily_descriptor(installation_id="configured:notion", observed_at=now, ready=True)
 
 
 def _required(value: str | None) -> str:
     if not value:
-        raise ValueError("configured_integration_value_missing")
+        msg = "configured_integration_value_missing"
+        raise ValueError(msg)
     return value
 
 
