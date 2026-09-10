@@ -315,6 +315,9 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
                 knowledge_transfers=None
                 if knowledge_runtime is None
                 else knowledge_runtime.adapter,
+                knowledge_worker_alive=None
+                if knowledge_thread is None
+                else knowledge_thread.is_alive,
             ),
             host=host,
             port=port,

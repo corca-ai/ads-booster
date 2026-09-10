@@ -5,6 +5,17 @@ from typing import override
 
 
 @dataclass(slots=True)
+class CurationSourceUnavailableError(ValueError):
+    source_id: str
+    revision_id: str
+    code: str = field(init=False, default="curation_source_unavailable")
+
+    @override
+    def __str__(self) -> str:
+        return self.code
+
+
+@dataclass(slots=True)
 class KnowledgePolicyError(Exception):
     code: str
 

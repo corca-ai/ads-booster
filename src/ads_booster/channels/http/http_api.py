@@ -123,6 +123,7 @@ class MarketingAgentApi:
 
     knowledge_ingress: CanonicalKnowledgeIngress | None = None
     knowledge_transfers: KnowledgeTransferProvider | None = None
+    knowledge_worker_alive: Callable[[], bool] | None = None
 
     def __post_init__(self) -> None:
         """Install current approval authority and canonical ingress on the same Run ledger."""
@@ -163,6 +164,12 @@ class MarketingAgentApi:
             health: JsonObject = {"status": "ok", "owner": "on_prem_agent"}
             if self.maintenance is not None:
                 health.update(self.maintenance.health())
+            if self.knowledge_worker_alive is not None:
+                alive = self.knowledge_worker_alive()
+                health["knowledge_worker"] = "running" if alive else "stopped"
+                if not alive:
+                    health["status"] = "degraded"
+                    return ApiResponse(503, health)
             return ApiResponse(200, health)
         # Cancellation admits no new work and remains available while an update drains.
         if method == "POST" and urlsplit(target).path == "/channels/slack/interactions":

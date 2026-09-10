@@ -6,6 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+import pytest
 from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
@@ -29,11 +30,13 @@ from ads_booster.knowledge.contracts import (
     Provenance,
     ScopeKind,
 )
+from ads_booster.knowledge.errors import AccessDeniedError
 from ads_booster.knowledge.evidence_contracts import EvidenceRef
 from ads_booster.knowledge.operation_enums import SkillOperationKind, SkillOrigin
 from ads_booster.knowledge.skill_contracts import SkillApplyInput, SkillOperation
 from ads_booster.providers.codex_cli import CodexCli
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
+from tests.knowledge.installed_runtime_support import install_curation_provider
 from tests.knowledge.procedural_skill_test_support import skill_record
 from tests.knowledge.test_curation_remember import MemoryProvider
 from tests.marketing.agent_service.test_application import AskThenStopReasoning
@@ -45,8 +48,6 @@ from tests.marketing.channels.test_slack_events import (
 )
 
 if TYPE_CHECKING:
-    import pytest
-
     from ads_booster.bootstrap.lifecycle import InstalledKnowledgeRuntime
     from ads_booster.contracts.reasoning import ReasoningRequest
     from ads_booster.knowledge.curation_contracts import (
@@ -91,6 +92,41 @@ def _installed_events(
 
 
 installed_events = _installed_events
+
+
+def test_new_message_completes_when_historic_learning_grant_is_removed(tmp_path: Path) -> None:
+    # Given: a completed historic conversation whose member can no longer read its source.
+    owner, installed, messages = _installed_events(tmp_path)
+    try:
+        receive(owner, user="U1")
+        while owner.work_once(now=NOW):
+            pass
+        historic_run = owner.commands.application.service.repository.list_runs("team")[0]
+        binding = installed.adapter.ingress.binding_for_run(historic_run.run_id)
+        assert binding is not None
+        with installed.adapter.repository.connection() as connection:
+            _ = connection.execute(
+                "DELETE FROM scope_grants WHERE workspace_id=? AND member_id=?",
+                (binding.actor.workspace_id, binding.actor.member_id),
+            )
+        delivered = len(messages)
+
+        # When: another admitted member sends a new message in a new thread.
+        receive(owner, user="U2", text="<@UBOT> hello", ts="100.002")
+        while owner.work_once(now=NOW):
+            pass
+
+        # Then: the new message completes while the historical source remains denied.
+        replies = messages[delivered:]
+        assert replies[-1]["text"] == "No execution tool is needed"
+        assert replies[0]["thread_ts"] == "100.002"
+        runs = owner.commands.application.service.repository.list_runs("team")
+        assert len(runs) == 2
+        assert all(run.state is AgentRunState.COMPLETED for run in runs)
+        with pytest.raises(AccessDeniedError):
+            _ = installed.adapter.resolve_question_answer(historic_run.run_id, "still-denied")
+    finally:
+        installed.runtime.close()
 
 
 def _prepared_learning_receipt(owner: SlackEvents, run_id: str) -> JsonObject:
@@ -275,21 +311,10 @@ def test_channel_feedback_cannot_automatically_publish_workspace_skill(tmp_path:
         installed.runtime.close()
 
 
-def _remember_channel_batch(
-    provider: CodexKnowledgeProvider,
-    batch_id: str,
-    jobs: tuple[CurationBatchJobContext, ...],
-    *,
-    timeout_seconds: float,
-) -> CurationBatchDecision:
-    _ = provider
-    return MemoryProvider().decide_batch(batch_id, jobs, timeout_seconds=timeout_seconds)
-
-
-def test_u2_new_thread_reads_u1_learning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_u2_new_thread_reads_u1_learning(tmp_path: Path) -> None:
     # Given: two admitted Slack users and the installed channel memory writer.
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _remember_channel_batch)
     owner, installed, _ = _installed_events(tmp_path)
+    install_curation_provider(installed, MemoryProvider())
     try:
         # When: U1's source is committed as channel memory before U2 opens a new thread.
         receive(
@@ -339,11 +364,11 @@ def test_u2_new_thread_reads_u1_learning(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_correction_during_nonterminal_run_keeps_the_bound_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(CodexKnowledgeProvider, "decide_batch", _remember_channel_batch)
     # Given: a shared Slack Run that is still awaiting input and has installed learning.
     owner, installed, _ = _installed_events(tmp_path)
+    install_curation_provider(installed, MemoryProvider())
     owner.commands.application.service.reasoning = AskThenStopReasoning()
     try:
         receive(owner, ts=str(NOW.timestamp() - 2))

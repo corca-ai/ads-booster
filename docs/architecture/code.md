@@ -344,6 +344,10 @@ process and mount, and a future comparable grader-environment digest is a separa
   bootstrap wheel installation, main fetch/CI gates, locked candidate install, systemd switching,
   offline state backup, transaction recovery, and installed process launch. The timer executes the
   manager from current, so updater changes follow main. It does not plan or own channel effects.
+- `cli/server_knowledge.py` owns additive managed-install Knowledge configuration migration, invoked
+  by the selected release's manager before exec. It reuses the Knowledge configuration and store
+  initializers, preserves prior files, and publishes environment additions last. The standalone
+  updater reads only persisted Knowledge path assignments for offline backup/restore.
 - The supplied systemd service/timer are the Linux process composition. The actual service process
   receives the release identity and maintenance path from the launcher, not from request parameters.
 - `.github/workflows/verify-agent-server.yml` owns the dedicated exact-commit CI gate and fresh-wheel
@@ -361,6 +365,10 @@ It delegates Run/input/approval mutations to `MarketingAgentService`; it does no
 existing maintenance-gated worker. `cli/marketing.py` composes this optional surface from env.
 Private DM composition narrows CapabilityPolicy while sharing the service lock and canonical stores.
 Operator manifests and merge-to-operation guidance live in `docs/operations/agent-server`.
+Optional learning-question projection skips historical conversations whose read access is denied;
+the resolver still enforces denial, and unrelated admitted Slack jobs continue to execute.
+`knowledge/jobs.py` owns the common cancellation interface and fresh-process job boundary;
+`knowledge/batch_runtime.py` applies the same spawned-process boundary to curation batches.
 
 ### Portable server onboarding and recovery
 

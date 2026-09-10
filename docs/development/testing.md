@@ -155,6 +155,14 @@ Fresh wheel proof must also show that a second Run can answer while the first wa
 restarting and replaying completion neither calls the adapter again nor charges twice.
 ## Team knowledge checks
 
+Managed upgrade regressions select `tests/cli/test_server_knowledge_migration.py` and
+`test_agent_server_update.py`: absent configuration, unchanged operator bytes/custom paths,
+partial configuration rejection, interrupted publication, and persistent-path Knowledge backup.
+`tests/cli/test_knowledge_health.py` drives real thread start/exit through CLI composition and the
+HTTP health route. `test_batch_policy_failures.py` verifies unavailable-source jobs become terminal
+without blocking a valid source, and `tests/marketing/channels/test_slack_learning.py` verifies a
+historical denied actor cannot starve a newly admitted Slack conversation.
+
 The knowledge implementation is covered by focused `tests/knowledge` contracts, repository/filesystem,
 ingress, Slack-scope, retrieval, curation, transfer, and deletion tests. Select the affected boundary
 with `uv run pytest -q <test-file>`; the focused owners are:

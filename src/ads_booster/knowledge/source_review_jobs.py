@@ -36,8 +36,7 @@ from ads_booster.knowledge.source_fetch import (
 )
 
 if TYPE_CHECKING:
-    from threading import Event
-
+    from ads_booster.knowledge.jobs import CancellationEvent
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
     from ads_booster.knowledge.scope_contracts import ActorContext
     from ads_booster.knowledge.source_contracts import Source
@@ -63,7 +62,7 @@ class SourceReviewJobProcessor:
     def process(  # noqa: PLR0911
         self,
         lease: JobLease,
-        cancellation: Event,
+        cancellation: CancellationEvent,
     ) -> JobProcessResult:
         if lease.job.kind is not JobKind.SOURCE_REVIEW:
             return _result(lease, JobState.FAILED, SourceReviewStatus.FAILED, "job_kind_invalid")
@@ -152,7 +151,7 @@ class SourceReviewJobProcessor:
         lease: JobLease,
         source: Source,
         request: SourceFetchRequest,
-        cancellation: Event,
+        cancellation: CancellationEvent,
     ) -> FetchedSource | JobProcessResult:
         for delay in (*_RETRY_DELAYS, None):
             if cancellation.is_set():

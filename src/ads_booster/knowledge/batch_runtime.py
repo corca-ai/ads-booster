@@ -24,7 +24,7 @@ from ads_booster.knowledge.batch_curation import (
 from ads_booster.knowledge.batch_failure import fail_unbatched_job, fail_unclaimed_batch
 from ads_booster.knowledge.contracts import CurationBatch, EventReceipt, KnowledgeJob
 from ads_booster.knowledge.curation_contracts import CurationRunStatus
-from ads_booster.knowledge.errors import KnowledgePolicyError
+from ads_booster.knowledge.errors import CurationSourceUnavailableError, KnowledgePolicyError
 from ads_booster.knowledge.learning_policy import LEARNING_POLICY_VERSION
 from ads_booster.knowledge.maintenance_jobs import (
     CancellationEvent,
@@ -40,7 +40,7 @@ from ads_booster.knowledge.repository_learning_recovery import recover_released_
 from ads_booster.knowledge.scope_contracts import ActorContext
 
 if TYPE_CHECKING:
-    from multiprocessing.context import ForkContext
+    from multiprocessing.context import SpawnContext
     from multiprocessing.process import BaseProcess
     from multiprocessing.queues import Queue
 
@@ -83,7 +83,7 @@ class CurationBatchRuntime:
     repository: SqliteKnowledgeRepository
     actor: ActorContext
     jobs: CanonicalJobProcessor
-    _context: ForkContext = field(init=False, repr=False)
+    _context: SpawnContext = field(init=False, repr=False)
     _process: BaseProcess | None = field(default=None, init=False, repr=False)
     _queue: Queue[str] = field(init=False, repr=False)
     _cancel: CancellationEvent = field(default_factory=Event, init=False, repr=False)
@@ -92,7 +92,7 @@ class CurationBatchRuntime:
 
     def __post_init__(self) -> None:
         """Allocate the process channel owned by this runtime."""
-        self._context = get_context("fork")
+        self._context = get_context("spawn")
         self._queue = self._context.Queue(maxsize=1)
 
     @property
@@ -188,7 +188,7 @@ class CurationBatchRuntime:
                         occurred_at=job.created_at,
                     )
                 )
-            except KnowledgePolicyError as error:
+            except (KnowledgePolicyError, CurationSourceUnavailableError) as error:
                 fail_unbatched_job(self.repository, job, error.code)
         return bool(rows) or recovered > 0
 

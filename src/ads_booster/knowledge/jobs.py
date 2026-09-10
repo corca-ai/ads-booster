@@ -4,9 +4,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from multiprocessing import get_context
-from multiprocessing.context import ForkContext
-from multiprocessing.process import BaseProcess
-from multiprocessing.queues import Queue
 from threading import Event
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -14,11 +11,23 @@ from ads_booster.knowledge.operation_enums import JobPriority, JobState
 from ads_booster.knowledge.repository_types import JobClaim, JobCompletion, JobLease
 
 if TYPE_CHECKING:
+    from multiprocessing.context import SpawnContext
+    from multiprocessing.process import BaseProcess
+    from multiprocessing.queues import Queue
+
     from ads_booster.knowledge.repository import SqliteKnowledgeRepository
 
 
+class CancellationEvent(Protocol):
+    def is_set(self) -> bool: ...
+
+    def set(self) -> None: ...
+
+    def wait(self, timeout: float | None = None) -> bool: ...
+
+
 class KnowledgeJobProcessor(Protocol):
-    def process(self, lease: JobLease, cancellation: Event) -> JobProcessResult: ...
+    def process(self, lease: JobLease, cancellation: CancellationEvent) -> JobProcessResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,15 +43,16 @@ class BoundedJobRunner:
     worker_id: str
     lease_duration: timedelta = timedelta(seconds=30)
     heartbeat_interval: timedelta = timedelta(seconds=5)
-    _context: ForkContext = field(init=False, repr=False)
+    _context: SpawnContext = field(init=False, repr=False)
     _process: BaseProcess | None = field(default=None, init=False, repr=False)
     _queue: Queue[JobProcessResult] = field(init=False, repr=False)
     _lease: JobLease | None = field(default=None, init=False, repr=False)
-    _cancel: Event = field(default_factory=Event, init=False, repr=False)
+    _cancel: CancellationEvent = field(default_factory=Event, init=False, repr=False)
     _last_heartbeat: datetime | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._context = cast("ForkContext", get_context("fork"))
+        """Create workers without inheriting the service's thread locks or database handles."""
+        self._context = get_context("spawn")
         self._queue = self._context.Queue(maxsize=1)
 
     @property
@@ -80,7 +90,10 @@ class BoundedJobRunner:
             return True
         if lease.job.priority is JobPriority.ROUTINE and _urgent_ready(self.repository, instant):
             self._cancel.set()
-        if self._last_heartbeat is None or instant - self._last_heartbeat >= self.heartbeat_interval:
+        if (
+            self._last_heartbeat is None
+            or instant - self._last_heartbeat >= self.heartbeat_interval
+        ):
             if not _heartbeat(self.repository, lease, instant + self.lease_duration):
                 self._cancel.set()
             self._last_heartbeat = instant
@@ -149,7 +162,7 @@ class BoundedJobRunner:
 def _process_job(
     processor: KnowledgeJobProcessor,
     lease: JobLease,
-    cancellation: Event,
+    cancellation: CancellationEvent,
     queue: Queue[JobProcessResult],
 ) -> None:
     try:
@@ -158,7 +171,9 @@ def _process_job(
         queue.put(JobProcessResult(JobState.FAILED, b"knowledge_job_processor_failed"))
 
 
-def _heartbeat(repository: SqliteKnowledgeRepository, lease: JobLease, lease_until: datetime) -> bool:
+def _heartbeat(
+    repository: SqliteKnowledgeRepository, lease: JobLease, lease_until: datetime
+) -> bool:
     with repository.connection() as connection:
         _ = connection.execute("BEGIN IMMEDIATE")
         cursor = connection.execute(
