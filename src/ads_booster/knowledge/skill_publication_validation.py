@@ -11,6 +11,7 @@ from ads_booster.knowledge.contract_types import (
     ScopeKind,
 )
 from ads_booster.knowledge.operation_enums import SkillOrigin
+from ads_booster.knowledge.skill_authoring import requested_skill_action
 from ads_booster.knowledge.skill_source_currentness import require_current_skill_sources
 from ads_booster.knowledge.skills import builtin_skill_records, known_capability_ids
 
@@ -41,8 +42,9 @@ def validate_skill_operations(
     context: TrustedInvocationContext,
 ) -> None:
     """Validate model-authored skill changes against server-owned state and authority."""
-    if actor.conversation_scope.kind is not ScopeKind.WORKSPACE:
+    if actor.conversation_scope.kind not in {ScopeKind.WORKSPACE, ScopeKind.CHANNEL}:
         _reject("skill_shared_write_required")
+    _require_requested_mutation(repository, operations, context)
     if len({operation.skill_id for operation in operations}) != len(operations):
         _reject("skill_operation_target_duplicate")
     builtins = {record.skill_id: record for record in builtin_skill_records()}
@@ -70,6 +72,44 @@ def validate_skill_operations(
             )
         if (current is not None and current.record.protected) or builtin is not None:
             _require_explicit_foreground(repository, operation, context)
+
+
+def _require_requested_mutation(
+    repository: SqliteKnowledgeRepository,
+    operations: tuple[SkillOperation, ...],
+    context: TrustedInvocationContext,
+) -> None:
+    event = context.source_fetch_event
+    if (
+        event is None
+        or context.run_id.startswith("background.")
+        or event.role is not ConversationRole.USER
+        or event.speaker_ref != context.actor.actor_id
+        or event.scope != context.actor.conversation_scope
+        or repository.canonical_event(context.actor, event.message_id) != event
+    ):
+        _reject("skill_direct_user_request_required")
+    requested = requested_skill_action(event.text)
+    if requested is None:
+        _reject("skill_explicit_request_required")
+    if len(operations) != 1:
+        _reject("skill_one_target_per_request")
+    operation = operations[0]
+    actual = "update" if operation.kind.value == "supersede" else operation.kind.value
+    if actual == "create" and operation.skill_id in {
+        item.skill_id for item in builtin_skill_records()
+    }:
+        actual = "update"
+    if actual != requested.value:
+        _reject("skill_requested_action_mismatch", operation.skill_id)
+    if not any(
+        reference.evidence_kind is EvidenceKind.CONVERSATION_EVENT
+        and reference.evidence_id == event.message_id
+        and reference.revision_id == str(event.revision)
+        and reference.scope == event.scope
+        for reference in operation.source_refs
+    ):
+        _reject("skill_request_source_mismatch", operation.skill_id)
 
 
 def _validate_record(
@@ -149,7 +189,7 @@ def _require_explicit_foreground(
         _reject("skill_protected_foreground_required", operation.skill_id)
     if (
         event.role is not ConversationRole.USER
-        or event.scope.kind is not ScopeKind.WORKSPACE
+        or event.scope.kind not in {ScopeKind.WORKSPACE, ScopeKind.CHANNEL}
         or event.speaker_ref != context.actor.actor_id
     ):
         _reject("skill_protected_user_event_required", operation.skill_id)

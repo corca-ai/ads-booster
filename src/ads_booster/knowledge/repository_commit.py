@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
@@ -11,6 +12,7 @@ from ads_booster.knowledge.change_validation import ChangeValidationError, Evide
 from ads_booster.knowledge.contracts import (
     AccessScope,
     ConversationEvent,
+    ConversationRole,
     EvidenceKind,
     KnowledgeOperation,
     MemoryKind,
@@ -59,6 +61,7 @@ from ads_booster.knowledge.repository_types import (
     RepositoryCommitBoundary,
     conflict,
 )
+from ads_booster.knowledge.skill_authoring import requested_skill_action
 from ads_booster.knowledge.skill_contracts import SkillOperation
 
 if TYPE_CHECKING:
@@ -162,12 +165,7 @@ def _authorize_commit(connection: sqlite3.Connection, command: CatalogCommit) ->
                     for reference in entry.source_refs
                 )
                 require_user_memory_entry(entry=entry, actor=command.actor, records=records, at=at)
-    if command.skill_writes:
-        target_scope = AccessScope(
-            kind=ScopeKind.WORKSPACE,
-            workspace_id=command.actor.workspace_id,
-        )
-        _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
+    _authorize_skill_commit(connection, command, at)
     for invalidation in command.dependency_invalidations:
         row = _OPTIONAL_STRING_ROW.validate_python(
             connection.execute(
@@ -484,6 +482,39 @@ def _insert_redirects(
                 command.operation_id,
             ),
         )
+
+
+def _require_skill_request_current(
+    connection: sqlite3.Connection, actor: ActorContext, operation: SkillOperation, at: datetime
+) -> None:
+    """Recheck user provenance inside the write transaction, without workspace data grants."""
+    for reference in operation.source_refs:
+        if reference.scope != actor.conversation_scope:
+            continue
+        record = _personal_record(connection, actor, reference, at)
+        event = record.canonical_event
+        if (
+            event is not None
+            and event.role is ConversationRole.USER
+            and event.speaker_ref == actor.actor_id
+            and sha256(event.text.encode()).hexdigest() == reference.quote_sha256
+            and requested_skill_action(event.text) is not None
+        ):
+            return
+    conflict("skill_explicit_request_required", operation.skill_id)
+
+
+def _authorize_skill_commit(
+    connection: sqlite3.Connection, command: CatalogCommit, at: datetime
+) -> None:
+    if not command.skill_writes:
+        return
+    target_scope = command.actor.conversation_scope
+    if target_scope.kind not in {ScopeKind.WORKSPACE, ScopeKind.CHANNEL}:
+        conflict("skill_shared_write_required", command.operation_id)
+    _ = authorize_write(actor=command.actor, target_scope=target_scope, at=at)
+    for write in command.skill_writes:
+        _require_skill_request_current(connection, command.actor, write.operation, at)
 
 
 __all__ = ["commit_catalog"]

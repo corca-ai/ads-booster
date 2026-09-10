@@ -331,7 +331,11 @@ class CurationRunner:
         )
 
     def _with_tool_catalog(self, request: CurationRequest) -> CurationRequest:
-        schemas = self.dependencies.tool_host.schemas()
+        schemas = {
+            name: schema
+            for name, schema in self.dependencies.tool_host.schemas().items()
+            if name is not KnowledgeToolName.SKILL_APPLY
+        }
         if request.learning_purpose is not None:
             schemas = {
                 name: schema for name, schema in schemas.items() if name in _LEARNING_TOOL_NAMES
@@ -348,7 +352,7 @@ class CurationRunner:
                 "tool_catalog": tuple(
                     CurationToolDefinition(name=name, input_schema=schema)
                     for name, schema in schemas.items()
-                )
+                ),
             }
         )
 

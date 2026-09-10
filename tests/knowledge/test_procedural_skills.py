@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,9 +31,12 @@ from tests.knowledge.procedural_skill_test_support import (
     apply_skill,
     foreground_override_context,
     private_source_ref,
+    requested_skill_work,
     skill_record,
 )
-from tests.knowledge.test_curation_inputs import curation_input as fixture_curation_input
+from tests.knowledge.procedural_skill_test_support import (
+    requested_skill_input as fixture_curation_input,
+)
 from tests.knowledge.test_curation_inputs import envelope
 
 if TYPE_CHECKING:
@@ -48,8 +52,8 @@ def test_model_skill_draft_derives_strict_persisted_record(
     curation_input: CurationInput,
 ) -> None:
     # Given
-    repository, processor, job, _, _ = curation_input
-    work = processor.build_curation_work(job)
+    repository, processor, _job, _, _ = curation_input
+    work = requested_skill_work(curation_input)
     payload: JsonObject = {
         "schema": "knowledge.tool.skill-apply.v1",
         "operation_id": "operation.skill.model-draft",
@@ -91,8 +95,8 @@ def test_complete_skill_record_with_forged_digest_is_rejected(
     curation_input: CurationInput,
 ) -> None:
     # Given
-    repository, processor, job, _, _ = curation_input
-    work = processor.build_curation_work(job)
+    repository, processor, _job, _, _ = curation_input
+    work = requested_skill_work(curation_input)
     authenticated = work.request.authenticated_user_event
     assert authenticated is not None
     record = skill_record(
@@ -136,8 +140,8 @@ def test_generic_catalog_discovers_subject_skill_but_explicit_mismatch_excludes(
     curation_input: CurationInput,
 ) -> None:
     # Given
-    repository, processor, job, _, _ = curation_input
-    work = processor.build_curation_work(job)
+    repository, processor, _job, _, _ = curation_input
+    work = requested_skill_work(curation_input)
     payload: JsonObject = {
         "schema": "knowledge.tool.skill-apply.v1",
         "operation_id": "operation.skill.subject-filter",
@@ -181,9 +185,9 @@ def test_generic_catalog_discovers_subject_skill_but_explicit_mismatch_excludes(
 
 def test_agent_created_skill_is_mutable(curation_input: CurationInput) -> None:
     # Given
-    repository, processor, job, _, _ = curation_input
+    repository, processor, _job, _, _ = curation_input
     host = ToolHost(repository)
-    work = processor.build_curation_work(job)
+    work = requested_skill_work(curation_input)
     authenticated = work.request.authenticated_user_event
     assert authenticated is not None
     created = skill_record(
@@ -209,17 +213,34 @@ def test_agent_created_skill_is_mutable(curation_input: CurationInput) -> None:
             reason="A source-linked successful procedure can be reused.",
         ),
     )
+    request = curation_input[3].model_copy(
+        update={
+            "message_id": "message.update",
+            "sequence": 2,
+            "text": "스킬 수정: learned.campaign-handoff 절차를 업데이트",
+        }
+    )
+    _ = KnowledgeIngestion(repository).ingest(
+        processor.actor, request, envelope(request, "delivery.update")
+    )
+    update_context = work.trusted_context.model_copy(update={"source_fetch_event": request})
+    update_ref = created.source_refs[0].model_copy(
+        update={
+            "evidence_id": request.message_id,
+            "quote_sha256": sha256(request.text.encode()).hexdigest(),
+        }
+    )
     revised = skill_record(
         skill_id=created.skill_id,
         version="learned.campaign-handoff.r2",
         origin=created.origin,
         protected=created.protected,
-        source_refs=created.source_refs,
+        source_refs=(update_ref,),
         procedure="Read the current brief, preserve scope, then retain the terminal receipt.",
     )
     second = apply_skill(
         host,
-        work.trusted_context,
+        update_context,
         operation_id="operation.skill.update",
         operation=SkillOperation(
             operation_id="operation.skill.update",
@@ -243,9 +264,9 @@ def test_agent_created_skill_is_mutable(curation_input: CurationInput) -> None:
 
 def test_entire_builtin_catalog_is_protected(curation_input: CurationInput) -> None:
     # Given
-    repository, processor, job, _, _ = curation_input
+    repository, processor, _job, _, _ = curation_input
     host = ToolHost(repository)
-    work = processor.build_curation_work(job)
+    work = requested_skill_work(curation_input)
     authenticated = work.request.authenticated_user_event
     assert authenticated is not None
 
@@ -286,9 +307,9 @@ def test_explicit_builtin_override_stays_protected(
     curation_input: CurationInput, tmp_path: Path
 ) -> None:
     # Given
-    repository, processor, job, _, _ = curation_input
+    repository, _processor, _job, _, _ = curation_input
     host = ToolHost(repository)
-    work = processor.build_curation_work(job)
+    work = requested_skill_work(curation_input)
     builtin = SKILLS[0]
     projected = host.execute(
         "skill_get",
@@ -367,9 +388,9 @@ def test_skill_apply_rejects_stale_or_private_source(
     curation_input: CurationInput, private: bool
 ) -> None:
     # Given
-    repository, processor, job, event, _ = curation_input
+    repository, processor, _job, event, _ = curation_input
     host = ToolHost(repository)
-    work = processor.build_curation_work(job)
+    work = requested_skill_work(curation_input)
     authenticated = work.request.authenticated_user_event
     assert authenticated is not None
     source_ref = authenticated.evidence_ref
@@ -422,8 +443,8 @@ def test_skill_selection_tracks_exact_source_currentness(
     text: str,
 ) -> None:
     # Given
-    repository, processor, job, event, _ = curation_input
-    work = processor.build_curation_work(job)
+    repository, processor, _job, event, _ = curation_input
+    work = requested_skill_work(curation_input)
     authenticated = work.request.authenticated_user_event
     assert authenticated is not None
     record = skill_record(
@@ -494,8 +515,8 @@ def test_skill_selection_tracks_exact_source_currentness(
 def test_scoped_discovery_finds_learned_revision_and_pages_builtin_metadata(
     curation_input: CurationInput,
 ) -> None:
-    repository, processor, job, _, _ = curation_input
-    context = processor.build_curation_work(job).trusted_context
+    repository, _processor, _job, _, _ = curation_input
+    context = requested_skill_work(curation_input).trusted_context
     host = ToolHost(repository)
     result = host.execute(
         "skill_apply",

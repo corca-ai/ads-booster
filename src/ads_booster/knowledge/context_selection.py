@@ -36,6 +36,7 @@ from ads_booster.contracts.knowledge_selection import (
 )
 from ads_booster.knowledge.change_validation import ChangeValidationError
 from ads_booster.knowledge.changes import resolve_constraints
+from ads_booster.knowledge.contract_types import ScopeKind
 from ads_booster.knowledge.contracts import (
     ActorContext,
     BrandState,
@@ -61,6 +62,7 @@ from ads_booster.knowledge.retrieval import (
     SearchRequest,
 )
 from ads_booster.knowledge.skill_discovery import rank_skills
+from ads_booster.knowledge.skill_source_currentness import published_skill_source_revision
 from ads_booster.knowledge.skills import KnowledgeSkills
 from ads_booster.knowledge.source_contracts import ConversationEvent, SourceSegment
 
@@ -305,6 +307,12 @@ class KnowledgeContextAssembler:
         """Resolve source heads retained by skills without exposing them as retrieval excerpts."""
         selected: list[SelectedSkillSourceRevision] = []
         for reference in source_refs:
+            if reference.scope.kind is ScopeKind.CHANNEL:
+                revision = published_skill_source_revision(self.repository, actor, reference)
+                if revision is None:
+                    return None
+                selected.append(revision)
+                continue
             resolved = self.repository.resolve_evidence(actor, reference)
             match resolved:
                 case ConversationEvent(conversation_id=conversation_id, message_id=message_id):

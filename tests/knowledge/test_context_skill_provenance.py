@@ -32,8 +32,14 @@ from ads_booster.knowledge.skills import KnowledgeSkills
 from ads_booster.knowledge.tool_contracts import ToolResultStatus
 from ads_booster.knowledge.tools import ToolHost
 from tests.knowledge.change_test_fixtures import NOW
-from tests.knowledge.procedural_skill_test_support import apply_skill, skill_record
-from tests.knowledge.test_curation_inputs import curation_input as fixture_curation_input
+from tests.knowledge.procedural_skill_test_support import (
+    apply_skill,
+    requested_skill_work,
+    skill_record,
+)
+from tests.knowledge.procedural_skill_test_support import (
+    requested_skill_input as fixture_curation_input,
+)
 from tests.knowledge.test_curation_inputs import envelope
 
 if TYPE_CHECKING:
@@ -55,9 +61,9 @@ def test_selected_skill_retains_current_source_dependency_and_excludes_stale_hea
     replacement_text: str,
 ) -> None:
     # Given: a source-linked shared skill and a task that selects it as metadata-only context.
-    repository, processor, job, event, receipt = curation_input
+    repository, processor, _job, event, receipt = curation_input
     host = ToolHost(repository)
-    work = processor.build_curation_work(job)
+    work = requested_skill_work(curation_input)
     authenticated = work.request.authenticated_user_event
     assert authenticated is not None
     record = skill_record(

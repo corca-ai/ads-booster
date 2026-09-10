@@ -228,7 +228,7 @@ class RequestMoreInput:
         )
 
 
-def test_channel_cannot_publish_workspace_skill(tmp_path: Path) -> None:
+def test_channel_feedback_cannot_automatically_publish_workspace_skill(tmp_path: Path) -> None:
     # Given: an installed runtime and an actor admitted only to the Slack channel.
     owner, installed, _ = _installed_events(tmp_path)
     try:
@@ -258,10 +258,11 @@ def test_channel_cannot_publish_workspace_skill(tmp_path: Path) -> None:
         )
         output = output_record.payload["output"]
         assert isinstance(output, dict)
-        assert output["error_code"] == "skill_shared_write_required"
-        assert installed.adapter.repository.read_skill(
-            admitted[1].actor, "learned.u1.receipt-rules"
-        ) is None
+        assert output["error_code"] == "skill_explicit_request_required"
+        assert (
+            installed.adapter.repository.read_skill(admitted[1].actor, "learned.u1.receipt-rules")
+            is None
+        )
         with installed.adapter.repository.connection() as connection:
             row = TypeAdapter(tuple[int]).validate_python(
                 connection.execute(
