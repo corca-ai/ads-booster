@@ -103,7 +103,8 @@ establish that the revised candidate is better than the already strong baseline 
 
 The existing CI also exposed `context_receipt_idempotency_conflict` when a newly learned but
 budget-excluded skill changed exclusions without changing visible block IDs. The context owner
-now hashes the complete observation. The pre-integration regression proved completion and exact skill selection. A replay/time
+now hashes the complete observation. The pre-integration regression proved completion and exact
+skill selection. A replay/time
 regression preserves exact idempotency and distinct observations.
 
 Local evidence roots are `/private/tmp/trace-marketer-152/{baseline,candidate,final}`; they contain
@@ -120,7 +121,11 @@ cannot become a workspace-wide skill merely because a write tool is listed. Priv
 the current grants. Earlier 0.6.0 Slack skill-writing fixtures are historical, not current proof.
 
 The merged source passed 87 focused tests, including channel memory and requester isolation.
-Its fresh 0.7.0 wheel is being checked separately; final installed/model and CI results are in PR #153.
+Its fresh non-editable 0.7.0 wheel passed 19 installed boundary tests and completed all six
+real-model marketing turns. The integrated replies retained correct objective costs, feasible
+measurement limits, coherent Japanese copy and exact body preservation during partial editing.
+Seven affected production files matched the installed package byte for byte. Evidence is in
+`/private/tmp/trace-marketer-152/integrated-marketing`; current CI results are in PR #153.
 
 ## Remaining competitive work
 

@@ -125,7 +125,8 @@ For example, in an authorized workspace-scoped API conversation, ask “이번�
 재사용할 스킬로 저장해줘.” `marketing.skill_learning` guides discovery, a source-bound semantic
 draft through `skill_apply`, and receipt/readback verification. Slack channels use channel-owned
 learning memory; channel input cannot publish workspace-wide skills. Private DMs expose only
-scoped reads allowed by current grants. Skills can compose existing tools as procedures; creating or saving one does not
+scoped reads allowed by current grants. Skills can compose existing tools as procedures;
+creating or saving one does not
 install executable code or register a new tool. See the
 [comparison and next extension boundary](docs/research/adaptive-skills.md).
 Slack follow-ups receive the current bounded conversation, including earlier assistant answers,
