@@ -7,6 +7,17 @@ Last reviewed: 2026-09-11
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+### Slack approval feedback
+
+Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_production_approval.py`,
+`test_slack_commands.py` and `test_slack_events.py` from the same directory. Signed events/forms
+exercise review explanations, invalid/oversized pages, missing pending work, current permission,
+changed digests and unavailable tools. Check delivered text and unchanged canonical records;
+help text must not grant reviewed-production assent. A fault after approval persistence verifies
+redacted diagnostics and no automatic retry. Run the same selection against a fresh non-editable
+wheel outside the checkout. Fixtures replace model/tool/Slack providers; they do not establish
+the cause of a deployed incident or successful live image generation.
+
 ### Adaptive skill discovery
 
 For bounded catalog queries, learned-skill ranking, context budgets, scoped provider guidance and

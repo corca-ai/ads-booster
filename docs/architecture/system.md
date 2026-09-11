@@ -627,6 +627,14 @@ retains the invocation digest and current approval membership is checked before 
 Initial broad requests, missing review pages, changed targets and external publication do not
 inherit a production grant. The explicit hash approval path remains available.
 
+Slack thread and slash-command review input share `SlackCommands.review_input`; malformed,
+oversized or out-of-range page arguments return guidance without entering continuation or
+changing approval state. Only the unchanged authoritative `review_pages` rendering counts as
+delivered review evidence. Event failures project an allowlist of approval rejection codes into
+actionable replies and log only message identity, action and a fixed code. Unknown exceptions
+use `unclassified`, disclose no exception payload, retain blocked message state and advise status
+inspection instead of repeating approval. This is diagnostic coverage, not effect reconciliation.
+
 Unknown edit operations expose a scoped status and explicit reviewer abandonment endpoint.
 The API derives authority from current authenticated membership, never the request body.
 Abandonment binds the pending operation/invocation, reviewer, note and time to a durable

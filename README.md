@@ -210,6 +210,12 @@ has received every `검토` page for that exact proposal can say `이대로 만�
 `이대로 제작해줘`. This reuses the exact production review context. Changed targets, another
 member's review, publication and remote external effects retain their explicit approval path.
 
+`검토 1`은 승인할 실행 내용의 첫 페이지를 보여줍니다. `검토 1이 뭐야` 같은 질문이나
+잘못된 페이지는 사용법을 안내하며 승인안을 변경하지 않습니다. 안내문은 검토 완료로
+계산되지 않습니다. 승인 권한 부족, 승인안 변경, 도구 이용 불가는 각각 원인에 맞게
+안내합니다. 실행 여부가 불명확한 오류는 `상태`로 확인하고 운영자에게 확인을 요청하세요.
+운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드만 기록합니다.
+
 For an uncertain edit, authenticated clients can inspect
 `GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop
 tracking it with `POST` to the same path plus `/abandon`, supplying only
