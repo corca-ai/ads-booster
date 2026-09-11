@@ -14,47 +14,48 @@ from typing import TYPE_CHECKING, Annotated, cast
 import typer
 from pydantic import ValidationError
 
-from ads_booster.cli.knowledge import app as knowledge_app
-from ads_booster.cli.server import app as server_app
-from ads_booster.knowledge.configuration import KnowledgeSettings, validate_settings
-from ads_booster.knowledge.maintenance import inspect_owner
+from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.agent.service.scheduler import (
+    AgentSkillScheduler,
+    DailySkillSchedule,
+)
 from ads_booster.bootstrap.channel_setup import (
     browser_from_env,
     run_slack_worker,
     run_web_jobs,
     slack_from_env,
 )
-from ads_booster.tools.github_issues import token_from_env
-from ads_booster.channels.http.http_api import (
-    MarketingAgentApi,
-    serve_marketing_agent_api,
-)
 from ads_booster.bootstrap.image_edit_setup import (
     connect_image_edit,
     run_image_edit_worker,
 )
 from ads_booster.bootstrap.integrations import AgentServiceIntegrationConfig
-from ads_booster.channels.http.jobs import AgentJobs
 from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
-from ads_booster.agent.service.maintenance import MaintenanceGate
-from ads_booster.channels.http.oauth import OAuthTokenIntrospector
-from ads_booster.agent.service.scheduler import (
-    AgentSkillScheduler,
-    DailySkillSchedule,
+from ads_booster.bootstrap.trace_post_setup import connect_trace_post, run_trace_post_worker
+from ads_booster.channels.http.http_api import (
+    MarketingAgentApi,
+    serve_marketing_agent_api,
 )
-from ads_booster.tools.web_search import SearchInput
+from ads_booster.channels.http.jobs import AgentJobs
+from ads_booster.channels.http.oauth import OAuthTokenIntrospector
 from ads_booster.channels.slack_events import events_from_env
+from ads_booster.cli.knowledge import app as knowledge_app
+from ads_booster.cli.server import app as server_app
+from ads_booster.knowledge.configuration import KnowledgeSettings, validate_settings
+from ads_booster.knowledge.maintenance import inspect_owner
+from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
 from ads_booster.research.dynamic_evidence_research import (
     DynamicEvidenceResearchError,
     DynamicEvidenceResearchRequest,
     DynamicEvidenceResearchRunner,
 )
 from ads_booster.research.evidence_research_operator import EvidenceResearchOperatorError
-from ads_booster.providers.codex_cli import CodexCli, resolve_codex_executable
+from ads_booster.tools.github_issues import token_from_env
+from ads_booster.tools.web_search import SearchInput
 
 if TYPE_CHECKING:
     from ads_booster.agent.service.application import MarketingAgentService
@@ -207,6 +208,15 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
         if slack_events is not None:
             _ = slack_events.enqueue_run_update(tenant_id, run_id, event_id=event_id)
 
+    trace_post = connect_trace_post(
+        service,
+        executable=executable,
+        model=model,
+        timeout_seconds=timeout_seconds,
+        now=datetime.now(UTC),
+        on_completed=notify_image_completion,
+    )
+
     image_edit_path = os.environ.get("TRACE_MARKETING_IMAGE_EDIT_CONFIG")
     image_edit = (
         None
@@ -271,8 +281,15 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
             daemon=True,
         )
     )
+    trace_post_thread = Thread(
+        target=run_trace_post_worker,
+        args=(trace_post, scheduler_stop, gate),
+        name="trace-marketing-trace-post",
+        daemon=True,
+    )
 
     def start_background() -> None:
+        trace_post_thread.start()
         if image_edit_thread is not None:
             image_edit_thread.start()
         jobs_thread.start()
@@ -287,6 +304,8 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
 
     def stop_service(_signum: int, _frame: object) -> None:
         scheduler_stop.set()
+        if trace_post_thread.is_alive():
+            trace_post_thread.join(timeout=5)
         if knowledge_runtime is not None:
             knowledge_runtime.runtime.request_stop()
         raise KeyboardInterrupt
@@ -326,6 +345,8 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
     finally:
         _ = signal.signal(signal.SIGTERM, previous_sigterm)
         scheduler_stop.set()
+        if trace_post_thread.is_alive():
+            trace_post_thread.join(timeout=5)
         if image_edit_thread is not None and image_edit_thread.is_alive():
             image_edit_thread.join(timeout=5)
         if knowledge_runtime is not None:
