@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 ## Focused checks
 
@@ -44,6 +44,26 @@ these are two executions of one synthetic scenario, not a benchmark. Research an
 executable-tool boundary are recorded in [adaptive skills](../research/adaptive-skills.md).
 
 ### Marketing decisions and finished deliverables
+
+For campaign planning, performance reporting and useful-content guidance, select
+`tests/marketing/agent_service/test_skill_tools.py`,
+`tests/knowledge/test_procedural_skills.py` and `tests/marketing/test_funnel_analysis.py`.
+The catalog test exercises list/read through canonical receipts for the changed procedures;
+it does not grade generated marketing text. Use a frozen dependency-complete development
+environment and scoped Ruff/BasedPyright for changed Python files.
+Funnel regressions include numeric-only canonical receipts without a currency, preservation of
+unknown financial values, and currency rejection when spend is supplied (including zero).
+
+The existing fresh-wheel command below accepts `--scenario planning` for three additional
+synthetic signed Slack turns: constrained campaign planning, an uneven-denominator report with
+missing business data, and a useful-content revision under pressure to invent product claims.
+Use identical inputs/model and a new output root for each baseline/candidate trial. Criteria
+are written before calls; results remain `quality_verdict: ungraded` until reviewed. Inspect
+the delivered replies and canonical tool intents as well as lifecycle state. Report each task's
+0/1/2 rubric dimensions, hard failures, elapsed time, actual model and trial count; a single
+passing candidate cannot establish an improvement or marketing lift. Campaign publication,
+real analytics and human brand acceptance remain separate. The source mapping and observed
+comparison live in [marketing planning quality](../research/marketing-planning-quality.md).
 
 The pre-integration selection passed 78 tests; after merging current main, 87 focused tests
 passed including channel memory, requester isolation and context identity. The integrated fresh

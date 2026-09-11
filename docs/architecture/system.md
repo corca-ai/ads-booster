@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 ## Runtime ownership
 
@@ -49,7 +49,15 @@ registered even without external credentials and allowed in admitted private Sla
 It returns arithmetic and limitations through canonical invocation/evidence/receipt records, without
 network calls or separate state. Decimal strings preserve exact portable receipt serialization;
 semantic input rejection is a known failed receipt, not an uncertain external effect.
+Numeric-only reports may omit currency with spend absent; output preserves `currency: null`.
+Reported spend, including zero, still requires currency. Existing currency-bearing inputs remain valid;
+the current descriptor advertises the relaxed schema while historical receipts stay immutable.
 Growth/customer-insight procedures guide outcome selection, customer evidence and finished copy.
+Strategy v2 adds campaign measurement and execution dependencies; performance-report v1 applies
+data-quality checks and selects existing funnel arithmetic only for compatible counts. Copy v3
+adds reader usefulness and claim review. These remain on-demand versioned procedures in the
+existing catalog: no new tools, context injection, state store or effect authority is introduced.
+Persisted goals retain their recorded procedure; new reads expose the current built-in version.
 Knowledge context receipts bind the complete selection observation, including exclusions and
 observation time. Stable block labels alone cannot identify a selection after a skill is learned.
 Existing receipts remain immutable; this identity change needs no data migration.

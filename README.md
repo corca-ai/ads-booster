@@ -102,7 +102,16 @@ customer outcome, with explicit denominators and comparison limits. It needs no 
 is available in admitted Slack channels and private conversations. Counts must be nested unique
 people from mature cohorts; spend is a decimal string such as `"300.00"`. Unknown spend and zero
 denominators remain undefined. The tool does not collect analytics or authorize budget changes.
+Currency may be omitted when spend is unknown; the result preserves it as `null`. Supplying spend,
+including `"0"`, requires a currency. Do not fill the field with a guessed currency or placeholder.
 Growth and customer-interview skills connect these observations to experiments and finished copy.
+For a campaign plan, `marketing.strategy` also connects the target behavior to measurement,
+owners, review and execution dependencies within the supplied budget. Ask for a weekly or campaign
+report to use `marketing.performance_report`: reported data, missing baselines and attribution
+limits stay explicit. It reuses available funnel arithmetic; it does not add analytics connectors.
+Copy review checks reader usefulness and supported claims, including search-oriented content.
+See the [official-source review](docs/research/marketing-planning-quality.md) for the selected
+practices and before/after verification.
 See the [marketing colleague evaluation](docs/research/marketing-colleague.md) for research,
 observed weaknesses and the limits of the synthetic Slack rehearsal.
 
