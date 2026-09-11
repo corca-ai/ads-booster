@@ -494,7 +494,7 @@ for members' DMs. The signed
 `/channels/slack/events` route acknowledges durable admission before reasoning. Mentions start
 threads; ordinary replies continue them with scoped persisted context. DM runs use a derived
 workspace/member/session tenant and search-only capability policy; they cannot mutate shared
-workspace state or invoke delivery tools. `상태`, `검토 1`, `승인 해시`, `거절 해시`, `종료`,
+workspace state or invoke delivery tools. `상태`, `검토 1`, `승인`, `거절`, `종료`,
 `다시 시작` work within the conversation. File contents and Slack-wide history search are not supported.
 Use the [merge-to-Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md), creating
 from the bootstrap manifest first and activating the full Events manifest after server startup.
@@ -502,9 +502,13 @@ from the bootstrap manifest first and activating the full Events manifest after 
 ### Create ads-booster issues from Slack
 
 The optional `github.issue.create` tool creates issues only in `corca-ai/ads-booster`.
-In an allowed shared Slack channel, mention the agent with the issue details. It proposes the
-repository, title and body for review; use `검토 1` (and subsequent pages), then send the exact
-`승인 <hash>` reply as a configured approver. `/trace` uses its existing review/approve commands.
+In an allowed shared Slack channel, explicitly ask the agent to create the issue with its details,
+for example `이 승인 반복 오류를 깃허브 이슈로 올려줘`. For a requester with current approval
+permission, that request authorizes one exact creation; a second review/confirmation is unnecessary.
+Questions and draft-only requests do not authorize creation. If additional consent is needed,
+the agent shows the proposed contents; reply `승인` or `진행해줘`, or `거절` to decline.
+Long proposals retain paginated `검토 1` review. Exact `승인 <hash>` and `/trace` review/approve
+commands remain available. Questions while waiting preserve the pending work.
 After creation and GitHub readback, the reply includes the actual issue URL. Private DMs do not
 have repository write authority. Labels, assignees, PRs and other repositories are not supported.
 
@@ -613,7 +617,8 @@ new operations use the newly installed version.
 
 In an allowed shared channel, mention the bot with a visual brief, for example
 `@Trace Marketing Agent 파란 배경의 미니멀한 Trace 앱 광고 이미지 한 장 만들어줘`.
-Review the proposed `creative.image.generate` prompt and approve its exact hash. The installed
+For a requester with current approval permission, this direct request authorizes one generation
+with delegated creative defaults. The agent does not ask for the same permission again. The installed
 server runs one dedicated official Codex image-generation turn with its existing ChatGPT login and
 configured model; no image API key or Mac/Appium worker is required. The account/model must support
 Codex's `image_generation` feature. Authentication alone does not prove image-generation entitlement.
