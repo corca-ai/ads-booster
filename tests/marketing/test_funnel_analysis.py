@@ -188,11 +188,19 @@ def test_nonportable_or_ambiguous_spend_is_rejected(spend: object) -> None:
 
 class AnalyzeThenStop(AskThenStopReasoning):
     invalid_counts: bool = False
+    no_financial_data: bool = False
 
     @override
     def plan(self, request: ReasoningRequest) -> ReasoningResult:
         self.requests.append(request)
         data = payload()
+        if self.no_financial_data:
+            cohorts = data["cohorts"]
+            assert isinstance(cohorts, list)
+            for cohort in cohorts:
+                assert isinstance(cohort, dict)
+                _ = cohort.pop("currency")
+                _ = cohort.pop("spend")
         if self.invalid_counts:
             cohorts = data["cohorts"]
             assert isinstance(cohorts, list)
@@ -222,13 +230,16 @@ class AnalyzeThenStop(AskThenStopReasoning):
 
 
 @pytest.mark.parametrize("invalid_counts", [False, True])
+@pytest.mark.parametrize("no_financial_data", [False, True])
 def test_funnel_analysis_runs_through_installed_registration_and_canonical_receipt(
     tmp_path: Path,
     invalid_counts: bool,
+    no_financial_data: bool,
 ) -> None:
     configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
     reasoning = AnalyzeThenStop()
     reasoning.invalid_counts = invalid_counts
+    reasoning.no_financial_data = no_financial_data
     service = _service(tmp_path / "agent.db", reasoning)
     service.registry = ToolRegistry.from_registrations(configured.registrations(), now=NOW)
     service.tools = service.registry.adapters
@@ -249,3 +260,28 @@ def test_funnel_analysis_runs_through_installed_registration_and_canonical_recei
             for record in service.repository.records("trace", completed.run_id)
             if record.kind is AgentRecordKind.EVIDENCE
         )
+
+
+@pytest.mark.parametrize("spend", [None, "0", "300"])
+def test_currency_is_required_only_when_spend_is_reported(spend: str | None) -> None:
+    data = payload()
+    cohorts = data["cohorts"]
+    assert isinstance(cohorts, list)
+    for cohort in cohorts:
+        assert isinstance(cohort, dict)
+        _ = cohort.pop("currency")
+        cohort["spend"] = spend
+    if spend is not None:
+        with pytest.raises(ValidationError, match="funnel_currency_required_for_spend"):
+            _ = FunnelAnalysisInput.model_validate(data)
+        return
+    output = analyze_funnels(FunnelAnalysisInput.model_validate(data))
+    rows = output["cohorts"]
+    assert isinstance(rows, list)
+    first = rows[0]
+    assert isinstance(first, dict)
+    assert first["currency"] is None
+    assert first["spend"] is None
+    assert first["cost_per_objective_person"] is None
+    assert first["objective_conversion_percent"] == "1.500000"
+    assert "Currencies differ" not in str(output["comparison_limits"])
