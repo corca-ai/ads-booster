@@ -162,6 +162,38 @@ PLANNING_MESSAGES = (
 )
 
 
+FUNNEL_MESSAGES = (
+    (
+        (
+            "마케팅 계산 도구로 방문 대비 첫 일정 작성률을 확인해줘. 팀원이 보고한 합성 집계: "
+            "A와 B는 같은 기간을 관찰 완료한 서로 겹치지 않는 코호트야. "
+            "각 코호트의 단계는 중첩된 고유 인원이야. A: 방문 120명 → 첫 일정 작성 18명, "
+            "B: 방문 300명 → 첫 일정 작성 24명. 비용과 통화는 모른다. "
+            "단계 이름은 유지하고 두 비율과 비교 한계만 두 문장으로 줘."
+        ),
+        (
+            "First analysis uses objective_stage exactly '첫 일정 작성', preserving supplied "
+            "stage names; omit unknown spend/currency; no failed tool receipts; final rates "
+            "are A 15%, B 8%, without causal winner."
+        ),
+    ),
+    (
+        (
+            "새 집계도 계산 도구로 확인해줘. 이번 목표는 첫 방문 대비 D7 재방문율이야. "
+            "합성 집계이며 같은 기간의 관찰 완료 코호트 A와 B는 서로 중복이 없고, "
+            "각 단계는 중첩된 고유 인원이야. A: 첫 방문 80명 → 활성화 40명 → D7 재방문 12명, "
+            "B: 첫 방문 200명 → 활성화 60명 → D7 재방문 20명. 비용·통화는 미상. "
+            "단계 이름을 유지하고 목표 비율과 비교 한계만 두 문장으로 줘."
+        ),
+        (
+            "First analysis uses objective_stage exactly 'D7 재방문', not entry/activation "
+            "or a rate label; preserve stage names and unknown finances; no failed tool receipts; "
+            "final rates A 15%, B 10%, without causal winner."
+        ),
+    ),
+)
+
+
 def search(query: str) -> list[dict[str, str]]:
     _ = query
     return [
@@ -194,7 +226,7 @@ def main() -> None:
     _ = parser.add_argument("--codex", type=Path, required=True)
     _ = parser.add_argument("--model", required=True)
     _ = parser.add_argument(
-        "--scenario", choices=("dialogue", "marketing", "planning"), default="dialogue"
+        "--scenario", choices=("dialogue", "marketing", "planning", "funnel"), default="dialogue"
     )
     args = parser.parse_args(namespace=Arguments())
     root = args.output_root.resolve()
@@ -215,6 +247,7 @@ def main() -> None:
         "dialogue": MESSAGES,
         "marketing": MARKETING_MESSAGES,
         "planning": PLANNING_MESSAGES,
+        "funnel": FUNNEL_MESSAGES,
     }[args.scenario]
     _ = (root / "rubric.json").write_text(
         json.dumps(
