@@ -77,7 +77,16 @@ class FunnelCohort(ContractModel):
 class FunnelAnalysisInput(ContractModel):
     """Counts are reported observations, never verified collection or effect authority."""
 
-    objective_stage: Label
+    objective_stage: Annotated[
+        Label,
+        Field(
+            description=(
+                "Exact steps[].name of an existing downstream stage shared by every cohort. "
+                "Copy the stage name verbatim, not a rate description or a new metric name; "
+                "the first (entry) stage cannot be the objective."
+            ),
+        ),
+    ]
     cohorts: Annotated[tuple[FunnelCohort, ...], Field(min_length=1, max_length=8)]
     source_note: Annotated[str, Field(min_length=1, max_length=1000)]
     design: Literal["observational", "randomized_reported"] = "observational"
