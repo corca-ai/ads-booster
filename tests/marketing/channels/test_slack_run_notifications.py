@@ -33,6 +33,9 @@ def test_run_update_is_durable_same_thread_and_once(tmp_path: Path) -> None:
     assert owner.work_once(now=NOW)
     assert len(messages) == before + 1
     assert messages[-1]["thread_ts"] == "100.001"
+    assert messages[-1]["text"] == messages[before - 1]["text"]
+    assert "상태:" not in str(messages[-1]["text"])
+    assert "실행:" not in str(messages[-1]["text"])
     assert not owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
     assert not owner.work_once(now=NOW)
     assert not owner.enqueue_run_update("other", run.run_id, event_id="worker-operation")
@@ -145,7 +148,8 @@ def test_image_edit_completion_projects_to_slack_outbox_and_recovers_callback_lo
     assert events.work_once(now=NOW)
     assert len(sent) == 1
     assert sent[0]["thread_ts"] == "100.001"
-    assert "completed" in str(sent[0]["text"])
+    assert "Bounded top extension" in str(sent[0]["text"])
+    assert "상태:" not in str(sent[0]["text"])
     assert replace(coordinator).work_once()["state"] == "idle"
     assert not events.work_once(now=NOW)
     assert len(sent) == 1

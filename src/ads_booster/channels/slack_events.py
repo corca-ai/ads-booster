@@ -1193,7 +1193,7 @@ class SlackEvents:
                 tenant_id,
                 run_id,
                 event_id=event_id,
-                result=self.summary(conversation, include_status=True)[:12000],
+                result=self.summary(conversation)[:12000],
             )
 
     def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
@@ -1216,11 +1216,23 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
-        if include_status or run.state not in {
+        if not include_status and run.state not in {
             AgentRunState.COMPLETED,
             AgentRunState.AWAITING_INPUT,
         }:
+            # A tool-selection rationale is not a finished conversational answer.
+            # Preserve canonical reasoning for explicit status/diagnostic reads.
+            answer = {
+                AgentRunState.AWAITING_TOOL: "요청한 도구의 결과를 기다리고 있습니다.",
+                AgentRunState.AWAITING_RECONCILIATION: (
+                    "실행 결과를 확인해야 합니다. 같은 작업을 다시 실행하지 않았습니다."
+                ),
+                AgentRunState.BLOCKED: "작업이 막혀 완료하지 못했습니다. 상태 확인이 필요합니다.",
+                AgentRunState.STOPPED: "작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다.",
+                AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다. 상태 확인이 필요합니다.",
+            }.get(run.state, "아직 작업이 완료되지 않았습니다.")
+        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
+        if include_status:
             result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
         return result
 
