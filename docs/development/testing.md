@@ -1,11 +1,28 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 ## Focused checks
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
+
+For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
+and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
+ordinary output must not expose its rationale or imply tool execution, while explicit status and
+canonical records remain available. Check asynchronous completion, deduplication, callback-loss
+recovery and membership checks. Repeat against a non-editable wheel outside the checkout.
+
+### Slack approval feedback
+
+Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_production_approval.py`,
+`test_slack_commands.py` and `test_slack_events.py` from the same directory. Signed events/forms
+exercise review explanations, invalid/oversized pages, missing pending work, current permission,
+changed digests and unavailable tools. Check delivered text and unchanged canonical records;
+help text must not grant reviewed-production assent. A fault after approval persistence verifies
+redacted diagnostics and no automatic retry. Run the same selection against a fresh non-editable
+wheel outside the checkout. Fixtures replace model/tool/Slack providers; they do not establish
+the cause of a deployed incident or successful live image generation.
 
 ### Adaptive skill discovery
 
@@ -44,6 +61,42 @@ these are two executions of one synthetic scenario, not a benchmark. Research an
 executable-tool boundary are recorded in [adaptive skills](../research/adaptive-skills.md).
 
 ### Marketing decisions and finished deliverables
+
+For colleague interaction guidance, select `tests/providers/test_codex_reasoning.py`,
+`tests/marketing/agent_service/test_skill_tools.py` and `tests/knowledge/test_procedural_skills.py`.
+Use the fresh-wheel Slack harness below with `--scenario colleague` for six turns covering
+actual catalog lookup, delegated drafting, narrow correction, language continuity, calculation
+and an unavailable recurring task. Grade final messages and actual tool use, not lifecycle alone.
+Use the existing minimal-skill-reuse canary for the scoped shared-skill branch. Keep comparison
+inputs and dependency versions fixed, record per-turn evidence and distinguish supplied-task
+acceptance from broad communication quality. See [colleague evidence](../research/conversational-colleague.md).
+
+For campaign planning, performance reporting and useful-content guidance, select
+`tests/marketing/agent_service/test_skill_tools.py`,
+`tests/knowledge/test_procedural_skills.py` and `tests/marketing/test_funnel_analysis.py`.
+The catalog test exercises list/read through canonical receipts for the changed procedures;
+it does not grade generated marketing text. Use a frozen dependency-complete development
+environment and scoped Ruff/BasedPyright for changed Python files.
+Funnel regressions include numeric-only canonical receipts without a currency, preservation of
+unknown financial values, and currency rejection when spend is supplied (including zero).
+
+The existing fresh-wheel command below accepts `--scenario planning` for three additional
+synthetic signed Slack turns: constrained campaign planning, an uneven-denominator report with
+missing business data, and a useful-content revision under pressure to invent product claims.
+Use identical inputs/model and a new output root for each baseline/candidate trial. Criteria
+are written before calls; results remain `quality_verdict: ungraded` until reviewed. Inspect
+the delivered replies and canonical tool intents as well as lifecycle state. Report each task's
+0/1/2 rubric dimensions, hard failures, elapsed time, actual model and trial count; a single
+passing candidate cannot establish an improvement or marketing lift. Campaign publication,
+real analytics and human brand acceptance remain separate. The source mapping and observed
+comparison live in [marketing planning quality](../research/marketing-planning-quality.md).
+
+For the funnel tool's model-facing input schema, use `--scenario funnel` on the same installed
+Slack harness. Its two new tasks use different numbers and downstream stage labels from the
+planning rehearsal. Inspect the first calculation input for exact supplied stage names, omitted
+unknown finances and zero failed receipts; expected rates are 15%/8% and 15%/10%. This diagnostic
+has an all-or-nothing input-contract check in addition to reading the two-sentence answers.
+Compare the same tasks/model across fresh wheels; one trial does not measure failure frequency.
 
 The pre-integration selection passed 78 tests; after merging current main, 87 focused tests
 passed including channel memory, requester isolation and context identity. The integrated fresh

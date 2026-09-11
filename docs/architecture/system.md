@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 ## Runtime ownership
 
@@ -49,7 +49,15 @@ registered even without external credentials and allowed in admitted private Sla
 It returns arithmetic and limitations through canonical invocation/evidence/receipt records, without
 network calls or separate state. Decimal strings preserve exact portable receipt serialization;
 semantic input rejection is a known failed receipt, not an uncertain external effect.
+Numeric-only reports may omit currency with spend absent; output preserves `currency: null`.
+Reported spend, including zero, still requires currency. Existing currency-bearing inputs remain valid;
+the current descriptor advertises the relaxed schema while historical receipts stay immutable.
 Growth/customer-insight procedures guide outcome selection, customer evidence and finished copy.
+Strategy v2 adds campaign measurement and execution dependencies; performance-report v1 applies
+data-quality checks and selects existing funnel arithmetic only for compatible counts. Copy v3
+adds reader usefulness and claim review. These remain on-demand versioned procedures in the
+existing catalog: no new tools, context injection, state store or effect authority is introduced.
+Persisted goals retain their recorded procedure; new reads expose the current built-in version.
 Knowledge context receipts bind the complete selection observation, including exclusions and
 observation time. Stable block labels alone cannot identify a selection after a skill is learned.
 Existing receipts remain immutable; this identity change needs no data migration.
@@ -60,6 +68,19 @@ operation units but consume the existing tool-call budget. Skills cover opportun
 strategy, copy and experiments as well as creative procedures. Creative v2 guidance follows
 available execution tools after preparation; human assistance is conditional on an actual blocker.
 Existing persisted goals keep their recorded procedure; new creative skill Runs use version 2.
+
+The Codex reasoning provider's conversation contract treats Trace as a teammate with marketing
+expertise. It maintains the current request through language/format changes, uses reasonable
+creative defaults for delegated drafts, and presents results rather than internal planning text.
+Skill inventory questions query the scoped catalog instead of treating selected context as the
+whole catalog. Procedure reads must lead to applicable work; compatible numerical reports use
+the available calculation tool. Shared skill writes still require the current explicit user request.
+This changes model guidance, not tool registration, approval, budgets or canonical history.
+
+Ordinary Slack replies and asynchronous updates omit Run diagnostics. Nonterminal updates use
+the persisted execution state rather than presenting the last tool-selection rationale as an
+answer. Explicit status requests retain diagnostic reasoning, state and Run ID. Approval review
+continues to expose the exact invocation and digest; notification durability is unchanged.
 
 Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
 completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after
@@ -618,6 +639,14 @@ review pages were successfully delivered to that same authenticated user. Its fr
 retains the invocation digest and current approval membership is checked before dispatch.
 Initial broad requests, missing review pages, changed targets and external publication do not
 inherit a production grant. The explicit hash approval path remains available.
+
+Slack thread and slash-command review input share `SlackCommands.review_input`; malformed,
+oversized or out-of-range page arguments return guidance without entering continuation or
+changing approval state. Only the unchanged authoritative `review_pages` rendering counts as
+delivered review evidence. Event failures project an allowlist of approval rejection codes into
+actionable replies and log only message identity, action and a fixed code. Unknown exceptions
+use `unclassified`, disclose no exception payload, retain blocked message state and advise status
+inspection instead of repeating approval. This is diagnostic coverage, not effect reconciliation.
 
 Unknown edit operations expose a scoped status and explicit reviewer abandonment endpoint.
 The API derives authority from current authenticated membership, never the request body.

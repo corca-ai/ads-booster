@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 
 
 class DiscoverThenRead(AskThenStopReasoning):
+    skill_id: str = "marketing.copy"
+
     @override
     def plan(self, request: ReasoningRequest) -> ReasoningResult:
         self.requests.append(request)
@@ -43,7 +45,7 @@ class DiscoverThenRead(AskThenStopReasoning):
             skills = index["skills"]
             assert isinstance(skills, list)
             choice = next(
-                s for s in skills if isinstance(s, dict) and s["skill_id"] == "marketing.copy"
+                s for s in skills if isinstance(s, dict) and s["skill_id"] == self.skill_id
             )
             assert isinstance(choice, dict)
             assert "procedure" not in choice
@@ -79,9 +81,15 @@ class DiscoverThenRead(AskThenStopReasoning):
         )
 
 
-def test_discovery_loads_versioned_procedure_through_real_run_receipts(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "skill_id", ["marketing.copy", "marketing.strategy", "marketing.performance_report"]
+)
+def test_discovery_loads_versioned_procedure_through_real_run_receipts(
+    tmp_path: Path, skill_id: str
+) -> None:
     configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
     reasoning = DiscoverThenRead()
+    reasoning.skill_id = skill_id
     service = _service(tmp_path / "agent.db", reasoning)
     service.registry = ToolRegistry(configured.descriptors(now=NOW))
     service.tools = configured.adapters()

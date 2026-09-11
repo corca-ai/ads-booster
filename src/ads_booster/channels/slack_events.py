@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from contextlib import contextmanager
@@ -102,6 +103,29 @@ _MAX_FIELD = 100000
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _TIMESTAMP = re.compile(r"[0-9]{1,16}\.[0-9]{1,8}")
 _HASH = re.compile(r"[a-f0-9]{64}")
+_LOGGER = logging.getLogger(__name__)
+_FAILURE_REPLIES = {
+    "slack_approval_not_allowed": (
+        "이 대화에서 승인 권한이 없습니다. 승인 가능한 팀원에게 검토를 요청하세요."
+    ),
+    "agent_approval_invocation_changed": (
+        "보낸 해시가 현재 승인안과 다릅니다. '검토 1'로 현재 내용을 확인하세요."
+    ),
+    "slack_production_target_changed": (
+        "승인 대상 작업이 변경되었습니다. '검토 1'로 현재 내용을 확인하세요."
+    ),
+    "agent_run_not_awaiting_approval": (
+        "현재 승인 대기 상태가 아닙니다. '상태'로 작업 진행 상황을 확인하세요."
+    ),
+    "tool_dispatch_no_longer_available": (
+        "승인 대상 도구를 현재 사용할 수 없습니다. "
+        "운영자에게 도구 연결과 준비 상태 확인을 요청하세요."
+    ),
+    "tool_dispatch_adapter_unavailable": (
+        "승인 대상 도구를 현재 사용할 수 없습니다. "
+        "운영자에게 도구 연결과 준비 상태 확인을 요청하세요."
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,14 +607,31 @@ class SlackEvents:
                 if plan.learning_urgent:
                     self._admit_urgent_learning(plan.run_id, now=now)
                 self._admit_shared_turn(conversation, plan, now=now)
-        except Exception:  # noqa: BLE001 - never repeat an uncertain effect; no provider secrets.
+        except Exception as exc:  # noqa: BLE001 - never repeat an uncertain effect; no provider secrets.
+            code = (
+                exc.args[0]
+                if isinstance(exc, ValueError)
+                and len(exc.args) == 1
+                and isinstance(exc.args[0], str)
+                and exc.args[0] in _FAILURE_REPLIES
+                else "unclassified"
+            )
+            _LOGGER.warning(
+                "slack_event_failed message=%s action=%s code=%s",
+                message.message_id,
+                plan.action if plan else "planning",
+                code,
+            )
             self.store.finish(
                 message,
-                " ".join(  # noqa: FLY002 - readable translated message.
-                    (
-                        "처리를 완료하지 못했습니다. 이 대화에 '상태'를 보내 확인하세요.",
-                        "승인 시에는 현재 '검토 1'에 표시된 해시를 사용하세요.",
-                    )
+                _FAILURE_REPLIES.get(
+                    code,
+                    " ".join(  # noqa: FLY002 - readable translated message.
+                        (
+                            "처리를 완료하지 못했습니다. 이 대화에 '상태'를 보내 확인하세요.",
+                            "실행 확인 전에는 승인을 반복하지 말고 운영자에게 문의하세요.",
+                        )
+                    ),
                 ),
                 blocked=True,
             )
@@ -758,8 +799,8 @@ class SlackEvents:
                 return MessagePlan(action="reply", reply="아직 시작한 작업이 없습니다.")
             return MessagePlan(action="pause", run_id=run.run_id)
         if action in {"검토", "review"}:
-            reply = self.commands.review(
-                conversation.tenant_id, conversation.current_run, int(argument or "1")
+            reply = self.commands.review_input(
+                conversation.tenant_id, conversation.current_run, argument
             )
             return MessagePlan(action="reply", reply=reply)
         if text in {"이대로 만들어줘", "이대로 제작해줘"}:
@@ -1152,7 +1193,7 @@ class SlackEvents:
                 tenant_id,
                 run_id,
                 event_id=event_id,
-                result=self.summary(conversation, include_status=True)[:12000],
+                result=self.summary(conversation)[:12000],
             )
 
     def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
@@ -1175,11 +1216,23 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
-        if include_status or run.state not in {
+        if not include_status and run.state not in {
             AgentRunState.COMPLETED,
             AgentRunState.AWAITING_INPUT,
         }:
+            # A tool-selection rationale is not a finished conversational answer.
+            # Preserve canonical reasoning for explicit status/diagnostic reads.
+            answer = {
+                AgentRunState.AWAITING_TOOL: "요청한 도구의 결과를 기다리고 있습니다.",
+                AgentRunState.AWAITING_RECONCILIATION: (
+                    "실행 결과를 확인해야 합니다. 같은 작업을 다시 실행하지 않았습니다."
+                ),
+                AgentRunState.BLOCKED: "작업이 막혀 완료하지 못했습니다. 상태 확인이 필요합니다.",
+                AgentRunState.STOPPED: "작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다.",
+                AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다. 상태 확인이 필요합니다.",
+            }.get(run.state, "아직 작업이 완료되지 않았습니다.")
+        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
+        if include_status:
             result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
         return result
 

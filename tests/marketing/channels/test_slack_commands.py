@@ -157,5 +157,4 @@ def test_slack_review_exposes_exact_invocation_without_requiring_web_login(tmp_p
     owner.public_links = False
     assert "https://agent.example" not in owner.summary("team", "run-one")
     body, headers = request("review run-one 999")
-    with pytest.raises(ValueError, match="agent_review_page_invalid"):
-        _ = owner.receive(body, headers, now=NOW)
+    assert "검토 페이지 범위를 벗어났습니다" in str(owner.receive(body, headers, now=NOW)["text"])

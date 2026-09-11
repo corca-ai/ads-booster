@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 ## On-premises Marketing Agent
 
@@ -91,6 +91,9 @@ structured-output provider rejects; canonical invocation input and history remai
 receipts; `bootstrap/integrations.py` registers it. This observation-only tool imports no channel,
 provider or mutable agent state. Known semantic input errors return failed receipts without raw
 input values; successful ratios are decimal strings compatible with the portable ledger.
+`FunnelCohort` permits an unknown currency only without spend; supplied spend, including zero,
+requires a currency. The descriptor derives its schema/digest from this contract, so numeric-only
+reports need no invented currency and known invalid monetary input follows the existing failed receipt.
 `agent/service/skills.py` owns growth/customer-insight procedures and their readiness requirements.
 
 ## Web and Slack onboarding owners

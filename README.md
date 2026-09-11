@@ -102,7 +102,22 @@ customer outcome, with explicit denominators and comparison limits. It needs no 
 is available in admitted Slack channels and private conversations. Counts must be nested unique
 people from mature cohorts; spend is a decimal string such as `"300.00"`. Unknown spend and zero
 denominators remain undefined. The tool does not collect analytics or authorize budget changes.
+Currency may be omitted when spend is unknown; the result preserves it as `null`. Supplying spend,
+including `"0"`, requires a currency. Do not fill the field with a guessed currency or placeholder.
 Growth and customer-interview skills connect these observations to experiments and finished copy.
+For a campaign plan, `marketing.strategy` also connects the target behavior to measurement,
+owners, review and execution dependencies within the supplied budget. Ask for a weekly or campaign
+report to use `marketing.performance_report`: reported data, missing baselines and attribution
+limits stay explicit. It reuses available funnel arithmetic; it does not add analytics connectors.
+Copy review checks reader usefulness and supported claims, including search-oriented content.
+
+Trace는 마케팅 전문성을 가진 동료로 대화합니다. 맡길 수 있는 일을 물으면 스킬 목록을
+직접 확인하고, 필요한 절차를 읽어 초안·분석·추천으로 이어갑니다. “알아서 정해줘”라는
+초안 요청에는 합리적인 창작 방향을 정하며, 언어·길이 수정은 진행 중인 결과에 적용합니다.
+계정 조회나 예약 같은 연결되지 않은 기능은 실행했다고 말하지 않습니다.
+대화·스킬 사용의 검증 범위는 [동료형 에이전트 점검](docs/research/conversational-colleague.md)에 있습니다.
+See the [official-source review](docs/research/marketing-planning-quality.md) for the selected
+practices and before/after verification.
 See the [marketing colleague evaluation](docs/research/marketing-colleague.md) for research,
 observed weaknesses and the limits of the synthetic Slack rehearsal.
 
@@ -200,6 +215,12 @@ For a currently pending edit/localization proposal, an authorized reviewer who
 has received every `검토` page for that exact proposal can say `이대로 만들어줘` or
 `이대로 제작해줘`. This reuses the exact production review context. Changed targets, another
 member's review, publication and remote external effects retain their explicit approval path.
+
+`검토 1`은 승인할 실행 내용의 첫 페이지를 보여줍니다. `검토 1이 뭐야` 같은 질문이나
+잘못된 페이지는 사용법을 안내하며 승인안을 변경하지 않습니다. 안내문은 검토 완료로
+계산되지 않습니다. 승인 권한 부족, 승인안 변경, 도구 이용 불가는 각각 원인에 맞게
+안내합니다. 실행 여부가 불명확한 오류는 `상태`로 확인하고 운영자에게 확인을 요청하세요.
+운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드만 기록합니다.
 
 For an uncertain edit, authenticated clients can inspect
 `GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop
