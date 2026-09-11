@@ -142,3 +142,33 @@ def test_skill_discovery_query_is_bounded_and_does_not_load_bodies() -> None:
     assert entries[0]["skill_id"] == "marketing.copy"
     assert "procedure" not in entries[0]
     assert "next_offset" in result.output
+
+
+def test_trace_post_discovery_reads_exact_installed_procedure() -> None:
+    configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
+    descriptors = {d.capability_id: d for d in configured.descriptors(now=NOW)}
+    listing = configured.adapters()["skills.list"].execute(
+        _invocation(descriptors["skills.list"], {"query": "trace-post"}),
+        descriptors["skills.list"],
+    )
+    assert isinstance(listing, ToolExecutionResult)
+    skills = listing.output["skills"]
+    assert isinstance(skills, list)
+    choice = next(
+        s for s in skills if isinstance(s, dict) and s["skill_id"] == "marketing.trace_post"
+    )
+    assert isinstance(choice, dict)
+    assert "procedure" not in choice
+    loaded = configured.adapters()["skills.read"].execute(
+        _invocation(
+            descriptors["skills.read"],
+            {"skill_id": choice["skill_id"], "version": choice["version"]},
+        ),
+        descriptors["skills.read"],
+    )
+    assert isinstance(loaded, ToolExecutionResult)
+    assert loaded.output["status"] == "found"
+    assert loaded.output["required_capabilities"] == ["creative.trace_post"]
+    assert loaded.output["authority"] == "procedure_only_not_evidence_or_approval"
+    # Reading the procedure does not install an executor or confer production approval.
+    assert "creative.trace_post" not in configured.adapters()

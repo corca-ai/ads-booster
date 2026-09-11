@@ -1,0 +1,23 @@
+{
+  "source_repository": "https://github.com/corca-ai/trace-marketing-context",
+  "source_commit": "6f462377d7ecf18c92ed716eb2d8dc80d10eaca9",
+  "files": {
+    "concepts/cute.md": "519ce75907f7f0bff3dc22abaf801dc6aaf9112a5e07d54c2d05087fe2f27fb7",
+    "context/POST-RUN.md": "d8121bfd0c6f11026173d61db7e6114b88ee9c8d36a18bdd285ed821afd53b9e",
+    "context/RUN-POLICY.md": "9618bdc68351809f5645e37fe2386f38727048e9d0c2408d9e617530cfb7d8b9",
+    "context/core/CAPTION-RULES.md": "19166b48b5e00e4dfb5183c19cfab760f689707e5830fed465ab112f98fed378",
+    "context/core/IMAGE-RULES.md": "4fdb0dd7e609973877cb9a1759e3aa813428911dee9917da11414d432a318be4",
+    "context/core/FACTS.md": "2cb7af07ad763ef1d5591ce43951093dc671591fba9c948c31e70b82453c4b79",
+    "context/templates/T2/spec.md": "38b802fd4c533eb557c1b599adeb585ac0026b6e636338457ddce93f5e061d4e",
+    "context/templates/T2/template.png": "a886e22faf22586dd61e0bcd5990b4432c5a713336cdb51939733d199a77e51c",
+    "context/templates/geom_check.py": "23db566d473b43b996dee7e25850a1f1fc879a19f0732b152ad8498d0ed4a634",
+    "context/templates/review-stage.md": "9ab8e69eca87dcef14b4c63b1f8ed9fa3bc8d67373a29cfc4c207d25f3ac850f",
+    "scripts/README.md": "df9360e3ee280c29e1be2308a59d0290faabebfcc0e406373324297544dcccbd",
+    "scripts/run_state.py": "48ac3cf2760f9e0967191dc648d6cb0f780b0143941a6c7650b317425b81d1d5",
+    "scripts/build_input.py": "83af84922a187ee6159310830f2fa6d21aa191ce56d9d2c95219f7cac552b7fe",
+    "scripts/content_review.py": "dda0664f92ddef72b5b2b360fc78a2d4ae73a05d4ae67e86e7dd11292b18e1c1",
+    "scripts/image_call.py": "58c4a9ea3f868351e9e169bd2366ca927c2c5b29f80d172d16951a13bc54ca7f",
+    "skills/trace-post/SKILL.md": "ed0b1d5ea9d1b2d840fba984843cd598cdf844beb4c26be5452cfb2347a2a5b7",
+    "skills/trace-post/scripts/manage_run.py": "fe36db305d273a343d2e5ca9af6e40bcd3734e625d537219307e422cfe23f28a"
+  }
+}

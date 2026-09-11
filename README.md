@@ -562,6 +562,32 @@ keeps verified issue links and reports uncertain effects explicitly. Cancellatio
 and a delayed old button cannot stop a newer request. `종료` still closes conversation auto-replies;
 the button stops the current execution without closing the conversation.
 
+### Create a KR/JP/TW Trace post
+
+In an allowed shared conversation, request `귀여움으로 KR·JP·TW 배경화면 게시물 만들어줘`.
+The installed `marketing.trace_post` procedure routes the request to `creative.trace_post`.
+It supports the cute card and T2 template, with optional date, motif and place selections from
+the current input schema. Review and approve the exact production proposal before execution.
+
+The service copies its packaged rules, template and helpers into one private operation workspace.
+It creates new schedules and localized captions, generates the KR text/background, localizes that
+same final wallpaper for JP/TW, and creates three phone scenes from the common scene prompt.
+The base workflow uses seven image calls; each stage permits at most one quality retry.
+A provider error with an unknown result does not authorize another generation attempt.
+
+This is a deferred server task using the configured official Codex executable/model with medium
+reasoning effort and a one-hour operation timeout. It is registered with the installed service;
+no separate image API key or trace-post configuration is required. The existing
+work's asset view receives six validated images; country captions and verification references return
+through the canonical result. Model review is not human approval or proof of actual app support.
+Image creation does not authorize Slack file delivery or external publication. Private DM execution
+is unavailable. A completed pipeline does not establish pixel-identical backgrounds across locales.
+
+The installed package is self-contained. It does not read a developer's checkout, `.agents` link or
+GitHub documents at execution time. `trace_post_bundle/provenance.json` records the imported source
+revision and file hashes. Existing operations retain their frozen bundle when the server updates;
+new operations use the newly installed version.
+
 ### Generate an image from Slack with the server's Codex login
 
 In an allowed shared channel, mention the bot with a visual brief, for example
