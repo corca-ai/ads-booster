@@ -242,7 +242,9 @@ def test_stop_during_issue_post_preserves_receipt_or_uncertainty_without_reposti
     ).adapters()
     receive(owner)
     assert owner.work_once(now=NOW)
-    approval = str(messages[-1]["text"]).split("\n")[1]
+    approval = next(
+        line for line in str(messages[-1]["text"]).splitlines() if line.startswith("승인 ")
+    )
     receive(owner, type="message", text=approval, ts="100.002", thread_ts="100.001")
     worker = Thread(target=lambda: owner.work_once(now=NOW))
     worker.start()

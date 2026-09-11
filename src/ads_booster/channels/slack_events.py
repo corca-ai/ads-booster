@@ -33,6 +33,11 @@ from ads_booster.channels.knowledge_ingress_slack import (
     build_slack_ingresses,
     slack_revision,
 )
+from ads_booster.channels.slack_approval import (
+    approve_requested_creation,
+    current_approval_source,
+    proposal_text,
+)
 from ads_booster.channels.slack_attachments import (
     SlackAttachmentContext,
     attachment_capabilities,
@@ -72,7 +77,6 @@ from ads_booster.contracts.agent_run import (
     AgentRun,
     AgentRunState,
     CapabilitySnapshot,
-    ToolInvocation,
     contract_sha256,
 )
 from ads_booster.contracts.tool_capability import EffectClass
@@ -105,6 +109,9 @@ _TIMESTAMP = re.compile(r"[0-9]{1,16}\.[0-9]{1,8}")
 _HASH = re.compile(r"[a-f0-9]{64}")
 _LOGGER = logging.getLogger(__name__)
 _FAILURE_REPLIES = {
+    "slack_approval_source_changed": (
+        "승인 메시지가 수정되거나 삭제되어 실행하지 않았습니다. 현재 의사를 새 메시지로 알려주세요."
+    ),
     "slack_approval_not_allowed": (
         "이 대화에서 승인 권한이 없습니다. 승인 가능한 팀원에게 검토를 요청하세요."
     ),
@@ -381,7 +388,7 @@ class SlackEvents:
             self.store.admit(conversation, message, knowledge)
         return {"ok": True}
 
-    def _message(  # noqa: C901,PLR0911 - explicit channel and DM admission boundaries.
+    def _message(  # noqa: C901,PLR0911,PLR0912 - explicit channel and DM admission boundaries.
         self, event: JsonObject, identity: ChannelIdentityBinding, *, now: datetime
     ) -> tuple[Conversation, Message, tuple[PendingKnowledgeIngress, ...]] | None:
         channel = _string(event, "channel")
@@ -451,6 +458,10 @@ class SlackEvents:
         run = self._service(conversation).repository.get(
             conversation.tenant_id, conversation.current_run
         )
+        if text in {"이대로 만들어줘", "이대로 제작해줘", "승인", "진행해줘", "approve"}:
+            assent = self._production_approval(conversation, message, run, at_admission=True)
+            if assent.action == "approve":
+                message = message.model_copy(update={"reviewed_invocation_sha256": assent.digest})
         action = "input" if run is not None and not text.startswith("새 작업 ") else "create"
         run_id = (
             run.run_id
@@ -803,13 +814,33 @@ class SlackEvents:
                 conversation.tenant_id, conversation.current_run, argument
             )
             return MessagePlan(action="reply", reply=reply)
-        if text in {"이대로 만들어줘", "이대로 제작해줘"}:
+        if text in {"거절", "reject", "취소", "취소해줘"}:
+            pending = (
+                None
+                if run is None
+                else service.pending_approval(conversation.tenant_id, run.run_id)
+            )
+            if (
+                run is not None
+                and run.state is AgentRunState.AWAITING_APPROVAL
+                and pending is not None
+            ):
+                return MessagePlan(
+                    action="reject", run_id=run.run_id, digest=contract_sha256(pending)
+                )
+            return MessagePlan(action="reply", reply="현재 승인 대기 중인 작업은 없습니다.")
+        if text in {"이대로 만들어줘", "이대로 제작해줘", "승인", "진행해줘", "approve"}:
             return self._production_approval(conversation, message, run)
-        if action in {"승인", "approve", "거절", "reject"}:
+        if action in {"승인", "approve", "거절", "reject"} and (
+            argument == "해시" or re.fullmatch(r"[a-fA-F0-9]{1,128}", argument)
+        ):
             if run is None or not _HASH.fullmatch(argument):
                 return MessagePlan(
                     action="reply",
-                    reply="'검토 1'을 읽고 '승인 해시' 또는 '거절 해시'를 보내세요.",
+                    reply=(
+                        "'해시'라는 단어를 입력할 필요는 없어요. 위 실행 내용을 확인하고 "
+                        "'승인' 또는 '거절'이라고 답해 주세요. 상세 내용은 '검토 1'로 볼 수 있어요."
+                    ),
                 )
             return MessagePlan(
                 action="approve" if action in {"승인", "approve"} else "reject",
@@ -873,20 +904,33 @@ class SlackEvents:
             ),
         )
 
-    def _production_approval(
-        self, conversation: Conversation, message: Message, run: AgentRun | None
+    def _production_approval(  # noqa: PLR0911 - each proposal/identity/delivery check fails closed.
+        self,
+        conversation: Conversation,
+        message: Message,
+        run: AgentRun | None,
+        *,
+        at_admission: bool = False,
     ) -> MessagePlan:
         fallback = MessagePlan(
             action="reply",
             reply="먼저 현재 제작안의 '검토 1'부터 모든 페이지를 확인해 주세요.",
         )
-        if run is None or conversation.private or run.state is not AgentRunState.AWAITING_APPROVAL:
+        if run is None or run.state is not AgentRunState.AWAITING_APPROVAL:
+            return MessagePlan(action="reply", reply="현재 승인 대기 중인 작업은 없습니다.")
+        if conversation.private:
             return fallback
         records = self._service(conversation).repository.records(conversation.tenant_id, run.run_id)
-        latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION), None)
-        if latest is None:
+        invocation = self._service(conversation).pending_approval(
+            conversation.tenant_id, run.run_id
+        )
+        if invocation is None:
             return fallback
-        invocation = ToolInvocation.model_validate(latest.payload)
+        if not at_admission and message.reviewed_invocation_sha256 != contract_sha256(invocation):
+            return MessagePlan(
+                action="reply",
+                reply=self.summary(conversation),
+            )
         snapshots = [
             CapabilitySnapshot.model_validate(r.payload)
             for r in records
@@ -899,11 +943,18 @@ class SlackEvents:
             for d in snapshot.descriptors
             if contract_sha256(d) == invocation.descriptor_sha256
         ]
-        if (
-            len(descriptors) != 1
-            or descriptors[0].effect_class is not EffectClass.LOCAL_ARTIFACT
+        if len(descriptors) != 1:
+            return fallback
+        production_phrase = message.text in {"이대로 만들어줘", "이대로 제작해줘"}
+        if production_phrase and (
+            descriptors[0].effect_class is not EffectClass.LOCAL_ARTIFACT
             or descriptors[0].capability_id
-            not in {"creative.image.edit", "creative.image.localize"}
+            not in {
+                "creative.image.generate",
+                "creative.image.edit",
+                "creative.image.localize",
+                "creative.trace_post",
+            }
         ):
             return fallback
         pages = self.commands.review_pages(conversation.tenant_id, run.run_id)
@@ -915,7 +966,14 @@ class SlackEvents:
                 (conversation.conversation_id, message.user_id),
             ).fetchall()
         delivered = TypeAdapter(list[tuple[str]]).validate_python(rows)
-        if any((page,) not in delivered for page in pages):
+        shown = proposal_text(invocation, descriptors[0])
+        marker = f"승인 {contract_sha256(invocation)}"
+        complete_summary = (
+            len(shown) > 0
+            and not shown.startswith("실행할 내용이 길어")
+            and any(shown in result and marker in result for (result,) in delivered)
+        )
+        if not complete_summary and any((page,) not in delivered for page in pages):
             return fallback
         return MessagePlan(action="approve", run_id=run.run_id, digest=contract_sha256(invocation))
 
@@ -931,6 +989,12 @@ class SlackEvents:
         service = self._service(conversation)
         if message.reopens:
             conversation = conversation.model_copy(update={"closed": False})
+        if plan.action in {"approve", "reject"}:
+            current = self.store.conversation(conversation.conversation_id)
+            if current is None or current.current_run != plan.run_id:
+                raise ValueError("slack_production_target_changed")
+            if not current_approval_source(self.store, conversation, message, identity):
+                raise ValueError("slack_approval_source_changed")
         if plan.action == "delivery":
             return delivery_command(
                 self.store.database_path, conversation, message, identity, now=now
@@ -1025,6 +1089,15 @@ class SlackEvents:
             )
         elif plan.action == "resume":
             _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
+        if plan.action in {"create", "revise", "input"}:
+            approve_requested_creation(
+                service,
+                self.store,
+                conversation,
+                message,
+                self._authorize(conversation, message.user_id),
+                now=now,
+            )
         return self.summary(conversation)
 
     def _answer_learning_question(
@@ -1203,15 +1276,33 @@ class SlackEvents:
             return "아직 시작한 작업이 없습니다. 요청을 텍스트로 보내주세요."
         records = service.repository.records(conversation.tenant_id, run.run_id)
         if run.state is AgentRunState.AWAITING_APPROVAL:
-            invocation = next(
-                ToolInvocation.model_validate(r.payload)
-                for r in reversed(records)
-                if r.kind is AgentRecordKind.INVOCATION
+            invocation = service.pending_approval(conversation.tenant_id, run.run_id)
+            if invocation is None:
+                return "승인할 작업 기록을 확인하지 못했습니다. 실행하지 않았습니다."
+            descriptor = next(
+                d
+                for r in records
+                if r.kind is AgentRecordKind.CAPABILITY_SNAPSHOT
+                and r.payload_sha256 == invocation.capability_snapshot_sha256
+                for d in CapabilitySnapshot.model_validate(r.payload).descriptors
+                if contract_sha256(d) == invocation.descriptor_sha256
+            )
+            latest = next(
+                (r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None
+            )
+            decision = None if latest is None else latest.payload.get("decision")
+            answer = (
+                str(decision.get("reasoning_summary", "")) + "\n\n"
+                if isinstance(decision, dict) and decision.get("action") != "invoke_tool"
+                else ""
             )
             return (
-                "실행 전 승인이 필요합니다. '검토 1'로 전체 내용을 확인하세요.\n"
-                f"승인 {contract_sha256(invocation)}\n"
-                "거절하려면 '거절' 다음에 같은 해시를 붙여 보내세요."
+                answer
+                + proposal_text(invocation, descriptor)
+                + "\n\n이 내용으로 진행할까요? '승인' 또는 '진행해줘'라고 답해 주세요.\n"
+                + "상세 기록은 '검토 1'로 확인할 수 있습니다.\n"
+                + f"승인 {contract_sha256(invocation)}\n"
+                + "진행하지 않으려면 '거절'이라고 답해 주세요."
             )
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
@@ -1231,7 +1322,12 @@ class SlackEvents:
                 AgentRunState.STOPPED: "작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다.",
                 AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다. 상태 확인이 필요합니다.",
             }.get(run.state, "아직 작업이 완료되지 않았습니다.")
-        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
+        verified_issues = "\n".join(
+            line
+            for line in issue_results(records).splitlines()
+            if line.rsplit(" ", 1)[-1] not in answer
+        )
+        result = "\n\n".join(part for part in (answer, verified_issues) if part)
         if include_status:
             result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
         return result

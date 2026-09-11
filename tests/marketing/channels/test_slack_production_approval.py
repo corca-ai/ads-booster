@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
-from ads_booster.contracts.tool_capability import EffectClass
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
+from ads_booster.contracts.tool_capability import EffectClass
 from tests.marketing.agent_service.test_application import (
     EffectThenStopReasoning,
     ResearchAdapter,
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
 
 
-@pytest.mark.parametrize("phrase", ["이대로 만들어줘", "이대로 제작해줘"])
+@pytest.mark.parametrize("phrase", ["이대로 만들어줘", "이대로 제작해줘", "승인", "진행해줘"])
 def test_signed_reviewed_same_thread_natural_approval(tmp_path: Path, phrase: str) -> None:
     owner, _ = setup_events(tmp_path)
     service = owner.commands.application.service
@@ -38,12 +38,12 @@ def test_signed_reviewed_same_thread_natural_approval(tmp_path: Path, phrase: st
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text=phrase, ts="100.002", thread_ts="100.001")
     assert owner.work_once(now=NOW)
-    assert service.repository.list_runs("team")[0].state is AgentRunState.AWAITING_APPROVAL
-    receive(owner, type="message", text="검토 1", ts="100.003", thread_ts="100.001")
-    assert owner.work_once(now=NOW)
-    receive(owner, type="message", text=phrase, ts="100.004", thread_ts="100.001")
-    assert owner.work_once(now=NOW)
+    # The complete readable proposal was already delivered to this requester.
     assert service.repository.list_runs("team")[0].state is AgentRunState.COMPLETED
+    receive(owner, type="message", text=phrase, ts="100.002", thread_ts="100.001")
+    assert not owner.work_once(now=NOW)
+    with pytest.raises(ValueError, match="idempotency_conflict"):
+        receive(owner, type="message", text="다른 요청", ts="100.002", thread_ts="100.001")
 
 
 def test_review_does_not_preserve_revoked_approval_authority(tmp_path: Path) -> None:
@@ -88,6 +88,7 @@ def test_frozen_natural_approval_cannot_approve_changed_invocation(tmp_path: Pat
     assert conversation is not None
     plan = owner._plan(conversation, message)
     assert plan.action == "approve"
+    service.reasoning = ReplacingReasoning()
     _ = continue_work(
         service,
         "team",
@@ -104,6 +105,22 @@ def test_frozen_natural_approval_cannot_approve_changed_invocation(tmp_path: Pat
         record.kind is AgentRecordKind.RECEIPT
         for record in service.repository.records("team", conversation.current_run)
     )
+
+
+class ReplacingReasoning:
+    def plan(self, request: ReasoningRequest) -> ReasoningResult:
+        result = EffectThenStopReasoning().plan(request)
+        return _reasoning_result(
+            request,
+            result.decision.model_copy(
+                update={
+                    "action": "invoke_tool",
+                    "capability_id": "creative.image.edit",
+                    "tool_input": {"screen": "new-background"},
+                    "pending_approval_action": "replace",
+                }
+            ),
+        )
 
 
 class ScopedReasoning:

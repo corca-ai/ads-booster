@@ -13,14 +13,6 @@ from urllib.parse import parse_qs
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import (
-    AgentBudget,
-    AgentGoal,
-    AgentRecordKind,
-    ToolInvocation,
-    contract_sha256,
-)
-from ads_booster.channels.http.browser_login import https_origin
 from ads_booster.channels.base import ChannelApplicationAdapter
 from ads_booster.channels.contracts import (
     ChannelApprovalRequest,
@@ -28,7 +20,14 @@ from ads_booster.channels.contracts import (
     ChannelRunRequest,
 )
 from ads_booster.channels.github_results import issue_results
+from ads_booster.channels.http.browser_login import https_origin
 from ads_booster.channels.slack import SlackRequestVerifier
+from ads_booster.contracts.agent_run import (
+    AgentBudget,
+    AgentGoal,
+    AgentRecordKind,
+    contract_sha256,
+)
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -345,9 +344,9 @@ class SlackCommands:
         run = self.application.service.repository.get(tenant_id, run_id)
         if run is None or run.state.value != "awaiting_approval":
             raise ValueError("agent_approval_not_pending")
-        records = self.application.service.repository.records(tenant_id, run_id)
-        latest = next(r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION)
-        invocation = ToolInvocation.model_validate(latest.payload)
+        invocation = self.application.service.pending_approval(tenant_id, run_id)
+        if invocation is None:
+            raise ValueError("agent_approval_not_pending")
         content = invocation.model_dump_json(indent=2)
         size = 1800
         pages = (len(content) + size - 1) // size
@@ -375,11 +374,8 @@ class SlackCommands:
         if self.public_links:
             lines.append(str(self.application.result_url(run_id)))
         if run.state.value == "awaiting_approval":
-            latest = next(
-                (r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION), None
-            )
-            if latest is not None:
-                invocation = ToolInvocation.model_validate(latest.payload)
+            invocation = self.application.service.pending_approval(tenant_id, run_id)
+            if invocation is not None:
                 lines += [
                     f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
                     f"/trace approve {run_id} {contract_sha256(invocation)}",
