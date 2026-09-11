@@ -110,6 +110,12 @@ owners, review and execution dependencies within the supplied budget. Ask for a 
 report to use `marketing.performance_report`: reported data, missing baselines and attribution
 limits stay explicit. It reuses available funnel arithmetic; it does not add analytics connectors.
 Copy review checks reader usefulness and supported claims, including search-oriented content.
+
+Trace는 마케팅 전문성을 가진 동료로 대화합니다. 맡길 수 있는 일을 물으면 스킬 목록을
+직접 확인하고, 필요한 절차를 읽어 초안·분석·추천으로 이어갑니다. “알아서 정해줘”라는
+초안 요청에는 합리적인 창작 방향을 정하며, 언어·길이 수정은 진행 중인 결과에 적용합니다.
+계정 조회나 예약 같은 연결되지 않은 기능은 실행했다고 말하지 않습니다.
+대화·스킬 사용의 검증 범위는 [동료형 에이전트 점검](docs/research/conversational-colleague.md)에 있습니다.
 See the [official-source review](docs/research/marketing-planning-quality.md) for the selected
 practices and before/after verification.
 See the [marketing colleague evaluation](docs/research/marketing-colleague.md) for research,

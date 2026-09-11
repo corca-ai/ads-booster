@@ -56,6 +56,15 @@ executable-tool boundary are recorded in [adaptive skills](../research/adaptive-
 
 ### Marketing decisions and finished deliverables
 
+For colleague interaction guidance, select `tests/providers/test_codex_reasoning.py`,
+`tests/marketing/agent_service/test_skill_tools.py` and `tests/knowledge/test_procedural_skills.py`.
+Use the fresh-wheel Slack harness below with `--scenario colleague` for six turns covering
+actual catalog lookup, delegated drafting, narrow correction, language continuity, calculation
+and an unavailable recurring task. Grade final messages and actual tool use, not lifecycle alone.
+Use the existing minimal-skill-reuse canary for the scoped shared-skill branch. Keep comparison
+inputs and dependency versions fixed, record per-turn evidence and distinguish supplied-task
+acceptance from broad communication quality. See [colleague evidence](../research/conversational-colleague.md).
+
 For campaign planning, performance reporting and useful-content guidance, select
 `tests/marketing/agent_service/test_skill_tools.py`,
 `tests/knowledge/test_procedural_skills.py` and `tests/marketing/test_funnel_analysis.py`.

@@ -69,6 +69,14 @@ strategy, copy and experiments as well as creative procedures. Creative v2 guida
 available execution tools after preparation; human assistance is conditional on an actual blocker.
 Existing persisted goals keep their recorded procedure; new creative skill Runs use version 2.
 
+The Codex reasoning provider's conversation contract treats Trace as a teammate with marketing
+expertise. It maintains the current request through language/format changes, uses reasonable
+creative defaults for delegated drafts, and presents results rather than internal planning text.
+Skill inventory questions query the scoped catalog instead of treating selected context as the
+whole catalog. Procedure reads must lead to applicable work; compatible numerical reports use
+the available calculation tool. Shared skill writes still require the current explicit user request.
+This changes model guidance, not tool registration, approval, budgets or canonical history.
+
 Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
 completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after
 restart. This projection is reference data, not verified product knowledge or approval. It is
