@@ -677,7 +677,7 @@ change canonical memory. Source messages remain provenance, but a message suppor
 preferences is excluded from common reference search, including when it also supplied a separately
 stored common fact. Existing common memory is not automatically reclassified as personal.
 
-### Package releases
+### Package releases 
 
 [GitHub Releases](https://github.com/corca-ai/ads-booster/releases) provides versioned wheels,
 source distributions, the source commit and SHA-256 checksums. A reviewed version bump is published
