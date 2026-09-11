@@ -634,16 +634,35 @@ locale, QA and stale state. Metadata listing does not read or verify every image
 and performance responses cannot overwrite another selected Run. Shared Slack summaries link
 to the configured Web origin only when public links are enabled; private history is not promoted.
 
-Natural production assent binds the current exact local-artifact invocation only after all
-review pages were successfully delivered to that same authenticated user. Its frozen action
-retains the invocation digest and current approval membership is checked before dispatch.
-Initial broad requests, missing review pages, changed targets and external publication do not
-inherit a production grant. The explicit hash approval path remains available.
+Shared Slack creation delegation binds a current authenticated message to one exact invocation.
+The reasoning provider interprets whether the complete current message requests execution and
+returns `authorization_message`; the channel checks an unchanged finalized event, current member
+approval permission, tenant/conversation identity, and the narrow creation capability/effect scope.
+Only image generation/edit/localization, packaged Trace post production and fixed-repository issue
+creation qualify. The canonical approval records the request event and text digest, then the normal
+runtime owns readiness, budgets, idempotency and uncertain-effect recovery. This is semantic intent
+classification, not a deterministic proof that every natural-language request is understood.
+Questions, negation and draft-only requests must not be classified as execution requests.
+One message authorizes at most one automatic creation; it grants no publication, spending or DM write.
+
+When additional consent is needed, Slack shows the complete readable tool inputs or retains raw
+paginated review for long inputs. Plain assent binds only a proposal already delivered to that same
+user when the assent message is admitted. The admitted message stores that digest; later delivery
+cannot retroactively qualify queued assent. Execution rechecks current source revision and approval
+permission. Editing/deleting an assent or changing its target rejects execution. Exact hash commands
+remain available, and brief refusal needs no hash. Public delivery retains its separate authority.
+
+The pending proposal is replayed from canonical invocations, decisions and approval records,
+independently of the latest conversational answer or read-only tool. Answering a question cannot
+complete pending work. Explicit cancellation/replacement can clear it; stale hashes remain invalid.
+Execution recovery uses the persisted EXECUTE step's invocation digest, including after intervening
+reads. New optional decision/approval fields omit default values when serialized to preserve old
+record digests; no history rewrite or database migration is required.
 
 Slack thread and slash-command review input share `SlackCommands.review_input`; malformed,
 oversized or out-of-range page arguments return guidance without entering continuation or
-changing approval state. Only the unchanged authoritative `review_pages` rendering counts as
-delivered review evidence. Event failures project an allowlist of approval rejection codes into
+changing approval state. Complete readable proposals and unchanged authoritative `review_pages`
+renderings count as delivered review evidence. Event failures project approval rejection codes into
 actionable replies and log only message identity, action and a fixed code. Unknown exceptions
 use `unclassified`, disclose no exception payload, retain blocked message state and advise status
 inspection instead of repeating approval. This is diagnostic coverage, not effect reconciliation.
@@ -685,9 +704,10 @@ approved title/body, GETs the created issue number and verifies its URL and exac
 a minimal receipt. Known HTTP rejections return sanitized failure; uncertain mutation or readback
 results use the canonical awaiting-reconciliation boundary with no blind retry.
 
-Slack's existing signature/member/channel scope and exact invocation-hash approval remain mandatory.
-The public repository is explicit in the frozen input reviewed by the approver. Private DM policy
-still exposes only public search. Both Slack message and slash-command summaries project issue URLs
+Slack's signature/member/channel scope and exact invocation-bound approval remain mandatory; an
+explicit current issue-creation request from an authorized member can supply that approval without
+another confirmation. The public repository is fixed in the invocation. Private DM policy remains
+read-only. Both Slack message and slash-command summaries project issue URLs
 from matching successful receipt/output digests, independently of model-generated prose. No new
 posting scheduler, GitHub shell authority or repository-wide token access is introduced.
 

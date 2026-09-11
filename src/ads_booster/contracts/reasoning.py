@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 
 from ads_booster.contracts.agent_run import (
     AgentGoal,
@@ -15,7 +21,9 @@ from ads_booster.contracts.agent_run import (
 from ads_booster.contracts.knowledge_preparation import PreparedKnowledgeContext  # noqa: TC001
 from ads_booster.contracts.knowledge_selection import KnowledgeActionKind  # noqa: TC001
 from ads_booster.contracts.models import ContractModel, Sha256Digest
-from ads_booster.transport.json_types import JsonObject  # noqa: TC001
+from ads_booster.transport.json_types import JsonObject
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class ReasoningRequest(ContractModel):
@@ -25,6 +33,7 @@ class ReasoningRequest(ContractModel):
     goal: AgentGoal
     # Host-admitted task input, separate from untrusted observations and the original goal.
     current_user_message: Annotated[str, Field(min_length=1, max_length=20_000)] | None = None
+    pending_approval: JsonObject | None = None
     capability_snapshot: CapabilitySnapshot
     evidence: Annotated[tuple[JsonObject, ...], Field(max_length=128)] = ()
     remaining_tool_calls: Annotated[int, Field(ge=0, le=10_000)]
@@ -41,6 +50,18 @@ class ReasoningDecision(ContractModel):
     reasoning_summary: Annotated[str, Field(min_length=1, max_length=4000)]
     proposed_action_kind: KnowledgeActionKind | None = None
     proposed_brand_ref: BoundedId | None = None
+    # Semantic interpretation only; the authenticated channel owns effect authority.
+    authorization_message: Annotated[str, Field(min_length=1, max_length=20_000)] | None = None
+    pending_approval_action: Literal["preserve", "replace", "cancel"] = "preserve"
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.authorization_message is None:
+            _ = result.pop("authorization_message", None)
+        if self.pending_approval_action == "preserve":
+            _ = result.pop("pending_approval_action", None)
+        return result
 
     @model_validator(mode="after")
     def require_action_payload(self) -> Self:
@@ -50,6 +71,9 @@ class ReasoningDecision(ContractModel):
             raise ValueError(message)
         if not invokes and (self.capability_id is not None or self.tool_input is not None):
             message = "non-tool reasoning decision cannot include a tool"
+            raise ValueError(message)
+        if not invokes and self.authorization_message is not None:
+            message = "only a tool proposal may cite execution intent"
             raise ValueError(message)
         if self.proposed_brand_ref is not None and self.proposed_action_kind is None:
             message = "reasoning brand proposal requires an action proposal"

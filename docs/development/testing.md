@@ -15,6 +15,23 @@ recovery and membership checks. Repeat against a non-editable wheel outside the 
 
 ### Slack approval feedback
 
+For conversational task approval (#169), also select `test_slack_pending_dialogue.py`,
+`test_slack_github_issues.py`, `test_slack_images.py`, `test_slack_progress.py`, service
+`test_application.py`, `test_application_deferred.py`, `test_work_continuation.py`,
+`tests/providers/test_codex_reasoning.py` and `tests/marketing/test_marketing_agent_contracts.py`.
+Verify pending work after acknowledgement/read tools, cancelled/replaced targets, queued assent
+before delivery, edited/deleted assent, direct-creation source/membership binding, duplicate events
+and uncertain effects. Interrupt after approval, execution and runtime-admission persistence.
+Repeat from outside the checkout against a fresh non-editable wheel.
+
+The opt-in `tests/marketing/agent_service/slack_approval_canary.py` runs six actual-model scenarios
+with `--output-root`, `--codex` and `--model` arguments. Copy the tests package outside the checkout
+and run it with the installed interpreter via `python -m tests.marketing.agent_service.slack_approval_canary`.
+It uses signed synthetic Slack events and synthetic image/GitHub adapters; inspect saved replies and
+canonical decisions as well as dispatch counts. The model must execute direct image/issue requests
+once, finish the turn, and perform no creation for capability questions, drafts, negation or quotes.
+Fixture artifact bytes and URLs are not evidence of live image generation or GitHub writes.
+
 Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_production_approval.py`,
 `test_slack_commands.py` and `test_slack_events.py` from the same directory. Signed events/forms
 exercise review explanations, invalid/oversized pages, missing pending work, current permission,

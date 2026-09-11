@@ -78,6 +78,15 @@ approval, receipt validation, restart recovery, and reconciliation. The service 
 not fork those guarantees. The `agent/` namespace now contains this canonical engine only; the prior
 connector-specific product is not restored, and no `trace-agent` or `trace-ads` entrypoint is introduced.
 
+`agent/service/pending_approval.py` derives the unexecuted proposal from canonical records; read
+invocations and ordinary answers do not replace it. Service planning, approval, Slack summaries and
+review pages consume that projection. Execution recovery resolves the EXECUTE step's digest rather
+than the last invocation. `channels/slack_approval.py` owns readable proposal rendering and the
+narrow authenticated Slack creation-delegation policy; it calls existing service approval rather
+than bypassing the runtime. `ReasoningDecision` carries semantic intent and pending-work disposition;
+the channel binds any execution permission to current source and identity. The Slack inbox stores
+the proposal known delivered at assent admission. These additions preserve historical record digests.
+
 Codex reasoning uses a strict provider projection: arbitrary tool input is encoded as
 JSON text in tool_input_json, decoded immediately back into the portable ReasoningDecision,
 and validated against the selected ToolDescriptor by the service. The receipt binds the actual

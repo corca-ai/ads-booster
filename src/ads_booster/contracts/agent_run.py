@@ -259,9 +259,22 @@ class ToolApproval(ContractModel):
     decision: Literal["granted", "rejected", "revoked"]
     expires_at: datetime | None = None
     decided_at: datetime
+    request_event_id: BoundedId | None = None
+    request_text_sha256: Sha256Digest | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_digest(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.request_event_id is None:
+            _ = result.pop("request_event_id", None)
+            _ = result.pop("request_text_sha256", None)
+        return result
 
     @model_validator(mode="after")
     def require_approval_times(self) -> Self:
+        if (self.request_event_id is None) != (self.request_text_sha256 is None):
+            message = "request approval requires event and text digest"
+            raise ValueError(message)
         _require_utc(self.decided_at)
         if self.expires_at is not None:
             _require_utc(self.expires_at)
