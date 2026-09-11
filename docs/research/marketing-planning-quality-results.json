@@ -447,5 +447,254 @@
         }
       ]
     }
+  },
+  "schema_followup": {
+    "purpose": "Check exact stage names on two new synthetic tasks after schema-description clarification.",
+    "model": "gpt-6-astra",
+    "trials_per_variant": 1,
+    "criteria": "First analysis preserves exact supplied stage names and objective; unknown currency/spend remain omitted; no failed tool receipts. Review numeric answers separately.",
+    "limitation": "Both variants passed; this does not establish reduced error frequency.",
+    "variants": {
+      "baseline": {
+        "wheel_sha256": "2f5030859fe8963e2e3eb2d368dc065e7b8cc86b5e8657f8866c43869ca5a738",
+        "failed_tool_receipts": 0,
+        "tasks": [
+          {
+            "turn": 1,
+            "input": "마케팅 계산 도구로 방문 대비 첫 일정 작성률을 확인해줘. 팀원이 보고한 합성 집계: A와 B는 같은 기간을 관찰 완료한 서로 겹치지 않는 코호트야. 각 코호트의 단계는 중첩된 고유 인원이야. A: 방문 120명 → 첫 일정 작성 18명, B: 방문 300명 → 첫 일정 작성 24명. 비용과 통화는 모른다. 단계 이름은 유지하고 두 비율과 비교 한계만 두 문장으로 줘.",
+            "preregistered_criteria": "First analysis uses objective_stage exactly '첫 일정 작성', preserving supplied stage names; omit unknown spend/currency; no failed tool receipts; final rates are A 15%, B 8%, without causal winner.",
+            "output": "팀원이 보고한 합성 집계를 마케팅 계산 도구로 계산한 방문 → 첫 일정 작성률은 A 15%(18/120), B 8%(24/300)입니다. 같은 기간 관찰을 완료한 비중첩 코호트지만 독립 검증·무작위 배정 근거가 없어 이 차이를 인과효과나 통계적 유의성으로 해석할 수 없고, 비용·통화가 없어 비용 효율도 비교할 수 없습니다.",
+            "state": "completed",
+            "actual_model_ids": [
+              "gpt-6-astra"
+            ],
+            "provider_calls": 2,
+            "elapsed_seconds": 31.114,
+            "calculation_inputs": [
+              {
+                "objective_stage": "첫 일정 작성",
+                "cohorts": [
+                  {
+                    "name": "A",
+                    "period": "B와 같은 기간, 관찰 완료",
+                    "audience": "B와 겹치지 않는 코호트 A",
+                    "steps": [
+                      {
+                        "name": "방문",
+                        "people": 120
+                      },
+                      {
+                        "name": "첫 일정 작성",
+                        "people": 18
+                      }
+                    ]
+                  },
+                  {
+                    "name": "B",
+                    "period": "A와 같은 기간, 관찰 완료",
+                    "audience": "A와 겹치지 않는 코호트 B",
+                    "steps": [
+                      {
+                        "name": "방문",
+                        "people": 300
+                      },
+                      {
+                        "name": "첫 일정 작성",
+                        "people": 24
+                      }
+                    ]
+                  }
+                ],
+                "source_note": "사용자가 전달한 팀원 보고 합성 집계. 같은 기간 관찰 완료한 서로 겹치지 않는 코호트이며 각 단계는 중첩된 고유 인원. 비용과 통화는 알 수 없고 무작위 배정은 보고되지 않음.",
+                "design": "observational"
+              }
+            ],
+            "input_contract_pass": true,
+            "answer_review": "Correct two-sentence rates and observational limits; implementing-agent review."
+          },
+          {
+            "turn": 2,
+            "input": "새 집계도 계산 도구로 확인해줘. 이번 목표는 첫 방문 대비 D7 재방문율이야. 합성 집계이며 같은 기간의 관찰 완료 코호트 A와 B는 서로 중복이 없고, 각 단계는 중첩된 고유 인원이야. A: 첫 방문 80명 → 활성화 40명 → D7 재방문 12명, B: 첫 방문 200명 → 활성화 60명 → D7 재방문 20명. 비용·통화는 미상. 단계 이름을 유지하고 목표 비율과 비교 한계만 두 문장으로 줘.",
+            "preregistered_criteria": "First analysis uses objective_stage exactly 'D7 재방문', not entry/activation or a rate label; preserve stage names and unknown finances; no failed tool receipts; final rates A 15%, B 10%, without causal winner.",
+            "output": "사용자 보고 합성 집계를 마케팅 계산 도구로 확인한 첫 방문 → D7 재방문율은 A 15%(12/80), B 10%(20/200)입니다. 같은 기간 관찰을 완료한 비중복 코호트지만 독립 검증·무작위 배정 근거가 없어 차이를 인과효과나 통계적 유의성으로 해석할 수 없고, 집단 구성·유입 차이가 영향을 줄 수 있으며 비용·통화 미상으로 비용 효율도 비교할 수 없습니다.",
+            "state": "completed",
+            "actual_model_ids": [
+              "gpt-6-astra"
+            ],
+            "provider_calls": 2,
+            "elapsed_seconds": 32.965,
+            "calculation_inputs": [
+              {
+                "objective_stage": "D7 재방문",
+                "cohorts": [
+                  {
+                    "name": "A",
+                    "period": "동일 기간, 관찰 완료",
+                    "audience": "B와 중복 없는 코호트 A",
+                    "steps": [
+                      {
+                        "name": "첫 방문",
+                        "people": 80
+                      },
+                      {
+                        "name": "활성화",
+                        "people": 40
+                      },
+                      {
+                        "name": "D7 재방문",
+                        "people": 12
+                      }
+                    ]
+                  },
+                  {
+                    "name": "B",
+                    "period": "동일 기간, 관찰 완료",
+                    "audience": "A와 중복 없는 코호트 B",
+                    "steps": [
+                      {
+                        "name": "첫 방문",
+                        "people": 200
+                      },
+                      {
+                        "name": "활성화",
+                        "people": 60
+                      },
+                      {
+                        "name": "D7 재방문",
+                        "people": 20
+                      }
+                    ]
+                  }
+                ],
+                "source_note": "사용자 보고 합성 집계. A와 B는 같은 기간의 관찰 완료 코호트이며 서로 중복이 없고, 각 단계는 중첩된 고유 인원이다. 목표는 첫 방문 대비 D7 재방문율이다. 비용·통화는 미상이며 무작위 배정은 보고되지 않았다.",
+                "design": "observational"
+              }
+            ],
+            "input_contract_pass": true,
+            "answer_review": "Correct two-sentence rates and observational limits; implementing-agent review."
+          }
+        ]
+      },
+      "candidate": {
+        "wheel_sha256": "5124596a4ea1f1cbd86d6ddec79dba9e335264ab095b941f421b35ec7f99c66b",
+        "failed_tool_receipts": 0,
+        "tasks": [
+          {
+            "turn": 1,
+            "input": "마케팅 계산 도구로 방문 대비 첫 일정 작성률을 확인해줘. 팀원이 보고한 합성 집계: A와 B는 같은 기간을 관찰 완료한 서로 겹치지 않는 코호트야. 각 코호트의 단계는 중첩된 고유 인원이야. A: 방문 120명 → 첫 일정 작성 18명, B: 방문 300명 → 첫 일정 작성 24명. 비용과 통화는 모른다. 단계 이름은 유지하고 두 비율과 비교 한계만 두 문장으로 줘.",
+            "preregistered_criteria": "First analysis uses objective_stage exactly '첫 일정 작성', preserving supplied stage names; omit unknown spend/currency; no failed tool receipts; final rates are A 15%, B 8%, without causal winner.",
+            "output": "팀원이 보고한 합성 집계를 마케팅 계산 도구로 계산한 방문 → 첫 일정 작성률은 A 15%(18/120), B 8%(24/300)입니다. 독립 검증되지 않은 관찰 집계이므로 코호트 구성 차이의 영향을 배제하거나 인과 효과·통계적 유의성을 단정할 수 없으며, 비용·통화가 없어 비용 효율도 비교할 수 없습니다.",
+            "state": "completed",
+            "actual_model_ids": [
+              "gpt-6-astra"
+            ],
+            "provider_calls": 2,
+            "elapsed_seconds": 27.462,
+            "calculation_inputs": [
+              {
+                "objective_stage": "첫 일정 작성",
+                "cohorts": [
+                  {
+                    "name": "A",
+                    "period": "동일 기간, 관찰 완료(구체 날짜 미제공)",
+                    "audience": "B와 겹치지 않는 코호트 A",
+                    "steps": [
+                      {
+                        "name": "방문",
+                        "people": 120
+                      },
+                      {
+                        "name": "첫 일정 작성",
+                        "people": 18
+                      }
+                    ]
+                  },
+                  {
+                    "name": "B",
+                    "period": "동일 기간, 관찰 완료(구체 날짜 미제공)",
+                    "audience": "A와 겹치지 않는 코호트 B",
+                    "steps": [
+                      {
+                        "name": "방문",
+                        "people": 300
+                      },
+                      {
+                        "name": "첫 일정 작성",
+                        "people": 24
+                      }
+                    ]
+                  }
+                ],
+                "source_note": "사용자가 전달한 팀원 보고 합성 집계. 두 코호트는 같은 기간 관찰 완료했고 서로 겹치지 않으며, 각 단계는 중첩된 고유 인원이다. 비용과 통화는 알려지지 않았고 무작위 배정은 보고되지 않았다.",
+                "design": "observational"
+              }
+            ],
+            "input_contract_pass": true,
+            "answer_review": "Correct two-sentence rates and observational limits; implementing-agent review."
+          },
+          {
+            "turn": 2,
+            "input": "새 집계도 계산 도구로 확인해줘. 이번 목표는 첫 방문 대비 D7 재방문율이야. 합성 집계이며 같은 기간의 관찰 완료 코호트 A와 B는 서로 중복이 없고, 각 단계는 중첩된 고유 인원이야. A: 첫 방문 80명 → 활성화 40명 → D7 재방문 12명, B: 첫 방문 200명 → 활성화 60명 → D7 재방문 20명. 비용·통화는 미상. 단계 이름을 유지하고 목표 비율과 비교 한계만 두 문장으로 줘.",
+            "preregistered_criteria": "First analysis uses objective_stage exactly 'D7 재방문', not entry/activation or a rate label; preserve stage names and unknown finances; no failed tool receipts; final rates A 15%, B 10%, without causal winner.",
+            "output": "사용자가 보고한 합성 집계를 마케팅 계산 도구로 계산한 첫 방문 → D7 재방문율은 A 15%(12/80), B 10%(20/200)입니다. 독립 검증되지 않은 관찰 집계이므로 코호트 구성 차이의 영향을 배제하거나 인과 효과·통계적 유의성을 단정할 수 없으며, 비용·통화가 없어 비용 효율도 비교할 수 없습니다.",
+            "state": "completed",
+            "actual_model_ids": [
+              "gpt-6-astra"
+            ],
+            "provider_calls": 2,
+            "elapsed_seconds": 30.493,
+            "calculation_inputs": [
+              {
+                "objective_stage": "D7 재방문",
+                "cohorts": [
+                  {
+                    "name": "A",
+                    "period": "동일 기간, 관찰 완료(구체 날짜 미제공)",
+                    "audience": "B와 중복 없는 코호트 A",
+                    "steps": [
+                      {
+                        "name": "첫 방문",
+                        "people": 80
+                      },
+                      {
+                        "name": "활성화",
+                        "people": 40
+                      },
+                      {
+                        "name": "D7 재방문",
+                        "people": 12
+                      }
+                    ]
+                  },
+                  {
+                    "name": "B",
+                    "period": "동일 기간, 관찰 완료(구체 날짜 미제공)",
+                    "audience": "A와 중복 없는 코호트 B",
+                    "steps": [
+                      {
+                        "name": "첫 방문",
+                        "people": 200
+                      },
+                      {
+                        "name": "활성화",
+                        "people": 60
+                      },
+                      {
+                        "name": "D7 재방문",
+                        "people": 20
+                      }
+                    ]
+                  }
+                ],
+                "source_note": "사용자가 보고한 합성 집계. A와 B는 같은 기간의 관찰 완료 코호트이며 서로 중복이 없고 각 단계는 중첩된 고유 인원이다. 비용·통화는 미상이며 무작위 배정은 보고되지 않았다.",
+                "design": "observational"
+              }
+            ],
+            "input_contract_pass": true,
+            "answer_review": "Correct two-sentence rates and observational limits; implementing-agent review."
+          }
+        ]
+      }
+    }
   }
 }

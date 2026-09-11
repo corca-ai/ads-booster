@@ -100,6 +100,24 @@ the installed interpreter and `slack_colleague_canary.py --scenario planning` as
 [testing](../development/testing.md). No release, installed-host activation, real platform collection,
 human brand acceptance or marketing lift is established.
 
+## Follow-up: make the tool's required name relation visible
+
+The final rehearsal's rejected call exposed a documentation gap: `objective_stage` was a generic
+string in the model-facing schema, while validation required an exact existing downstream stage.
+The schema now tells the model to copy a supplied downstream `steps[].name` verbatim, rather than
+invent a rate label or select the entry stage. Validation and execution behavior are unchanged.
+This applies the tool-interface guidance from the agent-design sources above at its owning contract.
+
+The `funnel` diagnostic adds two tasks with different counts and stage names, including a change
+from first-schedule creation to D7 retention. A fresh wheel matched the changed module's digest and
+exposed the description in its real descriptor. The 20 focused funnel tests and scoped Ruff/
+BasedPyright checks passed. Both pre-description and updated installations then passed both tasks
+with `gpt-6-astra`, one trial per variant: exact first-call objective/stage names, no invented
+financial inputs, zero failed receipts and correct 15%/8%, 15%/10% two-sentence answers.
+Inputs, answers, calls, timings and wheel digests are in `schema_followup` in the linked JSON record.
+Since both passed, this closes the ambiguous interface documentation but does not establish a
+lower model error rate. The preceding PR head's GitHub CI also passed; follow-up CI is separate.
+
 ## Remaining work
 
 - Human marketer review and repeated or blinded trials on held-out briefs; the implementing agent's

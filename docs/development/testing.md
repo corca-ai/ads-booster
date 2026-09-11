@@ -65,6 +65,13 @@ passing candidate cannot establish an improvement or marketing lift. Campaign pu
 real analytics and human brand acceptance remain separate. The source mapping and observed
 comparison live in [marketing planning quality](../research/marketing-planning-quality.md).
 
+For the funnel tool's model-facing input schema, use `--scenario funnel` on the same installed
+Slack harness. Its two new tasks use different numbers and downstream stage labels from the
+planning rehearsal. Inspect the first calculation input for exact supplied stage names, omitted
+unknown finances and zero failed receipts; expected rates are 15%/8% and 15%/10%. This diagnostic
+has an all-or-nothing input-contract check in addition to reading the two-sentence answers.
+Compare the same tasks/model across fresh wheels; one trial does not measure failure frequency.
+
 The pre-integration selection passed 78 tests; after merging current main, 87 focused tests
 passed including channel memory, requester isolation and context identity. The integrated fresh
 wheel passed 19 boundary tests and six actual-model marketing turns. Exact commands and current
