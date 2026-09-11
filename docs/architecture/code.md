@@ -555,3 +555,19 @@ participants can use one shared Slack Run without colliding on task ownership. E
 bindings remain valid. Provider wire schemas remove default metadata beside references while
 runtime contract defaults remain intact. Batch settlement persists provider/budget failures as
 terminal receipts and job reasons; cancellation retains its separate resumable path.
+
+## Trace post ownership
+
+- `contracts/trace_post.py` owns bounded concept/date/motif/place inputs and six-asset results.
+- `agent/service/trace_post.py` owns exact admission, durable operation state, frozen-source
+  validation and same-work asset registration.
+- `providers/codex_trace_post.py` owns the isolated official Codex process and unknown-result boundary;
+  `providers/codex_image_edit.py` owns the shared app-server transport and native PNG materialization.
+- `bootstrap/trace_post_setup.py` and the CLI compose the catalog and deferred worker into the
+  existing service lifecycle.
+- `agent/service/skills.py` owns discoverable metadata; `trace_post_bundle/` holds the versioned
+  generation instructions, template and standalone helpers. Those preserved helpers execute in
+  the frozen workspace rather than as application imports.
+
+Updating a bundle changes the next operation's inputs, not already-running jobs. Record source
+hashes and verify the installed wheel when changing bundled material.

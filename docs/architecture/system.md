@@ -868,3 +868,27 @@ fresh-wheel CLI checks precede draft upload and publication. Published versions 
 concurrent publishers are serialized. GitHub write permission is confined to the release job.
 It does not consume PR artifacts or server credentials. The on-prem updater above continues to
 select verified main independently; release publication is not installed-server activation.
+
+## Packaged Trace post production
+
+`marketing.trace_post` is a discoverable installed procedure; `creative.trace_post` owns its
+approved execution. The service freezes the exact invocation, production approval and packaged
+bundle in a private operation workspace before the deferred worker starts one Codex subprocess.
+Its shell access is limited to the operation and required runtime files; external tools/network
+are disabled. The model reads the frozen workflow, creates new content and executes A → B → L → C.
+A started operation with an uncertain outcome is not automatically replayed after restart.
+
+The server validates the frozen documents, content/image review bindings and six canonical outputs
+before registering same-work, tenant-scoped assets. File validation and model review remain separate
+from human visual approval. Completion resumes the existing work; external delivery uses the
+existing independent channel authority. Production credentials are not copied into the bundle.
+
+The app-server transport copies PNG bytes from native image-generation events into the private
+operation's `provider-images` directory and binds each file to its event ID and original SHA-256.
+The child uses those files as receipt sources. Completion requires the official event count and
+source path/hash set to match the frozen workflow's receipts. A durable provider proof permits
+readback after a crash; a child-written completion summary alone cannot certify success.
+
+The imported workflow originates at `corca-ai/trace-marketing-context` revision
+`6f462377d7ecf18c92ed716eb2d8dc80d10eaca9`. This provenance is not a live repository dependency.
+The executable product and its installed skill catalog are owned by `corca-ai/ads-booster`.

@@ -695,3 +695,38 @@ and background rejection; procedural skill and context provenance owners retain 
 overrides and stale-source checks. Repeat affected owners against a fresh non-editable wheel
 with `python -I -m pytest` from outside the checkout. Fixture reasoning and captured Slack sends
 do not establish real-model intent handling or live workspace deployment.
+
+### Installed Trace post workflow
+
+For `creative.trace_post`, select the bundle, approval/recovery, provider and discovery boundaries:
+
+```bash
+python -m pytest -q -p no:cacheprovider \
+  tests/marketing/agent_service/test_trace_post_bundle.py \
+  tests/marketing/agent_service/test_trace_post_contract.py \
+  tests/marketing/agent_service/test_trace_post_runtime.py \
+  tests/providers/test_codex_trace_post.py \
+  tests/providers/test_codex_image_edit.py \
+  tests/marketing/agent_service/test_skill_tools.py \
+  tests/providers/test_codex_reasoning.py \
+  tests/cli/test_image_edit_lifecycle.py \
+  tests/cli/test_cli_compatibility.py
+```
+
+The bundled Python helpers are preserved standalone generation resources, not application imports.
+Their tests run them in a temporary workspace and verify source hashes, deterministic assembly and
+stale-content rejection without generating images. Runtime tests must additionally prove exact
+production approval, same-work asset binding, failed/uncertain-operation handling and no replay.
+Run scoped Ruff, formatting and BasedPyright on the changed application/test owners.
+
+Build a non-editable wheel and install it with the frozen runtime requirements into a separate
+Python 3.14 environment. From outside the checkout, verify `trace-marketing version --json`, skill
+lookup and all packaged resource digests. Test the installed execution boundary rather than
+assuming the source catalog is installed. A no-image Codex sandbox probe verifies helper execution
+only; it does not prove image generation or final artifact ingestion.
+
+A complete actual-provider run must record the exact wheel/source hashes, configured model,
+production approval, frozen bundle, terminal receipt, three captions and six final asset digests.
+Distinguish recorded image calls from independently observed provider usage. Do not infer actual
+Slack delivery, Linux service activation, pixel-identical backgrounds or human visual approval from
+source tests, an installed local wheel or a completed model workflow.
