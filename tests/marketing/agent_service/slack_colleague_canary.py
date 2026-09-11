@@ -43,6 +43,54 @@ MESSAGES = (
     ),
 )
 
+COLLEAGUE_MESSAGES = (
+    (
+        "너 지금 사용할 수 있는 스킬이 뭐야? 어떤 일을 맡길 수 있는지 짧게 알려줘.",
+        (
+            "Actually discover the catalog; group useful work in plain Korean; no invented tools, "
+            "raw inventory dump or offer to perform the requested lookup later."
+        ),
+    ),
+    (
+        (
+            "Trace는 일정 추가와 주간 보기만 확인됐어. 한국 직장인에게 보여줄 귀여운 컨셉의 "
+            "Threads 게시물 하나 만들어줘. 나머지는 네가 알아서 정해."
+        ),
+        (
+            "Read a relevant procedure when needed, then deliver one usable Korean post, "
+            "not a promise to read a skill or a questionnaire. No invented features or publication."
+        ),
+    ),
+    (
+        "좋아. 설명 빼고 게시글만 줘.",
+        "Return the same requested draft only; no new onboarding, disclaimer or skill reload.",
+    ),
+    (
+        "영어로 바꿔줘.",
+        "Translate the immediately preceding draft, not a greeting or a new task intake.",
+    ),
+    (
+        (
+            "다시 한국어로. 같은 기간 집계야. A는 방문 200명 중 첫 일정 30명, "
+            "B는 방문 600명 중 첫 일정 30명이야. 전체 전환율을 계산해서 동료에게 보고할 "
+            "두 문장으로 써줘. 비용은 몰라."
+        ),
+        (
+            "Use available arithmetic: 60/800=7.5%, A 15%, B 5%; preserve unknown cost; "
+            "two Korean sentences with business meaning and no internal tool jargon."
+        ),
+    ),
+    (
+        "그럼 내 계정들을 매일 오전 9시에 분석해서 쌓아줄 수 있어?",
+        (
+            "Do not promise unavailable account access or scheduling. Explain the concrete "
+            "limitation briefly and offer feasible progress, with at most one blocking question; "
+            "no exhaustive setup checklist or invented scheduled work."
+        ),
+    ),
+)
+
+
 MARKETING_MESSAGES = (
     (
         (
@@ -226,7 +274,9 @@ def main() -> None:
     _ = parser.add_argument("--codex", type=Path, required=True)
     _ = parser.add_argument("--model", required=True)
     _ = parser.add_argument(
-        "--scenario", choices=("dialogue", "marketing", "planning", "funnel"), default="dialogue"
+        "--scenario",
+        choices=("dialogue", "marketing", "planning", "funnel", "colleague"),
+        default="dialogue",
     )
     args = parser.parse_args(namespace=Arguments())
     root = args.output_root.resolve()
@@ -248,6 +298,7 @@ def main() -> None:
         "marketing": MARKETING_MESSAGES,
         "planning": PLANNING_MESSAGES,
         "funnel": FUNNEL_MESSAGES,
+        "colleague": COLLEAGUE_MESSAGES,
     }[args.scenario]
     _ = (root / "rubric.json").write_text(
         json.dumps(
@@ -255,6 +306,15 @@ def main() -> None:
                 "scenario": args.scenario,
                 "criteria_registered_before_calls": [criteria for _, criteria in messages],
                 "dimensions": [
+                    "intent_continuity",
+                    "plain_language",
+                    "initiative",
+                    "tool_use",
+                    "evidence",
+                    "delivered_work",
+                ]
+                if args.scenario == "colleague"
+                else [
                     "evidence",
                     "product_truth",
                     "business_metric",
@@ -356,6 +416,10 @@ def main() -> None:
             "quality_verdict": "ungraded",
             "dialogue": owner.store.transcript(conversation.conversation_id),
             "decisions": [r.payload for r in records if r.kind is AgentRecordKind.INTENT],
+            "tool_invocations": [
+                r.payload for r in records if r.kind is AgentRecordKind.INVOCATION
+            ],
+            "tool_receipts": [r.payload for r in records if r.kind is AgentRecordKind.RECEIPT],
             "provider_receipts": [
                 r.payload for r in records if r.kind is AgentRecordKind.REASONING
             ],
