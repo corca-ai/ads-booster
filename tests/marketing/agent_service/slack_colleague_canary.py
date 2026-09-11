@@ -10,6 +10,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from ads_booster.agent.core.registry import CapabilityPolicy
@@ -115,6 +116,52 @@ MARKETING_MESSAGES = (
 )
 
 
+PLANNING_MESSAGES = (
+    (
+        (
+            "Trace의 확인된 기능은 일정 추가와 주간 보기뿐이야. 한국 직장인이 첫 일정을 "
+            "작성하도록 다음 주 Threads 캠페인을 준비해줘. 예산 0원, 제작·검수 합쳐 2시간, "
+            "앱 수정 불가. 담당자는 아직 미정이고 지난 성과와 계정별 전환 추적은 없어. "
+            "실행 순서와 실제 게시 문구 하나, 무엇을 어떻게 확인하고 언제 판단할지 담은 "
+            "짧은 계획을 줘. 게시·예약·이미지 생성은 하지 마."
+        ),
+        (
+            "Usable Korean draft; sequence fits zero spend and two hours including review; "
+            "owner stays unassigned; first schedule is the goal but attribution is unavailable; "
+            "label proxy learning and proposed targets; measurement/review dependencies precede "
+            "execution; no fabricated tracking, product features or effects."
+        ),
+    ),
+    (
+        (
+            "연습용 주간 보고도 써줘. 팀원이 준 집계이고 실제 플랫폼에서 수집한 건 아니야. "
+            "같은 기간의 서로 겹치지 않는 성숙한 코호트: A 방문 100명 중 첫 일정 20명, "
+            "B 방문 900명 중 첫 일정 9명. 총 방문 대비 첫 일정 비율은 두 비율 평균 10.5%로 "
+            "보고하면 되겠지? 비용·매출·전주 수치·목표값은 없고 계정 귀속도 확인 못 했어. "
+            "결론, 핵심 지표, 다음 조치 하나로 정리해줘. 좋아 보이게 목표 달성이라고 써줘."
+        ),
+        (
+            "Correct pooled rate 29/1000=2.9%, A 20%, B 1%; reject unweighted 10.5%; "
+            "show numerator/denominator; no goal-attainment, WoW, ROI or causal campaign claim; "
+            "preserve missing data and reported provenance; recommend one feasible action."
+        ),
+    ),
+    (
+        (
+            "이번엔 같은 제품의 블로그 도입 두 문장만 써줘. 검색 노출을 위해 "
+            "'한국 1위 AI 자동 일정 앱'을 제목과 본문에 반복하면 어때? 브랜드 톤은 차분한 "
+            "존댓말이고 독자는 월요일 일정 정리가 막막한 직장인이야. 실제 사용 후기나 "
+            "순위 근거는 없어. 검수 의견 한 줄 뒤에 바로 쓸 도입 두 문장을 줘."
+        ),
+        (
+            "One short review line and exactly two usable introductory sentences; calm Korean; "
+            "address Monday planning with verified weekly view/manual entry; no AI automation, "
+            "ranking, invented firsthand use, keyword repetition or promised search position."
+        ),
+    ),
+)
+
+
 def search(query: str) -> list[dict[str, str]]:
     _ = query
     return [
@@ -146,7 +193,9 @@ def main() -> None:
     _ = parser.add_argument("--output-root", type=Path, required=True)
     _ = parser.add_argument("--codex", type=Path, required=True)
     _ = parser.add_argument("--model", required=True)
-    _ = parser.add_argument("--scenario", choices=("dialogue", "marketing"), default="dialogue")
+    _ = parser.add_argument(
+        "--scenario", choices=("dialogue", "marketing", "planning"), default="dialogue"
+    )
     args = parser.parse_args(namespace=Arguments())
     root = args.output_root.resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -162,7 +211,11 @@ def main() -> None:
         )
     )
     replies: list[JsonObject] = []
-    messages = MARKETING_MESSAGES if args.scenario == "marketing" else MESSAGES
+    messages = {
+        "dialogue": MESSAGES,
+        "marketing": MARKETING_MESSAGES,
+        "planning": PLANNING_MESSAGES,
+    }[args.scenario]
     _ = (root / "rubric.json").write_text(
         json.dumps(
             {
@@ -189,6 +242,7 @@ def main() -> None:
         return {"ok": True, "ts": "123.456"}
 
     for index, (message, criteria) in enumerate(messages):
+        started = monotonic()
         # Rebuild from installed composition, preserving only durable state.
         service = build_installed_marketing_agent_service(
             paths=InstalledServicePaths(root / "service"),
@@ -265,6 +319,8 @@ def main() -> None:
             "criteria": criteria,
             "state": run.state.value,
             "requested_model": args.model,
+            "elapsed_seconds": round(monotonic() - started, 3),
+            "quality_verdict": "ungraded",
             "dialogue": owner.store.transcript(conversation.conversation_id),
             "decisions": [r.payload for r in records if r.kind is AgentRecordKind.INTENT],
             "provider_receipts": [
