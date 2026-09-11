@@ -3,6 +3,9 @@
 Status: Active — bounded candidate verification, not deployed Slack acceptance.
 Reviewed: 2026-09-11. Owning issue: #168; PR #166.
 
+The broader objective remains incomplete. Passing these short scenarios does not establish a
+reliable marketing colleague; the unfinished acceptance below belongs to the same issue.
+
 ## Observed problem and intended behavior
 
 A read-only sample of six September 9–11 `trace-agent-test` threads showed ordinary greetings
@@ -100,3 +103,33 @@ execution or proof of arbitrary skill learning.
 Focused source tests: 25 passed. Three changed Python files pass Ruff formatting/lint and
 BasedPyright. The final installed CLI exposes `service`, and the provider module matches the
 source. Final wheel SHA256: `787c703764ab9acf7f8f923050e98728c802e77148fafb184a9d431dafce4d2d`.
+
+## Output-boundary follow-up
+
+Further inspection found a deterministic gap outside the prompt: asynchronous notifications
+always requested diagnostic output, and nonterminal summaries exposed the last tool-selection
+rationale. A committed-plan interruption reproduced an internal instruction as the Slack answer
+even though no tool ran. The Slack projection now uses persisted state for unfinished work and
+reserves diagnostic reasoning/IDs for explicit status requests. Completion notifications use the
+same ordinary answer projection as foreground replies. Approval review is unchanged.
+
+Two notification regressions and one interrupted-plan regression failed before their fixes.
+The three affected test files pass 35 checks in the checkout and against a fresh non-editable
+wheel outside it. The installed module matches source and the CLI exposes `service`. BasedPyright
+passes for the three changed Python files. This is fixture-backed transport evidence, not a
+production incident reproduction or a new model-quality comparison.
+Wheel SHA256: `95b5478ead852d09773ebcb3e641ff5cced98d4ae923d94eba35e5ffee683cc8`.
+
+## Remaining acceptance, in priority order
+
+| Priority | Unfinished work | Acceptance evidence needed |
+| --- | --- | --- |
+| 1 | Actual team procedure follow-through, especially custom trace-post | Use the exact available revision and realistic scoped context; deliver a reviewable artifact or a precise dependency, not a promise to read a skill. Inspect model decisions, tool results and delivered messages. Current built-in-only trials do not cover this. |
+| 2 | Marketing judgment across research, customer evidence, strategy, copy and reporting | Evaluate a connected brief with conflicting evidence and corrections. A marketer reviews audience fit, product truth, differentiation and the proposed experiment; calling a tool alone is not professional competence. Repeat held-out tasks instead of tuning only the demonstrated examples. |
+| 3 | Long-conversation continuity and recovery | Exercise context truncation, intervening topics, exhausted budgets and interrupted tools. Preserve user constraints and identify unfinished work without claiming cancellation, retry or completion. The current state message is truthful but is not a recovery plan. |
+| 4 | Useful team learning | Verify that a scoped correction changes a later relevant task without affecting unrelated tasks or members. The exact-token save/reuse canary only proves storage and selection, not useful generalization. |
+| 5 | Actual recurring marketing work | Establish required accounts, available data, metrics, storage and scheduling owner before adding connectors. Do not infer a specific integration or fabricate access from the request to improve colleague behavior. |
+
+These are open acceptance gaps, not newly implemented features. Broad success requires repeated
+task evidence and human judgment in addition to the installed transport checks. No claim of
+parity with the referenced agents is warranted by this PR.

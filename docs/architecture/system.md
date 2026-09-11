@@ -77,6 +77,11 @@ whole catalog. Procedure reads must lead to applicable work; compatible numerica
 the available calculation tool. Shared skill writes still require the current explicit user request.
 This changes model guidance, not tool registration, approval, budgets or canonical history.
 
+Ordinary Slack replies and asynchronous updates omit Run diagnostics. Nonterminal updates use
+the persisted execution state rather than presenting the last tool-selection rationale as an
+answer. Explicit status requests retain diagnostic reasoning, state and Run ID. Approval review
+continues to expose the exact invocation and digest; notification durability is unchanged.
+
 Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
 completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after
 restart. This projection is reference data, not verified product knowledge or approval. It is

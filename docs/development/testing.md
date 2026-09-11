@@ -7,6 +7,12 @@ Last reviewed: 2026-09-11
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
+and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
+ordinary output must not expose its rationale or imply tool execution, while explicit status and
+canonical records remain available. Check asynchronous completion, deduplication, callback-loss
+recovery and membership checks. Repeat against a non-editable wheel outside the checkout.
+
 ### Slack approval feedback
 
 Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_production_approval.py`,
