@@ -193,7 +193,14 @@ def test_late_original_result_retains_thread_binding_after_dialogue(
     service.reasoning = Reasoning()
     assert service.drive("team", conversation.current_run, now=NOW).state is AgentRunState.COMPLETED
     assert owner.enqueue_run_update("team", conversation.current_run, event_id="late-worker")
-    assert owner.work_once(now=NOW)
+    for _ in range(8):
+        if any(
+            message.get("thread_ts") == conversation.thread_ts
+            and "Bounded asynchronous capture" in str(message["text"])
+            for message in messages
+        ):
+            break
+        assert owner.work_once(now=NOW)
     delivered = next(
         message
         for message in reversed(messages)
