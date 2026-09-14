@@ -219,7 +219,7 @@ def test_new_request_resumes_failed_reasoning_without_status_or_operator_step(
 
 
 def test_followup_does_not_replan_an_interrupted_execution(tmp_path: Path) -> None:
-    owner, _, requests, commands = configured(tmp_path)
+    owner, messages, requests, commands = configured(tmp_path)
     service = owner.commands.application.service
     service.reasoning = ImageReasoning(authorize=True)
 
@@ -236,6 +236,7 @@ def test_followup_does_not_replan_an_interrupted_execution(tmp_path: Path) -> No
     assert owner.work_once(now=NOW)
     assert not commands
     assert not requests
+    assert "실행 결과를 확정하기 전에 처리가 중단됐습니다" in str(messages[-1]["text"])
 
 
 @pytest.mark.parametrize("failure", ["invalid", "lost", "bad_host"])

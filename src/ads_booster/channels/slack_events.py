@@ -65,6 +65,7 @@ from ads_booster.channels.slack_performance import (
     performance_command,
 )
 from ads_booster.channels.slack_progress import SlackProgressStore
+from ads_booster.channels.slack_run_status import run_status
 from ads_booster.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
@@ -1276,6 +1277,10 @@ class SlackEvents:
             )
 
     def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
+        with self._service(conversation).execution_lock:
+            return self._summary(conversation, include_status=include_status)
+
+    def _summary(self, conversation: Conversation, *, include_status: bool) -> str:
         service = self._service(conversation)
         run = service.repository.get(conversation.tenant_id, conversation.current_run)
         if run is None:
@@ -1313,21 +1318,10 @@ class SlackEvents:
         latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
         decision = None if latest is None else latest.payload.get("decision")
         answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        if not include_status and run.state not in {
-            AgentRunState.COMPLETED,
-            AgentRunState.AWAITING_INPUT,
-        }:
-            # A tool-selection rationale is not a finished conversational answer.
-            # Preserve canonical reasoning for explicit status/diagnostic reads.
-            answer = {
-                AgentRunState.AWAITING_TOOL: "요청한 도구의 결과를 기다리고 있습니다.",
-                AgentRunState.AWAITING_RECONCILIATION: (
-                    "실행 결과를 확인해야 합니다. 같은 작업을 다시 실행하지 않았습니다."
-                ),
-                AgentRunState.BLOCKED: "작업을 진행할 수 없어 완료하지 못했습니다.",
-                AgentRunState.STOPPED: "작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다.",
-                AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다.",
-            }.get(run.state, "아직 작업이 완료되지 않았습니다.")
+        status = run_status(run, service.repository.steps(conversation.tenant_id, run.run_id))
+        if run.state not in {AgentRunState.COMPLETED, AgentRunState.AWAITING_INPUT}:
+            # Earlier reasoning can belong to another turn or an unexecuted plan.
+            answer = status
         verified_issues = "\n".join(
             line
             for line in issue_results(records).splitlines()
@@ -1335,7 +1329,11 @@ class SlackEvents:
         )
         result = "\n\n".join(part for part in (answer, verified_issues) if part)
         if include_status:
-            result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
+            result = "\n\n".join(
+                part
+                for part in (f"상태: {status}", answer if answer != status else "", verified_issues)
+                if part
+            )
         return result
 
     def _payload(self, conversation: Conversation, text: str) -> JsonObject:

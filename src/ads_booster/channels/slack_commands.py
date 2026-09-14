@@ -22,10 +22,12 @@ from ads_booster.channels.contracts import (
 from ads_booster.channels.github_results import issue_results
 from ads_booster.channels.http.browser_login import https_origin
 from ads_booster.channels.slack import SlackRequestVerifier
+from ads_booster.channels.slack_run_status import run_status
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
     AgentRecordKind,
+    AgentRunState,
     contract_sha256,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -363,14 +365,16 @@ class SlackCommands:
         )
 
     def summary(self, tenant_id: str, run_id: str) -> str:
+        with self.application.service.execution_lock:
+            return self._summary(tenant_id, run_id)
+
+    def _summary(self, tenant_id: str, run_id: str) -> str:
         run = self.application.service.repository.get(tenant_id, run_id)
         if run is None:
             raise ValueError("agent_run_not_found")
         records = self.application.service.repository.records(tenant_id, run_id)
-        lines = [
-            f"실행: {run_id}",
-            f"상태: {run.state.value}",
-        ]
+        steps = self.application.service.repository.steps(tenant_id, run_id)
+        lines = [f"실행: {run_id}", f"상태: {run_status(run, steps)}"]
         if self.public_links:
             lines.append(str(self.application.result_url(run_id)))
         if run.state.value == "awaiting_approval":
@@ -380,7 +384,7 @@ class SlackCommands:
                     f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
                     f"/trace approve {run_id} {contract_sha256(invocation)}",
                 ]
-        else:
+        elif run.state in {AgentRunState.COMPLETED, AgentRunState.AWAITING_INPUT}:
             latest = next(
                 (r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None
             )
