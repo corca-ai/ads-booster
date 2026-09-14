@@ -15,13 +15,13 @@ from ads_booster.contracts.agent_run import (
     AgentRecord,
     AgentRecordKind,
     AgentRunState,
-    ToolReceiptRecord,
     contract_sha256,
 )
 from ads_booster.contracts.task_completion import CompletionAssessment, ObligationAssessment
 from ads_booster.tools.image_generation import CAPABILITY
 from tests.marketing.agent_service.completion_fixtures import NOW, response_case
 from tests.marketing.agent_service.test_github_issues import Response
+from tests.marketing.channels.test_task_results import tool_evidence_records
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,39 +47,14 @@ def test_delivery_owner_uploads_only_assessed_reference_and_empty_uploads_none(
         digest = sha256(data).hexdigest()
         _ = (root / f"{digest}.png").write_bytes(data)
         output: JsonObject = {"artifact_sha256": digest}
-        receipt = ToolReceiptRecord(
-            schema_version="trace.tool-receipt.v1",
-            receipt_id=f"receipt-{index}",
-            invocation_sha256="a" * 64,
-            disposition="succeeded",
+        fixture_records = tool_evidence_records(
+            run_id=case.run.run_id,
+            index=index,
+            output=output,
             actual_cost_units=0,
-            output_schema_sha256="b" * 64,
-            output_sha256=contract_sha256(output),
-            executor_id="fixture",
-            occurred_at=NOW,
+            capability_id=CAPABILITY,
         )
-        payloads: tuple[JsonObject, ...] = (
-            receipt.model_dump(mode="json"),
-            {
-                "schema_version": "trace.tool-output-evidence.v1",
-                "receipt_sha256": contract_sha256(receipt),
-                "capability_id": CAPABILITY,
-                "output": output,
-            },
-        )
-        for offset, payload in enumerate(payloads):
-            evidence.append(
-                AgentRecord(
-                    schema_version="trace.agent-record.v1",
-                    record_id=f"record-{index}-{offset}",
-                    run_id=case.run.run_id,
-                    kind=AgentRecordKind.RECEIPT if offset == 0 else AgentRecordKind.EVIDENCE,
-                    payload_schema_version=str(payload["schema_version"]),
-                    payload=payload,
-                    payload_sha256=contract_sha256(payload),
-                    occurred_at=NOW,
-                )
-            )
+        evidence.extend(fixture_records)
         refs.append(evidence[-1].payload_sha256)
     candidate = BoundedCompletionRenderer().render(
         case.candidate.model_copy(update={"evidence_sha256s": (refs[0],)}),

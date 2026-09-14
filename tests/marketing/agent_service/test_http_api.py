@@ -10,7 +10,7 @@ from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.http_api import ApiResponse, MarketingAgentApi
 from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.reasoning import (
@@ -73,26 +73,39 @@ class WorkspaceAuthenticator:
         return OAuthIdentity(tenant_id="oauth-workspace", principal_id="oauth-member")
 
 
-def test_common_api_creates_and_reads_one_canonical_run(tmp_path: Path) -> None:
-    api = _api(tmp_path)
+def create_run(
+    api: MarketingAgentApi,
+    run_id: str,
+    objective: str,
+    success_criteria: list[str],
+) -> ApiResponse:
     body = json.dumps(
         {
-            "run_id": "run-one",
+            "run_id": run_id,
             "goal": {
-                "objective": "Market the changing AI lock screen",
-                "success_criteria": ["one experiment"],
+                "objective": objective,
+                "success_criteria": success_criteria,
                 "context": {},
             },
             "budget": {"max_tool_calls": 2, "max_cost_units": 4},
         }
     ).encode()
-
-    created = api.dispatch(
+    return api.dispatch(
         "POST",
         "/v1/runs",
         authorization="Bearer secret",
         body=body,
         now=NOW,
+    )
+
+
+def test_common_api_creates_and_reads_one_canonical_run(tmp_path: Path) -> None:
+    api = _api(tmp_path)
+    created = create_run(
+        api,
+        "run-one",
+        "Market the changing AI lock screen",
+        ["one experiment"],
     )
     fetched = api.dispatch("GET", "/v1/runs/run-one", authorization="Bearer secret")
 
@@ -113,18 +126,7 @@ def test_common_api_creates_and_reads_one_canonical_run(tmp_path: Path) -> None:
 
 def test_run_detail_projects_bounded_execution_status(tmp_path: Path) -> None:
     api = _api(tmp_path)
-    body = json.dumps(
-        {
-            "run_id": "status-run",
-            "goal": {
-                "objective": "Return one answer",
-                "success_criteria": ["answer is assessed"],
-                "context": {},
-            },
-            "budget": {"max_tool_calls": 2, "max_cost_units": 4},
-        }
-    ).encode()
-    _ = api.dispatch("POST", "/v1/runs", authorization="Bearer secret", body=body, now=NOW)
+    _ = create_run(api, "status-run", "Return one answer", ["answer is assessed"])
 
     response = api.dispatch("GET", "/v1/runs/status-run", authorization="Bearer secret")
 
@@ -152,18 +154,7 @@ def test_run_detail_projects_bounded_execution_status(tmp_path: Path) -> None:
 
 def test_run_detail_projects_optional_queue_claim_without_queue_payloads(tmp_path: Path) -> None:
     api = _api(tmp_path, reasoning=FailedReasoning())
-    body = json.dumps(
-        {
-            "run_id": "leased-run",
-            "goal": {
-                "objective": "Keep working",
-                "success_criteria": ["one result"],
-                "context": {},
-            },
-            "budget": {"max_tool_calls": 2, "max_cost_units": 4},
-        }
-    ).encode()
-    _ = api.dispatch("POST", "/v1/runs", authorization="Bearer secret", body=body, now=NOW)
+    _ = create_run(api, "leased-run", "Keep working", ["one result"])
     with closing(sqlite3.connect(api.service.repository.database_path)) as db, db:
         _ = db.execute(
             """CREATE TABLE agent_drive_work (
@@ -316,19 +307,7 @@ def test_reasoning_failure_returns_retryable_service_status_and_preserves_run(
     tmp_path: Path,
 ) -> None:
     api = _api(tmp_path, reasoning=FailedReasoning())
-    body = json.dumps(
-        {
-            "run_id": "retryable-run",
-            "goal": {
-                "objective": "Choose a format",
-                "success_criteria": ["one experiment"],
-                "context": {},
-            },
-            "budget": {"max_tool_calls": 2, "max_cost_units": 4},
-        }
-    ).encode()
-
-    response = api.dispatch("POST", "/v1/runs", authorization="Bearer secret", body=body, now=NOW)
+    response = create_run(api, "retryable-run", "Choose a format", ["one experiment"])
 
     assert response.status == 503
     assert response.body == {

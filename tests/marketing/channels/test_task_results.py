@@ -31,15 +31,91 @@ if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject
 
 from ads_booster.agent.core.ports import CompletionRenderContext
-from ads_booster.channels.task_results import BoundedCompletionRenderer, result_for
+from ads_booster.channels.task_results import (
+    BoundedCompletionRenderer,
+    latest_invocation,
+    result_for,
+)
 from ads_booster.contracts.agent_run import (
     AgentRecord,
     AgentRecordKind,
+    ToolInvocation,
     ToolReceiptRecord,
     contract_sha256,
 )
 from ads_booster.contracts.task_completion import CompletionCandidate
 from tests.marketing.agent_service.test_task_progress import make_run
+
+
+def tool_evidence_records(
+    *,
+    run_id: str,
+    index: int,
+    output: JsonObject,
+    actual_cost_units: int,
+    capability_id: str | None = None,
+) -> tuple[AgentRecord, AgentRecord]:
+    receipt = ToolReceiptRecord(
+        schema_version="trace.tool-receipt.v1",
+        receipt_id=f"receipt-{index}",
+        invocation_sha256="a" * 64,
+        disposition="succeeded",
+        actual_cost_units=actual_cost_units,
+        output_schema_sha256="b" * 64,
+        output_sha256=contract_sha256(output),
+        executor_id="fixture",
+        occurred_at=NOW,
+    )
+    evidence: JsonObject = {
+        "schema_version": "trace.tool-output-evidence.v1",
+        "receipt_sha256": contract_sha256(receipt),
+        "output": output,
+    }
+    if capability_id is not None:
+        evidence["capability_id"] = capability_id
+    payloads: tuple[JsonObject, JsonObject] = (receipt.model_dump(mode="json"), evidence)
+
+    def record(offset: int, payload: JsonObject) -> AgentRecord:
+        return AgentRecord(
+            schema_version="trace.agent-record.v1",
+            record_id=f"record-{index}-{offset}",
+            run_id=run_id,
+            kind=AgentRecordKind.RECEIPT if offset == 0 else AgentRecordKind.EVIDENCE,
+            payload_schema_version=str(payload["schema_version"]),
+            payload=payload,
+            payload_sha256=contract_sha256(payload),
+            occurred_at=NOW,
+        )
+
+    return record(0, payloads[0]), record(1, payloads[1])
+
+
+def test_latest_invocation_returns_the_latest_validated_contract() -> None:
+    invocation = ToolInvocation(
+        schema_version="trace.tool-invocation.v1",
+        invocation_id="invocation-one",
+        run_id="run-one",
+        step_id="step-one",
+        intent_sha256="a" * 64,
+        capability_snapshot_sha256="b" * 64,
+        descriptor_sha256="c" * 64,
+        idempotency_key="run-one:tool",
+        input={},
+        input_sha256=contract_sha256({}),
+    )
+    payload = invocation.model_dump(mode="json")
+    record = AgentRecord(
+        schema_version="trace.agent-record.v1",
+        record_id="record-one",
+        run_id="run-one",
+        kind=AgentRecordKind.INVOCATION,
+        payload_schema_version="trace.tool-invocation.v1",
+        payload=payload,
+        payload_sha256=contract_sha256(payload),
+        occurred_at=NOW,
+    )
+
+    assert latest_invocation((record,)) == invocation
 
 
 def test_renderer_binds_exact_limited_answer_and_links_before_assessment() -> None:
@@ -153,37 +229,13 @@ def test_only_selected_canonical_image_is_materialized_and_private_has_none() ->
     evidence_refs: list[str] = []
     for index in (1, 2):
         output: JsonObject = {"artifact_sha256": str(index) * 64}
-        receipt = ToolReceiptRecord(
-            schema_version="trace.tool-receipt.v1",
-            receipt_id=f"receipt-{index}",
-            invocation_sha256="a" * 64,
-            disposition="succeeded",
+        fixture_records = tool_evidence_records(
+            run_id=run.run_id,
+            index=index,
+            output=output,
             actual_cost_units=1,
-            output_schema_sha256="b" * 64,
-            output_sha256=contract_sha256(output),
-            executor_id="fixture",
-            occurred_at=NOW,
         )
-        payloads: tuple[JsonObject, ...] = (
-            receipt.model_dump(mode="json"),
-            {
-                "schema_version": "trace.tool-output-evidence.v1",
-                "receipt_sha256": contract_sha256(receipt),
-                "output": output,
-            },
-        )
-        for offset, payload in enumerate(payloads):
-            record = AgentRecord(
-                schema_version="trace.agent-record.v1",
-                record_id=f"record-{index}-{offset}",
-                run_id=run.run_id,
-                kind=AgentRecordKind.RECEIPT if offset == 0 else AgentRecordKind.EVIDENCE,
-                payload_schema_version=str(payload["schema_version"]),
-                payload=payload,
-                payload_sha256=contract_sha256(payload),
-                occurred_at=NOW,
-            )
-            records.append(record)
+        records.extend(fixture_records)
         evidence_refs.append(records[-1].payload_sha256)
     candidate = CompletionCandidate(
         candidate_id="candidate",

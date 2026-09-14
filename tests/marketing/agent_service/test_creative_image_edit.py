@@ -189,6 +189,16 @@ def finish_queued_edit(tool: CreativeImageEditTool, run_id: str = "run-one") -> 
     pytest.fail("bounded image completion did not reach quiescence")
 
 
+def receipt_payloads(
+    tool: CreativeImageEditTool, run_id: str = "run-one"
+) -> tuple[JsonObject, ...]:
+    return tuple(
+        record.payload
+        for record in tool.service.repository.records("tenant-a", run_id)
+        if record.kind is AgentRecordKind.RECEIPT
+    )
+
+
 def test_exact_approval_to_composed_asset_and_one_generation(tmp_path: Path) -> None:
     tool, provider = setup(tmp_path)
     assert tool.work_once()["state"] == "idle"
@@ -249,11 +259,7 @@ def test_source_bytes_changed_after_generation_fail_without_asset(tmp_path: Path
     assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 1
     assert not tuple(tool.root.glob("*/composed.png"))
-    receipts = [
-        r.payload
-        for r in tool.service.repository.records("tenant-a", "run-one")
-        if r.kind is AgentRecordKind.RECEIPT
-    ]
+    receipts = receipt_payloads(tool)
     assert receipts[0]["disposition"] == "failed"
 
 
@@ -320,11 +326,7 @@ def test_workspace_parent_rebound_after_generation_never_writes_outside_root(
     provider.hook = redirect
     assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert not tuple(outside.glob("*/composed.png"))
-    receipts = [
-        r.payload
-        for r in tool.service.repository.records("tenant-a", "run-one")
-        if r.kind is AgentRecordKind.RECEIPT
-    ]
+    receipts = receipt_payloads(tool)
     assert receipts[0]["disposition"] == "failed"
 
 
@@ -695,11 +697,7 @@ def test_knowledge_changed_while_queued_prevents_generation(
     monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
     assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 0
-    receipts = [
-        record.payload
-        for record in tool.service.repository.records("tenant-a", "run-one")
-        if record.kind is AgentRecordKind.RECEIPT
-    ]
+    receipts = receipt_payloads(tool)
     assert receipts[0]["disposition"] == "no_effect"
     assert receipts[0]["actual_cost_units"] == 0
 
@@ -716,11 +714,7 @@ def test_knowledge_change_after_generation_preserves_execution_receipt(
     provider.hook = changed
     assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 1
-    receipts = [
-        record.payload
-        for record in tool.service.repository.records("tenant-a", "run-one")
-        if record.kind is AgentRecordKind.RECEIPT
-    ]
+    receipts = receipt_payloads(tool)
     assert receipts[0]["disposition"] == "succeeded"
     assert receipts[0]["actual_cost_units"] == 20
     assert replace(tool).work_once()["state"] == "idle"
