@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.http.oauth import OAuthIdentity
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.reasoning import (
     ReasoningDecision,
@@ -11,19 +19,15 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import MarketingAgentService
-from ads_booster.channels.http.http_api import MarketingAgentApi
-from ads_booster.channels.http.oauth import OAuthIdentity
-from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.tools.descriptors import (
     notion_daily_descriptor,
     research_descriptor,
     slack_delivery_descriptor,
 )
-from ads_booster.providers.codex_reasoning import CodexReasoningError
+from tests.marketing.agent_service.completion_fixtures import (
+    FixtureMarketingAgentService as MarketingAgentService,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -99,7 +103,99 @@ def test_common_api_creates_and_reads_one_canonical_run(tmp_path: Path) -> None:
     assert fetched.body["run"] == created.body["run"]
     steps = fetched.body["steps"]
     assert isinstance(steps, list)
-    assert len(steps) == 2
+    run = fetched.body["run"]
+    assert isinstance(run, dict)
+    assert run["state"] == "completed"
+    revision = run["revision"]
+    assert isinstance(revision, int)
+    assert len(steps) == revision - 1
+
+
+def test_run_detail_projects_bounded_execution_status(tmp_path: Path) -> None:
+    api = _api(tmp_path)
+    body = json.dumps(
+        {
+            "run_id": "status-run",
+            "goal": {
+                "objective": "Return one answer",
+                "success_criteria": ["answer is assessed"],
+                "context": {},
+            },
+            "budget": {"max_tool_calls": 2, "max_cost_units": 4},
+        }
+    ).encode()
+    _ = api.dispatch("POST", "/v1/runs", authorization="Bearer secret", body=body, now=NOW)
+
+    response = api.dispatch("GET", "/v1/runs/status-run", authorization="Bearer secret")
+
+    assert response.status == 200
+    assert isinstance(response.body, dict)
+    execution = response.body["execution"]
+    assert execution == {
+        "schema_version": "trace.run-execution-summary.v1",
+        "phase": "terminal",
+        "next_action": "done",
+        "last_progress_at": "2026-09-03T00:00:00Z",
+        "last_progress_reason": "obligation_satisfied",
+        "budgets": {
+            "decisions": {"used": 2, "maximum": 64, "remaining": 62},
+            "assessments": {"used": 1, "maximum": 3, "remaining": 2},
+            "tools": {
+                "calls": {"used": 0, "maximum": 2, "remaining": 2},
+                "cost_units": {"used": 0, "maximum": 4, "remaining": 4},
+            },
+        },
+        "queue": {"state": None, "claim_owner": None, "lease_expires_at": None},
+        "wait_reason": None,
+    }
+
+
+def test_run_detail_projects_optional_queue_claim_without_queue_payloads(tmp_path: Path) -> None:
+    api = _api(tmp_path, reasoning=FailedReasoning())
+    body = json.dumps(
+        {
+            "run_id": "leased-run",
+            "goal": {
+                "objective": "Keep working",
+                "success_criteria": ["one result"],
+                "context": {},
+            },
+            "budget": {"max_tool_calls": 2, "max_cost_units": 4},
+        }
+    ).encode()
+    _ = api.dispatch("POST", "/v1/runs", authorization="Bearer secret", body=body, now=NOW)
+    with closing(sqlite3.connect(api.service.repository.database_path)) as db, db:
+        _ = db.execute(
+            """CREATE TABLE agent_drive_work (
+                tenant_id TEXT NOT NULL, run_id TEXT NOT NULL, revision INTEGER NOT NULL,
+                due_at TEXT NOT NULL, state TEXT NOT NULL, claim_owner TEXT,
+                lease_expires_at TEXT, PRIMARY KEY(tenant_id,run_id))"""
+        )
+        _ = db.execute(
+            "INSERT INTO agent_drive_work VALUES(?,?,?,?,?,?,?)",
+            (
+                "trace",
+                "leased-run",
+                2,
+                NOW.isoformat(),
+                "running",
+                "worker-1",
+                "2026-09-03T00:01:00+00:00",
+            ),
+        )
+
+    response = api.dispatch("GET", "/v1/runs/leased-run", authorization="Bearer secret")
+
+    assert response.status == 200
+    assert isinstance(response.body, dict)
+    execution = response.body["execution"]
+    assert isinstance(execution, dict)
+    assert execution["phase"] == "driving"
+    assert execution["queue"] == {
+        "state": "running",
+        "claim_owner": "worker-1",
+        "lease_expires_at": "2026-09-03T00:01:00Z",
+    }
 
 
 def test_common_api_derives_tenant_and_rejects_missing_identity(tmp_path: Path) -> None:

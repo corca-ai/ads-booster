@@ -123,6 +123,7 @@ class MarketingAgentApi:
     slack_only: bool = False
     maintenance: MaintenanceGate | None = None
     approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    drive_authorizer: Callable[[OAuthIdentity], bool] | None = None
 
     knowledge_ingress: CanonicalKnowledgeIngress | None = None
     knowledge_transfers: KnowledgeTransferProvider | None = None
@@ -132,6 +133,7 @@ class MarketingAgentApi:
         """Install current approval authority and canonical ingress on the same Run ledger."""
         if self.jobs is not None:
             self.jobs.approval_authorizer = self._can_approve
+            self.jobs.drive_authorizer = self._can_drive
         if self.knowledge_ingress is None:
             object.__setattr__(
                 self,
@@ -522,6 +524,18 @@ class MarketingAgentApi:
                 {"error": "reasoning_provider_unavailable", "retryable": True},
             )
         return ApiResponse(HTTPStatus.NOT_FOUND, {"error": "route_not_found"})
+
+    def _can_drive(self, identity: OAuthIdentity) -> bool:
+        if self.drive_authorizer is not None:
+            return self.drive_authorizer(identity) is True
+        if (
+            self.oauth_authenticator is not None
+            or self.browser_login is not None
+            or not self.bearer_token
+        ):
+            message = "authorization_unavailable"
+            raise RuntimeError(message)
+        return identity == OAuthIdentity(self.tenant_id, self.principal_id)
 
     def _can_approve(self, identity: OAuthIdentity) -> bool:
         """Authentication is not reviewer membership; only server policy can grant it."""
