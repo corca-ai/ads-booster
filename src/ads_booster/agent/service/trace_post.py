@@ -54,6 +54,7 @@ from ads_booster.contracts.trace_post import (
 )
 from ads_booster.creative.creative_asset_links import link_asset
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.execution_control import checkpoint, progress_scope
 from ads_booster.providers.codex_trace_post import TracePostGeneratedImage, TracePostProviderResult
 from ads_booster.tools.descriptors import image_generation_descriptor
 from ads_booster.transport.json_types import JsonObject
@@ -167,6 +168,7 @@ class TracePostTool:
     provider: TracePostProvider
     config: TracePostConfig
     on_completed: Callable[[str, str, str], None] | None = None
+    on_progress: Callable[[str, str, str], None] | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     _worker_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _active_operations: set[str] = field(default_factory=set, init=False, repr=False)
@@ -343,8 +345,13 @@ class TracePostTool:
             job = _Job.parse(selected[0])
             self._active_operations.add(job.operation_id)
 
+        def publish(stage: str) -> None:
+            if self.on_progress is not None:
+                self.on_progress(job.invocation.tenant_id or "", job.invocation.run_id, stage)
+
         try:
-            return self._work_once(selected)
+            with progress_scope(publish, stage="Trace post 제작을 준비하고 있습니다"):
+                return self._work_once(selected)
         finally:
             with self._worker_lock:
                 self._active_operations.remove(job.operation_id)
@@ -405,6 +412,7 @@ class TracePostTool:
                 "UPDATE trace_post_jobs SET stage='started' WHERE operation=?", (job.operation_id,)
             )
         try:
+            checkpoint("Trace post 제작을 시작했습니다 · 모델 응답을 기다리는 중")
             provider_result = self.provider.run(
                 workspace=workspace,
                 instruction=_instruction(
@@ -469,6 +477,7 @@ class TracePostTool:
     def _ingest(
         self, job: _Job, provider_result: TracePostProviderResult
     ) -> tuple[TracePostSuccess, int]:
+        checkpoint("생성된 이미지 6장과 국가별 캡션을 검증하고 있습니다")
         workspace = Path(job.workspace)
         if _bundle_digest(workspace / "repo") != job.bundle_sha256:
             raise ValueError("trace_post_frozen_bundle_changed")
