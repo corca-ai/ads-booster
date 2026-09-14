@@ -10,7 +10,6 @@ from ads_booster.contracts.provider_metrics import (
     ProviderMetricAvailability,
     ProviderMetricSnapshot,
 )
-from ads_booster.contracts.threads import ThreadsAccountStatus
 from ads_booster.learning.provider_metrics import ProviderMetricRepository
 from ads_booster.providers.threads_api import ThreadsApiClient, ThreadsApiError
 from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
@@ -36,9 +35,7 @@ class ThreadsMetricsService:
     ) -> tuple[ProviderMetricSnapshot, ...]:
         if observed_at.tzinfo is None or observed_at.utcoffset() != UTC.utcoffset(observed_at):
             raise ValueError("threads_metric_collection_requires_utc")
-        account = self.accounts.require_readable(
-            workspace_id, connection_id, now=observed_at
-        )
+        account = self.accounts.require_readable(workspace_id, connection_id, now=observed_at)
         if subject_kind == "account" and subject_id != account.provider_account_id:
             raise ValueError("threads_metric_account_identity_mismatch")
         token = self.tokens.get(account.token_ref)
@@ -49,14 +46,7 @@ class ThreadsMetricsService:
                 observed = self.api.insights(token, subject_id=subject_id, metrics=metric_names)
         except ThreadsApiError as error:
             if error.status == 401:
-                _ = self.accounts.put(
-                    account.model_copy(
-                        update={
-                            "status": ThreadsAccountStatus.REAUTH_REQUIRED,
-                            "updated_at": observed_at,
-                        }
-                    )
-                )
+                _ = self.accounts.mark_reauth(account, now=observed_at)
             raise
         snapshots: list[ProviderMetricSnapshot] = []
         observed_by_name = {item.name: item for item in observed}

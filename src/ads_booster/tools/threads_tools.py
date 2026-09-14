@@ -12,7 +12,6 @@ from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.threads import (
     ThreadsAccount,
-    ThreadsAccountStatus,
     ThreadsActor,
     ThreadsPublicationReceipt,
 )
@@ -231,7 +230,10 @@ class ThreadsTools:
                         account_id=account.connection_id,
                     )
                 return _observed(
-                    {"posts": [post.model_dump(mode="json") for post in page.posts], "after": page.after}
+                    {
+                        "posts": [post.model_dump(mode="json") for post in page.posts],
+                        "after": page.after,
+                    }
                 )
             case PostInput():
                 if capability != "threads.post.get":
@@ -254,7 +256,10 @@ class ThreadsTools:
                         after=request.after,
                     )
                 return _observed(
-                    {"posts": [post.model_dump(mode="json") for post in page.posts], "after": page.after}
+                    {
+                        "posts": [post.model_dump(mode="json") for post in page.posts],
+                        "after": page.after,
+                    }
                 )
             case ConversationInput() | RepliesInput():
                 expected = (
@@ -285,7 +290,10 @@ class ThreadsTools:
                         )
                     )
                 return _observed(
-                    {"posts": [post.model_dump(mode="json") for post in page.posts], "after": page.after}
+                    {
+                        "posts": [post.model_dump(mode="json") for post in page.posts],
+                        "after": page.after,
+                    }
                 )
             case MetricsInput():
                 if capability != "threads.metrics.collect":
@@ -343,12 +351,9 @@ class ThreadsTools:
                 if capability != "threads.publication.get":
                     raise ValueError("threads_descriptor_mismatch")
                 current_receipt = self.publisher.publications.get(request.operation_id)
-                if (
-                    actor.scheduled
-                    and (
-                        current_receipt is None
-                        or current_receipt.connection_id not in actor.allowed_connection_ids
-                    )
+                if actor.scheduled and (
+                    current_receipt is None
+                    or current_receipt.connection_id not in actor.allowed_connection_ids
                 ):
                     raise ValueError("threads_scheduled_account_denied")
                 receipt = self.publisher.reconcile(
@@ -405,9 +410,7 @@ class ThreadsTools:
                     disposition = "succeeded"
                 output = _JSON.validate_python(
                     {
-                        "publications": [
-                            receipt.model_dump(mode="json") for receipt in receipts
-                        ],
+                        "publications": [receipt.model_dump(mode="json") for receipt in receipts],
                         "requested_item_ids": list(request.item_ids),
                         "unattempted_item_ids": unattempted,
                     }
@@ -451,17 +454,13 @@ class ThreadsTools:
             }
         )
 
-    def _read_account(
-        self, actor: ThreadsActor, connection_id: str
-    ) -> tuple[ThreadsAccount, str]:
+    def _read_account(self, actor: ThreadsActor, connection_id: str) -> tuple[ThreadsAccount, str]:
         if actor.scheduled and connection_id not in actor.allowed_connection_ids:
             raise ValueError("threads_scheduled_account_denied")
         account = self.accounts.require_readable(actor.workspace_id, connection_id)
         return account, self.tokens.get(account.token_ref)
 
-    def _metadata_account(
-        self, actor: ThreadsActor, connection_id: str
-    ) -> ThreadsAccount:
+    def _metadata_account(self, actor: ThreadsActor, connection_id: str) -> ThreadsAccount:
         if actor.scheduled and connection_id not in actor.allowed_connection_ids:
             raise ValueError("threads_scheduled_account_denied")
         account = self.accounts.get(actor.workspace_id, connection_id)
@@ -479,9 +478,7 @@ class ThreadsTools:
     ) -> None:
         batch = self.publisher.drafts.get(actor.workspace_id, batch_id)
         selected = (
-            ()
-            if batch is None
-            else tuple(item for item in batch.items if item.item_id in item_ids)
+            () if batch is None else tuple(item for item in batch.items if item.item_id in item_ids)
         )
         if (
             batch is None
@@ -491,8 +488,7 @@ class ThreadsTools:
             or len(set(item_ids)) != len(item_ids)
             or any(item.excluded or item.action is not expected_action for item in selected)
             or any(
-                actor.scheduled
-                and item.connection_id not in actor.allowed_connection_ids
+                actor.scheduled and item.connection_id not in actor.allowed_connection_ids
                 for item in selected
             )
         ):
@@ -501,9 +497,7 @@ class ThreadsTools:
             account = self.accounts.require_owner(
                 actor.workspace_id, item.connection_id, actor.member_id
             )
-            _ = self.accounts.require_readable(
-                actor.workspace_id, item.connection_id
-            )
+            _ = self.accounts.require_readable(actor.workspace_id, item.connection_id)
             self._require_scope(account.granted_scopes, "threads_content_publish")
 
     @contextmanager
@@ -512,14 +506,7 @@ class ThreadsTools:
             yield
         except ThreadsApiError as error:
             if error.status == 401:
-                _ = self.accounts.put(
-                    account.model_copy(
-                        update={
-                            "status": ThreadsAccountStatus.REAUTH_REQUIRED,
-                            "updated_at": datetime.now(UTC),
-                        }
-                    )
-                )
+                _ = self.accounts.mark_reauth(account, now=datetime.now(UTC))
             raise
 
     @staticmethod
@@ -604,4 +591,10 @@ def _observed(output: JsonObject) -> DelegatedToolResult:
     return DelegatedToolResult(disposition="no_effect", actual_cost_units=1, output=output)
 
 
-__all__ = ["READ_CAPABILITIES", "ThreadsActor", "ThreadsActorResolver", "ThreadsTools", "descriptors"]
+__all__ = [
+    "READ_CAPABILITIES",
+    "ThreadsActor",
+    "ThreadsActorResolver",
+    "ThreadsTools",
+    "descriptors",
+]

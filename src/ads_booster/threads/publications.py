@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.threads import ThreadsAccountStatus, ThreadsPublicationReceipt
+from ads_booster.contracts.threads import ThreadsPublicationReceipt
 from ads_booster.providers.threads_api import ThreadsApiClient, ThreadsApiError
 from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
 from ads_booster.threads.drafts import (
@@ -157,9 +157,7 @@ class ThreadsPublicationRepository:
             )
         return tuple(ThreadsPublicationReceipt.model_validate_json(row[0]) for row in rows)
 
-    def for_invocation(
-        self, invocation_sha256: str
-    ) -> tuple[ThreadsPublicationReceipt, ...]:
+    def for_invocation(self, invocation_sha256: str) -> tuple[ThreadsPublicationReceipt, ...]:
         with sqlite3.connect(self.database_path) as database:
             rows = _RECEIPT_ROWS.validate_python(
                 database.execute(
@@ -226,7 +224,10 @@ class ThreadsPublicationRepository:
                     )
                     == receipt
                 )
-                if current.state in {"published", "failed", "uncertain"} and not reconciling_uncertain:
+                if (
+                    current.state in {"published", "failed", "uncertain"}
+                    and not reconciling_uncertain
+                ):
                     raise ThreadsPublicationError("threads_publication_terminal")
                 sequence = row[1] + 1
                 _ = database.execute(
@@ -275,16 +276,11 @@ class ThreadsPublisher:
         receipt = self.publications.get(operation_id)
         if receipt is None:
             raise ThreadsPublicationError("threads_publication_not_found")
-        if (
-            receipt.workspace_id != workspace_id
-            or receipt.owner_member_id != member_id
-        ):
+        if receipt.workspace_id != workspace_id or receipt.owner_member_id != member_id:
             raise ThreadsPublicationError("threads_publication_owner_required")
         if receipt.state == "published":
             return receipt
-        account = self.accounts.require_owner(
-            workspace_id, receipt.connection_id, member_id
-        )
+        account = self.accounts.require_owner(workspace_id, receipt.connection_id, member_id)
         if receipt.published_post_id is None or receipt.state != "uncertain":
             return receipt
         token = self.tokens.get(account.token_ref)
@@ -296,14 +292,7 @@ class ThreadsPublisher:
             )
         except ThreadsApiError as error:
             if error.status == 401:
-                _ = self.accounts.put(
-                    account.model_copy(
-                        update={
-                            "status": ThreadsAccountStatus.REAUTH_REQUIRED,
-                            "updated_at": now,
-                        }
-                    )
-                )
+                _ = self.accounts.mark_reauth(account, now=now)
             return receipt
         if post.post_id != receipt.published_post_id or not post.permalink:
             return receipt
@@ -396,8 +385,7 @@ class ThreadsPublisher:
                 or receipt.run_id != run_id
                 or receipt.invocation_sha256 != invocation_sha256
                 or receipt.draft_revision != batch.revision
-                or receipt.ordered_asset_sha256
-                != tuple(asset.sha256 for asset in item.assets)
+                or receipt.ordered_asset_sha256 != tuple(asset.sha256 for asset in item.assets)
                 or receipt.reply_to_id != item.reply_to_id
             ):
                 raise ThreadsPublicationError("threads_publication_identity_conflict")
@@ -406,9 +394,7 @@ class ThreadsPublisher:
             if receipt.published_post_id is None:
                 self.api.wait_until_ready(token, creation_id=receipt.creation_ids[-1])
                 receipt = self.publications.put(
-                    receipt.model_copy(
-                        update={"pending_step": "publish", "updated_at": now}
-                    )
+                    receipt.model_copy(update={"pending_step": "publish", "updated_at": now})
                 )
                 published_id = self.api.publish(token, creation_id=receipt.creation_ids[-1])
                 receipt = self.publications.put(
@@ -431,14 +417,7 @@ class ThreadsPublisher:
             )
         except ThreadsApiError as error:
             if error.status == 401:
-                _ = self.accounts.put(
-                    account.model_copy(
-                        update={
-                            "status": ThreadsAccountStatus.REAUTH_REQUIRED,
-                            "updated_at": now,
-                        }
-                    )
-                )
+                _ = self.accounts.mark_reauth(account, now=now)
             state = (
                 "uncertain"
                 if error.uncertain_effect or receipt.published_post_id is not None
@@ -547,17 +526,13 @@ class ThreadsPublisher:
             self.api.wait_until_ready(token, creation_id=child_id)
         if len(known) == child_count:
             receipt = self.publications.put(
-                receipt.model_copy(
-                    update={"pending_step": "create_carousel", "updated_at": now}
-                )
+                receipt.model_copy(update={"pending_step": "create_carousel", "updated_at": now})
             )
             parent = self.api.create_carousel(
                 token,
                 children=tuple(known),
                 text=item.text,
-                reply_to_id=item.reply_to_id
-                if item.action is ThreadsDraftAction.REPLY
-                else None,
+                reply_to_id=item.reply_to_id if item.action is ThreadsDraftAction.REPLY else None,
             )
             known.append(parent)
             receipt = self.publications.put(

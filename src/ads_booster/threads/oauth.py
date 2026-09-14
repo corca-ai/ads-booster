@@ -110,9 +110,9 @@ class ThreadsOAuthService:
         granted = self.api.granted_scopes(token.access_token)
         if not set(requested).issubset(granted):
             raise ThreadsOAuthError("threads_requested_scope_missing")
-        connection_id = "threads-" + sha256(
-            f"{workspace_id}\n{member_id}\n{user.id}".encode()
-        ).hexdigest()[:24]
+        connection_id = (
+            "threads-" + sha256(f"{workspace_id}\n{member_id}\n{user.id}".encode()).hexdigest()[:24]
+        )
         existing = next(
             (
                 account
@@ -176,14 +176,7 @@ class ThreadsOAuthService:
             )
         except ThreadsApiError as error:
             if error.status == 401:
-                _ = self.accounts.put(
-                    account.model_copy(
-                        update={
-                            "status": ThreadsAccountStatus.REAUTH_REQUIRED,
-                            "updated_at": now,
-                        }
-                    )
-                )
+                _ = self.accounts.mark_reauth(account, now=now)
             raise
         self.tokens.replace(account.token_ref, refreshed.access_token)
         return self.accounts.put(
@@ -201,9 +194,7 @@ class ThreadsOAuthService:
     ) -> ThreadsAccount:
         account = self.accounts.require_owned(workspace_id, connection_id, member_id)
         updated = self.accounts.put(
-            account.model_copy(
-                update={"status": ThreadsAccountStatus.REVOKED, "updated_at": now}
-            )
+            account.model_copy(update={"status": ThreadsAccountStatus.REVOKED, "updated_at": now})
         )
         self.tokens.delete(account.token_ref)
         return updated
