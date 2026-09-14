@@ -36,8 +36,10 @@ def _expand(value: JsonValue, definitions: JsonObject, resolving: frozenset[str]
             result = {
                 key: _expand(item, definitions, resolving)
                 for key, item in mapping.items()
-                if key not in {"$defs", "default"}
+                if key not in {"$defs", "default", "discriminator"}
             }
+            if "discriminator" in mapping and "oneOf" in result:
+                result["anyOf"] = result.pop("oneOf")
             properties = result.get("properties")
             if isinstance(properties, dict):
                 result["required"] = list(properties)
