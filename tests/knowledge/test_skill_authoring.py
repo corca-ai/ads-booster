@@ -27,6 +27,14 @@ requested_skill_input = fixture_requested_skill_input
     [
         ("<@UBOT> 고객 인터뷰를 카피로 바꾸는 스킬 만들어줘", "create"),
         ("스킬 만들기: 인터뷰를 카피로", "create"),
+        (
+            "이 워크스페이스에서 쓸 스킬을 하나 만들어줘. 매주 광고 문구를 작성하는 용도야.",
+            "create",
+        ),
+        ("스킬 만들어줘: 매주 광고 문구를 작성하는 절차", "create"),
+        ("learned.copy 스킬을 수정해줘. 제목은 짧게 써줘.", "update"),
+        ("이 스킬을 써서 이미지 만들어줘", None),
+        ('이 문장을 번역해줘: "스킬 만들어줘. 매주 광고를 써줘"', None),
         ("워크스페이스 공용 스킬 수정: learned.copy", "update"),
         ("Please create a workspace skill for interview analysis", "create"),
         ("Update the skill learned.copy", "update"),
