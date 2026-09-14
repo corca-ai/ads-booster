@@ -166,6 +166,9 @@ class MarketingAgentService:
     drive_admission: Callable[[AgentRun, TaskProjection, datetime], RepositoryAdmission] | None = (
         None
     )
+    approval_authorizers: tuple[
+        Callable[[ToolInvocation, ToolDescriptor, str], bool], ...
+    ] = ()
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     monotonic_clock: Callable[[], float] = monotonic
     _active_meter: float | None = field(default=None, init=False, repr=False)
@@ -527,6 +530,11 @@ class MarketingAgentService:
                 raise ValueError("approval_expiry_required")
             descriptor = self._descriptor_for_invocation(tenant_id, run_id, invocation)
             if granted:
+                if any(
+                    not authorize(invocation, descriptor, approver_id)
+                    for authorize in self.approval_authorizers
+                ):
+                    raise ValueError("tool_approval_authority_denied")
                 _ = self.registry.require_current_dispatch(
                     descriptor, policy=self.capability_policy, now=now
                 )
