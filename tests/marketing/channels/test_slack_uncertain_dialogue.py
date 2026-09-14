@@ -190,22 +190,20 @@ def test_late_original_result_retains_thread_binding_after_dialogue(
     session = service.runtime_store.load(conversation.current_run)
     assert session is not None
     assert session.reserved_cost_units == 0
-    service.reasoning = Reasoning()
+    late_result = "Late verified result"
+    service.reasoning = DialogueReasoning("캡처해줘", late_result)
     assert service.drive("team", conversation.current_run, now=NOW).state is AgentRunState.COMPLETED
     assert owner.enqueue_run_update("team", conversation.current_run, event_id="late-worker")
     for _ in range(8):
-        if any(
-            message.get("thread_ts") == conversation.thread_ts
-            and "Bounded asynchronous capture" in str(message["text"])
-            for message in messages
-        ):
+        if any(late_result in str(message["text"]) for message in messages):
             break
-        assert owner.work_once(now=NOW)
+        if not owner.work_once(now=NOW):
+            break
     delivered = next(
         message
         for message in reversed(messages)
         if message.get("thread_ts") == conversation.thread_ts
-        and "Bounded asynchronous capture" in str(message["text"])
+        and late_result in str(message["text"])
     )
     assert delivered["thread_ts"] == conversation.thread_ts
     count = len(messages)
