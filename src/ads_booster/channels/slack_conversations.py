@@ -263,7 +263,8 @@ class SlackConversationStore:
                 ).fetchone()
             )
         return (
-            None if row is None
+            None
+            if row is None
             else Conversation.model_validate_json(row[0]).model_copy(update={"current_run": run_id})
         )
 
