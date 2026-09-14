@@ -1351,6 +1351,280 @@
         "ae0aab85d31abfbde44513785b6ff2770d97a51a1a081e04deecfd4f63626434",
         "e8382497e1650803bb5b483b41e48bef8db4e860e1174389f4bf2830f0abe22e"
       ]
+    },
+    {
+      "fingerprint": "74698260b25ed106bf9cb2531be91ebfdab850bba9edef2f9f2e80fbe0114220",
+      "reason": "The personal-context test proves requester isolation while the Slack knowledge-preparation test proves a brand-wait follow-up; each keeps its own installed runtime setup so the authorization and channel contracts remain independent.",
+      "memberHashes": [
+        "1d3881fdfe3e023a83b012ac88729b061044d68467430ba96a1df4a0851701a1",
+        "1d3881fdfe3e023a83b012ac88729b061044d68467430ba96a1df4a0851701a1"
+      ]
+    },
+    {
+      "fingerprint": "aa2dd8d1d43a6aea1fde01ab19ce08a44837d54a29523891ffe16d046de272bd",
+      "reason": "The two Trace-post tests intentionally repeat queue setup for different oracles: one verifies six-file delivery and restart deduplication, while the other holds two providers concurrently to prove independent job execution.",
+      "memberHashes": [
+        "14836fb50ff196d9b51486f342c1225fa5b10d2e567fcb2882d03f7607dafb65",
+        "14836fb50ff196d9b51486f342c1225fa5b10d2e567fcb2882d03f7607dafb65"
+      ]
+    },
+    {
+      "fingerprint": "d50895efa33c88d360aa182fcd18e8be77b74f31453dba97efbf28f47844cbc8",
+      "reason": "The overlapping agent-run and creative-work imports declare dependencies in independent image-edit and Trace-post tool owners; executable approval binding is already shared through approval_binding.py.",
+      "memberHashes": [
+        "7a22fb8299a77823dbb7e2fb480c5b8f73ede891cad4f56751c6e9062873beb3",
+        "971a0422f759c37f9f2aaeaf845e278447c58509409e872c75e675c2a1c2f620"
+      ]
+    },
+    {
+      "fingerprint": "7c04834db2d04f7497e041a2680f4fd27eb060d7653964eed0c035ef974eb865",
+      "reason": "The application contract imports and the channel-brand test imports belong to production composition and an independent test fixture; a shared import barrel would hide dependencies and create coupling.",
+      "memberHashes": [
+        "4bb71cb5274d145caeeff1fd18a140e7ae3a96e485f72aca22e466cd1cdf386c",
+        "da6cdacb97d41f8265583f5285b0ce61bc87fa90528581b9ff6b158f64c23ac9"
+      ]
+    },
+    {
+      "fingerprint": "9e5184c0728c8ad7d9ad84c924f4ca7a2f3197c9a2016055b9160bb97ecfb373",
+      "reason": "These full tests exercise different boundaries: requester-private context isolation and Slack brand preparation with a new follow-up. Their standalone setup preserves separate authorization and presentation oracles.",
+      "memberHashes": [
+        "3fa687d5c4e2c89546ede1081702e25330490a5df23a8204c42bf3f809e837ad",
+        "57c93c1e2f41a928308981bcbfa7065641fed8606f6f883188dfb6804a0acdc3"
+      ]
+    },
+    {
+      "fingerprint": "fb1797dcea137b87197275b627603c3cf34abd0c108c99f2f932ba6804db2b71",
+      "reason": "The adjacent Slack knowledge tests deliberately construct separate installed runtimes for opposite preparation outcomes: voice-unconfigured execution and required-voice blocking followed by recovery.",
+      "memberHashes": [
+        "533b34e946f24ce50c9e62f32562ca22259b8dd53ee9b3363054339140afd564",
+        "a7da1ccab5dc61408786521937f5d8877905ecb0965e429dbc5817af83984aef"
+      ]
+    },
+    {
+      "fingerprint": "183725cf38cd61401499f2b9878bab8e9ad04ffa0fe7fb5944536f613f96e716",
+      "reason": "The notification tests share admission setup but prove different durable states: an unknown send after response loss versus denial after current-member revocation. Keeping each scenario self-contained preserves its recovery oracle.",
+      "memberHashes": [
+        "6b2ad8d4d2af6e732fa352d25343ee4a77c060c1727fc3cfd70f4a9aa04e77ad",
+        "8b17af6763ca2ba8fb4b976ff97f1e0097b7ac7645454b0d4bc413cae93cc6bc"
+      ]
+    },
+    {
+      "fingerprint": "1dc7d094222e3e4862b1b86cdc3ba1ac6f3454b08c9d16b86e4159715ac01177",
+      "reason": "The one-line request append is intentionally local to independently typed provider fakes across unit, channel, knowledge, and installed acceptance surfaces.",
+      "memberHashes": [
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64"
+      ]
+    },
+    {
+      "fingerprint": "f492f2a880f2f8d1379274f411ee44ca6481cef8e18c9f85c55bd4cc4ac266a1",
+      "reason": "The detector overlaps adjacent validation predicates inside one Slack image-delivery loop; the capability filter and receipt-output binding guard different failure conditions and do not form a reusable unit.",
+      "memberHashes": [
+        "3bbda318b1e10a2fdec92b0aab6299c178d2e68133e7d9a5e6a282a2ccf22219",
+        "780f3173274b41d5cf9a57fe803210a476245eaba67d8bcb7d0254d9779d497c"
+      ]
+    },
+    {
+      "fingerprint": "535d960e81b7ccc8d393d00825902a060991adafc3c82969439f3676d62df302",
+      "reason": "The two Slack result tests inject different interruptions and assert different projections: a committed tool plan must not look executed, while a failed follow-up must not repeat an older answer.",
+      "memberHashes": [
+        "80f42235c7b4b05731bad5f8c48856cff765d0b8f427acfc16b9c69a0a125b82",
+        "c582bec5a660a64fdff0825c6f718b941c9dd243c0bf925d936ebf746513e267"
+      ]
+    },
+    {
+      "fingerprint": "1605a00e2c2db7dad1113bb450debbbb84f0ebe82e31be5d0096f8600c52e425",
+      "reason": "These Slack scenarios share initial signed effect admission but independently prove review help is non-mutating, exact-hash rejection, post-dialogue approval, and classified failure. Scenario-specific temporal assertions remain visible.",
+      "memberHashes": [
+        "2d9217d17c01fc85bff4f81264ec1f595543caa4458612f5f416af94a522729a",
+        "7dcc6e057a5f5ef2d11da1b9e078c654a3faed7fe5383f6cb63ef09935af38e7",
+        "a9fc1928d1878fd0eefdff86676a5c9f2570a85c8bf6e912e6f61457643be763",
+        "d2f0cee5a12fe4c1bb73efbee5ba367e70d7c862a5c130e0c4df2e619f7c8edc"
+      ]
+    },
+    {
+      "fingerprint": "b225ace1843aaa44effb94d09390beab10c454b3cd94f764a1dd36af9dc0f777",
+      "reason": "Creative image edit and Trace post are separate durable tool owners with different queue stages, provider outputs, artifact contracts, and completion costs; only their approval binding is shared, so merging the state machines would couple independent workflows.",
+      "memberHashes": [
+        "0f6ad4946e1b054265ad346c970347694f1116c3699a9904f5766d7f9e340bce",
+        "4e9a6b1d7466f090de46c87f231c03eee36db649665a1e813a6f8facced286da"
+      ]
+    },
+    {
+      "fingerprint": "e95a78bc1393164642e28b4f7f3e032160de4599afdecc3661de3df1c98f1fc5",
+      "reason": "The reasoning fakes target different capability schemas and outputs: image generation emits an artifact and optional direct authorization, while GitHub issue creation emits a fixed repository payload and confirmed external URL.",
+      "memberHashes": [
+        "91bb30abc80ca81fb810f7f0554165e3ef1c59db89f952d3b3f8f971a66de0bb",
+        "daaa238f9c7b921a1f643df843b9d082ceda3b2601443f6f3b0cfc5d02f1093c"
+      ]
+    },
+    {
+      "fingerprint": "2cd34facaabaf19d0b759425e7a279bac6f304d9b84b8e8683c933179458e70b",
+      "reason": "One test injects a fault after approval commit and proves durable recovery, redaction, one receipt, and one adapter call; the other exercises model-delegated GitHub authorization and POST-GET readback across restart.",
+      "memberHashes": [
+        "63d1fef02688474b5a03cdf5d59d3ac1f96bc029dad37fffb0c54d8b289571c5",
+        "836aa889ffcb988358d6500aa9c04750100cc2b91f2250a2451d536d9b26a174"
+      ]
+    },
+    {
+      "fingerprint": "f63f04b1663942f2d3e1e52e9bb67d00d804e9641e7eb3e38db7bcba59bd3b92",
+      "reason": "The small follow-up assertions belong to requester-isolation and brand-preparation tests with different state owners; extracting them would couple independent channel and knowledge regressions.",
+      "memberHashes": [
+        "ce544b2ac337fd4f1a6ddbe5c9286a4d34f2ae9205e27f371a6051f58c17b623",
+        "e2ed786c94f476efb7dc3df25a87c4c5fc6460efbf9a194b5f3d04e2c65ba20e"
+      ]
+    },
+    {
+      "fingerprint": "11e7f982d08066bed11ce9355f7daafec42a9772238162fab367264f99530a54",
+      "reason": "The overlapping approval-feedback regions cover different terminal boundaries: permission and readiness rejection versus an uncertain post-approval effect with redacted diagnostics and no retry.",
+      "memberHashes": [
+        "66b2df9a334e8d95efbc71e0d2cc5f7c30b0e321c73f598abb3622ff52378b00",
+        "f812dd3428418ee34deadd2f8a5f9e126b2f5bf593a3f3e50414d9f6e8ff1598"
+      ]
+    },
+    {
+      "fingerprint": "58143398fe5badaa1a79a5433e179a5d505248d42d52fa8eccef0378c994e175",
+      "reason": "SlackEvents planning and summary rendering intentionally inspect similar records for different responsibilities: planning mutates the next action, while summary is a read-only user projection and cannot share the planning control flow.",
+      "memberHashes": [
+        "abd406e5adf302a481605f8ba6439f534509763ef76b2150d1fa6fe9dc2c5c19",
+        "c1ebe7be1fa6239c73dae0bb0c7488aff37b5ca4b5a282a603507b623ceaa6a3"
+      ]
+    },
+    {
+      "fingerprint": "fef2d44cdccfafa3bf8ddeec0ba45ec4b4561ebe44f9081a6f6d1be0887a1348",
+      "reason": "The detector spans the tail of one image-integrity test and the setup of the following lock and private-scope tests, so it does not identify one coherent extractable unit.",
+      "memberHashes": [
+        "6ac630754fdbe45d717a137af427a646595ea182ec0f6ee63d706099320ca3e4",
+        "f9143aeb41bbf3525eeb45cf7957f5bff68dc8f137aea2a63bf0cf1c48bbaca9"
+      ]
+    },
+    {
+      "fingerprint": "b8579676f54148f87fbd05431d3531bdb9db70e78f3b30bb8c997f547d83a284",
+      "reason": "These tests share only small restart and no-retry assertion shapes across image upload and GitHub uncertain-write owners; request counts, reconciliation state, and user messages are channel-specific outcomes.",
+      "memberHashes": [
+        "60e9cfe1e7bdbe185da2fb7757b760718842ea6d83654e879af1fa6b8f370743",
+        "b19e848a9018e9fb9be8420a799d3d1f809226af8ed3ee2779de5d0205100798",
+        "b1b8512118f95456628a4f71a37a0b9ebab6ac5092d724d16e5146adb4abc1a3"
+      ]
+    },
+    {
+      "fingerprint": "732f9906a9121affedc607dfe3ae575b84c281fd72f83e67a28fd7d2e55ce9d6",
+      "reason": "Module-local TYPE_CHECKING blocks retain separate service, tool, channel, and test dependency ownership; a shared barrel would create hidden dependencies and circular-import pressure.",
+      "memberHashes": [
+        "0e282ff87c68ab34140858b8852579de02001ed5c26d6fa2947b055f603c7b7a",
+        "0e9c7936403f917e59050820cfd44d5f450371842111ab0fd040637f73adf121",
+        "148bc8fc9b0777bf4762d962538055872c0976289bb18b201aee115e2903d7be",
+        "23a63d2044213263102b0c42a268e5f8012e57eaa4b9ea512b0204801ab10643",
+        "2ca5aef2e89b6ef963e66e000837b5c0f292552a2efc65bb9bf7c92d2a6a6ff5",
+        "3230780f6b2c39d7858befc0138f2325bcbd03d75ec3eaa0cf9acb91aa8c8ede",
+        "385e85f4172f3c4f0f8c57f9478a5307b8bc62e5879fc8948697c09f1927f9b2",
+        "39d4fd2cbbd745d455309ab73b6b16218996e1d686b8cd652f824a6243a88356",
+        "3c07f0d105dbb69ab81ee6b783a4fe3f5a7a77d27024580ac9300f7e1c15f6eb",
+        "3d36950c654cb761a463f40df792b58379eb4df89bf1701974f72645d4e06775",
+        "44c1f3133a01858d378829efe3adf1f33f4665df517098bfe3009bceff832f8d",
+        "4524d8414c4f363fc8aa1438adcbfc2889b52d447af1530ac779d33f063103f3",
+        "45e5adbffbd8a03576f4345d4804d1bcf7622af13be4c73f68051ac05f7456de",
+        "46f3966918bbbe385fc199882286e102ebb1ea6fb96f1816f21f73cb4789200b",
+        "47fb09d902612d404d10c541e202f10452a33a38788fcf5bdd37a5ae86b66aa8",
+        "4ff16e8e9a805e4257788800fff214fdaa34c071cd1a7f1d4fd6c0387f815216",
+        "55dda5f873472eef7d3ad18215cbc95d141f125350e55ce8c436aeb7ce727292",
+        "5cd51c73a1309ae5c6aa91e01ebdb56fdeeef99191c25b260a3d352cf8d1835d",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "65dba2dfec42dcb9af37a73b62733bc0a4389aef2f1ddaecfba473e6f7909487",
+        "72bc9cb554253c9dbba8aa2e4846d6c1459ce48ec3229737f3ee07bcb0b579b2",
+        "7bb0c925657031371ac42933aab32570e9f1ae9225469486f7da5329ba9fbf93",
+        "82553b8ab2cd0a62b49789c1f1d347203706fb018a7b8ca62b95238903dc4445",
+        "8c3b99957635a024f4a61fac3ffa5d4f9a15a2927a576fccedd31c4c07cd0023",
+        "8d262a363221356044efa7038a7b83d4beaddffd473bbba5e143800c1355b133",
+        "9595f6aad418f4e43f0507e8a84c2e336ef0a956396552f007a5620e3e4a441f",
+        "9ff38f6698d848050d060decba8f4312d5cc68ee1af2dca2fec39352abb85bfb",
+        "a2d29cb429600ad4ac9e969d392d9ca2172404c2465c31b60d1abb4e135952f0",
+        "a3df6dbe2dcaa3e79e0f5f97a3a0afb30fc2ba0a474530d2d20231fae54bc802",
+        "a4fbc6cc2ec7b6993a86d49fa11d826963f142411a2e0c6b70453e23d9f3715a",
+        "aa81266efc3322a91808c93751bf0ef51b727dd3e8eedc0e6f67b124415b1ae9",
+        "ae9765f2db2fb810ada71703457e9e91b3e3ab7e92caf97c0dc4c0febf24ba4a",
+        "aeb633fd6df156e6baeca193186363ea652ccb93168d440206e4ef6e82d0defc",
+        "b1a93e3ee49e58da253fbcc853206fc6743d4e48199fd4403ee6f602f8bebd72",
+        "b2c939d5773b8dc238e335f17cd758f00497c4f5e11efa19877be935d2678dd4",
+        "b7ce45f819dbbcb72e8b2db3c965a993af860eeb0d662b318c652f4ba44bb7be",
+        "b88842e1f5125e009b43538f6819e75bf9da7d72654dee3e8c5f97c56775dd5c",
+        "bf656b8f242c0c894ff6368dbb927285820f80a5aedbc162ec62678320ab5f9e",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3daec434dcf4cf537fbc20a6009038cdcd42ecb2601c7a575affa0d77b45873",
+        "e0b62b8b2a5b4f2adde275edd64dfbc2beafef3fd162f57a7561721f89a067eb",
+        "e2d1998d37c8fe108810644ae7360f8d5ecabf064175f8b681388f1d32fd3336",
+        "f731ce6b9b02662b37cd989a071c4230b5cf2a9f874cb10e66c39eeb6de47ab0",
+        "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
+        "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660"
+      ]
+    },
+    {
+      "fingerprint": "c783b2f9a2f4a8cf016982f11dc99585dc7dd272f740f22ea01bde7b62173e28",
+      "reason": "Each nested crash hook names a distinct canonical commit point and scenario-specific exception used by an independent recovery test; retaining it beside the scenario prevents accepting the wrong interruption boundary.",
+      "memberHashes": [
+        "316e63aed29d322328d13b6f306f19ac6a5a7eeb152f10a76f7de2b5537dd980",
+        "555872231a2abd938f258f113cce7a6525f7faa456d9ddbd1bfe54a06f6f486b",
+        "5c84df385236b3eca1006d2417949ecc76033b7c73c70520ca8e18ef1ad427a1",
+        "8b37573b294f7a2d7dfbf271740801dc263cda9eb5d0320e1e69e475b51b49d6",
+        "90da7963bc0a345d0f0a71cf639e33a55ea4341ecbccb63cdf28d96ff8e21c4d",
+        "aa403694b15fe7f6c98a49ca72d8a46b510af39f989366a49c4c1e3681516d25",
+        "b08c8cb58dbc4a50b2e2b3221eb0fe6bdff317b582474b132b4c42fffaa546aa",
+        "cffbc7bab86c88b2c1761d82212badf2369ede36f3a195b451e9eff09f02d49e"
+      ]
+    },
+    {
+      "fingerprint": "a8e511b8b457bb714a14a6f6acd783a78faff1d2b146a4b840f5689917b41698",
+      "reason": "Module-local TYPE_CHECKING blocks declare each repository, batch, command, and test support dependency directly; sharing them would hide ownership and introduce cross-module import coupling.",
+      "memberHashes": [
+        "144d16ada54690a9cd57c896d1e34cf6116dfae1eb9db43c198e3706ea9c2133",
+        "88bd51558ce4633ffb6ab4d9044a5287ea89e361561fd3784bf1aa5eb6f7eeb1",
+        "8afacc09c52e0e94608b0dd01703d02fb85f34e1df00c05851564a549b8a994b",
+        "be8e6d6591416e3978c2f3c4fd5d2a36489f462c591e9a8c9c80983675c54c5d",
+        "eefe1930fa6fac4e8d34198d092c0008d62d92e17c34a59023ffb6d46d4057d6"
+      ]
+    },
+    {
+      "fingerprint": "48eff830a9436f271965daf8ae699cb51d5a07842f651699c47dfd5d18f9fe18",
+      "reason": "interrupted_reasoning is a read-only safe-boundary predicate, while _resume_continuation validates durable event identity and may submit input or drive the Run; their small shared step check serves different contracts.",
+      "memberHashes": [
+        "22a1085f5e660b80c673f763273562ae5bf71d990c88f6eeed20e8dd6bc72e28",
+        "c3008dd78238f01ad15e462fcff796172fe03d8b5a21cefbe9f0b17dcced29a2"
+      ]
+    },
+    {
+      "fingerprint": "24df3842a2c1cfe852de65664f633959d59a93c312551587e86c4e2d7bcf774c",
+      "reason": "The Slack approval proposal and the general conversational fallback both inspect the latest reasoning record but render different states and authority messages; keeping the lookups local avoids coupling approval and status presentation.",
+      "memberHashes": [
+        "867d078714a8b0cf295addc3a8f3162fd42f232bd15117b1cf61cca0c79108d9",
+        "d2840d12612b11489713a5407b916d7b4908161c91f2cab93f9903fc2680b6d1"
+      ]
+    },
+    {
+      "fingerprint": "432aabd9f009843726ef67f510a8f19d8a98c71d8bb7c24246c02e1d6a18122e",
+      "reason": "HTTP and Slack-command recovery each invoke the shared DriveWorkQueue for a different channel before applying channel-specific crash policy; the one-line calls belong to separate worker owners.",
+      "memberHashes": [
+        "1ccd5b520b04f6d5cabac95c04aa8fe9d389ff70abbb4416020be845a17fcf13",
+        "a47270c0d1f4f90976d70dc1795d7d2eebe6aa62a3df5802719dac3a57ffead5"
+      ]
     }
   ]
 }
