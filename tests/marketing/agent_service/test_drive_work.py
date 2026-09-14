@@ -346,31 +346,9 @@ def test_http_input_requeues_while_another_worker_holds_the_run_lease(tmp_path: 
     database = tmp_path / "http-contention.sqlite3"
     service = build_service(database, Steps())
     jobs = AgentJobs(service)
-    run = service.repository.create(
-        make_run().model_copy(update={"run_id": "lease-input", "tenant_id": "trace"})
-    )
-    origin = DriveOrigin(
-        tenant_id=run.tenant_id,
-        run_id=run.run_id,
-        channel="http",
-        principal_id="member",
-        event_id="active-drive",
-    )
-    jobs.drive_queue.bind(origin)
-    with jobs.drive_queue.connect() as db:
-        _ = db.execute(
-            "INSERT INTO agent_drive_work(tenant_id,run_id,revision,due_at,state,"
-            + "claim_owner,lease_expires_at) VALUES(?,?,?,?,?,?,?)",
-            (
-                run.tenant_id,
-                run.run_id,
-                run.revision,
-                NOW.isoformat(),
-                "running",
-                "other-worker",
-                (NOW + timedelta(minutes=5)).isoformat(),
-            ),
-        )
+    run, _, _ = _admit_running(service.repository, jobs.drive_queue)
+    active = jobs.drive_queue.claim("http", NOW)
+    assert active is not None
     job = WebJob(
         job_id="lease-input-job",
         run_id=run.run_id,
