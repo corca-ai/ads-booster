@@ -1018,6 +1018,34 @@ class SlackEvents:
         context["privacy"] = "private_dm" if conversation.private else "shared_thread"
         if (
             run is not None
+            and run.state is AgentRunState.AWAITING_RECONCILIATION
+            and not text.startswith("새 작업 ")
+        ):
+            return MessagePlan(
+                action="create",
+                run_id="slack-inspect-"
+                + contract_sha256(
+                    {"message": message.message_id, "scope": conversation.conversation_id}
+                )[:40],
+                goal=AgentGoal(
+                    objective=text,
+                    success_criteria=(
+                        "현재 질문에 원래 작업의 확인된 기록과 불확실성을 구분하여 답한다.",
+                    ),
+                    context={
+                        "slack_conversation": context,
+                        "reconciliation_inspection": {
+                            "source_run_id": run.run_id,
+                            "source_state": run.state.value,
+                            "source_objective": run.goal.objective,
+                            "source_status": self.summary(conversation),
+                            "constraint": "Read-only inspection. Do not repeat or settle the uncertain operation.",
+                        },
+                    },
+                ),
+            )
+        if (
+            run is not None
             and (
                 run.state
                 in {
@@ -1032,14 +1060,20 @@ class SlackEvents:
             and not text.startswith("새 작업 ")
         ):
             return MessagePlan(action="revise", run_id=run.run_id)
-        if text.startswith("새 작업 "):
+        explicit_new_work = text.startswith("새 작업 ")
+        if explicit_new_work:
             text = text.removeprefix("새 작업 ").strip() or text
         correction_signal = not conversation.private and has_learning_correction_signal(text)
-        if run is not None and run.state not in {
-            AgentRunState.COMPLETED,
-            AgentRunState.STOPPED,
-            AgentRunState.FAILED,
-        }:
+        if (
+            run is not None
+            and not (explicit_new_work and run.state is AgentRunState.AWAITING_RECONCILIATION)
+            and run.state
+            not in {
+                AgentRunState.COMPLETED,
+                AgentRunState.STOPPED,
+                AgentRunState.FAILED,
+            }
+        ):
             return MessagePlan(
                 action="reply",
                 run_id=run.run_id if correction_signal else "",
@@ -1172,7 +1206,13 @@ class SlackEvents:
             return plan.reply
         if plan.action == "learning_answer":
             return self._answer_learning_question(conversation, message, plan, now=now)
-        conversation = conversation.model_copy(update={"current_run": plan.run_id})
+        source_run = conversation.inspection_source_run
+        if plan.action == "create":
+            inspection = plan.goal.context.get("reconciliation_inspection") if plan.goal else None
+            source_run = conversation.current_run if isinstance(inspection, dict) else ""
+        conversation = conversation.model_copy(
+            update={"current_run": plan.run_id, "inspection_source_run": source_run}
+        )
         self.store.update_conversation(conversation)
         origin = DriveOrigin(
             tenant_id=conversation.tenant_id,
@@ -1632,7 +1672,9 @@ class SlackEvents:
             state = "denied"
         else:
             service = self._service(conversation)
-            current = service.repository.get(conversation.tenant_id, conversation.current_run)
+            current = service.repository.get(
+                conversation.tenant_id, message.result_run_id or conversation.current_run
+            )
             if current is not None:
                 with self.store.connect() as db:
                     valid = matches_result(

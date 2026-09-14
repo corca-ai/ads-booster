@@ -598,6 +598,14 @@ class MarketingAgentService:
             policy=self.capability_policy,
             now=now,
         )
+        if "reconciliation_inspection" in run.goal.context:
+            snapshot = snapshot.model_copy(
+                update={
+                    "descriptors": tuple(
+                        d for d in snapshot.descriptors if d.effect_class is EffectClass.OBSERVE
+                    )
+                }
+            )
         # Retrieval follows admitted intent too, even when its evidence was compacted.
         knowledge_query = user_message[:4000] + (
             "\n" + run.goal.objective[:4000] if user_message != run.goal.objective else ""
@@ -1315,6 +1323,11 @@ class MarketingAgentService:
         interrupted = self._pause_for_signal(run, now=now)
         if interrupted is not None:
             return interrupted
+        if (
+            "reconciliation_inspection" in run.goal.context
+            and descriptor.effect_class is not EffectClass.OBSERVE
+        ):
+            raise ValueError("reconciliation_inspection_read_only")
         _ = self.registry.require_current_dispatch(
             descriptor, policy=self.capability_policy, now=now
         )
