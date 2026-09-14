@@ -142,6 +142,15 @@ an OS exit after assessment reservation preserved counters when another process 
 
 ### Completion state compatibility and rollback
 
+Ordinary Slack messages during `awaiting_reconciliation` receive a response-only model turn
+with the current authenticated message, bounded conversation transcript and persisted operation
+status. This turn has no selectable tools or execution budget, and a tool proposal is rejected.
+It does not revise or drive the uncertain Run, replace its knowledge execution source, or take
+its drive/notification claim. The response and provider receipt are saved in the Slack message
+plan before notification, so recovery can deliver a saved answer without another model call.
+The original Run remains the conversation's work target and retains its late-result binding.
+These dialogue answers are not task-completion assessments or fresh external-result checks.
+
 The candidate reads legacy Runs by deriving a task from the immutable goal when task records are
 absent. Existing records and receipt/approval digests are not rewritten. Reasoning v1 remains readable,
 and its public constructor supplies a response-only compatibility assessor so ordinary v1 stops keep

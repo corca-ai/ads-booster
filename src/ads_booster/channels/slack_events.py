@@ -25,6 +25,7 @@ from ads_booster.agent.service.drive_work import (
     DriveWorkQueue,
 )
 from ads_booster.agent.service.knowledge import READ_ONLY_DM_TOOLS
+from ads_booster.agent.service.waiting_dialogue import answer_waiting_dialogue
 from ads_booster.agent.service.work_continuation import continue_work, interrupted_reasoning
 from ads_booster.channels.contracts import ChannelIdentityBinding, ChannelKind
 from ads_booster.channels.github_results import issue_results
@@ -616,7 +617,11 @@ class SlackEvents:
                 if plan is None:
                     plan = self._plan(conversation, message)
                     self.store.save_plan(message, plan)
-                if plan.run_id and (plan.action != "reply" or plan.learning_urgent):
+                if (
+                    plan.run_id
+                    and plan.action != "dialogue"
+                    and (plan.action != "reply" or plan.learning_urgent)
+                ):
                     self.store.knowledge_ingress.bind_execution(
                         message.message_id, plan.run_id, actor_id=identity.member_id
                     )
@@ -645,7 +650,7 @@ class SlackEvents:
                     result = self._execute(conversation, message, plan, identity, now=now)
                 projected_run = (
                     service.repository.get(conversation.tenant_id, plan.run_id)
-                    if plan.run_id
+                    if plan.run_id and plan.action != "dialogue"
                     else None
                 )
                 projected = (
@@ -663,7 +668,8 @@ class SlackEvents:
                     if projected is not None and projected.text == result
                     else None,
                 )
-                self._defer_running_result(conversation, plan, message)
+                if plan.action != "dialogue":
+                    self._defer_running_result(conversation, plan, message)
                 if plan.learning_urgent:
                     self._admit_urgent_learning(plan.run_id, now=now)
                 self._admit_shared_turn(conversation, plan, now=now)
@@ -1015,6 +1021,23 @@ class SlackEvents:
         context["current_attachments"] = [a.model_dump(mode="json") for a in message.attachments]
         context["attachment_verification"] = "reference_only_not_visually_inspected"
         context["privacy"] = "private_dm" if conversation.private else "shared_thread"
+        if run is not None and run.state is AgentRunState.AWAITING_RECONCILIATION:
+            context["message_id"] = message.message_id
+            context["user_id"] = message.user_id
+            return MessagePlan(
+                action="dialogue",
+                run_id=run.run_id,
+                goal=AgentGoal(
+                    objective=text,
+                    success_criteria=(
+                        "Answer the current message in its conversation context.",
+                        "Discuss pending work only when relevant, using persisted records.",
+                        "Do not claim a fresh external lookup or an unconfirmed result.",
+                        "Do not execute, retry, approve, or revise the pending operation.",
+                    ),
+                    context={"slack_conversation": context},
+                ),
+            )
         if (
             run is not None
             and (
@@ -1169,6 +1192,18 @@ class SlackEvents:
         if plan.action == "reply":
             self.store.update_conversation(conversation)
             return plan.reply
+        if plan.action == "dialogue":
+            if plan.reply:
+                return plan.reply
+            run = service.repository.get(conversation.tenant_id, plan.run_id)
+            if run is None or plan.goal is None:
+                reason = "slack_dialogue_context_missing"
+                raise ValueError(reason)
+            answer, evidence = answer_waiting_dialogue(service, run, plan.goal)
+            self.store.save_plan(
+                message, plan.model_copy(update={"reply": answer, "evidence": evidence})
+            )
+            return answer
         if plan.action == "learning_answer":
             return self._answer_learning_question(conversation, message, plan, now=now)
         conversation = conversation.model_copy(update={"current_run": plan.run_id})
