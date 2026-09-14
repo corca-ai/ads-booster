@@ -153,7 +153,9 @@ Slack follow-ups receive the current bounded conversation, including earlier ass
 so selections such as “use the second option” can resolve within the same work after restart.
 The latest admitted request is also passed separately from the original goal and reference data,
 so a new question or a shorter-answer request can steer the next reply. Normal answers omit
-internal Run diagnostics; `상태` still shows them, and the optional work link appears separately.
+internal Run diagnostics. `상태` explains the current execution stage in plain language; it never
+repeats a previous answer as the status of an interrupted request. The optional work link appears
+separately.
 `marketing.context` guides on-demand wiki/memory/source lookup. When team knowledge is configured,
 DMs expose its scoped read tools as well as skill discovery and public search. A missing read
 integration does not mean the wiki is empty; this PR does not enable that integration on a server.
@@ -219,8 +221,10 @@ member's review, publication and remote external effects retain their explicit a
 `검토 1`은 승인할 실행 내용의 첫 페이지를 보여줍니다. `검토 1이 뭐야` 같은 질문이나
 잘못된 페이지는 사용법을 안내하며 승인안을 변경하지 않습니다. 안내문은 검토 완료로
 계산되지 않습니다. 승인 권한 부족, 승인안 변경, 도구 이용 불가는 각각 원인에 맞게
-안내합니다. 실행 여부가 불명확한 오류는 `상태`로 확인하고 운영자에게 확인을 요청하세요.
-운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드만 기록합니다.
+안내합니다. 요청 해석 중 중단된 대화는 새 요청으로 이어갈 수 있습니다. 실행 결과가
+불명확한 작업은 중복 실행하지 않습니다. 상태 조회나 운영자 문의는 이용의 필수 단계가 아닙니다.
+운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드와 제한된 예외 유형·
+제품 코드 위치를 기록합니다. 예외 메시지·소스 본문·지역변수·외부 파일 경로는 기록하지 않습니다.
 
 For an uncertain edit, authenticated clients can inspect
 `GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop

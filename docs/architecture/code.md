@@ -494,6 +494,9 @@ remain in Agent Core/service/runtime, with no separate retry or issue state stor
 `execution_control.py` provides the channel/provider-neutral cooperative scope and owned subprocess
 cancellation. `providers/codex_cli.py` uses it for structured jobs; `codex_reasoning.py` preserves the
 cancellation signal. The canonical service owns checkpoints and append-only STOP transitions.
+`channels/slack_run_status.py` owns the shared readable Run/step projection for Events and slash
+commands; callers hold the service execution lock. `channels/slack_failure_diagnostics.py` owns
+bounded, message-free exception-chain locations for the Events journal. Neither owns Run state.
 `channels/slack_progress.py` owns only status-message identity and durable cancellation requests.
 `channels/slack_events.py` owns signed button authorization, status updates and scoped execution, using the
 existing sender transport (`chat.postMessage` for new status, `chat.update` for known timestamps).

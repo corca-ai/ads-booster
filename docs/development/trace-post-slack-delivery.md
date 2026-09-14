@@ -61,7 +61,7 @@ interrupted dispatch exclusion, six filenames/captions, old output-schema compat
 bytes, absent Run links, disabled members, ambiguous upload responses and restart deduplication.
 No full local suite was run. Scoped BasedPyright reported zero errors. Ruff on the changed files
 has zero new findings relative to main; 41 pre-existing findings remain in those files.
-The same **126 tests passed** from outside the checkout against the final non-editable wheel
+The same **126 tests passed** from outside the checkout against that candidate non-editable wheel
 in a new Python 3.14.7 environment with frozen runtime dependencies and pytest 8.4.2.
 `trace-marketing version --json` returned 0.7.1; `service doctor` returned `ready: true`.
 
@@ -102,3 +102,42 @@ No environment-variable change, database migration, version bump or release tag 
 The existing main verification and installed updater remain the activation path. Merge and
 installation are separate observations. Rollback uses the existing installed update mechanism;
 canonical histories, artifact bytes and upload deduplication rows are retained.
+
+## Follow-up: interrupted status and failure diagnosis
+
+Status reads reused the most recent reasoning record even when it belonged to a previously
+completed turn. Both Events and slash commands now use the current Run and last committed step
+under the execution lock. A stopped observation says the request interpretation was interrupted;
+an interrupted plan says its tool has not started; an interrupted dispatch does not claim success
+or retry. Prior answers are shown only for completed or input-waiting turns. Canonical history is
+unchanged. Thread status no longer exposes raw `running` or a Run identifier.
+
+Existing unknown-error logging discarded even the location of a wrapped provider failure.
+The Events journal now includes bounded allowed exception categories and product module/function/
+line locations across causes. It excludes exception messages, source text, locals and external
+paths. This improves diagnosis of future failures without exposing secrets in Slack or logs.
+
+Three status regressions failed against the previous non-editable candidate installation.
+The focused seven-file selection below passed **72 tests** in source and **72 tests** against a
+new non-editable wheel outside the checkout (`status-installed`, Python 3.14.7):
+
+```bash
+python -m pytest -q -p no:cacheprovider \
+  tests/marketing/channels/test_slack_result_link.py \
+  tests/marketing/channels/test_slack_commands.py \
+  tests/marketing/channels/test_slack_run_notifications.py \
+  tests/marketing/channels/test_slack_images.py \
+  tests/marketing/channels/test_slack_approval_feedback.py \
+  tests/marketing/channels/test_slack_progress.py \
+  tests/marketing/channels/test_slack_events.py
+```
+
+Scoped BasedPyright reported zero errors; Ruff found no new findings relative to the prior PR
+head. Installed CLI version/doctor passed. The prior PR head `70ff475` passed GitHub's complete
+on-prem verification, including the fresh Ubuntu lifecycle; the new head needs its own CI run.
+
+Read-only production health on September 14 returned `status: ok`, `release: 26ec221`,
+`maintenance: false` and `knowledge_worker: running`. SSH to the configured on-prem alias timed
+out, so the original provider exception remains unconfirmed. The user confirmed that merging the
+PR uses the existing automatic updater. No merge, production restart or Slack message was sent.
+Live creative output, attachment preview/download and activation remain unobserved.

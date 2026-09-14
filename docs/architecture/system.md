@@ -79,8 +79,12 @@ This changes model guidance, not tool registration, approval, budgets or canonic
 
 Ordinary Slack replies and asynchronous updates omit Run diagnostics. Nonterminal updates use
 the persisted execution state rather than presenting the last tool-selection rationale as an
-answer. Explicit status requests retain diagnostic reasoning, state and Run ID. Approval review
-continues to expose the exact invocation and digest; notification durability is unchanged.
+answer. Both thread status and slash-command status project the current Run and last committed
+step under the execution lock. Interrupted reasoning, interrupted dispatch and asynchronous tool
+waits receive distinct descriptions; an earlier reasoning answer is never a nonterminal status.
+The slash command retains its explicit Run ID. Approval review continues to expose the exact
+invocation and digest; notification durability is unchanged. Failure logs preserve bounded exception
+categories and product-code locations across wrapped causes without messages, source text or locals.
 
 Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
 completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after

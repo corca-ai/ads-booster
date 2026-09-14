@@ -21,9 +21,11 @@ not live image quality or a real user's Slack download. See the
 [Trace post delivery record](trace-post-slack-delivery.md) for baseline/candidate evidence.
 
 For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
-and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
-ordinary output must not expose its rationale or imply tool execution, while explicit status and
-canonical records remain available. Check asynchronous completion, deduplication, callback-loss
+and `test_slack_events.py` under `tests/marketing/channels`, plus `test_slack_commands.py`.
+Interrupt after a committed tool plan and fail reasoning after a previous successful answer:
+neither ordinary output nor explicit status may repeat earlier reasoning or imply ongoing
+execution. Verify the distinct interrupted-stage messages and unchanged canonical records.
+Check asynchronous completion, deduplication, callback-loss
 recovery and membership checks. Repeat against a non-editable wheel outside the checkout.
 
 ### Slack approval feedback
@@ -53,7 +55,8 @@ Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_p
 exercise review explanations, invalid/oversized pages, missing pending work, current permission,
 changed digests and unavailable tools. Check delivered text and unchanged canonical records;
 help text must not grant reviewed-production assent. A fault after approval persistence verifies
-redacted diagnostics and no automatic retry. Run the same selection against a fresh non-editable
+redacted diagnostics (including wrapped secret-bearing causes) and no automatic retry.
+Run the same selection against a fresh non-editable
 wheel outside the checkout. Fixtures replace model/tool/Slack providers; they do not establish
 the cause of a deployed incident or successful live image generation.
 
