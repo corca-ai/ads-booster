@@ -2181,6 +2181,30 @@
         "5b63295098b7d6732339080558906d0d819bd08e3c39c1f19db1459202917303",
         "793463ab09e278a9a4aa4acf1fccc6faad9031c60c710d9139b790455f679b08"
       ]
+    },
+    {
+      "fingerprint": "c5af7fb6f6456bd2edf5c5a62488c376cf298c78f7d60e06c3021263b89dd6d4",
+      "reason": "These queries target different tables and return contracts: knowledge-event provenance versus scheduled-conversation notification availability. A shared helper would mix independent Slack channel responsibilities.",
+      "memberHashes": [
+        "574fc8b914708a8ba8b0b0501ee8e8d84c648049a11d9e71502553e5731dc669",
+        "ec58e825f0d27ecb4ae6ee9b0f695fac31e6a60aafc1ed596080789903ed5d82"
+      ]
+    },
+    {
+      "fingerprint": "1643814dedb5904a7fe10beb9b5fe85fc006e4988be5a8a4c951b79061906dd1",
+      "reason": "Threads provider operations and Threads account control are separately registered tool adapters with distinct schemas, effects, and error outputs. Their controller-shaped dispatch is intentionally independent.",
+      "memberHashes": [
+        "7921c15444067dc58fff6ccd61871e587142583cfeeb8d50060dd78245ad472c",
+        "899eb2f762b9fcc2130b6420d8c5496cfb260a92a7c13cc796ff8d5965986eaa"
+      ]
+    },
+    {
+      "fingerprint": "815655be4370be0d9d52a6354f349fa702a3c7528536586a984f6b442586b42b",
+      "reason": "An interrupted pending provider POST and a provider readback mismatch are distinct recovery causes and transition points. Keeping explicit error codes at each state transition preserves causal reconciliation evidence.",
+      "memberHashes": [
+        "76bbbeac3607370cec77ef40e274771c27deaade015889f82506dddaa68d3afa",
+        "fbcfce9e3dd1a84bcf12c0dfcdbf97791d951540ef37ca48c5467852d7e8fd21"
+      ]
     }
   ]
 }
