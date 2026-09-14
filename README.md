@@ -768,3 +768,19 @@ automatically after verification of that exact main commit. Maintainers follow t
 The Python package keeps the compatibility name `trace-appium-capture`; its CLI is `trace-marketing`.
 The server installer/updater continues to follow verified main. A GitHub release is a downloadable
 package snapshot; check the server's health release SHA to confirm an installed update.
+
+### Interrupted media work
+
+If a media worker cannot start its internal sandbox launcher, Slack reports that failure instead
+of implying that generation is still running. Known provider failure codes survive restart; raw
+provider output is not stored as a diagnostic. An uncertain operation is never automatically rerun.
+Ask a follow-up in the same thread to discuss the failure. The response-only dialogue uses current
+persisted operation facts and the fixed failure reason, without executing tools or retrying work.
+The original operation retains its late-result notification binding. These answers are not fresh
+external provider-result lookups.
+
+The image worker's restricted profile includes the installed Codex runtime and generated launcher
+paths. It does not grant the complete Codex home or credential directory. No environment-variable
+change or repeated approval is needed for this repair.
+
+Fresh Ubuntu installation includes `bubblewrap` for the official Linux sandbox; `install-server.sh --check` also reports `bwrap`. Existing installations already using bwrap need no additional host change.

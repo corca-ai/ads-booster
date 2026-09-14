@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ads_booster.agent.service.deferred_failure import FAILURE_TEXT
 from ads_booster.agent.service.task_drive import plan_task
 from ads_booster.agent.service.task_progress import seed_task
 from ads_booster.contracts.agent_run import AgentRecordKind, CapabilitySnapshot, contract_sha256
@@ -43,6 +44,17 @@ def answer_waiting_dialogue(
         "receipts": receipts[-16:],
         "verification": "persisted_records_only_no_external_lookup",
     }
+    diagnostic = next(
+        (
+            record.payload.get("reason_code")
+            for record in reversed(records)
+            if record.payload_schema_version == "trace.deferred-provider-failure.v1"
+        ),
+        None,
+    )
+    if isinstance(diagnostic, str) and diagnostic in FAILURE_TEXT:
+        pending["failure_code"] = diagnostic
+        pending["failure_reason"] = FAILURE_TEXT[diagnostic]
     dialogue_goal = goal.model_copy(update={"context": {**goal.context, "pending_work": pending}})
     dialogue_id = (
         "dialogue-"

@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import os
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -239,6 +240,9 @@ def test_trace_app_server_command_keeps_shell_and_installs_the_named_profile(
         str(workspace.resolve()): "write",
         str(executable.resolve()): "read",
         str(python_root): "read",
+        str(
+            (Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "tmp/arg0").resolve()
+        ): "read",
     }
     assert profile["network"] == {"enabled": False}
 

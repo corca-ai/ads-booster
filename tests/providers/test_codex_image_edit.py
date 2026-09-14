@@ -24,6 +24,7 @@ from ads_booster.providers.codex_image_edit import (
     _StreamState,
     image_edit_command,
 )
+from ads_booster.providers.codex_runtime_paths import runtime_read_paths
 from ads_booster.transport.json_types import JsonObject
 
 
@@ -337,6 +338,7 @@ def test_process_profile_denies_global_reads_and_network_with_only_job_and_binar
         ":root": "deny",
         ":minimal": "read",
         str(tmp_path.resolve()): "write",
+        str(Path(sys.executable).absolute()): "read",
         str(Path(sys.executable).resolve()): "read",
     }
     assert profile["network"] == {"enabled": False}
@@ -367,3 +369,57 @@ def test_native_image_events_update_only_safe_progress_stage(tmp_path: Path) -> 
         )
     assert "이미지를 생성" in control.stage
     assert "private" not in control.stage
+
+
+def test_shell_launcher_failure_is_classified_without_leaking_output(tmp_path: Path) -> None:
+    state = _StreamState(
+        ImageEditProcessRequest(
+            Path("/fixture/codex"),
+            "fixture",
+            tmp_path,
+            "fixture",
+            (),
+            10,
+            allow_shell=True,
+            allowed_item_types=("commandExecution",),
+        )
+    )
+    state.thread_id = "thread"
+    with pytest.raises(CodexCliError, match="codex_sandbox_launcher_unavailable") as failure:
+        _ = state.accept(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {
+                        "id": "command",
+                        "type": "commandExecution",
+                        "exitCode": 127,
+                        "aggregatedOutput": (
+                            "bwrap: execvp codex-linux-sandbox: "
+                            "No such file or directory\nsecret private prompt"
+                        ),
+                    },
+                },
+            }
+        )
+    assert "secret" not in str(failure.value)
+
+
+def test_standalone_runtime_and_arg0_grants_exclude_codex_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "codex-home"
+    release = home / "packages/standalone/releases/version"
+    (release / "bin").mkdir(parents=True)
+    executable = release / "bin/codex"
+    _ = executable.write_text("fixture")
+    _ = (release / "codex-package.json").write_text("{}")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    paths = runtime_read_paths(executable)
+    assert release / "bin" in paths
+    assert home / "tmp/arg0" in paths
+    assert home not in paths
+    assert home / "auth.json" not in paths
+    assert home / "config.toml" not in paths

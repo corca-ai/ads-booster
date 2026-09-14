@@ -39,7 +39,7 @@ arch="$(uname -m)"
 export PATH="$HOME/.local/bin:$PATH"
 if [[ "$check" == 1 ]]; then
   missing=0
-  for tool in python3 git curl tar sha256sum uv codex cloudflared systemctl; do
+  for tool in python3 git curl tar sha256sum uv codex cloudflared systemctl bwrap; do
     if command -v "$tool" >/dev/null; then echo "$tool: present"; else echo "$tool: missing (installer will prepare)"; missing=1; fi
   done
   exit "$missing"
@@ -60,7 +60,7 @@ if [[ "$(id -u)" != 0 ]]; then
   sudo_cmd=(sudo)
 fi
 echo "[1/4] Prepare Ubuntu dependencies and login-independent user services."
-packages=(python3 git curl ca-certificates tar dbus-user-session)
+packages=(python3 git curl ca-certificates tar dbus-user-session bubblewrap)
 need_packages=0
 for package in "${packages[@]}"; do
   [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" == 'install ok installed' ]] || need_packages=1

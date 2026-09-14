@@ -685,3 +685,10 @@ resolves the original message by conversation and Run. The adapter owns current 
 presentation, while the worker's durable job owns execution/uncertainty and notification recovery.
 `trace_post_jobs.notified` records callback completion; stable outbox event IDs own send deduplication.
 The Trace post instruction names the resolved interpreter allowed by the existing provider profile.
+
+`providers/codex_runtime_paths.py` owns official executable-layout discovery for restricted image
+profiles; `codex_image_edit` owns shell-event failure classification. `agent/service/deferred_failure`
+owns the allowlisted error-code projection shared by deferred owners and Slack. Job stores own
+failure persistence; `MarketingAgentService.mark_deferred_uncertain` owns canonical diagnostic
+idempotency. `waiting_dialogue` projects the same bounded reason into its response-only request; Slack
+retains the original work target and existing notification binding. No alternative runtime or agent entry point is added.

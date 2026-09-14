@@ -84,7 +84,11 @@ def uncertain_conversation(tmp_path: Path) -> tuple[SlackEvents, list[JsonObject
     )
     assert len(adapter.calls) == 1
     _ = service.mark_deferred_uncertain(
-        "team", original_id, operation_id="op-" + invocation.invocation_id, now=NOW
+        "team",
+        original_id,
+        operation_id="op-" + invocation.invocation_id,
+        now=NOW,
+        failure_code="codex_sandbox_launcher_unavailable",
     )
     for _ in range(4):
         if not owner.work_once(now=NOW):
@@ -123,6 +127,10 @@ def test_uncertain_operation_allows_current_dialogue_without_redispatch(
     assert len(reasoning.requests) == 1
     assert reasoning.requests[0].capability_snapshot.descriptors == ()
     assert reasoning.requests[0].remaining_tool_calls == 0
+    pending = reasoning.requests[0].goal.context["pending_work"]
+    assert isinstance(pending, dict)
+    assert pending["failure_code"] == "codex_sandbox_launcher_unavailable"
+    assert "내부 실행기" in str(pending["failure_reason"])
     assert messages[-1]["text"] == answer
     assert messages[-1]["thread_ts"] == "100.001"
     assert service.repository.get("team", original_id) == original

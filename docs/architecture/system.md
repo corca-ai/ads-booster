@@ -1118,3 +1118,25 @@ Explicit Korean skill create/update directives may be followed by a sentence or 
 procedure details. Quoted instructions, negation and merely using a skill are not publication
 requests. Existing workspace ownership, exact revision, source-currentness and private-chat read-only
 boundaries remain unchanged.
+
+## Linux launcher dependencies and uncertain-work dialogue
+
+The shared image provider builds runtime read grants from the invoked and resolved Codex executable,
+its recognized standalone/npm runtime directories, Node where needed, and `CODEX_HOME/tmp/arg0`
+(the official dynamically generated launcher directory). It never grants the whole Codex home.
+The existing workspace, minimal system and Python runtime grants remain the execution boundary.
+A completed shell item containing a missing bwrap launcher is classified at the transport boundary
+as `codex_sandbox_launcher_unavailable`; the provider stops rather than looping on identical calls.
+
+Trace post and image-edit stores add nullable `failure_code` columns. Workers persist allowlisted
+codes before projecting uncertainty. The service appends one `trace.deferred-provider-failure.v1`
+evidence record per operation; raw stdout/stderr, paths and exception payloads are excluded.
+Canonical uncertainty, receipts and no-replay semantics remain intact. Slack renders fixed reason
+text from this evidence after restart.
+
+The existing response-only waiting dialogue receives the same allowlisted failure code and fixed
+reason from canonical evidence. It keeps the original Run and notification binding unchanged and
+has no tool budget. The channel does not create a competing inspection Run or replace operation
+ownership. The earlier response-only dialogue contract remains the sole follow-up path.
+
+The Ubuntu installer installs the system `bubblewrap` package because the pinned single-binary Codex download has no bundled bwrap resource. Installer preflight includes `bwrap`. The installed Linux gate exercises this dependency without credentials.

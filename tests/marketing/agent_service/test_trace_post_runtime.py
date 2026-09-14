@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import timedelta
 from importlib.resources import files
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, cast, override
 
 import pytest
 
@@ -32,6 +32,7 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.providers.codex_trace_post import (
     TracePostGeneratedImage,
     TracePostProviderResult,
@@ -374,4 +375,30 @@ def test_old_uncertain_job_gets_notification_after_upgrade_without_generation(
     assert "uncertain" in events[0]
     assert upgraded.work_once()["state"] == "uncertain"
     assert len(events) == 1
+    assert provider.calls == 1
+
+
+def test_provider_failure_reason_survives_restart_without_raw_output(tmp_path: Path) -> None:
+    class LauncherFailure(FakeProvider):
+        calls: int
+
+        @override
+        def run(
+            self, *, workspace: Path, instruction: str, timeout_seconds: float
+        ) -> TracePostProviderResult:
+            self.calls += 1
+            code = "codex_sandbox_launcher_unavailable"
+            raise CodexCliError(code)
+
+    provider = LauncherFailure()
+    tool = setup(tmp_path, provider)
+    assert tool.work_once()["state"] == "uncertain"
+    recovered = replace(tool)
+    assert recovered.work_once()["state"] == "uncertain"
+    records = tool.service.repository.records("tenant-a", "run-one")
+    diagnostics = [
+        r for r in records if r.payload_schema_version == "trace.deferred-provider-failure.v1"
+    ]
+    assert len(diagnostics) == 1
+    assert diagnostics[0].payload["reason_code"] == "codex_sandbox_launcher_unavailable"
     assert provider.calls == 1

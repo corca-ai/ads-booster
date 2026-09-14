@@ -946,3 +946,19 @@ production approval, frozen bundle, terminal receipt, three captions and six fin
 Distinguish recorded image calls from independently observed provider usage. Do not infer actual
 Slack delivery, Linux service activation, pixel-identical backgrounds or human visual approval from
 source tests, an installed local wheel or a completed model workflow.
+
+### Linux sandbox launcher and uncertain follow-ups
+
+`tests/operations/installed_codex_sandbox.py` runs in the existing privileged Ubuntu 22.04/24.04
+installer CI containers, as the service user with the freshly installed package and official Codex.
+It uses the production image profile to read a frozen skill and execute a Python helper, then proves
+an unrelated home file remains unreadable. It requires no login and makes zero model/image calls.
+This actual subprocess gate covers the Linux launcher boundary that macOS image calls do not prove.
+
+Select provider image-edit/Trace-post tests, deferred Trace-post/image-edit owner tests and Slack
+Trace-post, uncertain-dialogue, notification, drive and attachment tests for this repair.
+`test_slack_uncertain_dialogue` verifies a signed follow-up reaches response-only reasoning with
+the persisted failure reason, unchanged original records, and retained delayed source notification.
+Rebuild a non-editable wheel and run this selection outside the checkout. These fixtures prove
+routing and persistence, not actual Slack delivery or production image generation. Verify the merged
+SHA through public health after the exact main verification succeeds; CI alone is not activation.

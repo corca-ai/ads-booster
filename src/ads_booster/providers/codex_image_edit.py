@@ -24,6 +24,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.execution_control import checkpoint
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
+from ads_booster.providers.codex_runtime_paths import runtime_read_paths
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -110,6 +111,20 @@ class ImageEditResult:
     turn_id: str
 
 
+def _check_shell_failure(item: JsonObject, *, completed: bool) -> None:
+    if not completed or item.get("type") != "commandExecution":
+        return
+    output = item.get("aggregatedOutput")
+    if (
+        item.get("exitCode") not in (None, 0)
+        and isinstance(output, str)
+        and "bwrap: execvp" in output
+        and "No such file or directory" in output
+    ):
+        code = "codex_sandbox_launcher_unavailable"
+        raise _error(code)
+
+
 def _error(code: str) -> CodexCliError:
     return CodexCliError(code)
 
@@ -144,7 +159,7 @@ def image_edit_command(  # noqa: PLR0913 - explicit fixed security boundary opti
             (":root", "deny"),
             (":minimal", "read"),
             (str(workspace.resolve()), "write"),
-            (str(executable.resolve()), "read"),
+            *((str(path), "read") for path in runtime_read_paths(executable)),
             *((str(path.resolve()), "read") for path in read_paths),
         )
         entries = ",".join(
@@ -450,6 +465,7 @@ class _StreamState:
         if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
+        _check_shell_failure(item, completed=method == "item/completed")
         _image_progress(str(method), str(kind), len(self.items))
         if method == "item/completed" and kind == "imageGeneration":
             if self.request.materialize_image_results:
