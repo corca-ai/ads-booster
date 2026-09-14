@@ -5,6 +5,17 @@ Last reviewed: 2026-09-11
 
 ## Focused checks
 
+For first-use knowledge and concurrent Slack requests, select
+`tests/marketing/channels/test_slack_knowledge_preparation.py` and `test_slack_parallel.py`, plus
+`test_slack_trace_post.py` and `test_slack_run_notifications.py`. Exercise the initialized knowledge
+runtime with no brands, a current brand-preparation wait followed by a different question, and
+unchanged asynchronous notifications. Block one model call and prove another conversation enters
+reasoning while its same-thread follow-up waits. Run two Trace post providers through a barrier:
+both must complete once and deliver to their own threads without reclaiming live operations.
+For changes to shared Run serialization, include affected service/deferred/image-edit, HTTP jobs
+and creative API tests. Repeat the changed consumer scenarios from a non-editable installed wheel.
+
+
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
 For request-based Trace post execution and result attachments, select

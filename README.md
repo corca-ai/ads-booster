@@ -600,7 +600,14 @@ In an allowed shared conversation, request `귀여움으로 KR·JP·TW 배경화
 The installed `marketing.trace_post` procedure routes the request to `creative.trace_post`.
 It supports the cute card and T2 template, with optional date, motif and place selections from
 the current input schema. The request starts production without a separate approval or review step.
-Unspecified creative choices are selected within the supported options.
+Unspecified creative choices are selected within the supported options. An empty brand store uses
+that brief and the packaged skill; initial brand setup is not required. Explicit brand references
+still require accessible, current brand material.
+
+The Slack service processes up to four independent conversations concurrently, preserving message
+order inside each thread. Up to two Trace post productions run concurrently in separate operation
+workspaces. A long image task therefore does not hold the other conversations. Shutdown and
+maintenance wait for admitted work to yield before replacing the service.
 
 The service copies its packaged rules, template and helpers into one private operation workspace.
 It creates new schedules and localized captions, generates the KR text/background, localizes that

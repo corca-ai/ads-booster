@@ -465,12 +465,15 @@ app_mention starts a thread; ordinary message events only join an admitted threa
 unrelated channel chatter and external shared-channel envelopes are ignored. Message identity binds
 team/channel/timestamp, preventing duplicate retries from creating new work.
 
-The same maintenance-gated Slack worker drains commands and conversation jobs. Plans are frozen
-under the canonical service lock; follow-ups bind to the latest thread Run only when dequeued.
+Four maintenance-gated Slack worker lanes drain commands and conversation jobs. Startup recovery
+finishes before these lanes claim work. Durable claims exclude another running job in the same
+conversation (or slash-command Run); unrelated conversations may call the model concurrently.
+Plans and canonical mutations hold a reentrant `(tenant_id, run_id)` lock, shared by private and
+shared service projections. Follow-ups bind to the latest thread Run only when dequeued.
 Awaiting-input replies and ordinary completed-work follow-ups continue that Run at its saved revision.
 The original goal and full ledger remain stored; explicit new-work requests start a new Run.
 Private DM tenant IDs derive from workspace, member, channel and thread; unthreaded messages use the
-member's ongoing DM session. Private services share the canonical lock/ledger but expose only
+member's ongoing DM session. Private services share the canonical Run locks/ledger but expose only
 public search, skill discovery and registered scoped knowledge/memory/source reads, with no
 shared-context mutation or delivery tool authority. Knowledge must be configured for those reads
 to appear; current actor/session grants are still checked by the knowledge owner.
@@ -933,3 +936,23 @@ readback after a crash; a child-written completion summary alone cannot certify 
 The imported workflow originates at `corca-ai/trace-marketing-context` revision
 `57779174c8be0dde741bab436fa21a61c2933f90`. This provenance is not a live repository dependency.
 The executable product and its installed skill catalog are owned by `corca-ai/ads-booster`.
+
+## First-use knowledge and concurrent Trace post production
+
+A content request with no selected brand and no visible local brands receives `voice_unconfigured`:
+use the user brief and selected procedure without inventing brand policy. Multiple visible brands
+still need selection; an explicit inaccessible/missing/stale brand remains a preparation error.
+A newly admitted input after a brand-selection/voice/scope wait is first prepared as team chat so
+reasoning can classify the new request. Any resulting content action prepares its required context
+again. Task transitions include the prior task identity, preventing reuse of a closed task.
+
+An input-wait reply reads the current step's preparation or intent record, never an older reasoning
+answer. Missing reasoning gets readable current-state text. An asynchronous callback whose result
+matches the most recent delivered/skipped reply is durably marked skipped, preserving event-ID
+idempotency without sending the same answer again.
+
+Two maintenance-gated Trace post lanes own separate operation workspaces. The queue selection lock
+protects an in-process active-operation set, so another lane cannot mistake live generation for a
+crash-left operation. Per-Run locks cover canonical preflight/completion; the image provider runs
+outside those locks. Started work left by a prior process retains uncertainty handling and is not
+blindly retried. Maintenance counts each admitted lane and shutdown joins them before exit.

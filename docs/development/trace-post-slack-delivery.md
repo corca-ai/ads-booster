@@ -34,7 +34,7 @@ permission; `can_approve` remains relevant to reviewing a separate proposal. Sou
 disable/revocation, private scope, exact invocation and execution budgets remain enforced.
 
 New input may revise interrupted reasoning only when the last committed step is OBSERVE and the
-service execution lock is held. Interrupted PLAN/APPROVE/EXECUTE and uncertain effects retain
+service Run lock is held. Interrupted PLAN/APPROVE/EXECUTE and uncertain effects retain
 their canonical recovery boundaries. No automatic provider or effect retry was added.
 
 Trace post completion binds the outbox message to its original Run. The result adapter checks its
@@ -107,7 +107,7 @@ canonical histories, artifact bytes and upload deduplication rows are retained.
 
 Status reads reused the most recent reasoning record even when it belonged to a previously
 completed turn. Both Events and slash commands now use the current Run and last committed step
-under the execution lock. A stopped observation says the request interpretation was interrupted;
+under the Run lock. A stopped observation says the request interpretation was interrupted;
 an interrupted plan says its tool has not started; an interrupted dispatch does not claim success
 or retry. Prior answers are shown only for completed or input-waiting turns. Canonical history is
 unchanged. Thread status no longer exposes raw `running` or a Run identifier.
@@ -141,3 +141,31 @@ Read-only production health on September 14 returned `status: ok`, `release: 26e
 out, so the original provider exception remains unconfirmed. The user confirmed that merging the
 PR uses the existing automatic updater. No merge, production restart or Slack message was sent.
 Live creative output, attachment preview/download and activation remain unobserved.
+
+## Follow-up: first-message silence, repeated replies and sequential execution
+
+The second reported thread showed empty replies to an initial `trace_post` image request, later
+brand-voice errors, repeated prior replies to new questions and issue requests, and sequential
+processing. The initialized knowledge runtime reproduced the empty-brand preparation failure.
+An AWAITING_INPUT step could have no reasoning record, while Slack only searched reasoning; later
+input inherited the failed content task before the model could classify that new input. Separate
+completion callbacks could enqueue an already delivered answer. A global service lock and single
+Slack/Trace post worker serialized unrelated requests.
+
+The fixes allow an unconfigured brand store to use the brief and skill, project the current
+preparation wait, reclassify newly admitted input, and suppress unchanged callback output durably.
+Four Slack lanes and two Trace post lanes use per-Run serialization and durable per-thread claims.
+The regression holds one model call open while a second thread progresses, and runs two image
+providers simultaneously without treating either active operation as a crashed job.
+
+Before repair, the isolated previous wheel failed all three new checks for empty-brand first use,
+brand-wait reply/follow-up, and simultaneous Trace posts. The source Slack concurrency regression
+also failed before repair. The directly affected source selection passed 161 tests before the
+additional issue-request variant and HTTP boundary checks. The expanded non-editable wheel selection passed **194 tests**, including the issue-request
+follow-up and HTTP boundaries. Scoped BasedPyright reported zero errors and Ruff no new findings
+relative to the prior PR head. The fresh installed actual Codex model received the second thread's
+first request with an empty knowledge store: one Trace post operation completed and six PNG upload
+flows (18 captured HTTP requests) returned captions and download guidance without a setup gate.
+Generated PNGs and Slack transports remain test adapters; no real Slack message was sent.
+The proof bundle contains `parallel-selection.txt`, `parallel-installed`, and
+`parallel-model/result.json`.
