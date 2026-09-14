@@ -10,19 +10,28 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.agent.service.completion_evidence import BoundCompletionEvidence
+    from ads_booster.agent.service.schedule_repository import ScheduleRepository
     from ads_booster.contracts.agent_run import AgentRun
     from ads_booster.contracts.creative_work import CreativeScope
     from ads_booster.contracts.tool_capability import EffectClass
     from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+    from ads_booster.threads.accounts import ThreadsAccountRepository
+    from ads_booster.threads.drafts import ThreadsDraftRepository
+    from ads_booster.threads.publications import ThreadsPublicationRepository
 
 
 @dataclass(frozen=True, slots=True)
 class CompletionArtifactOwners:
+    database_path: Path | None = None
     image_root: Path | None = None
     assets: SqliteCreativeAssetRepository | None = None
     scope_for_run: Callable[[AgentRun], CreativeScope] | None = None
     slack_channel_id: str | None = None
     notion_parent_page_id: str | None = None
+    threads_publications: ThreadsPublicationRepository | None = None
+    threads_accounts: ThreadsAccountRepository | None = None
+    threads_drafts: ThreadsDraftRepository | None = None
+    schedules: ScheduleRepository | None = None
 
 
 @dataclass(frozen=True, slots=True)
