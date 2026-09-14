@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from threading import Event
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, cast, override
 
 from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.drive_work import DriveOrigin
+from ads_booster.channels.slack_conversations import Conversation, Message
 from ads_booster.contracts.agent_run import AgentBudget, AgentRunState
 from ads_booster.execution_control import checkpoint
 from tests.marketing.agent_service.test_application import build_service
 from tests.marketing.agent_service.test_task_drive import FreshResearch, Steps
+from tests.marketing.agent_service.test_task_progress import make_run
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 
@@ -65,6 +69,69 @@ def test_slack_worker_resumes_slices_after_reconstruction(tmp_path: Path) -> Non
         _ = delivery.work_once(now=NOW)
     assert sum(item.get("text") == "Finished draft" for item in messages) == 1
     assert len(adapter.inputs) == 10
+
+
+def test_slack_input_requeues_while_another_worker_holds_the_run_lease(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    service = owner.commands.application.service
+    run = service.repository.create(
+        make_run().model_copy(
+            update={
+                "tenant_id": "team",
+                "run_id": "lease-input",
+                "state": AgentRunState.AWAITING_INPUT,
+            }
+        )
+    )
+    conversation = Conversation(
+        conversation_id="lease-conversation",
+        tenant_id="team",
+        channel_id="C1",
+        thread_ts="100.001",
+        owner_id="",
+        private=False,
+        current_run=run.run_id,
+    )
+    message = Message(
+        message_id="lease-message",
+        conversation_id=conversation.conversation_id,
+        user_id="U1",
+        text="새 요구",
+    )
+    owner.store.admit(conversation, message)
+    origin = DriveOrigin(
+        tenant_id=run.tenant_id,
+        run_id=run.run_id,
+        channel="slack",
+        principal_id="U1",
+        event_id=message.message_id,
+        conversation_id=conversation.conversation_id,
+    )
+    owner.drive_queue.bind(origin)
+    with owner.drive_queue.connect() as db:
+        _ = db.execute(
+            "INSERT INTO agent_drive_work(tenant_id,run_id,revision,due_at,state,"
+            + "claim_owner,lease_expires_at) VALUES(?,?,?,?,?,?,?)",
+            (
+                run.tenant_id,
+                run.run_id,
+                run.revision,
+                NOW.isoformat(),
+                "running",
+                "other-worker",
+                (NOW + timedelta(minutes=5)).isoformat(),
+            ),
+        )
+
+    assert owner.work_once(now=NOW)
+    with owner.store.connect() as db:
+        state = cast(
+            "tuple[str] | None",
+            db.execute(
+                "SELECT state FROM slack_message_jobs WHERE message_id=?", (message.message_id,)
+            ).fetchone(),
+        )
+    assert state == ("pending",)
 
 
 class BlockingSecondSlice(Steps):

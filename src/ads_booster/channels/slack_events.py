@@ -19,7 +19,11 @@ from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
-from ads_booster.agent.service.drive_work import DriveOrigin, DriveWorkQueue
+from ads_booster.agent.service.drive_work import (
+    DriveClaimLostError,
+    DriveOrigin,
+    DriveWorkQueue,
+)
 from ads_booster.agent.service.knowledge import READ_ONLY_DM_TOOLS
 from ads_booster.agent.service.work_continuation import continue_work
 from ads_booster.channels.contracts import ChannelIdentityBinding, ChannelKind
@@ -594,7 +598,7 @@ class SlackEvents:
             raise ValueError("slack_channel_removed")
         return identity
 
-    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ordered ingress, notification and cancellable run boundaries.
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901,PLR0912 - ordered ingress, notification and cancellable run boundaries.
         if self._advance_background(now=now):
             return True
         claimed = self.store.claim()
@@ -604,6 +608,7 @@ class SlackEvents:
         conversation = self.store.conversation(message.conversation_id)
         if conversation is None:
             raise ValueError("slack_conversation_missing")
+        ownership_entered = False
         try:
             identity = self._authorize(conversation, message.user_id)
             service = self._service(conversation)
@@ -629,6 +634,7 @@ class SlackEvents:
                         self.drive_queue.ownership(origin=origin, now=now),
                         self._working(conversation, message, plan) as control,
                     ):
+                        ownership_entered = True
                         try:
                             result = self._execute(conversation, message, plan, identity, now=now)
                         except ExecutionCancelledError:
@@ -662,6 +668,16 @@ class SlackEvents:
                 if plan.learning_urgent:
                     self._admit_urgent_learning(plan.run_id, now=now)
                 self._admit_shared_turn(conversation, plan, now=now)
+        except DriveClaimLostError:
+            if not ownership_entered:
+                self.store.requeue(message)
+                _LOGGER.info(
+                    "slack_event_deferred_for_drive_lease message=%s run=%s",
+                    message.message_id,
+                    plan.run_id if plan else "",
+                )
+                return True
+            raise
         except Exception as exc:  # noqa: BLE001 - never repeat an uncertain effect; no provider secrets.
             code = (
                 exc.args[0]
@@ -1097,7 +1113,7 @@ class SlackEvents:
             return fallback
         return MessagePlan(action="approve", run_id=run.run_id, digest=contract_sha256(invocation))
 
-    def _execute(  # noqa: C901,PLR0911,PLR0912 - one canonical mutation per frozen action.
+    def _execute(  # noqa: C901,PLR0911,PLR0912,PLR0915 - one canonical mutation per frozen action.
         self,
         conversation: Conversation,
         message: Message,

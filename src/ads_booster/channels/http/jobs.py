@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import TypeAdapter
 
 from ads_booster.agent.service.application import CreateAgentRunRequest
-from ads_booster.agent.service.drive_work import DriveOrigin, DriveWorkQueue
+from ads_booster.agent.service.drive_work import (
+    DriveClaimLostError,
+    DriveOrigin,
+    DriveWorkQueue,
+)
 from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
     KnowledgeIngressSink,
@@ -194,7 +198,7 @@ class AgentJobs:
                     ),
                 )
 
-    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ingress and execution have distinct recovery guards.
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901,PLR0912 - ingress and execution have distinct recovery guards.
         if self.knowledge_ingress.dispatch_once():
             return True
         with self._db() as db:
@@ -213,6 +217,7 @@ class AgentJobs:
             return self._drive_once(now)
         tenant, job_id, principal, raw = row
         job = WebJob.model_validate_json(raw)
+        ownership_entered = False
         try:
             with self.service.execution_lock:
                 origin = DriveOrigin(
@@ -223,6 +228,7 @@ class AgentJobs:
                     event_id=job_id,
                 )
                 with self.drive_queue.ownership(origin=origin, now=now):
+                    ownership_entered = True
                     if job.action == "create":
                         if job.goal is None or job.budget is None:
                             raise ValueError("agent_job_goal_required")  # noqa: TRY301
@@ -263,6 +269,11 @@ class AgentJobs:
                             expected_invocation_sha256=job.invocation_sha256,
                         )
             state, error = "done", None
+        except DriveClaimLostError:
+            if not ownership_entered:
+                self.requeue(tenant, job_id)
+                return True
+            raise
         except ApprovalPermissionError:
             state, error = "blocked", _APPROVAL_PERMISSION_REQUIRED
         except Exception:  # noqa: BLE001 - persist a sanitized blocked outcome.
@@ -274,6 +285,15 @@ class AgentJobs:
             )
         self.drive_queue.notification_persisted(tenant, job_id)
         return True
+
+    def requeue(self, tenant: str, job_id: str) -> None:
+        """Return an ingress job to pending after transient lease contention."""
+        with self._db() as db:
+            _ = db.execute(
+                """UPDATE agent_web_jobs SET state='pending',error=NULL
+                WHERE tenant=? AND job_id=? AND state='running'""",
+                (tenant, job_id),
+            )
 
     def _drive_once(self, now: datetime) -> bool:
         with self.service.execution_lock:

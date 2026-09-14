@@ -342,6 +342,49 @@ def test_http_worker_drains_multiple_slices_after_restart(tmp_path: Path) -> Non
     assert len(adapter.inputs) == 10
 
 
+def test_http_input_requeues_while_another_worker_holds_the_run_lease(tmp_path: Path) -> None:
+    database = tmp_path / "http-contention.sqlite3"
+    service = build_service(database, Steps())
+    jobs = AgentJobs(service)
+    run = service.repository.create(
+        make_run().model_copy(update={"run_id": "lease-input", "tenant_id": "trace"})
+    )
+    origin = DriveOrigin(
+        tenant_id=run.tenant_id,
+        run_id=run.run_id,
+        channel="http",
+        principal_id="member",
+        event_id="active-drive",
+    )
+    jobs.drive_queue.bind(origin)
+    with jobs.drive_queue.connect() as db:
+        _ = db.execute(
+            "INSERT INTO agent_drive_work(tenant_id,run_id,revision,due_at,state,"
+            + "claim_owner,lease_expires_at) VALUES(?,?,?,?,?,?,?)",
+            (
+                run.tenant_id,
+                run.run_id,
+                run.revision,
+                NOW.isoformat(),
+                "running",
+                "other-worker",
+                (NOW + timedelta(minutes=5)).isoformat(),
+            ),
+        )
+    job = WebJob(
+        job_id="lease-input-job",
+        run_id=run.run_id,
+        action="input",
+        evidence={"note": "new authenticated correction"},
+        expected_revision=run.revision,
+    )
+
+    assert jobs.enqueue(run.tenant_id, "member", job, now=NOW)["state"] == "pending"
+    assert jobs.work_once(now=NOW)
+    assert jobs.status(run.tenant_id, job.job_id)["state"] == "pending"
+    assert service.repository.get(run.tenant_id, run.run_id) == run
+
+
 def test_http_revoked_actor_cannot_resume_tools(tmp_path: Path) -> None:
     database = tmp_path / "revoked.sqlite3"
     adapter = FreshResearch()

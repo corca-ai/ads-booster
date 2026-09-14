@@ -447,6 +447,15 @@ class SlackConversationStore:
             if task_result is not None:
                 bind_result(db, "message:" + message.message_id, task_result)
 
+    def requeue(self, message: Message) -> None:
+        """Return an ingress item to the durable inbox after transient lease contention."""
+        with self.connect() as db:
+            _ = db.execute(
+                """UPDATE slack_message_jobs SET state='pending',result=''
+                WHERE message_id=? AND state='running'""",
+                (message.message_id,),
+            )
+
     def defer_result(self, message: Message) -> None:
         with self.connect() as db:
             _ = db.execute(
