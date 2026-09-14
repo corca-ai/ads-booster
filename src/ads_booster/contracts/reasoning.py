@@ -82,9 +82,7 @@ class ReasoningResult(ContractModel):
 
     @model_validator(mode="after")
     def require_decision_binding(self) -> Self:
-        if contract_sha256(self.decision) != self.receipt.decision_sha256:
-            message = "reasoning receipt decision digest mismatch"
-            raise ValueError(message)
+        _require_decision_binding(self.decision, self.receipt)
         return self
 
 
@@ -137,10 +135,17 @@ class ReasoningResultV2(ContractModel):
 
     @model_validator(mode="after")
     def require_decision_binding(self) -> Self:
-        if contract_sha256(self.decision) != self.receipt.decision_sha256:
-            message = "reasoning receipt decision digest mismatch"
-            raise ValueError(message)
+        _require_decision_binding(self.decision, self.receipt)
         return self
+
+
+def _require_decision_binding(
+    decision: ReasoningDecision | ReasoningDecisionV2,
+    receipt: ReasoningProviderReceipt,
+) -> None:
+    if contract_sha256(decision) != receipt.decision_sha256:
+        message = "reasoning receipt decision digest mismatch"
+        raise ValueError(message)
 
 
 def decode_reasoning_decision(payload: JsonObject) -> ReasoningDecision | ReasoningDecisionV2:
