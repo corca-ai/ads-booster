@@ -503,8 +503,9 @@ from the bootstrap manifest first and activating the full Events manifest after 
 
 The optional `github.issue.create` tool creates issues only in `corca-ai/ads-booster`.
 In an allowed shared Slack channel, explicitly ask the agent to create the issue with its details,
-for example `이 승인 반복 오류를 깃허브 이슈로 올려줘`. For a requester with current approval
-permission, that request authorizes the requested execution; a second review/confirmation is unnecessary.
+for example `이 승인 반복 오류를 깃허브 이슈로 올려줘`. Every admitted workspace member can
+authorize their requested execution, including on first use; no reviewer role or second confirmation
+is needed. Disabled or revoked members cannot execute work.
 Requested subsequent tool steps also continue within the run budget, with current source and
 permission checked for each step. This applies to exposed workspace-member tools, not only creation.
 Questions and draft-only requests do not authorize creation. For an unrequested proposal,
@@ -594,7 +595,8 @@ the button stops the current execution without closing the conversation.
 In an allowed shared conversation, request `귀여움으로 KR·JP·TW 배경화면 게시물 만들어줘`.
 The installed `marketing.trace_post` procedure routes the request to `creative.trace_post`.
 It supports the cute card and T2 template, with optional date, motif and place selections from
-the current input schema. Review and approve the exact production proposal before execution.
+the current input schema. The request starts production without a separate approval or review step.
+Unspecified creative choices are selected within the supported options.
 
 The service copies its packaged rules, template and helpers into one private operation workspace.
 It creates new schedules and localized captions, generates the KR text/background, localizes that
@@ -605,9 +607,12 @@ A provider error with an unknown result does not authorize another generation at
 This is a deferred server task using the configured official Codex executable/model with medium
 reasoning effort and a one-hour operation timeout. It is registered with the installed service;
 no separate image API key or trace-post configuration is required. The existing
-work's asset view receives six validated images; country captions and verification references return
-through the canonical result. Model review is not human approval or proof of actual app support.
-Image creation does not authorize Slack file delivery or external publication. Private DM execution
+work's asset view receives six validated images. The requesting Slack thread automatically receives
+the country captions and six PNG attachments named `trace-post-<kr|jp|tw>-<final|scene>.png`.
+Open an attachment to preview or download its original PNG. Human feedback is optional; there is
+no required review, approval, status command or operator contact step. Model review is not proof
+of actual app support. Delivery to another channel or publication still requires that request.
+Private DM execution
 is unavailable. A completed pipeline does not establish pixel-identical backgrounds across locales.
 
 The installed package is self-contained. It does not read a developer's checkout, `.agents` link or

@@ -637,7 +637,7 @@ to the configured Web origin only when public links are enabled; private history
 Shared Slack execution requests authorize the requested work without a second user-facing
 approval or review phase. The reasoning provider cites the complete current request in
 `authorization_message` for each requested step. The channel verifies its unchanged finalized
-source, current member permission, tenant/conversation and exact invocation, then records the
+source, current run-creation permission, tenant/conversation and exact invocation, then records the
 grant through the existing service. All exposed tools with `workspace_member` authority use this
 path; it is not restricted to a creation allowlist. A request can cover multiple steps within the
 run budget. Each step rechecks source and membership; receipts and runtime idempotency remain the
@@ -645,6 +645,9 @@ owners of duplicate/uncertain execution. Model interpretation does not prove uni
 accuracy. Questions, negation, draft-only requests and unrequested actions confer no execution
 authority. Publication or spending requires a request covering that destination and scope;
 creation alone does not imply either. Private DMs remain read-only.
+First-use workspace members may request execution with `can_approve=False`; that field controls
+reviewing a separate proposal, not delegating their own work. Disable/revocation and source freshness
+are still checked before every requested step.
 
 Completed generated images are delivered results, without a mandatory human-review checkpoint.
 `review_status=not_reviewed` records provenance without claiming human review or visual quality.
@@ -668,8 +671,10 @@ oversized or out-of-range page arguments return guidance without entering contin
 changing approval state. Complete readable proposals and unchanged authoritative `review_pages`
 renderings count as delivered review evidence. Event failures project approval rejection codes into
 actionable replies and log only message identity, action and a fixed code. Unknown exceptions
-use `unclassified`, disclose no exception payload, retain blocked message state and advise status
-inspection instead of repeating approval. This is diagnostic coverage, not effect reconciliation.
+use `unclassified`, disclose no exception payload and retain blocked message state without requiring
+a status command or operator contact. After reasoning fails at an OBSERVE boundary, a new user
+message can revise the same Run under the execution lock. PLAN, APPROVE and EXECUTE interruptions
+retain their original recovery paths; new input must not conceal or replay uncertain effects.
 
 Unknown edit operations expose a scoped status and explicit reviewer abandonment endpoint.
 The API derives authority from current authenticated membership, never the request body.
@@ -896,16 +901,22 @@ select verified main independently; release publication is not installed-server 
 ## Packaged Trace post production
 
 `marketing.trace_post` is a discoverable installed procedure; `creative.trace_post` owns its
-approved execution. The service freezes the exact invocation, production approval and packaged
+requested execution. The service freezes the exact invocation, request-bound grant and packaged
 bundle in a private operation workspace before the deferred worker starts one Codex subprocess.
 Its shell access is limited to the operation and required runtime files; external tools/network
 are disabled. The model reads the frozen workflow, creates new content and executes A → B → L → C.
 A started operation with an uncertain outcome is not automatically replayed after restart.
 
 The server validates the frozen documents, content/image review bindings and six canonical outputs
-before registering same-work, tenant-scoped assets. File validation and model review remain separate
-from human visual approval. Completion resumes the existing work; external delivery uses the
-existing independent channel authority. Production credentials are not copied into the bundle.
+before registering same-work, tenant-scoped assets. New results report `human_review_required=False`
+and do not invent a human review record. Historical True values remain readable and do not gate
+delivery. Completion resumes the existing work and queues an outbox message bound to that exact
+Run, independently of transient progress UI. Receipt and asset-link validation resolve six images
+from the configured artifact root; Slack uploads them to the original thread as named PNG files
+with country captions. Current member permission is rechecked at delivery. Digest changes or absent
+same-Run links prevent attachment; ambiguous uploads are not repeated after restart. Returning
+results in the requesting thread is part of generation, while other destinations require a request.
+Production credentials are not copied into the bundle.
 
 The app-server transport copies PNG bytes from native image-generation events into the private
 operation's `provider-images` directory and binds each file to its event ID and original SHA-256.

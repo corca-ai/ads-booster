@@ -504,7 +504,13 @@ new runs. Slack manifests own the external callback registration contract.
 artifact verification. The descriptor remains in `tools/descriptors.py`; installed lifecycle
 injects the executor and private artifact root through `ConfiguredAgentTools`. Existing Agent Core
 owns exact approval and uncertain execution handling. `channels/slack_images.py` owns receipt-bound
-artifact projection, durable upload admission and Slack's external file-upload adapter. Slack event
+artifact projection, durable upload admission and Slack's external file-upload adapter.
+`channels/slack_image_results.py` resolves ordinary image and six-asset Trace post results into
+named PNG attachments and country captions. It checks same-Run links and tenant-scoped assets
+through the existing creative repository. `Message.result_run_id` binds asynchronous result
+notifications independently of progress-message storage. `work_continuation.interrupted_reasoning`
+is the shared admission check for new input after a failed OBSERVE boundary under execution_lock.
+Slack event
 composition binds the artifact directory beside the canonical service database and passes only the
 authorized conversation, never model-selected channel IDs or local filenames.
 `CanonicalKnowledgeIngress` owns additive `knowledge_execution_bindings`: immutable Slack source
