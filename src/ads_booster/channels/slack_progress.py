@@ -12,6 +12,8 @@ from ads_booster.channels.slack_conversations import Message
 if TYPE_CHECKING:
     from ads_booster.channels.slack_conversations import SlackConversationStore
 
+_MESSAGE_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
+
 _ROW: TypeAdapter[tuple[str, str, str, str, int] | None] = TypeAdapter(
     tuple[str, str, str, str, int] | None
 )
@@ -91,3 +93,16 @@ class SlackProgressStore:
     def cancelled(self, message_id: str) -> bool:
         record = self.locate(message_id)
         return record is not None and record.cancelled
+
+    def for_run(self, conversation_id: str, run_id: str) -> ProgressRecord | None:
+        with self.inbox.connect() as db:
+            row = _MESSAGE_ROW.validate_python(
+                db.execute(
+                    """SELECT p.message_id FROM slack_progress p
+                JOIN slack_message_jobs j USING(message_id)
+                WHERE j.conversation_id=? AND p.run_id=? AND p.timestamp<>''
+                ORDER BY j.rowid DESC LIMIT 1""",
+                    (conversation_id, run_id),
+                ).fetchone()
+            )
+        return None if row is None else self.locate(row[0])

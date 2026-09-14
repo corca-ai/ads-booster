@@ -62,6 +62,7 @@ def connect_trace_post(
     timeout_seconds: float,
     now: datetime,
     on_completed: Callable[[str, str, str], None] | None = None,
+    on_progress: Callable[[str, str, str], None] | None = None,
 ) -> TracePostTool:
     if CAPABILITY in service.tools:
         raise ValueError("trace_post_tool_already_configured")
@@ -77,6 +78,7 @@ def connect_trace_post(
         provider=CodexTracePostProvider(config.executable, config.model),
         config=config,
         on_completed=on_completed,
+        on_progress=on_progress,
     )
     service.install_tool_catalog(TracePostCatalog(tool), now=now)
     return tool

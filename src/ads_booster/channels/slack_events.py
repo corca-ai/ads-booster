@@ -1409,6 +1409,25 @@ class SlackEvents:
                 queued = self.store.enqueue_learning_question(question) or queued
         return queued
 
+    def update_run_progress(self, tenant_id: str, run_id: str, stage: str) -> None:
+        """Project worker-owned stage text onto its durable original Slack message."""
+        conversation = self.store.conversation_for_run(tenant_id, run_id)
+        if conversation is None or conversation.closed:
+            return
+        service = self._service(conversation)
+        with service.run_locks.hold(tenant_id, run_id):
+            run = service.repository.get(tenant_id, run_id)
+            if run is None or run.state is not AgentRunState.AWAITING_TOOL:
+                return
+            status = self.progress.for_run(conversation.conversation_id, run_id)
+            if status is None:
+                return
+            try:
+                _ = self._authorize(conversation, status.user_id)
+            except ValueError:
+                return
+            _ = self._send(conversation, "⏳ " + stage, timestamp=status.timestamp)
+
     def _notify(self) -> bool:
         claimed = self.store.claim_notification()
         if claimed is None:
@@ -1437,6 +1456,8 @@ class SlackEvents:
                         delivery.text if delivery.replaces_answer else result + "\n" + delivery.text
                     )
             status = self.progress.locate(message.message_id)
+            if status is None and message.result_run_id:
+                status = self.progress.for_run(conversation.conversation_id, message.result_run_id)
             state = self._send(
                 conversation, result, timestamp="" if status is None else status.timestamp
             )
