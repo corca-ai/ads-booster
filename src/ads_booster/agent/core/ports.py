@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ads_booster.contracts.agent_run import ToolExecutionDeferred, ToolInvocation
-    from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+    from ads_booster.contracts.reasoning import (
+        ReasoningRequest,
+        ReasoningRequestV2,
+        ReasoningResult,
+        ReasoningResultV2,
+    )
     from ads_booster.contracts.task_completion import (
         SemanticAssessmentRequest,
         SemanticAssessmentResult,
@@ -16,6 +21,11 @@ if TYPE_CHECKING:
 
 class ReasoningProvider(Protocol):
     def plan(self, request: ReasoningRequest) -> ReasoningResult: ...
+
+
+@runtime_checkable
+class ReasoningProviderV2(Protocol):
+    def plan_v2(self, request: ReasoningRequestV2) -> ReasoningResultV2: ...
 
 
 class SemanticAssessor(Protocol):
