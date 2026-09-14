@@ -29,7 +29,7 @@ def main() -> None:
         config = [
             value for index, value in enumerate(command) if index and command[index - 1] == "-c"
         ]
-        args = [str(executable), "sandbox", "linux"]
+        args = [str(executable), "sandbox"]
         for value in config:
             args.extend(("-c", value))
         script = (
