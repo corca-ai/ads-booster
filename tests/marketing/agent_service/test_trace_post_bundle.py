@@ -18,6 +18,7 @@ EXPECTED_FILES = frozenset(
         "context/POST-RUN.md",
         "context/RUN-POLICY.md",
         "context/core/CAPTION-RULES.md",
+        "context/core/CONCEPT-DIRECTION.md",
         "context/core/FACTS.md",
         "context/core/IMAGE-RULES.md",
         "context/templates/T2/spec.md",
@@ -34,7 +35,7 @@ EXPECTED_FILES = frozenset(
     }
 )
 SOURCE_REPOSITORY = "https://github.com/corca-ai/trace-marketing-context"
-SOURCE_COMMIT = "6f462377d7ecf18c92ed716eb2d8dc80d10eaca9"
+SOURCE_COMMIT = "57779174c8be0dde741bab436fa21a61c2933f90"
 
 
 class Provenance(TypedDict):

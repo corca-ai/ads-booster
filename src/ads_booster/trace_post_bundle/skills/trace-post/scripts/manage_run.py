@@ -66,6 +66,7 @@ def source_files(root, card, template):
         root / "context" / "POST-RUN.md",
         root / "context" / "RUN-POLICY.md",
         root / "context" / "core" / "CAPTION-RULES.md",
+        root / "context" / "core" / "CONCEPT-DIRECTION.md",
         root / "context" / "core" / "IMAGE-RULES.md",
         root / "context" / "core" / "FACTS.md",
         root / "context" / "templates" / template / "spec.md",

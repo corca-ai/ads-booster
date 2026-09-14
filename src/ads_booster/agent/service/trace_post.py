@@ -785,7 +785,7 @@ def _bundle_digest(bundle: Path) -> str:
         for path in (bundle / root_name).rglob("*")
         if path.is_file()
     }
-    if set(files) != actual or len(files) != 17:
+    if set(files) != actual or len(files) != 18:
         raise ValueError("trace_post_bundle_manifest_incomplete")
     for relative, expected in files.items():
         if not isinstance(expected, str) or _sha256(bundle / relative) != expected:

@@ -176,7 +176,12 @@ def test_trace_post_discovery_reads_exact_installed_procedure() -> None:
     )
     assert isinstance(loaded, ToolExecutionResult)
     assert loaded.output["status"] == "found"
+    assert loaded.output["version"] == "2"
     assert loaded.output["required_capabilities"] == ["creative.trace_post"]
     assert loaded.output["authority"] == "procedure_only_not_evidence_or_approval"
+    procedure = loaded.output["procedure"]
+    assert isinstance(procedure, str)
+    assert "세부 촬영 상황" in procedure
+    assert "셀프 촬영 가능한" in procedure
     # Reading the procedure does not install an executor or confer production approval.
     assert "creative.trace_post" not in configured.adapters()
