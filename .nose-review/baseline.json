@@ -1625,6 +1625,14 @@
         "1ccd5b520b04f6d5cabac95c04aa8fe9d389ff70abbb4416020be845a17fcf13",
         "a47270c0d1f4f90976d70dc1795d7d2eebe6aa62a3df5802719dac3a57ffead5"
       ]
+    },
+    {
+      "fingerprint": "314700d97953e1e048410ca9c0b28f4d0a1099fef9ff687f30abc81ad1c4aa5e",
+      "reason": "The pending-dialogue and production-approval tests declare their own scenario dependencies; sharing an import fixture would couple independent approval and delegated-step test modules without consolidating behavior.",
+      "memberHashes": [
+        "2b159e76dd0f3d7b729be2165ab2df5b1e1a8505ae649cf9dcdf3cf087c89b38",
+        "61da3f1495c3d86324a8ba9bf2b3dd197b31a752116cf77f19b567dd095f15c1"
+      ]
     }
   ]
 }
