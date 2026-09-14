@@ -66,7 +66,7 @@ from ads_booster.channels.slack_performance import (
     performance_command,
 )
 from ads_booster.channels.slack_progress import SlackProgressStore
-from ads_booster.channels.slack_run_status import run_status
+from ads_booster.channels.slack_run_status import conversational_answer, run_status
 from ads_booster.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
@@ -1317,10 +1317,9 @@ class SlackEvents:
                 + f"승인 {contract_sha256(invocation)}\n"
                 + "진행하지 않으려면 '거절'이라고 답해 주세요."
             )
-        latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
-        decision = None if latest is None else latest.payload.get("decision")
-        answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        status = run_status(run, service.repository.steps(conversation.tenant_id, run.run_id))
+        steps = service.repository.steps(conversation.tenant_id, run.run_id)
+        answer = conversational_answer(run, steps, records)
+        status = run_status(run, steps)
         if run.state not in {AgentRunState.COMPLETED, AgentRunState.AWAITING_INPUT}:
             # Earlier reasoning can belong to another turn or an unexecuted plan.
             answer = status

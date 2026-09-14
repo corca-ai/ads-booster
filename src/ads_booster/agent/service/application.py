@@ -40,7 +40,7 @@ from ads_booster.agent.service.sqlite_repository import (
     RepositoryAdmission,
     SqliteAgentRunRepository,
 )
-from ads_booster.agent.service.task_input import current_user_message
+from ads_booster.agent.service.task_input import current_user_message, new_input_after_brand_wait
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -63,6 +63,7 @@ from ads_booster.contracts.knowledge_preparation import (
     PreparedKnowledgeContext,
     RequiredContextPreparationError,
 )
+from ads_booster.contracts.knowledge_selection import KnowledgeActionKind
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import (
@@ -505,7 +506,19 @@ class MarketingAgentService:
         prepared_context: PreparedKnowledgeContext | None = None
         if self.knowledge is not None:
             snapshot = self.knowledge.filter_snapshot(run.run_id, snapshot)
-            preparation = self.knowledge.prepare(run, snapshot, now=now, query=knowledge_query)
+            preparation = self.knowledge.prepare(
+                run,
+                snapshot,
+                now=now,
+                query=knowledge_query,
+                action_kind=(
+                    KnowledgeActionKind.TEAM_CHAT
+                    if new_input_after_brand_wait(
+                        self.repository.records(run.tenant_id, run.run_id)
+                    )
+                    else None
+                ),
+            )
             if isinstance(
                 preparation,
                 RequiredContextPreparationError | BrandUnresolvedPreparation,

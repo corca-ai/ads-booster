@@ -845,6 +845,7 @@ class KnowledgeServiceAdapter:
                     "policy_epoch": actor.policy_epoch,
                     "action_kind": action_kind.value,
                     "brand_id": brand_id,
+                    "previous_task_id": None if current is None else current.task_id,
                 }
             )[:40]
         )

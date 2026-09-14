@@ -448,7 +448,20 @@ class KnowledgeContextAssembler:
         if task.brand_id is None:
             candidates = self._active_brands(actor)
             if not candidates:
-                return _required_error(task, RequiredContextErrorCode.REQUIRED_VOICE_UNAVAILABLE)
+                # Fresh/channel-local installations have no configured brand voice.
+                # Absence is not a broken or denied selected brand document.
+                return (
+                    VoiceStatus.VOICE_UNCONFIGURED,
+                    None,
+                    (),
+                    (
+                        _block(
+                            "brand.unconfigured",
+                            PreparedContextSlot.BRAND_VOICE,
+                            "Use brief and skill; don't invent brand rules or require brand setup.",
+                        ),
+                    ),
+                )
             return BrandUnresolvedPreparation(
                 schema="knowledge.preparation.v1",
                 status="brand_unresolved",

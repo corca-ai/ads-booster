@@ -22,11 +22,10 @@ from ads_booster.channels.contracts import (
 from ads_booster.channels.github_results import issue_results
 from ads_booster.channels.http.browser_login import https_origin
 from ads_booster.channels.slack import SlackRequestVerifier
-from ads_booster.channels.slack_run_status import run_status
+from ads_booster.channels.slack_run_status import conversational_answer, run_status
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
-    AgentRecordKind,
     AgentRunState,
     contract_sha256,
 )
@@ -385,13 +384,7 @@ class SlackCommands:
                     f"/trace approve {run_id} {contract_sha256(invocation)}",
                 ]
         elif run.state in {AgentRunState.COMPLETED, AgentRunState.AWAITING_INPUT}:
-            latest = next(
-                (r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None
-            )
-            if latest is not None:
-                decision = latest.payload.get("decision")
-                if isinstance(decision, dict):
-                    lines.append(str(decision.get("reasoning_summary", ""))[:1800])
+            lines.append(conversational_answer(run, steps, records)[:1800])
         if result := issue_results(records):
             lines.append(result)
         return "\n".join(lines)
