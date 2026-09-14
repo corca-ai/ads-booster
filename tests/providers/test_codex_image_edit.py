@@ -15,6 +15,7 @@ import pytest
 from PIL import Image
 from pydantic import TypeAdapter
 
+from ads_booster.execution_control import ExecutionControl, execution_scope
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage
 from ads_booster.providers.codex_image_edit import (
     CodexImageEditProvider,
@@ -340,3 +341,29 @@ def test_process_profile_denies_global_reads_and_network_with_only_job_and_binar
     }
     assert profile["network"] == {"enabled": False}
     assert 'default_permissions="trace-image-edit-restricted"' in command
+
+
+def test_native_image_events_update_only_safe_progress_stage(tmp_path: Path) -> None:
+
+    state = _StreamState(
+        ImageEditProcessRequest(Path("/fixture/codex"), "gpt-6-astra", tmp_path, "fixture", (), 10)
+    )
+    state.thread_id = "thread"
+    control = ExecutionControl(lambda: False)
+    with execution_scope(control):
+        _ = state.accept(
+            {
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {
+                        "id": "image-one",
+                        "type": "imageGeneration",
+                        "prompt": "private content",
+                    },
+                },
+            }
+        )
+    assert "이미지를 생성" in control.stage
+    assert "private" not in control.stage

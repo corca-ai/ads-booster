@@ -22,6 +22,7 @@ from typing import Literal, Protocol
 
 from pydantic import TypeAdapter
 
+from ads_booster.execution_control import checkpoint
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
@@ -449,10 +450,12 @@ class _StreamState:
         if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
+        _image_progress(str(method), str(kind), len(self.items))
         if method == "item/completed" and kind == "imageGeneration":
             if self.request.materialize_image_results:
                 item = self._materialize(item)
             self.items.append(item)
+            checkpoint(f"이미지 {len(self.items)}회 생성 완료 · 결과를 정리하고 있습니다")
 
     def _materialize(self, item: JsonObject) -> JsonObject:
         event_id, encoded = item.get("id"), item.get("result")
@@ -713,3 +716,12 @@ class CodexImageEditProvider:
             response.thread_id,
             response.turn_id,
         )
+
+
+def _image_progress(method: str, kind: str, completed: int) -> None:
+    if method != "item/started":
+        return
+    if kind == "imageGeneration":
+        checkpoint(f"이미지를 생성하고 있습니다 · {completed}회 생성 완료")
+    elif kind == "commandExecution":
+        checkpoint(f"제작 절차와 파일을 처리하고 있습니다 · {completed}회 생성 완료")
