@@ -24,10 +24,9 @@ class ThreadsMediaError(ValueError):
     pass
 
 
-_ROW: TypeAdapter[tuple[str, int, str, str, int, str, str] | None] = TypeAdapter(
-    tuple[str, int, str, str, int, str, str] | None
+_ROW: TypeAdapter[tuple[str, str, int, str, str, int, str, str] | None] = TypeAdapter(
+    tuple[str, str, int, str, str, int, str, str] | None
 )
-_BATCH_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
 _TABLE_INFO: TypeAdapter[list[tuple[int, str, str, int, str | None, int]]] = TypeAdapter(
     list[tuple[int, str, str, int, str | None, int]]
 )
@@ -96,7 +95,9 @@ class ThreadsMediaDelivery:
             _ = database.execute("BEGIN IMMEDIATE")
             for asset in item.assets:
                 token = token_urlsafe(32)
-                signature = hmac.new(self.signing_secret, token.encode(), hashlib.sha256).hexdigest()
+                signature = hmac.new(
+                    self.signing_secret, token.encode(), hashlib.sha256
+                ).hexdigest()
                 credential = f"{token}.{signature}"
                 _ = database.execute(
                     """INSERT INTO threads_media_grants(
@@ -132,16 +133,24 @@ class ThreadsMediaDelivery:
         with sqlite3.connect(self.database_path) as database:
             row = _ROW.validate_python(
                 database.execute(
-                    """SELECT workspace_id,batch_revision,item_id,asset_id,asset_revision,
+                    """SELECT workspace_id,batch_id,batch_revision,item_id,asset_id,asset_revision,
                     asset_sha256,expires_at
                     FROM threads_media_grants WHERE token_sha256=?""",
                     (hashlib.sha256(credential.encode()).hexdigest(),),
                 ).fetchone()
             )
-        if row is None or datetime.fromisoformat(row[6]) <= now:
+        if row is None or datetime.fromisoformat(row[7]) <= now:
             raise ThreadsMediaError("threads_media_grant_expired")
-        workspace_id, batch_revision, item_id, asset_id, asset_revision, asset_sha256, _ = row
-        batch_id = self._batch_id(credential)
+        (
+            workspace_id,
+            batch_id,
+            batch_revision,
+            item_id,
+            asset_id,
+            asset_revision,
+            asset_sha256,
+            _,
+        ) = row
         batch = ThreadsDraftRepository(self.database_path).get(workspace_id, batch_id)
         if (
             batch is None
@@ -169,18 +178,6 @@ class ThreadsMediaDelivery:
         if asset is None or asset.sha256 != reference.sha256:
             raise ThreadsMediaError("threads_media_asset_unavailable")
         return (repository.artifact_root / asset.relative_path).read_bytes()
-
-    def _batch_id(self, credential: str) -> str:
-        with sqlite3.connect(self.database_path) as database:
-            row = _BATCH_ROW.validate_python(
-                database.execute(
-                    "SELECT batch_id FROM threads_media_grants WHERE token_sha256=?",
-                    (hashlib.sha256(credential.encode()).hexdigest(),),
-                ).fetchone()
-            )
-        if row is None:
-            raise ThreadsMediaError("threads_media_grant_invalid")
-        return row[0]
 
 
 __all__ = ["ThreadsMediaDelivery", "ThreadsMediaError", "ThreadsMediaGrant"]
