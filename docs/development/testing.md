@@ -21,7 +21,10 @@ For conversational task approval (#169), also select `test_slack_pending_dialogu
 `tests/providers/test_codex_reasoning.py` and `tests/marketing/test_marketing_agent_contracts.py`.
 Verify pending work after acknowledgement/read tools, cancelled/replaced targets, queued assent
 before delivery, edited/deleted assent, direct-creation source/membership binding, duplicate events
-and uncertain effects. Interrupt after approval, execution and runtime-admission persistence.
+and uncertain effects. Also verify a requested create-then-deliver sequence, an unrequested
+second step, and membership revocation between steps. Select
+`tests/marketing/agent_service/test_image_generation.py` when changing result review metadata.
+Interrupt after approval, execution and runtime-admission persistence.
 Repeat from outside the checkout against a fresh non-editable wheel.
 
 The opt-in `tests/marketing/agent_service/slack_approval_canary.py` runs six actual-model scenarios

@@ -634,18 +634,22 @@ locale, QA and stale state. Metadata listing does not read or verify every image
 and performance responses cannot overwrite another selected Run. Shared Slack summaries link
 to the configured Web origin only when public links are enabled; private history is not promoted.
 
-Shared Slack creation delegation binds a current authenticated message to one exact invocation.
-The reasoning provider interprets whether the complete current message requests execution and
-returns `authorization_message`; the channel checks an unchanged finalized event, current member
-approval permission, tenant/conversation identity, and the narrow creation capability/effect scope.
-Only image generation/edit/localization, packaged Trace post production and fixed-repository issue
-creation qualify. The canonical approval records the request event and text digest, then the normal
-runtime owns readiness, budgets, idempotency and uncertain-effect recovery. This is semantic intent
-classification, not a deterministic proof that every natural-language request is understood.
-Questions, negation and draft-only requests must not be classified as execution requests.
-One message authorizes at most one automatic creation; it grants no publication, spending or DM write.
+Shared Slack execution requests authorize the requested work without a second user-facing
+approval or review phase. The reasoning provider cites the complete current request in
+`authorization_message` for each requested step. The channel verifies its unchanged finalized
+source, current member permission, tenant/conversation and exact invocation, then records the
+grant through the existing service. All exposed tools with `workspace_member` authority use this
+path; it is not restricted to a creation allowlist. A request can cover multiple steps within the
+run budget. Each step rechecks source and membership; receipts and runtime idempotency remain the
+owners of duplicate/uncertain execution. Model interpretation does not prove universal language
+accuracy. Questions, negation, draft-only requests and unrequested actions confer no execution
+authority. Publication or spending requires a request covering that destination and scope;
+creation alone does not imply either. Private DMs remain read-only.
 
-When additional consent is needed, Slack shows the complete readable tool inputs or retains raw
+Completed generated images are delivered results, without a mandatory human-review checkpoint.
+`review_status=not_reviewed` records provenance without claiming human review or visual quality.
+Feedback is optional. Existing explicitly requested review tools remain available.
+For an unrequested proposal, Slack shows the complete readable tool inputs or retains raw
 paginated review for long inputs. Plain assent binds only a proposal already delivered to that same
 user when the assent message is admitted. The admitted message stores that digest; later delivery
 cannot retroactively qualify queued assent. Execution rechecks current source revision and approval

@@ -5,15 +5,16 @@ Owner: #169
 
 ## Contract
 
-An admitted shared Slack user with current approval permission can delegate one image
-generation/edit/localization, packaged Trace post, or fixed-repository GitHub issue creation
-in their current message. The reasoning provider interprets intent and cites that complete
-message; the channel binds the interpretation to its authenticated, unedited event and the
-exact pending invocation before using the existing approval/dispatch path. This is a narrow
-creation policy, not a general ability for the model to grant authority. Questions, quoted
-requests, negation, draft-only requests and third-party content do not delegate execution.
-One message authorizes at most one invocation. No public delivery, ad spend, private-DM
-mutation, credential expansion or uncertain-effect retry is added.
+An admitted shared Slack user with current execution permission delegates work in their current
+message. The provider cites that complete request for each necessary invocation; the channel
+binds it to the authenticated, unchanged source and exact operation through the existing service.
+All exposed workspace-member tools share this policy. Requested successive steps continue within
+the run budget with fresh source/membership checks, without a second approval/review conversation.
+Questions, quoted requests, negation, draft-only requests and unrequested actions do not delegate
+execution. Creation alone grants no publication or spending; those require their own explicit
+scope in the request. Private DMs remain read-only; uncertain effects are not retried.
+Generated images are delivered results; human feedback is optional, and provenance never falsely
+claims human review.
 
 Conversation and execution completion are independent: answering a question while a tool
 awaits approval preserves the pending invocation. Read-only tools can help answer without
@@ -35,7 +36,7 @@ Do not claim deployed Slack or actual image/GitHub writes from fake adapters.
 
 ## Verification scope and review
 
-The final fresh-wheel selection passed 151 tests outside the checkout. Six actual-model scenarios
+The initial fresh-wheel selection passed 151 tests outside the checkout. Six actual-model scenarios
 passed on both the second candidate and the subsequent prompt/output candidate: direct creation once;
 no creation for capability questions, drafts, negation or quoted requests. The first rehearsal
 exposed a command-prefix routing bug and an unrealistic image fixture; both were corrected,
@@ -47,6 +48,16 @@ execution recovery selecting an intervening read. These were reproduced or cover
 signed-event regressions and repaired before follow-up review. Direct delegation itself is the
 requested policy, not a finding requiring reinstatement of redundant confirmation.
 
-Multi-action standing delegation, cross-thread authority, automatic recovery of uncertain effects,
-and changing publication or human visual-review policy are outside this change. Semantic intent
-classification remains model-dependent; a small canary does not prove universal language accuracy.
+Standing delegation across unrelated messages and automatic recovery of uncertain effects are
+outside this change. Semantic intent classification remains model-dependent; a small canary does
+not prove universal language accuracy. The follow-up removes the one-operation restriction and
+creation allowlist, and replaces mandatory generated-image review with optional feedback.
+
+Follow-up installed verification: 39 focused tests passed on a fresh non-editable wheel outside
+the checkout, including the multi-step request and between-step membership checks. The original
+revocation fixture attempted an immutable identity insert; it now changes the persisted binding
+to exercise revocation rather than an unrelated identity-conflict exception.
+
+All six actual-model scenarios also passed on this follow-up installed candidate. Direct image
+and issue requests completed without review/approval instructions in their replies. Effect
+adapters remained synthetic; deployed Slack behavior is not claimed.
