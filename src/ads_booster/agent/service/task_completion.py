@@ -17,7 +17,12 @@ from ads_booster.execution_control import ExecutionCancelledError
 
 _INVALID_EVIDENCE: Final = "completion_evidence_invalid"
 _OWNER_UNAVAILABLE: Final = "completion_proof_owner_unavailable"
-__all__ = ["CompletionContext", "CompletionProofReader", "TaskCompletionService"]
+__all__ = [
+    "CompletionContext",
+    "CompletionProofReader",
+    "LegacyV1CompletionAssessor",
+    "TaskCompletionService",
+]
 
 if TYPE_CHECKING:
     from ads_booster.agent.core.ports import SemanticAssessor
@@ -43,6 +48,49 @@ class CompletionProofError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class LegacyV1CompletionAssessor:
+    """Preserve the pre-task-completion stop contract for v1 response runs.
+
+    v1 providers do not return a semantic completion judgment.  The host-created
+    ``candidate:`` identity is the compatibility marker; response obligations may
+    keep the old stop behavior, while artifact/effect obligations still require
+    their normal owner evidence in ``CompletionAttempt``.
+    """
+
+    assessment_identity: str = "legacy-v1-stop-compatibility"
+
+    def assess(self, request: SemanticAssessmentRequest) -> SemanticAssessmentResult:
+        legacy_candidate = request.candidate.candidate_id.startswith("candidate:")
+        obligations = tuple(
+            ObligationAssessment(
+                obligation_id=item.obligation_id,
+                status="satisfied"
+                if legacy_candidate and item.kind == "response"
+                else "unsatisfied",
+                mechanism="legacy_v1_stop_compatibility",
+                reason=(
+                    "Legacy v1 stop candidates retain the response-only completion contract"
+                    if legacy_candidate and item.kind == "response"
+                    else "Legacy v1 compatibility does not certify artifact or effect obligations"
+                ),
+            )
+            for item in request.obligations
+        )
+        uncovered = tuple(
+            item.description
+            for item, assessment in zip(request.obligations, obligations, strict=True)
+            if item.required and assessment.status != "satisfied"
+        )
+        return SemanticAssessmentResult(
+            request_sha256=contract_sha256(request),
+            candidate_sha256=contract_sha256(request.candidate),
+            obligations=obligations,
+            uncovered_requirements=uncovered,
+            requested_deliverables_supported=legacy_candidate and not uncovered,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TaskCompletionService:
     repository: SqliteAgentRunRepository
     assessor: SemanticAssessor | None
@@ -58,6 +106,10 @@ class TaskCompletionService:
         try:
             evidence = self._evidence(candidate, context.run)
             deterministic = assess_deterministic_obligations(task.obligations, candidate)
+            if isinstance(
+                self.assessor, LegacyV1CompletionAssessor
+            ) and not candidate.candidate_id.startswith("candidate:"):
+                return attempt.finish("verification_unavailable")
             failed_ids = {
                 item.obligation_id
                 for item in deterministic.assessments

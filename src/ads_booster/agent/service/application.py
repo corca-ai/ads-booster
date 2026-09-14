@@ -55,7 +55,11 @@ from ads_booster.agent.service.sqlite_repository import (
     SqliteAgentRunRepository,
 )
 from ads_booster.agent.service.task_admission import completion_revision_fence, task_at_boundary
-from ads_booster.agent.service.task_completion import CompletionContext, TaskCompletionService
+from ads_booster.agent.service.task_completion import (
+    CompletionContext,
+    LegacyV1CompletionAssessor,
+    TaskCompletionService,
+)
 from ads_booster.agent.service.task_drive import (
     DecisionProjectionContext,
     plan_task,
@@ -174,6 +178,11 @@ class MarketingAgentService:
         )
         if missing:
             raise ValueError("ready_tool_adapter_missing")
+        if self.completion is None:
+            # Keep the public constructor compatible with v1 providers.  Callers
+            # may still explicitly disable completion after construction; the
+            # assessment path then retains its fail-closed behavior.
+            self.completion = TaskCompletionService(self.repository, LegacyV1CompletionAssessor())
 
     def install_tool_catalog(
         self,
