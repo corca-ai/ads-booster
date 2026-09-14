@@ -336,3 +336,50 @@ def test_restart_rejects_incomplete_snapshot_manifest_before_asset_ingest(
             database.execute("SELECT COUNT(*) FROM creative_assets").fetchone(),
         )[0]
     assert asset_count == 0
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_completion_notification_recovers_without_regenerating(tmp_path: Path, fail: bool) -> None:
+    provider = FakeProvider(fail=fail)
+    tool = setup(tmp_path, provider)
+    events: list[str] = []
+
+    def offline(_tenant: str, _run: str, _event: str) -> None:
+        message = "synthetic notification unavailable"
+        raise RuntimeError(message)
+
+    tool.on_completed = offline
+    with pytest.raises(RuntimeError, match="synthetic notification unavailable"):
+        _ = tool.work_once()
+
+    def online(_tenant: str, _run: str, event: str) -> None:
+        events.append(event)
+
+    recovered = replace(tool, on_completed=online)
+    _ = recovered.work_once()
+    assert len(events) == 1
+    _ = recovered.work_once()
+    assert len(events) == 1
+    assert provider.calls == 1
+
+
+def test_old_uncertain_job_gets_notification_after_upgrade_without_generation(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(fail=True)
+    tool = setup(tmp_path, provider)
+    assert tool.work_once()["state"] == "uncertain"
+    with closing(tool._db()) as db, db:
+        _ = db.execute("ALTER TABLE trace_post_jobs DROP COLUMN notified")
+    events: list[str] = []
+
+    def completed(_tenant: str, _run: str, event: str) -> None:
+        events.append(event)
+
+    upgraded = replace(tool, on_completed=completed)
+    assert upgraded.work_once()["state"] == "uncertain"
+    assert len(events) == 1
+    assert "uncertain" in events[0]
+    assert upgraded.work_once()["state"] == "uncertain"
+    assert len(events) == 1
+    assert provider.calls == 1

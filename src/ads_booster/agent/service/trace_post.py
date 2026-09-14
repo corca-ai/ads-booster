@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import sqlite3
 import subprocess
@@ -180,6 +181,14 @@ class TracePostTool:
                 stage TEXT NOT NULL,result TEXT,provider_result TEXT,
                 settled INTEGER NOT NULL DEFAULT 0)"""
             )
+            columns = cast(
+                "list[tuple[str]]",
+                db.execute("SELECT name FROM pragma_table_info('trace_post_jobs')").fetchall(),
+            )
+            if "notified" not in {row[0] for row in columns}:
+                _ = db.execute(
+                    "ALTER TABLE trace_post_jobs ADD COLUMN notified INTEGER NOT NULL DEFAULT 0"
+                )
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(self.service.repository.database_path, timeout=5)
@@ -301,6 +310,7 @@ class TracePostTool:
         return workspace.resolve(strict=True)
 
     def work_once(self) -> JsonObject:
+        self._recover_notifications()
         with self._worker_lock, closing(self._db()) as db:
             rows = cast(
                 "list[tuple[str,str,str | None,str | None]]",
@@ -332,6 +342,7 @@ class TracePostTool:
                 }
             job = _Job.parse(selected[0])
             self._active_operations.add(job.operation_id)
+
         try:
             return self._work_once(selected)
         finally:
@@ -452,6 +463,7 @@ class TracePostTool:
         _ = self.service.mark_deferred_uncertain(
             tenant, job.invocation.run_id, operation_id=job.operation_id, now=self.clock()
         )
+        self._publish_result(job, uncertain=True)
         return {"state": "uncertain", "operation_id": job.operation_id}
 
     def _ingest(
@@ -684,11 +696,39 @@ class TracePostTool:
         )
         with closing(self._db()) as db, db:
             _ = db.execute(
-                "UPDATE trace_post_jobs SET settled=1 WHERE operation=?", (job.operation_id,)
+                "UPDATE trace_post_jobs SET settled=1,notified=0 WHERE operation=?",
+                (job.operation_id,),
             )
-        if self.on_completed is not None:
-            self.on_completed(tenant, job.invocation.run_id, f"trace-post:{job.operation_id}")
+        self._publish_result(job, uncertain=False)
         return {"state": run.state.value, "operation_id": job.operation_id}
+
+    def _publish_result(self, job: _Job, *, uncertain: bool) -> None:
+        if self.on_completed is None or job.invocation.tenant_id is None:
+            return
+        prefix = "trace-post-uncertain" if uncertain else "trace-post"
+        self.on_completed(
+            job.invocation.tenant_id, job.invocation.run_id, f"{prefix}:{job.operation_id}"
+        )
+        with closing(self._db()) as db, db:
+            _ = db.execute(
+                "UPDATE trace_post_jobs SET notified=1 WHERE operation=?", (job.operation_id,)
+            )
+
+    def _recover_notifications(self) -> None:
+        if self.on_completed is None:
+            return
+        with closing(self._db()) as db:
+            rows = cast(
+                "list[tuple[str,str]]",
+                db.execute(
+                    "SELECT data,stage FROM trace_post_jobs WHERE notified=0 AND (settled=1 OR stage='uncertain') LIMIT 8"
+                ).fetchall(),
+            )
+        for data, stage in rows:
+            try:
+                self._publish_result(_Job.parse(data), uncertain=stage == "uncertain")
+            except Exception:  # noqa: BLE001 - durable notification retries never replay the provider.
+                logging.getLogger(__name__).warning("trace_post_notification_pending")
 
 
 def _instruction(job: _Job, request: TracePostInput, model: str) -> str:

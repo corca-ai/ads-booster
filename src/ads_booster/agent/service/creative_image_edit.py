@@ -363,6 +363,12 @@ uncertainty_attempts INTEGER NOT NULL DEFAULT 0"""
             operation_id=job.operation_id,
             now=self.clock(),
         )
+        if self.on_completed is not None:
+            self.on_completed(
+                job.source.scope.workspace_id,
+                job.invocation.run_id,
+                f"image-edit-uncertain:{job.operation_id}",
+            )
         with closing(self._db()) as db, db:
             _ = db.execute(
                 """UPDATE image_edit_jobs SET uncertain_projected=1 WHERE operation=?
