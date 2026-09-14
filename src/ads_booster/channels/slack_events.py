@@ -52,6 +52,7 @@ from ads_booster.channels.slack_conversations import (
 )
 from ads_booster.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.channels.slack_delivery import delivery_command
+from ads_booster.channels.slack_failure_diagnostics import failure_diagnostic
 from ads_booster.channels.slack_image_review import bind_files
 from ads_booster.channels.slack_images import SlackImageDelivery
 from ads_booster.channels.slack_learning_questions import (
@@ -627,10 +628,11 @@ class SlackEvents:
                 else "unclassified"
             )
             _LOGGER.warning(
-                "slack_event_failed message=%s action=%s code=%s",
+                "slack_event_failed message=%s action=%s code=%s diagnostic=%s",
                 message.message_id,
                 plan.action if plan else "planning",
                 code,
+                failure_diagnostic(exc),
             )
             self.store.finish(
                 message,

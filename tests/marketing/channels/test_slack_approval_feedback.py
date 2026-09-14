@@ -113,7 +113,10 @@ def test_unknown_failure_after_approval_does_not_leak_or_retry(
 
     def fail_after_commit(stage: str) -> None:
         if stage == "approval_committed":
-            raise RuntimeError(secret)
+            try:
+                raise ValueError(secret)  # noqa: TRY301 - fixture for chained secret-bearing failures.
+            except ValueError as cause:
+                raise RuntimeError(secret) from cause
 
     service.fault_hook = fail_after_commit
     receive(
@@ -129,6 +132,9 @@ def test_unknown_failure_after_approval_does_not_leak_or_retry(
     assert "상태" not in str(messages[-1]["text"])
     assert secret not in str(messages) + caplog.text
     assert "code=unclassified" in caplog.text
+    assert "RuntimeError@ads_booster." in caplog.text
+    assert " <- ValueError@external" in caplog.text
+    assert "fail_after_commit" not in caplog.text  # Non-product frames stay private.
     after = service.repository.records("team", run.run_id)
     assert sum(r.kind is AgentRecordKind.APPROVAL for r in after) == 1
     assert not any(r.kind is AgentRecordKind.RECEIPT for r in after)
