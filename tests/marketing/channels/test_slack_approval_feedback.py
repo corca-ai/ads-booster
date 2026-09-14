@@ -37,10 +37,7 @@ def test_review_input_preserves_pending_invocation(tmp_path: Path, text: str) ->
     assert "검토" in str(messages[-1]["text"])
     assert service.repository.list_runs("team")[0] == before
     assert service.repository.records("team", before.run_id) == records
-    # Explanation is not delivered review evidence and cannot authorize production.
-    receive(owner, type="message", text="이대로 만들어줘", ts="100.003", thread_ts="100.001")
-    assert owner.work_once(now=NOW)
-    assert service.repository.list_runs("team")[0] == before
+    # Help itself adds no review evidence; the initial readable proposal is separate.
 
 
 def test_review_without_pending_work_and_slash_invalid_input(tmp_path: Path) -> None:

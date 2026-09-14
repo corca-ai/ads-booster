@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 
 
 class ImageReasoning:
+    def __init__(self, *, authorize: bool = False) -> None:
+        self.authorize: bool = authorize
+
     def plan(self, request: ReasoningRequest) -> ReasoningResult:
         available = any(
             d.capability_id == CAPABILITY for d in request.capability_snapshot.descriptors
@@ -59,6 +62,7 @@ class ImageReasoning:
                 tool_input={"prompt": "파란 배경의 미니멀한 앱 광고 이미지"},
                 expected_outcome="Draft image",
                 reasoning_summary="이미지 생성 요청을 검토해 주세요.",
+                authorization_message=request.current_user_message if self.authorize else None,
             )
         )
         return _reasoning_result(request, decision)
@@ -135,17 +139,28 @@ def configured(
     )
 
 
-def test_image_request_approval_png_upload_thread_and_restart_deduplication(tmp_path: Path) -> None:
+@pytest.mark.parametrize("direct_request", [False, True])
+def test_image_request_approval_png_upload_thread_and_restart_deduplication(
+    tmp_path: Path,
+    direct_request: bool,
+) -> None:
     owner, messages, requests, commands = configured(tmp_path)
+    owner.commands.application.service.reasoning = ImageReasoning(authorize=direct_request)
     receive(owner, text="<@UBOT> 이미지 생성해줘")
     assert owner.work_once(now=NOW)
-    assert not commands
-    assert not requests
-    assert (
-        owner.commands.application.service.repository.list_runs("team")[0].state
-        is AgentRunState.AWAITING_APPROVAL
-    )
-    approve(owner, str(messages[-1]["text"]).split("\n")[1])
+    if not direct_request:
+        assert not commands
+        assert not requests
+        assert (
+            owner.commands.application.service.repository.list_runs("team")[0].state
+            is AgentRunState.AWAITING_APPROVAL
+        )
+        approve(
+            owner,
+            next(
+                line for line in str(messages[-1]["text"]).splitlines() if line.startswith("승인 ")
+            ),
+        )
     assert len(commands) == 1
     assert len(requests) == 3
     data = requests[-1].data
@@ -168,7 +183,10 @@ def test_invalid_output_or_uncertain_upload_is_not_retried(tmp_path: Path, failu
     owner, messages, requests, commands = configured(tmp_path, **{failure: True})
     receive(owner)
     assert owner.work_once(now=NOW)
-    approve(owner, str(messages[-1]["text"]).split("\n")[1])
+    approve(
+        owner,
+        next(line for line in str(messages[-1]["text"]).splitlines() if line.startswith("승인 ")),
+    )
     count = len(requests)
     assert count == {"invalid": 0, "lost": 3, "bad_host": 1}[failure]
     owner.recover()

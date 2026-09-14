@@ -9,10 +9,6 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import AgentGoal, contract_sha256
-from ads_booster.contracts.models import ContractModel
-from ads_booster.knowledge.contract_types import ConversationEventKind
-from ads_booster.knowledge.source_contracts import ConversationEvent
 from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
     KnowledgeIngressSink,
@@ -24,6 +20,10 @@ from ads_booster.channels.slack_learning_questions import (
     SlackLearningQuestionIntent,
     learning_question_intent,
 )
+from ads_booster.contracts.agent_run import AgentGoal, contract_sha256
+from ads_booster.contracts.models import ContractModel
+from ads_booster.knowledge.contract_types import ConversationEventKind
+from ads_booster.knowledge.source_contracts import ConversationEvent
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -53,6 +53,8 @@ class Message(ContractModel):
     learning_question_intent: SlackLearningQuestionIntent | None = None
     reopens: bool = False
     attachments: tuple[SlackAttachment, ...] = ()
+    # Proposal known delivered before this message was admitted, never inferred later.
+    reviewed_invocation_sha256: str = ""
 
 
 class MessagePlan(ContractModel):
@@ -165,7 +167,15 @@ class SlackConversationStore:
                 ).fetchone()
             )
             if row is not None:
-                if Message.model_validate_json(row[0]) != message:
+                previous = Message.model_validate_json(row[0])
+                # Admission evidence is immutable across webhook retries. A later
+                # delivery or completed Run must not recompute the original grant.
+                replay = message.model_copy(
+                    update={
+                        "reviewed_invocation_sha256": previous.reviewed_invocation_sha256,
+                    }
+                )
+                if previous != replay:
                     raise ValueError("slack_message_idempotency_conflict")
                 return
             count = TypeAdapter(int).validate_python(
