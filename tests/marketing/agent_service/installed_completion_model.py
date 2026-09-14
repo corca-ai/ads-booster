@@ -80,17 +80,25 @@ class RecordingRunner:
     root: Path
     role: str
 
+    def _record(self, index: int, payload: JsonObject) -> None:
+        write_json(
+            self.root / f"{self.role}-{index}.json",
+            {
+                **payload,
+                "pid": os.getpid(),
+                "role": self.role,
+                "model": self.codex.model,
+            },
+        )
+
     def run_marketing_judgment_job(
         self, prompt: str, schema: JsonObject, *, workspace: Path, timeout_seconds: float
     ) -> JsonObject:
         index = len(tuple(self.root.glob(f"{self.role}-*.json"))) + 1
         started = monotonic()
-        write_json(
-            self.root / f"{self.role}-{index}.json",
+        self._record(
+            index,
             {
-                "pid": os.getpid(),
-                "role": self.role,
-                "model": self.codex.model,
                 "outcome": "started",
                 "prompt": prompt,
                 "schema": schema,
@@ -101,12 +109,9 @@ class RecordingRunner:
                 prompt, schema, workspace=workspace, timeout_seconds=timeout_seconds
             )
         except (RuntimeError, OSError, ValueError) as error:
-            write_json(
-                self.root / f"{self.role}-{index}.json",
+            self._record(
+                index,
                 {
-                    "pid": os.getpid(),
-                    "role": self.role,
-                    "model": self.codex.model,
                     "outcome": "error",
                     "error_type": type(error).__name__,
                     "elapsed_seconds": monotonic() - started,
@@ -115,12 +120,9 @@ class RecordingRunner:
                 },
             )
             raise
-        write_json(
-            self.root / f"{self.role}-{index}.json",
+        self._record(
+            index,
             {
-                "pid": os.getpid(),
-                "role": self.role,
-                "model": self.codex.model,
                 "outcome": "completed",
                 "elapsed_seconds": monotonic() - started,
                 "prompt": prompt,

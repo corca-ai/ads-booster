@@ -45,6 +45,7 @@ from tests.marketing.agent_service.completion_fixtures import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from ads_booster.transport.json_types import JsonObject
@@ -321,28 +322,15 @@ def test_create_retry_drives_run_after_reasoning_failure(tmp_path: Path) -> None
 def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Path) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
 
-    first = MarketingAgentService(
-        repository=SqliteAgentRunRepository(database),
-        registry=ToolRegistry((descriptor,)),
-        reasoning=EffectThenStopReasoning(),
-        tools={"creative.image.edit": adapter},
-        runtime_store=SqliteSessionStore(database),
-    )
+    first = _ready_image_effect_service(database, adapter)
 
     waiting = first.create(_request(), now=NOW)
 
     assert waiting.state is AgentRunState.AWAITING_APPROVAL
     assert adapter.inputs == []
 
-    restarted = MarketingAgentService(
-        repository=SqliteAgentRunRepository(database),
-        registry=ToolRegistry((descriptor,)),
-        reasoning=EffectThenStopReasoning(),
-        tools={"creative.image.edit": adapter},
-        runtime_store=SqliteSessionStore(database),
-    )
+    restarted = _ready_image_effect_service(database, adapter)
     with pytest.raises(ValueError, match="agent_approval_invocation_changed"):
         _ = restarted.decide_approval(
             "trace",
@@ -385,14 +373,7 @@ def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Pat
 def test_rejected_effect_approval_never_calls_adapter(tmp_path: Path) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
-    service = MarketingAgentService(
-        repository=SqliteAgentRunRepository(database),
-        registry=ToolRegistry((descriptor,)),
-        reasoning=EffectThenStopReasoning(),
-        tools={"creative.image.edit": adapter},
-        runtime_store=SqliteSessionStore(database),
-    )
+    service = _ready_image_effect_service(database, adapter)
     waiting = service.create(_request(), now=NOW)
 
     stopped = service.decide_approval(
@@ -489,21 +470,13 @@ def test_restart_resumes_a_committed_exact_approval_without_second_decision(
 ) -> None:
     database = tmp_path / "agent-service.sqlite3"
     adapter = ResearchAdapter()
-    descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
 
     def crash_after_approval(point: str) -> None:
         if point == "approval_committed":
             message = "crash:approval_committed"
             raise RuntimeError(message)
 
-    first = MarketingAgentService(
-        repository=SqliteAgentRunRepository(database),
-        registry=ToolRegistry((descriptor,)),
-        reasoning=EffectThenStopReasoning(),
-        tools={"creative.image.edit": adapter},
-        runtime_store=SqliteSessionStore(database),
-        fault_hook=crash_after_approval,
-    )
+    first = _ready_image_effect_service(database, adapter, fault_hook=crash_after_approval)
     waiting = first.create(_request(), now=NOW)
     with pytest.raises(RuntimeError, match="crash:approval_committed"):
         _ = first.decide_approval(
@@ -515,13 +488,7 @@ def test_restart_resumes_a_committed_exact_approval_without_second_decision(
             expires_at=NOW + timedelta(minutes=5),
         )
 
-    restarted = MarketingAgentService(
-        repository=SqliteAgentRunRepository(database),
-        registry=ToolRegistry((descriptor,)),
-        reasoning=EffectThenStopReasoning(),
-        tools={"creative.image.edit": adapter},
-        runtime_store=SqliteSessionStore(database),
-    )
+    restarted = _ready_image_effect_service(database, adapter)
     completed = restarted.drive("trace", waiting.run_id, now=NOW + timedelta(seconds=2))
 
     assert completed.state is AgentRunState.COMPLETED
@@ -606,6 +573,25 @@ def _service(
         reasoning=reasoning,
         tools={"research.web": adapter},
         runtime_store=SqliteSessionStore(database),
+    )
+
+
+def _ready_image_effect_service(
+    database: Path,
+    adapter: ResearchAdapter,
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> MarketingAgentService:
+    effect_descriptor = _descriptor(
+        "creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True
+    )
+    return MarketingAgentService(
+        repository=SqliteAgentRunRepository(database),
+        registry=ToolRegistry((effect_descriptor,)),
+        reasoning=EffectThenStopReasoning(),
+        tools={"creative.image.edit": adapter},
+        runtime_store=SqliteSessionStore(database),
+        fault_hook=fault_hook,
     )
 
 

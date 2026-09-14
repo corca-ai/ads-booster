@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from sqlite3 import Connection
 
+    from ads_booster.agent.service.application import CreateAgentRunRequest
     from ads_booster.contracts.agent_run import AgentRun, AgentStep
 
 
@@ -54,22 +55,69 @@ def _queue_row(queue: DriveWorkQueue) -> tuple[int, str, str | None, str | None]
         )
 
 
-def test_ownership_scope_keeps_multiple_transitions_claimed_until_slice_exit(
-    tmp_path: Path,
-) -> None:
-    repository = SqliteAgentRunRepository(tmp_path / "slice.sqlite3")
-    owner = DriveWorkQueue(repository.database_path, owner_id="worker-a")
-    contender = DriveWorkQueue(repository.database_path, owner_id="worker-b")
-    run = repository.create(make_run())
-    origin = DriveOrigin(
+def _http_origin(run: AgentRun) -> DriveOrigin:
+    return DriveOrigin(
         tenant_id=run.tenant_id,
         run_id=run.run_id,
         channel="http",
         principal_id="member",
         event_id="event",
     )
-    owner.bind(origin)
-    task = seed_task(run)
+
+
+def _bound_task(
+    repository: SqliteAgentRunRepository, queue: DriveWorkQueue
+) -> tuple[AgentRun, TaskProjection, DriveOrigin]:
+    run = repository.create(make_run())
+    origin = _http_origin(run)
+    queue.bind(origin)
+    return run, seed_task(run), origin
+
+
+def _admit_running(
+    repository: SqliteAgentRunRepository, queue: DriveWorkQueue
+) -> tuple[AgentRun, TaskProjection, DriveOrigin]:
+    run, task, origin = _bound_task(repository, queue)
+    admitted = repository.append_step(
+        run,
+        step(),
+        state=AgentRunState.RUNNING,
+        expected_revision=run.revision,
+        records=task_records(run, task, NOW),
+        admission=queue.transition(run, task, NOW),
+    )
+    return admitted, task, origin
+
+
+def _terminal_task(task: TaskProjection) -> TaskProjection:
+    return TaskProjection(
+        task.spec,
+        task.checkpoint.model_copy(update={"disposition": "satisfied", "next_action": "done"}),
+    )
+
+
+def _enqueue_bounded_http_create(jobs: AgentJobs, request: CreateAgentRunRequest) -> None:
+    _ = jobs.enqueue(
+        "trace",
+        "member",
+        WebJob(
+            job_id="web",
+            run_id=request.run_id,
+            action="create",
+            goal=request.goal,
+            budget=request.budget.model_copy(update={"max_tool_calls": 12}),
+        ),
+        now=APP_NOW,
+    )
+
+
+def test_ownership_scope_keeps_multiple_transitions_claimed_until_slice_exit(
+    tmp_path: Path,
+) -> None:
+    repository = SqliteAgentRunRepository(tmp_path / "slice.sqlite3")
+    owner = DriveWorkQueue(repository.database_path, owner_id="worker-a")
+    contender = DriveWorkQueue(repository.database_path, owner_id="worker-b")
+    run, task, origin = _bound_task(repository, owner)
 
     with owner.ownership(origin=origin, now=NOW):
         first = repository.append_step(
@@ -118,24 +166,7 @@ def test_recovered_pending_claim_rejects_stale_in_slice_transition(tmp_path: Pat
         lease_duration=timedelta(minutes=5),
     )
     contender = DriveWorkQueue(repository.database_path, owner_id="worker-b")
-    run = repository.create(make_run())
-    origin = DriveOrigin(
-        tenant_id=run.tenant_id,
-        run_id=run.run_id,
-        channel="http",
-        principal_id="member",
-        event_id="event",
-    )
-    owner.bind(origin)
-    task = seed_task(run)
-    admitted = repository.append_step(
-        run,
-        step(),
-        state=AgentRunState.RUNNING,
-        expected_revision=run.revision,
-        records=task_records(run, task, NOW),
-        admission=owner.transition(run, task, NOW),
-    )
+    admitted, task, _ = _admit_running(repository, owner)
     claim = owner.claim("http", NOW)
     assert claim is not None
 
@@ -150,24 +181,12 @@ def test_terminal_transition_releases_owned_slice_to_notification(tmp_path: Path
     repository = SqliteAgentRunRepository(tmp_path / "terminal.sqlite3")
     owner = DriveWorkQueue(repository.database_path, owner_id="worker-a")
     notifier = DriveWorkQueue(repository.database_path, owner_id="worker-b")
-    run = repository.create(make_run())
-    origin = DriveOrigin(
-        tenant_id=run.tenant_id,
-        run_id=run.run_id,
-        channel="http",
-        principal_id="member",
-        event_id="event",
-    )
-    owner.bind(origin)
+    run, task, origin = _bound_task(repository, owner)
     with owner.connect() as db:
         _ = db.execute("""CREATE TABLE agent_web_jobs (
             tenant TEXT NOT NULL, job_id TEXT NOT NULL, request_json TEXT NOT NULL,
             state TEXT NOT NULL)""")
-    task = seed_task(run)
-    terminal = TaskProjection(
-        task.spec,
-        task.checkpoint.model_copy(update={"disposition": "satisfied", "next_action": "done"}),
-    )
+    terminal = _terminal_task(task)
 
     with owner.ownership(origin=origin, now=NOW):
         completed = repository.append_step(
@@ -195,24 +214,7 @@ def test_queue_wake_is_atomic_with_checkpoint_and_single_claim(tmp_path: Path) -
         owner_id="worker-a",
         lease_duration=timedelta(minutes=5),
     )
-    run = repository.create(make_run())
-    origin = DriveOrigin(
-        tenant_id=run.tenant_id,
-        run_id=run.run_id,
-        channel="http",
-        principal_id="member",
-        event_id="event",
-    )
-    queue.bind(origin)
-    task = seed_task(run)
-    _ = repository.append_step(
-        run,
-        step(),
-        state=AgentRunState.RUNNING,
-        expected_revision=1,
-        records=task_records(run, task, NOW),
-        admission=queue.transition(run, task, NOW),
-    )
+    _, _, origin = _admit_running(repository, queue)
     claimed = queue.claim("http", NOW)
     assert claimed is not None
     assert claimed.origin == origin
@@ -242,25 +244,7 @@ def test_live_claim_is_not_recovered_by_overlapping_process(tmp_path: Path) -> N
         owner_id="worker-b",
         lease_duration=timedelta(minutes=5),
     )
-    run = repository.create(make_run())
-    owner.bind(
-        DriveOrigin(
-            tenant_id=run.tenant_id,
-            run_id=run.run_id,
-            channel="http",
-            principal_id="member",
-            event_id="event",
-        )
-    )
-    task = seed_task(run)
-    _ = repository.append_step(
-        run,
-        step(),
-        state=AgentRunState.RUNNING,
-        expected_revision=1,
-        records=task_records(run, task, NOW),
-        admission=owner.transition(run, task, NOW),
-    )
+    admitted, task, _ = _admit_running(repository, owner)
 
     first = owner.claim("http", NOW)
     assert first is not None
@@ -270,7 +254,7 @@ def test_live_claim_is_not_recovered_by_overlapping_process(tmp_path: Path) -> N
     second = contender.claim("http", NOW + timedelta(minutes=6))
     assert second is not None
     assert second.owner_id == "worker-b"
-    current = repository.get(run.tenant_id, run.run_id)
+    current = repository.get(admitted.tenant_id, admitted.run_id)
     assert current is not None
     with owner.connect() as db, pytest.raises(DriveClaimLostError, match="claim_lost"):
         owner.transition(current, task, NOW + timedelta(minutes=6))(db)
@@ -366,18 +350,7 @@ def test_http_revoked_actor_cannot_resume_tools(tmp_path: Path) -> None:
         drive_authorizer=lambda identity: False,
     )
     request = run_request()
-    _ = jobs.enqueue(
-        "trace",
-        "member",
-        WebJob(
-            job_id="web",
-            run_id=request.run_id,
-            action="create",
-            goal=request.goal,
-            budget=request.budget.model_copy(update={"max_tool_calls": 12}),
-        ),
-        now=APP_NOW,
-    )
+    _enqueue_bounded_http_create(jobs, request)
     assert jobs.work_once(now=APP_NOW)
     calls = len(adapter.inputs)
     assert jobs.work_once(now=APP_NOW)
@@ -393,18 +366,7 @@ def test_missing_current_http_authority_records_explicit_block(tmp_path: Path) -
     adapter = FreshResearch()
     jobs = AgentJobs(build_service(database, Steps(), research_adapter=adapter))
     request = run_request()
-    _ = jobs.enqueue(
-        "trace",
-        "member",
-        WebJob(
-            job_id="web",
-            run_id=request.run_id,
-            action="create",
-            goal=request.goal,
-            budget=request.budget.model_copy(update={"max_tool_calls": 12}),
-        ),
-        now=APP_NOW,
-    )
+    _enqueue_bounded_http_create(jobs, request)
     assert jobs.work_once(now=APP_NOW)
     calls = len(adapter.inputs)
     assert jobs.work_once(now=APP_NOW)
@@ -415,17 +377,7 @@ def test_missing_current_http_authority_records_explicit_block(tmp_path: Path) -
 def test_failed_transaction_leaves_no_runnable_work(tmp_path: Path) -> None:
     repository = SqliteAgentRunRepository(tmp_path / "rollback.sqlite3")
     queue = DriveWorkQueue(repository.database_path)
-    run = repository.create(make_run())
-    queue.bind(
-        DriveOrigin(
-            tenant_id=run.tenant_id,
-            run_id=run.run_id,
-            channel="http",
-            principal_id="member",
-            event_id="event",
-        )
-    )
-    task = seed_task(run)
+    run, task, _ = _bound_task(repository, queue)
     with pytest.raises(ValueError, match="revision_conflict"):
         _ = repository.append_step(
             run,
@@ -441,17 +393,7 @@ def test_failed_transaction_leaves_no_runnable_work(tmp_path: Path) -> None:
 def test_checkpoint_and_wake_rollback_after_queue_write(tmp_path: Path) -> None:
     repository = SqliteAgentRunRepository(tmp_path / "fault.sqlite3")
     queue = DriveWorkQueue(repository.database_path)
-    run = repository.create(make_run())
-    queue.bind(
-        DriveOrigin(
-            tenant_id=run.tenant_id,
-            run_id=run.run_id,
-            channel="http",
-            principal_id="member",
-            event_id="event",
-        )
-    )
-    task = seed_task(run)
+    run, task, _ = _bound_task(repository, queue)
 
     def fail(connection: Connection) -> None:
         queue.transition(run, task, NOW)(connection)
@@ -497,10 +439,7 @@ def test_pending_admitted_http_input_fences_terminal_commit(tmp_path: Path) -> N
         now=NOW,
     )
     task = seed_task(run)
-    terminal = TaskProjection(
-        task.spec,
-        task.checkpoint.model_copy(update={"disposition": "satisfied", "next_action": "done"}),
-    )
+    terminal = _terminal_task(task)
     with pytest.raises(DriveAdmissionConflict, match="pending_admission"):
         _ = service.repository.append_step(
             run,

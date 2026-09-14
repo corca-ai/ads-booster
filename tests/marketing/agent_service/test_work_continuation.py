@@ -340,6 +340,23 @@ def test_pending_inbox_correction_vetoes_terminal_transaction(tmp_path: Path) ->
     assert task.checkpoint.candidate.task_revision == 2
 
 
+def _supersede_original_obligations(
+    result: SemanticAssessmentResult, event_id: str
+) -> SemanticAssessmentResult:
+    return result.model_copy(
+        update={
+            "obligations": tuple(
+                item.model_copy(
+                    update={"status": "superseded", "superseded_by_event_id": event_id}
+                )
+                if item.obligation_id.startswith("original-")
+                else item
+                for item in result.obligations
+            )
+        }
+    )
+
+
 class OneVariantAssessor(ScriptedAssessor):
     @override
     def assess(self, request: SemanticAssessmentRequest) -> SemanticAssessmentResult:
@@ -347,18 +364,7 @@ class OneVariantAssessor(ScriptedAssessor):
         assert request.admitted_instructions[-1].text == "Only one blue variant"
         assert request.candidate.answer == "One blue variant"
         result = super().assess(request)
-        return result.model_copy(
-            update={
-                "obligations": tuple(
-                    item.model_copy(
-                        update={"status": "superseded", "superseded_by_event_id": "narrow-one"}
-                    )
-                    if item.obligation_id.startswith("original-")
-                    else item
-                    for item in result.obligations
-                )
-            }
-        )
+        return _supersede_original_obligations(result, "narrow-one")
 
 
 def test_active_narrowing_supersedes_response_count_without_refilling(tmp_path: Path) -> None:
@@ -447,18 +453,7 @@ class JapaneseLineageAssessor(ScriptedAssessor):
         )
         assert request.candidate.answer == "短い回答"
         result = super().assess(request)
-        return result.model_copy(
-            update={
-                "obligations": tuple(
-                    item.model_copy(
-                        update={"status": "superseded", "superseded_by_event_id": "japanese"}
-                    )
-                    if item.obligation_id.startswith("original-")
-                    else item
-                    for item in result.obligations
-                )
-            }
-        )
+        return _supersede_original_obligations(result, "japanese")
 
 
 def test_admitted_language_correction_survives_later_compacted_instruction(

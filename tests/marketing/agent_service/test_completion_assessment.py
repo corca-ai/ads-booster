@@ -13,17 +13,34 @@ from ads_booster.contracts.agent_run import (
     contract_sha256,
 )
 from ads_booster.contracts.task_progress import ExactResponseCheck, TaskProposal
-from tests.marketing.agent_service.completion_fixtures import ExactTipAssessor, response_case
+from tests.marketing.agent_service.completion_fixtures import (
+    CompletionCase,
+    ExactTipAssessor,
+    response_case,
+)
 from tests.marketing.agent_service.test_task_progress import NOW, step
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.contracts.task_completion import (
+        CompletionAssessment,
         SemanticAssessmentRequest,
         SemanticAssessmentResult,
     )
     from ads_booster.contracts.task_progress import TaskObligation
+
+
+def _assess_exact_response(case: CompletionCase, expected: str) -> CompletionAssessment:
+    (source_obligation,) = case.task.obligations
+    obligation = source_obligation.model_copy(
+        update={"verification": ExactResponseCheck(expected=expected)}
+    )
+    task = case.task.model_copy(update={"obligations": (obligation,)})
+    checkpoint = case.checkpoint.model_copy(update={"spec_sha256": contract_sha256(task)})
+    return TaskCompletionService(case.repository, None).assess(
+        task, case.candidate, CompletionContext(case.run, checkpoint)
+    )
 
 
 def test_exact_response_is_assessed_without_tool_evidence(tmp_path: Path) -> None:
@@ -41,15 +58,7 @@ def test_exact_response_is_assessed_without_tool_evidence(tmp_path: Path) -> Non
 
 def test_host_exact_response_check_skips_semantic_assessor(tmp_path: Path) -> None:
     case = response_case(tmp_path / "state.db")
-    obligation = case.task.obligations[0].model_copy(
-        update={"verification": ExactResponseCheck(expected=case.candidate.answer)}
-    )
-    task = case.task.model_copy(update={"obligations": (obligation,)})
-    checkpoint = case.checkpoint.model_copy(update={"spec_sha256": contract_sha256(task)})
-
-    result = TaskCompletionService(case.repository, None).assess(
-        task, case.candidate, CompletionContext(case.run, checkpoint)
-    )
+    result = _assess_exact_response(case, case.candidate.answer)
 
     assert result.disposition == "satisfied"
     assert result.obligations[0].mechanism == "host_exact_response"
@@ -57,19 +66,12 @@ def test_host_exact_response_check_skips_semantic_assessor(tmp_path: Path) -> No
 
 def test_host_exact_response_mismatch_continues_without_semantic_assessor(tmp_path: Path) -> None:
     case = response_case(tmp_path / "state.db")
-    obligation = case.task.obligations[0].model_copy(
-        update={"verification": ExactResponseCheck(expected="Different exact answer")}
-    )
-    task = case.task.model_copy(update={"obligations": (obligation,)})
-    checkpoint = case.checkpoint.model_copy(update={"spec_sha256": contract_sha256(task)})
-
-    result = TaskCompletionService(case.repository, None).assess(
-        task, case.candidate, CompletionContext(case.run, checkpoint)
-    )
+    result = _assess_exact_response(case, "Different exact answer")
 
     assert result.disposition == "continue"
     assert result.obligations[0].status == "unsatisfied"
-    assert result.uncovered_requirements == (obligation.description,)
+    (source_obligation,) = case.task.obligations
+    assert result.uncovered_requirements == (source_obligation.description,)
 
 
 def test_actor_cannot_add_self_selected_deterministic_verification(tmp_path: Path) -> None:
