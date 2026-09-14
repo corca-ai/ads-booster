@@ -1,0 +1,661 @@
+{
+  "schemaVersion": 1,
+  "noseVersion": "nose 0.21.0",
+  "accepted": [],
+  "intentional": [
+    {
+      "fingerprint": "4ebc13cee66921cced5ed2936b05c2810d605f34b71e4f9e601dba12af1b3175",
+      "reason": "The drive, knowledge-ingress, Slack-conversation, and legacy-memory stores own separate SQLite connection lifecycles and intentionally use different 5-second and 1-second lock timeouts.",
+      "memberHashes": [
+        "09ef03594b7d57bb279c69b4d76e6817704cfe76b2f11750a2581f2351e588c7",
+        "09ef03594b7d57bb279c69b4d76e6817704cfe76b2f11750a2581f2351e588c7",
+        "1da8acf6e515350905e734c952162ccade5067d0c83fe3334aef2d7046063285",
+        "c624eaf7c18827a0fc09c982a364c001639f86464cceccc57c978d24beabbebc"
+      ]
+    },
+    {
+      "fingerprint": "c73b4f6af0d7fe35d4a5b931f90e0c09da8edf615a26c2f3572b3af8b04b7f35",
+      "reason": "Production composition and independent tests explicitly import the agent-run contracts they consume; sharing an import wrapper would hide dependencies and couple test fixtures to production.",
+      "memberHashes": [
+        "6e3da4177d7f308c4226ecf05d7769439caaec3a16f138de92b9811893b9b880",
+        "72c7af57fc1e454fac835c5d3c21b28d81e3f6d9b3a942f6327beb085ace1108",
+        "8327195639c084200223bf20034e99956a8c1b4646ef1f645261e67c8165ad9f",
+        "90bb30d651b5138b471d62dade3b5702a2190e0d549a3d6ee0fd25312b659152",
+        "aec7b3816e260f516c7ea2f86efb7821201cf922ab3425a7688063e1a50b420e"
+      ]
+    },
+    {
+      "fingerprint": "a5114c336ecd23d046d9f43b32bef0e520c3bd5fe5c77da24d82a956a55b9110",
+      "reason": "The application and run-limit test directly import the task-progress public API so the test remains an independent consumer rather than reusing production composition.",
+      "memberHashes": [
+        "a455f7b727dfcc5260028eeac24069fa5d96a47ce6bbc49f9606a1424fcbdee4",
+        "a455f7b727dfcc5260028eeac24069fa5d96a47ce6bbc49f9606a1424fcbdee4"
+      ]
+    },
+    {
+      "fingerprint": "3e8e379fec79c51c98912f7f9c1dfcc743480d8c7c735f126ef68c3a3da43841",
+      "reason": "Each wire-contract module locally declares its own future, typing, and Pydantic schema dependencies; these imports contain no shared runtime behavior.",
+      "memberHashes": [
+        "4dbea4d83fdd0e5bc09b45d5d380a7efd28d5341c88991cb73c4b38c98e9ab3d",
+        "4dbea4d83fdd0e5bc09b45d5d380a7efd28d5341c88991cb73c4b38c98e9ab3d",
+        "b7be7b6d1a37bf6021d034ea77cab6938ead1e9ab5fe5d26f2b6f4ba68f8fc58",
+        "b7be7b6d1a37bf6021d034ea77cab6938ead1e9ab5fe5d26f2b6f4ba68f8fc58"
+      ]
+    },
+    {
+      "fingerprint": "d7e26cde5073cbede731421adbc5860ce66d2b35f54d95664322c510e1634e5b",
+      "reason": "Learning admission and the task-result test independently import the exact agent-record contracts they consume, preserving the production-versus-test dependency boundary.",
+      "memberHashes": [
+        "6ebbdcb5c713ae8f0ed5572e9b57a9c06a8355a53d12387e0d6c065591111212",
+        "fac56b759956a41e9258a5f11f8c3e832206e2867612efb740e78a724cc6b20a"
+      ]
+    },
+    {
+      "fingerprint": "e0e251a82ebc4aed6824e1fa6152d3a688be8e211100d01fc715445e97bc2890",
+      "reason": "The HTTP ingress worker and its integration test intentionally import the same public ingress and OAuth owners directly while retaining different production and fixture dependencies.",
+      "memberHashes": [
+        "2feb77cedf7e0c0f29c43371740cce36ad4744d21623f989464e4f2b77de0a59",
+        "4d4d5284508a0e9d4cbe3d5b85f2deb3a0aecbe2d9610dc941803d6918fb14f0"
+      ]
+    },
+    {
+      "fingerprint": "71b40da1a6b1793505cc7bc979f4ec051f8ab6f5a446527e259a39545b9f1d5c",
+      "reason": "The knowledge service and retrieval test locally declare standard time and hashing dependencies so the test oracle does not depend on a production import barrel.",
+      "memberHashes": [
+        "3a5c35deb227c9fe5cc19b62ea76c805f485e448652eed7c068c5be99be5c86e",
+        "de0648c0a2ea72843fc54a9da53c7cb312e95ddd8a932e4e685d25eca0e70bcd"
+      ]
+    },
+    {
+      "fingerprint": "cc7f567bbb0300b48be5df33623e1ba1800b1b96f77a5c8347ff562360f730f3",
+      "reason": "ReasoningRequest v1 and v2 intentionally repeat shared wire fields because their JSON schemas and backward-compatibility surfaces must evolve independently.",
+      "memberHashes": [
+        "788272641d93f88845dc9697ce05c30bfba89746a5635217a24560eca172475d",
+        "84e8ff75426ebae65441ee4f06653e60fbd20e1ae50ff40cfc6f6dde2bb320b1"
+      ]
+    },
+    {
+      "fingerprint": "fb00f1e4575c6335fc0d17c27e24e36688814f3ba2faea31e4cb17e0906187ce",
+      "reason": "Reasoning and completion use the same Codex transport but own different prompts, schemas, decoders, workspace identities, and sanitized provider error contracts.",
+      "memberHashes": [
+        "39eb34faf07bcf490e83e5356dfb63cbb94c7d7de904ba1da2abf609a4c8fd53",
+        "50b2112d07c9005328ba7ca23a11338416ea60d72254134f260cc61ec8036245"
+      ]
+    },
+    {
+      "fingerprint": "815fd68e9443d54672646f44062683fd8e0b3648a818af540d440fed8da28b89",
+      "reason": "Reasoning, creative-work, and task-completion contract modules locally declare their schema dependencies rather than coupling independent wire owners through an import barrel.",
+      "memberHashes": [
+        "33cde349aa023f88e8fd95c5e60e07eefd8ceb0571b872bae9e8858678aa941e",
+        "c6216b141d97fb302ecb3acf6ee2bec513463ab2ddad28f0e611b351c8031394",
+        "d8ce48ba1d170170368a15e66605d892dc21b56d8939f63a900a2201c3027d3f"
+      ]
+    },
+    {
+      "fingerprint": "ea334da368e987ab4705ebc61df697b08e899371cf2113d12cdca989c7bcdb47",
+      "reason": "The agent HTTP API and memory HTTP API independently declare URL-parsing and Pydantic boundary dependencies for separate endpoint contracts.",
+      "memberHashes": [
+        "2fc36005a55cfa69c2a8224f399949062d77ac0a36c8f55a2557b175b7195398",
+        "db79b29f25bed81af848217899a782187b1442a5ff2c61536d3ffc7fe8fac50d"
+      ]
+    },
+    {
+      "fingerprint": "491214f0e3c6d3de3c102456ec21612ddea9a5ae93edbd923c36e221ed1a2f6c",
+      "reason": "Pydantic requires a validator hook on each concrete ReasoningResult version; both hooks already delegate the actual digest invariant to the single shared helper.",
+      "memberHashes": [
+        "3b91a573d23c25a7948768bf2e8aa4b776cf815701342216cd0764e2174baf12",
+        "3b91a573d23c25a7948768bf2e8aa4b776cf815701342216cd0764e2174baf12"
+      ]
+    },
+    {
+      "fingerprint": "d1baf344033500c616eb20a0353271bf6b06dbff1a4ca46512864ba9fa9abfab",
+      "reason": "The production schema expander and test-side recursive inspectors must remain independent because reusing the implementation would make the schema tests self-validating.",
+      "memberHashes": [
+        "21723d90ee9609dbb9d95831603db3a8681a7d48ad7a47afee1d5907e5364a14",
+        "a149f5112bf4af9cb810d9cf703187238b354c61bde490969f0f2ed9dab049d1",
+        "fb410047f46ba9136bf9788539cd8aec31b47ccafbd725c01ab20b9d98ce6690"
+      ]
+    },
+    {
+      "fingerprint": "bf60e6e3f3d9a41ff36c26b58b8abd7cfd8a922e8387534631e7a2e334ae5094",
+      "reason": "Memory and page repositories resolve optional revisions against different aggregate head tables and identifiers; keeping static SQL in each repository preserves ownership and avoids dynamic table-name SQL.",
+      "memberHashes": [
+        "757c4a21e78e72ef2d82ccac31f7e01561b0a67e534b4c19937ec55bd60ec4b7",
+        "8cf3aeeedff15c7c3c1b2634e4f56af6466b5df2e8c13e20b1d4477d372006bc"
+      ]
+    },
+    {
+      "fingerprint": "44ce2a18b31e8383b043f92ded25407b0ab575143e76b0039b32b25405440702",
+      "reason": "These are local Optional guards in unrelated parsers and converters, each preserving its own None-return contract rather than implementing reusable behavior.",
+      "memberHashes": [
+        "2e1d7ef5e6e9d2cab06ce6128598287795052c3c2772734b699be90dee17366a",
+        "2e1d7ef5e6e9d2cab06ce6128598287795052c3c2772734b699be90dee17366a",
+        "2e1d7ef5e6e9d2cab06ce6128598287795052c3c2772734b699be90dee17366a",
+        "ae7c69aa34056eee6204668d0544c910a7ce7ca00bd39abdbf06f700d12ef837",
+        "c3cdd101a54c4d3e5cdb3a8b3d96c4981775e5ceb1ff54ce24dd0544df4c5a68",
+        "c3cdd101a54c4d3e5cdb3a8b3d96c4981775e5ceb1ff54ce24dd0544df4c5a68"
+      ]
+    },
+    {
+      "fingerprint": "7f42453c1cc7eb1a65c00d00faf8f6ecc8527ab3bcd28e17631b123af38984d9",
+      "reason": "The currentness probe returns a fail-closed boolean, while trusted-context resolution raises policy errors and assembles task, source, and legacy context; sharing their partial lookup would hide distinct security contracts.",
+      "memberHashes": [
+        "2fc626e948eb601f4d305457c5ab1ca2307b2e2b8bf422849c999e5a029f91c8",
+        "70614de8885f91ba5d927a3d9cff9f5cf46ea12bff4fc602fb52e6f28d645029"
+      ]
+    },
+    {
+      "fingerprint": "e8def90742d1ecc22525afaa56092bf1c4a3b6d9221cb070c9c3f8f59232d98d",
+      "reason": "Delivery recording and message/command synchronization update different keys and static table schemas; parameterizing SQL identifiers would add unsafe complexity and erase channel ownership.",
+      "memberHashes": [
+        "0b76914f31b9e77f22772c3ae511a22dac73b61dc4439ae8a317ebccd04d600a",
+        "251648e1cde8355c32d3e3d42df3e32382ffb4600a973cd5b55d7f094801530a",
+        "32a5d63dd02a5fb4adb6f4b89d2d00e3706cf0e827f471513114d6a3d117033f"
+      ]
+    },
+    {
+      "fingerprint": "72ec336d335230a0d073cb6a021bf806cf9ca93c34e69a0673e720f7c635a979",
+      "reason": "SkillReferenceLike and ReasoningConfiguration are semantically unrelated ports for knowledge provenance and provider runtime configuration despite their similar property syntax.",
+      "memberHashes": [
+        "bb40295555418597d1809ef0659109806e5fe88967502521cfcc12abd5685d1d",
+        "ca257d2b1616d98b2958cbc312c3a45c18bb0ee18eb7d47ac9532b7f7a69b403"
+      ]
+    },
+    {
+      "fingerprint": "a2f2c511700c7f368fc73cb15fc20e3757fe0346968ef1e2a08dca5e40470318",
+      "reason": "These TYPE_CHECKING blocks declare each module's actual local typing dependencies across production and tests; a shared barrel would create hidden dependencies and circular-import pressure.",
+      "memberHashes": [
+        "0ace0b427263f5c2c793178321a0fddc1b36cd706dee45053728331461bb4832",
+        "0e282ff87c68ab34140858b8852579de02001ed5c26d6fa2947b055f603c7b7a",
+        "144d16ada54690a9cd57c896d1e34cf6116dfae1eb9db43c198e3706ea9c2133",
+        "23a63d2044213263102b0c42a268e5f8012e57eaa4b9ea512b0204801ab10643",
+        "2ca5aef2e89b6ef963e66e000837b5c0f292552a2efc65bb9bf7c92d2a6a6ff5",
+        "3230780f6b2c39d7858befc0138f2325bcbd03d75ec3eaa0cf9acb91aa8c8ede",
+        "385e85f4172f3c4f0f8c57f9478a5307b8bc62e5879fc8948697c09f1927f9b2",
+        "3c07f0d105dbb69ab81ee6b783a4fe3f5a7a77d27024580ac9300f7e1c15f6eb",
+        "3d36950c654cb761a463f40df792b58379eb4df89bf1701974f72645d4e06775",
+        "44c1f3133a01858d378829efe3adf1f33f4665df517098bfe3009bceff832f8d",
+        "4524d8414c4f363fc8aa1438adcbfc2889b52d447af1530ac779d33f063103f3",
+        "45e5adbffbd8a03576f4345d4804d1bcf7622af13be4c73f68051ac05f7456de",
+        "46f3966918bbbe385fc199882286e102ebb1ea6fb96f1816f21f73cb4789200b",
+        "47fb09d902612d404d10c541e202f10452a33a38788fcf5bdd37a5ae86b66aa8",
+        "55dda5f873472eef7d3ad18215cbc95d141f125350e55ce8c436aeb7ce727292",
+        "5cd51c73a1309ae5c6aa91e01ebdb56fdeeef99191c25b260a3d352cf8d1835d",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "65dba2dfec42dcb9af37a73b62733bc0a4389aef2f1ddaecfba473e6f7909487",
+        "72bc9cb554253c9dbba8aa2e4846d6c1459ce48ec3229737f3ee07bcb0b579b2",
+        "7bb0c925657031371ac42933aab32570e9f1ae9225469486f7da5329ba9fbf93",
+        "8037799d2e8365da5969f1b59dd177bfc2fbbecd76ec5203f8002dbb48b98eaf",
+        "82553b8ab2cd0a62b49789c1f1d347203706fb018a7b8ca62b95238903dc4445",
+        "8c3b99957635a024f4a61fac3ffa5d4f9a15a2927a576fccedd31c4c07cd0023",
+        "9595f6aad418f4e43f0507e8a84c2e336ef0a956396552f007a5620e3e4a441f",
+        "9ff38f6698d848050d060decba8f4312d5cc68ee1af2dca2fec39352abb85bfb",
+        "a2d29cb429600ad4ac9e969d392d9ca2172404c2465c31b60d1abb4e135952f0",
+        "a3df6dbe2dcaa3e79e0f5f97a3a0afb30fc2ba0a474530d2d20231fae54bc802",
+        "a4793d8606468785c835b5f19a7b237903f26d7a13aa061e6a3d4f09adb8bb0f",
+        "aa81266efc3322a91808c93751bf0ef51b727dd3e8eedc0e6f67b124415b1ae9",
+        "ae9765f2db2fb810ada71703457e9e91b3e3ab7e92caf97c0dc4c0febf24ba4a",
+        "aeb633fd6df156e6baeca193186363ea652ccb93168d440206e4ef6e82d0defc",
+        "b1a93e3ee49e58da253fbcc853206fc6743d4e48199fd4403ee6f602f8bebd72",
+        "b2c939d5773b8dc238e335f17cd758f00497c4f5e11efa19877be935d2678dd4",
+        "b88842e1f5125e009b43538f6819e75bf9da7d72654dee3e8c5f97c56775dd5c",
+        "bf656b8f242c0c894ff6368dbb927285820f80a5aedbc162ec62678320ab5f9e",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3daec434dcf4cf537fbc20a6009038cdcd42ecb2601c7a575affa0d77b45873",
+        "c99cd3533ff5cab01c5840511fbaa05921a981a7a819f63d63925a5383e9228a",
+        "e0b62b8b2a5b4f2adde275edd64dfbc2beafef3fd162f57a7561721f89a067eb",
+        "e2d1998d37c8fe108810644ae7360f8d5ecabf064175f8b681388f1d32fd3336",
+        "f731ce6b9b02662b37cd989a071c4230b5cf2a9f874cb10e66c39eeb6de47ab0",
+        "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
+        "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660"
+      ]
+    },
+    {
+      "fingerprint": "89091c2ae462affba5144c6178d7ee161ce5c03649722cdfda4c901c7445eedc",
+      "reason": "The APPROVE, idempotency-conflict EXECUTE, and reconciliation VERIFY sites encode different auditable transitions, while their shared CAS and persistence behavior already lives in _append_step.",
+      "memberHashes": [
+        "005cf0b23c888989ec1721331d72e686dfd28411924351b5f159d31de20cc219",
+        "8b6cc3f83eac5308c2ef4e2fbd5c9732d3419febead5c83328155c293c3a133f",
+        "c78f049426a43b60d809e98464b5ccdafd0429c2c1c2ac3e251b5b3b62ee389a"
+      ]
+    },
+    {
+      "fingerprint": "b70e4c04724a417ae9e52bdd11f1dbab04dd6d02e8705b9f32d6753515b73beb",
+      "reason": "KnowledgeRepository and agent-core ports locally declare dependencies for different bounded contexts; sharing those TYPE_CHECKING imports would violate the dependency boundary.",
+      "memberHashes": [
+        "2c563ca6eb47142369854fccf9cfa691dc200f633fd2b8eb121895fe959ff8a6",
+        "4c54a78eadec435be9051dc9392d2c1cd68beda7d429d5b2f7a08107cfb2572e"
+      ]
+    },
+    {
+      "fingerprint": "7907ffb45d4e64a491f87bcd715b12cc3cc5d2f12db464a35ec8ce0a2ea0a8f1",
+      "reason": "Each assert_never statement proves exhaustiveness for a different local union and must remain at the corresponding match owner for static type checking.",
+      "memberHashes": [
+        "36a1adaa3df642b26921fd7567de8be3ac52f84beeb3a722f63bdf182b5f4b21",
+        "77660d1f4aed067a82238338dc779ebea2354e58846eacd7ae8c9183dddb5244",
+        "b665709d5e5065a2a0a902138b7288e82430c655d76afc9cbe5818f719815ce9",
+        "cc9130f96420b3f4207e3a438e78a4fbcf5ca0c9b20fded838b1901b098766fa",
+        "d38ed5d125ac1266085330ca9f81c084c9bcf8e599fc7a96bd0a5ac6bdd67e7e",
+        "f95ad5d3c53ac69fe97aace040e39711ea1fd450c050e422244dcb37f879a201"
+      ]
+    },
+    {
+      "fingerprint": "c3ea4131f989945c6bd8e0e557cfb6636003386b8a0045927748d24f39451f74",
+      "reason": "ReasoningRequest v1, ReasoningRequest v2, and AgentIntent have distinct wire identities and semantics; a shared base would couple schema compatibility to unrelated intent evolution.",
+      "memberHashes": [
+        "7345e4e67a4bc2a7e925fbd58c3473e8b91697242ff447dc0306f4f83a1db884",
+        "adcee370c4b3dfc44401f908b49da3ea7f9d6115a9529fa6745531aef83a0433",
+        "b1c25d5a05a91c4f8bd520914c2ca59f1db32ac8f45f829282fbc32705147fc1"
+      ]
+    },
+    {
+      "fingerprint": "d53f43db57b58880d3e1041255232b41c14c197a82f950dbf5f1e98462c90bcc",
+      "reason": "ToolDependencies is a runtime service bundle while CompletionEvaluationReport is an evaluation-metrics record; their adjacent typed fields are structurally coincidental.",
+      "memberHashes": [
+        "7476707a13d09454e834930ff899d8d5a859f03c732507eceeb6bc4f5ab43b91",
+        "bce3155e40b383f652c62b576f5d11bc5833e8d80f5723e772b5decaafcc4898"
+      ]
+    },
+    {
+      "fingerprint": "0b3c81684aa71d59838a920abd44bd0e1653ab4f37a2b898ac03d9abf1f86068",
+      "reason": "The task-required invocation resolver and taskless question-answer resolver are separate public authorization capabilities whose explicit wrappers preserve the require_task policy distinction.",
+      "memberHashes": [
+        "3b46bbce378307bfe7d0078152e04e3e52e6cfeba88a6725941c0562ec2485b6",
+        "57e159174350517a0f9f1062a540a4fa70795d8adf4e398ea5b27584d1d4954a"
+      ]
+    },
+    {
+      "fingerprint": "a67e5d9c20e9d18d8742aff87cb9ad3fba7368e7661c06ebf87684be7e96b1f6",
+      "reason": "HTTP and Slack workers recover the same queue with different origin identifiers that preserve channel ownership and audit attribution.",
+      "memberHashes": [
+        "82bab9ef87fef5731570cca39cd61f18793f733f3031e63439be5df8492100d5",
+        "bdfae13943e042ba7c3515349abf4613f328e3c94114dee4018a2c615a809824"
+      ]
+    },
+    {
+      "fingerprint": "97e098356b0034d390403cd0b09d91770fe5bac9af632f6a49e56c0226b3bb1b",
+      "reason": "These return lines are the reduced overlap of two intentionally separate authorization entrypoints; require_task true versus false is the contract-defining distinction.",
+      "memberHashes": [
+        "34f0705cd7f3cbad2606dcba7cdd28e426743352b46b41a791ea110a6c8ac124",
+        "e5401d32038b079018e5444405bc4b34d17796e19092f3eb682d42b035257583"
+      ]
+    },
+    {
+      "fingerprint": "02a5a0c703c0ff97b1d779e000d91bc376d47d138e4ada153c71e87a49146388",
+      "reason": "These are explicit module-level imports in independent channel and service test modules; sharing them would require a re-export layer and couple unrelated test owners.",
+      "memberHashes": [
+        "eafe0313c30a0671049a4adb674e2aa822d1c727d700e1cbebd90c5709779faf",
+        "eafe0313c30a0671049a4adb674e2aa822d1c727d700e1cbebd90c5709779faf"
+      ]
+    },
+    {
+      "fingerprint": "09b304f21aba2266dc9679b2064b5793de5dc7e81be3a42a50dd497bb884957a",
+      "reason": "Each standalone installed-model and Slack-colleague canary must declare its own lifecycle and signed-Slack dependencies so it remains directly executable in isolation.",
+      "memberHashes": [
+        "506be14ea3dddbf4f94439fc14f5c73c78e9657e33766a5f75293b08e539a14f",
+        "506be14ea3dddbf4f94439fc14f5c73c78e9657e33766a5f75293b08e539a14f"
+      ]
+    },
+    {
+      "fingerprint": "1b6831bd15528292dbfd9ae666e5769141fc11a3f51c6691c34fb1a6a9fde5a3",
+      "reason": "The response and image fixture modules explicitly import the contract types used by their different fixture owners; a shared import facade would create coupling without sharing behavior.",
+      "memberHashes": [
+        "1e9c4473d2044f5e2181a64b4a2a5397f34ac3023061834930cc6a0d4d857c9c",
+        "e9c7cc6e6ed7caafef63ac32f7c2528901709ac8f4697c7b492608fae65906a1"
+      ]
+    },
+    {
+      "fingerprint": "6358dccf9923c31b340fb16b0630999a1ecc3da1192504f5c018057d209e4d67",
+      "reason": "Registry and application tests independently import capability contracts for different test responsibilities; consolidating imports would obscure those dependencies behind a test-only facade.",
+      "memberHashes": [
+        "60b1d96bf77ce46fce7f7913529a6dd93282a5b795fbfb51b949eeac0a3a0ffb",
+        "64801acccadd7e4a905cc950322d776bc62f425c8fb95321f8aee25e3d55a266"
+      ]
+    },
+    {
+      "fingerprint": "3fae1c5f9227df03d33687cb8f223e6ac5b4ca22a1fac107121133640d8b6de9",
+      "reason": "Application and task-completion modules explicitly declare overlapping agent/reasoning contracts but exercise separate service and completion boundaries, so no shared implementation is owned.",
+      "memberHashes": [
+        "b961e1cba2f7cfb1c00417bd96ce12aefdf1e0f291f9c95bfda6505063be7414",
+        "fb3f8bdf0d14e1538b3ef04221a6bf18f34e1edab42bcdb59d69940f5c22a5b5"
+      ]
+    },
+    {
+      "fingerprint": "a8f483d5ece8e38bc06911fe37cf20214827c5d32ff7966d4e6ccb0462ebf948",
+      "reason": "The paired authorization tests intentionally repeat two worker slices to prove that revoked and unavailable authority independently prevent any second tool effect while asserting different terminal evidence.",
+      "memberHashes": [
+        "6bcf7520fec7bb9efd332ab9b65ea975f0d622b21e51fc587e52abff1c736a6d",
+        "f906a23180875a2e7f1b538b06b242c3ead725cdd86f214ebf44fba2a97119c3"
+      ]
+    },
+    {
+      "fingerprint": "d560b40751cfa7757802208150c3d16a1b67fa454ee3d21625cc9deb5f3bdac2",
+      "reason": "The installed non-editable canary tool records process evidence and two capabilities, while the unit image fixture owns call counting and no-effect behavior; sharing would weaken the installed-versus-source proof boundary.",
+      "memberHashes": [
+        "5f658b72b4239fd74fd6978413562b249d0a4e1b9ab7476489a293e993ec355a",
+        "fb56fd448e2f6a135294c21a207f5c8aa426db729b9b5a30cf412c7a3e45abda"
+      ]
+    },
+    {
+      "fingerprint": "611c0194dcec94935d404ec58a6e57423017afe0d7141388c8626e4fce716517",
+      "reason": "Each one-line fault hook names a different durable commit boundary and scenario-specific failure message; centralizing it would hide the exact interruption point each regression proves.",
+      "memberHashes": [
+        "316e63aed29d322328d13b6f306f19ac6a5a7eeb152f10a76f7de2b5537dd980",
+        "555872231a2abd938f258f113cce7a6525f7faa456d9ddbd1bfe54a06f6f486b",
+        "8b37573b294f7a2d7dfbf271740801dc263cda9eb5d0320e1e69e475b51b49d6",
+        "90da7963bc0a345d0f0a71cf639e33a55ea4341ecbccb63cdf28d96ff8e21c4d",
+        "b08c8cb58dbc4a50b2e2b3221eb0fe6bdff317b582474b132b4c42fffaa546aa",
+        "cffbc7bab86c88b2c1761d82212badf2369ede36f3a195b451e9eff09f02d49e"
+      ]
+    },
+    {
+      "fingerprint": "409cc9cc4ee35ce32b17f7a6f481000b1bcc490009b08c6ee3f52452fe53d76a",
+      "reason": "These are explicit imports and TYPE_CHECKING declarations in independent queue and run-limit test modules; a shared facade would couple unrelated fixtures without shared runtime behavior.",
+      "memberHashes": [
+        "848b1a27c24069746a39aa8ba5109ea6b6099c481d68f41bda86205a235ad14e",
+        "fd8e2ea34a26e3f0837f5be28f6fa615289aa9cbc875ff245dc8019c05a55e9a"
+      ]
+    },
+    {
+      "fingerprint": "cb79fea8f3679c30660e59e76dc74406628ac928c59b915bba1e505bf2909edf",
+      "reason": "The tests deliberately share the same service stimulus but prove opposite capability-policy outcomes: successful observation/replanning versus denied dispatch with no invocation record.",
+      "memberHashes": [
+        "4d439bf44553dc820a14a6b3cdc2478ea13356b99a93051ae06f0294240876f6",
+        "a4ce0d3963692d8b777304b03183db285f383f7699df0623980871b111da5283"
+      ]
+    },
+    {
+      "fingerprint": "1814155c25c2109a4aa516833ad41f8db193fe0f07bdf06c2b7cf0c2a9980713",
+      "reason": "The detected spans cross independent completion tests for unavailable verification, canonical cache reuse, invalid assessor output, and candidate mutation; they do not form one coherent reusable contract.",
+      "memberHashes": [
+        "1c6ceab2d1db0fbfed371b7969c23c830a0f80fb9b9ef7abb89816f337e59aa2",
+        "5f24a979f49de4cde6fabfcbf0d30996199b5d769307882c233652bd09dca877"
+      ]
+    },
+    {
+      "fingerprint": "54877a261dec5b21d27fc4e5e4323c6fe0c4eb6c8bb944e6f253eff5ee006942",
+      "reason": "The direct semantic-assessment test and canonical-cache-reuse test intentionally keep separate setup because one proves provider binding and the other seeds durable evidence before proving assessor bypass.",
+      "memberHashes": [
+        "cee561fe94476eac330b70506315580283c17a4772bea37f015669c2e285a0d8",
+        "e89a1d12f2518e35344567250b88d0ed10927fcc39e2e3ac464da251a4cf01bd"
+      ]
+    },
+    {
+      "fingerprint": "009277e6b4541ef83ac9a3f5ff885a4636debd480a9ce626b8b650539e4980a6",
+      "reason": "Installed-model and Slack-colleague canaries independently sign and submit synthetic Slack requests with different secrets and runner lifecycles, preserving standalone acceptance evidence.",
+      "memberHashes": [
+        "38b843bfca4d2aa237787f8d4ac51f829955d92a4238f5d4b0f05fce4472012a",
+        "fa433f95ae2e905b91650be45ea44164f2dfb3fb07c4d8140e15f5a5cbf85640"
+      ]
+    },
+    {
+      "fingerprint": "cabd1db752c6110b9228305048abadd27313c3aa6f15f82b0e69c570e7089ef7",
+      "reason": "Each standalone canary constructs its own event callback envelope and event identity; sharing this transport setup would make one acceptance script depend on the other's fixture lifecycle.",
+      "memberHashes": [
+        "96f18a60cef2e7bd839de09cadb36f86216aa2f5dd44e4d483b273a2146f0b80",
+        "a253f311bcc58e1fcb56e3f0cc2a4c011da9ac32acc425163715a2abdbe31052"
+      ]
+    },
+    {
+      "fingerprint": "11c89a306fd3fa8e8299636f209f8403b1bf02759d3e0401ab1b29cca2ca4e87",
+      "reason": "The two canaries intentionally build their own mention-or-thread event with scenario-specific prompt, timestamp, and identity so each remains an independent executable oracle.",
+      "memberHashes": [
+        "11b7c0e89409ca63e20c97a6974ca5449030fe7762f7c97342767a437dfad679",
+        "66f1d1e4a6ef04ade14fd7a56e808f7fa184f28938f152ca3e64dd060321ca4e"
+      ]
+    },
+    {
+      "fingerprint": "0f6e5dcd3dba1e817b70e88a6807f904eacf5a391754d083d028ae503ba384bf",
+      "reason": "The same approval call is intentionally repeated as the controlled stimulus for opposite outcomes: successful exact approval after restart and fail-closed rejection when current tool readiness is unavailable.",
+      "memberHashes": [
+        "9557c8d26de04a5a3b80d8d691f14ef0ac5737a5362b4e941bbd2c0f83b50275",
+        "afe3bb703e67ecc93b2b1eb8068ae43b749b63464456a3f36ff4f4fa8fc57440"
+      ]
+    },
+    {
+      "fingerprint": "8927ff39aebee91ec7f741a0fd3adae7272f5ef5eccd7bce9eba93516a695ec7",
+      "reason": "These single candidate-answer assertions are scenario-specific lineage oracles for narrowing, language correction, prior-result follow-up, and draft-only revision; abstraction would hide the distinct expected deliverables.",
+      "memberHashes": [
+        "68cc6b1be0010c6bb59ef84a3546259f43eac9f518ba11689710191df4e7eec8",
+        "ac3b53559f25dba6807771feb8e47cc4d71eb3e27f738f49762e712cb8022157",
+        "cf3c263d376500e8d80305e3d5acf0db63346b1f9517601827100caf283640a4",
+        "ecdc3fd14932bacc14a2484354c060807b947f492fbd7c74010755398cebc480"
+      ]
+    },
+    {
+      "fingerprint": "86e417c4ba3f766f666190880bcb6fc32bd56dd76f35df4041690328d535da1e",
+      "reason": "The assertions encode different admitted-instruction contracts for one-variant narrowing and draft-only artifact supersession, with no invariant source line or shared fixture behavior to own.",
+      "memberHashes": [
+        "14048fec6dc88ec698e224b376ad78641627a1c56a8e41e8112530a8bbe50477",
+        "a418662f80af78534f96bb062be4a4f6e4703f1bd51ef2645aefba8a209ffb5b"
+      ]
+    },
+    {
+      "fingerprint": "4c3d7c3e7d298f693749d9567d235d994305de3546511c5162d94ce9b76d7e47",
+      "reason": "Each typed fake owns a request list for a different reasoning or semantic-assessment port; a generic recorder base would erase the fixture's contract type and module ownership.",
+      "memberHashes": [
+        "503dd92e628ce9a4168c1701e15b946292501cd3f5071a50d6018daa677ab35e",
+        "503dd92e628ce9a4168c1701e15b946292501cd3f5071a50d6018daa677ab35e",
+        "a9b0d4eb0e7900bb95e2b6456ee44c6a259e3cfc534a93ca469eb54bdf097261",
+        "e3499ebe24c83dfc92273ed56bd16a9adffb1ef657240bee0290ba397ffea8e8",
+        "e3499ebe24c83dfc92273ed56bd16a9adffb1ef657240bee0290ba397ffea8e8"
+      ]
+    },
+    {
+      "fingerprint": "79635f3e5d3f04b54e05259bd0d3ef445113272b8cd7de882a8bd68d7706a48f",
+      "reason": "The one-line request append is intentionally local to independently typed provider fakes across unit, channel, knowledge, and installed acceptance surfaces.",
+      "memberHashes": [
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64"
+      ]
+    },
+    {
+      "fingerprint": "f359536d1bd0a6577bb37da2322f6b29057eee32f1d6f6ff965195ff9570c002",
+      "reason": "Completion repair and task completion tests explicitly import the same public service contracts while retaining different integration and repair fixture owners.",
+      "memberHashes": [
+        "1fe6d135ef697b895287bc18aee1fed0fb7e9e5e16df7e9ea7fc3926a5be4d98",
+        "7fe38bd54b7ce71d939d5b4a762421b7f151e0a1d1d51923a8f6729daf01de4c"
+      ]
+    },
+    {
+      "fingerprint": "91bfb64478e039bbc6165e18f5c6ac1aa6798f8e3ea7776969f747d40ed76ce0",
+      "reason": "Creative API and procedure tests declare the same direct reasoning/service imports, which cannot be usefully hidden behind a helper.",
+      "memberHashes": [
+        "1ebdf0b2972f2797a5f64555545f296d6aadaecc264432ed38608d6dd7e6fabd",
+        "1ebdf0b2972f2797a5f64555545f296d6aadaecc264432ed38608d6dd7e6fabd"
+      ]
+    },
+    {
+      "fingerprint": "5f7fc5cf3891113fe2910b3be04909b600b1be5245f2301df5ddd5ea5451b9e1",
+      "reason": "The similar Slack upload responders prove different boundaries: hostile-host rejection versus successful attachment delivery, so sharing would couple distinct security and delivery oracles.",
+      "memberHashes": [
+        "49a84852f88f1e0c4a403323e303a824620211651231ac96648f8b65f36342b3",
+        "654f6043a0bd746f55df3c7e7121cbf2628d17f214c8b25350cc255b8c3e0f82"
+      ]
+    },
+    {
+      "fingerprint": "cf0107ae2fd222e9df762ecc03768724f6172c589fe61f95694f797fd76dc028",
+      "reason": "Slack learning unit coverage and the installed learning smoke intentionally retain independent setup so installed-package validation does not depend on unit-test fixtures.",
+      "memberHashes": [
+        "0583846429ab6655f4d2a44af4dda68c052188ddc44522a056917719093157f3",
+        "9d9ac591fd7f2ced48fd912ab6962f0c5b7b16894b41f2118a9c2c2e47566505"
+      ]
+    },
+    {
+      "fingerprint": "56623145f6acd127b6295dfb6a75b172088dc803e00bbf87bdc55c69d09a6186",
+      "reason": "Both cross-member scenarios keep the read_source and USE_ONLY assertions inline because that disposition is the property each scenario proves.",
+      "memberHashes": [
+        "2a233416553a4920141cf52a00235ebc71dcd3b9598f3a39e02b5573225b9f33",
+        "d672192b6d41cb73d909ea41e1f07427e4679b74808af960d7f64f16073642b4"
+      ]
+    },
+    {
+      "fingerprint": "77d4d7c7e5bab5ee5b695ca02a6a2279452db27c800e9a88c069913062fa5e14",
+      "reason": "The overlap is only the standard Python prologue and typing/pytest imports in two test modules, with no shared executable responsibility.",
+      "memberHashes": [
+        "98f475a1e68a9f45e5d8e1feec9bd6d241a2d30afe9a7624eb6376622787308c",
+        "ce71b1143fe89c15a8e535c364c5901bee2356c539464c37981c42e49b6587ec"
+      ]
+    },
+    {
+      "fingerprint": "1c3f4b4eaa7c829348f2ff31a1276f7df28533a0daed3d419028e39f234d200a",
+      "reason": "The two uncertainty tests install failures with different lifetimes—persistent projection failure for starvation and scoped crash for restart repair—so their boundaries must remain explicit.",
+      "memberHashes": [
+        "3d24536643d9010df8758b549a5a7afecdf1aa45e4c2c10040389aaf74741979",
+        "78bb7c3364f4698b5523361dc6a056647ba4bbf81e520b4d63070929214d6574"
+      ]
+    },
+    {
+      "fingerprint": "6673a53444f2b8cec365555ab0e3e59dbc36dd0ee2fb78d349a0fffb85e6fec1",
+      "reason": "One task-progress test proves SQLite reopen projection while the other proves transaction rollback and stale CAS; inline setup exposes each durability oracle.",
+      "memberHashes": [
+        "bf8e4c3bd343fa96bae04f69f45821ae1d8704951a884f5d89c1fffbc4799bbe",
+        "fe9af8e0c06d3e43e713d3fc364993ca610602006b023b92bbbab9baaed811e1"
+      ]
+    },
+    {
+      "fingerprint": "a8b71abbcbed4480791a082d1454bb19214bedf3f30d1d1e6514a514e582d2f2",
+      "reason": "The shared initial Slack lifecycle steps lead to different owners and assertions—continuity binding versus queued-result suppression—so the overlap is scenario setup, not a common contract.",
+      "memberHashes": [
+        "e6c6f63cf918cb23f8dbcd1003540ff5048be8f8bfa253807783aa99e35e2072",
+        "f791b8e9a07fbc1f8e99f73292d68cf7d56097afc25181eab947579fba6a81cd"
+      ]
+    },
+    {
+      "fingerprint": "4892dcc7f79f8b45f6fcfe22a01ae9ba1f6d9fa1186f6b51866efd401d87a7ff",
+      "reason": "Each independent fake provider asserts its own workspace boundary; the repeated one-line is_dir check is the local oracle, not extractable behavior.",
+      "memberHashes": [
+        "fe2d776f87c5ec579562107dfc6361b16ecbf06ae32d66c9d64d3e27e59c9f68",
+        "fe2d776f87c5ec579562107dfc6361b16ecbf06ae32d66c9d64d3e27e59c9f68",
+        "fe2d776f87c5ec579562107dfc6361b16ecbf06ae32d66c9d64d3e27e59c9f68"
+      ]
+    },
+    {
+      "fingerprint": "9fd76672838f9ec1247fd5f169203868c29abacdb53a226ffc8007d095abc3ad",
+      "reason": "The similar event-admission prefix encodes different temporal assertions: question delivery after one work slice versus repaired completion after two.",
+      "memberHashes": [
+        "33f56b741113414d6687dda28ceea327f33ce1573f9282dbf4551433d5745ae7",
+        "3edf38abdcd952419122dae6c9753bbc333c7e20330b2c9ef7879934aaf8c2ae"
+      ]
+    },
+    {
+      "fingerprint": "f9a020e0021b138f78fc00763ba5dc3459bd7ab16710e03a1bc1a7512ef43cae",
+      "reason": "RecordingReasoning and RecordingAssessor implement different typed ports and result contracts, so a shared recorder base would erase fixture ownership.",
+      "memberHashes": [
+        "782633253fdf0e67eb31a58cc5fdf6265678ef9e43338a722fe7030d0fd46d24",
+        "aac6ef0bc774cdf84ab96e7ca8ab84bc41f4458b108f2eb6f5ca024944db4cc0"
+      ]
+    },
+    {
+      "fingerprint": "b154478eafeaa7f95852ec4eff54a1b7a495cb7bab152744c36c361a6b8d7188",
+      "reason": "The explicit queued-message setup is the precondition under test for two different suppressors—payload tampering and a superseding task—and should remain visible.",
+      "memberHashes": [
+        "cbcb2ddf378e4bcb7b62aa11b20bdca4187e3996866654663dd6815e77afa8df",
+        "efd63e6e968469389a5fe11ee02cc5568d29eebb971dad1a101b9f7577368d09"
+      ]
+    },
+    {
+      "fingerprint": "f8440bb834a47a20487e26f86a84b6f3d356d687fdd54fcee5f37b8457c01cbc",
+      "reason": "The repeated timeout assertion is a one-line boundary check in distinct completion and reasoning provider fakes, with no helper value.",
+      "memberHashes": [
+        "27c9ad4b1c8ee99c2f5ce8f33af1c14fc591ba104e26898e98d0fd22d9b8528a",
+        "27c9ad4b1c8ee99c2f5ce8f33af1c14fc591ba104e26898e98d0fd22d9b8528a"
+      ]
+    },
+    {
+      "fingerprint": "936f75f0568d2c803fa8497ffbecdf9b5a3fad2601eb333c8fbc46126d0741d2",
+      "reason": "The detector spans the tail of one image-integrity test and the setup of the following lock/private-scope tests, so it does not identify one coherent extractable unit.",
+      "memberHashes": [
+        "9da7f7cb96c7d0dcbbd6cc3ceee91c6dcc3b907527c603ee8a4353580d69f9f7",
+        "f9143aeb41bbf3525eeb45cf7957f5bff68dc8f137aea2a63bf0cf1c48bbaca9"
+      ]
+    },
+    {
+      "fingerprint": "fad6de542234069aa5366ebb50e5933e2ae37c26a9f6d64c8f6491549bdf7348",
+      "reason": "The tiny injected failures target different callback signatures and error contracts—repository admission versus image projection—so a generic raiser would weaken typing.",
+      "memberHashes": [
+        "626946c69655459d474e0d719dc8d6bf1337ff1febe16baf5636c7bcda594aa8",
+        "e80b3649ba14949b57abdf6ea892d9f66daea657c04a34a607b255a114b320b7"
+      ]
+    },
+    {
+      "fingerprint": "95668d938212234c7b665419270fe4c960a97ebdfb666882369ce5709ab7571c",
+      "reason": "Local send fakes intentionally capture different message lists and timestamps across standalone canaries and channel tests; sharing would couple independent surfaces.",
+      "memberHashes": [
+        "13628176fff152fb6204be2012c40ae1c6c6014ae503f320c9917638ba40c646",
+        "395600e9cb046be415c63f72057a1ba39962ae9c5196b739aaa4ee48cbf4b657",
+        "6bc68bbac175b6a416056c706f618e77c1f25931297a54f10e39f731745db4d7",
+        "6bc68bbac175b6a416056c706f618e77c1f25931297a54f10e39f731745db4d7",
+        "6e9b0c3b6fd8a7fd7e6008b297695f0162261fa6aee01800dae479d0d3e1b6ed",
+        "bab20f0e6c4d139800994a182288afd1cc7ce8ccfe9c456eed106dbb06991c5f",
+        "d41b1aa330b1bf8b875da66949c18cf6d6dc1dc093e310acb0e67f2746e1f448",
+        "d41b1aa330b1bf8b875da66949c18cf6d6dc1dc093e310acb0e67f2746e1f448"
+      ]
+    },
+    {
+      "fingerprint": "9682863650d43162b715876f497340eeae44224babf16f9ce7b3d009615107af",
+      "reason": "These one-line Slack acknowledgements are endpoint-local fixture values, including intentionally distinct timestamps, rather than reusable behavior.",
+      "memberHashes": [
+        "98f6687f74c3b09fa9ebad8fe594938103031d8aab8abb08dc64c7e1f05247dc",
+        "9d072f6d9d90db7975037108d1383ce845c76ae1ece27582fe16322c3d0cf9c0",
+        "b8319e96f4769dc1e852239e0e8072b4d9f96f0694d78854dd45885a72bab434",
+        "b8319e96f4769dc1e852239e0e8072b4d9f96f0694d78854dd45885a72bab434",
+        "b8319e96f4769dc1e852239e0e8072b4d9f96f0694d78854dd45885a72bab434",
+        "b8319e96f4769dc1e852239e0e8072b4d9f96f0694d78854dd45885a72bab434",
+        "b8319e96f4769dc1e852239e0e8072b4d9f96f0694d78854dd45885a72bab434",
+        "d86785b52d4010aac41f570e86b17b2dd1a923b0dc8e07c03fd3cdecdad8e88c"
+      ]
+    },
+    {
+      "fingerprint": "1a22755e1a1ab5b19c1cede9c2713a1812ca8d6e02034f5c6b9cf890adabbc1c",
+      "reason": "The detector groups semantic_output with tests that consume it inside one provider module; producer-to-caller data flow is not duplicate responsibility.",
+      "memberHashes": [
+        "17e82d18a81e60c6c9a7c107040482796cf8acd7610171a82dde8337ef0dbab4",
+        "df82e7975c1dfc3ddfc448e2163132b7fe446fb8d422b348d5bd18b9934bcbc8",
+        "f88d20025a180cdd0a94f7c702048ebf0326beff364f3a9f3cbe0b46113d9060"
+      ]
+    },
+    {
+      "fingerprint": "ac3ced280217447cfb2cf89e662e0c3fd3a85a034dda5e8eb003b1970ac80e55",
+      "reason": "The installed canary deliberately mirrors the ten-tool unit scenario so the packaged runtime proves the same bounded behavior without depending on unit-test implementation.",
+      "memberHashes": [
+        "22d4b5d3cc95942461bf4fd04ba84049feb2ed4cf34be226609363f66738ef2e",
+        "9a0a348cda081c276de853e02dcd165d654dfe13e704c2d1b62277b1a8496efa"
+      ]
+    },
+    {
+      "fingerprint": "f895e14980fcc709776efff4970d45704b4b4dd676e721180e83fc3aef8551be",
+      "reason": "The two PageSnapshot constructions belong to different retrieval cases—many pending operations versus missing fallback—and keep their differing revision context explicit.",
+      "memberHashes": [
+        "5e5cfbf9f18c713c5b0c7870142dfccd3c0247fdd76e16911ce511df81742741",
+        "816f76918a084aad3cb6ff749d5b8a1d49c56f28d4be38d2e1e6efca64345414"
+      ]
+    },
+    {
+      "fingerprint": "34f440c9e8a5f99986f551148ca6053b7433e5b5ba5b71776cddb0a19fe8b736",
+      "reason": "Each pytest.fail call is a distinct bounded-safety oracle for image completion, network dispatch, task completion, or provider invocation; only the assertion primitive is shared.",
+      "memberHashes": [
+        "2af78f4c0f79413b8833072fbfb747f901168a2dc500881bdb13ad0a45a6097c",
+        "428bf1d6a44954b3044d52805708211e603b7dee6b1c7ef06f396cbd630e09e0",
+        "6684983a1bb3473fa308d08d6b26a3815339e09954caca39f36814233c0c37ee",
+        "d71e5daf627da6c4d938af92f88e7627b1813a3aaf008a8dc62d805ffada7184"
+      ]
+    }
+  ]
+}
