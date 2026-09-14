@@ -197,7 +197,8 @@ def test_late_original_result_retains_thread_binding_after_dialogue(
     delivered = next(
         message
         for message in reversed(messages)
-        if "Bounded asynchronous capture" in str(message["text"])
+        if message.get("thread_ts") == conversation.thread_ts
+        and "Bounded asynchronous capture" in str(message["text"])
     )
     assert delivered["thread_ts"] == conversation.thread_ts
     count = len(messages)
