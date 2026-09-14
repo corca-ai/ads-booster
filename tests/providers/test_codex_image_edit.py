@@ -370,6 +370,39 @@ def test_native_image_events_update_only_safe_progress_stage(tmp_path: Path) -> 
     assert "private" not in control.stage
 
 
+def test_shell_launcher_failure_is_classified_without_leaking_output(tmp_path: Path) -> None:
+    state = _StreamState(
+        ImageEditProcessRequest(
+            Path("/fixture/codex"),
+            "fixture",
+            tmp_path,
+            "fixture",
+            (),
+            10,
+            allow_shell=True,
+            allowed_item_types=("commandExecution",),
+        )
+    )
+    state.thread_id = "thread"
+    with pytest.raises(CodexCliError, match="codex_sandbox_launcher_unavailable") as failure:
+        _ = state.accept(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {
+                        "id": "command",
+                        "type": "commandExecution",
+                        "exitCode": 127,
+                        "aggregatedOutput": "bwrap: execvp codex-linux-sandbox: No such file or directory\nsecret private prompt",
+                    },
+                },
+            }
+        )
+    assert "secret" not in str(failure.value)
+
+
 def test_standalone_runtime_and_arg0_grants_exclude_codex_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

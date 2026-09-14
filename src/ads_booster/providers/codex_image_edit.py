@@ -451,6 +451,15 @@ class _StreamState:
         if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
+        if method == "item/completed" and kind == "commandExecution":
+            output = item.get("aggregatedOutput")
+            if (
+                item.get("exitCode") not in (None, 0)
+                and isinstance(output, str)
+                and "bwrap: execvp" in output
+                and "No such file or directory" in output
+            ):
+                raise _error("codex_sandbox_launcher_unavailable")
         _image_progress(str(method), str(kind), len(self.items))
         if method == "item/completed" and kind == "imageGeneration":
             if self.request.materialize_image_results:
