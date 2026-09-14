@@ -24,6 +24,10 @@ from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.contracts.trace_post import TracePostSuccess
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.execution_control import checkpoint
+from ads_booster.tools.completion_proofs import (
+    CanonicalCompletionProofs,
+    CompletionArtifactOwners,
+)
 from tests.marketing.agent_service.test_application import _reasoning_result
 from tests.marketing.agent_service.test_trace_post_runtime import FakeProvider, TracePostReasoning
 from tests.marketing.channels.test_slack_commands import NOW
@@ -118,6 +122,19 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
     service.registry = ToolRegistry((trace_post_descriptor(now=NOW),))
     service.tools = {"creative.trace_post": tool}
     service.reasoning = RequestedTracePost()
+    assert service.completion is not None
+    service.completion = replace(
+        service.completion,
+        proof_reader=CanonicalCompletionProofs(
+            service.repository,
+            CompletionArtifactOwners(
+                assets=tool.assets,
+                scope_for_run=lambda run: CreativeScope(
+                    workspace_id=run.tenant_id, product_id="trace"
+                ),
+            ),
+        ),
+    )
     receive(owner, user="UNEW" if new_member else "U1", text="<@UBOT> trace-post로 이미지 만들어줘")
     assert owner.work_once(now=NOW)
     run = service.repository.list_runs("team")[0]
@@ -132,7 +149,9 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
         assert replace(tool).work_once()["state"] == "uncertain"
         assert provider.calls == 1
         return
-    assert tool.work_once()["state"] == "completed"
+    assert tool.work_once()["state"] == "running"
+    run = service.drive("team", run.run_id, now=NOW)
+    assert run.state is AgentRunState.COMPLETED
     assert provider.calls == 1
     output = next(
         r.payload["output"]
@@ -240,14 +259,29 @@ def test_two_trace_posts_generate_in_parallel_without_reclaiming_active_jobs(
     service.registry = ToolRegistry((trace_post_descriptor(now=NOW),))
     service.tools = {"creative.trace_post": tool}
     service.reasoning = RequestedTracePost()
+    assert service.completion is not None
+    service.completion = replace(
+        service.completion,
+        proof_reader=CanonicalCompletionProofs(
+            service.repository,
+            CompletionArtifactOwners(
+                assets=tool.assets,
+                scope_for_run=lambda run: CreativeScope(
+                    workspace_id=run.tenant_id, product_id="trace"
+                ),
+            ),
+        ),
+    )
     for ts in ("100.001", "200.001"):
         receive(owner, text="<@UBOT> trace-post로 이미지 만들어줘", ts=ts)
         assert owner.work_once(now=NOW)
     with ThreadPoolExecutor(max_workers=2) as pool:
         jobs = [pool.submit(tool.work_once) for _ in range(2)]
         results = [job.result(timeout=15) for job in jobs]
-    assert [result["state"] for result in results] == ["completed", "completed"]
+    assert [result["state"] for result in results] == ["running", "running"]
     assert provider.calls == 2
+    for run in service.repository.list_runs("team"):
+        assert service.drive("team", run.run_id, now=NOW).state is AgentRunState.COMPLETED
     while owner.work_once(now=NOW):
         pass
     assert len(uploads) == 36

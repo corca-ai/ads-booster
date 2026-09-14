@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 
 from pydantic import Field, TypeAdapter
 
-from ads_booster.agent.runtime import ApprovalGrant, pending_deferred_execution
+from ads_booster.agent.runtime import pending_deferred_execution
+from ads_booster.agent.service.approval_binding import runtime_grant_approval
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     ToolApproval,
@@ -310,23 +311,13 @@ uncertainty_attempts INTEGER NOT NULL DEFAULT 0"""
             or session.pending_call.call_id != invocation.invocation_id
         ):
             raise ValueError("image_edit_admission_missing")
-        for record in self.service.repository.records(invocation.tenant_id, invocation.run_id):
-            if record.kind is not AgentRecordKind.APPROVAL:
-                continue
-            approval = ToolApproval.model_validate(record.payload)
-            if (
-                approval.invocation_sha256 == contract_sha256(invocation)
-                and approval.decision == "granted"
-                and approval.expires_at is not None
-            ):
-                grant = ApprovalGrant(
-                    approval.approval_id,
-                    session.pending_call.digest,
-                    approval.approver_id,
-                    approval.expires_at,
-                )
-                if grant.digest == session.pending_grant_sha256:
-                    return approval
+        approval = runtime_grant_approval(
+            self.service.repository.records(invocation.tenant_id, invocation.run_id),
+            invocation,
+            session,
+        )
+        if approval is not None:
+            return approval
         raise ValueError("image_edit_admission_missing")
 
     def _source(self, source: CreativeAsset, request: CreativeImageEditInput) -> ReviewImage:

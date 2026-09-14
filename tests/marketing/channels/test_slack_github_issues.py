@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from typing import TYPE_CHECKING, override
 
 import pytest
 
 from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.bootstrap import integrations
 from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
 from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.tools.completion_proofs import CanonicalCompletionProofs
 from ads_booster.tools.github_issues import CAPABILITY, GitHubIssues, token_from_env
+from tests.marketing.agent_service.completion_fixtures import ScriptedAssessor
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.marketing.agent_service.test_github_issues import PAYLOAD, URL, Response
 from tests.marketing.agent_service.test_integrations import UnusedResearchRunner
 from tests.marketing.channels.test_slack_commands import NOW
-from tests.marketing.channels.test_slack_events import receive, setup_events
+from tests.marketing.channels.test_slack_events import receive, revoke_run_creation, setup_events
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,17 +111,7 @@ def test_model_interpretation_cannot_bypass_current_host_authority(
         def plan(self, request: ReasoningRequest) -> ReasoningResult:
             result = super().plan(request)
             if cause == "revoked":
-                identity = owner.identity("U1")
-                with closing(sqlite3.connect(owner.store.database_path)) as db, db:
-                    _ = db.execute(
-                        "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
-                        (
-                            identity.model_copy(
-                                update={"can_create_runs": False}
-                            ).model_dump_json(),
-                            identity.binding_id,
-                        ),
-                    )
+                revoke_run_creation(owner)
             if cause == "wrong_message" and result.decision.action == "invoke_tool":
                 return _reasoning_result(
                     request,
@@ -196,6 +187,11 @@ def configured_events(
     service.registry = ToolRegistry(config.descriptors(now=NOW))
     service.tools = config.adapters()
     service.reasoning = IssueReasoning()
+    service.completion = TaskCompletionService(
+        service.repository,
+        ScriptedAssessor(),
+        CanonicalCompletionProofs(service.repository),
+    )
     return SlackEvents(owner.commands, "UBOT", frozenset({"C1"})), messages, calls
 
 

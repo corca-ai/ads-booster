@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,7 +17,12 @@ from tests.marketing.agent_service.test_application import (
     _reasoning_result,
 )
 from tests.marketing.channels.test_slack_commands import NOW
-from tests.marketing.channels.test_slack_events import effect_descriptor, receive, setup_events
+from tests.marketing.channels.test_slack_events import (
+    effect_descriptor,
+    receive,
+    revoke_approval,
+    setup_events,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -56,15 +59,7 @@ def test_review_does_not_preserve_revoked_approval_authority(tmp_path: Path) -> 
     assert owner.work_once(now=NOW)
     receive(owner, type="message", text="검토 1", ts="100.002", thread_ts="100.001")
     assert owner.work_once(now=NOW)
-    identity = owner.identity("U1")
-    with closing(sqlite3.connect(owner.store.database_path)) as db, db:
-        _ = db.execute(
-            "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
-            (
-                identity.model_copy(update={"can_approve": False}).model_dump_json(),
-                identity.binding_id,
-            ),
-        )
+    revoke_approval(owner)
     receive(owner, type="message", text="이대로 만들어줘", ts="100.003", thread_ts="100.001")
     assert owner.work_once(now=NOW)
     assert service.repository.list_runs("team")[0].state is AgentRunState.AWAITING_APPROVAL

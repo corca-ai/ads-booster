@@ -18,6 +18,7 @@ from ads_booster.agent.service.trace_post import (
     TracePostTool,
     trace_post_descriptor,
 )
+from ads_booster.bootstrap.durable_worker import run_durable_worker
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.providers.codex_trace_post import CodexTracePostProvider
 
@@ -86,14 +87,12 @@ def connect_trace_post(
 
 def run_trace_post_worker(tool: TracePostTool, stop: Event, gate: MaintenanceGate) -> None:
     def lane() -> None:
-        while not stop.is_set():
-            try:
-                with gate.work() as admitted:
-                    if admitted:
-                        _ = tool.work_once()
-            except Exception:  # noqa: BLE001 - durable queue state survives worker failures.
-                _LOGGER.warning("trace_post_queue_poll_failed")
-            _ = stop.wait(1)
+        run_durable_worker(
+            tool.work_once,
+            stop,
+            gate,
+            lambda: _LOGGER.warning("trace_post_queue_poll_failed"),
+        )
 
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="trace-post") as pool:
         workers = [pool.submit(lane) for _ in range(2)]

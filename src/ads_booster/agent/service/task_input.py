@@ -36,9 +36,19 @@ def current_user_message(run: AgentRun, records: tuple[AgentRecord, ...]) -> str
 
 def new_input_after_brand_wait(records: tuple[AgentRecord, ...]) -> bool:
     """A newly admitted input can reclassify a previous brand-blocked request."""
-    if not records or records[-1].payload_schema_version != "trace.agent-input-evidence.v1":
+    input_index = next(
+        (
+            index
+            for index in range(len(records) - 1, -1, -1)
+            if records[index].payload_schema_version == "trace.agent-input-evidence.v1"
+        ),
+        None,
+    )
+    if input_index is None or any(
+        record.kind is AgentRecordKind.REASONING for record in records[input_index + 1 :]
+    ):
         return False
-    for record in reversed(records[:-1]):
+    for record in reversed(records[:input_index]):
         if record.kind is AgentRecordKind.REASONING:
             return False
         if record.payload_schema_version != "trace.knowledge-preparation-blocked.v1":

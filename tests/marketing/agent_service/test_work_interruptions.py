@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, override
 
 import pytest
 
+from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.agent.core.registry import ToolRegistry
 from tests.marketing.agent_service.test_application import (
     NOW,
     AskThenStopReasoning,
@@ -69,8 +69,13 @@ def test_steering_received_during_reasoning_prevents_first_dispatch(tmp_path: Pa
     assert service.runtime_store.load(run.run_id) is None
     records = service.repository.records("trace", run.run_id)
     assert not any(r.kind is AgentRecordKind.RECEIPT for r in records)
-    assert records[-1].payload["event_id"] == "signed-message-2"
-    assert records[-1].payload["verification"] == "human_reported"
+    interruption = next(
+        record
+        for record in reversed(records)
+        if record.payload_schema_version == "trace.work-interruption.v1"
+    )
+    assert interruption.payload["event_id"] == "signed-message-2"
+    assert interruption.payload["verification"] == "human_reported"
     revision = run.revision
     assert service.drive("trace", run.run_id, now=NOW).revision == revision
     assert len(service.repository.records("trace", run.run_id)) == len(records)

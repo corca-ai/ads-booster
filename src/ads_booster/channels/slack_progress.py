@@ -86,7 +86,12 @@ class SlackProgressStore:
                 """UPDATE slack_progress SET cancelled=1 WHERE message_id=?
                 AND EXISTS (SELECT 1 FROM slack_message_jobs j
                 WHERE j.message_id=slack_progress.message_id
-                AND j.state IN ('running','pending'))""",
+                AND (j.state IN ('running','pending') OR EXISTS (
+                    SELECT 1 FROM agent_drive_work w
+                    JOIN agent_drive_origins o USING(tenant_id,run_id)
+                    WHERE w.run_id=slack_progress.run_id
+                    AND json_extract(o.origin_json,'$.event_id')=j.message_id
+                    AND w.state IN ('running','pending'))))""",
                 (message_id,),
             )
 

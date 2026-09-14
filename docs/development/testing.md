@@ -1,7 +1,7 @@
 # Testing and Verification
 
 Status: Active
-Last reviewed: 2026-09-11
+Last reviewed: 2026-09-14
 
 ## Focused checks
 
@@ -31,6 +31,155 @@ and creative API tests. Repeat the changed consumer scenarios from a non-editabl
 
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+### Task completion harness
+
+Status: Verified candidate scope through 2026-09-14. Fresh installed fixtures, process recovery and a
+controlled read-only rollback rehearsal passed as detailed below; the latest actual-model comparison
+remains the September 12 run. Preserve historical
+counts below as evidence of their original versions, not current completion-gate results. Their
+`completed` lifecycle observations did not include this candidate's task assessment. New acceptance
+requires a satisfied assessment bound to the exact task revision and rendered candidate; delivery
+is a separate assertion. Semantic satisfaction remains model judgment, not a quality guarantee.
+
+Select the changed boundary in a frozen environment. For completion proof and repair:
+
+```bash
+uv run --frozen python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/marketing/agent_service/test_task_completion.py \
+  tests/marketing/agent_service/test_completion_assessment.py \
+  tests/marketing/agent_service/test_deterministic_completion.py \
+  tests/marketing/agent_service/test_completion_proof_registry.py \
+  tests/marketing/agent_service/test_completion_regression_corpus.py \
+  tests/marketing/agent_service/test_completion_repair.py \
+  tests/marketing/agent_service/test_completion_supersession.py \
+  tests/marketing/agent_service/test_completion_summary.py \
+  tests/marketing/agent_service/test_daily_slack.py \
+  tests/providers/test_codex_completion.py \
+  tests/providers/test_codex_reasoning_v2.py
+```
+
+For bounded execution, admitted corrections, restart queues and delivered-result binding:
+
+```bash
+uv run --frozen python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/marketing/agent_service/test_task_progress.py \
+  tests/marketing/agent_service/test_task_drive.py \
+  tests/marketing/agent_service/test_work_continuation.py \
+  tests/marketing/agent_service/test_completion_budget_baseline.py \
+  tests/marketing/agent_service/test_run_limits.py \
+  tests/marketing/agent_service/test_failure_progress.py \
+  tests/marketing/agent_service/test_drive_work.py \
+  tests/marketing/channels/test_slack_drive.py \
+  tests/marketing/channels/test_task_results.py \
+  tests/marketing/channels/test_task_attachments.py \
+  tests/marketing/channels/test_completion_gate_fixes.py \
+  tests/marketing/channels/test_slack_run_notifications.py
+```
+
+The completion selection includes configured Slack/Notion owner readback and v1 constructor
+compatibility. The bounded execution selection includes HTTP and Slack live-lease contention;
+those regressions assert the newly admitted input remains `pending` and is not terminally blocked.
+
+Run scoped Ruff, formatting and BasedPyright on changed Python owners. Capture failing-first output,
+the matching passing scenario, canonical database/receipts and actual artifact bytes. Drain slices to
+quiescence: a transient `RUNNING` state is not proof that missing work was rejected. Require explicit
+incomplete disposition for unproved work and an accepted answer for the response-only control.
+Include stop → missing-proof feedback → actual tool work → satisfied assessment; test preparation-only,
+missing/tampered/out-of-root bytes and mutations during assessment. Use real owner adapters when
+claiming owner proof. Scripted planners/assessors prove host orchestration, not model competence.
+The gate-fix selection verifies the exact current input question through HTTP Run detail and signed
+slash delivery, excludes a stale task revision's question, and reconstructs a worker after faults
+before/after the notification commit. Require one final send and unchanged reasoning-record count.
+Its source regression captured two failures before the fixes; the five-file result/command/attachment
+selection then passed 23 tests. This is not installed-process or live Slack proof.
+
+The version-controlled completion corpus records host-contract oracle kind and basis, expected
+dispositions and actor/assessor call caps.
+Its report names false completion, false blocking, unnecessary continuation, duplicate effect keys,
+call-budget violations and elapsed milliseconds. It is a deterministic regression gate over fixture
+or recorded observations. Its designer-owned fixture oracles are not independent model-quality ground
+truth and must not be used to estimate real-world quality. Proof-registry tests require an
+exact host identity and preserve the real GitHub/image owner checks. Queue tests cover legacy additive
+migration, live overlapping owners, expiry recovery and stale-worker rejection. Run-detail tests assert
+the bounded execution projection without treating it as a progress percentage.
+
+For installed acceptance, build a non-editable wheel and install it with locked dependencies into a
+fresh Python 3.14 environment. Run from a sibling directory outside the checkout and environment;
+preserve the user's existing installation and configuration. The opt-in runner checks isolated
+`site-packages` imports, installed CLI help and loopback health, and writes command/exit manifests:
+
+```bash
+/absolute/fresh-venv/bin/python -I \
+  /absolute/checkout/tests/marketing/agent_service/installed_completion_canary.py \
+  --mode fixture --scenario all --output-root /absolute/new-fixture-evidence \
+  --baseline-python /absolute/old-fresh-venv/bin/python \
+  --codex /absolute/codex --model gpt-6-astra
+/absolute/fresh-venv/bin/python -I \
+  /absolute/checkout/tests/marketing/agent_service/installed_completion_canary.py \
+  --mode model --scenario all --output-root /absolute/new-model-evidence \
+  --codex /absolute/codex --model gpt-6-astra
+```
+
+Fixture mode copies test fixtures while requiring all product imports to stay installed. Its restart
+workers use different OS processes and check durable receipts without duplicate execution. Model mode
+uses the logged-in official Codex CLI for response, correction, artifact and blocked cases; tools and
+Slack transport remain synthetic. Record the model, actual call count, task rubric, received answers,
+artifact readback and baseline/candidate outcomes. One source-adapter strict-schema smoke has already
+used one actual `gpt-6-astra` assessor call; it is not this installed rehearsal or a benchmark.
+Report source forced-failure fixtures separately from actual-model comparisons. The baseline and
+candidate both passed the four representative cases with `gpt-6-astra`, an eight-tool-call cap and
+50 cost units. This does not demonstrate baseline premature completion or a quality advantage.
+
+The final non-editable wheel was `trace_appium_capture-0.7.0-py3-none-any.whl`, SHA-256
+`b65ac9a097f4faad8d749846034c4937337ab1d8b6e40da7d950997bfb936587`.
+Its installation contained 292 product Python files, all byte-matched to the source. Isolated
+imports stayed in `site-packages` while running outside the checkout. `candidate-fixture-3`
+passed 110 tests in 24.16s.
+Installed CLI help and loopback health passed. Separate restart processes retained the new-Slack
+32-tool/50-cost budget, reached ten receipts and delivered one final reply. Another process exited
+with the deliberate code 73 after assessment reservation; restart exited 0, retaining assessment
+count 1 → 2 and decision count 2 → 3 rather than resetting them.
+
+The September 14 hardening candidate built the same package version with SHA-256
+`9c4998a0a703ba7099b5953dc5609fba34dd6dd28e03ca637a74a34d37adb869` and installed locked
+dependencies into a new Python 3.14 environment outside the checkout. All installed Python bytes
+matched source. The expanded fixture selection passed 158 tests in 19.90 seconds; CLI help, loopback
+health, separate-process ten-receipt restart, expected reservation crash (exit 73), restart completion,
+and controlled rollback state checks passed. No old-version reader or actual model was exercised in
+this hardening rerun, so the September 12 model and old-reader evidence remains separate.
+
+The accepted model evidence is `candidate-model-2` for response/correction/blocked, plus
+`candidate-model-3/artifact`; the matched baseline uses `baseline-model-1` for the first three and
+`baseline-model-4/artifact`, built from commit `1c3f33e42f8ace919f4d068121e63ef1ef72ef7c`.
+The candidate's accepted set used seven actor and four assessor calls; the baseline used seven actor
+calls. Across retained exploratory attempts, the runner recorded 28 actor and five assessor calls
+(excluding the separate one-call source schema smoke).
+
+| Case | Observed final result | Actor / assessor calls |
+| --- | --- | --- |
+| Response | Exact `The sum is 4.`; completed | 1 / 1 |
+| Correction | Exact `こんにちは。`; completed | 2 / 2 |
+| Artifact | Completed after exact signed approval, two tool receipts and readable rooted PNG; final text includes its exact digest | 3 / 1 |
+| Missing publisher | `awaiting_input`; actionable request to connect ExamplePublisher and supply post/account; zero publication receipts | 1 / 0 |
+
+The artifact digest is `93e1ab1bd3e3980870a646e63252259ff54d84340805735ac6b7aa562b45e639`.
+It identifies a synthetic 128×128 PNG, not aesthetic quality or a real image-generation benchmark.
+Earlier attempts remain in the evidence: the first fixture run exposed a stale projected-evidence
+hash in the test adapter, and the initial artifact oracle demanded a literal digest that the prompt
+had not requested. The adapter was corrected to use the canonical host handle. The artifact prompt
+was amended to request the exact digest for both versions, and that case was rerun without removing
+assertions. The accepted set above is not an aggregate pass rate across all exploratory attempts.
+Evidence directories live under `.omo/evidence/task9/`; command, installation, received-result,
+approval, byte-readback and crash manifests retain the full provenance.
+The accepted-set and failed-attempt inventory is in `.omo/evidence/task9/final-report.md`.
+
+The rollback rehearsal is separately controlled and disposable: refuse the runbook's old-code start
+while drive/notify work remains, drain or cancel it, settle notification state, stop the candidate,
+make a fresh consistent SQLite backup, then inspect that backup read-only with the old installed
+version and compare record digests. This verifies a procedure, not an automatic guard, old-binary
+execution compatibility or production downgrade. Never restore over candidate-created work.
+See [state compatibility](../architecture/system.md#completion-state-compatibility-and-rollback).
+
 For request-based Trace post execution and result attachments, select
 `tests/marketing/channels/test_slack_trace_post.py`, `test_slack_images.py`,
 `test_slack_pending_dialogue.py`, `test_slack_github_issues.py`, `test_slack_run_notifications.py`,
@@ -43,13 +192,13 @@ upload uncertainty and restart deduplication. Repeat from outside the checkout w
 wheel and copied tests. Synthetic PNGs and captured Slack requests prove transport contracts,
 not live image quality or a real user's Slack download. See the
 [Trace post delivery record](trace-post-slack-delivery.md) for baseline/candidate evidence.
+The source selection must also observe the deferred tool returning `running`, a subsequent bounded
+completion assessment, and attachment delivery only from the accepted six-asset evidence set.
 
 For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
-and `test_slack_events.py` under `tests/marketing/channels`, plus `test_slack_commands.py`.
-Interrupt after a committed tool plan and fail reasoning after a previous successful answer:
-neither ordinary output nor explicit status may repeat earlier reasoning or imply ongoing
-execution. Verify the distinct interrupted-stage messages and unchanged canonical records.
-Check asynchronous completion, deduplication, callback-loss
+and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
+ordinary output must not expose its rationale or imply tool execution, while explicit status and
+canonical records remain available. Check asynchronous completion, deduplication, callback-loss
 recovery and membership checks. Repeat against a non-editable wheel outside the checkout.
 
 ### Slack approval feedback
@@ -79,8 +228,7 @@ Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_p
 exercise review explanations, invalid/oversized pages, missing pending work, current permission,
 changed digests and unavailable tools. Check delivered text and unchanged canonical records;
 help text must not grant reviewed-production assent. A fault after approval persistence verifies
-redacted diagnostics (including wrapped secret-bearing causes) and no automatic retry.
-Run the same selection against a fresh non-editable
+redacted diagnostics and no automatic retry. Run the same selection against a fresh non-editable
 wheel outside the checkout. Fixtures replace model/tool/Slack providers; they do not establish
 the cause of a deployed incident or successful live image generation.
 

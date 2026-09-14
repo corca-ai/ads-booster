@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,7 +10,12 @@ from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.contracts.agent_run import AgentRecordKind, ToolInvocation, contract_sha256
 from tests.marketing.agent_service.test_application import EffectThenStopReasoning, ResearchAdapter
 from tests.marketing.channels.test_slack_commands import NOW, request
-from tests.marketing.channels.test_slack_events import effect_descriptor, receive, setup_events
+from tests.marketing.channels.test_slack_events import (
+    effect_descriptor,
+    receive,
+    revoke_approval,
+    setup_events,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,15 +72,7 @@ def test_exact_approval_failure_is_actionable_without_execution(
     )
     digest = contract_sha256(invocation)
     if cause == "permission":
-        identity = owner.identity("U1")
-        with closing(sqlite3.connect(owner.store.database_path)) as db, db:
-            _ = db.execute(
-                "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
-                (
-                    identity.model_copy(update={"can_approve": False}).model_dump_json(),
-                    identity.binding_id,
-                ),
-            )
+        revoke_approval(owner)
         expected, code = "실행할 권한이 없어", "slack_approval_not_allowed"
     elif cause == "changed":
         digest = "0" * 64
@@ -101,7 +96,8 @@ def test_unknown_failure_after_approval_does_not_leak_or_retry(
     service = owner.commands.application.service
     service.registry = ToolRegistry((effect_descriptor(),))
     service.reasoning = EffectThenStopReasoning()
-    service.tools = {"creative.image.edit": ResearchAdapter()}
+    adapter = ResearchAdapter()
+    service.tools = {"creative.image.edit": adapter}
     receive(owner)
     assert owner.work_once(now=NOW)
     run = service.repository.list_runs("team")[0]
@@ -138,5 +134,11 @@ def test_unknown_failure_after_approval_does_not_leak_or_retry(
     after = service.repository.records("team", run.run_id)
     assert sum(r.kind is AgentRecordKind.APPROVAL for r in after) == 1
     assert not any(r.kind is AgentRecordKind.RECEIPT for r in after)
+    assert owner.work_once(now=NOW)
+    assert owner.work_once(now=NOW)
     assert not owner.work_once(now=NOW)
-    assert service.repository.records("team", run.run_id) == after
+    settled = service.repository.records("team", run.run_id)
+    assert sum(r.kind is AgentRecordKind.APPROVAL for r in settled) == 1
+    assert sum(r.kind is AgentRecordKind.RECEIPT for r in settled) == 1
+    assert len(adapter.inputs) == 1
+    assert secret not in str(messages) + caplog.text + str(settled)

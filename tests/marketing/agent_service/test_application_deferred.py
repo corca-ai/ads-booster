@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.service.work_continuation import continue_work
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     AgentRunState,
@@ -18,11 +22,9 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import EffectClass, ToolDescriptor, ToolExecutionResult
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import MarketingAgentService
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.service.work_continuation import continue_work
-from ads_booster.agent.runtime import SqliteSessionStore
+from tests.marketing.agent_service.completion_fixtures import (
+    FixtureMarketingAgentService as MarketingAgentService,
+)
 
 from .test_application import NOW, _descriptor, _reasoning_result, _request
 
@@ -142,13 +144,14 @@ def start(
 
 
 def complete(service: MarketingAgentService, invocation: ToolInvocation) -> AgentRunState:
-    return service.complete_deferred(
+    _ = service.complete_deferred(
         "trace",
         "run-one",
         operation_id="op-" + invocation.invocation_id,
         result=result(invocation),
         now=NOW + timedelta(hours=1),
-    ).state
+    )
+    return service.drive("trace", "run-one", now=NOW + timedelta(hours=1)).state
 
 
 def test_restart_preserves_reserved_budget_and_consumed_approval_can_expire(tmp_path: Path) -> None:

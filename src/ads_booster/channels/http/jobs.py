@@ -11,15 +11,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import (
-    AgentBudget,
-    AgentGoal,
-    AgentRecordKind,
-    ToolInvocation,
-    contract_sha256,
-)
-from ads_booster.contracts.models import ContractModel
 from ads_booster.agent.service.application import CreateAgentRunRequest
+from ads_booster.agent.service.drive_work import (
+    DriveClaimLostError,
+    DriveOrigin,
+    DriveWorkQueue,
+)
 from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
     KnowledgeIngressSink,
@@ -29,6 +26,13 @@ from ads_booster.channels.http.knowledge_ingress_api import (
     build_api_ingress,
 )
 from ads_booster.channels.http.oauth import OAuthIdentity
+from ads_booster.channels.task_results import latest_invocation
+from ads_booster.contracts.agent_run import (
+    AgentBudget,
+    AgentGoal,
+    contract_sha256,
+)
+from ads_booster.contracts.models import ContractModel
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -66,9 +70,13 @@ class AgentJobs:
     approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
     knowledge_sink: KnowledgeIngressSink | None = None
     knowledge_ingress: CanonicalKnowledgeIngress = field(init=False)
+    drive_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    drive_queue: DriveWorkQueue = field(init=False)
 
     def __post_init__(self) -> None:
         """Create additive durable request admission tables."""
+        self.drive_queue = DriveWorkQueue(self.service.repository.database_path)
+        self.service.drive_admission = self.drive_queue.transition
         self.knowledge_ingress = CanonicalKnowledgeIngress(
             self.service.repository.database_path, sink=self.knowledge_sink
         )
@@ -170,6 +178,7 @@ class AgentJobs:
         return {"job_id": job_id, "run_id": job.run_id, "state": row[0], "error": row[1]}
 
     def recover(self) -> None:
+        self.drive_queue.recover("http")
         with self._db() as db:
             for tenant, job_id, raw in _ROWS.validate_python(
                 db.execute(
@@ -188,7 +197,7 @@ class AgentJobs:
                     ),
                 )
 
-    def work_once(self, *, now: datetime) -> bool:  # noqa: C901 - ingress and execution have distinct recovery guards.
+    def work_once(self, *, now: datetime) -> bool:  # noqa: C901,PLR0912 - ingress and execution have distinct recovery guards.
         if self.knowledge_ingress.dispatch_once():
             return True
         with self._db() as db:
@@ -199,53 +208,73 @@ class AgentJobs:
                     WHERE state='pending' ORDER BY rowid LIMIT 1"""
                 ).fetchone()
             )
-            if row is None:
-                return False
-            _ = db.execute(
-                "UPDATE agent_web_jobs SET state='running' WHERE tenant=? AND job_id=?", row[:2]
-            )
+            if row is not None:
+                _ = db.execute(
+                    "UPDATE agent_web_jobs SET state='running' WHERE tenant=? AND job_id=?", row[:2]
+                )
+        if row is None:
+            return self._drive_once(now)
         tenant, job_id, principal, raw = row
         job = WebJob.model_validate_json(raw)
+        ownership_entered = False
         try:
             with self.service.run_locks.hold(tenant, job.run_id):
-                if job.action == "create":
-                    if job.goal is None or job.budget is None:
-                        raise ValueError("agent_job_goal_required")  # noqa: TRY301
-                    _ = self.service.create(
-                        CreateAgentRunRequest(
-                            run_id=job.run_id, tenant_id=tenant, goal=job.goal, budget=job.budget
-                        ),
-                        now=now,
-                    )
-                elif job.action == "input":
-                    run = self.service.repository.get(tenant, job.run_id)
-                    if run is None or run.revision != job.expected_revision:
-                        raise ValueError("agent_input_revision_changed")  # noqa: TRY301
-                    _ = self.service.submit_input(tenant, job.run_id, job.evidence or {}, now=now)
-                elif job.action == "resume":
-                    _ = self.service.drive(tenant, job.run_id, now=now)
-                else:
-                    self._require_approval(OAuthIdentity(tenant, principal))
-                    records = self.service.repository.records(tenant, job.run_id)
-                    latest = next(
-                        (r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION), None
-                    )
-                    if (
-                        latest is None
-                        or contract_sha256(ToolInvocation.model_validate(latest.payload))
-                        != job.invocation_sha256
-                    ):
-                        raise ValueError("agent_approval_invocation_changed")  # noqa: TRY301
-                    _ = self.service.decide_approval(
-                        tenant,
-                        job.run_id,
-                        approver_id=principal,
-                        granted=job.decision == "granted",
-                        expires_at=job.expires_at,
-                        now=now,
-                        expected_invocation_sha256=job.invocation_sha256,
-                    )
+                origin = DriveOrigin(
+                    tenant_id=tenant,
+                    run_id=job.run_id,
+                    channel="http",
+                    principal_id=principal,
+                    event_id=job_id,
+                )
+                with self.drive_queue.ownership(origin=origin, now=now):
+                    ownership_entered = True
+                    if job.action == "create":
+                        if job.goal is None or job.budget is None:
+                            raise ValueError("agent_job_goal_required")  # noqa: TRY301
+                        _ = self.service.create(
+                            CreateAgentRunRequest(
+                                run_id=job.run_id,
+                                tenant_id=tenant,
+                                goal=job.goal,
+                                budget=job.budget,
+                            ),
+                            now=now,
+                        )
+                    elif job.action == "input":
+                        run = self.service.repository.get(tenant, job.run_id)
+                        if run is None or run.revision != job.expected_revision:
+                            raise ValueError("agent_input_revision_changed")  # noqa: TRY301
+                        _ = self.service.submit_input(
+                            tenant, job.run_id, job.evidence or {}, now=now
+                        )
+                    elif job.action == "resume":
+                        _ = self.service.drive(tenant, job.run_id, now=now)
+                    else:
+                        self._require_approval(OAuthIdentity(tenant, principal))
+                        records = self.service.repository.records(tenant, job.run_id)
+                        invocation = latest_invocation(records)
+                        if (
+                            invocation is None
+                            or contract_sha256(invocation) != job.invocation_sha256
+                        ):
+                            raise ValueError("agent_approval_invocation_changed")  # noqa: TRY301
+                        _ = self.service.decide_approval(
+                            tenant,
+                            job.run_id,
+                            approver_id=principal,
+                            granted=job.decision == "granted",
+                            expires_at=job.expires_at,
+                            now=now,
+                            expected_invocation_sha256=job.invocation_sha256,
+                        )
             state, error = "done", None
+        except DriveClaimLostError:
+            if not ownership_entered:
+                self.requeue(tenant, job_id)
+                return True
+            # Once the owner entered, a lost claim may follow an uncertain effect;
+            # preserve the existing terminal handling rather than retrying it.
+            state, error = "blocked", "agent_job_failed_check_run"
         except ApprovalPermissionError:
             state, error = "blocked", _APPROVAL_PERMISSION_REQUIRED
         except Exception:  # noqa: BLE001 - persist a sanitized blocked outcome.
@@ -255,7 +284,46 @@ class AgentJobs:
                 "UPDATE agent_web_jobs SET state=?,error=? WHERE tenant=? AND job_id=?",
                 (state, error, tenant, job_id),
             )
+        self.drive_queue.notification_persisted(tenant, job_id)
         return True
+
+    def requeue(self, tenant: str, job_id: str) -> None:
+        """Return an ingress job to pending after transient lease contention."""
+        with self._db() as db:
+            _ = db.execute(
+                """UPDATE agent_web_jobs SET state='pending',error=NULL
+                WHERE tenant=? AND job_id=? AND state='running'""",
+                (tenant, job_id),
+            )
+
+    def _drive_once(self, now: datetime) -> bool:
+        claim = self.drive_queue.claim("http", now)
+        if claim is None:
+            return False
+        with self.service.run_locks.hold(claim.origin.tenant_id, claim.origin.run_id):
+            with self.drive_queue.ownership(claim=claim, now=now):
+                identity = OAuthIdentity(claim.origin.tenant_id, claim.origin.principal_id)
+                reason = "authorization_unavailable"
+                try:
+                    allowed = self.drive_authorizer is not None and self.drive_authorizer(identity)
+                    if self.drive_authorizer is not None:
+                        reason = "actor_revoked"
+                except Exception:  # noqa: BLE001 - authority lookup failure cannot grant a drive.
+                    allowed = False
+                if not allowed:
+                    self.drive_queue.block(claim, reason, now)
+                    with self._db() as db:
+                        _ = db.execute(
+                            """UPDATE agent_web_jobs SET state='blocked',error=?
+                            WHERE tenant=? AND job_id=?""",
+                            (reason, identity.tenant_id, claim.origin.event_id),
+                        )
+                    return True
+                if claim.phase == "drive":
+                    _ = self.service.drive(identity.tenant_id, claim.origin.run_id, now=now)
+                else:
+                    _ = self.drive_queue.discard(claim, now=now)
+                return True
 
     def _require_approval(self, identity: OAuthIdentity) -> None:
         allowed = False

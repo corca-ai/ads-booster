@@ -97,6 +97,55 @@ provide a correction, or send a human-made result. `어디까지 됐어?` reads 
 `새 작업 <request>` starts independent work. A stopped external action is never claimed
 undone. Existing `/trace` commands and server onboarding continue to work.
 
+### Completion checks (candidate, hardened 2026-09-14)
+
+The candidate service treats a model's `stop` as an answer to check, not proof that work is done.
+It checks the final text and links against the admitted request and its corrections. An image request
+needs verified artifact bytes; publication needs an actual effect receipt from a supported owner.
+A preparation brief, filename, human report or model claim cannot replace that proof. A host-declared
+exact answer, line count, JSON-field set or evidence digest is checked locally; the actor cannot attach
+one of these checks to certify itself. Other text answers receive a separate semantic assessment, and
+an exact prior result is reused only when its task, candidate, evidence, assessor and schema still match.
+That model judgment does not guarantee writing
+quality or business results; readable image bytes are not visual QA.
+
+Missing but obtainable work returns to the planner with unmet criteria. Unavailable verification,
+exhausted limits or repeated lack of progress produces an explicit incomplete result. Approval and
+human-input waits remain waits. Completion never grants permission to publish or bypass image review.
+When input is needed, Slack and the Run detail show the current question; older questions and
+rejected completion drafts are not substituted for it.
+Accepted task completion and successful Slack delivery are separate facts. Incomplete replies list
+confirmed work and remaining requirements without presenting rejected drafts as finished results.
+Authenticated `GET /v1/runs/{run_id}` also returns a bounded `execution` summary with phase, next
+action, last progress, budgets, queue owner/lease and a sanitized wait reason. It is operational state,
+not a transcript, token stream or estimated completion percentage.
+
+Configured Slack and Notion effects are verified against their owner readbacks, configured destination,
+successful receipt and approval/invocation binding. If an authenticated Slack or HTTP correction arrives
+while another worker holds the same Run lease, the ingress remains pending and is retried after that lease
+ends. Services constructed without a completion assessor retain the legacy v1 response-stop behavior;
+artifact and effect obligations still require their normal owner proof.
+
+New Slack Runs default to 32 tool calls and 50 cost units. Set
+`TRACE_MARKETING_MAX_TOOL_CALLS` to change the new-Slack-Run call limit and
+`TRACE_MARKETING_MAX_DECISION_CALLS` to change the new task-segment decision limit (default 64).
+An explicit Run budget wins over the Slack default. Planning and completion assessment share the
+decision limit, with at most three assessments per segment. The last decision slot is reserved for the
+final assessment. Limits are persisted at admission;
+restarts, approval waits, corrections and same-Run follow-ups do not refill the Run's tool/cost budget.
+For example, a stored legacy Run with an eight-call cap keeps that cap; the new default does not
+upgrade it. A newly admitted task segment resets its decision/assessment counters, not Run spend.
+Bounded worker slices continue automatically while authorized work remains runnable.
+
+The September 12 candidate passed a fresh, non-editable installed rehearsal outside the checkout:
+110 fixture tests, process restart/recovery and four representative actual-model cases. The baseline
+also passed the four matched cases; this is not a quality benchmark. The pre-existing user
+installation (`trace-appium-capture` 0.2.3) was preserved. No production deployment is claimed. See
+[completion verification](docs/development/testing.md#task-completion-harness) and the
+[state/rollback boundary](docs/architecture/system.md#completion-state-compatibility-and-rollback).
+The September 14 hardening rerun passed 158 installed fixture tests plus process restart and crash
+recovery; it did not rerun an actual model, live Slack or an old-version reader.
+
 For supplied funnel counts, `marketing.analyze` calculates stage conversion and cost per desired
 customer outcome, with explicit denominators and comparison limits. It needs no credentials and
 is available in admitted Slack channels and private conversations. Counts must be nested unique

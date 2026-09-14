@@ -1,7 +1,7 @@
 # Code Architecture
 
 Status: Active
-Last reviewed: 2026-09-11
+Last reviewed: 2026-09-14
 
 ## On-premises Marketing Agent
 
@@ -19,10 +19,10 @@ an existing service-to-domain or canonical-repository bridge remains permitted.
 | `contracts/tool_capability.py` | complete ToolDescriptor policy/readiness/idempotency/reconciliation contract | registry selection or execution |
 | `contracts/reasoning.py` | replaceable structured reasoning request and decision | Codex process lifecycle |
 | `agent/core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
-| `agent/service/` | canonical on-prem application flow and append-only SQLite repository | channel-specific planning or effect implementation |
+| `agent/service/` | canonical on-prem application flow, append-only SQLite repository and bounded lease-aware task progression | channel-specific planning or effect implementation |
 | `agent/runtime.py` | write-ahead invocation, exact approval, receipt validation and recovery | channel admission or effect-specific implementation |
 | `channels/`, `channels/http/` | signed Slack and authenticated HTTP input/output boundaries | canonical Run state or tool effects |
-| `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs | Run/approval/recovery ownership |
+| `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs and owner-bound completion proofs | Run/approval/recovery ownership |
 | `bootstrap/` | composition of the configured service and concrete integrations | a second execution path |
 | `knowledge/` | team knowledge, scoped retrieval, curation, learned skills and workspace learning readiness | Agent, channel, bootstrap, tool or workload dependencies |
 | `creative/`, `delivery/`, `learning/`, `research/`, `workflows/`, `evaluation/` | their named domain policies and implementations | Agent Core or channel admission; their established service bridge remains explicit |
@@ -43,7 +43,7 @@ planning and dispatch time, without replacing an already admitted invocation's e
 `skills.list` and `skills.read` adapters, registered by `bootstrap/integrations.py`. Discovery returns compact metadata;
 reading returns one exact server-owned procedure, criteria and required capabilities. Neither
 loads arbitrary files/URLs nor creates another Run. The canonical runtime owns invocation,
-receipt and budget accounting. `providers/codex_reasoning.py` owns generic discover/act/inspect guidance;
+receipt and budget accounting. `providers/codex_reasoning_prompt.py` owns generic discover/act/inspect guidance;
 marketing procedure bodies remain in the skill catalog rather than the initial prompt.
 
 `knowledge/skill_discovery.py` owns deterministic metadata-only ranking used by both catalog
@@ -77,6 +77,15 @@ handling, conversation identity and private member/session isolation remain the 
 approval, receipt validation, restart recovery, and reconciliation. The service composes it; it does
 not fork those guarantees. The `agent/` namespace now contains this canonical engine only; the prior
 connector-specific product is not restored, and no `trace-agent` or `trace-ads` entrypoint is introduced.
+
+`agent/service/application.py` installs `LegacyV1CompletionAssessor` when callers omit a completion
+service. That compatibility boundary only accepts host-created v1 response candidates; explicit
+completion services still own semantic judgments, and setting `service.completion = None` retains
+the fail-closed unavailable-verification path. `tools/completion_verifiers.py` owns the configured
+Slack and Notion receipt readback checks, while `tools/completion_registry.py` binds every registry
+dispatch to the exact invocation digest. `channels/slack_conversations.py` and `channels/http/jobs.py`
+return newly admitted input to `pending` when `DriveWorkQueue` reports a live same-Run lease; the
+existing owner continues the Run and the input is retried after the lease yields.
 
 `agent/service/pending_approval.py` derives the unexecuted proposal from canonical records; read
 invocations and ordinary answers do not replace it. Service planning, approval, Slack summaries and
@@ -397,6 +406,66 @@ allowlisted configuration/unit paths and exact previous/desired contents, so int
 resume without replacing intervening edits. Completed setup is idempotent. Doctor distinguishes
 missing configuration and Codex login from readiness; status includes update provenance. No company
 IdP or repository authentication is required for the default public Slack-only server.
+
+## Completion-harness owners (2026-09-14 candidate)
+
+| Owner | Responsibility |
+| --- | --- |
+| `contracts/task_progress.py`, `task_instruction.py`, `task_completion.py` | Versioned task/segment policy, host-selected deterministic checks, admitted text lineage, candidate and assessment/cache contracts; no execution |
+| `agent/service/task_progress.py`, `task_admission.py` | Legacy projection, exact event replay, monotonic revisions, actor-proposal constraints and completion revision fence |
+| `agent/service/application.py`, `task_drive.py` | Single-boundary advancement, bounded drive, v1/v2 planning and current task/checkpoint persistence through the existing repository |
+| `agent/service/run_limits.py` | Canonical cumulative budget, assessment-only final call reservation and evidence-based no-progress detection |
+| `agent/service/task_completion.py`, `completion_assessment.py`, `deterministic_completion.py` | Mandatory assessment, exact semantic-result reuse, candidate/spec/evidence binding, supersession validation and host deterministic checks |
+| `agent/service/completion_evaluation.py` | Frozen-corpus outcome, call, duplicate-effect and elapsed-time metrics; no model-quality claim |
+| `agent/service/completion_evidence.py` | Read-only canonical receipt/invocation/descriptor/approval binding; no effect implementation |
+| `tools/completion_proofs.py`, `completion_registry.py`, `completion_verifiers.py`, `completion_summary.py` | Typed host proof registration/dispatch, owner-specific artifact/effect verification and bounded semantic evidence summaries |
+| `providers/codex_reasoning.py`, `codex_reasoning_v2.py`, `codex_reasoning_transport.py` | Official Codex transport, retained v1 and strict v2 wire projection |
+| `providers/codex_completion.py`, `codex_completion_schema.py` | Independent no-tools semantic assessor and strict JSON schema |
+| `agent/service/drive_work.py` | Durable drive/notify claims, process lease/revision fencing, additive queue migration and atomic canonical transition hook |
+| `channels/http/execution_status.py` | Bounded Run phase/progress/budget/queue projection; no raw payload or secret ownership |
+| `channels/task_results.py`, `task_result_bindings.py` | Pure pre-assessment rendering, accepted/incomplete projection and immutable notification identity with separate delivery state |
+| `bootstrap/completion_policy.py`, `lifecycle.py`, `channel_setup.py` | New-Run/segment defaults and configured checker/provider/proof/worker composition |
+
+Legacy v1 stop projection in `task_drive.py` carries selected canonical delivery evidence into
+the completion candidate after `application.py` binds it through `CompletionEvidenceReader`.
+The v2 candidate remains actor-selected and passes the same assessment boundary.
+
+`agent/service/approval_binding.py` binds each deferred tool's canonical approval to its runtime
+grant. Image-edit and Trace-post retain their own admission preconditions and queue state.
+`bootstrap/durable_worker.py` owns their shared maintenance/shutdown polling boundary, with each
+tool wrapper retaining its log identity. Memory view status and claim queries share one scoped
+target predicate in `knowledge/memory_consolidation_views.py`.
+
+The proof adapter's narrow read-only bridge to `completion_evidence.py` follows the existing
+tool-to-service catalog precedent. It imports image and GitHub owner verification; `agent/service/`
+does not. This adapter cannot write Run state, authorize an effect, retry it or own recovery.
+`CanonicalCompletionProofs` receives configured roots/assets and a host-owned immutable registry;
+the actor and evidence payload cannot register or choose a verifier. Absence of a supported owner cannot
+be converted into verified proof. Production composition supplies the mandatory
+`CodexCompletionAssessor`; a missing assessor blocks completion. Test-only scripted assessors
+must state their expected task and evidence scope explicitly.
+
+Task records use the existing append-only repository and atomic admission hook. A deterministic check
+can enter only through trusted task admission; `apply_proposal` rejects actor-selected checks. Semantic
+supersession may retire a failed retained check only against later admitted instruction lineage; all
+other semantic statuses leave its host result authoritative. Cache identity includes the exact request
+digest, assessor identity and result schema, and cache hits still reread owner evidence. The auxiliary
+`agent_drive_origins`/`agent_drive_work` queue and `task_result_deliveries` projection do not replace
+canonical execution or channel outboxes. `DeliveryIdentity` contains tenant, Run, task/revision,
+candidate SHA-256, assessment ID and answer SHA-256. Slack length limits and private-link exclusion
+run before assessment; channels must send those assessed bytes rather than truncate them afterward.
+`agent/core/ports.py` defines `CompletionRenderContext(run, records)`, supplied by the service on
+every production render. The renderer derives attachment references from candidate-selected canonical
+successful image outputs, including the six nested `creative.trace_post` asset digests, and replaces
+actor references; private rendering removes them. The Trace-post proof registration rereads all six
+current repository assets before those evidence records become deliverable. Notification
+delivery filters through `attachment_records`; an empty accepted reference list delivers no images.
+`current_input_question` projects only a canonical request-input intent whose same-commit checkpoint
+binds the current task revision/spec. It cannot use a rejected completion draft or a stale question.
+The queue adds nullable `claim_owner` and `lease_expires_at` columns in place, preserving legacy rows;
+the existing Run revision is its fencing token. A process-local operation scope holds ownership while
+the revision advances across multiple canonical transitions, then releases only the latest derived
+queue target. HTTP status reads those columns through a read-only, legacy-compatible projection.
 
 ## Continuing-work owners (2026-09-07 candidate)
 

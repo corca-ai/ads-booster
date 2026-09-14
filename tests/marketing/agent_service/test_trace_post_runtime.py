@@ -135,6 +135,7 @@ def setup(tmp_path: Path, provider: FakeProvider, *, legacy_review: bool = False
         reasoning=TracePostReasoning(),
         tools={},
         runtime_store=SqliteSessionStore(database),
+        clock=lambda: NOW,
     )
     artifact_root = tmp_path / "artifacts"
     tool = TracePostTool(
@@ -157,6 +158,28 @@ def setup(tmp_path: Path, provider: FakeProvider, *, legacy_review: bool = False
     assert service.create(request, now=NOW).state is AgentRunState.AWAITING_APPROVAL
     _approve(service, "run-one")
     return tool
+
+
+def _unsettled_workspace(tool: TracePostTool) -> Path:
+    with closing(tool._db()) as database:
+        row = cast(
+            "tuple[str]",
+            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
+        )
+    raw = cast("dict[str, object]", json.loads(row[0]))
+    return Path(cast("str", raw["workspace"]))
+
+
+def _install_completed_provider_result(tool: TracePostTool) -> Path:
+    workspace = _unsettled_workspace(tool)
+    run = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
+    proof = _provider_result(run)
+    with closing(tool._db()) as database, database:
+        _ = database.execute(
+            "UPDATE trace_post_jobs SET stage='generated',provider_result=?",
+            (_provider_result_json(proof, workspace),),
+        )
+    return run
 
 
 def _approve(service: MarketingAgentService, run_id: str) -> None:
@@ -188,7 +211,7 @@ def test_approved_deferred_trace_post_ingests_six_assets_and_does_not_replay(
 ) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider, legacy_review=legacy_review)
-    assert tool.work_once()["state"] == "completed"
+    assert tool.work_once()["state"] == "running"
     assert provider.calls == 1
     with closing(tool._db()) as database:
         linked = database.execute(
@@ -217,7 +240,7 @@ def test_provider_event_count_must_equal_frozen_workflow_receipts(tmp_path: Path
     provider = FakeProvider(extra_image=True)
     tool = setup(tmp_path, provider)
 
-    assert tool.work_once()["state"] == "completed"
+    assert tool.work_once()["state"] == "running"
     records = tool.service.repository.records("tenant-a", "run-one")
     receipt = next(record for record in records if record.kind is AgentRecordKind.RECEIPT)
     assert receipt.payload["disposition"] == "failed"
@@ -245,7 +268,7 @@ def test_started_unknown_trace_post_is_not_replayed_after_restart(tmp_path: Path
     )
     assert tool.service.create(second, now=NOW).state is AgentRunState.AWAITING_APPROVAL
     _approve(tool.service, "run-two")
-    assert replace(tool).work_once()["state"] == "completed"
+    assert replace(tool).work_once()["state"] == "running"
     assert provider.calls == 2
     assert replace(tool).work_once()["state"] == "uncertain"
     assert provider.calls == 2
@@ -254,22 +277,9 @@ def test_started_unknown_trace_post_is_not_replayed_after_restart(tmp_path: Path
 def test_restart_recovers_a_completed_frozen_run_without_provider_replay(tmp_path: Path) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider)
-    with closing(tool._db()) as database, database:
-        row = cast(
-            "tuple[str]",
-            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
-        )
-        raw = cast("dict[str, object]", json.loads(row[0]))
-        workspace = Path(cast("str", raw["workspace"]))
-    run = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
-    proof = _provider_result(run)
-    with closing(tool._db()) as database, database:
-        _ = database.execute(
-            "UPDATE trace_post_jobs SET stage='generated',provider_result=?",
-            (_provider_result_json(proof, workspace),),
-        )
+    _ = _install_completed_provider_result(tool)
 
-    assert replace(tool).work_once()["state"] == "completed"
+    assert replace(tool).work_once()["state"] == "running"
     assert provider.calls == 0
     with closing(tool._db()) as database:
         linked = cast(
@@ -285,13 +295,8 @@ def test_restart_recovers_a_completed_frozen_run_without_provider_replay(tmp_pat
 def test_restart_does_not_invent_provider_proof_from_completed_files(tmp_path: Path) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider)
+    workspace = _unsettled_workspace(tool)
     with closing(tool._db()) as database, database:
-        row = cast(
-            "tuple[str]",
-            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
-        )
-        raw = cast("dict[str, object]", json.loads(row[0]))
-        workspace = Path(cast("str", raw["workspace"]))
         _ = database.execute("UPDATE trace_post_jobs SET stage='started'")
     _ = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
 
@@ -305,20 +310,7 @@ def test_restart_rejects_incomplete_snapshot_manifest_before_asset_ingest(
 ) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider)
-    with closing(tool._db()) as database, database:
-        row = cast(
-            "tuple[str]",
-            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
-        )
-        raw = cast("dict[str, object]", json.loads(row[0]))
-        workspace = Path(cast("str", raw["workspace"]))
-    run = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
-    proof = _provider_result(run)
-    with closing(tool._db()) as database, database:
-        _ = database.execute(
-            "UPDATE trace_post_jobs SET stage='generated',provider_result=?",
-            (_provider_result_json(proof, workspace),),
-        )
+    run = _install_completed_provider_result(tool)
     manifest_path = run / "document-manifest.json"
     manifest = cast("dict[str, object]", json.loads(manifest_path.read_text(encoding="utf-8")))
     manifest_files = cast("dict[str, object]", manifest["files"])

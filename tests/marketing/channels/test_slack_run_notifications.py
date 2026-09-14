@@ -8,9 +8,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ads_booster.agent.service.drive_work import DriveOrigin
 from ads_booster.bootstrap.channel_setup import slack_from_env
+from ads_booster.channels.http.http_api import MarketingAgentApi
 from ads_booster.channels.slack_conversations import Conversation, Message
 from ads_booster.channels.slack_events import SlackEvents
+from ads_booster.channels.task_results import result_for
 from tests.marketing.agent_service.test_creative_image_edit import approve, setup
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
@@ -47,7 +50,14 @@ def test_claimed_notification_is_not_resent_after_response_loss(tmp_path: Path) 
     assert owner.work_once(now=NOW)
     run = owner.commands.application.service.repository.list_runs("team")[0]
     assert owner.store.enqueue_run_notification(
-        "team", run.run_id, event_id="worker-operation", result="새 작업 결과"
+        "team",
+        run.run_id,
+        event_id="worker-operation",
+        result="새 작업 결과",
+        task_result=result_for(
+            run,
+            owner.commands.application.service.repository.records("team", run.run_id),
+        ),
     )
     claimed = owner.store.claim_notification()
     assert claimed is not None
@@ -56,6 +66,15 @@ def test_claimed_notification_is_not_resent_after_response_loss(tmp_path: Path) 
     assert not owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
     assert not owner.work_once(now=NOW)
     assert len(messages) == count
+    api = MarketingAgentApi(owner.commands.application.service, "team", "member", "secret")
+    response = api.dispatch("GET", f"/v1/runs/{run.run_id}", authorization="Bearer secret", now=NOW)
+    assert isinstance(response.body, dict)
+    task = response.body["task"]
+    assert isinstance(task, dict)
+    assert task["disposition"] == "satisfied"
+    deliveries = response.body["delivery"]
+    assert isinstance(deliveries, list)
+    assert any(isinstance(item, dict) and item.get("state") == "unknown" for item in deliveries)
 
 
 def test_notification_rechecks_current_member_and_excludes_synthetic_user_context(
@@ -133,8 +152,19 @@ def test_image_edit_completion_projects_to_slack_outbox_and_recovers_callback_lo
         text="승인된 이미지 편집",
     )
     events.store.admit(conversation, message)
+    events.drive_queue.bind(
+        DriveOrigin(
+            tenant_id="tenant-a",
+            run_id="run-one",
+            channel="slack",
+            principal_id="U1",
+            event_id=message.message_id,
+            conversation_id=conversation.conversation_id,
+        )
+    )
     events.store.finish(message, "")
     events.store.sent(message, "skipped")
+    events.store.sent(message, "skipped", ack=True)
     failure = True
 
     def callback(tenant: str, run: str, event: str) -> None:
@@ -148,10 +178,16 @@ def test_image_edit_completion_projects_to_slack_outbox_and_recovers_callback_lo
         _ = coordinator.work_once()
     events.recover()
     failure = False
-    assert replace(coordinator).work_once()["state"] == "completed"
-    assert events.work_once(now=NOW)
+    assert replace(coordinator).work_once()["state"] == "running"
+    for _ in range(5):
+        _ = events.work_once(now=NOW)
     assert len(sent) == 1
     assert sent[0]["thread_ts"] == "100.001"
+    run = coordinator.service.repository.get("tenant-a", "run-one")
+    assert run is not None
+    accepted = result_for(run, coordinator.service.repository.records("tenant-a", "run-one"))
+    assert accepted.identity is not None
+    assert sent[0]["text"] == accepted.text
     assert "Bounded top extension" in str(sent[0]["text"])
     assert "상태:" not in str(sent[0]["text"])
     assert replace(coordinator).work_once()["state"] == "idle"

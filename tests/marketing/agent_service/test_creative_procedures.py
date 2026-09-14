@@ -7,17 +7,23 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.application import (
+    CreateAgentRunRequest,
+    MarketingAgentService,
+)
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.bootstrap.integrations import (
+    AgentServiceIntegrationConfig,
+    ConfiguredAgentTools,
+)
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, AgentRunState, contract_sha256
 from ads_booster.contracts.reasoning import (
     ReasoningDecision,
     ReasoningProviderReceipt,
     ReasoningRequest,
     ReasoningResult,
-)
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import (
-    CreateAgentRunRequest,
-    MarketingAgentService,
 )
 from ads_booster.creative.creative_procedures import (
     PROCEDURES,
@@ -26,12 +32,6 @@ from ads_booster.creative.creative_procedures import (
     Task,
     build_creative_brief,
 )
-from ads_booster.bootstrap.integrations import (
-    AgentServiceIntegrationConfig,
-    ConfiguredAgentTools,
-)
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.runtime import SqliteSessionStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -152,6 +152,7 @@ def test_configured_service_executes_prepare_without_external_writes(
         reasoning=provider,
         tools=configured.adapters(),
         runtime_store=SqliteSessionStore(database),
+        clock=lambda: NOW,
     )
     run = service.create(
         CreateAgentRunRequest(
