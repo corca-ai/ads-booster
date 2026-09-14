@@ -677,7 +677,20 @@ class SlackEvents:
                     plan.run_id if plan else "",
                 )
                 return True
-            raise
+            # Once the owner entered, a lost claim may follow an uncertain effect;
+            # preserve the existing terminal handling rather than retrying it.
+            self.store.finish(
+                message,
+                " ".join(
+                    (
+                        "처리를 완료하지 못했습니다. 이 대화에 '상태'를 보내 확인하세요.",
+                        "실행 확인 전에는 승인을 반복하지 말고 운영자에게 문의하세요.",
+                    )
+                ),
+                blocked=True,
+            )
+            _ = self._notify()
+            return True
         except Exception as exc:  # noqa: BLE001 - never repeat an uncertain effect; no provider secrets.
             code = (
                 exc.args[0]

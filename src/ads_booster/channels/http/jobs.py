@@ -273,7 +273,9 @@ class AgentJobs:
             if not ownership_entered:
                 self.requeue(tenant, job_id)
                 return True
-            raise
+            # Once the owner entered, a lost claim may follow an uncertain effect;
+            # preserve the existing terminal handling rather than retrying it.
+            state, error = "blocked", "agent_job_failed_check_run"
         except ApprovalPermissionError:
             state, error = "blocked", _APPROVAL_PERMISSION_REQUIRED
         except Exception:  # noqa: BLE001 - persist a sanitized blocked outcome.
