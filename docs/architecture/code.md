@@ -421,6 +421,12 @@ Legacy v1 stop projection in `task_drive.py` carries selected canonical delivery
 the completion candidate after `application.py` binds it through `CompletionEvidenceReader`.
 The v2 candidate remains actor-selected and passes the same assessment boundary.
 
+`agent/service/approval_binding.py` binds each deferred tool's canonical approval to its runtime
+grant. Image-edit and Trace-post retain their own admission preconditions and queue state.
+`bootstrap/durable_worker.py` owns their shared maintenance/shutdown polling boundary, with each
+tool wrapper retaining its log identity. Memory view status and claim queries share one scoped
+target predicate in `knowledge/memory_consolidation_views.py`.
+
 The proof adapter's narrow read-only bridge to `completion_evidence.py` follows the existing
 tool-to-service catalog precedent. It imports image and GitHub owner verification; `agent/service/`
 does not. This adapter cannot write Run state, authorize an effect, retry it or own recovery.
