@@ -1633,6 +1633,55 @@
         "2b159e76dd0f3d7b729be2165ab2df5b1e1a8505ae649cf9dcdf3cf087c89b38",
         "61da3f1495c3d86324a8ba9bf2b3dd197b31a752116cf77f19b567dd095f15c1"
       ]
+    },
+    {
+      "fingerprint": "5e8e3498fbc839ee57a6780576c79f6d2ddd5a29821ae2ba269e5e5da1f88226",
+      "reason": "The serial Trace-post delivery test and the two-worker concurrency test intentionally construct separate proof readers around separate tool instances; sharing the mutable service and repository setup would couple independent delivery and concurrency oracles.",
+      "memberHashes": [
+        "896af77ee84d537d98a8dd74eb9db1984994c90ec7b841c84f3ddfa6be03352c",
+        "896af77ee84d537d98a8dd74eb9db1984994c90ec7b841c84f3ddfa6be03352c"
+      ]
+    },
+    {
+      "fingerprint": "fdace1957ff2478ce4d0587b842d84f935c5c13c5ea99b9eda835ea587fb39dc",
+      "reason": "The continuity test reads one conversation binding while the task-result test deliberately changes one synthetic notification row; their short SQLite fixture shapes belong to different persistence contracts.",
+      "memberHashes": [
+        "a91035cc64242ebda2c322663746553ded0f43e36681c38ff14c9e9e08b51b8f",
+        "e6c6f63cf918cb23f8dbcd1003540ff5048be8f8bfa253807783aa99e35e2072"
+      ]
+    },
+    {
+      "fingerprint": "074d8ca0a7c90818efe052973d09eeaa6b843121bbe6de051a61e94a3ba6363d",
+      "reason": "The adjacent result-binding tests intentionally force a skipped callback pending for different attacks: one tampers the body and the other changes task identity. Keeping the setup beside each oracle makes the corrupted state explicit.",
+      "memberHashes": [
+        "77d98e2c9875f3f54557ef36cc7a1677718718166225c5b1d6b86f4483226efd",
+        "d17e133077cbeaaef930469e648d9700e415dcdc528dcd279908cd74e05c3947"
+      ]
+    },
+    {
+      "fingerprint": "f627d453f2566e62ebb865711dc643e9769ed695cfba635c9cdc4ffe7997fa9f",
+      "reason": "ManagedImageProof verifies one full CreativeAsset returned by the image-edit owner, while TracePostProof verifies six output references returned by the Trace-post owner; their repository checks are similar but their wire contracts and equality requirements differ.",
+      "memberHashes": [
+        "88c517c70e2a46b2278d2495351a09584906dcdf4d23669ed6699be852b140be",
+        "9641950a61d21cacf6bc1fbc2c9e36318eaa01205636375835740e8d85c8217b"
+      ]
+    },
+    {
+      "fingerprint": "11d2a83550352f88ec1b63cb22ebdab7d744615b1464af85859a9ce1570d4dc5",
+      "reason": "The overlap spans the tail of single-asset verification and the separate six-asset Trace-post verifier; extracting it would either erase the full-asset equality check or make the Trace-post owner depend on an image-edit output shape.",
+      "memberHashes": [
+        "b0fc772f44985ea21813b2ee6c3cad88bc3d397e5974da6bda0dda9687d16496",
+        "ea62d908c4cee711d097809d3b58e9c6028a7ac1c676c205ec36c56d9b7f6aa7"
+      ]
+    },
+    {
+      "fingerprint": "715fbafe9b23c55f5d7f1149fb6c09539864a63eb6b77f5b7827158b571b71b8",
+      "reason": "These tests share only restart and no-retry assertion shapes across image upload and GitHub uncertain-write owners; upload request counts, reconciliation states, and user messages are separate channel outcomes.",
+      "memberHashes": [
+        "4a03945834d73a5007d2c0c433ffa321734eebf98fcceeceec84950a508f49c7",
+        "b1b8512118f95456628a4f71a37a0b9ebab6ac5092d724d16e5146adb4abc1a3",
+        "b4882d6748c85e6c660d87d3cfe31a248dd42856f945f2665721aa78fb4cabf7"
+      ]
     }
   ]
 }
