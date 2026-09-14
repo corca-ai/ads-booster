@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from ads_booster.contracts.agent_run import ToolExecutionDeferred, ToolInvocation
+    from ads_booster.contracts.agent_run import (
+        AgentRecord,
+        AgentRun,
+        ToolExecutionDeferred,
+        ToolInvocation,
+    )
     from ads_booster.contracts.reasoning import (
         ReasoningRequest,
         ReasoningRequestV2,
@@ -13,6 +19,7 @@ if TYPE_CHECKING:
         ReasoningResultV2,
     )
     from ads_booster.contracts.task_completion import (
+        CompletionCandidate,
         SemanticAssessmentRequest,
         SemanticAssessmentResult,
     )
@@ -36,6 +43,18 @@ class SemanticAssessor(Protocol):
 class IdentifiedSemanticAssessor(Protocol):
     @property
     def assessment_identity(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionRenderContext:
+    run: AgentRun
+    records: tuple[AgentRecord, ...]
+
+
+class CompletionRenderer(Protocol):
+    def render(
+        self, candidate: CompletionCandidate, context: CompletionRenderContext | None = None
+    ) -> CompletionCandidate: ...
 
 
 class ToolAdapter(Protocol):
