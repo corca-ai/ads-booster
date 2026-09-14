@@ -21,6 +21,8 @@ def assert_strict_schema(value: JsonValue) -> None:
             assert "$ref" not in mapping
             assert "$defs" not in mapping
             assert "default" not in mapping
+            assert "oneOf" not in mapping
+            assert "discriminator" not in mapping
             properties = mapping.get("properties")
             if isinstance(properties, dict):
                 required = mapping.get("required")

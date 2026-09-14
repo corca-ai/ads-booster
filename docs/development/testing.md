@@ -180,6 +180,14 @@ version and compare record digests. This verifies a procedure, not an automatic 
 execution compatibility or production downgrade. Never restore over candidate-created work.
 See [state compatibility](../architecture/system.md#completion-state-compatibility-and-rollback).
 
+For Slack dialogue while an operation awaits reconciliation, select
+`tests/marketing/channels/test_slack_uncertain_dialogue.py` together with
+`test_slack_events.py`, `test_slack_run_notifications.py`, and
+`tests/marketing/agent_service/test_application_deferred.py`. Verify current-message reasoning,
+empty tool capabilities, unchanged pending execution, cached-answer recovery, and late-result
+delivery to the original thread. Scripted replies prove routing and persistence; repeat with the
+official provider from a fresh non-editable installation before claiming actual-model behavior.
+
 For request-based Trace post execution and result attachments, select
 `tests/marketing/channels/test_slack_trace_post.py`, `test_slack_images.py`,
 `test_slack_pending_dialogue.py`, `test_slack_github_issues.py`, `test_slack_run_notifications.py`,
