@@ -23,6 +23,7 @@ from pydantic import TypeAdapter
 from ads_booster.agent.runtime import ApprovalGrant
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
+    CapabilitySnapshot,
     ToolApproval,
     ToolExecutionDeferred,
     ToolInvocation,
@@ -555,7 +556,7 @@ class TracePostTool:
                 sha256=digest,
                 parents=parent,
                 source="Installed trace-post frozen workflow",
-                use_terms="Internal marketing draft; human review required before use",
+                use_terms="Generated marketing image; user feedback is optional",
                 data_permission="synthetic",
                 permission_evidence="Generated from the packaged synthetic Trace template",
                 origin="worker_receipt",
@@ -579,13 +580,6 @@ class TracePostTool:
                         checks=("frozen_workflow_review",),
                         evidence="Reviewed by the configured workflow model",
                         reviewer="trace-post-model",
-                    ),
-                    CreativeQA(
-                        method="human_review",
-                        status="pending",
-                        locale=locale,
-                        evidence="Review typography, localization and phone readability",
-                        reviewer="team",
                     ),
                 ),
             )
@@ -620,12 +614,16 @@ class TracePostTool:
             run_summary_sha256=_sha256(summary_path),
             bundle_sha256=job.bundle_sha256,
             recorded_image_call_count=begins,
-            human_review_required=True,
+            human_review_required=False,
         ), begins
 
     def _complete(
         self, job: _Job, disposition: str, output: TracePostSuccess | TracePostFailure, cost: int
     ) -> JsonObject:
+        if isinstance(output, TracePostSuccess) and self._legacy_review_marker(job):
+            # Preserve an in-flight operation's frozen wire contract after an update.
+            # The historical marker does not impose a review or delivery checkpoint.
+            output = output.model_copy(update={"human_review_required": True})
         result = ToolExecutionResult(
             schema_version="trace.tool-execution-result.v1",
             invocation_sha256=contract_sha256(job.invocation),
@@ -640,6 +638,28 @@ class TracePostTool:
                 (result.model_dump_json(), job.operation_id),
             )
         return self._finish(job, result)
+
+    def _legacy_review_marker(self, job: _Job) -> bool:
+        if job.invocation.tenant_id is None:
+            raise ValueError("trace_post_tenant_required")
+        for record in self.service.repository.records(job.invocation.tenant_id, job.invocation.run_id):
+            if (
+                record.kind is not AgentRecordKind.CAPABILITY_SNAPSHOT
+                or record.payload_sha256 != job.invocation.capability_snapshot_sha256
+            ):
+                continue
+            snapshot = CapabilitySnapshot.model_validate(record.payload)
+            for descriptor in snapshot.descriptors:
+                if contract_sha256(descriptor) != job.invocation.descriptor_sha256:
+                    continue
+                value = descriptor.output_schema
+                for key in ("$defs", "TracePostSuccess", "properties", "human_review_required"):
+                    nested = value.get(key)
+                    if not isinstance(nested, dict):
+                        return False
+                    value = nested
+                return value.get("const") is True
+        raise ValueError("trace_post_descriptor_missing")
 
     def _finish(self, job: _Job, result: ToolExecutionResult) -> JsonObject:
         tenant = job.invocation.tenant_id

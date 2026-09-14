@@ -59,7 +59,8 @@ class TracePostSuccess(ContractModel):
     run_summary_sha256: Sha256Digest
     bundle_sha256: Sha256Digest
     recorded_image_call_count: int = Field(ge=7, le=14)
-    human_review_required: Literal[True]
+    # Older persisted operations may still report True; it is metadata, not a delivery gate.
+    human_review_required: bool = False
 
     @model_validator(mode="after")
     def complete_country_roles(self) -> Self:
