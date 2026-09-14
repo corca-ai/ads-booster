@@ -53,7 +53,7 @@ def test_interrupted_tool_plan_is_not_delivered_as_an_answer(tmp_path: Path) -> 
     assert conversation is not None
     before = service.repository.records("team", run.run_id)
     answer = events.summary(conversation)
-    assert answer == "아직 작업이 완료되지 않았습니다."
+    assert answer == "작업을 계속 진행하고 있습니다."
     assert not adapter.inputs
     assert service.repository.records("team", run.run_id) == before
     assert "상태: running" in events.summary(conversation, include_status=True)
