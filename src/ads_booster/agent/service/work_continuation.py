@@ -24,6 +24,14 @@ if TYPE_CHECKING:
 _MAX_NOTE_CHARS = 20_000
 
 
+def interrupted_reasoning(service: MarketingAgentService, run: AgentRun) -> bool:
+    """The caller holds execution_lock; no tool intent was committed after observation."""
+    if run.state is not AgentRunState.RUNNING:
+        return False
+    steps = service.repository.steps(run.tenant_id, run.run_id)
+    return bool(steps and steps[-1].kind is AgentStepKind.OBSERVE)
+
+
 def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are explicit.
     service: MarketingAgentService,
     tenant_id: str,
@@ -81,7 +89,7 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
             AgentRunState.CREATED,
             AgentRunState.AWAITING_RECONCILIATION,
             AgentRunState.BLOCKED,
-        }:
+        } and not interrupted_reasoning(service, run):
             raise ValueError("work_continuation_requires_safe_boundary")
         updated = service.repository.append_step(
             run,

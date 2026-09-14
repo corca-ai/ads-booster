@@ -24,7 +24,7 @@ from ads_booster.agent.service.knowledge_ingress import (
     KnowledgeIngressSink,
     PendingKnowledgeIngress,
 )
-from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.agent.service.work_continuation import continue_work, interrupted_reasoning
 from ads_booster.channels.contracts import ChannelIdentityBinding, ChannelKind
 from ads_booster.channels.github_results import issue_results
 from ads_booster.channels.knowledge_ingress_slack import (
@@ -110,27 +110,25 @@ _HASH = re.compile(r"[a-f0-9]{64}")
 _LOGGER = logging.getLogger(__name__)
 _FAILURE_REPLIES = {
     "slack_approval_source_changed": (
-        "승인 메시지가 수정되거나 삭제되어 실행하지 않았습니다. 현재 의사를 새 메시지로 알려주세요."
+        "요청 메시지가 수정되거나 삭제되어 실행하지 않았습니다. 현재 요청을 새 메시지로 알려주세요."
     ),
     "slack_approval_not_allowed": (
-        "이 대화에서 승인 권한이 없습니다. 승인 가능한 팀원에게 검토를 요청하세요."
+        "이 대화에서 해당 작업을 실행할 권한이 없어 실행하지 않았습니다."
     ),
     "agent_approval_invocation_changed": (
-        "보낸 해시가 현재 승인안과 다릅니다. '검토 1'로 현재 내용을 확인하세요."
+        "실행할 내용이 변경되어 이전 요청으로 실행하지 않았습니다."
     ),
     "slack_production_target_changed": (
-        "승인 대상 작업이 변경되었습니다. '검토 1'로 현재 내용을 확인하세요."
+        "대상 작업이 변경되어 이전 요청으로 실행하지 않았습니다."
     ),
     "agent_run_not_awaiting_approval": (
-        "현재 승인 대기 상태가 아닙니다. '상태'로 작업 진행 상황을 확인하세요."
+        "해당 작업은 이미 처리되었거나 변경되어 다시 실행하지 않았습니다."
     ),
     "tool_dispatch_no_longer_available": (
-        "승인 대상 도구를 현재 사용할 수 없습니다. "
-        "운영자에게 도구 연결과 준비 상태 확인을 요청하세요."
+        "요청한 도구를 현재 사용할 수 없어 작업을 완료하지 못했습니다."
     ),
     "tool_dispatch_adapter_unavailable": (
-        "승인 대상 도구를 현재 사용할 수 없습니다. "
-        "운영자에게 도구 연결과 준비 상태 확인을 요청하세요."
+        "요청한 도구를 현재 사용할 수 없어 작업을 완료하지 못했습니다."
     ),
 }
 
@@ -639,8 +637,8 @@ class SlackEvents:
                     code,
                     " ".join(  # noqa: FLY002 - readable translated message.
                         (
-                            "처리를 완료하지 못했습니다. 이 대화에 '상태'를 보내 확인하세요.",
-                            "실행 확인 전에는 승인을 반복하지 말고 운영자에게 문의하세요.",
+                            "요청을 처리하는 중 오류가 발생해 완료하지 못했습니다.",
+                            "실행 여부가 확인되지 않은 작업은 중복 실행하지 않았습니다.",
                         )
                     ),
                 ),
@@ -866,14 +864,17 @@ class SlackEvents:
         context["privacy"] = "private_dm" if conversation.private else "shared_thread"
         if (
             run is not None
-            and run.state
-            in {
-                AgentRunState.COMPLETED,
-                AgentRunState.STOPPED,
-                AgentRunState.AWAITING_INPUT,
-                AgentRunState.AWAITING_APPROVAL,
-                AgentRunState.AWAITING_TOOL,
-            }
+            and (
+                run.state
+                in {
+                    AgentRunState.COMPLETED,
+                    AgentRunState.STOPPED,
+                    AgentRunState.AWAITING_INPUT,
+                    AgentRunState.AWAITING_APPROVAL,
+                    AgentRunState.AWAITING_TOOL,
+                }
+                or interrupted_reasoning(service, run)
+            )
             and not text.startswith("새 작업 ")
         ):
             return MessagePlan(action="revise", run_id=run.run_id)
@@ -1323,9 +1324,9 @@ class SlackEvents:
                 AgentRunState.AWAITING_RECONCILIATION: (
                     "실행 결과를 확인해야 합니다. 같은 작업을 다시 실행하지 않았습니다."
                 ),
-                AgentRunState.BLOCKED: "작업이 막혀 완료하지 못했습니다. 상태 확인이 필요합니다.",
+                AgentRunState.BLOCKED: "작업을 진행할 수 없어 완료하지 못했습니다.",
                 AgentRunState.STOPPED: "작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다.",
-                AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다. 상태 확인이 필요합니다.",
+                AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다.",
             }.get(run.state, "아직 작업이 완료되지 않았습니다.")
         verified_issues = "\n".join(
             line
