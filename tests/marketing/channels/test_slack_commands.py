@@ -7,14 +7,16 @@ from urllib.parse import urlencode
 
 import pytest
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.bootstrap.channel_setup import slack_from_env
+from ads_booster.channels.slack import slack_signature
 from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import MarketingAgentService
-from ads_booster.bootstrap.channel_setup import slack_from_env
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.channels.slack import slack_signature
-from ads_booster.agent.runtime import SqliteSessionStore
+from tests.marketing.agent_service.completion_fixtures import (
+    FixtureMarketingAgentService as MarketingAgentService,
+)
 from tests.marketing.agent_service.test_application import (
     NOW as APP_NOW,
 )

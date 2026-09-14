@@ -18,6 +18,7 @@ from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
+from ads_booster.agent.service.drive_work import DriveOrigin, DriveWorkQueue
 from ads_booster.agent.service.knowledge import READ_ONLY_DM_TOOLS
 from ads_booster.agent.service.knowledge_ingress import (
     KnowledgeIngressSink,
@@ -63,9 +64,14 @@ from ads_booster.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
 )
+from ads_booster.channels.task_result_bindings import matches_result
+from ads_booster.channels.task_results import (
+    BoundedCompletionRenderer,
+    attachment_records,
+    result_for,
+)
 from ads_booster.contracts.agent_memory import MemoryAccess, MemoryScope
 from ads_booster.contracts.agent_run import (
-    AgentBudget,
     AgentGoal,
     AgentRecordKind,
     AgentRun,
@@ -91,6 +97,7 @@ from ads_booster.transport.json_types import JsonObject, JsonValue
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
 
+    from ads_booster.agent.service.drive_work import DriveClaim
     from ads_booster.agent.service.knowledge_ingress import TrustedLearningSource
     from ads_booster.knowledge.tool_contracts import QuestionRecord, TrustedInvocationContext
     from ads_booster.knowledge.tools import ToolHost
@@ -144,6 +151,7 @@ class SlackEvents:
     store: SlackConversationStore = field(init=False)
     private_service: MarketingAgentService = field(init=False)
     progress: SlackProgressStore = field(init=False)
+    drive_queue: DriveWorkQueue = field(init=False)
 
     def __post_init__(self) -> None:
         """Share the canonical ledger while constraining private tool authority."""
@@ -159,6 +167,8 @@ class SlackEvents:
             ),
         )
         self.progress = SlackProgressStore(self.store)
+        self.drive_queue = DriveWorkQueue(self.store.database_path)
+        self.commands.application.service.drive_admission = self.drive_queue.transition
         self.private_service = replace(
             self.commands.application.service,
             capability_policy=CapabilityPolicy(
@@ -172,6 +182,7 @@ class SlackEvents:
             ),
         )
         self.private_service.execution_lock = self.commands.application.service.execution_lock
+        self.private_service.renderer = BoundedCompletionRenderer(include_links=False)
         self.commands.application.service.boundary_signal = self._pending_steering
         self.private_service.boundary_signal = self._pending_steering
         self.commands.application.service.current_context = self._current_context
@@ -531,6 +542,8 @@ class SlackEvents:
 
     def recover(self) -> None:
         self.store.recover()
+        with self.commands.application.service.execution_lock:
+            self.drive_queue.recover("slack")
 
     def _service(self, conversation: Conversation) -> MarketingAgentService:
         return self.private_service if conversation.private else self.commands.application.service
@@ -551,7 +564,7 @@ class SlackEvents:
             return True
         claimed = self.store.claim()
         if claimed is None:
-            return False
+            return self._drive_once(now)
         message, plan = claimed
         conversation = self.store.conversation(message.conversation_id)
         if conversation is None:
@@ -569,7 +582,18 @@ class SlackEvents:
                         message.message_id, plan.run_id, actor_id=identity.member_id
                     )
                 if plan.action in {"create", "input", "resume", "approve", "revise"}:
-                    with self._working(conversation, message, plan) as control:
+                    origin = DriveOrigin(
+                        tenant_id=conversation.tenant_id,
+                        run_id=plan.run_id,
+                        channel="slack",
+                        principal_id=message.user_id,
+                        event_id=message.message_id,
+                        conversation_id=conversation.conversation_id,
+                    )
+                    with (
+                        self.drive_queue.ownership(origin=origin, now=now),
+                        self._working(conversation, message, plan) as control,
+                    ):
                         try:
                             result = self._execute(conversation, message, plan, identity, now=now)
                         except ExecutionCancelledError:
@@ -579,7 +603,27 @@ class SlackEvents:
                                 result = self._cancelled_result(conversation, plan, now=now)
                 else:
                     result = self._execute(conversation, message, plan, identity, now=now)
-                self.store.finish(message, result)
+                projected_run = (
+                    service.repository.get(conversation.tenant_id, plan.run_id)
+                    if plan.run_id
+                    else None
+                )
+                projected = (
+                    result_for(
+                        projected_run,
+                        service.repository.records(conversation.tenant_id, plan.run_id),
+                    )
+                    if projected_run is not None
+                    else None
+                )
+                self.store.finish(
+                    message,
+                    result,
+                    task_result=projected
+                    if projected is not None and projected.text == result
+                    else None,
+                )
+                self._defer_running_result(conversation, plan, message)
                 if plan.learning_urgent:
                     self._admit_urgent_learning(plan.run_id, now=now)
                 self._admit_shared_turn(conversation, plan, now=now)
@@ -602,6 +646,82 @@ class SlackEvents:
             self._invalidate_learning_sources(now=now)
             return True
         return self._enqueue_learning_questions() or self._notify()
+
+    def _defer_running_result(
+        self, conversation: Conversation, plan: MessagePlan, message: Message
+    ) -> None:
+        active = (
+            self._service(conversation).repository.get(conversation.tenant_id, plan.run_id)
+            if plan.run_id
+            else None
+        )
+        if active is not None and active.state is AgentRunState.RUNNING:
+            self.store.defer_result(message)
+        else:
+            self.drive_queue.notification_persisted(conversation.tenant_id, message.message_id)
+
+    def _drive_once(self, now: datetime) -> bool:
+        with self.commands.application.service.execution_lock:
+            claim = self.drive_queue.claim("slack", now)
+            if claim is None:
+                return False
+            with self.drive_queue.ownership(claim=claim, now=now):
+                conversation = self.store.conversation(claim.origin.conversation_id)
+                if conversation is None or conversation.closed:
+                    self.drive_queue.block(claim, "actor_revoked", now)
+                    return True
+                try:
+                    _ = self._authorize(conversation, claim.origin.principal_id)
+                except ValueError:
+                    self.drive_queue.block(claim, "actor_revoked", now)
+                    return True
+                service = self._service(conversation)
+                message = self.store.admitted_message(claim.origin.event_id)
+                if message is None:
+                    self.drive_queue.block(claim, "authorization_unavailable", now)
+                    return True
+                plan = MessagePlan(action="resume", run_id=claim.origin.run_id)
+                if claim.phase == "notify":
+                    self._notify_drive_claim(service, message, claim, now=now)
+                    return True
+                with self._working(conversation, message, plan) as control:
+                    try:
+                        _ = service.drive(claim.origin.tenant_id, claim.origin.run_id, now=now)
+                    except ExecutionCancelledError:
+                        _ = self._cancelled_result(conversation, plan, now=now)
+                    else:
+                        if control.cancelled():
+                            _ = self._cancelled_result(conversation, plan, now=now)
+        _ = self._notify()
+        return True
+
+    def _notify_drive_claim(
+        self,
+        service: MarketingAgentService,
+        message: Message,
+        claim: DriveClaim,
+        *,
+        now: datetime,
+    ) -> None:
+        current = service.repository.get(claim.origin.tenant_id, claim.origin.run_id)
+        if current is None:
+            _ = self.drive_queue.discard(claim, now=now)
+            return
+        projected = result_for(
+            current, service.repository.records(current.tenant_id, current.run_id)
+        )
+        if self.store.notification_state(message) in {"pending", "deferred"}:
+            self.store.finish_drive_result(message, projected.text, task_result=projected)
+        else:
+            _ = self.store.enqueue_run_notification(
+                current.tenant_id,
+                current.run_id,
+                event_id=f"drive-result:{claim.revision}",
+                result=projected.text,
+                task_result=projected,
+            )
+        _ = self.drive_queue.discard(claim, now=now)
+        _ = self._notify()
 
     def interact(self, body: bytes, headers: dict[str, str], *, now: datetime) -> JsonObject:
         """Persist cancellation without waiting for the active execution lock or Slack API."""
@@ -914,6 +1034,14 @@ class SlackEvents:
             return self._answer_learning_question(conversation, message, plan, now=now)
         conversation = conversation.model_copy(update={"current_run": plan.run_id})
         self.store.update_conversation(conversation)
+        origin = DriveOrigin(
+            tenant_id=conversation.tenant_id,
+            run_id=plan.run_id,
+            channel="slack",
+            principal_id=message.user_id,
+            event_id=message.message_id,
+            conversation_id=conversation.conversation_id,
+        )
         if message.attachments and not conversation.private:
             bind_files(
                 self.store.database_path,
@@ -925,30 +1053,32 @@ class SlackEvents:
         if plan.action == "create":
             if plan.goal is None:
                 raise ValueError("slack_goal_missing")
-            _ = service.create(
-                CreateAgentRunRequest(
-                    run_id=plan.run_id,
-                    tenant_id=conversation.tenant_id,
-                    goal=plan.goal,
-                    budget=AgentBudget(max_tool_calls=8, max_cost_units=50),
-                ),
-                now=now,
-            )
+            with self.drive_queue.ownership(origin=origin, now=now):
+                _ = service.create(
+                    CreateAgentRunRequest(
+                        run_id=plan.run_id,
+                        tenant_id=conversation.tenant_id,
+                        goal=plan.goal,
+                        budget=self.commands.new_run_budget,
+                    ),
+                    now=now,
+                )
         elif plan.action in {"revise", "pause"}:
-            continued = continue_work(
-                service,
-                conversation.tenant_id,
-                plan.run_id,
-                event_id=message.message_id,
-                actor_id=identity.member_id,
-                note=message.text,
-                action="pause" if plan.action == "pause" else "revise",
-                now=now,
-                inputs={
-                    "attachments": [a.model_dump(mode="json") for a in message.attachments],
-                    "verification": "reference_only_not_visually_inspected",
-                },
-            )
+            with self.drive_queue.ownership(origin=origin, now=now):
+                continued = continue_work(
+                    service,
+                    conversation.tenant_id,
+                    plan.run_id,
+                    event_id=message.message_id,
+                    actor_id=identity.member_id,
+                    note=message.text,
+                    action="pause" if plan.action == "pause" else "revise",
+                    now=now,
+                    inputs={
+                        "attachments": [a.model_dump(mode="json") for a in message.attachments],
+                        "verification": "reference_only_not_visually_inspected",
+                    },
+                )
             if continued.state is AgentRunState.AWAITING_TOOL:
                 return (
                     "요청을 현재 업무에 기록했습니다. "
@@ -964,7 +1094,10 @@ class SlackEvents:
             run = service.repository.get(conversation.tenant_id, plan.run_id)
             if run is None or run.revision != plan.revision or plan.evidence is None:
                 raise ValueError("slack_input_revision_changed")
-            _ = service.submit_input(conversation.tenant_id, plan.run_id, plan.evidence, now=now)
+            with self.drive_queue.ownership(origin=origin, now=now):
+                _ = service.submit_input(
+                    conversation.tenant_id, plan.run_id, plan.evidence, now=now
+                )
         elif plan.action in {"approve", "reject"}:
             if not identity.can_approve or conversation.private:
                 raise ValueError("slack_approval_not_allowed")
@@ -973,17 +1106,22 @@ class SlackEvents:
                 and conversation.current_run != plan.run_id
             ):
                 raise ValueError("slack_production_target_changed")
-            _ = service.decide_approval(
-                conversation.tenant_id,
-                plan.run_id,
-                approver_id=identity.member_id,
-                granted=plan.action == "approve",
-                expected_invocation_sha256=plan.digest,
-                expires_at=now + timedelta(minutes=5) if plan.action == "approve" else None,
-                now=now,
-            )
+            with self.drive_queue.ownership(origin=origin, now=now):
+                _ = service.decide_approval(
+                    conversation.tenant_id,
+                    plan.run_id,
+                    approver_id=identity.member_id,
+                    granted=plan.action == "approve",
+                    expected_invocation_sha256=plan.digest,
+                    expires_at=now + timedelta(minutes=5) if plan.action == "approve" else None,
+                    now=now,
+                )
         elif plan.action == "resume":
-            _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
+            with self.drive_queue.ownership(origin=origin, now=now):
+                _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
+        current = service.repository.get(conversation.tenant_id, plan.run_id)
+        if current is not None and current.state is AgentRunState.RUNNING:
+            return "작업을 계속 진행하고 있습니다."
         return self.summary(conversation)
 
     def _answer_learning_question(
@@ -1148,11 +1286,14 @@ class SlackEvents:
             run = service.repository.get(tenant_id, run_id)
             if run is None:
                 return False
+            if run.state is AgentRunState.RUNNING:
+                return False
             return self.store.enqueue_run_notification(
                 tenant_id,
                 run_id,
                 event_id=event_id,
-                result=self.summary(conversation, include_status=True)[:12000],
+                result=self.summary(conversation),
+                task_result=result_for(run, service.repository.records(tenant_id, run_id)),
             )
 
     def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
@@ -1172,14 +1313,8 @@ class SlackEvents:
                 f"승인 {contract_sha256(invocation)}\n"
                 "거절하려면 '거절' 다음에 같은 해시를 붙여 보내세요."
             )
-        latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
-        decision = None if latest is None else latest.payload.get("decision")
-        answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        result = "\n\n".join(part for part in (answer, issue_results(records)) if part)
-        if include_status or run.state not in {
-            AgentRunState.COMPLETED,
-            AgentRunState.AWAITING_INPUT,
-        }:
+        result = result_for(run, records).text
+        if include_status:
             result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
         return result
 
@@ -1267,12 +1402,30 @@ class SlackEvents:
         except ValueError:
             state = "denied"
         else:
-            if self.image_delivery is not None and not conversation.private:
+            service = self._service(conversation)
+            current = service.repository.get(conversation.tenant_id, conversation.current_run)
+            if current is not None:
+                with self.store.connect() as db:
+                    valid = matches_result(
+                        db,
+                        "message:" + message.message_id,
+                        replace(
+                            result_for(
+                                current,
+                                service.repository.records(current.tenant_id, current.run_id),
+                            ),
+                            text=result,
+                        ),
+                    )
+                if not valid:
+                    self.store.sent(message, "superseded")
+                    return True
+            if self.image_delivery is not None and not conversation.private and current is not None:
                 plan = self.progress.locate(message.message_id)
                 if plan is not None:
-                    result += "\n" + self.image_delivery.deliver(
-                        self._service(conversation).repository.records(
-                            conversation.tenant_id, plan.run_id
+                    _ = self.image_delivery.deliver(
+                        attachment_records(
+                            current, service.repository.records(conversation.tenant_id, plan.run_id)
                         ),
                         conversation,
                     )
