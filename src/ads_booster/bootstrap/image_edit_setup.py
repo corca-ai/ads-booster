@@ -8,15 +8,15 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
-from ads_booster.contracts.tool_capability import ToolReadiness
 from ads_booster.agent.core.registry import ToolRegistration, ToolRegistry
-from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.agent.service.creative_image_edit import (
     CreativeImageEditTool,
     ImageEditConfig,
     image_edit_descriptor,
 )
-from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.bootstrap.durable_worker import run_durable_worker
+from ads_booster.contracts.tool_capability import ToolReadiness
+from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.providers.codex_image_edit import CodexImageEditProvider
 
 if TYPE_CHECKING:
@@ -24,8 +24,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from threading import Event
 
-    from ads_booster.contracts.tool_capability import ToolDescriptor
     from ads_booster.agent.service.application import MarketingAgentService
+    from ads_booster.agent.service.maintenance import MaintenanceGate
+    from ads_booster.contracts.tool_capability import ToolDescriptor
 
 _MAX_CONFIG = 16000
 _LOGGER = logging.getLogger(__name__)
@@ -124,11 +125,9 @@ def connect_image_edit(
 
 def run_image_edit_worker(tool: CreativeImageEditTool, stop: Event, gate: MaintenanceGate) -> None:
     """Poll the durable queue inside the existing maintenance and shutdown boundary."""
-    while not stop.is_set():
-        try:
-            with gate.work() as admitted:
-                if admitted:
-                    _ = tool.work_once()
-        except Exception:  # noqa: BLE001 - queue owner retains uncertainty; no provider-error leakage.
-            _LOGGER.warning("image_edit_queue_poll_failed")
-        _ = stop.wait(1)
+    run_durable_worker(
+        tool.work_once,
+        stop,
+        gate,
+        lambda: _LOGGER.warning("image_edit_queue_poll_failed"),
+    )
