@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
-from ads_booster.agent.core.ports import CompletionRenderContext
+from ads_booster.agent.core.ports import CompletionRenderContext, ReasoningProviderV2
 from ads_booster.agent.core.registry import (
     CapabilityPolicy,
     ToolRegistrationCatalog,
@@ -178,7 +178,7 @@ class MarketingAgentService:
         )
         if missing:
             raise ValueError("ready_tool_adapter_missing")
-        if self.completion is None:
+        if self.completion is None and not isinstance(self.reasoning, ReasoningProviderV2):
             # Keep the public constructor compatible with v1 providers.  Callers
             # may still explicitly disable completion after construction; the
             # assessment path then retains its fail-closed behavior.
