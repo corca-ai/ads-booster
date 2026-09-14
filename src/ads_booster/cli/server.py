@@ -7,11 +7,13 @@ import getpass
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from secrets import token_urlsafe
 from typing import TYPE_CHECKING, Annotated, cast
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -104,6 +106,43 @@ def env_value(value: str) -> str:
     if any(c in value for c in "\n\r\x00"):
         raise RuntimeError("invalid_multiline_setting")
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def merge_env_settings(current: str, settings: dict[str, str]) -> str:
+    remaining = dict(settings)
+    lines: list[str] = []
+    for line in current.splitlines():
+        key, separator, _value = line.partition("=")
+        if separator and key in remaining:
+            lines.append(f"{key}={env_value(remaining.pop(key))}")
+        else:
+            lines.append(line)
+    lines.extend(f"{key}={env_value(value)}" for key, value in remaining.items())
+    return "\n".join(lines) + "\n"
+
+
+def environment_keys(path: Path) -> frozenset[str]:
+    if not path.is_file():
+        return frozenset()
+    keys: set[str] = set()
+    for line in path.read_text().splitlines():
+        key, separator, _value = line.partition("=")
+        if separator and re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+            keys.add(key)
+    return frozenset(keys)
+
+
+def environment_value(path: Path, selected_key: str) -> str | None:
+    if not path.is_file():
+        return None
+    for line in path.read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key == selected_key:
+            parsed = shlex.split(value)
+            if len(parsed) != 1:
+                raise RuntimeError("invalid_environment_setting")
+            return parsed[0]
+    return None
 
 
 def executable(name: str) -> str:
@@ -352,6 +391,45 @@ def setup() -> None:
         raise typer.Exit(1) from None
 
 
+@app.command("threads-setup")
+def threads_setup() -> None:
+    try:
+        if not interactive_terminal():
+            raise RuntimeError("threads_setup_requires_interactive_terminal")
+        environment_path = CONFIG / "agent.env"
+        server_path = CONFIG / "server.json"
+        if not environment_path.is_file() or not server_path.is_file():
+            raise RuntimeError("server_setup_required")
+        server = cast("dict[str, object]", json.loads(server_path.read_text()))
+        origin = origin_value(str(server.get("origin", "")))
+        app_id = prompt("Meta Threads App ID")
+        app_secret = getpass.getpass("Meta Threads App Secret (화면에 표시되지 않음): ").strip()
+        if not app_id or not app_secret:
+            raise RuntimeError("threads_app_credentials_required")
+        redirect_uri = origin + "/integrations/threads/callback"
+        media_secret = environment_value(
+            environment_path, "TRACE_MARKETING_THREADS_MEDIA_SECRET"
+        ) or token_urlsafe(48)
+        settings = {
+            "TRACE_MARKETING_THREADS_APP_ID": app_id,
+            "TRACE_MARKETING_THREADS_APP_SECRET": app_secret,
+            "TRACE_MARKETING_THREADS_REDIRECT_URI": redirect_uri,
+            "TRACE_MARKETING_THREADS_MEDIA_SECRET": media_secret,
+        }
+        private_write(
+            environment_path,
+            merge_env_settings(environment_path.read_text(), settings),
+        )
+        typer.echo("Threads 앱 설정을 저장했습니다.")
+        typer.echo(f"Meta OAuth Redirect URI: {redirect_uri}")
+        typer.echo("다음: trace-marketing server stop / trace-marketing server start")
+    except Exception as error:  # noqa: BLE001 - secret-bearing input must never reach a traceback.
+        typer.echo(
+            str(error) if isinstance(error, RuntimeError) else type(error).__name__, err=True
+        )
+        raise typer.Exit(1) from None
+
+
 @app.command("manifest")
 def manifest(
     origin: Annotated[str, typer.Option(help="Public HTTPS origin for Slack callbacks.")],
@@ -439,7 +517,17 @@ def status() -> None:
         try:
             value = json_request(url)
             checks[label] = {
-                k: value.get(k) for k in ["owner", "release", "maintenance", "update_protocol"]
+                k: value.get(k)
+                for k in [
+                    "owner",
+                    "release",
+                    "maintenance",
+                    "update_protocol",
+                    "schedule_worker",
+                    "scheduler_last_tick_at",
+                    "scheduler_backlog",
+                ]
+                if k in value
             }
         except Exception:  # noqa: BLE001 - public failures can contain response secrets.
             checks[label] = "unreachable"
@@ -474,6 +562,16 @@ def doctor() -> None:
         checks[name] = shutil.which(name) is not None
     checks["configured"] = (CONFIG / "server.json").is_file()
     checks["setup_complete"] = not (CONFIG / "setup-pending.json").exists()
+    thread_keys = {
+        "TRACE_MARKETING_THREADS_APP_ID",
+        "TRACE_MARKETING_THREADS_APP_SECRET",
+        "TRACE_MARKETING_THREADS_REDIRECT_URI",
+        "TRACE_MARKETING_THREADS_MEDIA_SECRET",
+    }
+    configured_keys = environment_keys(CONFIG / "agent.env")
+    checks["threads_config_complete"] = (
+        not (thread_keys & configured_keys) or thread_keys <= configured_keys
+    )
     if checks["configured"] and checks["setup_complete"] and operator_settings().get("tunnel"):
         checks["cloudflared"] = shutil.which("cloudflared") is not None
     try:

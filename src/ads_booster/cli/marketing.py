@@ -15,6 +15,7 @@ import typer
 from pydantic import ValidationError
 
 from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.agent.service.schedule_runtime import ScheduleRuntime
 from ads_booster.agent.service.scheduler import (
     AgentSkillScheduler,
     DailySkillSchedule,
@@ -35,6 +36,8 @@ from ads_booster.bootstrap.lifecycle import (
     build_installed_knowledge_runtime,
     build_installed_marketing_agent_service,
 )
+from ads_booster.bootstrap.scheduling_setup import connect_scheduling
+from ads_booster.bootstrap.threads_setup import connect_threads, threads_config_from_env
 from ads_booster.bootstrap.trace_post_setup import connect_trace_post, run_trace_post_worker
 from ads_booster.channels.http.http_api import (
     MarketingAgentApi,
@@ -54,6 +57,7 @@ from ads_booster.research.dynamic_evidence_research import (
     DynamicEvidenceResearchRunner,
 )
 from ads_booster.research.evidence_research_operator import EvidenceResearchOperatorError
+from ads_booster.threads.reconciliation import ThreadsReconciliationRuntime
 from ads_booster.tools.github_issues import token_from_env
 from ads_booster.tools.web_search import SearchInput
 
@@ -117,6 +121,12 @@ def service_doctor(
             knowledge_state = "disabled"
     except ValueError as error:
         knowledge_state = str(error)
+    try:
+        threads_state = (
+            "disabled" if threads_config_from_env(os.environ) is None else "configured"
+        )
+    except ValueError as error:
+        threads_state = str(error)
     typer.echo(
         json.dumps(
             {
@@ -127,7 +137,9 @@ def service_doctor(
                 "reasoning_ready": executable is not None,
                 "appium_required": False,
                 "knowledge": knowledge_state,
-                "ready": executable is not None,
+                "threads": threads_state,
+                "ready": executable is not None
+                and threads_state != "threads_configuration_incomplete",
             },
             ensure_ascii=False,
             indent=2,
@@ -203,6 +215,22 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
     browser_login = browser_from_env(os.environ, oauth)
     slack_commands = slack_from_env(os.environ, service, tenant_id=tenant)
     slack_events = events_from_env(os.environ, slack_commands)
+    scheduling = (
+        None
+        if slack_events is None
+        else connect_scheduling(service, slack_events, now=datetime.now(UTC))
+    )
+    try:
+        threads_config = threads_config_from_env(os.environ)
+    except ValueError as error:
+        raise typer.BadParameter("Threads integration configuration is incomplete") from error
+    if threads_config is not None and slack_events is None:
+        raise typer.BadParameter("Threads integration requires Slack Events configuration")
+    installed_threads = (
+        None
+        if threads_config is None or slack_events is None
+        else connect_threads(service, slack_events, threads_config, now=datetime.now(UTC))
+    )
 
     def notify_image_completion(tenant_id: str, run_id: str, event_id: str) -> None:
         if slack_events is not None:
@@ -246,6 +274,21 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
             name="trace-marketing-skill-scheduler",
             daemon=True,
         )
+    generic_scheduler_thread = (
+        None
+        if scheduling is None
+        else Thread(
+            target=_run_generic_scheduler,
+            args=(
+                scheduling,
+                scheduler_stop,
+                gate,
+                None if installed_threads is None else installed_threads.reconciliation,
+            ),
+            name="trace-marketing-task-scheduler",
+            daemon=True,
+        )
+    )
     jobs = AgentJobs(service)
     jobs_thread = Thread(
         target=run_web_jobs,
@@ -297,6 +340,8 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
         jobs_thread.start()
         if scheduler_thread is not None:
             scheduler_thread.start()
+        if generic_scheduler_thread is not None:
+            generic_scheduler_thread.start()
         if slack_thread is not None:
             slack_thread.start()
         if knowledge_thread is not None:
@@ -339,6 +384,12 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
                 knowledge_worker_alive=None
                 if knowledge_thread is None
                 else knowledge_thread.is_alive,
+                threads_oauth=None if installed_threads is None else installed_threads.oauth,
+                threads_media=None if installed_threads is None else installed_threads.media,
+                schedule_health=None if scheduling is None else scheduling.health,
+                schedule_worker_alive=None
+                if generic_scheduler_thread is None
+                else generic_scheduler_thread.is_alive,
             ),
             host=host,
             port=port,
@@ -357,12 +408,16 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
             jobs_thread.join(timeout=5)
         if scheduler_thread is not None and scheduler_thread.is_alive():
             scheduler_thread.join(timeout=5)
+        if generic_scheduler_thread is not None and generic_scheduler_thread.is_alive():
+            generic_scheduler_thread.join(timeout=5)
         if slack_thread is not None and slack_thread.is_alive():
             slack_thread.join(timeout=5)
         if knowledge_thread is not None and knowledge_thread.is_alive():
             knowledge_thread.join(timeout=15)
         if knowledge_runtime is not None:
             knowledge_runtime.runtime.close()
+        if installed_threads is not None:
+            installed_threads.close()
 
 
 @agent_app.command("research")
@@ -467,6 +522,30 @@ def _run_skill_scheduler(
                     _ = scheduler.tick(now=datetime.now(UTC))
         except Exception as error:  # noqa: BLE001 - scheduler survives one bounded run failure.
             typer.echo(f"scheduled skill deferred: {type(error).__name__}", err=True)
+        _ = stop.wait(30)
+
+
+def _run_generic_scheduler(
+    scheduler: ScheduleRuntime,
+    stop: Event,
+    gate: MaintenanceGate | None = None,
+    threads_reconciliation: ThreadsReconciliationRuntime | None = None,
+) -> None:
+    gate = gate or MaintenanceGate()
+    while not stop.is_set():
+        try:
+            with gate.work() as admitted:
+                if admitted:
+                    _ = scheduler.tick(now=datetime.now(UTC))
+                    for _ in range(20):
+                        if not scheduler.work_once(now=datetime.now(UTC)):
+                            break
+                    if threads_reconciliation is not None:
+                        for _ in range(10):
+                            if not threads_reconciliation.work_once(now=datetime.now(UTC)):
+                                break
+        except Exception as error:  # noqa: BLE001 - top-level worker preserves future occurrences.
+            typer.echo(f"scheduled task deferred: {type(error).__name__}", err=True)
         _ = stop.wait(30)
 
 
