@@ -111,7 +111,9 @@ class ImageEditResult:
     turn_id: str
 
 
-def _check_shell_failure(item: JsonObject) -> None:
+def _check_shell_failure(item: JsonObject, *, completed: bool) -> None:
+    if not completed or item.get("type") != "commandExecution":
+        return
     output = item.get("aggregatedOutput")
     if (
         item.get("exitCode") not in (None, 0)
@@ -463,8 +465,7 @@ class _StreamState:
         if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
-        if method == "item/completed" and kind == "commandExecution":
-            _check_shell_failure(item)
+        _check_shell_failure(item, completed=method == "item/completed")
         _image_progress(str(method), str(kind), len(self.items))
         if method == "item/completed" and kind == "imageGeneration":
             if self.request.materialize_image_results:
