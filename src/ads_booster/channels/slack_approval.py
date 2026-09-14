@@ -66,7 +66,11 @@ def execute_requested_work(  # noqa: PLR0911,PLR0913 - explicit fail-closed chan
     run = service.repository.get(conversation.tenant_id, conversation.current_run)
     if conversation.private or run is None or run.state is not AgentRunState.AWAITING_APPROVAL:
         return False
-    if not identity.can_approve or identity.tenant_id != run.tenant_id:
+    if (
+        not identity.can_create_runs
+        or identity.revoked_at is not None
+        or identity.tenant_id != run.tenant_id
+    ):
         return False
     if not current_approval_source(store, conversation, message, identity):
         return False

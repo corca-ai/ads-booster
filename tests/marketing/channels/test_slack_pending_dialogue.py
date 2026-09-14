@@ -280,7 +280,9 @@ def test_delegated_steps_continue_without_review_ceremony(
                     _ = db.execute(
                         "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
                         (
-                            identity.model_copy(update={"can_approve": False}).model_dump_json(),
+                            identity.model_copy(
+                                update={"can_create_runs": False}
+                            ).model_dump_json(),
                             identity.binding_id,
                         ),
                     )

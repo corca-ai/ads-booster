@@ -178,6 +178,18 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     assert len(commands) == 1
 
 
+def test_first_use_member_can_request_image_without_reviewer_role(tmp_path: Path) -> None:
+    owner, messages, requests, commands = configured(tmp_path)
+    owner.workspace_mentions = True
+    owner.commands.application.service.reasoning = ImageReasoning(authorize=True)
+    receive(owner, user="UNEW", text="<@UBOT> 이미지 만들어줘")
+    assert not owner.identity("UNEW").can_approve
+    assert owner.work_once(now=NOW)
+    assert len(commands) == 1
+    assert len(requests) == 3
+    assert "승인" not in str(messages[-1]["text"])
+
+
 @pytest.mark.parametrize("failure", ["invalid", "lost", "bad_host"])
 def test_invalid_output_or_uncertain_upload_is_not_retried(tmp_path: Path, failure: str) -> None:
     owner, messages, requests, commands = configured(tmp_path, **{failure: True})
