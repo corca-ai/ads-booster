@@ -10,24 +10,25 @@ from urllib.request import Request
 
 from pydantic import Field, TypeAdapter
 
-from ads_booster.contracts.models import ContractModel
-from ads_booster.channels.http.browser_login import BrowserLogin, BrowserLoginConfig
-from ads_booster.channels.http.jobs import AgentJobs
 from ads_booster.agent.service.maintenance import MaintenanceGate
-from ads_booster.channels.http.oauth import (
-    AccessTokenAuthenticator,
-    exchange_authorization_code,
-    open_auth_request,
-)
+from ads_booster.bootstrap.completion_policy import load_completion_policy
 from ads_booster.channels.base import ChannelApplicationAdapter
 from ads_booster.channels.contracts import (
     ChannelIdentityBinding,
     ChannelInstallation,
     ChannelKind,
 )
+from ads_booster.channels.http.browser_login import BrowserLogin, BrowserLoginConfig
+from ads_booster.channels.http.jobs import AgentJobs
+from ads_booster.channels.http.oauth import (
+    AccessTokenAuthenticator,
+    exchange_authorization_code,
+    open_auth_request,
+)
 from ads_booster.channels.slack import SlackRequestVerifier
 from ads_booster.channels.slack_commands import SlackCommands
 from ads_booster.channels.store import SqliteChannelStore
+from ads_booster.contracts.models import ContractModel
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -151,6 +152,7 @@ def slack_from_env(
         frozenset(member.slack_user_id for member in config.members),
         send,
         public_links=env.get("TRACE_MARKETING_SLACK_ONLY") != "1",
+        new_run_budget=load_completion_policy(env).slack_budget,
     )
 
 
