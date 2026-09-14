@@ -10,6 +10,7 @@ from PIL import Image
 from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -18,11 +19,16 @@ from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.channels.slack_images import SlackImageDelivery
 from ads_booster.contracts.agent_run import AgentRunState
 from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.tools.completion_proofs import (
+    CanonicalCompletionProofs,
+    CompletionArtifactOwners,
+)
 from ads_booster.tools.image_generation import (
     CAPABILITY,
     CodexImages,
     read_artifact,
 )
+from tests.marketing.agent_service.completion_fixtures import ScriptedAssessor
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )
@@ -131,6 +137,14 @@ def configured(
     service.registry = ToolRegistry(config.descriptors(now=NOW))
     service.tools = config.adapters()
     service.reasoning = ImageReasoning()
+    service.completion = TaskCompletionService(
+        service.repository,
+        ScriptedAssessor(),
+        CanonicalCompletionProofs(
+            service.repository,
+            CompletionArtifactOwners(image_root=root),
+        ),
+    )
     delivery = SlackImageDelivery(root, owner.store.database_path, "fixture", opener)
     return (
         SlackEvents(owner.commands, "UBOT", frozenset({"C1"}), image_delivery=delivery),
@@ -169,6 +183,8 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     payload = TypeAdapter(dict[str, object]).validate_json(data)
     assert payload["channel_id"] == "C1"
     assert payload["thread_ts"] == "100.001"
+    texts = [str(message["text"]) for message in messages]
+    assert sum(text.startswith("이미지 결과를 확인해 주세요.") for text in texts) == 1
     assert "다운로드" in str(messages[-1]["text"])
     artifact = next((tmp_path / "images").glob("*.png"))
     assert read_artifact(artifact.parent, artifact.stem) == requests[1].data
@@ -255,7 +271,9 @@ def test_invalid_output_or_uncertain_upload_is_not_retried(tmp_path: Path, failu
     assert len(requests) == count
     assert len(commands) == 1
     if failure != "invalid":
-        assert "확인하지 못했습니다" in str(messages[-1]["text"])
+        texts = [str(message["text"]) for message in messages]
+        assert sum(text.startswith("이미지 결과를 확인해 주세요.") for text in texts) == 1
+        assert any("확인하지 못했습니다" in text for text in texts)
 
 
 def test_private_dm_cannot_generate_or_share_images(tmp_path: Path) -> None:

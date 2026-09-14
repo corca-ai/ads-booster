@@ -15,21 +15,27 @@ from ads_booster.agent.service.knowledge_ingress import (
     PendingKnowledgeIngress,
     TrustedRunBinding,
 )
-from ads_booster.channels.slack_attachments import SlackAttachment
+from ads_booster.channels.slack_attachments import SlackAttachment  # noqa: TC001 - Pydantic field.
 from ads_booster.channels.slack_learning_questions import (
     SlackLearningQuestionIntent,
     learning_question_intent,
+)
+from ads_booster.channels.task_result_bindings import (
+    bind_result,
+    record_delivery,
+    sync_message_deliveries,
 )
 from ads_booster.contracts.agent_run import AgentGoal, contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.knowledge.contract_types import ConversationEventKind
 from ads_booster.knowledge.source_contracts import ConversationEvent
-from ads_booster.transport.json_types import JsonObject
+from ads_booster.transport.json_types import JsonObject  # noqa: TC001 - Pydantic field.
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+    from ads_booster.channels.task_results import TaskResult
     from ads_booster.knowledge.tool_contracts import QuestionRecord
 
 
@@ -257,7 +263,13 @@ class SlackConversationStore:
         return None if row is None else Conversation.model_validate_json(row[0])
 
     def enqueue_run_notification(
-        self, tenant_id: str, run_id: str, *, event_id: str, result: str
+        self,
+        tenant_id: str,
+        run_id: str,
+        *,
+        event_id: str,
+        result: str,
+        task_result: TaskResult | None = None,
     ) -> bool:
         """Atomically bind one local notification to the still-current conversation."""
         if (
@@ -329,6 +341,8 @@ class SlackConversationStore:
                     "skipped" if duplicate else "pending",
                 ),
             )
+            if task_result is not None:
+                bind_result(db, "message:" + message.message_id, task_result)
             return cursor.rowcount == 1 and not duplicate
 
     def enqueue_learning_question(self, question: QuestionRecord) -> bool:
@@ -434,12 +448,61 @@ class SlackConversationStore:
                 (plan.model_dump_json(), message.message_id),
             )
 
-    def finish(self, message: Message, result: str, *, blocked: bool = False) -> None:
+    def finish(
+        self,
+        message: Message,
+        result: str,
+        *,
+        blocked: bool = False,
+        task_result: TaskResult | None = None,
+    ) -> None:
         with self.connect() as db:
             _ = db.execute(
                 "UPDATE slack_message_jobs SET state=?,result=? WHERE message_id=?",
                 ("blocked" if blocked else "done", result, message.message_id),
             )
+            if task_result is not None:
+                bind_result(db, "message:" + message.message_id, task_result)
+
+    def requeue(self, message: Message) -> None:
+        """Return an ingress item to the durable inbox after transient lease contention."""
+        with self.connect() as db:
+            _ = db.execute(
+                """UPDATE slack_message_jobs SET state='pending',result=''
+                WHERE message_id=? AND state='running'""",
+                (message.message_id,),
+            )
+
+    def defer_result(self, message: Message) -> None:
+        with self.connect() as db:
+            _ = db.execute(
+                """UPDATE slack_message_jobs SET notification_state='deferred'
+                WHERE message_id=? AND notification_state='pending'""",
+                (message.message_id,),
+            )
+
+    def notification_state(self, message: Message) -> str:
+        with self.connect() as db:
+            row = _ROW.validate_python(
+                db.execute(
+                    "SELECT notification_state FROM slack_message_jobs WHERE message_id=?",
+                    (message.message_id,),
+                ).fetchone()
+            )
+        return "missing" if row is None else row[0]
+
+    def finish_drive_result(
+        self, message: Message, result: str, *, task_result: TaskResult | None = None
+    ) -> None:
+        with self.connect() as db:
+            _ = db.execute(
+                """UPDATE slack_message_jobs SET state='done',result=?,notification_state=CASE
+                WHEN notification_state='deferred' THEN 'pending' ELSE notification_state END
+                WHERE message_id=?""",
+                (result, message.message_id),
+            )
+            if task_result is not None:
+                bind_result(db, "message:" + message.message_id, task_result)
 
     def recover(self) -> None:
         with self.connect() as db:
@@ -470,6 +533,8 @@ class SlackConversationStore:
             _ = db.execute(
                 "UPDATE slack_message_jobs SET ack_state='unknown' WHERE ack_state='sending'"
             )
+        with self.connect() as db:
+            sync_message_deliveries(db)
         self.knowledge_ingress.recover()
 
     def transcript(self, conversation_id: str) -> JsonObject:
@@ -544,3 +609,5 @@ class SlackConversationStore:
                 f"UPDATE slack_message_jobs SET {column}=? WHERE message_id=?",  # noqa: S608 - fixed internal column.
                 (state, message.message_id),
             )
+            if not ack:
+                record_delivery(db, "message:" + message.message_id, state)

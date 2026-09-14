@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from ads_booster.agent.service.task_admission import (
+    admit_task_revision,
+    recoverable_task,
+    task_at_boundary,
+)
+from ads_booster.agent.service.task_progress import project_task, task_records
 from ads_booster.contracts.agent_run import (
     AgentRecord,
     AgentRecordKind,
@@ -16,8 +22,8 @@ from ads_booster.contracts.agent_run import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from ads_booster.contracts.agent_run import AgentRun
     from ads_booster.agent.service.application import MarketingAgentService
+    from ads_booster.contracts.agent_run import AgentRun
     from ads_booster.transport.json_types import JsonObject
 
 
@@ -84,13 +90,34 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
                 raise ValueError("work_continuation_idempotency_conflict")
             return _resume_continuation(service, run, payload, now=now)
         # Do not obscure interrupted dispatch or unknown effects with new work.
-        if run.state in {
-            AgentRunState.RUNNING,
-            AgentRunState.CREATED,
-            AgentRunState.AWAITING_RECONCILIATION,
-            AgentRunState.BLOCKED,
-        } and not interrupted_reasoning(service, run):
+        session = service.runtime_store.load(run_id)
+        steps = service.repository.steps(tenant_id, run_id)
+        task = project_task(run, service.repository.records(tenant_id, run_id))
+        recoverable = recoverable_task(task)
+        if (
+            run.state is AgentRunState.AWAITING_RECONCILIATION
+            or (run.state is AgentRunState.BLOCKED and (not recoverable or action != "revise"))
+            or (
+                run.state is AgentRunState.RUNNING
+                and steps
+                and steps[-1].kind
+                in {
+                    AgentStepKind.EXECUTE,
+                    AgentStepKind.VERIFY,
+                }
+            )
+            or (
+                not deferred_input
+                and session is not None
+                and session.pending_invocation is not None
+            )
+        ):
             raise ValueError("work_continuation_requires_safe_boundary")
+        task = (
+            admit_task_revision(run, task, event_id, note)
+            if action == "revise"
+            else task_at_boundary(task, AgentRunState.AWAITING_INPUT, "user_paused")
+        )
         updated = service.repository.append_step(
             run,
             AgentStep(
@@ -118,7 +145,11 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
                     payload_sha256=digest,
                     occurred_at=now,
                 ),
+                *task_records(run, task, now),
             ),
+            admission=None
+            if service.drive_admission is None
+            else service.drive_admission(run, task, now),
         )
         if service.fault_hook is not None:
             service.fault_hook("work_continuation_committed")

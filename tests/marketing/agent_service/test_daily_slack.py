@@ -3,6 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.application import (
+    CreateAgentRunRequest,
+    MarketingAgentService,
+)
+from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
+from ads_booster.agent.service.skills import MarketingSkillCatalog
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, ToolInvocation, contract_sha256
 from ads_booster.contracts.reasoning import (
     ReasoningDecision,
@@ -11,20 +20,11 @@ from ads_booster.contracts.reasoning import (
     ReasoningResult,
 )
 from ads_booster.contracts.tool_capability import ToolDescriptor, ToolExecutionResult
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import (
-    CreateAgentRunRequest,
-    MarketingAgentService,
-)
-from ads_booster.agent.service.scheduler import AgentSkillScheduler, DailySkillSchedule
-from ads_booster.agent.service.skills import MarketingSkillCatalog
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.tools.web_search import WebSearch, search_descriptor
-from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.tools.descriptors import (
     research_descriptor,
     slack_delivery_descriptor,
 )
+from ads_booster.tools.web_search import WebSearch, search_descriptor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -103,6 +103,7 @@ def test_slack_only_schedule_researches_delivers_and_never_repeats_same_day(tmp_
         ResearchThenDeliver(),
         {"research.search": research, "deliver.slack": slack},
         SqliteSessionStore(db),
+        clock=lambda: NOW,
     )
     assert MarketingSkillCatalog(registry).require_ready("research.daily_slack_only", now=NOW)
     schedule = DailySkillSchedule(
@@ -175,6 +176,7 @@ def test_same_day_upgrade_reuses_frozen_v1_goal_without_reexecution(tmp_path: Pa
         provider,
         {},
         SqliteSessionStore(database),
+        clock=lambda: NOW,
     )
     run_id = "scheduled-research-daily-slack-2026-09-07"
     frozen = AgentGoal(
@@ -243,6 +245,7 @@ def test_schedule_upgrade_cannot_add_automatic_approval_to_frozen_run(tmp_path: 
         provider,
         {"deliver.slack": slack},
         SqliteSessionStore(database),
+        clock=lambda: NOW,
     )
     run_id = "scheduled-research-daily-slack-2026-09-07"
     run = service.create(

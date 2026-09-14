@@ -11,18 +11,22 @@ from pydantic import TypeAdapter
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.agent.service.drive_work import DriveWorkQueue
 from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
 from ads_booster.agent.service.knowledge_ingress import CanonicalKnowledgeIngress
 from ads_booster.agent.service.knowledge_ingress_authority import (
     KnowledgeIngressAuthority,
 )
 from ads_booster.agent.service.learning_admission import TerminalExperienceAdmission
+from ads_booster.agent.service.run_limits import remaining_budget
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.service.task_completion import TaskCompletionService
+from ads_booster.bootstrap.completion_policy import load_completion_policy
 from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
-from ads_booster.contracts.agent_run import AgentRecordKind, ToolInvocation
+from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.creative.creative_asset_verifier import CreativeAssetVerifier
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.creative.managed_image_review import (
@@ -36,8 +40,8 @@ from ads_booster.knowledge.change_publication import ChangePublisher
 from ads_booster.knowledge.configuration import KnowledgeSettings, load_local_actor
 from ads_booster.knowledge.context_selection import KnowledgeContextAssembler
 from ads_booster.knowledge.curation import CurationRunner
-from ads_booster.knowledge.curation_memory import CurationMemoryWriter
 from ads_booster.knowledge.curation_disposition import RepositorySourceDisposition
+from ads_booster.knowledge.curation_memory import CurationMemoryWriter
 from ads_booster.knowledge.curation_runtime import CurationDependencies
 from ads_booster.knowledge.indexing import KnowledgeIndexWorker
 from ads_booster.knowledge.ingestion import KnowledgeIngestion
@@ -59,13 +63,20 @@ from ads_booster.knowledge.source_review_jobs import SourceReviewJobProcessor
 from ads_booster.knowledge.tools import ToolHost
 from ads_booster.learning.memory import SQLiteMemoryStore
 from ads_booster.providers.codex_cli import CodexCli
+from ads_booster.providers.codex_completion import CodexCompletionAssessor
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from ads_booster.providers.codex_reasoning import CodexReasoningProvider
 from ads_booster.research.dynamic_evidence_research import DynamicEvidenceResearchRunner
+from ads_booster.tools.completion_proofs import (
+    CanonicalCompletionProofs,
+    CompletionArtifactOwners,
+)
 from ads_booster.tools.image_generation import CodexImages
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ads_booster.contracts.agent_run import ToolInvocation
 
 
 _WORKSPACE_PRESENCE: TypeAdapter[tuple[int] | None] = TypeAdapter(tuple[int] | None)
@@ -111,8 +122,9 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
     paths.prepare()
     repository = SqliteAgentRunRepository(paths.database)
     codex = CodexCli(executable=codex_executable, model=model_id)
+    integration_config = integrations or AgentServiceIntegrationConfig()
     configured = ConfiguredAgentTools(
-        config=integrations or AgentServiceIntegrationConfig(),
+        config=integration_config,
         images=CodexImages(codex_executable, paths.root / "images", model_id),
         delivery_tool=DeliveryPreparationTool(
             DeliveryReviewStore(
@@ -144,6 +156,29 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
         tools=registry.adapters,
         runtime_store=SqliteSessionStore(paths.database),
         knowledge=knowledge,
+        task_policy=load_completion_policy().segment_policy,
+        drive_admission=DriveWorkQueue(paths.database).transition,
+        completion=TaskCompletionService(
+            repository=repository,
+            assessor=CodexCompletionAssessor(
+                codex=codex,
+                workspace_root=paths.reasoning_workspace,
+                model_id=model_id,
+                timeout_seconds=timeout_seconds,
+            ),
+            proof_reader=CanonicalCompletionProofs(
+                repository,
+                CompletionArtifactOwners(
+                    image_root=paths.root / "images",
+                    assets=SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts"),
+                    slack_channel_id=integration_config.slack_channel_id,
+                    notion_parent_page_id=integration_config.notion_parent_page_id,
+                    scope_for_run=lambda run: CreativeScope(
+                        workspace_id=run.tenant_id, product_id="trace"
+                    ),
+                ),
+            ),
+        ),
     )
 
     managed_review = ManagedImageReviewTool(
@@ -173,20 +208,12 @@ def _creative_capabilities(
         message = "creative_run_context_required"
         raise ValueError(message)
     records = service.repository.records(run.tenant_id, run.run_id)
-    calls = sum(record.kind is AgentRecordKind.INVOCATION for record in records)
-    spent = 0
-    for record in records:
-        if record.kind is AgentRecordKind.RECEIPT:
-            cost = record.payload.get("actual_cost_units")
-            if not isinstance(cost, int) or isinstance(cost, bool):
-                message = "tool_receipt_cost_invalid"
-                raise ValueError(message)
-            spent += cost
+    remaining = remaining_budget(run, records)
     snapshot = service.registry.snapshot_for_plan(
         snapshot_id=f"{invocation.invocation_id}:creative-readiness",
         run_id=run.run_id,
-        remaining_tool_calls=max(0, run.budget.max_tool_calls - calls),
-        remaining_cost_units=max(0, run.budget.max_cost_units - spent),
+        remaining_tool_calls=remaining.tool_calls,
+        remaining_cost_units=remaining.cost_units,
         policy=service.capability_policy,
         now=now,
     )

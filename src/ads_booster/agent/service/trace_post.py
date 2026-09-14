@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import TypeAdapter
 
-from ads_booster.agent.runtime import ApprovalGrant
+from ads_booster.agent.service.approval_binding import runtime_grant_approval
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     CapabilitySnapshot,
@@ -244,23 +244,13 @@ class TracePostTool:
         session = self.service.runtime_store.load(invocation.run_id)
         if session is None or session.pending_call is None:
             raise ValueError("trace_post_admission_missing")
-        for record in self.service.repository.records(invocation.tenant_id, invocation.run_id):
-            if record.kind is not AgentRecordKind.APPROVAL:
-                continue
-            approval = ToolApproval.model_validate(record.payload)
-            if (
-                approval.invocation_sha256 == contract_sha256(invocation)
-                and approval.decision == "granted"
-                and approval.expires_at is not None
-            ):
-                grant = ApprovalGrant(
-                    approval.approval_id,
-                    session.pending_call.digest,
-                    approval.approver_id,
-                    approval.expires_at,
-                )
-                if grant.digest == session.pending_grant_sha256:
-                    return approval
+        approval = runtime_grant_approval(
+            self.service.repository.records(invocation.tenant_id, invocation.run_id),
+            invocation,
+            session,
+        )
+        if approval is not None:
+            return approval
         raise ValueError("trace_post_admission_missing")
 
     def _selection(self, tenant: str, request: TracePostInput) -> _Selection:
@@ -352,20 +342,10 @@ class TracePostTool:
                     proof = _provider_result_from_json(row[3], Path(job.workspace))
                     success, count = self._ingest(job, proof)
                 except OSError, ValueError, KeyError, json.JSONDecodeError:
-                    _ = db.execute(
-                        "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                        (job.operation_id,),
-                    )
-                    db.commit()
-                    return self._uncertain(job)
+                    return self._mark_uncertain(db, job)
                 return self._complete(job, "succeeded", success, count)
             if row[1] in ("started", "generated"):
-                _ = db.execute(
-                    "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
-                )
-                db.commit()
-                return self._uncertain(job)
+                return self._mark_uncertain(db, job)
             if job.approval.expires_at is None or self.clock() >= job.approval.expires_at:
                 return self._complete(
                     job,
@@ -403,20 +383,12 @@ class TracePostTool:
             )
         except Exception:  # noqa: BLE001 - a started image workflow is never automatically replayed.
             with closing(self._db()) as db, db:
-                _ = db.execute(
-                    "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
-                )
-            return self._uncertain(job)
+                return self._mark_uncertain(db, job)
         try:
             provider_result_json = _provider_result_json(provider_result, workspace)
         except OSError, ValueError:
             with closing(self._db()) as db, db:
-                _ = db.execute(
-                    "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
-                )
-            return self._uncertain(job)
+                return self._mark_uncertain(db, job)
         with closing(self._db()) as db, db:
             _ = db.execute(
                 "UPDATE trace_post_jobs SET stage='generated',provider_result=? WHERE operation=?",
@@ -453,6 +425,14 @@ class TracePostTool:
             tenant, job.invocation.run_id, operation_id=job.operation_id, now=self.clock()
         )
         return {"state": "uncertain", "operation_id": job.operation_id}
+
+    def _mark_uncertain(self, db: sqlite3.Connection, job: _Job) -> JsonObject:
+        _ = db.execute(
+            "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
+            (job.operation_id,),
+        )
+        db.commit()
+        return self._uncertain(job)
 
     def _ingest(
         self, job: _Job, provider_result: TracePostProviderResult

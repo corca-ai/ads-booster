@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ads_booster.contracts.agent_run import ToolInvocation, contract_sha256
-from ads_booster.contracts.creative_work import CreativeScope
-from ads_booster.creative.creative_asset_links import link_asset
 from ads_booster.agent.service.creative_image_edit import ImageEditJob
 from ads_booster.bootstrap.lifecycle import (
     InstalledServicePaths,
     build_installed_marketing_agent_service,
 )
+from ads_booster.contracts.agent_run import AgentRunState, ToolInvocation, contract_sha256
+from ads_booster.contracts.creative_work import CreativeScope
+from ads_booster.creative.creative_asset_links import link_asset
 from ads_booster.creative.managed_image_review import (
     ManagedImageReviewTool,
     managed_image_review_descriptor,
@@ -229,7 +229,8 @@ def test_generated_asset_can_be_reviewed_without_slack_upload(
 ) -> None:
     edit, generated = setup_edit(tmp_path)
     approve(edit)
-    assert edit.work_once()["state"] == "completed"
+    assert edit.work_once()["state"] == "running"
+    assert edit.service.drive("tenant-a", "run-one", now=NOW).state is AgentRunState.COMPLETED
     with closing(sqlite3.connect(edit.service.repository.database_path)) as db:
         row = cast("tuple[str]", db.execute("SELECT data FROM image_edit_jobs").fetchone())
     job = ImageEditJob.model_validate_json(row[0])

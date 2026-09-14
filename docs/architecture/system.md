@@ -1,7 +1,7 @@
 # System Architecture
 
 Status: Active
-Last reviewed: 2026-09-11
+Last reviewed: 2026-09-14
 
 ## Runtime ownership
 
@@ -40,6 +40,128 @@ ingress, and `tools/` supplies configured adapters. This package placement does 
 public CLI, HTTP, SQLite, approval or recovery contracts.
 A source checkout, fake adapter or candidate wheel does not establish live provider, Slack, OAuth,
 Tunnel or Linux deployment acceptance. See the [server guide](../operations/agent-server/README.md).
+
+## Evidence-based task completion (2026-09-14 candidate)
+
+`AgentRun` remains the authority for execution, approval, receipts and cumulative budget. A versioned
+`TaskSpec` names the current result, response/artifact/effect obligations and their admitted sources.
+Its revision is independent of the Run ledger revision. A `TaskCheckpoint` binds that spec digest to
+a segment, next action, counters, candidate and unresolved criteria. Task records and runnable-queue
+changes commit with the canonical Run transition in SQLite, not a second execution ledger.
+
+Authenticated corrections append their exact instruction text outside transcript compaction.
+The original request remains provenance; later instructions can supersede incompatible requirements
+while preserving compatible constraints. The actor may add obligations but cannot weaken existing
+ones. Only the independent assessor can mark one `superseded`, citing a later admitted event that the
+host validates against its sources. Prior accepted results are context for a new task, not its proof.
+An active correction invalidates the old candidate. A terminal follow-up starts a new task/segment
+on the same Run without refilling its tool/cost budget.
+
+The service advances one boundary at a time and drives bounded slices: default four provider calls
+or 20 seconds, checked between calls. These bounds do not interrupt an in-flight call or effect.
+Planning and assessment reserve persisted decision calls before invocation; the default segment cap
+is 64, including at most three assessments. The final call slot is assessment-only, so an actor cannot
+produce an unchecked candidate at the cap. The third assessment may succeed; rejection cannot trigger
+a fourth. Waiting does not consume active work time. Canonical invocations and actual receipt costs
+determine remaining Run budget across restarts and continuations.
+
+Progress means new evidence or newly satisfied obligations, not a new receipt ID or repeated prose.
+Repeated equivalent outcomes, including short alternating failure cycles, trigger one bounded
+strategy reconsideration; continued repetition blocks with `no_progress`. Obtainable missing proof
+returns unmet criteria for another action. Missing verification infrastructure fails closed as
+`verification_unavailable`; input and exact approval dependencies retain their wait states.
+Cancellation stops at a safe boundary and does not undo an already-started effect.
+
+A pure renderer receives `CompletionRenderContext(run, records)` and materializes final text, links
+and attachment references before assessment. Attachment references come only from candidate-selected,
+successful canonical image outputs; actor-supplied references are replaced, and private output strips
+them. An empty accepted attachment list means no attachment delivery, not all available images.
+`TaskCompletionService` binds
+the assessment to the current spec, full candidate and canonical evidence digests. The configured
+proof registry selects a host-installed verifier by one composite identity: canonical capability,
+owner, executor and effect class. A registration may additionally require an exact installation
+identity, as the configured GitHub verifier does; local image verifiers rely on the composite identity.
+It checks artifact
+roots, digest and image decoding, or supported effect-owner receipts, readback and invocation/approval
+identity. The configured `deliver.slack` and `store.notion.daily` registrations bind the
+`slack.chat_post_message` and `notion.pages_create` owners to their configured channel/page and
+require a successful receipt with the exact invocation and approval binding. Unsupported or
+ambiguous identities fail closed. It rechecks proofs after the semantic call
+or cache lookup to reject
+artifacts changed during assessment. Preparation/no-effect receipts, unsupported effects and human
+reports are not effect proof. Long briefs are bounded for model context without invalidating verified
+bytes. Visual quality requires actual image-review evidence and remains separate from human approval.
+
+The no-tools Codex assessor receives trusted instruction lineage, the exact candidate and bounded
+owner evidence, not the actor's justification. It independently reports omitted deliverables and
+required artifact/effect kinds. A host-admitted exact response, response line count, required JSON
+fields or required evidence digest can be decided without a model; actor proposals cannot select
+these checks. On a later authenticated revision, a failed retained check still reaches the assessor
+only to decide source-valid supersession; semantic approval cannot override its host comparison.
+Exact semantic results are reused only from a canonical assessment record whose task,
+candidate, evidence, assessor identity and result schema all match. Owner proof is re-read on reuse.
+Other response tasks use this assessor; unavailable verification has no success bypass.
+Subjective semantic judgment remains fallible, even when every deterministic binding passes.
+
+### Durable continuation and result delivery
+
+`DriveWorkQueue` stores channel/principal/event origin and Run revision beside the ledger. Existing
+Slack, slash-command and HTTP workers claim work; no new daemon is introduced. A `drive` claim
+advances runnable work. A `notify` claim persists its terminal result without planning or executing
+tools again, closing the commit-to-notification crash gap. Recovery returns interrupted claims to
+their respective phases only after their lease expires. Each process lifetime has one owner identity;
+an explicit operation scope keeps that owner and lease across every Run transition in the bounded
+slice, updates the revision fence, and publishes the latest `pending` or `notify` target only on scope
+exit. A newly authenticated Slack or HTTP input that arrives while another live lease owns the
+same Run is returned to its inbox as `pending`; it is not converted into a terminal blocked job.
+The owner may renew only its own still-live claim. Atomic claim, owner, lease and Run-revision
+fencing prevent a live rolling-restart peer or stale worker from
+transitioning another claim. The 20-second slice target is checked only between provider calls and is
+not an in-flight timeout. The default 30-minute lease covers four calls at their 300-second timeout
+plus headroom;
+expired or null legacy claims are reclaimed at startup and before the next claim. Workers recheck
+current authority and safe Run state; a durable claim
+cannot replace revoked or unavailable authorization.
+The slash-command worker releases a notify claim only after its final result/outbox transaction
+commits. Recovery before or after that commit can finish notification without re-planning the task.
+
+Pending authenticated input fences completion commit. Notification identity binds tenant, Run,
+task/revision, candidate digest, assessment ID and rendered answer digest. Superseded pending
+completions are suppressed. Sending/unknown outcomes retain existing reconciliation rules and are
+not blindly resent. Accepted task disposition and delivery state are separate HTTP projections:
+`task` contains `disposition`, `result`, `accepted_identity`; `delivery` contains notification state.
+The same Run detail includes a bounded `execution` view: current phase and next action, derived last
+progress reason/time, decision/assessment/tool usage, queue state/owner/lease and a sanitized wait code.
+It is not a transcript, provider-token stream or completion-percentage estimate.
+Attachment delivery remains with the image owner. An input wait shows the exact latest canonical
+`request_input` question only when its checkpoint binds the current task/spec revision. Incomplete
+text otherwise reports confirmed obligations and remaining work rather than repeating old questions
+or unsupported candidates. Installed fixture regressions cover these boundaries with synthetic
+Slack transport. A separate process restart resumed ten durable tool receipts and one final reply;
+an OS exit after assessment reservation preserved counters when another process completed the task.
+
+### Completion state compatibility and rollback
+
+The candidate reads legacy Runs by deriving a task from the immutable goal when task records are
+absent. Existing records and receipt/approval digests are not rewritten. Reasoning v1 remains readable,
+and its public constructor supplies a response-only compatibility assessor so ordinary v1 stops keep
+their historical completion behavior while artifact/effect obligations remain owner-gated. Historical
+`completed` Runs are not retroactively certified.
+
+Old binaries do not understand the new checkpoint and runnable/notify semantics; backward execution
+compatibility is unsupported. Before rollback, use existing managed-service maintenance controls to
+stop admission, drain or explicitly stop runnable
+harness work, resolve pending/unknown delivery through its owner, stop the service, and preserve a
+consistent backup of canonical state and artifacts. Preserve candidate-created work; never silently
+replace it with an older snapshot. Start old code only with a separately preserved compatible state
+after those conditions are verified. Never run both versions against one live database.
+
+The September 12 disposable installed rehearsal refused old-reader use while runnable work remained,
+then drained work and notifications, backed up SQLite and verified integrity and unchanged canonical
+digests through the old installed read-only repository. This proves those controlled operator
+preconditions, not an automatic downgrade guard or backward execution compatibility. Fresh installed
+CLI, loopback health, completion and process restart were exercised; production deployment/rollback
+still requires separate authorization. See [verification scope](../development/testing.md#task-completion-harness).
 
 ## Browser and Slack admission
 
@@ -761,6 +883,8 @@ Mention-thread result delivery projects only matching successful receipt/evidenc
 current member/channel authorization it reads the digest-bound file and shares a review draft in that
 exact channel/thread through Slack's external upload protocol. `slack_image_deliveries` records
 admission before upload, keyed by conversation/run/digest; unknown completion is never reposted.
+Upload success or uncertainty is sent as a separate transport notice; the assessed answer and its
+delivery identity retain their original bytes.
 The bot credential goes only to fixed Slack API endpoints, never to the signed file upload URL.
 Private conversations remain public-search-only. Slash/API callers can generate local artifacts,
 but automatic image attachment is the mention-thread delivery surface.
@@ -919,7 +1043,9 @@ A started operation with an uncertain outcome is not automatically replayed afte
 The server validates the frozen documents, content/image review bindings and six canonical outputs
 before registering same-work, tenant-scoped assets. New results report `human_review_required=False`
 and do not invent a human review record. Historical True values remain readable and do not gate
-delivery. Completion resumes the existing work and queues an outbox message bound to that exact
+delivery. Completion adopts the Trace-post receipt only after its owner verifier rereads all six
+current artifact records and bytes; those exact evidence and digest references then bind Slack
+attachments. Completion resumes the existing work and queues an outbox message bound to that exact
 Run, independently of transient progress UI. Receipt and asset-link validation resolve six images
 from the configured artifact root; Slack uploads them to the original thread as named PNG files
 with country captions. Current member permission is rechecked at delivery. Digest changes or absent

@@ -1,0 +1,34 @@
+[
+  {
+    "case_id": "semantic_response_satisfied",
+    "oracle_kind": "host_contract",
+    "expected_basis": "The independent fixture assessor verifies the exact admitted response contract.",
+    "expected_disposition": "satisfied",
+    "max_actor_calls": 0,
+    "max_assessor_calls": 1
+  },
+  {
+    "case_id": "exact_response_satisfied_without_model",
+    "oracle_kind": "host_contract",
+    "expected_basis": "The candidate bytes exactly equal the trusted host-declared response bytes.",
+    "expected_disposition": "satisfied",
+    "max_actor_calls": 0,
+    "max_assessor_calls": 0
+  },
+  {
+    "case_id": "exact_response_mismatch_continues",
+    "oracle_kind": "host_contract",
+    "expected_basis": "The candidate bytes differ from the trusted host-declared response bytes.",
+    "expected_disposition": "continue",
+    "max_actor_calls": 0,
+    "max_assessor_calls": 0
+  },
+  {
+    "case_id": "semantic_verifier_unavailable_blocks",
+    "oracle_kind": "host_contract",
+    "expected_basis": "A semantic obligation has no configured verifier and must fail closed.",
+    "expected_disposition": "blocked",
+    "max_actor_calls": 0,
+    "max_assessor_calls": 0
+  }
+]

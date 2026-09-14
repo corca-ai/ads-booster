@@ -7,6 +7,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.application import (
+    CreateAgentRunRequest,
+    MarketingAgentService,
+)
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.channels.http.delivery_api import PrepareDelivery
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -21,20 +29,12 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequest,
     ReasoningResult,
 )
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import (
-    CreateAgentRunRequest,
-    MarketingAgentService,
-)
-from ads_booster.channels.http.delivery_api import PrepareDelivery
 from ads_booster.delivery.delivery_review import DeliveryReviewStore
 from ads_booster.delivery.delivery_tools import (
     DeliveryPreparationTool,
     DeliveryPrepareRequest,
     delivery_prepare_descriptor,
 )
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.tools.compatibility import DelegatingToolAdapter
 
 if TYPE_CHECKING:
@@ -106,6 +106,7 @@ def test_reasoning_prepares_durable_same_run_review_without_grant(tmp_path: Path
             )
         },
         runtime_store=SqliteSessionStore(database),
+        clock=lambda: NOW,
     )
     run = service.create(
         CreateAgentRunRequest(
