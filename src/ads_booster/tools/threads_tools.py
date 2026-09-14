@@ -21,7 +21,7 @@ from ads_booster.contracts.tool_capability import (
     ToolReconciliationPolicy,
 )
 from ads_booster.learning.provider_metrics import compare_provider_metrics
-from ads_booster.providers.threads_api import ThreadsApiError
+from ads_booster.providers.threads_api import ThreadsApiError, ThreadsPage
 from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
 from ads_booster.threads.drafts import ThreadsDraftAction
 from ads_booster.threads.metrics import ThreadsMetricsService
@@ -229,12 +229,7 @@ class ThreadsTools:
                         after=request.after,
                         account_id=account.connection_id,
                     )
-                return _observed(
-                    {
-                        "posts": [post.model_dump(mode="json") for post in page.posts],
-                        "after": page.after,
-                    }
-                )
+                return _observed_posts(page)
             case PostInput():
                 if capability != "threads.post.get":
                     raise ValueError("threads_descriptor_mismatch")
@@ -255,12 +250,7 @@ class ThreadsTools:
                         limit=request.limit,
                         after=request.after,
                     )
-                return _observed(
-                    {
-                        "posts": [post.model_dump(mode="json") for post in page.posts],
-                        "after": page.after,
-                    }
-                )
+                return _observed_posts(page)
             case ConversationInput() | RepliesInput():
                 expected = (
                     "threads.conversation"
@@ -289,12 +279,7 @@ class ThreadsTools:
                             after=request.after,
                         )
                     )
-                return _observed(
-                    {
-                        "posts": [post.model_dump(mode="json") for post in page.posts],
-                        "after": page.after,
-                    }
-                )
+                return _observed_posts(page)
             case MetricsInput():
                 if capability != "threads.metrics.collect":
                     raise ValueError("threads_descriptor_mismatch")
@@ -589,6 +574,15 @@ def _input_schema(capability: str) -> JsonObject:
 
 def _observed(output: JsonObject) -> DelegatedToolResult:
     return DelegatedToolResult(disposition="no_effect", actual_cost_units=1, output=output)
+
+
+def _observed_posts(page: ThreadsPage) -> DelegatedToolResult:
+    return _observed(
+        {
+            "posts": [post.model_dump(mode="json") for post in page.posts],
+            "after": page.after,
+        }
+    )
 
 
 __all__ = [
