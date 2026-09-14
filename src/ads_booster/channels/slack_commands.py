@@ -22,10 +22,11 @@ from ads_booster.channels.contracts import (
 from ads_booster.channels.github_results import issue_results
 from ads_booster.channels.http.browser_login import https_origin
 from ads_booster.channels.slack import SlackRequestVerifier
+from ads_booster.channels.slack_run_status import conversational_answer, run_status
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
-    AgentRecordKind,
+    AgentRunState,
     contract_sha256,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -198,8 +199,13 @@ class SlackCommands:
             _ = db.execute("BEGIN IMMEDIATE")
             row = _ROW.validate_python(
                 db.execute(
-                    """SELECT job_id,user_id,command_json FROM slack_command_jobs WHERE
-                    state='pending' ORDER BY rowid LIMIT 1"""
+                    """SELECT job_id,user_id,command_json FROM slack_command_jobs AS job WHERE
+                    state='pending' AND NOT EXISTS (
+                        SELECT 1 FROM slack_command_jobs AS active
+                        WHERE active.state='running'
+                        AND json_extract(active.command_json,'$.run_id')
+                            =json_extract(job.command_json,'$.run_id')
+                    ) ORDER BY rowid LIMIT 1"""
                 ).fetchone()
             )
             if row is not None:
@@ -255,7 +261,7 @@ class SlackCommands:
                         now=now,
                     )
                 else:
-                    with self.application.service.execution_lock:
+                    with self.application.service.run_locks.hold(identity.tenant_id, run_id):
                         run = self.application.service.repository.get(identity.tenant_id, run_id)
                         if run is None or run.revision != command["revision"]:
                             raise ValueError("agent_input_revision_changed")  # noqa: TRY301
@@ -363,14 +369,16 @@ class SlackCommands:
         )
 
     def summary(self, tenant_id: str, run_id: str) -> str:
+        with self.application.service.run_locks.hold(tenant_id, run_id):
+            return self._summary(tenant_id, run_id)
+
+    def _summary(self, tenant_id: str, run_id: str) -> str:
         run = self.application.service.repository.get(tenant_id, run_id)
         if run is None:
             raise ValueError("agent_run_not_found")
         records = self.application.service.repository.records(tenant_id, run_id)
-        lines = [
-            f"실행: {run_id}",
-            f"상태: {run.state.value}",
-        ]
+        steps = self.application.service.repository.steps(tenant_id, run_id)
+        lines = [f"실행: {run_id}", f"상태: {run_status(run, steps)}"]
         if self.public_links:
             lines.append(str(self.application.result_url(run_id)))
         if run.state.value == "awaiting_approval":
@@ -380,14 +388,8 @@ class SlackCommands:
                     f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
                     f"/trace approve {run_id} {contract_sha256(invocation)}",
                 ]
-        else:
-            latest = next(
-                (r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None
-            )
-            if latest is not None:
-                decision = latest.payload.get("decision")
-                if isinstance(decision, dict):
-                    lines.append(str(decision.get("reasoning_summary", ""))[:1800])
+        elif run.state in {AgentRunState.COMPLETED, AgentRunState.AWAITING_INPUT}:
+            lines.append(conversational_answer(run, steps, records)[:1800])
         if result := issue_results(records):
             lines.append(result)
         return "\n".join(lines)

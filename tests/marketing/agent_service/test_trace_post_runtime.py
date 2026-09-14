@@ -70,6 +70,8 @@ class FakeProvider:
         self, *, workspace: Path, instruction: str, timeout_seconds: float
     ) -> TracePostProviderResult:
         self.calls += 1
+        assert "Human feedback is optional" in instruction
+        assert "without waiting for another approval or human review" in instruction
         assert "헬로키티" in instruction
         assert "카페 나무 테이블" in instruction
         assert timeout_seconds == 3600
@@ -107,9 +109,24 @@ def _provider_result(run: Path) -> TracePostProviderResult:
     )
 
 
-def setup(tmp_path: Path, provider: FakeProvider) -> TracePostTool:
+def setup(tmp_path: Path, provider: FakeProvider, *, legacy_review: bool = False) -> TracePostTool:
     database = tmp_path / "service.sqlite3"
     descriptor = trace_post_descriptor(now=NOW)
+    if legacy_review:
+        schema = descriptor.output_schema
+        value = schema
+        for key in ("$defs", "TracePostSuccess", "properties", "human_review_required"):
+            nested = value[key]
+            assert isinstance(nested, dict)
+            value = nested
+        value["const"] = True
+        _ = value.pop("default", None)
+        descriptor = descriptor.model_copy(
+            update={
+                "output_schema": schema,
+                "output_schema_sha256": contract_sha256(schema),
+            }
+        )
     service = MarketingAgentService(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry(()),
@@ -162,11 +179,13 @@ def _approve(service: MarketingAgentService, run_id: str) -> None:
     )
 
 
+@pytest.mark.parametrize("legacy_review", [False, True])
 def test_approved_deferred_trace_post_ingests_six_assets_and_does_not_replay(
     tmp_path: Path,
+    legacy_review: bool,
 ) -> None:
     provider = FakeProvider()
-    tool = setup(tmp_path, provider)
+    tool = setup(tmp_path, provider, legacy_review=legacy_review)
     assert tool.work_once()["state"] == "completed"
     assert provider.calls == 1
     with closing(tool._db()) as database:
@@ -181,6 +200,15 @@ def test_approved_deferred_trace_post_ingests_six_assets_and_does_not_replay(
     receipts = [record for record in records if record.kind is AgentRecordKind.RECEIPT]
     assert len(receipts) == 1
     assert receipts[0].payload["actual_cost_units"] == 7
+    evidence = next(
+        r
+        for r in records
+        if r.kind is AgentRecordKind.EVIDENCE
+        and r.payload.get("capability_id") == "creative.trace_post"
+    )
+    output = evidence.payload["output"]
+    assert isinstance(output, dict)
+    assert output["human_review_required"] is legacy_review
 
 
 def test_provider_event_count_must_equal_frozen_workflow_receipts(tmp_path: Path) -> None:

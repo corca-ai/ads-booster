@@ -153,7 +153,9 @@ Slack follow-ups receive the current bounded conversation, including earlier ass
 so selections such as “use the second option” can resolve within the same work after restart.
 The latest admitted request is also passed separately from the original goal and reference data,
 so a new question or a shorter-answer request can steer the next reply. Normal answers omit
-internal Run diagnostics; `상태` still shows them, and the optional work link appears separately.
+internal Run diagnostics. `상태` explains the current execution stage in plain language; it never
+repeats a previous answer as the status of an interrupted request. The optional work link appears
+separately.
 `marketing.context` guides on-demand wiki/memory/source lookup. When team knowledge is configured,
 DMs expose its scoped read tools as well as skill discovery and public search. A missing read
 integration does not mean the wiki is empty; this PR does not enable that integration on a server.
@@ -219,8 +221,10 @@ member's review, publication and remote external effects retain their explicit a
 `검토 1`은 승인할 실행 내용의 첫 페이지를 보여줍니다. `검토 1이 뭐야` 같은 질문이나
 잘못된 페이지는 사용법을 안내하며 승인안을 변경하지 않습니다. 안내문은 검토 완료로
 계산되지 않습니다. 승인 권한 부족, 승인안 변경, 도구 이용 불가는 각각 원인에 맞게
-안내합니다. 실행 여부가 불명확한 오류는 `상태`로 확인하고 운영자에게 확인을 요청하세요.
-운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드만 기록합니다.
+안내합니다. 요청 해석 중 중단된 대화는 새 요청으로 이어갈 수 있습니다. 실행 결과가
+불명확한 작업은 중복 실행하지 않습니다. 상태 조회나 운영자 문의는 이용의 필수 단계가 아닙니다.
+운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드와 제한된 예외 유형·
+제품 코드 위치를 기록합니다. 예외 메시지·소스 본문·지역변수·외부 파일 경로는 기록하지 않습니다.
 
 For an uncertain edit, authenticated clients can inspect
 `GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop
@@ -503,8 +507,9 @@ from the bootstrap manifest first and activating the full Events manifest after 
 
 The optional `github.issue.create` tool creates issues only in `corca-ai/ads-booster`.
 In an allowed shared Slack channel, explicitly ask the agent to create the issue with its details,
-for example `이 승인 반복 오류를 깃허브 이슈로 올려줘`. For a requester with current approval
-permission, that request authorizes the requested execution; a second review/confirmation is unnecessary.
+for example `이 승인 반복 오류를 깃허브 이슈로 올려줘`. Every admitted workspace member can
+authorize their requested execution, including on first use; no reviewer role or second confirmation
+is needed. Disabled or revoked members cannot execute work.
 Requested subsequent tool steps also continue within the run budget, with current source and
 permission checked for each step. This applies to exposed workspace-member tools, not only creation.
 Questions and draft-only requests do not authorize creation. For an unrequested proposal,
@@ -594,7 +599,15 @@ the button stops the current execution without closing the conversation.
 In an allowed shared conversation, request `귀여움으로 KR·JP·TW 배경화면 게시물 만들어줘`.
 The installed `marketing.trace_post` procedure routes the request to `creative.trace_post`.
 It supports the cute card and T2 template, with optional date, motif and place selections from
-the current input schema. Review and approve the exact production proposal before execution.
+the current input schema. The request starts production without a separate approval or review step.
+Unspecified creative choices are selected within the supported options. An empty brand store uses
+that brief and the packaged skill; initial brand setup is not required. Explicit brand references
+still require accessible, current brand material.
+
+The Slack service processes up to four independent conversations concurrently, preserving message
+order inside each thread. Up to two Trace post productions run concurrently in separate operation
+workspaces. A long image task therefore does not hold the other conversations. Shutdown and
+maintenance wait for admitted work to yield before replacing the service.
 
 The service copies its packaged rules, template and helpers into one private operation workspace.
 It creates new schedules and localized captions, generates the KR text/background, localizes that
@@ -605,9 +618,12 @@ A provider error with an unknown result does not authorize another generation at
 This is a deferred server task using the configured official Codex executable/model with medium
 reasoning effort and a one-hour operation timeout. It is registered with the installed service;
 no separate image API key or trace-post configuration is required. The existing
-work's asset view receives six validated images; country captions and verification references return
-through the canonical result. Model review is not human approval or proof of actual app support.
-Image creation does not authorize Slack file delivery or external publication. Private DM execution
+work's asset view receives six validated images. The requesting Slack thread automatically receives
+the country captions and six PNG attachments named `trace-post-<kr|jp|tw>-<final|scene>.png`.
+Open an attachment to preview or download its original PNG. Human feedback is optional; there is
+no required review, approval, status command or operator contact step. Model review is not proof
+of actual app support. Delivery to another channel or publication still requires that request.
+Private DM execution
 is unavailable. A completed pipeline does not establish pixel-identical backgrounds across locales.
 
 The installed package is self-contained. It does not read a developer's checkout, `.agents` link or

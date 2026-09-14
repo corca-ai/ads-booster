@@ -176,7 +176,7 @@ def test_trace_post_discovery_reads_exact_installed_procedure() -> None:
     )
     assert isinstance(loaded, ToolExecutionResult)
     assert loaded.output["status"] == "found"
-    assert loaded.output["version"] == "2"
+    assert loaded.output["version"] == "3"
     assert loaded.output["required_capabilities"] == ["creative.trace_post"]
     assert loaded.output["authority"] == "procedure_only_not_evidence_or_approval"
     procedure = loaded.output["procedure"]

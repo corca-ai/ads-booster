@@ -24,7 +24,7 @@ from ads_booster.agent.service.knowledge_ingress import (
     KnowledgeIngressSink,
     PendingKnowledgeIngress,
 )
-from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.agent.service.work_continuation import continue_work, interrupted_reasoning
 from ads_booster.channels.contracts import ChannelIdentityBinding, ChannelKind
 from ads_booster.channels.github_results import issue_results
 from ads_booster.channels.knowledge_ingress_slack import (
@@ -52,6 +52,7 @@ from ads_booster.channels.slack_conversations import (
 )
 from ads_booster.channels.slack_creative_setup import connect_slack_creative
 from ads_booster.channels.slack_delivery import delivery_command
+from ads_booster.channels.slack_failure_diagnostics import failure_diagnostic
 from ads_booster.channels.slack_image_review import bind_files
 from ads_booster.channels.slack_images import SlackImageDelivery
 from ads_booster.channels.slack_learning_questions import (
@@ -65,6 +66,7 @@ from ads_booster.channels.slack_performance import (
     performance_command,
 )
 from ads_booster.channels.slack_progress import SlackProgressStore
+from ads_booster.channels.slack_run_status import conversational_answer, run_status
 from ads_booster.channels.slack_work_observations import (
     is_work_observation_command,
     work_observation_command,
@@ -110,27 +112,23 @@ _HASH = re.compile(r"[a-f0-9]{64}")
 _LOGGER = logging.getLogger(__name__)
 _FAILURE_REPLIES = {
     "slack_approval_source_changed": (
-        "승인 메시지가 수정되거나 삭제되어 실행하지 않았습니다. 현재 의사를 새 메시지로 알려주세요."
+        "요청 메시지가 수정되거나 삭제되어 실행하지 않았습니다. 현재 요청을 새 메시지로 알려주세요."
     ),
     "slack_approval_not_allowed": (
-        "이 대화에서 승인 권한이 없습니다. 승인 가능한 팀원에게 검토를 요청하세요."
+        "이 대화에서 해당 작업을 실행할 권한이 없어 실행하지 않았습니다."
     ),
     "agent_approval_invocation_changed": (
-        "보낸 해시가 현재 승인안과 다릅니다. '검토 1'로 현재 내용을 확인하세요."
+        "실행할 내용이 변경되어 이전 요청으로 실행하지 않았습니다."
     ),
-    "slack_production_target_changed": (
-        "승인 대상 작업이 변경되었습니다. '검토 1'로 현재 내용을 확인하세요."
-    ),
+    "slack_production_target_changed": ("대상 작업이 변경되어 이전 요청으로 실행하지 않았습니다."),
     "agent_run_not_awaiting_approval": (
-        "현재 승인 대기 상태가 아닙니다. '상태'로 작업 진행 상황을 확인하세요."
+        "해당 작업은 이미 처리되었거나 변경되어 다시 실행하지 않았습니다."
     ),
     "tool_dispatch_no_longer_available": (
-        "승인 대상 도구를 현재 사용할 수 없습니다. "
-        "운영자에게 도구 연결과 준비 상태 확인을 요청하세요."
+        "요청한 도구를 현재 사용할 수 없어 작업을 완료하지 못했습니다."
     ),
     "tool_dispatch_adapter_unavailable": (
-        "승인 대상 도구를 현재 사용할 수 없습니다. "
-        "운영자에게 도구 연결과 준비 상태 확인을 요청하세요."
+        "요청한 도구를 현재 사용할 수 없어 작업을 완료하지 못했습니다."
     ),
 }
 
@@ -202,7 +200,7 @@ class SlackEvents:
                 )
             ),
         )
-        self.private_service.execution_lock = self.commands.application.service.execution_lock
+        self.private_service.run_locks = self.commands.application.service.run_locks
         self.commands.application.service.boundary_signal = self._pending_steering
         self.private_service.boundary_signal = self._pending_steering
         self.commands.application.service.current_context = self._current_context
@@ -595,7 +593,9 @@ class SlackEvents:
             identity = self._authorize(conversation, message.user_id)
             service = self._service(conversation)
             # The same lock owns plan binding, Run mutation and thread progression.
-            with service.execution_lock:
+            with service.run_locks.hold(
+                conversation.tenant_id, conversation.current_run or conversation.conversation_id
+            ):
                 if plan is None:
                     plan = self._plan(conversation, message)
                     self.store.save_plan(message, plan)
@@ -628,10 +628,11 @@ class SlackEvents:
                 else "unclassified"
             )
             _LOGGER.warning(
-                "slack_event_failed message=%s action=%s code=%s",
+                "slack_event_failed message=%s action=%s code=%s diagnostic=%s",
                 message.message_id,
                 plan.action if plan else "planning",
                 code,
+                failure_diagnostic(exc),
             )
             self.store.finish(
                 message,
@@ -639,8 +640,8 @@ class SlackEvents:
                     code,
                     " ".join(  # noqa: FLY002 - readable translated message.
                         (
-                            "처리를 완료하지 못했습니다. 이 대화에 '상태'를 보내 확인하세요.",
-                            "실행 확인 전에는 승인을 반복하지 말고 운영자에게 문의하세요.",
+                            "요청을 처리하는 중 오류가 발생해 완료하지 못했습니다.",
+                            "실행 여부가 확인되지 않은 작업은 중복 실행하지 않았습니다.",
                         )
                     ),
                 ),
@@ -866,14 +867,17 @@ class SlackEvents:
         context["privacy"] = "private_dm" if conversation.private else "shared_thread"
         if (
             run is not None
-            and run.state
-            in {
-                AgentRunState.COMPLETED,
-                AgentRunState.STOPPED,
-                AgentRunState.AWAITING_INPUT,
-                AgentRunState.AWAITING_APPROVAL,
-                AgentRunState.AWAITING_TOOL,
-            }
+            and (
+                run.state
+                in {
+                    AgentRunState.COMPLETED,
+                    AgentRunState.STOPPED,
+                    AgentRunState.AWAITING_INPUT,
+                    AgentRunState.AWAITING_APPROVAL,
+                    AgentRunState.AWAITING_TOOL,
+                }
+                or interrupted_reasoning(service, run)
+            )
             and not text.startswith("새 작업 ")
         ):
             return MessagePlan(action="revise", run_id=run.run_id)
@@ -1263,7 +1267,7 @@ class SlackEvents:
         if conversation is None or conversation.closed:
             return False
         service = self._service(conversation)
-        with service.execution_lock:
+        with service.run_locks.hold(tenant_id, run_id):
             run = service.repository.get(tenant_id, run_id)
             if run is None:
                 return False
@@ -1275,6 +1279,12 @@ class SlackEvents:
             )
 
     def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
+        with self._service(conversation).run_locks.hold(
+            conversation.tenant_id, conversation.current_run
+        ):
+            return self._summary(conversation, include_status=include_status)
+
+    def _summary(self, conversation: Conversation, *, include_status: bool) -> str:
         service = self._service(conversation)
         run = service.repository.get(conversation.tenant_id, conversation.current_run)
         if run is None:
@@ -1309,24 +1319,12 @@ class SlackEvents:
                 + f"승인 {contract_sha256(invocation)}\n"
                 + "진행하지 않으려면 '거절'이라고 답해 주세요."
             )
-        latest = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
-        decision = None if latest is None else latest.payload.get("decision")
-        answer = str(decision.get("reasoning_summary", "")) if isinstance(decision, dict) else ""
-        if not include_status and run.state not in {
-            AgentRunState.COMPLETED,
-            AgentRunState.AWAITING_INPUT,
-        }:
-            # A tool-selection rationale is not a finished conversational answer.
-            # Preserve canonical reasoning for explicit status/diagnostic reads.
-            answer = {
-                AgentRunState.AWAITING_TOOL: "요청한 도구의 결과를 기다리고 있습니다.",
-                AgentRunState.AWAITING_RECONCILIATION: (
-                    "실행 결과를 확인해야 합니다. 같은 작업을 다시 실행하지 않았습니다."
-                ),
-                AgentRunState.BLOCKED: "작업이 막혀 완료하지 못했습니다. 상태 확인이 필요합니다.",
-                AgentRunState.STOPPED: "작업을 멈췄습니다. 이미 실행된 결과는 유지됩니다.",
-                AgentRunState.FAILED: "오류로 작업을 완료하지 못했습니다. 상태 확인이 필요합니다.",
-            }.get(run.state, "아직 작업이 완료되지 않았습니다.")
+        steps = service.repository.steps(conversation.tenant_id, run.run_id)
+        answer = conversational_answer(run, steps, records)
+        status = run_status(run, steps)
+        if run.state not in {AgentRunState.COMPLETED, AgentRunState.AWAITING_INPUT}:
+            # Earlier reasoning can belong to another turn or an unexecuted plan.
+            answer = status
         verified_issues = "\n".join(
             line
             for line in issue_results(records).splitlines()
@@ -1334,7 +1332,11 @@ class SlackEvents:
         )
         result = "\n\n".join(part for part in (answer, verified_issues) if part)
         if include_status:
-            result += f"\n\n상태: {run.state.value}\n실행: {run.run_id}"
+            result = "\n\n".join(
+                part
+                for part in (f"상태: {status}", answer if answer != status else "", verified_issues)
+                if part
+            )
         return result
 
     def _payload(self, conversation: Conversation, text: str) -> JsonObject:
@@ -1423,12 +1425,16 @@ class SlackEvents:
         else:
             if self.image_delivery is not None and not conversation.private:
                 plan = self.progress.locate(message.message_id)
-                if plan is not None:
-                    result += "\n" + self.image_delivery.deliver(
+                result_run_id = message.result_run_id or ("" if plan is None else plan.run_id)
+                if result_run_id:
+                    delivery = self.image_delivery.deliver(
                         self._service(conversation).repository.records(
-                            conversation.tenant_id, plan.run_id
+                            conversation.tenant_id, result_run_id
                         ),
                         conversation,
+                    )
+                    result = (
+                        delivery.text if delivery.replaces_answer else result + "\n" + delivery.text
                     )
             status = self.progress.locate(message.message_id)
             state = self._send(

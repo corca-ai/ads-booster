@@ -5,12 +5,38 @@ Last reviewed: 2026-09-11
 
 ## Focused checks
 
+For first-use knowledge and concurrent Slack requests, select
+`tests/marketing/channels/test_slack_knowledge_preparation.py` and `test_slack_parallel.py`, plus
+`test_slack_trace_post.py` and `test_slack_run_notifications.py`. Exercise the initialized knowledge
+runtime with no brands, a current brand-preparation wait followed by a different question, and
+unchanged asynchronous notifications. Block one model call and prove another conversation enters
+reasoning while its same-thread follow-up waits. Run two Trace post providers through a barrier:
+both must complete once and deliver to their own threads without reclaiming live operations.
+For changes to shared Run serialization, include affected service/deferred/image-edit, HTTP jobs
+and creative API tests. Repeat the changed consumer scenarios from a non-editable installed wheel.
+
+
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
+For request-based Trace post execution and result attachments, select
+`tests/marketing/channels/test_slack_trace_post.py`, `test_slack_images.py`,
+`test_slack_pending_dialogue.py`, `test_slack_github_issues.py`, `test_slack_run_notifications.py`,
+`test_slack_progress.py`, `test_slack_events.py` and `test_slack_approval_feedback.py` from that
+channel directory, plus `test_work_continuation.py`, `test_trace_post_runtime.py`,
+`test_trace_post_contract.py` and `test_skill_tools.py` in `tests/marketing/agent_service`.
+Verify first-use non-reviewer execution, failed-reasoning follow-up, interrupted dispatch exclusion,
+six named PNGs and captions, exact asynchronous Run binding, digest/link rejection, member disable,
+upload uncertainty and restart deduplication. Repeat from outside the checkout with a non-editable
+wheel and copied tests. Synthetic PNGs and captured Slack requests prove transport contracts,
+not live image quality or a real user's Slack download. See the
+[Trace post delivery record](trace-post-slack-delivery.md) for baseline/candidate evidence.
+
 For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
-and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
-ordinary output must not expose its rationale or imply tool execution, while explicit status and
-canonical records remain available. Check asynchronous completion, deduplication, callback-loss
+and `test_slack_events.py` under `tests/marketing/channels`, plus `test_slack_commands.py`.
+Interrupt after a committed tool plan and fail reasoning after a previous successful answer:
+neither ordinary output nor explicit status may repeat earlier reasoning or imply ongoing
+execution. Verify the distinct interrupted-stage messages and unchanged canonical records.
+Check asynchronous completion, deduplication, callback-loss
 recovery and membership checks. Repeat against a non-editable wheel outside the checkout.
 
 ### Slack approval feedback
@@ -40,7 +66,8 @@ Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_p
 exercise review explanations, invalid/oversized pages, missing pending work, current permission,
 changed digests and unavailable tools. Check delivered text and unchanged canonical records;
 help text must not grant reviewed-production assent. A fault after approval persistence verifies
-redacted diagnostics and no automatic retry. Run the same selection against a fresh non-editable
+redacted diagnostics (including wrapped secret-bearing causes) and no automatic retry.
+Run the same selection against a fresh non-editable
 wheel outside the checkout. Fixtures replace model/tool/Slack providers; they do not establish
 the cause of a deployed incident or successful live image generation.
 

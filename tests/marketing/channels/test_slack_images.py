@@ -9,20 +9,20 @@ import pytest
 from PIL import Image
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import AgentRunState
-from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.tools.image_generation import (
-    CAPABILITY,
-    CodexImages,
-    read_artifact,
-)
 from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
 from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.channels.slack_images import SlackImageDelivery
+from ads_booster.contracts.agent_run import AgentRunState
+from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.tools.image_generation import (
+    CAPABILITY,
+    CodexImages,
+    read_artifact,
+)
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )
@@ -54,7 +54,8 @@ class ImageReasoning:
                 expected_outcome="Draft",
                 reasoning_summary="이미지 결과를 확인해 주세요.",
             )
-            if request.evidence or not available
+            if any(item.get("capability_id") == CAPABILITY for item in request.evidence)
+            or not available
             else ReasoningDecision(
                 schema_version="trace.reasoning-decision.v1",
                 action="invoke_tool",
@@ -168,7 +169,7 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     payload = TypeAdapter(dict[str, object]).validate_json(data)
     assert payload["channel_id"] == "C1"
     assert payload["thread_ts"] == "100.001"
-    assert "초안" in str(messages[-1]["text"])
+    assert "다운로드" in str(messages[-1]["text"])
     artifact = next((tmp_path / "images").glob("*.png"))
     assert read_artifact(artifact.parent, artifact.stem) == requests[1].data
     assert artifact.stat().st_mode & 0o077 == 0
@@ -176,6 +177,66 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     assert not owner.work_once(now=NOW)
     assert len(requests) == 3
     assert len(commands) == 1
+
+
+def test_first_use_member_can_request_image_without_reviewer_role(tmp_path: Path) -> None:
+    owner, messages, requests, commands = configured(tmp_path)
+    owner.workspace_mentions = True
+    owner.commands.application.service.reasoning = ImageReasoning(authorize=True)
+    receive(owner, user="UNEW", text="<@UBOT> 이미지 만들어줘")
+    assert not owner.identity("UNEW").can_approve
+    assert owner.work_once(now=NOW)
+    assert len(commands) == 1
+    assert len(requests) == 3
+    assert "승인" not in str(messages[-1]["text"])
+    assert "검토해" not in str(messages[-1]["text"])
+
+
+def test_new_request_resumes_failed_reasoning_without_status_or_operator_step(
+    tmp_path: Path,
+) -> None:
+    owner, messages, requests, commands = configured(tmp_path)
+    service = owner.commands.application.service
+
+    class BrokenReasoning:
+        def plan(self, request: ReasoningRequest) -> ReasoningResult:
+            _ = request
+            message = "synthetic reasoning failure"
+            raise RuntimeError(message)
+
+    service.reasoning = BrokenReasoning()
+    receive(owner, text="<@UBOT> 이미지 만들어줘")
+    assert owner.work_once(now=NOW)
+    assert not commands
+    assert not requests
+    service.reasoning = ImageReasoning(authorize=True)
+    receive(owner, type="message", text="실행해줘", ts="100.002", thread_ts="100.001")
+    assert owner.work_once(now=NOW)
+    assert len(commands) == 1
+    assert len(requests) == 3
+    assert "다운로드" in str(messages[-1]["text"])
+    assert service.repository.list_runs("team")[0].state is AgentRunState.COMPLETED
+
+
+def test_followup_does_not_replan_an_interrupted_execution(tmp_path: Path) -> None:
+    owner, messages, requests, commands = configured(tmp_path)
+    service = owner.commands.application.service
+    service.reasoning = ImageReasoning(authorize=True)
+
+    def crash(point: str) -> None:
+        if point == "execute_committed":
+            message = "synthetic dispatch interruption"
+            raise RuntimeError(message)
+
+    service.fault_hook = crash
+    receive(owner, text="<@UBOT> 이미지 만들어줘")
+    assert owner.work_once(now=NOW)
+    service.fault_hook = None
+    receive(owner, type="message", text="실행해줘", ts="100.002", thread_ts="100.001")
+    assert owner.work_once(now=NOW)
+    assert not commands
+    assert not requests
+    assert "실행 결과를 확정하기 전에 처리가 중단됐습니다" in str(messages[-1]["text"])
 
 
 @pytest.mark.parametrize("failure", ["invalid", "lost", "bad_host"])
