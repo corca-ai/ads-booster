@@ -343,20 +343,10 @@ class TracePostTool:
                     proof = _provider_result_from_json(row[3], Path(job.workspace))
                     success, count = self._ingest(job, proof)
                 except OSError, ValueError, KeyError, json.JSONDecodeError:
-                    _ = db.execute(
-                        "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                        (job.operation_id,),
-                    )
-                    db.commit()
-                    return self._uncertain(job)
+                    return self._mark_uncertain(db, job)
                 return self._complete(job, "succeeded", success, count)
             if row[1] in ("started", "generated"):
-                _ = db.execute(
-                    "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
-                )
-                db.commit()
-                return self._uncertain(job)
+                return self._mark_uncertain(db, job)
             if job.approval.expires_at is None or self.clock() >= job.approval.expires_at:
                 return self._complete(
                     job,
@@ -394,20 +384,12 @@ class TracePostTool:
             )
         except Exception:  # noqa: BLE001 - a started image workflow is never automatically replayed.
             with closing(self._db()) as db, db:
-                _ = db.execute(
-                    "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
-                )
-            return self._uncertain(job)
+                return self._mark_uncertain(db, job)
         try:
             provider_result_json = _provider_result_json(provider_result, workspace)
         except OSError, ValueError:
             with closing(self._db()) as db, db:
-                _ = db.execute(
-                    "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
-                )
-            return self._uncertain(job)
+                return self._mark_uncertain(db, job)
         with closing(self._db()) as db, db:
             _ = db.execute(
                 "UPDATE trace_post_jobs SET stage='generated',provider_result=? WHERE operation=?",
@@ -444,6 +426,14 @@ class TracePostTool:
             tenant, job.invocation.run_id, operation_id=job.operation_id, now=self.clock()
         )
         return {"state": "uncertain", "operation_id": job.operation_id}
+
+    def _mark_uncertain(self, db: sqlite3.Connection, job: _Job) -> JsonObject:
+        _ = db.execute(
+            "UPDATE trace_post_jobs SET stage='uncertain' WHERE operation=?",
+            (job.operation_id,),
+        )
+        db.commit()
+        return self._uncertain(job)
 
     def _ingest(
         self, job: _Job, provider_result: TracePostProviderResult
