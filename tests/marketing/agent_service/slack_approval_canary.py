@@ -71,7 +71,7 @@ class SyntheticCreation:
             "width": 128,
             "height": 128,
             "media_type": "image/png",
-            "review_status": "awaiting_human_review",
+            "review_status": "not_reviewed",
             "prompt_sha256": sha256(str(invocation.input.get("prompt", "")).encode()).hexdigest(),
             "invocation_sha256": contract_sha256(invocation),
         }
