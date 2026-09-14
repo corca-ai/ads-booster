@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class DriveOrigin(ContractModel):
     tenant_id: str
     run_id: str
-    channel: Literal["slack", "http", "slack_command"]
+    channel: Literal["slack", "http", "slack_command", "schedule"]
     principal_id: str
     event_id: str
     conversation_id: str = ""
@@ -130,6 +130,18 @@ class DriveWorkQueue:
     def bind(self, origin: DriveOrigin) -> None:
         with self.connect() as db:
             _bind_origin(db, origin)
+
+    def admission(
+        self,
+        origin: DriveOrigin,
+        following: RepositoryAdmission | None = None,
+    ) -> RepositoryAdmission:
+        def admit(connection: sqlite3.Connection) -> None:
+            _bind_origin(connection, origin)
+            if following is not None:
+                following(connection)
+
+        return admit
 
     @contextmanager
     def ownership(
