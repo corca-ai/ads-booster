@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 from threading import Event
 from typing import TYPE_CHECKING, cast, override
 
@@ -9,12 +8,13 @@ from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.service.drive_work import DriveOrigin
+from ads_booster.agent.service.task_progress import seed_task, task_records
 from ads_booster.channels.slack_conversations import Conversation, Message
 from ads_booster.contracts.agent_run import AgentBudget, AgentRunState
 from ads_booster.execution_control import checkpoint
 from tests.marketing.agent_service.test_application import build_service
 from tests.marketing.agent_service.test_task_drive import FreshResearch, Steps
-from tests.marketing.agent_service.test_task_progress import make_run
+from tests.marketing.agent_service.test_task_progress import make_run, step
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import receive, setup_events
 
@@ -96,7 +96,7 @@ def test_slack_input_requeues_while_another_worker_holds_the_run_lease(tmp_path:
         message_id="lease-message",
         conversation_id=conversation.conversation_id,
         user_id="U1",
-        text="새 요구",
+        text="계속",
     )
     owner.store.admit(conversation, message)
     origin = DriveOrigin(
@@ -108,22 +108,19 @@ def test_slack_input_requeues_while_another_worker_holds_the_run_lease(tmp_path:
         conversation_id=conversation.conversation_id,
     )
     owner.drive_queue.bind(origin)
-    with owner.drive_queue.connect() as db:
-        _ = db.execute(
-            "INSERT INTO agent_drive_work(tenant_id,run_id,revision,due_at,state,"
-            + "claim_owner,lease_expires_at) VALUES(?,?,?,?,?,?,?)",
-            (
-                run.tenant_id,
-                run.run_id,
-                run.revision,
-                NOW.isoformat(),
-                "running",
-                "other-worker",
-                (NOW + timedelta(minutes=5)).isoformat(),
-            ),
-        )
+    lease_time = run.created_at
+    task = seed_task(run)
+    _ = service.repository.append_step(
+        run,
+        step().model_copy(update={"run_id": run.run_id, "occurred_at": lease_time}),
+        state=AgentRunState.RUNNING,
+        expected_revision=run.revision,
+        records=task_records(run, task, lease_time),
+        admission=owner.drive_queue.transition(run, task, lease_time),
+    )
+    assert owner.drive_queue.claim("slack", lease_time) is not None
 
-    assert owner.work_once(now=NOW)
+    assert owner.work_once(now=lease_time)
     with owner.store.connect() as db:
         state = cast(
             "tuple[str] | None",
