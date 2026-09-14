@@ -50,6 +50,7 @@ class Message(ContractModel):
     user_id: str
     text: str
     notification_only: bool = False
+    result_run_id: str = ""
     learning_question_intent: SlackLearningQuestionIntent | None = None
     reopens: bool = False
     attachments: tuple[SlackAttachment, ...] = ()
@@ -304,6 +305,7 @@ class SlackConversationStore:
                 user_id=original.user_id,
                 text="",
                 notification_only=True,
+                result_run_id=run_id,
             )
             cursor = db.execute(
                 """INSERT OR IGNORE INTO slack_message_jobs

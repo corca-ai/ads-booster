@@ -1424,12 +1424,16 @@ class SlackEvents:
         else:
             if self.image_delivery is not None and not conversation.private:
                 plan = self.progress.locate(message.message_id)
-                if plan is not None:
-                    result += "\n" + self.image_delivery.deliver(
+                result_run_id = message.result_run_id or ("" if plan is None else plan.run_id)
+                if result_run_id:
+                    delivery = self.image_delivery.deliver(
                         self._service(conversation).repository.records(
-                            conversation.tenant_id, plan.run_id
+                            conversation.tenant_id, result_run_id
                         ),
                         conversation,
+                    )
+                    result = (
+                        delivery.text if delivery.replaces_answer else result + "\n" + delivery.text
                     )
             status = self.progress.locate(message.message_id)
             state = self._send(

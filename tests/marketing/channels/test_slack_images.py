@@ -9,20 +9,20 @@ import pytest
 from PIL import Image
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import AgentRunState
-from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.tools.image_generation import (
-    CAPABILITY,
-    CodexImages,
-    read_artifact,
-)
 from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
 )
 from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.channels.slack_images import SlackImageDelivery
+from ads_booster.contracts.agent_run import AgentRunState
+from ads_booster.contracts.reasoning import ReasoningDecision
+from ads_booster.tools.image_generation import (
+    CAPABILITY,
+    CodexImages,
+    read_artifact,
+)
 from tests.marketing.agent_service.test_application import (
     _reasoning_result,  # pyright: ignore[reportPrivateUsage]
 )
@@ -169,7 +169,7 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     payload = TypeAdapter(dict[str, object]).validate_json(data)
     assert payload["channel_id"] == "C1"
     assert payload["thread_ts"] == "100.001"
-    assert "초안" in str(messages[-1]["text"])
+    assert "다운로드" in str(messages[-1]["text"])
     artifact = next((tmp_path / "images").glob("*.png"))
     assert read_artifact(artifact.parent, artifact.stem) == requests[1].data
     assert artifact.stat().st_mode & 0o077 == 0
@@ -189,6 +189,7 @@ def test_first_use_member_can_request_image_without_reviewer_role(tmp_path: Path
     assert len(commands) == 1
     assert len(requests) == 3
     assert "승인" not in str(messages[-1]["text"])
+    assert "검토해" not in str(messages[-1]["text"])
 
 
 def test_new_request_resumes_failed_reasoning_without_status_or_operator_step(
@@ -213,7 +214,7 @@ def test_new_request_resumes_failed_reasoning_without_status_or_operator_step(
     assert owner.work_once(now=NOW)
     assert len(commands) == 1
     assert len(requests) == 3
-    assert "초안" in str(messages[-1]["text"])
+    assert "다운로드" in str(messages[-1]["text"])
     assert service.repository.list_runs("team")[0].state is AgentRunState.COMPLETED
 
 
