@@ -51,7 +51,9 @@ _RECEIPT_SCHEMA: JsonObject = {
     ],
     "properties": {
         "schema_version": {"const": "trace.tool-execution-result.v1"},
-        "disposition": {"enum": ["no_effect", "succeeded", "failed"]},
+        "disposition": {
+            "enum": ["no_effect", "succeeded", "failed", "unknown_side_effect"]
+        },
         "invocation_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "output": {"type": "object"},
         "actual_cost_units": {"type": "integer", "minimum": 0},
