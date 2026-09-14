@@ -31,14 +31,27 @@ if TYPE_CHECKING:
 
 _DIRECTORY_MODE: Final = 0o700
 _FILE_MODE: Final = 0o600
-_STATE_ROW: Final[TypeAdapter[tuple[str, str | None] | None]] = TypeAdapter(
-    tuple[str, str | None] | None
-)
 _NEXT_ROW: Final[TypeAdapter[tuple[str, str, str, int] | None]] = TypeAdapter(
     tuple[str, str, str, int] | None
 )
-_TARGET_ROW: Final[TypeAdapter[tuple[str, int] | None]] = TypeAdapter(tuple[str, int] | None)
+_SCOPED_TARGET_ROW: Final[TypeAdapter[tuple[str, int, str, str | None] | None]] = TypeAdapter(
+    tuple[str, int, str, str | None] | None
+)
 _HEAD_ROW: Final[TypeAdapter[tuple[str] | None]] = TypeAdapter(tuple[str] | None)
+_SCOPED_TARGET_QUERY: Final = """SELECT item_id,lease_generation,state,error_code
+    FROM memory_view_outbox
+    WHERE workspace_id=?
+    AND document_id=?
+    AND revision_id=?
+    AND EXISTS (SELECT 1
+    FROM memory_documents AS document
+    WHERE document.workspace_id=memory_view_outbox.workspace_id
+    AND document.document_id=memory_view_outbox.document_id
+    AND document.scope_key IN (SELECT value FROM json_each(?)))"""
+_TARGET_STATE_QUERY: Final = _SCOPED_TARGET_QUERY + " ORDER BY item_id LIMIT 1"
+_CLAIM_TARGET_QUERY: Final = (
+    _SCOPED_TARGET_QUERY + " AND state='pending' ORDER BY item_id LIMIT 1"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,19 +111,9 @@ class MemoryViewDispatcher:
 
     def _target_state(self, document_id: str, revision_id: str) -> MemoryViewDispatchResult:
         with self.repository.connection() as connection:
-            row = _STATE_ROW.validate_python(
+            row = _SCOPED_TARGET_ROW.validate_python(
                 connection.execute(
-                    """SELECT state,error_code
-                FROM memory_view_outbox
-                WHERE workspace_id=?
-                AND document_id=?
-                AND revision_id=?
-                AND EXISTS (SELECT 1
-                FROM memory_documents AS document
-                WHERE document.workspace_id=memory_view_outbox.workspace_id
-                AND document.document_id=memory_view_outbox.document_id
-                AND document.scope_key IN (SELECT value FROM json_each(?)))
-                ORDER BY item_id LIMIT 1""",
+                    _TARGET_STATE_QUERY,
                     (
                         self.actor.workspace_id,
                         document_id,
@@ -123,7 +126,7 @@ class MemoryViewDispatcher:
             return MemoryViewDispatchResult(
                 processed=False, completed=False, code="memory_view_outbox_missing"
             )
-        state, error = row
+        _, _, state, error = row
         if state == "completed":
             return MemoryViewDispatchResult(
                 processed=False, completed=True, code="memory_view_already_current"
@@ -161,20 +164,9 @@ class MemoryViewDispatcher:
     def _claim_target(self, document_id: str, revision_id: str) -> _ViewItem | None:
         with self.repository.connection() as connection:
             _ = connection.execute("BEGIN IMMEDIATE")
-            row = _TARGET_ROW.validate_python(
+            row = _SCOPED_TARGET_ROW.validate_python(
                 connection.execute(
-                    """SELECT item_id,lease_generation
-                FROM memory_view_outbox
-                WHERE workspace_id=?
-                AND document_id=?
-                AND revision_id=?
-                AND state='pending'
-                AND EXISTS (SELECT 1
-                FROM memory_documents AS document
-                WHERE document.workspace_id=memory_view_outbox.workspace_id
-                AND document.document_id=memory_view_outbox.document_id
-                AND document.scope_key IN (SELECT value FROM json_each(?)))
-                ORDER BY item_id LIMIT 1""",
+                    _CLAIM_TARGET_QUERY,
                     (
                         self.actor.workspace_id,
                         document_id,
