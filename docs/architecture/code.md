@@ -19,10 +19,10 @@ an existing service-to-domain or canonical-repository bridge remains permitted.
 | `contracts/tool_capability.py` | complete ToolDescriptor policy/readiness/idempotency/reconciliation contract | registry selection or execution |
 | `contracts/reasoning.py` | replaceable structured reasoning request and decision | Codex process lifecycle |
 | `agent/core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
-| `agent/service/` | canonical on-prem application flow and append-only SQLite repository | channel-specific planning or effect implementation |
+| `agent/service/` | canonical on-prem application flow, append-only SQLite repository and bounded lease-aware task progression | channel-specific planning or effect implementation |
 | `agent/runtime.py` | write-ahead invocation, exact approval, receipt validation and recovery | channel admission or effect-specific implementation |
 | `channels/`, `channels/http/` | signed Slack and authenticated HTTP input/output boundaries | canonical Run state or tool effects |
-| `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs | Run/approval/recovery ownership |
+| `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs and owner-bound completion proofs | Run/approval/recovery ownership |
 | `bootstrap/` | composition of the configured service and concrete integrations | a second execution path |
 | `knowledge/` | team knowledge, scoped retrieval, curation, learned skills and workspace learning readiness | Agent, channel, bootstrap, tool or workload dependencies |
 | `creative/`, `delivery/`, `learning/`, `research/`, `workflows/`, `evaluation/` | their named domain policies and implementations | Agent Core or channel admission; their established service bridge remains explicit |
@@ -77,6 +77,15 @@ handling, conversation identity and private member/session isolation remain the 
 approval, receipt validation, restart recovery, and reconciliation. The service composes it; it does
 not fork those guarantees. The `agent/` namespace now contains this canonical engine only; the prior
 connector-specific product is not restored, and no `trace-agent` or `trace-ads` entrypoint is introduced.
+
+`agent/service/application.py` installs `LegacyV1CompletionAssessor` when callers omit a completion
+service. That compatibility boundary only accepts host-created v1 response candidates; explicit
+completion services still own semantic judgments, and setting `service.completion = None` retains
+the fail-closed unavailable-verification path. `tools/completion_verifiers.py` owns the configured
+Slack and Notion receipt readback checks, while `tools/completion_registry.py` binds every registry
+dispatch to the exact invocation digest. `channels/slack_conversations.py` and `channels/http/jobs.py`
+return newly admitted input to `pending` when `DriveWorkQueue` reports a live same-Run lease; the
+existing owner continues the Run and the input is retried after the lease yields.
 
 `agent/service/pending_approval.py` derives the unexecuted proposal from canonical records; read
 invocations and ordinary answers do not replace it. Service planning, approval, Slack summaries and

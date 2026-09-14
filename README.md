@@ -120,6 +120,12 @@ Authenticated `GET /v1/runs/{run_id}` also returns a bounded `execution` summary
 action, last progress, budgets, queue owner/lease and a sanitized wait reason. It is operational state,
 not a transcript, token stream or estimated completion percentage.
 
+Configured Slack and Notion effects are verified against their owner readbacks, configured destination,
+successful receipt and approval/invocation binding. If an authenticated Slack or HTTP correction arrives
+while another worker holds the same Run lease, the ingress remains pending and is retried after that lease
+ends. Services constructed without a completion assessor retain the legacy v1 response-stop behavior;
+artifact and effect obligations still require their normal owner proof.
+
 New Slack Runs default to 32 tool calls and 50 cost units. Set
 `TRACE_MARKETING_MAX_TOOL_CALLS` to change the new-Slack-Run call limit and
 `TRACE_MARKETING_MAX_DECISION_CALLS` to change the new task-segment decision limit (default 64).

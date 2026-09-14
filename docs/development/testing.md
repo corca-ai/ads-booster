@@ -29,6 +29,7 @@ uv run --frozen python -m pytest -q -p no:cacheprovider --tb=short \
   tests/marketing/agent_service/test_completion_repair.py \
   tests/marketing/agent_service/test_completion_supersession.py \
   tests/marketing/agent_service/test_completion_summary.py \
+  tests/marketing/agent_service/test_daily_slack.py \
   tests/providers/test_codex_completion.py \
   tests/providers/test_codex_reasoning_v2.py
 ```
@@ -50,6 +51,10 @@ uv run --frozen python -m pytest -q -p no:cacheprovider --tb=short \
   tests/marketing/channels/test_completion_gate_fixes.py \
   tests/marketing/channels/test_slack_run_notifications.py
 ```
+
+The completion selection includes configured Slack/Notion owner readback and v1 constructor
+compatibility. The bounded execution selection includes HTTP and Slack live-lease contention;
+those regressions assert the newly admitted input remains `pending` and is not terminally blocked.
 
 Run scoped Ruff, formatting and BasedPyright on changed Python owners. Capture failing-first output,
 the matching passing scenario, canonical database/receipts and actual artifact bytes. Drain slices to

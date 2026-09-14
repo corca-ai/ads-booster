@@ -83,7 +83,10 @@ owner, executor and effect class. A registration may additionally require an exa
 identity, as the configured GitHub verifier does; local image verifiers rely on the composite identity.
 It checks artifact
 roots, digest and image decoding, or supported effect-owner receipts, readback and invocation/approval
-identity. Unsupported or ambiguous identities fail closed. It rechecks proofs after the semantic call
+identity. The configured `deliver.slack` and `store.notion.daily` registrations bind the
+`slack.chat_post_message` and `notion.pages_create` owners to their configured channel/page and
+require a successful receipt with the exact invocation and approval binding. Unsupported or
+ambiguous identities fail closed. It rechecks proofs after the semantic call
 or cache lookup to reject
 artifacts changed during assessment. Preparation/no-effect receipts, unsupported effects and human
 reports are not effect proof. Long briefs are bounded for model context without invalidating verified
@@ -109,7 +112,9 @@ tools again, closing the commit-to-notification crash gap. Recovery returns inte
 their respective phases only after their lease expires. Each process lifetime has one owner identity;
 an explicit operation scope keeps that owner and lease across every Run transition in the bounded
 slice, updates the revision fence, and publishes the latest `pending` or `notify` target only on scope
-exit. The owner may renew only its own still-live claim. Atomic claim, owner, lease and Run-revision
+exit. A newly authenticated Slack or HTTP input that arrives while another live lease owns the
+same Run is returned to its inbox as `pending`; it is not converted into a terminal blocked job.
+The owner may renew only its own still-live claim. Atomic claim, owner, lease and Run-revision
 fencing prevent a live rolling-restart peer or stale worker from
 transitioning another claim. The 20-second slice target is checked only between provider calls and is
 not an in-flight timeout. The default 30-minute lease covers four calls at their 300-second timeout
@@ -139,7 +144,9 @@ an OS exit after assessment reservation preserved counters when another process 
 
 The candidate reads legacy Runs by deriving a task from the immutable goal when task records are
 absent. Existing records and receipt/approval digests are not rewritten. Reasoning v1 remains readable,
-but its stop still requires assessment. Historical `completed` Runs are not retroactively certified.
+and its public constructor supplies a response-only compatibility assessor so ordinary v1 stops keep
+their historical completion behavior while artifact/effect obligations remain owner-gated. Historical
+`completed` Runs are not retroactively certified.
 
 Old binaries do not understand the new checkpoint and runnable/notify semantics; backward execution
 compatibility is unsupported. Before rollback, use existing managed-service maintenance controls to
