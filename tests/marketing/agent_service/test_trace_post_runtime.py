@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
@@ -70,6 +71,7 @@ class FakeProvider:
         self, *, workspace: Path, instruction: str, timeout_seconds: float
     ) -> TracePostProviderResult:
         self.calls += 1
+        assert json.dumps(str(Path(sys.executable).resolve())) in instruction
         assert "Human feedback is optional" in instruction
         assert "without waiting for another approval or human review" in instruction
         assert "헬로키티" in instruction
