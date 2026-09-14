@@ -16,6 +16,7 @@ from pydantic import Field, TypeAdapter
 
 from ads_booster.agent.runtime import pending_deferred_execution
 from ads_booster.agent.service.approval_binding import runtime_grant_approval
+from ads_booster.agent.service.deferred_failure import provider_failure_code
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     ToolApproval,
@@ -198,6 +199,9 @@ uncertain_projected INTEGER NOT NULL DEFAULT 0"""
 uncertainty_attempts INTEGER NOT NULL DEFAULT 0"""
                 )
 
+            if "failure_code" not in columns:
+                _ = db.execute("ALTER TABLE image_edit_jobs ADD COLUMN failure_code TEXT")
+
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(self.service.repository.database_path, timeout=5)
 
@@ -350,11 +354,21 @@ uncertainty_attempts INTEGER NOT NULL DEFAULT 0"""
             self._worker_lock.release()
 
     def _project_uncertain(self, job: ImageEditJob) -> None:
+        with closing(self._db()) as db:
+            row = cast(
+                "tuple[str | None] | None",
+                db.execute(
+                    "SELECT failure_code FROM image_edit_jobs WHERE operation=?",
+                    (job.operation_id,),
+                ).fetchone(),
+            )
+        reason = row[0] if row is not None and isinstance(row[0], str) else None
         _ = self.service.mark_deferred_uncertain(
             job.source.scope.workspace_id,
             job.invocation.run_id,
             operation_id=job.operation_id,
             now=self.clock(),
+            failure_code=reason,
         )
         if self.on_completed is not None:
             self.on_completed(
@@ -519,15 +533,15 @@ WHERE operation=?""",
                 images=(source,),
                 timeout_seconds=job.config.timeout_seconds,
             )
-        except Exception:  # noqa: BLE001 - uncertain paid generation is never repeated.
+        except Exception as error:  # noqa: BLE001 - uncertain paid generation is never repeated.
             with (
                 self.service.run_locks.hold(job.source.scope.workspace_id, job.invocation.run_id),
                 closing(self._db()) as failed_db,
                 failed_db,
             ):
                 _ = failed_db.execute(
-                    "UPDATE image_edit_jobs SET stage='uncertain' WHERE operation=?",
-                    (job.operation_id,),
+                    "UPDATE image_edit_jobs SET stage='uncertain',failure_code=? WHERE operation=?",
+                    (provider_failure_code(error), job.operation_id),
                 )
                 failed_db.commit()
                 self._project_uncertain(job)

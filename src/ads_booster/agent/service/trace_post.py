@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from pydantic import TypeAdapter
 
 from ads_booster.agent.service.approval_binding import runtime_grant_approval
+from ads_booster.agent.service.deferred_failure import provider_failure_code
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     CapabilitySnapshot,
@@ -191,6 +192,9 @@ class TracePostTool:
                 _ = db.execute(
                     "ALTER TABLE trace_post_jobs ADD COLUMN notified INTEGER NOT NULL DEFAULT 0"
                 )
+
+            if "failure_code" not in {row[0] for row in columns}:
+                _ = db.execute("ALTER TABLE trace_post_jobs ADD COLUMN failure_code TEXT")
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(self.service.repository.database_path, timeout=5)
@@ -400,8 +404,12 @@ class TracePostTool:
                 ),
                 timeout_seconds=self.config.timeout_seconds,
             )
-        except Exception:  # noqa: BLE001 - a started image workflow is never automatically replayed.
+        except Exception as error:  # noqa: BLE001 - a started image workflow is never automatically replayed.
             with closing(self._db()) as db, db:
+                _ = db.execute(
+                    "UPDATE trace_post_jobs SET failure_code=? WHERE operation=?",
+                    (provider_failure_code(error), job.operation_id),
+                )
                 return self._mark_uncertain(db, job)
         try:
             provider_result_json = _provider_result_json(provider_result, workspace)
@@ -440,8 +448,21 @@ class TracePostTool:
         tenant = job.invocation.tenant_id
         if tenant is None:
             raise ValueError("trace_post_tenant_required")
+        with closing(self._db()) as db:
+            row = cast(
+                "tuple[str | None] | None",
+                db.execute(
+                    "SELECT failure_code FROM trace_post_jobs WHERE operation=?",
+                    (job.operation_id,),
+                ).fetchone(),
+            )
+        reason = row[0] if row is not None and isinstance(row[0], str) else None
         _ = self.service.mark_deferred_uncertain(
-            tenant, job.invocation.run_id, operation_id=job.operation_id, now=self.clock()
+            tenant,
+            job.invocation.run_id,
+            operation_id=job.operation_id,
+            now=self.clock(),
+            failure_code=reason,
         )
         self._publish_result(job, uncertain=True)
         return {"state": "uncertain", "operation_id": job.operation_id}

@@ -19,6 +19,7 @@ from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
 )
+from ads_booster.agent.service.deferred_failure import FAILURE_TEXT
 from ads_booster.agent.service.drive_work import (
     DriveClaimLostError,
     DriveOrigin,
@@ -1492,6 +1493,20 @@ class SlackEvents:
             )
         steps = service.repository.steps(conversation.tenant_id, run.run_id)
         status = run_status(run, steps)
+        if run.state is AgentRunState.AWAITING_RECONCILIATION:
+            diagnostic = next(
+                (
+                    r.payload.get("reason_code")
+                    for r in reversed(records)
+                    if r.payload_schema_version == "trace.deferred-provider-failure.v1"
+                ),
+                None,
+            )
+            if isinstance(diagnostic, str) and diagnostic in FAILURE_TEXT:
+                status = (
+                    FAILURE_TEXT[diagnostic]
+                    + " 결과는 확인되지 않았으며 자동 재실행하지 않았습니다."
+                )
         if run.state is AgentRunState.COMPLETED:
             answer = result_for(run, records).text
         elif run.state is AgentRunState.AWAITING_INPUT:

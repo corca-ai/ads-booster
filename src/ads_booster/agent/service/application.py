@@ -38,6 +38,7 @@ from ads_booster.agent.runtime import (
     tool_receipt_from_event,
 )
 from ads_booster.agent.service.completion_evidence import CompletionEvidenceReader
+from ads_booster.agent.service.deferred_failure import FAILURE_TEXT
 from ads_booster.agent.service.drive_work import DriveAdmissionConflict
 from ads_booster.agent.service.pending_approval import pending_approval
 from ads_booster.agent.service.run_limits import (
@@ -1745,7 +1746,13 @@ class MarketingAgentService:
         return waiting
 
     def mark_deferred_uncertain(
-        self, tenant_id: str, run_id: str, *, operation_id: str, now: datetime
+        self,
+        tenant_id: str,
+        run_id: str,
+        *,
+        operation_id: str,
+        now: datetime,
+        failure_code: str | None = None,
     ) -> AgentRun:
         """Internal worker readback boundary; elapsed time alone is not evidence of uncertainty."""
         with self.run_locks.hold(tenant_id, run_id):
@@ -1763,7 +1770,41 @@ class MarketingAgentService:
                     self.runtime_store, session, operation_id, now=now
                 )
                 self._fault("deferred_uncertainty_persisted")
-            return self._await_deferred(run, invocation, deferred, now=now)
+            run = self._await_deferred(run, invocation, deferred, now=now)
+            if failure_code is not None:
+                if failure_code not in FAILURE_TEXT:
+                    raise ValueError("deferred_failure_code_invalid")
+                record_id = f"{run_id}:provider-failure:{operation_id}"
+                if not any(
+                    r.record_id == record_id for r in self.repository.records(tenant_id, run_id)
+                ):
+                    payload: JsonObject = {
+                        "schema_version": "trace.deferred-provider-failure.v1",
+                        "operation_id": operation_id,
+                        "reason_code": failure_code,
+                    }
+                    run = self._append_step(
+                        run,
+                        _step(
+                            run,
+                            kind=AgentStepKind.VERIFY,
+                            input_sha256=contract_sha256(invocation),
+                            output_sha256=contract_sha256(payload),
+                            now=now,
+                        ),
+                        state=run.state,
+                        expected_revision=run.revision,
+                        records=(
+                            _record(
+                                run,
+                                record_id=record_id,
+                                kind=AgentRecordKind.EVIDENCE,
+                                payload=payload,
+                                now=now,
+                            ),
+                        ),
+                    )
+            return run
 
     def complete_deferred(  # noqa: C901,PLR0912 - exact completion and crash recovery guards.
         self,

@@ -24,6 +24,7 @@ from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.contracts.trace_post import TracePostSuccess
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.execution_control import checkpoint
+from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.tools.completion_proofs import (
     CanonicalCompletionProofs,
     CompletionArtifactOwners,
@@ -68,7 +69,17 @@ class RequestedTracePost(TracePostReasoning):
 
 @pytest.mark.parametrize("new_member", [False, True])
 @pytest.mark.parametrize(
-    "damage", ["", "digest", "link", "lost", "disabled_member", "provider_failure", "progress"]
+    "damage",
+    [
+        "",
+        "digest",
+        "link",
+        "lost",
+        "disabled_member",
+        "provider_failure",
+        "progress",
+        "launcher_failure",
+    ],
 )
 def test_request_worker_completion_attaches_six_named_downloadable_images(  # noqa: C901,PLR0915 - signed request through deferred worker, upload and restart.
     tmp_path: Path,
@@ -97,12 +108,24 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
                 workspace=workspace, instruction=instruction, timeout_seconds=timeout_seconds
             )
 
+    class LauncherFailure(FakeProvider):
+        calls: int
+
+        @override
+        def run(
+            self, *, workspace: Path, instruction: str, timeout_seconds: float
+        ) -> TracePostProviderResult:
+            self.calls += 1
+            raise CodexCliError("codex_sandbox_launcher_unavailable")
+
     owner.commands.sender = capture
     provider = (
         ProgressProvider()
         if damage == "progress"
         else FakeProvider(fail=damage == "provider_failure")
     )
+    if damage == "launcher_failure":
+        provider = LauncherFailure()
     root = tmp_path / "artifacts"
 
     def completed(tenant: str, run: str, event: str) -> None:
@@ -140,11 +163,13 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
     run = service.repository.list_runs("team")[0]
     assert run.state is AgentRunState.AWAITING_TOOL
     assert not uploads
-    if damage == "provider_failure":
+    if damage in {"provider_failure", "launcher_failure"}:
         assert tool.work_once()["state"] == "uncertain"
         assert owner.work_once(now=NOW)
         assert "확인되지" in str(messages[-1]["text"])
         assert "기다리고" not in str(messages[-1]["text"])
+        if damage == "launcher_failure":
+            assert "내부 실행기" in str(messages[-1]["text"])
         assert not uploads
         assert replace(tool).work_once()["state"] == "uncertain"
         assert provider.calls == 1
