@@ -55,6 +55,7 @@ jobs:
             trap 'docker logs "$container_id"; docker rm -f "$container_id"' EXIT
             docker exec "$container_id" bash -c 'useradd -m -s /bin/bash agent; cp -a /fixture /srv/source; chown -R agent:agent /srv/source'
             docker exec "$container_id" bash /srv/source/install-server.sh --user agent --source /srv/source
+            docker exec "$container_id" bash -c 'runuser -u agent -- env PATH="/home/agent/.local/bin:$PATH" /home/agent/.local/share/trace-marketing-server/current/.venv/bin/python /srv/source/tests/operations/installed_codex_sandbox.py'
             docker exec "$container_id" bash /srv/source/install-server.sh --user agent --source /srv/source
             docker exec "$container_id" bash -c 'agent_uid="$(id -u agent)"; runuser -u agent -- env PATH="/home/agent/.local/bin:$PATH" XDG_RUNTIME_DIR="/run/user/$agent_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$agent_uid/bus" /home/agent/.local/share/trace-marketing-server/current/.venv/bin/python /srv/source/tests/operations/installed_server_lifecycle.py'
             docker rm -f "$container_id"
