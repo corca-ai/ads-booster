@@ -6,31 +6,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.contracts.agent_run import (
-    AgentBudget,
-    AgentGoal,
-    AgentRecordKind,
-    AgentRunState,
-    ToolInvocation,
-    contract_sha256,
-)
-from ads_booster.contracts.reasoning import (
-    ReasoningDecision,
-    ReasoningProviderReceipt,
-    ReasoningRequest,
-    ReasoningResult,
-)
-from ads_booster.contracts.tool_capability import (
-    EffectClass,
-    ToolApprovalPolicy,
-    ToolCost,
-    ToolDescriptor,
-    ToolExecutionResult,
-    ToolIdempotencyPolicy,
-    ToolReadiness,
-    ToolReconciliationPolicy,
-)
 from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.agent.service.application import (
     CreateAgentRunRequest,
     MarketingAgentService,
@@ -58,7 +35,30 @@ from ads_booster.channels.slack import (
 )
 from ads_booster.channels.store import SqliteChannelStore
 from ads_booster.channels.web import WebChannelAdapter
-from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.contracts.agent_run import (
+    AgentBudget,
+    AgentGoal,
+    AgentRecordKind,
+    AgentRunState,
+    ToolInvocation,
+    contract_sha256,
+)
+from ads_booster.contracts.reasoning import (
+    ReasoningDecision,
+    ReasoningProviderReceipt,
+    ReasoningRequest,
+    ReasoningResult,
+)
+from ads_booster.contracts.tool_capability import (
+    EffectClass,
+    ToolApprovalPolicy,
+    ToolCost,
+    ToolDescriptor,
+    ToolExecutionResult,
+    ToolIdempotencyPolicy,
+    ToolReadiness,
+    ToolReconciliationPolicy,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -339,6 +339,7 @@ def _application(
         reasoning=reasoning,
         tools=tools,
         runtime_store=SqliteSessionStore(database),
+        clock=lambda: NOW,
     )
     store = SqliteChannelStore(database)
     return ChannelApplicationAdapter(service, store, "https://agent.example"), store
