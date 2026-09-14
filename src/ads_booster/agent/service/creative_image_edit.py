@@ -45,6 +45,7 @@ from ads_booster.creative.creative_image_edit_contract import (
     CreativeImageEditInput,
     compose_preserved_edit,
 )
+from ads_booster.execution_control import checkpoint, progress_scope
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
 from ads_booster.providers.codex_image_edit import ImageEditResult
 from ads_booster.tools.descriptors import image_generation_descriptor
@@ -165,6 +166,7 @@ class CreativeImageEditTool:
     config: ImageEditConfig
     readiness: Callable[[], bool]
     on_completed: Callable[[str, str, str], None] | None = None
+    on_progress: Callable[[str, str, str], None] | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     _worker_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -354,6 +356,12 @@ uncertainty_attempts INTEGER NOT NULL DEFAULT 0"""
             operation_id=job.operation_id,
             now=self.clock(),
         )
+        if self.on_completed is not None:
+            self.on_completed(
+                job.source.scope.workspace_id,
+                job.invocation.run_id,
+                f"image-edit-uncertain:{job.operation_id}",
+            )
         with closing(self._db()) as db, db:
             _ = db.execute(
                 """UPDATE image_edit_jobs SET uncertain_projected=1 WHERE operation=?
@@ -436,7 +444,14 @@ WHERE operation=?""",
                     break
             if selected is None:
                 return {"state": "awaiting_ack"}
-        return self._process_job(selected)
+        job = ImageEditJob.model_validate_json(selected[0])
+
+        def publish(stage: str) -> None:
+            if self.on_progress is not None:
+                self.on_progress(job.source.scope.workspace_id, job.invocation.run_id, stage)
+
+        with progress_scope(publish, stage="이미지 편집을 준비하고 있습니다"):
+            return self._process_job(selected)
 
     def _process_job(self, row: tuple[str, str, str | None]) -> JsonObject:  # noqa: C901,PLR0911 - durable preflight/dispatch/recovery boundaries.
         job = ImageEditJob.model_validate_json(row[0])
@@ -496,6 +511,7 @@ WHERE operation=?""",
             if changed != 1:
                 return {"state": "busy"}
         try:
+            checkpoint("이미지 편집을 시작했습니다 · 모델 응답을 기다리는 중")
             generated = self.provider.generate(
                 operation_id=job.operation_id,
                 workspace=workspace,

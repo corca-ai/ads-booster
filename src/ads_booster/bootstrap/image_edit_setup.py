@@ -94,6 +94,7 @@ def connect_image_edit(
     config_path: Path,
     now: datetime,
     on_completed: Callable[[str, str, str], None] | None = None,
+    on_progress: Callable[[str, str, str], None] | None = None,
 ) -> CreativeImageEditTool:
     if any(capability in service.tools for capability in _CAPABILITIES):
         raise ValueError("image_edit_tool_already_configured")
@@ -117,6 +118,7 @@ def connect_image_edit(
         config=config,
         readiness=lambda: provider.readiness().ready,
         on_completed=on_completed,
+        on_progress=on_progress,
     )
     catalog = ImageEditCatalog(tool)
     service.install_tool_catalog(catalog, now=now)

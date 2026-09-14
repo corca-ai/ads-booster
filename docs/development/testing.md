@@ -5,6 +5,30 @@ Last reviewed: 2026-09-14
 
 ## Focused checks
 
+For Trace post interpreter access, deferred progress and notification recovery, select
+`tests/marketing/agent_service/test_trace_post_runtime.py`, `test_creative_image_edit.py`,
+`tests/marketing/channels/test_slack_trace_post.py`, `test_slack_progress.py`,
+`test_slack_run_notifications.py`, and `tests/providers/test_codex_image_edit.py` / `test_codex_trace_post.py`.
+Verify the resolved interpreter in the frozen instruction, native event stage labels without
+provider text, same-message progress/completion, late progress suppression and callback-loss recovery
+without regenerating. For natural-language workspace skills, select
+`tests/knowledge/test_skill_authoring.py`, and
+`tests/marketing/channels/test_slack_workspace_skills.py`. Confirm create/update with trailing details,
+quoted/use-only exclusions and cross-channel reuse without granting source access. Run these from a
+fresh non-editable wheel outside the checkout. Real image generation and real-model skill reuse are
+separate opt-in observations; fixture PNGs do not establish provider execution.
+
+For first-use knowledge and concurrent Slack requests, select
+`tests/marketing/channels/test_slack_knowledge_preparation.py` and `test_slack_parallel.py`, plus
+`test_slack_trace_post.py` and `test_slack_run_notifications.py`. Exercise the initialized knowledge
+runtime with no brands, a current brand-preparation wait followed by a different question, and
+unchanged asynchronous notifications. Block one model call and prove another conversation enters
+reasoning while its same-thread follow-up waits. Run two Trace post providers through a barrier:
+both must complete once and deliver to their own threads without reclaiming live operations.
+For changes to shared Run serialization, include affected service/deferred/image-edit, HTTP jobs
+and creative API tests. Repeat the changed consumer scenarios from a non-editable installed wheel.
+
+
 Choose the boundary that changed. Source tests are not installed-service or live-provider proof.
 
 ### Task completion harness

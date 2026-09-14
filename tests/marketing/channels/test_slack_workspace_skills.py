@@ -31,7 +31,11 @@ if TYPE_CHECKING:
 def test_explicit_channel_request_creates_workspace_skill(tmp_path: Path) -> None:
     owner, installed, _ = _installed_events(tmp_path)
     try:
-        receive(owner, user="U1", text="<@UBOT> 스킬 만들기: 완료 receipt를 확인하는 공용 절차")
+        receive(
+            owner,
+            user="U1",
+            text="<@UBOT> 워크스페이스 스킬을 하나 만들어줘. 완료 receipt를 확인하는 절차야.",
+        )
         assert owner.work_once(now=NOW)
         admitted = owner.store.latest_knowledge_event(owner._message_id("C1", "100.001"))  # pyright: ignore[reportPrivateUsage]
         assert admitted is not None
@@ -86,7 +90,7 @@ def test_explicit_channel_request_creates_workspace_skill(tmp_path: Path) -> Non
             user="U2",
             channel="C2",
             ts="100.003",
-            text="<@UBOT> 스킬 수정: learned.u1.receipt-rules 검증 단계 추가",
+            text="<@UBOT> learned.u1.receipt-rules 스킬을 수정해줘. 검증 단계를 추가해줘.",
         )
         assert owner.work_once(now=NOW)
         update = owner.store.latest_knowledge_event(owner._message_id("C2", "100.003"))  # pyright: ignore[reportPrivateUsage]

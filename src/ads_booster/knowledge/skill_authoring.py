@@ -65,9 +65,9 @@ def requested_skill_action(text: str) -> SkillOperationKind | None:
             return SkillOperationKind(kind)
         if re.match(rf"^(?:워크스페이스\s*(?:공용\s*)?)?스킬\s*(?:{actions})(?:\s*[:：]|$)", line):
             return SkillOperationKind(kind)
-        if re.fullmatch(
-            rf"[^\n]{{0,300}}스킬(?:을|로|도)?\s*(?:좀\s*|하나\s*)?"
-            rf"(?:{actions})(?:줘|주세요|주십시오)[.!?。]*",
+        if re.match(
+            rf"[^\n\"'“”‘’>]{{0,300}}스킬(?:을|로|도)?\s*(?:좀\s*|하나\s*)?"
+            rf"(?:{actions})(?:줘|주세요|주십시오)(?:[.!?。](?:\s|$)|[:：]|$)",
             line,
         ):
             return SkillOperationKind(kind)

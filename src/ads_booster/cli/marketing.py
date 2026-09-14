@@ -215,6 +215,7 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
         timeout_seconds=timeout_seconds,
         now=datetime.now(UTC),
         on_completed=notify_image_completion,
+        on_progress=None if slack_events is None else slack_events.update_run_progress,
     )
 
     image_edit_path = os.environ.get("TRACE_MARKETING_IMAGE_EDIT_CONFIG")
@@ -226,6 +227,7 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
             config_path=Path(image_edit_path),
             now=datetime.now(UTC),
             on_completed=notify_image_completion,
+            on_progress=None if slack_events is None else slack_events.update_run_progress,
         )
     )
     if slack_only and slack_commands is None:

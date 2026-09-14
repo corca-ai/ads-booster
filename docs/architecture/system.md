@@ -1082,3 +1082,30 @@ protects an in-process active-operation set, so another lane cannot mistake live
 crash-left operation. Per-Run locks cover canonical preflight/completion; the image provider runs
 outside those locks. Started work left by a prior process retains uncertainty handling and is not
 blindly retried. Maintenance counts each admitted lane and shutdown joins them before exit.
+
+## Deferred media progress and notification recovery
+
+`execution_control.progress_scope` gives a deferred worker a thread-local observed stage and a
+five-second presentation heartbeat. Trace post and image-edit owners bind it to the tenant/Run;
+Codex image started/completed notifications advance fixed stage labels without exposing prompts,
+model reasoning, commands or paths. Elapsed time measures the worker scope, not output completion.
+The Slack adapter updates the latest durable original progress-message identity for that Run,
+rechecks current membership and canonical AWAITING_TOOL state under its Run lock, and never posts
+a second progress message when the original Slack timestamp is unknown. Terminal state suppresses
+late worker updates. The heartbeat stops and joins when the worker yields.
+
+Completion/uncertainty notifications bind to the original progress message, including after restart.
+Trace post adds the backward-compatible `trace_post_jobs.notified` column. A pending notification
+is retried with its stable event ID after callback failure or restart; provider execution is never
+repeated by notification recovery. Existing uncertainty becomes visible through the same mechanism.
+Image-edit uncertainty is marked projected only after its notification callback succeeds.
+
+The restricted Trace post subprocess invokes the resolved base Python executable already covered
+by its runtime read grant. It does not attempt to execute the inaccessible installation-venv symlink
+or broaden access to other installation files or credentials. The frozen helpers use the standard
+library and the operation's packaged workspace.
+
+Explicit Korean skill create/update directives may be followed by a sentence or colon with the
+procedure details. Quoted instructions, negation and merely using a skill are not publication
+requests. Existing workspace ownership, exact revision, source-currentness and private-chat read-only
+boundaries remain unchanged.

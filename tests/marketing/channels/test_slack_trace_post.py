@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from typing import TYPE_CHECKING, override
 
 import pytest
@@ -23,6 +23,7 @@ from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
 from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.contracts.trace_post import TracePostSuccess
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.execution_control import checkpoint
 from ads_booster.tools.completion_proofs import (
     CanonicalCompletionProofs,
     CompletionArtifactOwners,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 
     from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
     from ads_booster.providers.codex_trace_post import TracePostProviderResult
+    from ads_booster.transport.json_types import JsonObject
 
 
 def upload_payload(request: Request) -> dict[str, object]:
@@ -65,8 +67,10 @@ class RequestedTracePost(TracePostReasoning):
 
 
 @pytest.mark.parametrize("new_member", [False, True])
-@pytest.mark.parametrize("damage", ["", "digest", "link", "lost", "disabled_member"])
-def test_request_worker_completion_attaches_six_named_downloadable_images(  # noqa: PLR0915 - signed request through deferred worker, upload and restart.
+@pytest.mark.parametrize(
+    "damage", ["", "digest", "link", "lost", "disabled_member", "provider_failure", "progress"]
+)
+def test_request_worker_completion_attaches_six_named_downloadable_images(  # noqa: C901,PLR0915 - signed request through deferred worker, upload and restart.
     tmp_path: Path,
     new_member: bool,
     damage: str,
@@ -74,7 +78,31 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
     owner, messages, uploads, _ = configured(tmp_path, lost=damage == "lost")
     owner.workspace_mentions = True
     service = owner.commands.application.service
-    provider = FakeProvider()
+    progressing = Event()
+    send = owner.commands.sender
+
+    def capture(payload: JsonObject) -> JsonObject:
+        if "이미지를 생성하고 있습니다" in str(payload.get("text")):
+            progressing.set()
+        return send(payload)
+
+    class ProgressProvider(FakeProvider):
+        @override
+        def run(
+            self, *, workspace: Path, instruction: str, timeout_seconds: float
+        ) -> TracePostProviderResult:
+            checkpoint("이미지를 생성하고 있습니다")
+            assert progressing.wait(8)
+            return super().run(
+                workspace=workspace, instruction=instruction, timeout_seconds=timeout_seconds
+            )
+
+    owner.commands.sender = capture
+    provider = (
+        ProgressProvider()
+        if damage == "progress"
+        else FakeProvider(fail=damage == "provider_failure")
+    )
     root = tmp_path / "artifacts"
 
     def completed(tenant: str, run: str, event: str) -> None:
@@ -89,6 +117,7 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
         config=TracePostConfig(tmp_path / "codex", "fixture", 3600),
         clock=lambda: NOW,
         on_completed=completed,
+        on_progress=owner.update_run_progress,
     )
     service.registry = ToolRegistry((trace_post_descriptor(now=NOW),))
     service.tools = {"creative.trace_post": tool}
@@ -111,6 +140,15 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
     run = service.repository.list_runs("team")[0]
     assert run.state is AgentRunState.AWAITING_TOOL
     assert not uploads
+    if damage == "provider_failure":
+        assert tool.work_once()["state"] == "uncertain"
+        assert owner.work_once(now=NOW)
+        assert "확인되지" in str(messages[-1]["text"])
+        assert "기다리고" not in str(messages[-1]["text"])
+        assert not uploads
+        assert replace(tool).work_once()["state"] == "uncertain"
+        assert provider.calls == 1
+        return
     assert tool.work_once()["state"] == "running"
     run = service.drive("team", run.run_id, now=NOW)
     assert run.state is AgentRunState.COMPLETED
@@ -145,7 +183,7 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
                 ),
             )
     assert owner.work_once(now=NOW)
-    if damage:
+    if damage and damage != "progress":
         assert len(uploads) == (18 if damage == "lost" else 0)
         if damage in {"digest", "link"}:
             assert "검증에 실패" in str(messages[-1]["text"])
@@ -169,6 +207,9 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
         assert payload["channel_id"] == "C1"
         assert payload["thread_ts"] == "100.001"
         assert "검토" not in str(payload["files"])
+    assert messages[-1]["ts"] == messages[0].get("ts", "123.456")
+    owner.update_run_progress("team", run.run_id, "stale generation")
+    assert "stale generation" not in str(messages[-1]["text"])
     answer = str(messages[-1]["text"])
     assert "다운로드" in answer
     assert "kr synthetic caption" in answer

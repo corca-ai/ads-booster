@@ -671,3 +671,11 @@ a nonempty fallback. `task_input.new_input_after_brand_wait` recognizes a newly 
 that boundary; the service reclassifies it through team-chat preparation before selecting a new
 action. `knowledge/context_selection.py` owns the empty-brand `voice_unconfigured` fallback;
 explicit brand access, freshness and constraints remain owned by knowledge preparation.
+
+`execution_control.progress_scope` owns deferred stage lifetime and heartbeat cleanup, independent
+of Slack and provider implementations. Native provider events call `checkpoint` with fixed labels.
+Trace post/image-edit composition supplies `SlackEvents.update_run_progress`; `SlackProgressStore`
+resolves the original message by conversation and Run. The adapter owns current authorization and
+presentation, while the worker's durable job owns execution/uncertainty and notification recovery.
+`trace_post_jobs.notified` records callback completion; stable outbox event IDs own send deduplication.
+The Trace post instruction names the resolved interpreter allowed by the existing provider profile.

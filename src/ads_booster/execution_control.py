@@ -6,9 +6,10 @@ import os
 import signal
 import subprocess
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
+from threading import Event, Thread
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -93,3 +94,35 @@ def controlled_process(
                 pass
             _ = process.communicate()
             raise
+
+
+@contextmanager
+def progress_scope(
+    publish: Callable[[str], None] | None, *, stage: str, interval: float = 5.0
+) -> Generator[None]:
+    """Keep a deferred owner's observed stage visible; publication cannot replay work."""
+    if publish is None:
+        yield
+        return
+    control = ExecutionControl(lambda: False, stage=stage)
+    stopped = Event()
+    started = time.monotonic()
+
+    def report() -> None:
+        # Presentation failure cannot interrupt or replay paid work.
+        with suppress(Exception):
+            publish(f"{control.stage} · {int(time.monotonic() - started)}초 경과")
+
+    def refresh() -> None:
+        while not stopped.wait(interval):
+            report()
+
+    report()
+    thread = Thread(target=refresh, name="trace-deferred-progress", daemon=True)
+    thread.start()
+    try:
+        with execution_scope(control):
+            yield
+    finally:
+        stopped.set()
+        thread.join()
