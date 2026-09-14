@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,7 +10,12 @@ from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.contracts.agent_run import AgentRecordKind, ToolInvocation, contract_sha256
 from tests.marketing.agent_service.test_application import EffectThenStopReasoning, ResearchAdapter
 from tests.marketing.channels.test_slack_commands import NOW, request
-from tests.marketing.channels.test_slack_events import effect_descriptor, receive, setup_events
+from tests.marketing.channels.test_slack_events import (
+    effect_descriptor,
+    receive,
+    revoke_approval,
+    setup_events,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,15 +72,7 @@ def test_exact_approval_failure_is_actionable_without_execution(
     )
     digest = contract_sha256(invocation)
     if cause == "permission":
-        identity = owner.identity("U1")
-        with closing(sqlite3.connect(owner.store.database_path)) as db, db:
-            _ = db.execute(
-                "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
-                (
-                    identity.model_copy(update={"can_approve": False}).model_dump_json(),
-                    identity.binding_id,
-                ),
-            )
+        revoke_approval(owner)
         expected, code = "승인 권한이 없습니다", "slack_approval_not_allowed"
     elif cause == "changed":
         digest = "0" * 64

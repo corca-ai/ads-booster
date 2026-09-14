@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING, override
 
 import pytest
 from pydantic import TypeAdapter
 
-from ads_booster.contracts.agent_run import AgentRunState, ToolInvocation, contract_sha256
-from ads_booster.contracts.tool_capability import EffectClass
 from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.channels.http.http_api import MarketingAgentApi
 from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.channels.http.http_api import MarketingAgentApi
 from ads_booster.channels.slack import slack_signature
 from ads_booster.channels.slack_events import SlackEvents, events_from_env
+from ads_booster.contracts.agent_run import AgentRunState, ToolInvocation, contract_sha256
+from ads_booster.contracts.tool_capability import EffectClass
 from tests.marketing.agent_service.test_application import (
     AskThenStopReasoning,
     EffectThenStopReasoning,
@@ -62,6 +64,18 @@ def setup_events(root: Path) -> tuple[SlackEvents, list[JsonObject]]:
 
     commands.sender = send
     return SlackEvents(commands, "UBOT", frozenset({"C1"})), messages
+
+
+def revoke_approval(owner: SlackEvents, user_id: str = "U1") -> None:
+    identity = owner.identity(user_id)
+    with closing(sqlite3.connect(owner.store.database_path)) as database, database:
+        _ = database.execute(
+            "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
+            (
+                identity.model_copy(update={"can_approve": False}).model_dump_json(),
+                identity.binding_id,
+            ),
+        )
 
 
 def signed(envelope: JsonObject) -> tuple[bytes, dict[str, str]]:
