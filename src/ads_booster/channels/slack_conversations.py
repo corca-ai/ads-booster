@@ -72,6 +72,7 @@ class MessagePlan(ContractModel):
         "reject",
         "resume",
         "reply",
+        "dialogue",
         "close",
         "revise",
         "pause",
@@ -515,6 +516,7 @@ class SlackConversationStore:
                 replayable = plan is None or plan.action in {
                     "create",
                     "reply",
+                    "dialogue",
                     "close",
                     "revise",
                     "pause",
