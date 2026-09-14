@@ -285,25 +285,13 @@ class ScheduleRuntime:
             or current_schedule.status is not ScheduleStatus.ACTIVE
         ):
             return self.repository.transition(
-                occurrence.model_copy(
-                    update={
-                        "state": ScheduleOccurrenceState.BLOCKED,
-                        "reason": "schedule_revision_inactive",
-                        "updated_at": now,
-                    }
-                ),
+                _blocked_occurrence(occurrence, reason="schedule_revision_inactive", now=now),
                 expected_state=ScheduleOccurrenceState.RESERVED,
             )
         unavailable = self.authority.unavailable_reason(schedule, now=now)
         if unavailable is not None:
             return self.repository.transition(
-                occurrence.model_copy(
-                    update={
-                        "state": ScheduleOccurrenceState.BLOCKED,
-                        "reason": unavailable,
-                        "updated_at": now,
-                    }
-                ),
+                _blocked_occurrence(occurrence, reason=unavailable, now=now),
                 expected_state=ScheduleOccurrenceState.RESERVED,
             )
         origin = DriveOrigin(
@@ -354,6 +342,18 @@ class ScheduleRuntime:
                 skipped.append(occurrence.occurrence_id)
             case _:
                 admitted.append(occurrence.occurrence_id)
+
+
+def _blocked_occurrence(
+    occurrence: ScheduleOccurrence, *, reason: str, now: datetime
+) -> ScheduleOccurrence:
+    return occurrence.model_copy(
+        update={
+            "state": ScheduleOccurrenceState.BLOCKED,
+            "reason": reason,
+            "updated_at": now,
+        }
+    )
 
 
 def _scheduled_goal(schedule: AgentSchedule, occurrence: ScheduleOccurrence) -> AgentGoal:
