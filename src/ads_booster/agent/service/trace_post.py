@@ -20,9 +20,8 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import TypeAdapter
 
-from ads_booster.agent.runtime import ApprovalGrant
+from ads_booster.agent.service.approval_binding import runtime_grant_approval
 from ads_booster.contracts.agent_run import (
-    AgentRecordKind,
     ToolApproval,
     ToolExecutionDeferred,
     ToolInvocation,
@@ -242,23 +241,13 @@ class TracePostTool:
         session = self.service.runtime_store.load(invocation.run_id)
         if session is None or session.pending_call is None:
             raise ValueError("trace_post_admission_missing")
-        for record in self.service.repository.records(invocation.tenant_id, invocation.run_id):
-            if record.kind is not AgentRecordKind.APPROVAL:
-                continue
-            approval = ToolApproval.model_validate(record.payload)
-            if (
-                approval.invocation_sha256 == contract_sha256(invocation)
-                and approval.decision == "granted"
-                and approval.expires_at is not None
-            ):
-                grant = ApprovalGrant(
-                    approval.approval_id,
-                    session.pending_call.digest,
-                    approval.approver_id,
-                    approval.expires_at,
-                )
-                if grant.digest == session.pending_grant_sha256:
-                    return approval
+        approval = runtime_grant_approval(
+            self.service.repository.records(invocation.tenant_id, invocation.run_id),
+            invocation,
+            session,
+        )
+        if approval is not None:
+            return approval
         raise ValueError("trace_post_admission_missing")
 
     def _selection(self, tenant: str, request: TracePostInput) -> _Selection:
