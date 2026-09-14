@@ -1,4 +1,4 @@
-"""Narrow creation delegation and readable review at the authenticated Slack boundary."""
+"""Requested work delegation and readable proposals at the authenticated Slack boundary."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from ads_booster.contracts.agent_run import (
     CapabilitySnapshot,
     contract_sha256,
 )
-from ads_booster.contracts.tool_capability import EffectClass
 from ads_booster.knowledge.contract_types import ConversationEventKind
 
 if TYPE_CHECKING:
@@ -28,14 +27,6 @@ if TYPE_CHECKING:
     from ads_booster.contracts.tool_capability import ToolDescriptor
 
 
-_CREATION_TOOLS = frozenset(
-    {
-        "creative.image.generate",
-        "creative.image.edit",
-        "creative.image.localize",
-        "creative.trace_post",
-    }
-)
 _MAX_PROPOSAL_CHARS = 2000
 
 
@@ -57,19 +48,7 @@ def current_approval_source(
     )
 
 
-def creation_delegation_allowed(descriptor: ToolDescriptor, invocation: ToolInvocation) -> bool:
-    """Never expand local production intent into publication, spending or arbitrary tools."""
-    return (
-        descriptor.capability_id in _CREATION_TOOLS
-        and descriptor.effect_class is EffectClass.LOCAL_ARTIFACT
-    ) or (
-        descriptor.capability_id == "github.issue.create"
-        and descriptor.effect_class is EffectClass.EXTERNAL
-        and invocation.input.get("repository") == "corca-ai/ads-booster"
-    )
-
-
-def approve_requested_creation(  # noqa: PLR0911,PLR0913 - explicit fail-closed channel checks.
+def execute_requested_work(  # noqa: PLR0911,PLR0913 - explicit fail-closed channel checks.
     service: MarketingAgentService,
     store: SlackConversationStore,
     conversation: Conversation,
@@ -77,36 +56,30 @@ def approve_requested_creation(  # noqa: PLR0911,PLR0913 - explicit fail-closed 
     identity: ChannelIdentityBinding,
     *,
     now: datetime,
-) -> None:
+) -> bool:
     """Bind a provider's semantic reading to this admitted event and one exact invocation.
 
     This is not a regex permission classifier. The provider interprets the complete
-    user request; scope, identity, freshness and one-effect bounds remain host checks.
+    user request; scope, identity, freshness and execution budgets remain host checks.
     Other adapters and messages cannot opt into this policy by supplying tool text.
     """
     run = service.repository.get(conversation.tenant_id, conversation.current_run)
     if conversation.private or run is None or run.state is not AgentRunState.AWAITING_APPROVAL:
-        return
+        return False
     if not identity.can_approve or identity.tenant_id != run.tenant_id:
-        return
+        return False
     if not current_approval_source(store, conversation, message, identity):
-        return
+        return False
     records = service.repository.records(run.tenant_id, run.run_id)
-    if any(
-        r.kind is AgentRecordKind.APPROVAL
-        and r.payload.get("request_event_id") == message.message_id
-        for r in records
-    ):
-        return
     pending = service.pending_approval(run.tenant_id, run.run_id)
     if pending is None:
-        return
+        return False
     reasoning = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
     decision = None if reasoning is None else reasoning.payload.get("decision")
     if not isinstance(decision, dict) or decision.get("authorization_message") != message.text:
-        return
+        return False
     if decision.get("action") != "invoke_tool" or decision.get("tool_input") != pending.input:
-        return
+        return False
     descriptor = next(
         (
             d
@@ -121,9 +94,9 @@ def approve_requested_creation(  # noqa: PLR0911,PLR0913 - explicit fail-closed 
     if (
         descriptor is None
         or decision.get("capability_id") != descriptor.capability_id
-        or not creation_delegation_allowed(descriptor, pending)
+        or descriptor.approval_policy.authority != "workspace_member"
     ):
-        return
+        return False
     _ = service.decide_approval(
         run.tenant_id,
         run.run_id,
@@ -135,6 +108,7 @@ def approve_requested_creation(  # noqa: PLR0911,PLR0913 - explicit fail-closed 
         request_text_sha256=contract_sha256({"text": message.text}),
         now=now,
     )
+    return True
 
 
 def proposal_text(invocation: ToolInvocation, descriptor: ToolDescriptor) -> str:

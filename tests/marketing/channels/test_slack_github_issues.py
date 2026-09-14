@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, override
 
 import pytest
@@ -109,9 +111,14 @@ def test_model_interpretation_cannot_bypass_current_host_authority(
             result = super().plan(request)
             if cause == "revoked":
                 identity = owner.identity("U1")
-                owner.commands.application.store.put_identity(
-                    identity.model_copy(update={"can_approve": False})
-                )
+                with closing(sqlite3.connect(owner.store.database_path)) as db, db:
+                    _ = db.execute(
+                        "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
+                        (
+                            identity.model_copy(update={"can_approve": False}).model_dump_json(),
+                            identity.binding_id,
+                        ),
+                    )
             if cause == "wrong_message" and result.decision.action == "invoke_tool":
                 return _reasoning_result(
                     request,

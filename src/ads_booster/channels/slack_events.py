@@ -34,8 +34,8 @@ from ads_booster.channels.knowledge_ingress_slack import (
     slack_revision,
 )
 from ads_booster.channels.slack_approval import (
-    approve_requested_creation,
     current_approval_source,
+    execute_requested_work,
     proposal_text,
 )
 from ads_booster.channels.slack_attachments import (
@@ -1090,14 +1090,19 @@ class SlackEvents:
         elif plan.action == "resume":
             _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
         if plan.action in {"create", "revise", "input"}:
-            approve_requested_creation(
-                service,
-                self.store,
-                conversation,
-                message,
-                self._authorize(conversation, message.user_id),
-                now=now,
-            )
+            # A request may include several operations. Recheck its source and the
+            # member for every step; service budgets and receipts bound execution.
+            run = service.repository.get(conversation.tenant_id, plan.run_id)
+            for _ in range(0 if run is None else run.budget.max_tool_calls):
+                if not execute_requested_work(
+                    service,
+                    self.store,
+                    conversation,
+                    message,
+                    self._authorize(conversation, message.user_id),
+                    now=now,
+                ):
+                    break
         return self.summary(conversation)
 
     def _answer_learning_question(

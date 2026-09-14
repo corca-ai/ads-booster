@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -247,3 +249,80 @@ def test_sentence_starting_with_approval_is_not_a_hash_command(tmp_path: Path) -
     receive(owner, text="<@UBOT> 승인 대기 중에 작업이 끝나는 버그를 설명해줘")
     assert owner.work_once(now=NOW)
     assert len(owner.commands.application.service.repository.list_runs("team")) == 1
+
+
+@pytest.mark.parametrize(
+    ("second_requested", "revoke"), [(True, False), (False, False), (True, True)]
+)
+def test_delegated_steps_continue_without_review_ceremony(
+    tmp_path: Path, second_requested: bool, revoke: bool
+) -> None:
+    owner, messages = setup_events(tmp_path)
+    service = owner.commands.application.service
+    delivery = _descriptor("deliver.slack", EffectClass.EXTERNAL, ready=True)
+    delivery = delivery.model_copy(
+        update={"readiness": delivery.readiness.model_copy(update={"observed_at": NOW})}
+    )
+    service.registry = ToolRegistry((effect_descriptor(), delivery))
+    image, sender = ResearchAdapter(), ResearchAdapter()
+    service.tools = {"creative.image.edit": image, "deliver.slack": sender}
+
+    class RequestedSteps:
+        def __init__(self) -> None:
+            self.calls: int = 0
+
+        def plan(self, request: ReasoningRequest) -> ReasoningResult:
+            self.calls += 1
+            action = self.calls
+            if action == 2 and revoke:
+                identity = owner.identity("U1")
+                with closing(sqlite3.connect(owner.store.database_path)) as db, db:
+                    _ = db.execute(
+                        "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
+                        (
+                            identity.model_copy(update={"can_approve": False}).model_dump_json(),
+                            identity.binding_id,
+                        ),
+                    )
+            return _reasoning_result(
+                request,
+                ReasoningDecision(
+                    schema_version="trace.reasoning-decision.v1",
+                    action="invoke_tool" if action <= 2 else "stop",
+                    capability_id=("creative.image.edit" if action == 1 else "deliver.slack")
+                    if action <= 2
+                    else None,
+                    tool_input={"step": action} if action <= 2 else None,
+                    authorization_message=(
+                        request.current_user_message
+                        if action == 1 or (action == 2 and second_requested)
+                        else None
+                    ),
+                    expected_outcome="Complete only the requested steps",
+                    reasoning_summary="요청한 작업을 마쳤어요.",
+                ),
+            )
+
+    service.reasoning = RequestedSteps()
+    text = (
+        "<@UBOT> 이미지 수정하고 #design 채널에도 보내줘"
+        if second_requested
+        else "<@UBOT> 이미지 수정해줘"
+    )
+    should_deliver = second_requested and not revoke
+    receive(owner, text=text)
+    assert owner.work_once(now=NOW)
+    assert image.inputs == [{"step": 1}]
+    assert sender.inputs == ([{"step": 2}] if should_deliver else [])
+    run = service.repository.list_runs("team")[0]
+    assert run.state is (
+        AgentRunState.COMPLETED if should_deliver else AgentRunState.AWAITING_APPROVAL
+    )
+    if should_deliver:
+        assert str(messages[-1]["text"]) == "요청한 작업을 마쳤어요."
+    restarted = SlackEvents(owner.commands, "UBOT", frozenset({"C1"}))
+    restarted.recover()
+    receive(restarted, text=text)
+    assert not restarted.work_once(now=NOW)
+    assert len(image.inputs) == 1
+    assert len(sender.inputs) == int(should_deliver)
