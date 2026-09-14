@@ -6,6 +6,16 @@ from typing import TYPE_CHECKING, Literal
 
 import pytest
 
+from ads_booster.agent.core.registry import (
+    CapabilityPolicy,
+    ToolRegistration,
+    ToolRegistry,
+)
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.application import (
+    CreateAgentRunRequest,
+)
+from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -30,17 +40,9 @@ from ads_booster.contracts.tool_capability import (
     ToolReadiness,
     ToolReconciliationPolicy,
 )
-from ads_booster.agent.core.registry import (
-    CapabilityPolicy,
-    ToolRegistration,
-    ToolRegistry,
+from tests.marketing.agent_service.completion_fixtures import (
+    FixtureMarketingAgentService as MarketingAgentService,
 )
-from ads_booster.agent.service.application import (
-    CreateAgentRunRequest,
-    MarketingAgentService,
-)
-from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.runtime import SqliteSessionStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -245,6 +247,8 @@ def test_service_reasons_and_resumes_without_appium(tmp_path: Path) -> None:
         AgentStepKind.OBSERVE,
         AgentStepKind.OBSERVE,
         AgentStepKind.REPLAN,
+        AgentStepKind.EVALUATE,
+        AgentStepKind.EVALUATE,
     ]
 
 
@@ -266,6 +270,8 @@ def test_service_executes_observe_tool_and_replans_without_appium(tmp_path: Path
         AgentStepKind.EVALUATE,
         AgentStepKind.OBSERVE,
         AgentStepKind.REPLAN,
+        AgentStepKind.EVALUATE,
+        AgentStepKind.EVALUATE,
     ]
     assert reasoning.requests[1].phase == "replan"
     assert all(
@@ -371,6 +377,8 @@ def test_effect_tool_waits_for_exact_approval_and_survives_restart(tmp_path: Pat
         AgentStepKind.EVALUATE,
         AgentStepKind.OBSERVE,
         AgentStepKind.REPLAN,
+        AgentStepKind.EVALUATE,
+        AgentStepKind.EVALUATE,
     ]
 
 
@@ -677,3 +685,8 @@ def _reasoning_result(
             decision_sha256=contract_sha256(decision),
         ),
     )
+
+
+build_service = _service
+run_request = _request
+reasoning_result = _reasoning_result

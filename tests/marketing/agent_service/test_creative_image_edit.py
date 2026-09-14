@@ -25,7 +25,9 @@ from ads_booster.contracts.creative_work import CreativeAsset, CreativeScope
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.contracts.tool_capability import ToolExecutionResult
 from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.service.application import MarketingAgentService
+from tests.marketing.agent_service.completion_fixtures import (
+    FixtureMarketingAgentService as MarketingAgentService,
+)
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.agent.service.creative_image_edit import (
     CreativeImageEditTool,
@@ -178,12 +180,21 @@ def approve(tool: CreativeImageEditTool) -> None:
     )
 
 
+def finish_queued_edit(tool: CreativeImageEditTool, run_id: str = "run-one") -> AgentRunState:
+    assert tool.work_once()["state"] == "running"
+    for _ in range(16):
+        run = tool.service.drive("tenant-a", run_id, now=tool.clock())
+        if run.state is not AgentRunState.RUNNING:
+            return run.state
+    pytest.fail("bounded image completion did not reach quiescence")
+
+
 def test_exact_approval_to_composed_asset_and_one_generation(tmp_path: Path) -> None:
     tool, provider = setup(tmp_path)
     assert tool.work_once()["state"] == "idle"
     approve(tool)
     assert provider.calls == 0
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert replace(tool).work_once()["state"] == "idle"
     assert provider.calls == 1
     records = tool.service.repository.records("tenant-a", "run-one")
@@ -215,7 +226,7 @@ def test_callback_failure_replays_only_projection(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="callback failure"):
         _ = tool.work_once()
     tool.on_completed = None
-    assert replace(tool).work_once()["state"] == "completed"
+    assert finish_queued_edit(replace(tool)) is AgentRunState.COMPLETED
     assert provider.calls == 1
 
 
@@ -223,7 +234,7 @@ def test_expired_approval_no_effect_without_generation(tmp_path: Path) -> None:
     tool, provider = setup(tmp_path)
     approve(tool)
     tool.clock = lambda: NOW + timedelta(hours=1)
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 0
 
 
@@ -235,7 +246,7 @@ def test_source_bytes_changed_after_generation_fail_without_asset(tmp_path: Path
         _ = (tool.assets.artifact_root / "background.png").write_bytes(b"changed")
 
     provider.hook = corrupt
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 1
     assert not tuple(tool.root.glob("*/composed.png"))
     receipts = [
@@ -262,7 +273,7 @@ def test_generation_releases_service_lock_for_other_work(tmp_path: Path) -> None
         thread.join(1)
 
     provider.hook = probe
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
 
 
 def test_pause_while_queued_settles_without_generation(tmp_path: Path) -> None:
@@ -278,7 +289,7 @@ def test_pause_while_queued_settles_without_generation(tmp_path: Path) -> None:
         action="pause",
         now=NOW,
     )
-    assert tool.work_once()["state"] == "awaiting_input"
+    assert finish_queued_edit(tool) is AgentRunState.AWAITING_INPUT
     assert provider.calls == 0
 
 
@@ -307,7 +318,7 @@ def test_workspace_parent_rebound_after_generation_never_writes_outside_root(
         tool.root.symlink_to(outside, target_is_directory=True)
 
     provider.hook = redirect
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert not tuple(outside.glob("*/composed.png"))
     receipts = [
         r.payload
@@ -378,7 +389,7 @@ def test_known_decode_failure_has_terminal_effect_classification(
         "ads_booster.agent.service.creative_image_edit.read_review_images",
         decode,
     )
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == (1 if after_generation else 0)
     receipts = [
         r.payload
@@ -448,7 +459,7 @@ def test_uncertainty_projection_failure_does_not_starve_next_run(
         expires_at=NOW + timedelta(minutes=10),
     )
     provider.fail = False
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool, "run-two") is AgentRunState.COMPLETED
     assert provider.calls == 2
     assert tool.work_once()["state"] == "reconciliation_projection_pending"
     assert provider.calls == 2
@@ -461,7 +472,7 @@ def test_previous_queue_schema_preserves_jobs_when_adding_projection_marker(tmp_
         _ = db.execute("ALTER TABLE image_edit_jobs DROP COLUMN uncertain_projected")
         _ = db.execute("ALTER TABLE image_edit_jobs DROP COLUMN uncertainty_attempts")
     restarted = replace(tool)
-    assert restarted.work_once()["state"] == "completed"
+    assert finish_queued_edit(restarted) is AgentRunState.COMPLETED
     assert provider.calls == 1
 
 
@@ -570,7 +581,7 @@ def test_japanese_english_and_japanese_only_followup_keep_same_run_and_sibling(
             now=NOW,
             expires_at=NOW + timedelta(minutes=10),
         )
-        assert tool.work_once()["state"] == "completed"
+        assert finish_queued_edit(tool) is AgentRunState.COMPLETED
         asset = tool.assets.get(scope, "image-edit-" + contract_sha256(invocation)[:48])
         assert asset is not None
         assert asset.locale == expected_locale
@@ -682,7 +693,7 @@ def test_knowledge_changed_while_queued_prevents_generation(
     tool, provider = setup(tmp_path)
     approve(tool)
     monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 0
     receipts = [
         record.payload
@@ -703,7 +714,7 @@ def test_knowledge_change_after_generation_preserves_execution_receipt(
         monkeypatch.setattr(MarketingAgentService, "knowledge_is_current", knowledge_stale)
 
     provider.hook = changed
-    assert tool.work_once()["state"] == "completed"
+    assert finish_queued_edit(tool) is AgentRunState.COMPLETED
     assert provider.calls == 1
     receipts = [
         record.payload

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from threading import RLock
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
+from ads_booster.agent.core.ports import CompletionRenderContext
 from ads_booster.agent.core.registry import (
     CapabilityPolicy,
     ToolRegistrationCatalog,
@@ -34,12 +37,31 @@ from ads_booster.agent.runtime import (
     tool_call_payload,
     tool_receipt_from_event,
 )
+from ads_booster.agent.service.drive_work import DriveAdmissionConflict
+from ads_booster.agent.service.run_limits import (
+    ProgressObservation,
+    observe_progress,
+    outcome_fingerprint,
+    progress_evidence_fingerprint,
+    remaining_budget,
+    reserve_decision,
+    stable_failure_fingerprint,
+)
 from ads_booster.agent.service.sqlite_repository import (
     AgentRunConflictError,
     RepositoryAdmission,
     SqliteAgentRunRepository,
 )
+from ads_booster.agent.service.task_admission import completion_revision_fence, task_at_boundary
+from ads_booster.agent.service.task_completion import CompletionContext, TaskCompletionService
+from ads_booster.agent.service.task_drive import plan_task, project_decision
 from ads_booster.agent.service.task_input import current_user_message
+from ads_booster.agent.service.task_progress import (
+    TaskProjection,
+    project_task,
+    seed_task,
+    task_records,
+)
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -63,7 +85,13 @@ from ads_booster.contracts.knowledge_preparation import (
     RequiredContextPreparationError,
 )
 from ads_booster.contracts.models import ContractModel
-from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
+from ads_booster.contracts.reasoning import (
+    ReasoningDecision,
+    ReasoningDecisionV2,
+    ReasoningRequest,
+    decode_reasoning_result,
+)
+from ads_booster.contracts.task_progress import ObligationEvidence, TaskPolicy
 from ads_booster.contracts.tool_capability import (
     AUTHENTICATED_SOURCE_AUTHORITY,
     EffectClass,
@@ -83,10 +111,17 @@ _RUNTIME_SOURCE_AUTHORIZED_DESCRIPTOR_INVALID = "runtime_source_authorized_descr
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from datetime import datetime
+    from sqlite3 import Connection
 
-    from ads_booster.agent.core.ports import ReasoningProvider, ToolAdapter
+    from ads_booster.agent.core.ports import (
+        CompletionRenderer,
+        ReasoningProvider,
+        ReasoningProviderV2,
+        ToolAdapter,
+    )
     from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
+    from ads_booster.agent.service.sqlite_repository import RepositoryAfterCommit
+    from ads_booster.contracts.task_completion import CompletionAssessment
     from ads_booster.transport.json_types import JsonObject
 
 
@@ -102,7 +137,7 @@ class MarketingAgentService:
     execution_lock: RLock = field(default_factory=RLock, init=False, repr=False)
     repository: SqliteAgentRunRepository
     registry: ToolRegistry
-    reasoning: ReasoningProvider
+    reasoning: ReasoningProvider | ReasoningProviderV2
     tools: Mapping[str, ToolAdapter]
     runtime_store: SqliteSessionStore
     fault_hook: Callable[[str], None] | None = None
@@ -112,6 +147,15 @@ class MarketingAgentService:
 
     current_context: Callable[[AgentRun, datetime], JsonObject | None] | None = None
     knowledge: KnowledgeServiceAdapter | None = None
+    completion: TaskCompletionService | None = None
+    renderer: CompletionRenderer | None = None
+    task_policy: TaskPolicy = field(default_factory=TaskPolicy)
+    drive_admission: Callable[[AgentRun, TaskProjection, datetime], RepositoryAdmission] | None = (
+        None
+    )
+    clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    monotonic_clock: Callable[[], float] = monotonic
+    _active_meter: float | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Fail closed when a selectable descriptor has no execution adapter."""
@@ -167,7 +211,7 @@ class MarketingAgentService:
                 request_sha256=contract_sha256(request),
                 admission=admission,
             )
-            return self._plan(run, evidence=(), now=now)
+            return self.drive(run.tenant_id, run.run_id, now=now)
 
     def stop(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun | None:
         """Stop future work after the owning execution has yielded; preserve uncertain effects."""
@@ -180,7 +224,7 @@ class MarketingAgentService:
                 AgentRunState.AWAITING_RECONCILIATION,
             }:
                 return run
-            return self.repository.append_step(
+            return self._append_step(
                 run,
                 _step(
                     run,
@@ -193,12 +237,45 @@ class MarketingAgentService:
                 expected_revision=run.revision,
             )
 
-    def drive(  # noqa: PLR0911 - distinct persisted recovery boundaries.
-        self, tenant_id: str, run_id: str, *, now: datetime
-    ) -> AgentRun:
-        """Continue a recoverable reasoning boundary without repeating a claimed effect."""
+    def drive(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun:
+        """Advance persisted transitions within a bounded provider/time slice."""
         with self.execution_lock:
             run = self._required_run(tenant_id, run_id)
+            initial = self._task(run).checkpoint
+            started = self.monotonic_clock()
+            self._active_meter = started
+            try:
+                while True:
+                    instant = self.clock()
+                    task = self._task(run)
+                    if (
+                        task.checkpoint.decision_calls - initial.decision_calls
+                        >= initial.policy.slice_provider_calls
+                        or self.monotonic_clock() - started >= initial.policy.slice_seconds
+                    ):
+                        return run
+                    try:
+                        advanced = self._advance(run, now=max(now, instant, run.updated_at))
+                    except DriveAdmissionConflict:
+                        return self._required_run(tenant_id, run_id)
+                    except AgentRunConflictError:
+                        current = self._required_run(tenant_id, run_id)
+                        if current.revision != run.revision:
+                            return current
+                        raise
+                    if (
+                        advanced.revision == run.revision
+                        or advanced.state is not AgentRunState.RUNNING
+                    ):
+                        return advanced
+                    run = advanced
+            finally:
+                self._active_meter = None
+
+    def _advance(self, run: AgentRun, *, now: datetime) -> AgentRun:  # noqa: PLR0911
+        """Recover or perform exactly one persisted orchestration transition."""
+        with self.execution_lock:
+            tenant_id, run_id = run.tenant_id, run.run_id
             if run.state in {AgentRunState.AWAITING_TOOL, AgentRunState.AWAITING_RECONCILIATION}:
                 if run.state is AgentRunState.AWAITING_RECONCILIATION:
                     invocation = self._latest_invocation(tenant_id, run_id)
@@ -214,6 +291,9 @@ class MarketingAgentService:
                 return self._resume_verified_tool(run, now=now)
             if steps and steps[-1].kind is AgentStepKind.APPROVE:
                 return self._resume_approved_invocation(run, now=now)
+            task = project_task(run, self.repository.records(tenant_id, run_id))
+            if task.checkpoint.next_action == "assess":
+                return self._assess_completion(run, task, now=now)
             if steps and steps[-1].kind in {AgentStepKind.PLAN, AgentStepKind.REPLAN}:
                 return self._resume_planned_decision(run, now=now)
             evidence = tuple(
@@ -242,7 +322,7 @@ class MarketingAgentService:
         if intent_record is None or reasoning_record is None or snapshot_record is None:
             raise ValueError("planned_decision_recovery_records_missing")
         intent = AgentIntent.model_validate(intent_record.payload)
-        reasoning = ReasoningResult.model_validate(reasoning_record.payload)
+        reasoning = decode_reasoning_result(reasoning_record.payload)
         snapshot = CapabilitySnapshot.model_validate(snapshot_record.payload)
         decision = reasoning.decision
         if (
@@ -313,7 +393,14 @@ class MarketingAgentService:
             (item for item in reversed(records) if item.kind is AgentRecordKind.RECEIPT), None
         )
         evidence_record = next(
-            (item for item in reversed(records) if item.kind is AgentRecordKind.EVIDENCE), None
+            (
+                item
+                for item in reversed(records)
+                if item.payload_schema_version == "trace.tool-output-evidence.v1"
+                and receipt_record is not None
+                and item.payload.get("receipt_sha256") == receipt_record.payload_sha256
+            ),
+            None,
         )
         if receipt_record is None or evidence_record is None:
             raise ValueError("verified_tool_recovery_records_missing")
@@ -358,7 +445,7 @@ class MarketingAgentService:
                 payload=evidence_payload,
                 now=now,
             )
-            resumed = self.repository.append_step(
+            resumed = self._append_step(
                 run,
                 _step(
                     run,
@@ -372,7 +459,7 @@ class MarketingAgentService:
                 records=(record,),
                 admission=admission,
             )
-            return self._plan(resumed, evidence=(evidence_payload,), now=now)
+            return self.drive(resumed.tenant_id, resumed.run_id, now=now)
 
     def decide_approval(  # noqa: PLR0913 - exact approval identity and expiry stay explicit.
         self,
@@ -415,7 +502,7 @@ class MarketingAgentService:
                 decided_at=now,
             )
             approval_sha256 = contract_sha256(approval)
-            decided = self.repository.append_step(
+            decided = self._append_step(
                 run,
                 _step(
                     run,
@@ -439,14 +526,7 @@ class MarketingAgentService:
             if not granted:
                 return decided
             self._fault("approval_committed")
-            return self._dispatch_tool(
-                decided,
-                invocation=invocation,
-                descriptor=descriptor,
-                approval=approval,
-                now=now,
-                persist_invocation=False,
-            )
+            return self.drive(decided.tenant_id, decided.run_id, now=now)
 
     def _plan(
         self,
@@ -512,7 +592,12 @@ class MarketingAgentService:
                 ),
             )
         )
-        observed = self.repository.append_step(
+        task = self._task(run)
+        reserved = reserve_decision(task.checkpoint)
+        if reserved is None:
+            return self._block_task(run, task, "decision_budget_exhausted", now=now)
+        task = TaskProjection(task.spec, reserved.model_copy(update={"next_action": "plan"}))
+        observed = self._append_step(
             run,
             _step(
                 run,
@@ -533,6 +618,7 @@ class MarketingAgentService:
                     now=now,
                 ),
                 *context_records,
+                *task_records(run, task, now),
             ),
         )
         current_context = None if self.current_context is None else self.current_context(run, now)
@@ -554,11 +640,23 @@ class MarketingAgentService:
             ),
             prepared_context=prepared_context,
         )
-        reasoning_result = self.reasoning.plan(reasoning_request)
+        reasoning_result = plan_task(
+            self.reasoning,
+            reasoning_request,
+            task,
+            self.repository.records(run.tenant_id, run.run_id),
+        )
         checkpoint("다음 작업을 확인하고 있습니다")
-        if reasoning_result.receipt.request_sha256 != contract_sha256(reasoning_request):
-            raise ValueError("reasoning_receipt_request_digest_mismatch")
         decision = reasoning_result.decision
+        remaining = remaining_budget(observed, self.repository.records(run.tenant_id, run.run_id))
+        if (
+            decision.action == "invoke_tool"
+            and not any(
+                item.capability_id == decision.capability_id for item in snapshot.descriptors
+            )
+            and (remaining.tool_calls == 0 or remaining.cost_units == 0)
+        ):
+            return self._block_task(observed, task, "tool_budget_exhausted", now=now)
         self._validate_reasoning_decision(snapshot, decision)
         if (
             self.knowledge is not None
@@ -577,17 +675,10 @@ class MarketingAgentService:
                 brand_id=decision.proposed_brand_ref,
                 query=knowledge_query,
             )
-            if isinstance(rebound, RequiredContextPreparationError | BrandUnresolvedPreparation):
-                return self._await_knowledge_input(observed, rebound, snapshot, now=now)
-            return self._plan(
-                observed,
-                evidence=(
-                    {
-                        "schema_version": "trace.knowledge-action-reprepared.v1",
-                        "prepared_context_sha256": contract_sha256(rebound),
-                    },
-                ),
-                now=now,
+            return (
+                self._await_knowledge_input(observed, rebound, snapshot, now=now)
+                if isinstance(rebound, RequiredContextPreparationError | BrandUnresolvedPreparation)
+                else observed
             )
         intent = AgentIntent(
             schema_version="trace.agent-intent.v1",
@@ -616,11 +707,12 @@ class MarketingAgentService:
             now=now,
         )
         next_state = {
-            "stop": AgentRunState.COMPLETED,
+            "stop": AgentRunState.RUNNING,
             "request_input": AgentRunState.AWAITING_INPUT,
             "invoke_tool": AgentRunState.RUNNING,
         }[decision.action]
-        planned = self.repository.append_step(
+        task = project_decision(observed, task, decision)
+        planned = self._append_step(
             observed,
             _step(
                 observed,
@@ -631,20 +723,228 @@ class MarketingAgentService:
             ),
             state=next_state,
             expected_revision=observed.revision,
-            records=(intent_record, reasoning_record),
+            records=(intent_record, reasoning_record, *task_records(observed, task, now)),
         )
-        if decision.action != "invoke_tool":
-            return planned
-        if decision.capability_id is None or decision.tool_input is None:
-            raise ValueError("reasoning_tool_action_payload_missing")
         self._fault("plan_committed")
-        return self._execute_tool(
-            planned,
-            intent=intent,
-            capability_id=decision.capability_id,
-            tool_input=decision.tool_input,
-            snapshot=snapshot,
+        return planned
+
+    def _task(self, run: AgentRun) -> TaskProjection:
+        records = self.repository.records(run.tenant_id, run.run_id)
+        if not any(
+            item.payload_schema_version == "trace.task-checkpoint.v1"
+            and item.record_id.startswith(f"task:{item.payload_sha256}:")
+            for item in records
+        ):
+            return seed_task(run, policy=self.task_policy)
+        return project_task(run, records)
+
+    def _append_step(  # noqa: PLR0913 - canonical CAS and transaction callback bindings stay explicit.
+        self,
+        run: AgentRun,
+        step: AgentStep,
+        *,
+        state: AgentRunState,
+        expected_revision: int,
+        records: tuple[AgentRecord, ...] = (),
+        blocked_reason: str | None = None,
+        admission: RepositoryAdmission | None = None,
+        after_commit: RepositoryAfterCommit | None = None,
+    ) -> AgentRun:
+        prior = self._task(run)
+        task = project_task(run, (*self.repository.records(run.tenant_id, run.run_id), *records))
+        if not any(item.record_id.startswith("task:") for item in records) and not any(
+            item.record_id.startswith("task:")
+            for item in self.repository.records(run.tenant_id, run.run_id)
+        ):
+            task = prior
+        task = task_at_boundary(
+            task, state, blocked_reason or task.checkpoint.wait_reason or state.value
+        )
+        measured_at = None if self._active_meter is None else self.monotonic_clock()
+        if measured_at is not None and self._active_meter is not None:
+            previous = (
+                prior.checkpoint.active_elapsed_ms
+                if prior.checkpoint.segment_id == task.checkpoint.segment_id
+                else 0
+            )
+            task = TaskProjection(
+                task.spec,
+                task.checkpoint.model_copy(
+                    update={
+                        "active_elapsed_ms": max(previous, task.checkpoint.active_elapsed_ms)
+                        + max(0, int((measured_at - self._active_meter) * 1000)),
+                    }
+                ),
+            )
+        canonical = tuple(item for item in records if not item.record_id.startswith("task:"))
+        queue = (
+            None
+            if self.drive_admission is None
+            else self.drive_admission(run, task, step.occurred_at)
+        )
+        fence = completion_revision_fence(run, prior) if state is AgentRunState.COMPLETED else None
+
+        def admit(connection: Connection) -> None:
+            if fence is not None:
+                fence(connection)
+            if admission is not None:
+                admission(connection)
+            if queue is not None:
+                queue(connection)
+
+        updated = self.repository.append_step(
+            run,
+            step,
+            state=state,
+            expected_revision=expected_revision,
+            records=(*canonical, *task_records(run, task, step.occurred_at)),
+            blocked_reason=blocked_reason,
+            admission=admit,
+            after_commit=after_commit,
+        )
+        if measured_at is not None:
+            self._active_meter = measured_at
+        return updated
+
+    def _save_task(
+        self,
+        run: AgentRun,
+        task: TaskProjection,
+        *,
+        now: datetime,
+        state: AgentRunState = AgentRunState.RUNNING,
+        records: tuple[AgentRecord, ...] = (),
+    ) -> AgentRun:
+        return self._append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.EVALUATE,
+                input_sha256=contract_sha256(task.spec),
+                output_sha256=contract_sha256(task.checkpoint),
+                now=now,
+            ),
+            state=state,
+            expected_revision=run.revision,
+            records=(*records, *task_records(run, task, now)),
+            blocked_reason=task.checkpoint.wait_reason if state is AgentRunState.BLOCKED else None,
+        )
+
+    def _block_task(
+        self,
+        run: AgentRun,
+        task: TaskProjection,
+        reason: str,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        task = TaskProjection(
+            task.spec,
+            task.checkpoint.model_copy(
+                update={
+                    "disposition": "budget_exhausted" if "budget" in reason else "blocked",
+                    "wait_reason": reason,
+                    "next_action": "wait",
+                }
+            ),
+        )
+        return self._save_task(run, task, now=now, state=AgentRunState.BLOCKED)
+
+    def _assess_completion(
+        self,
+        run: AgentRun,
+        task: TaskProjection,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        interrupted = self._pause_for_signal(run, now=now)
+        if interrupted is not None:
+            return interrupted
+        candidate = task.checkpoint.candidate
+        if candidate is None:
+            return self._block_task(run, task, "completion_candidate_missing", now=now)
+        if self.renderer is not None:
+            candidate = self.renderer.render(
+                candidate,
+                CompletionRenderContext(run, self.repository.records(run.tenant_id, run.run_id)),
+            )
+            task = TaskProjection(
+                task.spec, task.checkpoint.model_copy(update={"candidate": candidate})
+            )
+        reserved = reserve_decision(task.checkpoint, assessment=True)
+        if reserved is None:
+            return self._block_task(run, task, "verification_budget_exhausted", now=now)
+        task = TaskProjection(task.spec, reserved)
+        reserved_run = self._save_task(run, task, now=now)
+        self._fault("assessment_reserved")
+        checker = self.completion or TaskCompletionService(self.repository, None)
+        assessment = checker.assess(task.spec, candidate, CompletionContext(reserved_run, reserved))
+        self._fault("completion_assessed")
+        current = self._required_run(run.tenant_id, run.run_id)
+        if current.revision != reserved_run.revision:
+            return current
+        interrupted = self._pause_for_signal(current, now=now)
+        if interrupted is not None:
+            return interrupted
+        return self._commit_assessment(current, task, assessment, now=now)
+
+    def _commit_assessment(
+        self,
+        run: AgentRun,
+        task: TaskProjection,
+        assessment: CompletionAssessment,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        accepted = tuple(
+            ObligationEvidence(
+                obligation_id=item.obligation_id,
+                evidence_sha256s=item.evidence_sha256s,
+            )
+            for item in assessment.obligations
+            if item.status == "satisfied"
+        )
+        unresolved = tuple(
+            item.obligation_id
+            for item in assessment.obligations
+            if item.status not in {"satisfied", "superseded"}
+        )
+        match assessment.disposition:
+            case "satisfied":
+                disposition, next_action, state = "satisfied", "done", AgentRunState.COMPLETED
+            case "continue":
+                disposition, next_action, state = "active", "plan", AgentRunState.RUNNING
+            case "waiting":
+                disposition, next_action, state = "waiting", "wait", AgentRunState.AWAITING_INPUT
+            case "blocked":
+                disposition, next_action, state = "blocked", "wait", AgentRunState.BLOCKED
+        task = TaskProjection(
+            task.spec,
+            task.checkpoint.model_copy(
+                update={
+                    "disposition": disposition,
+                    "next_action": next_action,
+                    "accepted_evidence": accepted,
+                    "unresolved_obligation_ids": unresolved,
+                    "wait_reason": None if state is AgentRunState.COMPLETED else assessment.reason,
+                }
+            ),
+        )
+        self._fault("before_completion_commit")
+        return self._save_task(
+            run,
+            task,
             now=now,
+            state=state,
+            records=(
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:assessment:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=assessment.model_dump(mode="json"),
+                    now=now,
+                ),
+            ),
         )
 
     def _select_context(self, run: AgentRun) -> tuple[tuple[JsonObject, ...], JsonObject]:
@@ -661,6 +961,9 @@ class MarketingAgentService:
                 # Knowledge must be reselected under current authority, never replayed
                 # through the general conversation projection after invalidation.
                 "trace.prepared-knowledge-context-record.v1",
+                "trace.task-spec.v1",
+                "trace.task-checkpoint.v1",
+                "trace.task-completion.v1",
             }
         ]
         # Keep the latest observation first, then recent human constraints ahead of
@@ -765,7 +1068,7 @@ class MarketingAgentService:
             # Once admitted, the runtime must finish or reconcile its existing call.
             # A channel signal cannot clear that write-ahead execution ownership.
             return None
-        return self.repository.append_step(
+        return self._append_step(
             run,
             _step(
                 run,
@@ -816,7 +1119,7 @@ class MarketingAgentService:
                 ),
             )
         )
-        return self.repository.append_step(
+        return self._append_step(
             run,
             _step(
                 run,
@@ -872,7 +1175,7 @@ class MarketingAgentService:
             input_sha256=input_sha256,
         )
         if descriptor.approval_policy.mode == "required":
-            return self.repository.append_step(
+            return self._append_step(
                 run,
                 AgentStep(
                     schema_version="trace.agent-step.v1",
@@ -937,16 +1240,11 @@ class MarketingAgentService:
                 # Preserve its reservation and exact call for explicit reconciliation;
                 # no provider effect or invented schema-breaking receipt is produced.
                 return self._mark_reconciliation(run, contract_sha256(invocation), now=now)
-            return self._plan(
-                run,
-                evidence=(
-                    {
-                        "schema_version": "trace.knowledge-context-stale.v1",
-                        "reason": "knowledge_context_changed_before_dispatch",
-                    },
-                ),
-                now=now,
+            task = project_task(run, self.repository.records(run.tenant_id, run.run_id))
+            task = TaskProjection(
+                task.spec, task.checkpoint.model_copy(update={"next_action": "plan"})
             )
+            return self._save_task(run, task, now=now)
         adapter = self.tools.get(descriptor.capability_id)
         if adapter is None:
             raise ValueError("tool_dispatch_adapter_unavailable")
@@ -960,7 +1258,7 @@ class MarketingAgentService:
                 claimed_at=now.isoformat(),
             )
         except AgentRunConflictError:
-            return self.repository.append_step(
+            return self._append_step(
                 run,
                 AgentStep(
                     schema_version="trace.agent-step.v1",
@@ -979,7 +1277,7 @@ class MarketingAgentService:
             )
         admitted = run
         if not admitted_already:
-            admitted = self.repository.append_step(
+            admitted = self._append_step(
                 run,
                 _step(
                     run,
@@ -1077,7 +1375,7 @@ class MarketingAgentService:
                 self._required_run(run.tenant_id, run.run_id), invocation, backend.deferred, now=now
             )
         if completed.state.value == "awaiting_reconciliation" or backend.result is None:
-            return self.repository.append_step(
+            return self._append_step(
                 admitted,
                 AgentStep(
                     schema_version="trace.agent-step.v1",
@@ -1139,7 +1437,18 @@ class MarketingAgentService:
                     capability_id=descriptor.capability_id,
                 )
                 after_commit = self.knowledge.terminal.after_commit
-        verified = self.repository.append_step(
+        task = project_task(run, self.repository.records(run.tenant_id, run.run_id))
+        queue_admission = (
+            None if self.drive_admission is None else self.drive_admission(run, task, now)
+        )
+
+        def admit_result(connection: Connection) -> None:
+            if admission is not None:
+                admission(connection)
+            if queue_admission is not None:
+                queue_admission(connection)
+
+        verified = self._append_step(
             admitted,
             _step(
                 admitted,
@@ -1166,17 +1475,57 @@ class MarketingAgentService:
                     now=now,
                 ),
             ),
-            admission=admission,
+            admission=admit_result,
             after_commit=after_commit,
         )
         self._fault("verify_committed")
-        return self._evaluate_tool_result(verified, receipt, evidence_payload, now=now)
+        return verified
 
     def _evaluate_tool_result(
         self, run: AgentRun, receipt: ToolReceiptRecord, evidence: JsonObject, *, now: datetime
     ) -> AgentRun:
         paused = self._deferred_pause_requested(run, receipt.invocation_sha256)
-        evaluated = self.repository.append_step(
+        task = project_task(run, self.repository.records(run.tenant_id, run.run_id))
+        invocation = self._latest_invocation(run.tenant_id, run.run_id)
+        capability_id = self._descriptor_for_invocation(
+            run.tenant_id, run.run_id, invocation
+        ).capability_id
+        failed_fingerprint = (
+            stable_failure_fingerprint(capability_id, evidence)
+            if receipt.disposition == "failed"
+            else None
+        )
+        progress = observe_progress(
+            task.checkpoint,
+            ProgressObservation(
+                outcome_fingerprint=failed_fingerprint
+                or outcome_fingerprint(
+                    self._descriptor_for_invocation(
+                        run.tenant_id, run.run_id, invocation
+                    ).capability_id,
+                    invocation.input,
+                    evidence,
+                ),
+                evidence_sha256s=(progress_evidence_fingerprint(evidence),)
+                if receipt.disposition == "succeeded"
+                else (),
+                satisfied_obligation_ids=(),
+                failure_description=f"{capability_id} returned the same failure code"
+                if failed_fingerprint
+                else None,
+            ),
+        )
+        task = TaskProjection(
+            task.spec,
+            progress.model_copy(
+                update={
+                    "next_action": "wait"
+                    if paused or progress.disposition == "blocked"
+                    else "plan",
+                }
+            ),
+        )
+        return self._append_step(
             run,
             _step(
                 run,
@@ -1185,12 +1534,15 @@ class MarketingAgentService:
                 output_sha256=contract_sha256(evidence),
                 now=now,
             ),
-            state=AgentRunState.AWAITING_INPUT if paused else AgentRunState.RUNNING,
+            state=AgentRunState.BLOCKED
+            if progress.disposition == "blocked"
+            else AgentRunState.AWAITING_INPUT
+            if paused
+            else AgentRunState.RUNNING,
             expected_revision=run.revision,
+            records=task_records(run, task, now),
+            blocked_reason=progress.wait_reason if progress.disposition == "blocked" else None,
         )
-        if paused:
-            return evaluated
-        return self._plan(evaluated, evidence=(evidence,), now=now)
 
     def _deferred_pause_requested(self, run: AgentRun, invocation_sha256: str) -> bool:
         after_invocation = False
@@ -1234,7 +1586,7 @@ class MarketingAgentService:
                     if previous != deferred:
                         raise ValueError("deferred_operation_conflict")
                     return
-        _ = self.repository.append_step(
+        _ = self._append_step(
             run,
             _step(
                 run,
@@ -1293,7 +1645,7 @@ class MarketingAgentService:
             raise ValueError("deferred_runtime_acknowledgement_invalid")
         if run.state is AgentRunState.AWAITING_TOOL:
             return run
-        waiting = self.repository.append_step(
+        waiting = self._append_step(
             run,
             _step(
                 run,
@@ -1416,7 +1768,7 @@ class MarketingAgentService:
                     "operation_id": operation_id,
                     "result": result.model_dump(mode="json"),
                 }
-                run = self.repository.append_step(
+                run = self._append_step(
                     run,
                     _step(
                         run,
@@ -1460,7 +1812,7 @@ class MarketingAgentService:
                     run.state is AgentRunState.RUNNING
                     and self._latest_invocation(tenant_id, run_id) == invocation
                 ):
-                    return self.drive(tenant_id, run_id, now=now)
+                    return run
                 return run
             return self._record_tool_result(run, invocation, descriptor, approval, result, now=now)
 
@@ -1508,7 +1860,7 @@ class MarketingAgentService:
 
     @staticmethod
     def _validate_reasoning_decision(
-        snapshot: CapabilitySnapshot, decision: ReasoningDecision
+        snapshot: CapabilitySnapshot, decision: ReasoningDecision | ReasoningDecisionV2
     ) -> None:
         if decision.action != "invoke_tool":
             return
@@ -1525,7 +1877,7 @@ class MarketingAgentService:
     def _mark_reconciliation(
         self, run: AgentRun, invocation_sha256: str, *, now: datetime
     ) -> AgentRun:
-        return self.repository.append_step(
+        return self._append_step(
             run,
             AgentStep(
                 schema_version="trace.agent-step.v1",
