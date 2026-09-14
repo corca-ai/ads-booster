@@ -2137,6 +2137,50 @@
         "6ab727c8365fd192a57ad54ec098cf70bc641b8b7bcfb191b632d342fbf63d44",
         "c270010dc8e9f7f2ac96828c1d7439cb9ea70b5b4d3ada9507b3d98d26418d5a"
       ]
+    },
+    {
+      "fingerprint": "44f8c783d92f97391e82696bc7916950c0a0f9976f784a281860e38f7bf8a188",
+      "reason": "Threads account, draft, and schedule repositories deserialize different aggregate models under different identity keys and CAS rules; their explicit get methods remain with each storage owner.",
+      "memberHashes": [
+        "0a66525a0a53b5894bde35d3703f731229c6732a637d171533e7c3591e6b9f25",
+        "dbec5b8f78dc1b96f556c8c74878c2c1424ba86ad08de028e8d5724eee338929",
+        "f099e589c18fa32197a1d9da243e6cd4470f253b788b3a00d9f841cc198e0e58"
+      ]
+    },
+    {
+      "fingerprint": "573ae3fafeca686a6885ed3fb5f7e23ad34b5c76afd57abb37ed78c24bc954f5",
+      "reason": "Account listing and publication listing return different aggregates with different filters and authorization consumers; tuple deserialization similarity does not justify a cross-repository helper.",
+      "memberHashes": [
+        "1517cfd957a508674edd38f89df4d47c55db297880cf322963c0f0457e908950",
+        "3378d34b54e968172f980b9a8783d8d3ced2b7ddbd04d7219fb6ec59b321a36e"
+      ]
+    },
+    {
+      "fingerprint": "875d3deb723b76d21f12df3fcfb15f5062144b00cd576ed16b5a58b8132ec047",
+      "reason": "Managed image review, Knowledge backup, and Threads accounts independently own SQLite connection lifetimes; the standard closing import must remain local to each resource owner.",
+      "memberHashes": [
+        "68d76859cc153420336965f2db3ed4d3a6c7188fac1ffc9c0b22b92bb1d7cef9",
+        "944a85ac44b10d7e1bc1ae5d03b5f28359618fe0b16badfb13ce9f3e22cb6853",
+        "944a85ac44b10d7e1bc1ae5d03b5f28359618fe0b16badfb13ce9f3e22cb6853"
+      ]
+    },
+    {
+      "fingerprint": "b87ca4f6a36c6ff97273861671e9d76caaaffd6e3f6b73f6c10abee345811e34",
+      "reason": "Meta text and carousel creation bind different media payloads and external side effects; separate endpoint methods keep each POST contract and uncertainty boundary auditable.",
+      "memberHashes": [
+        "6cfd11de71a189335d733e5f42009b9e67f716613a4e78313d2d91d707330f6c",
+        "6cfd11de71a189335d733e5f42009b9e67f716613a4e78313d2d91d707330f6c"
+      ]
+    },
+    {
+      "fingerprint": "c5ec575798f83283e4e8880c3cbead48c9415a924cfe5ddfca87e3508d28d5d5",
+      "reason": "The detector aligns whole unrelated schedule, Knowledge runtime, and test modules; they have separate owners, contracts, and callers, so there is no behavior-preserving shared abstraction.",
+      "memberHashes": [
+        "02aed957c211978f45ff3560aa12657b9c265b5672ba7dc278a8df3a412c793b",
+        "123b2982aad81ed7fa8ed55263d4bb5954a4dab83bebf8bdf429b94c17c276da",
+        "5b63295098b7d6732339080558906d0d819bd08e3c39c1f19db1459202917303",
+        "793463ab09e278a9a4aa4acf1fccc6faad9031c60c710d9139b790455f679b08"
+      ]
     }
   ]
 }
