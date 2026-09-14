@@ -32,6 +32,7 @@ from ads_booster.contracts.agent_run import (
 )
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
+from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.providers.codex_trace_post import (
     TracePostGeneratedImage,
     TracePostProviderResult,
@@ -378,8 +379,6 @@ def test_old_uncertain_job_gets_notification_after_upgrade_without_generation(
 
 
 def test_provider_failure_reason_survives_restart_without_raw_output(tmp_path: Path) -> None:
-    from ads_booster.providers.codex_cli import CodexCliError
-
     class LauncherFailure(FakeProvider):
         calls: int
 
@@ -388,7 +387,8 @@ def test_provider_failure_reason_survives_restart_without_raw_output(tmp_path: P
             self, *, workspace: Path, instruction: str, timeout_seconds: float
         ) -> TracePostProviderResult:
             self.calls += 1
-            raise CodexCliError("codex_sandbox_launcher_unavailable")
+            code = "codex_sandbox_launcher_unavailable"
+            raise CodexCliError(code)
 
     provider = LauncherFailure()
     tool = setup(tmp_path, provider)

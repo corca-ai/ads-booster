@@ -1327,7 +1327,8 @@ class MarketingAgentService:
             "reconciliation_inspection" in run.goal.context
             and descriptor.effect_class is not EffectClass.OBSERVE
         ):
-            raise ValueError("reconciliation_inspection_read_only")
+            code = "reconciliation_inspection_read_only"
+            raise ValueError(code)
         _ = self.registry.require_current_dispatch(
             descriptor, policy=self.capability_policy, now=now
         )
@@ -1786,7 +1787,8 @@ class MarketingAgentService:
             run = self._await_deferred(run, invocation, deferred, now=now)
             if failure_code is not None:
                 if failure_code not in FAILURE_TEXT:
-                    raise ValueError("deferred_failure_code_invalid")
+                    code = "deferred_failure_code_invalid"
+                    raise ValueError(code)
                 record_id = f"{run_id}:provider-failure:{operation_id}"
                 if not any(
                     r.record_id == record_id for r in self.repository.records(tenant_id, run_id)

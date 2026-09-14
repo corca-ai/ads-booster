@@ -1039,7 +1039,10 @@ class SlackEvents:
                             "source_state": run.state.value,
                             "source_objective": run.goal.objective,
                             "source_status": self.summary(conversation),
-                            "constraint": "Read-only inspection. Do not repeat or settle the uncertain operation.",
+                            "constraint": (
+                                "Read-only inspection. "
+                                "Do not repeat or settle the uncertain operation."
+                            ),
                         },
                     },
                 ),

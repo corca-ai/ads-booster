@@ -24,6 +24,7 @@ from ads_booster.providers.codex_image_edit import (
     _StreamState,
     image_edit_command,
 )
+from ads_booster.providers.codex_runtime_paths import runtime_read_paths
 from ads_booster.transport.json_types import JsonObject
 
 
@@ -395,7 +396,10 @@ def test_shell_launcher_failure_is_classified_without_leaking_output(tmp_path: P
                         "id": "command",
                         "type": "commandExecution",
                         "exitCode": 127,
-                        "aggregatedOutput": "bwrap: execvp codex-linux-sandbox: No such file or directory\nsecret private prompt",
+                        "aggregatedOutput": (
+                            "bwrap: execvp codex-linux-sandbox: "
+                            "No such file or directory\nsecret private prompt"
+                        ),
                     },
                 },
             }
@@ -406,8 +410,6 @@ def test_shell_launcher_failure_is_classified_without_leaking_output(tmp_path: P
 def test_standalone_runtime_and_arg0_grants_exclude_codex_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from ads_booster.providers.codex_runtime_paths import runtime_read_paths
-
     home = tmp_path / "codex-home"
     release = home / "packages/standalone/releases/version"
     (release / "bin").mkdir(parents=True)

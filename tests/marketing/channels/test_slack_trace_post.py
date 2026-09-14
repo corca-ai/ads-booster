@@ -116,7 +116,8 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
             self, *, workspace: Path, instruction: str, timeout_seconds: float
         ) -> TracePostProviderResult:
             self.calls += 1
-            raise CodexCliError("codex_sandbox_launcher_unavailable")
+            code = "codex_sandbox_launcher_unavailable"
+            raise CodexCliError(code)
 
     owner.commands.sender = capture
     provider = (
