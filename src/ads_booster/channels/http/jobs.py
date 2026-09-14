@@ -22,11 +22,10 @@ from ads_booster.channels.http.knowledge_ingress_api import (
     build_api_ingress,
 )
 from ads_booster.channels.http.oauth import OAuthIdentity
+from ads_booster.channels.task_results import latest_invocation
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
-    AgentRecordKind,
-    ToolInvocation,
     contract_sha256,
 )
 from ads_booster.contracts.models import ContractModel
@@ -248,14 +247,10 @@ class AgentJobs:
                     else:
                         self._require_approval(OAuthIdentity(tenant, principal))
                         records = self.service.repository.records(tenant, job.run_id)
-                        latest = next(
-                            (r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION),
-                            None,
-                        )
+                        invocation = latest_invocation(records)
                         if (
-                            latest is None
-                            or contract_sha256(ToolInvocation.model_validate(latest.payload))
-                            != job.invocation_sha256
+                            invocation is None
+                            or contract_sha256(invocation) != job.invocation_sha256
                         ):
                             raise ValueError("agent_approval_invocation_changed")  # noqa: TRY301
                         _ = self.service.decide_approval(

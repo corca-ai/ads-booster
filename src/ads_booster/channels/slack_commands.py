@@ -26,12 +26,14 @@ from ads_booster.channels.task_result_bindings import (
     record_delivery,
     sync_command_deliveries,
 )
-from ads_booster.channels.task_results import BoundedCompletionRenderer, result_for
+from ads_booster.channels.task_results import (
+    BoundedCompletionRenderer,
+    latest_invocation,
+    result_for,
+)
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
-    AgentRecordKind,
-    ToolInvocation,
     contract_sha256,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -459,8 +461,9 @@ class SlackCommands:
         if run is None or run.state.value != "awaiting_approval":
             raise ValueError("agent_approval_not_pending")
         records = self.application.service.repository.records(tenant_id, run_id)
-        latest = next(r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION)
-        invocation = ToolInvocation.model_validate(latest.payload)
+        invocation = latest_invocation(records)
+        if invocation is None:
+            raise ValueError("agent_approval_not_pending")
         content = invocation.model_dump_json(indent=2)
         size = 1800
         pages = (len(content) + size - 1) // size
@@ -489,14 +492,12 @@ class SlackCommands:
         ]
         if self.public_links:
             lines.append(str(self.application.result_url(run_id)))
-        if run.state.value == "awaiting_approval":
-            latest = next(
-                (r for r in reversed(records) if r.kind is AgentRecordKind.INVOCATION), None
-            )
-            if latest is not None:
-                invocation = ToolInvocation.model_validate(latest.payload)
-                lines += [
-                    f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
-                    f"/trace approve {run_id} {contract_sha256(invocation)}",
-                ]
+        if (
+            run.state.value == "awaiting_approval"
+            and (invocation := latest_invocation(records)) is not None
+        ):
+            lines += [
+                f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
+                f"/trace approve {run_id} {contract_sha256(invocation)}",
+            ]
         return "\n".join(lines)

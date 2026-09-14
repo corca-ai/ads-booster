@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ads_booster.agent.service.task_progress import project_task
-from ads_booster.contracts.agent_run import AgentIntent, AgentRecordKind, contract_sha256
+from ads_booster.contracts.agent_run import (
+    AgentIntent,
+    AgentRecordKind,
+    ToolInvocation,
+    contract_sha256,
+)
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.task_completion import CompletionAssessment, CompletionCandidate
 from ads_booster.contracts.task_progress import TaskCheckpoint
@@ -29,6 +34,14 @@ class TaskResult:
     text: str
     task_disposition: str
     identity: DeliveryIdentity | None = None
+
+
+def latest_invocation(records: tuple[AgentRecord, ...]) -> ToolInvocation | None:
+    latest = next(
+        (record for record in reversed(records) if record.kind is AgentRecordKind.INVOCATION),
+        None,
+    )
+    return None if latest is None else ToolInvocation.model_validate(latest.payload)
 
 
 @dataclass(frozen=True, slots=True)
