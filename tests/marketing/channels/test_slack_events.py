@@ -67,12 +67,20 @@ def setup_events(root: Path) -> tuple[SlackEvents, list[JsonObject]]:
 
 
 def revoke_approval(owner: SlackEvents, user_id: str = "U1") -> None:
+    update_identity(owner, user_id, can_approve=False)
+
+
+def revoke_run_creation(owner: SlackEvents, user_id: str = "U1") -> None:
+    update_identity(owner, user_id, can_create_runs=False)
+
+
+def update_identity(owner: SlackEvents, user_id: str = "U1", **changes: bool) -> None:
     identity = owner.identity(user_id)
     with closing(sqlite3.connect(owner.store.database_path)) as database, database:
         _ = database.execute(
             "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
             (
-                identity.model_copy(update={"can_approve": False}).model_dump_json(),
+                identity.model_copy(update=changes).model_dump_json(),
                 identity.binding_id,
             ),
         )

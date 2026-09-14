@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,6 +22,7 @@ from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import (
     effect_descriptor,
     receive,
+    revoke_run_creation,
     setup_events,
 )
 
@@ -279,17 +278,7 @@ def test_delegated_steps_continue_without_review_ceremony(
             self.calls += 1
             action = self.calls
             if action == 2 and revoke:
-                identity = owner.identity("U1")
-                with closing(sqlite3.connect(owner.store.database_path)) as db, db:
-                    _ = db.execute(
-                        "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
-                        (
-                            identity.model_copy(
-                                update={"can_create_runs": False}
-                            ).model_dump_json(),
-                            identity.binding_id,
-                        ),
-                    )
+                revoke_run_creation(owner)
             return _reasoning_result(
                 request,
                 ReasoningDecision(
@@ -329,6 +318,7 @@ def test_delegated_steps_continue_without_review_ceremony(
     restarted = SlackEvents(owner.commands, "UBOT", frozenset({"C1"}))
     restarted.recover()
     receive(restarted, text=text)
+    assert restarted.work_once(now=NOW) is revoke
     assert not restarted.work_once(now=NOW)
     assert len(image.inputs) == 1
     assert len(sender.inputs) == int(should_deliver)

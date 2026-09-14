@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from typing import TYPE_CHECKING, override
 
 import pytest
@@ -21,7 +19,7 @@ from tests.marketing.agent_service.test_application import (
 from tests.marketing.agent_service.test_github_issues import PAYLOAD, URL, Response
 from tests.marketing.agent_service.test_integrations import UnusedResearchRunner
 from tests.marketing.channels.test_slack_commands import NOW
-from tests.marketing.channels.test_slack_events import receive, setup_events
+from tests.marketing.channels.test_slack_events import receive, revoke_run_creation, setup_events
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -113,17 +111,7 @@ def test_model_interpretation_cannot_bypass_current_host_authority(
         def plan(self, request: ReasoningRequest) -> ReasoningResult:
             result = super().plan(request)
             if cause == "revoked":
-                identity = owner.identity("U1")
-                with closing(sqlite3.connect(owner.store.database_path)) as db, db:
-                    _ = db.execute(
-                        "UPDATE channel_identity_bindings SET binding_json=? WHERE binding_id=?",
-                        (
-                            identity.model_copy(
-                                update={"can_create_runs": False}
-                            ).model_dump_json(),
-                            identity.binding_id,
-                        ),
-                    )
+                revoke_run_creation(owner)
             if cause == "wrong_message" and result.decision.action == "invoke_tool":
                 return _reasoning_result(
                     request,
