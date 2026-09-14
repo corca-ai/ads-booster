@@ -169,3 +169,50 @@ flows (18 captured HTTP requests) returned captions and download guidance withou
 Generated PNGs and Slack transports remain test adapters; no real Slack message was sent.
 The proof bundle contains `parallel-selection.txt`, `parallel-installed`, and
 `parallel-model/result.json`.
+
+## Follow-up: actual image execution and visible worker progress (#178)
+
+The new baseline is deployed main `6b9237c` (0.7.2). A real Codex image-provider run from its
+isolated installation ended uncertain with zero uploads. A read-only provider probe read the frozen
+skill but failed to execute the installation-venv Python symlink with `operation not permitted`.
+The provider already grants the resolved base interpreter; the frozen instruction now uses that
+resolved executable without widening filesystem access. Production SSH logs were unavailable,
+so this reproduces an installed execution defect rather than identifying the exact live exception.
+
+With that correction, the same installed request path completed **seven real native image calls**,
+validated **six final image assets**, and produced **18 captured Slack HTTP requests** (six upload
+flows) plus country captions and download guidance. The generated Korean wallpaper was visually
+inspected. Both reasoning and image generation used the official Codex CLI login; Slack ingress and
+transport used fixtures. This proves real generation through installed composition, not actual
+Slack preview/download or deployment. Unconfigured account-link placeholders remain in the frozen
+caption procedure; generation success is not publication-readiness evidence.
+
+A separate installed real-model canary created `learned.weekly-copy` from an ordinary Korean request
+followed by procedure details. It performed skill lookup, apply and exact-revision readback. A second
+member in another channel found that workspace skill and used it to produce three Korean titles.
+The stored procedure prohibits unsupported efficacy claims. Neither run needed another approval.
+The signed-ingress regression additionally covers update, source visibility and deletion invalidation.
+
+Deferred workers now publish fixed observed stages and elapsed time every five seconds. Native image
+start/completion events advance the stage and image-call count. Completion replaces the original
+Slack progress reply; terminal Run state suppresses late updates. Provider uncertainty also notifies
+the thread. An additive `trace_post_jobs.notified` column recovers lost callbacks, including old
+uncertain jobs, without replaying generation. Stable outbox IDs retain transport deduplication.
+
+The interpreter, natural-request and callback-loss regressions failed before their owning fixes.
+Focused source selections passed (82 worker/Slack/skill checks and 3 native-event/progress checks).
+The final installed focused selection passed 169 checks; one CLI metadata check initially failed
+because its copied fixture lacked `pyproject.toml`. After copying that repository metadata, the
+single check passed from outside the checkout (170 checks in total). No runtime fix was required.
+Scoped BasedPyright reported zero errors; Ruff had zero new findings against the baseline.
+Actual generation used the interpreter-fix wheel; later progress and notification changes are
+verified separately against the final wheel. No new video generation provider was added.
+
+The local proof bundle is `/private/tmp/trace-runtime-progress-proof`: `baseline-actual/result.json`,
+`baseline-probe/events.jsonl`, `python-fix-actual/result.json`, `workspace-skill-model/result.json`,
+`selection.txt`, `final-pytest.log`, wheels and non-editable installations. These are single-scenario
+provider observations, not a benchmark. No production Slack message was sent.
+
+No new environment variable, version bump or release tag is required. The SQLite column is additive;
+older code ignores it on rollback. The main verification and installed updater remain the deployment
+path. This new PR has not been merged or activated by these checks.

@@ -140,7 +140,9 @@ Slack에서 `@Trace 스킬 만들기: 고객 인터뷰를 광고 카피로 바�
 에이전트가 `marketing.skill_learning` 절차에 따라 기존 스킬을 검색하고 공용 스킬을 저장한 뒤
 저장 receipt와 정확한 revision을 다시 읽어 확인합니다. 저장한 스킬은 같은 워크스페이스의
 다른 채널에서도 검색·사용할 수 있습니다. 수정은 `@Trace 스킬 수정: 스킬 ID와 변경 내용`으로
-요청합니다. 일반 피드백이나 반복 작업만으로 스킬을 자동 생성·수정하지 않습니다.
+요청합니다. `이 워크스페이스에서 쓸 스킬을 하나 만들어줘. 매주 광고 제목을 쓰는 절차야.`처럼
+요청 뒤에 설명을 이어 붙여도 처리합니다. `learned.copy 스킬을 수정해줘. 제목은 짧게 써줘.`도
+같은 저장 경로를 사용합니다. 일반 피드백이나 반복 작업만으로 스킬을 자동 생성·수정하지 않습니다.
 
 저장은 현재 사용자의 명시적 요청에서만 가능합니다. 첫 줄의 `스킬 만들기:` / `스킬 수정:` /
 `스킬 삭제:` 또는 지원되는 직접 요청형 문장을 확인하며, 애매한 표현은 다시 요청하도록
@@ -614,6 +616,13 @@ It creates new schedules and localized captions, generates the KR text/backgroun
 same final wallpaper for JP/TW, and creates three phone scenes from the common scene prompt.
 The base workflow uses seven image calls; each stage permits at most one quality retry.
 A provider error with an unknown result does not authorize another generation attempt.
+
+The original Slack reply updates while the deferred worker runs: preparation, observed image
+generation and completed image-call count, then asset/caption verification. Updates include elapsed
+worker time, not an estimated completion percentage. Completion or uncertainty replaces that same
+message; it does not leave an obsolete waiting reply behind. A failed completion notification is
+recovered from the durable queue without generating images again. Image editing uses the same
+progress boundary; ordinary synchronous tools retain their existing stage updates.
 
 This is a deferred server task using the configured official Codex executable/model with medium
 reasoning effort and a one-hour operation timeout. It is registered with the installed service;

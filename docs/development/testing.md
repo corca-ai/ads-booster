@@ -5,6 +5,19 @@ Last reviewed: 2026-09-11
 
 ## Focused checks
 
+For Trace post interpreter access, deferred progress and notification recovery, select
+`tests/marketing/agent_service/test_trace_post_runtime.py`, `test_creative_image_edit.py`,
+`tests/marketing/channels/test_slack_trace_post.py`, `test_slack_progress.py`,
+`test_slack_run_notifications.py`, and `tests/providers/test_codex_image_edit.py` / `test_codex_trace_post.py`.
+Verify the resolved interpreter in the frozen instruction, native event stage labels without
+provider text, same-message progress/completion, late progress suppression and callback-loss recovery
+without regenerating. For natural-language workspace skills, select
+`tests/knowledge/test_skill_authoring.py`, and
+`tests/marketing/channels/test_slack_workspace_skills.py`. Confirm create/update with trailing details,
+quoted/use-only exclusions and cross-channel reuse without granting source access. Run these from a
+fresh non-editable wheel outside the checkout. Real image generation and real-model skill reuse are
+separate opt-in observations; fixture PNGs do not establish provider execution.
+
 For first-use knowledge and concurrent Slack requests, select
 `tests/marketing/channels/test_slack_knowledge_preparation.py` and `test_slack_parallel.py`, plus
 `test_slack_trace_post.py` and `test_slack_run_notifications.py`. Exercise the initialized knowledge
