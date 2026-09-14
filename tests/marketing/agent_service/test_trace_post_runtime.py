@@ -141,6 +141,30 @@ def setup(tmp_path: Path, provider: FakeProvider) -> TracePostTool:
     return tool
 
 
+def _unsettled_workspace(tool: TracePostTool) -> Path:
+    with closing(tool._db()) as database:
+        row = cast(
+            "tuple[str]",
+            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
+        )
+    raw = cast("dict[str, object]", json.loads(row[0]))
+    return Path(cast("str", raw["workspace"]))
+
+
+def _install_completed_provider_result(tool: TracePostTool) -> Path:
+    workspace = _unsettled_workspace(tool)
+    run = build_completed_run(
+        workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11"
+    )
+    proof = _provider_result(run)
+    with closing(tool._db()) as database, database:
+        _ = database.execute(
+            "UPDATE trace_post_jobs SET stage='generated',provider_result=?",
+            (_provider_result_json(proof, workspace),),
+        )
+    return run
+
+
 def _approve(service: MarketingAgentService, run_id: str) -> None:
     invocation = ToolInvocation.model_validate(
         next(
@@ -225,20 +249,7 @@ def test_started_unknown_trace_post_is_not_replayed_after_restart(tmp_path: Path
 def test_restart_recovers_a_completed_frozen_run_without_provider_replay(tmp_path: Path) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider)
-    with closing(tool._db()) as database, database:
-        row = cast(
-            "tuple[str]",
-            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
-        )
-        raw = cast("dict[str, object]", json.loads(row[0]))
-        workspace = Path(cast("str", raw["workspace"]))
-    run = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
-    proof = _provider_result(run)
-    with closing(tool._db()) as database, database:
-        _ = database.execute(
-            "UPDATE trace_post_jobs SET stage='generated',provider_result=?",
-            (_provider_result_json(proof, workspace),),
-        )
+    _ = _install_completed_provider_result(tool)
 
     assert replace(tool).work_once()["state"] == "running"
     assert provider.calls == 0
@@ -256,13 +267,8 @@ def test_restart_recovers_a_completed_frozen_run_without_provider_replay(tmp_pat
 def test_restart_does_not_invent_provider_proof_from_completed_files(tmp_path: Path) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider)
+    workspace = _unsettled_workspace(tool)
     with closing(tool._db()) as database, database:
-        row = cast(
-            "tuple[str]",
-            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
-        )
-        raw = cast("dict[str, object]", json.loads(row[0]))
-        workspace = Path(cast("str", raw["workspace"]))
         _ = database.execute("UPDATE trace_post_jobs SET stage='started'")
     _ = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
 
@@ -276,20 +282,7 @@ def test_restart_rejects_incomplete_snapshot_manifest_before_asset_ingest(
 ) -> None:
     provider = FakeProvider()
     tool = setup(tmp_path, provider)
-    with closing(tool._db()) as database, database:
-        row = cast(
-            "tuple[str]",
-            database.execute("SELECT data FROM trace_post_jobs WHERE settled=0").fetchone(),
-        )
-        raw = cast("dict[str, object]", json.loads(row[0]))
-        workspace = Path(cast("str", raw["workspace"]))
-    run = build_completed_run(workspace / "repo", "헬로키티", "카페 나무 테이블", "2026-09-11")
-    proof = _provider_result(run)
-    with closing(tool._db()) as database, database:
-        _ = database.execute(
-            "UPDATE trace_post_jobs SET stage='generated',provider_result=?",
-            (_provider_result_json(proof, workspace),),
-        )
+    run = _install_completed_provider_result(tool)
     manifest_path = run / "document-manifest.json"
     manifest = cast("dict[str, object]", json.loads(manifest_path.read_text(encoding="utf-8")))
     manifest_files = cast("dict[str, object]", manifest["files"])
