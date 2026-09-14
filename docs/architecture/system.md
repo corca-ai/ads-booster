@@ -21,9 +21,10 @@ Slack / authenticated Web
      -> configured Slack / Notion / GitHub adapters: approved external delivery
 ```
 
-Cloudflare Workers, D1/R2 campaign storage, the hosted review workspace, Mac/Appium workers,
-Simulator execution and Threads publication/metrics adapters have been removed. Cloudflare Tunnel
-remains an optional HTTPS transport to the server. Source removal does not delete deployed Workers,
+Cloudflare Workers, D1/R2 campaign storage, the hosted review workspace, Mac/Appium workers and
+Simulator execution remain removed. The optional Threads adapter uses only the official API and is
+composed when its complete configuration is present. Cloudflare Tunnel remains an optional HTTPS
+transport to the server. Source removal does not delete deployed Workers,
 remote databases, objects, installed services or existing operator state.
 
 `GET /v1/tools` projects the current tool catalog; `GET /v1/skills` projects versioned procedures.
@@ -31,6 +32,28 @@ The registry refreshes readiness at planning and dispatch boundaries. An unavail
 leaves research and human handoff available. An operator configures each daily schedule and its service principal. The scheduler creates one
 stable Run per tenant, skill and local date; that principal may preauthorize only the schedule's
 declared exact Slack/Notion delivery invocations.
+
+The generic scheduler is separate from the legacy daily research scheduler. `agent_schedules`,
+immutable revisions and `agent_schedule_occurrences` own calendar intent and occurrence identity;
+each occurrence creates one canonical `AgentRun` through the same drive queue. Every tick, dispatch
+and notification rechecks the authenticated Slack source and current membership. Missed content
+work is skipped by policy, read-only collection can coalesce to the latest due occurrence, and an
+unknown external effect is not replaced with a new Run. Review-mode occurrences notify the source
+thread with the exact Run and approval hash. Auto mode can approve only capabilities frozen in the
+schedule capability and resource allowlists and remains bounded by its Run budget, end and occurrence limits.
+
+Threads OAuth state is short-lived and single-use. Account ownership and non-secret metadata live in
+SQLite while access tokens remain in mode-0600 files. Approved draft revisions issue opaque expiring
+URLs for only their exact creative assets. Publication writes persist each pending provider step,
+returned container ID, published ID and final permalink. A restart during an unresolved POST marks
+the operation uncertain instead of issuing another POST. The bounded Threads reconciliation worker
+uses only a known published ID for provider readback, then settles the original canonical Run with a
+zero-cost terminal receipt. Provider metrics use append-only snapshots;
+human-reported performance remains a separate evidence type.
+
+Threads publish and reply approvals also pass a service-level resource-owner admission check in
+every channel. A workspace approver who does not own the draft batch cannot authorize the external
+write.
 
 The service is a single process with one execution lock. Durable asynchronous jobs and image-edit
 operations release that lock while waiting. No distributed active-active Run ownership is claimed.
