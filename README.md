@@ -782,3 +782,5 @@ not a live provider-result lookup. A later worker update remains bound to the or
 The image worker's restricted profile includes the installed Codex runtime and generated launcher
 paths. It does not grant the complete Codex home or credential directory. No environment-variable
 change or repeated approval is needed for this repair.
+
+Fresh Ubuntu installation includes `bubblewrap` for the official Linux sandbox; `install-server.sh --check` also reports `bwrap`. Existing installations already using bwrap need no additional host change.

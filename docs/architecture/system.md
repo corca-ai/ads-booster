@@ -1132,3 +1132,5 @@ normal work. Conversation JSON adds an optional `inspection_source_run` binding 
 current; source notifications resolve within the same tenant/conversation and recheck membership.
 Notification result validation and original progress lookup use the source Run, so late updates do
 not target the inspection result. New normal work clears this retained source binding.
+
+The Ubuntu installer installs the system `bubblewrap` package because the pinned single-binary Codex download has no bundled bwrap resource. Installer preflight includes `bwrap`. The installed Linux gate exercises this dependency without credentials.
