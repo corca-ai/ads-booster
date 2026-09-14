@@ -2205,6 +2205,14 @@
         "76bbbeac3607370cec77ef40e274771c27deaade015889f82506dddaa68d3afa",
         "fbcfce9e3dd1a84bcf12c0dfcdbf97791d951540ef37ca48c5467852d7e8fd21"
       ]
+    },
+    {
+      "fingerprint": "f24f52fdfddd1b38639917e190b562c2ce092bffd48758702871aca9cb23b2a6",
+      "reason": "General Slack webhook admission preserves the original message grant from message_json, while scheduled notification admission validates both message_json and the rendered result. Their selected columns and idempotency conflict contracts are intentionally distinct.",
+      "memberHashes": [
+        "29b3707b6d79c73863154f6712a19082f40a155c0ba6254845586c464e77bbe6",
+        "48259a32929b084bcbda21755b58de2feff1705460dbb7d9daf1d4fbc8e00d08"
+      ]
     }
   ]
 }
