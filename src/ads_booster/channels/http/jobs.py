@@ -178,8 +178,7 @@ class AgentJobs:
         return {"job_id": job_id, "run_id": job.run_id, "state": row[0], "error": row[1]}
 
     def recover(self) -> None:
-        with self.service.execution_lock:
-            self.drive_queue.recover("http")
+        self.drive_queue.recover("http")
         with self._db() as db:
             for tenant, job_id, raw in _ROWS.validate_python(
                 db.execute(
@@ -219,7 +218,7 @@ class AgentJobs:
         job = WebJob.model_validate_json(raw)
         ownership_entered = False
         try:
-            with self.service.execution_lock:
+            with self.service.run_locks.hold(tenant, job.run_id):
                 origin = DriveOrigin(
                     tenant_id=tenant,
                     run_id=job.run_id,
@@ -298,10 +297,10 @@ class AgentJobs:
             )
 
     def _drive_once(self, now: datetime) -> bool:
-        with self.service.execution_lock:
-            claim = self.drive_queue.claim("http", now)
-            if claim is None:
-                return False
+        claim = self.drive_queue.claim("http", now)
+        if claim is None:
+            return False
+        with self.service.run_locks.hold(claim.origin.tenant_id, claim.origin.run_id):
             with self.drive_queue.ownership(claim=claim, now=now):
                 identity = OAuthIdentity(claim.origin.tenant_id, claim.origin.principal_id)
                 reason = "authorization_unavailable"

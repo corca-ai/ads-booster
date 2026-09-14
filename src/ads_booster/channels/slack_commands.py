@@ -19,7 +19,9 @@ from ads_booster.channels.contracts import (
     ChannelKind,
     ChannelRunRequest,
 )
+from ads_booster.channels.github_results import issue_results
 from ads_booster.channels.http.browser_login import https_origin
+from ads_booster.channels.slack_run_status import conversational_answer, run_status
 from ads_booster.channels.task_result_bindings import (
     bind_result,
     matches_result,
@@ -33,6 +35,7 @@ from ads_booster.channels.task_results import (
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
+    AgentRunState,
     contract_sha256,
 )
 from ads_booster.transport.json_types import JsonObject
@@ -192,8 +195,7 @@ class SlackCommands:
 
     def recover(self) -> None:
         """Only create is replayable after a crash; other uncertain mutations need readback."""
-        with self.application.service.execution_lock:
-            self.drive_queue.recover("slack_command")
+        self.drive_queue.recover("slack_command")
         with self._connect() as db:
             for job_id, raw in _ROWS.validate_python(
                 db.execute(
@@ -221,8 +223,13 @@ class SlackCommands:
             _ = db.execute("BEGIN IMMEDIATE")
             row = _ROW.validate_python(
                 db.execute(
-                    """SELECT job_id,user_id,command_json FROM slack_command_jobs WHERE
-                    state='pending' ORDER BY rowid LIMIT 1"""
+                    """SELECT job_id,user_id,command_json FROM slack_command_jobs AS job WHERE
+                    state='pending' AND NOT EXISTS (
+                        SELECT 1 FROM slack_command_jobs AS active
+                        WHERE active.state='running'
+                        AND json_extract(active.command_json,'$.run_id')
+                            =json_extract(job.command_json,'$.run_id')
+                    ) ORDER BY rowid LIMIT 1"""
                 ).fetchone()
             )
             if row is not None:
@@ -291,7 +298,7 @@ class SlackCommands:
                             now=now,
                         )
                     else:
-                        with self.application.service.execution_lock:
+                        with self.application.service.run_locks.hold(identity.tenant_id, run_id):
                             run = self.application.service.repository.get(
                                 identity.tenant_id, run_id
                             )
@@ -327,10 +334,10 @@ class SlackCommands:
         return self._notify() or row is not None or self._drive_once(now)
 
     def _drive_once(self, now: datetime) -> bool:
-        with self.application.service.execution_lock:
-            claim = self.drive_queue.claim("slack_command", now)
-            if claim is None:
-                return False
+        claim = self.drive_queue.claim("slack_command", now)
+        if claim is None:
+            return False
+        with self.application.service.run_locks.hold(claim.origin.tenant_id, claim.origin.run_id):
             with self.drive_queue.ownership(claim=claim, now=now):
                 try:
                     installation = self.application.store.resolve_installation(
@@ -499,22 +506,33 @@ class SlackCommands:
         )
 
     def summary(self, tenant_id: str, run_id: str) -> str:
+        with self.application.service.run_locks.hold(tenant_id, run_id):
+            return self._summary(tenant_id, run_id)
+
+    def _summary(self, tenant_id: str, run_id: str) -> str:
         run = self.application.service.repository.get(tenant_id, run_id)
         if run is None:
             raise ValueError("agent_run_not_found")
         records = self.application.service.repository.records(tenant_id, run_id)
-        if run.state.value != "awaiting_approval":
-            return result_for(run, records).text
+        steps = self.application.service.repository.steps(tenant_id, run_id)
+        status = run_status(run, steps)
         lines = [
             f"실행: {run_id}",
-            f"상태: {run.state.value}",
+            f"상태: {status}",
         ]
         if self.public_links:
             lines.append(str(self.application.result_url(run_id)))
-        invocation = self.application.service.pending_approval(tenant_id, run_id)
-        if invocation is not None:
-            lines += [
-                f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
-                f"/trace approve {run_id} {contract_sha256(invocation)}",
-            ]
+        if run.state is AgentRunState.AWAITING_APPROVAL:
+            invocation = self.application.service.pending_approval(tenant_id, run_id)
+            if invocation is not None:
+                lines += [
+                    f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
+                    f"/trace approve {run_id} {contract_sha256(invocation)}",
+                ]
+        elif run.state is AgentRunState.COMPLETED:
+            lines.append(result_for(run, records).text[:1800])
+        elif run.state is AgentRunState.AWAITING_INPUT:
+            lines.append(conversational_answer(run, steps, records)[:1800])
+        if result := issue_results(records):
+            lines.append(result)
         return "\n".join(lines)

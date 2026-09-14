@@ -32,3 +32,20 @@ def current_user_message(run: AgentRun, records: tuple[AgentRecord, ...]) -> str
             continue
         return note
     return run.goal.objective
+
+
+def new_input_after_brand_wait(records: tuple[AgentRecord, ...]) -> bool:
+    """A newly admitted input can reclassify a previous brand-blocked request."""
+    if not records or records[-1].payload_schema_version != "trace.agent-input-evidence.v1":
+        return False
+    for record in reversed(records[:-1]):
+        if record.kind is AgentRecordKind.REASONING:
+            return False
+        if record.payload_schema_version != "trace.knowledge-preparation-blocked.v1":
+            continue
+        preparation = record.payload.get("preparation")
+        return isinstance(preparation, dict) and (
+            preparation.get("status") == "brand_unresolved"
+            or preparation.get("error_code") in {"required_voice_unavailable", "scope_unresolved"}
+        )
+    return False

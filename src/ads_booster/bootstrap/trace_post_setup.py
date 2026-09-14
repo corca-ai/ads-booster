@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -83,12 +84,18 @@ def connect_trace_post(
 
 
 def run_trace_post_worker(tool: TracePostTool, stop: Event, gate: MaintenanceGate) -> None:
-    run_durable_worker(
-        tool.work_once,
-        stop,
-        gate,
-        lambda: _LOGGER.warning("trace_post_queue_poll_failed"),
-    )
+    def lane() -> None:
+        run_durable_worker(
+            tool.work_once,
+            stop,
+            gate,
+            lambda: _LOGGER.warning("trace_post_queue_poll_failed"),
+        )
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="trace-post") as pool:
+        workers = [pool.submit(lane) for _ in range(2)]
+        for worker in workers:
+            worker.result()
 
 
 __all__ = ["TracePostCatalog", "connect_trace_post", "run_trace_post_worker"]

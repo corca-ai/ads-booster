@@ -561,6 +561,9 @@ remain in Agent Core/service/runtime, with no separate retry or issue state stor
 `execution_control.py` provides the channel/provider-neutral cooperative scope and owned subprocess
 cancellation. `providers/codex_cli.py` uses it for structured jobs; `codex_reasoning.py` preserves the
 cancellation signal. The canonical service owns checkpoints and append-only STOP transitions.
+`channels/slack_run_status.py` owns the shared readable Run/step projection for Events and slash
+commands; callers hold the service execution lock. `channels/slack_failure_diagnostics.py` owns
+bounded, message-free exception-chain locations for the Events journal. Neither owns Run state.
 `channels/slack_progress.py` owns only status-message identity and durable cancellation requests.
 `channels/slack_events.py` owns signed button authorization, status updates and scoped execution, using the
 existing sender transport (`chat.postMessage` for new status, `chat.update` for known timestamps).
@@ -571,7 +574,13 @@ new runs. Slack manifests own the external callback registration contract.
 artifact verification. The descriptor remains in `tools/descriptors.py`; installed lifecycle
 injects the executor and private artifact root through `ConfiguredAgentTools`. Existing Agent Core
 owns exact approval and uncertain execution handling. `channels/slack_images.py` owns receipt-bound
-artifact projection, durable upload admission and Slack's external file-upload adapter. Slack event
+artifact projection, durable upload admission and Slack's external file-upload adapter.
+`channels/slack_image_results.py` resolves ordinary image and six-asset Trace post results into
+named PNG attachments and country captions. It checks same-Run links and tenant-scoped assets
+through the existing creative repository. `Message.result_run_id` binds asynchronous result
+notifications independently of progress-message storage. `work_continuation.interrupted_reasoning`
+is the shared admission check for new input after a failed OBSERVE boundary under the Run lock.
+Slack event
 composition binds the artifact directory beside the canonical service database and passes only the
 authorized conversation, never model-selected channel IDs or local filenames.
 `CanonicalKnowledgeIngress` owns additive `knowledge_execution_bindings`: immutable Slack source
@@ -648,3 +657,15 @@ terminal receipts and job reasons; cancellation retains its separate resumable p
 
 Updating a bundle changes the next operation's inputs, not already-running jobs. Record source
 hashes and verify the installed wheel when changing bundled material.
+
+`agent/service/run_locks.py` owns reference-counted reentrant locks keyed by tenant and Run. The
+service, Slack/HTTP boundaries and deferred owners use the same lock pool. The separate catalog
+lock serializes startup catalog publication. `bootstrap/channel_setup.py` owns the four Slack lanes
+and one-time recovery; `bootstrap/trace_post_setup.py` owns two Trace post lanes. Queue stores own
+same-conversation/Run claim exclusion; `TracePostTool` owns live-operation exclusion.
+
+`channels/slack_run_status.py` projects the current preparation/intent at an input wait and supplies
+a nonempty fallback. `task_input.new_input_after_brand_wait` recognizes a newly admitted input at
+that boundary; the service reclassifies it through team-chat preparation before selecting a new
+action. `knowledge/context_selection.py` owns the empty-brand `voice_unconfigured` fallback;
+explicit brand access, freshness and constraints remain owned by knowledge preparation.

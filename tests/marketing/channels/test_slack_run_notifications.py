@@ -24,18 +24,18 @@ if TYPE_CHECKING:
     from ads_booster.transport.json_types import JsonObject
 
 
-def test_run_update_is_durable_same_thread_and_once(tmp_path: Path) -> None:
+def test_unchanged_run_update_is_not_repeated_and_stays_deduplicated(tmp_path: Path) -> None:
     owner, messages = setup_events(tmp_path)
     receive(owner, text="<@UBOT> 배경 검토해줘")
     assert owner.work_once(now=NOW)
     run = owner.commands.application.service.repository.list_runs("team")[0]
     before = len(messages)
-    assert owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
+    assert not owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
     assert not owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
     owner.recover()
-    assert owner.work_once(now=NOW)
-    assert len(messages) == before + 1
-    assert messages[-1]["thread_ts"] == "100.001"
+    assert not owner.work_once(now=NOW)
+    assert len(messages) == before
+    assert messages[0]["thread_ts"] == "100.001"
     assert messages[-1]["text"] == messages[before - 1]["text"]
     assert "상태:" not in str(messages[-1]["text"])
     assert "실행:" not in str(messages[-1]["text"])
@@ -49,7 +49,9 @@ def test_claimed_notification_is_not_resent_after_response_loss(tmp_path: Path) 
     receive(owner, text="<@UBOT> 배경 검토해줘")
     assert owner.work_once(now=NOW)
     run = owner.commands.application.service.repository.list_runs("team")[0]
-    assert owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
+    assert owner.store.enqueue_run_notification(
+        "team", run.run_id, event_id="worker-operation", result="새 작업 결과"
+    )
     claimed = owner.store.claim_notification()
     assert claimed is not None
     count = len(messages)
@@ -78,7 +80,9 @@ def test_notification_rechecks_current_member_and_excludes_synthetic_user_contex
     conversation = owner.store.conversation_for_run("team", run.run_id)
     assert conversation is not None
     context = owner.store.transcript(conversation.conversation_id)
-    assert owner.enqueue_run_update("team", run.run_id, event_id="worker-operation")
+    assert owner.store.enqueue_run_notification(
+        "team", run.run_id, event_id="worker-operation", result="새 작업 결과"
+    )
     assert owner.store.transcript(conversation.conversation_id) == context
     count = len(messages)
     revoked = replace(owner, commands=replace(owner.commands, allowed_user_ids=frozenset()))

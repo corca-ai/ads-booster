@@ -201,8 +201,12 @@ This changes model guidance, not tool registration, approval, budgets or canonic
 
 Ordinary Slack replies and asynchronous updates omit Run diagnostics. Nonterminal updates use
 the persisted execution state rather than presenting the last tool-selection rationale as an
-answer. Explicit status requests retain diagnostic reasoning, state and Run ID. Approval review
-continues to expose the exact invocation and digest; notification durability is unchanged.
+answer. Both thread status and slash-command status project the current Run and last committed
+step under the execution lock. Interrupted reasoning, interrupted dispatch and asynchronous tool
+waits receive distinct descriptions; an earlier reasoning answer is never a nonterminal status.
+The slash command retains its explicit Run ID. Approval review continues to expose the exact
+invocation and digest; notification durability is unchanged. Failure logs preserve bounded exception
+categories and product-code locations across wrapped causes without messages, source text or locals.
 
 Each Slack planning boundary also receives a fresh, bounded projection of that conversation's
 completed message/reply pairs. Same-Run follow-ups therefore retain prior alternatives after
@@ -583,12 +587,15 @@ app_mention starts a thread; ordinary message events only join an admitted threa
 unrelated channel chatter and external shared-channel envelopes are ignored. Message identity binds
 team/channel/timestamp, preventing duplicate retries from creating new work.
 
-The same maintenance-gated Slack worker drains commands and conversation jobs. Plans are frozen
-under the canonical service lock; follow-ups bind to the latest thread Run only when dequeued.
+Four maintenance-gated Slack worker lanes drain commands and conversation jobs. Startup recovery
+finishes before these lanes claim work. Durable claims exclude another running job in the same
+conversation (or slash-command Run); unrelated conversations may call the model concurrently.
+Plans and canonical mutations hold a reentrant `(tenant_id, run_id)` lock, shared by private and
+shared service projections. Follow-ups bind to the latest thread Run only when dequeued.
 Awaiting-input replies and ordinary completed-work follow-ups continue that Run at its saved revision.
 The original goal and full ledger remain stored; explicit new-work requests start a new Run.
 Private DM tenant IDs derive from workspace, member, channel and thread; unthreaded messages use the
-member's ongoing DM session. Private services share the canonical lock/ledger but expose only
+member's ongoing DM session. Private services share the canonical Run locks/ledger but expose only
 public search, skill discovery and registered scoped knowledge/memory/source reads, with no
 shared-context mutation or delivery tool authority. Knowledge must be configured for those reads
 to appear; current actor/session grants are still checked by the knowledge owner.
@@ -759,7 +766,7 @@ to the configured Web origin only when public links are enabled; private history
 Shared Slack execution requests authorize the requested work without a second user-facing
 approval or review phase. The reasoning provider cites the complete current request in
 `authorization_message` for each requested step. The channel verifies its unchanged finalized
-source, current member permission, tenant/conversation and exact invocation, then records the
+source, current run-creation permission, tenant/conversation and exact invocation, then records the
 grant through the existing service. All exposed tools with `workspace_member` authority use this
 path; it is not restricted to a creation allowlist. A request can cover multiple steps within the
 run budget. Each step rechecks source and membership; receipts and runtime idempotency remain the
@@ -767,6 +774,9 @@ owners of duplicate/uncertain execution. Model interpretation does not prove uni
 accuracy. Questions, negation, draft-only requests and unrequested actions confer no execution
 authority. Publication or spending requires a request covering that destination and scope;
 creation alone does not imply either. Private DMs remain read-only.
+First-use workspace members may request execution with `can_approve=False`; that field controls
+reviewing a separate proposal, not delegating their own work. Disable/revocation and source freshness
+are still checked before every requested step.
 
 Completed generated images are delivered results, without a mandatory human-review checkpoint.
 `review_status=not_reviewed` records provenance without claiming human review or visual quality.
@@ -790,8 +800,10 @@ oversized or out-of-range page arguments return guidance without entering contin
 changing approval state. Complete readable proposals and unchanged authoritative `review_pages`
 renderings count as delivered review evidence. Event failures project approval rejection codes into
 actionable replies and log only message identity, action and a fixed code. Unknown exceptions
-use `unclassified`, disclose no exception payload, retain blocked message state and advise status
-inspection instead of repeating approval. This is diagnostic coverage, not effect reconciliation.
+use `unclassified`, disclose no exception payload and retain blocked message state without requiring
+a status command or operator contact. After reasoning fails at an OBSERVE boundary, a new user
+message can revise the same Run under the execution lock. PLAN, APPROVE and EXECUTE interruptions
+retain their original recovery paths; new input must not conceal or replay uncertain effects.
 
 Unknown edit operations expose a scoped status and explicit reviewer abandonment endpoint.
 The API derives authority from current authenticated membership, never the request body.
@@ -1020,16 +1032,24 @@ select verified main independently; release publication is not installed-server 
 ## Packaged Trace post production
 
 `marketing.trace_post` is a discoverable installed procedure; `creative.trace_post` owns its
-approved execution. The service freezes the exact invocation, production approval and packaged
+requested execution. The service freezes the exact invocation, request-bound grant and packaged
 bundle in a private operation workspace before the deferred worker starts one Codex subprocess.
+The worker instruction makes user delegation and optional human feedback explicit, overriding
+conflicting review language in the frozen reference bundle without inventing human QA.
 Its shell access is limited to the operation and required runtime files; external tools/network
 are disabled. The model reads the frozen workflow, creates new content and executes A → B → L → C.
 A started operation with an uncertain outcome is not automatically replayed after restart.
 
 The server validates the frozen documents, content/image review bindings and six canonical outputs
-before registering same-work, tenant-scoped assets. File validation and model review remain separate
-from human visual approval. Completion resumes the existing work; external delivery uses the
-existing independent channel authority. Production credentials are not copied into the bundle.
+before registering same-work, tenant-scoped assets. New results report `human_review_required=False`
+and do not invent a human review record. Historical True values remain readable and do not gate
+delivery. Completion resumes the existing work and queues an outbox message bound to that exact
+Run, independently of transient progress UI. Receipt and asset-link validation resolve six images
+from the configured artifact root; Slack uploads them to the original thread as named PNG files
+with country captions. Current member permission is rechecked at delivery. Digest changes or absent
+same-Run links prevent attachment; ambiguous uploads are not repeated after restart. Returning
+results in the requesting thread is part of generation, while other destinations require a request.
+Production credentials are not copied into the bundle.
 
 The app-server transport copies PNG bytes from native image-generation events into the private
 operation's `provider-images` directory and binds each file to its event ID and original SHA-256.
@@ -1040,3 +1060,23 @@ readback after a crash; a child-written completion summary alone cannot certify 
 The imported workflow originates at `corca-ai/trace-marketing-context` revision
 `57779174c8be0dde741bab436fa21a61c2933f90`. This provenance is not a live repository dependency.
 The executable product and its installed skill catalog are owned by `corca-ai/ads-booster`.
+
+## First-use knowledge and concurrent Trace post production
+
+A content request with no selected brand and no visible local brands receives `voice_unconfigured`:
+use the user brief and selected procedure without inventing brand policy. Multiple visible brands
+still need selection; an explicit inaccessible/missing/stale brand remains a preparation error.
+A newly admitted input after a brand-selection/voice/scope wait is first prepared as team chat so
+reasoning can classify the new request. Any resulting content action prepares its required context
+again. Task transitions include the prior task identity, preventing reuse of a closed task.
+
+An input-wait reply reads the current step's preparation or intent record, never an older reasoning
+answer. Missing reasoning gets readable current-state text. An asynchronous callback whose result
+matches the most recent delivered/skipped reply is durably marked skipped, preserving event-ID
+idempotency without sending the same answer again.
+
+Two maintenance-gated Trace post lanes own separate operation workspaces. The queue selection lock
+protects an in-process active-operation set, so another lane cannot mistake live generation for a
+crash-left operation. Per-Run locks cover canonical preflight/completion; the image provider runs
+outside those locks. Started work left by a prior process retains uncertainty handling and is not
+blindly retried. Maintenance counts each admitted lane and shutdown joins them before exit.

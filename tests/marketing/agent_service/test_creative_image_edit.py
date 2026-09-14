@@ -270,7 +270,7 @@ def test_generation_releases_service_lock_for_other_work(tmp_path: Path) -> None
 
     def probe() -> None:
         def lock() -> None:
-            with tool.service.execution_lock:
+            with tool.service.run_locks.hold("tenant-a", "run-one"):
                 acquired.set()
 
         thread = threading.Thread(target=lock)

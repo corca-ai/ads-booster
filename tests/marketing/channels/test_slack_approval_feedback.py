@@ -73,13 +73,13 @@ def test_exact_approval_failure_is_actionable_without_execution(
     digest = contract_sha256(invocation)
     if cause == "permission":
         revoke_approval(owner)
-        expected, code = "승인 권한이 없습니다", "slack_approval_not_allowed"
+        expected, code = "실행할 권한이 없어", "slack_approval_not_allowed"
     elif cause == "changed":
         digest = "0" * 64
-        expected, code = "현재 승인안과 다릅니다", "agent_approval_invocation_changed"
+        expected, code = "실행할 내용이 변경되어", "agent_approval_invocation_changed"
     else:
         service.registry = ToolRegistry(())
-        expected, code = "도구를 현재 사용할 수 없습니다", "tool_dispatch_no_longer_available"
+        expected, code = "도구를 현재 사용할 수 없어", "tool_dispatch_no_longer_available"
     receive(owner, type="message", text=f"승인 {digest}", ts="100.002", thread_ts="100.001")
     assert owner.work_once(now=NOW)
     assert expected in str(messages[-1]["text"])
@@ -109,7 +109,10 @@ def test_unknown_failure_after_approval_does_not_leak_or_retry(
 
     def fail_after_commit(stage: str) -> None:
         if stage == "approval_committed":
-            raise RuntimeError(secret)
+            try:
+                raise ValueError(secret)  # noqa: TRY301 - fixture for chained secret-bearing failures.
+            except ValueError as cause:
+                raise RuntimeError(secret) from cause
 
     service.fault_hook = fail_after_commit
     receive(
@@ -120,9 +123,14 @@ def test_unknown_failure_after_approval_does_not_leak_or_retry(
         thread_ts="100.001",
     )
     assert owner.work_once(now=NOW)
-    assert "승인을 반복하지 말고" in str(messages[-1]["text"])
+    assert "중복 실행하지 않았습니다" in str(messages[-1]["text"])
+    assert "운영자" not in str(messages[-1]["text"])
+    assert "상태" not in str(messages[-1]["text"])
     assert secret not in str(messages) + caplog.text
     assert "code=unclassified" in caplog.text
+    assert "RuntimeError@ads_booster." in caplog.text
+    assert " <- ValueError@external" in caplog.text
+    assert "fail_after_commit" not in caplog.text  # Non-product frames stay private.
     after = service.repository.records("team", run.run_id)
     assert sum(r.kind is AgentRecordKind.APPROVAL for r in after) == 1
     assert not any(r.kind is AgentRecordKind.RECEIPT for r in after)

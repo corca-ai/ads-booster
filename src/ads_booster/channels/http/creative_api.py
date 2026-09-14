@@ -192,7 +192,7 @@ def _upload(  # noqa: PLR0913,PLR0917 - explicit identity, Run and artifact owne
 ) -> tuple[int, JsonObject]:
     data, extension = _image_bytes(upload.image_base64)
     request_digest = contract_sha256(upload.model_dump(mode="json"))
-    with service.execution_lock:
+    with service.run_locks.hold(identity.tenant_id, run_id):
         with _links(service.repository.database_path) as connection:
             prior = cast(
                 "tuple[str, str] | None",

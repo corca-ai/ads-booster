@@ -49,6 +49,7 @@ from ads_booster.agent.service.run_limits import (
     reserve_decision,
     stable_failure_fingerprint,
 )
+from ads_booster.agent.service.run_locks import RunLocks
 from ads_booster.agent.service.sqlite_repository import (
     AgentRunConflictError,
     RepositoryAdmission,
@@ -65,7 +66,7 @@ from ads_booster.agent.service.task_drive import (
     plan_task,
     project_decision,
 )
-from ads_booster.agent.service.task_input import current_user_message
+from ads_booster.agent.service.task_input import current_user_message, new_input_after_brand_wait
 from ads_booster.agent.service.task_progress import (
     TaskProjection,
     project_task,
@@ -94,6 +95,7 @@ from ads_booster.contracts.knowledge_preparation import (
     PreparedKnowledgeContext,
     RequiredContextPreparationError,
 )
+from ads_booster.contracts.knowledge_selection import KnowledgeActionKind
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.reasoning import (
     ReasoningDecision,
@@ -144,7 +146,8 @@ class CreateAgentRunRequest(ContractModel):
 
 @dataclass(slots=True)
 class MarketingAgentService:
-    execution_lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    run_locks: RunLocks = field(default_factory=RunLocks, init=False, repr=False)
+    catalog_lock: RLock = field(default_factory=RLock, init=False, repr=False)
     repository: SqliteAgentRunRepository
     registry: ToolRegistry
     reasoning: ReasoningProvider | ReasoningProviderV2
@@ -191,7 +194,7 @@ class MarketingAgentService:
         now: datetime,
     ) -> None:
         """Publish validated descriptor and adapter projections as one service update."""
-        with self.execution_lock:
+        with self.catalog_lock:
             candidate = self.registry.with_registrations(catalog.registrations(), now=now)
             self.registry, self.tools = candidate, candidate.adapters
 
@@ -202,7 +205,7 @@ class MarketingAgentService:
         now: datetime,
         admission: RepositoryAdmission | None = None,
     ) -> AgentRun:
-        with self.execution_lock:
+        with self.run_locks.hold(request.tenant_id, request.run_id):
             current = self.repository.get(request.tenant_id, request.run_id)
             if current is not None:
                 if (
@@ -230,7 +233,7 @@ class MarketingAgentService:
 
     def stop(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun | None:
         """Stop future work after the owning execution has yielded; preserve uncertain effects."""
-        with self.execution_lock:
+        with self.run_locks.hold(tenant_id, run_id):
             run = self.repository.get(tenant_id, run_id)
             if run is None or run.state in {
                 AgentRunState.STOPPED,
@@ -261,9 +264,11 @@ class MarketingAgentService:
                 ),
             )
 
-    def drive(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun:
+    def drive(  # noqa: PLR0911 - distinct persisted recovery boundaries.
+        self, tenant_id: str, run_id: str, *, now: datetime
+    ) -> AgentRun:
         """Advance persisted transitions within a bounded provider/time slice."""
-        with self.execution_lock:
+        with self.run_locks.hold(tenant_id, run_id):
             run = self._required_run(tenant_id, run_id)
             initial = self._task(run).checkpoint
             started = self.monotonic_clock()
@@ -298,7 +303,7 @@ class MarketingAgentService:
 
     def _advance(self, run: AgentRun, *, now: datetime) -> AgentRun:  # noqa: PLR0911
         """Recover or perform exactly one persisted orchestration transition."""
-        with self.execution_lock:
+        with self.run_locks.hold(run.tenant_id, run.run_id):
             tenant_id, run_id = run.tenant_id, run.run_id
             if run.state in {AgentRunState.AWAITING_TOOL, AgentRunState.AWAITING_RECONCILIATION}:
                 if run.state is AgentRunState.AWAITING_RECONCILIATION:
@@ -460,7 +465,7 @@ class MarketingAgentService:
         now: datetime,
         admission: RepositoryAdmission | None = None,
     ) -> AgentRun:
-        with self.execution_lock:
+        with self.run_locks.hold(tenant_id, run_id):
             run = self._required_run(tenant_id, run_id)
             if run.state is not AgentRunState.AWAITING_INPUT:
                 raise ValueError("agent_run_not_awaiting_input")
@@ -506,7 +511,7 @@ class MarketingAgentService:
         request_text_sha256: str | None = None,
     ) -> AgentRun:
         """Resolve one exact pending invocation and dispatch only a valid grant."""
-        with self.execution_lock:
+        with self.run_locks.hold(tenant_id, run_id):
             run = self._required_run(tenant_id, run_id)
             if run.state is not AgentRunState.AWAITING_APPROVAL:
                 raise ValueError("agent_run_not_awaiting_approval")
@@ -599,7 +604,19 @@ class MarketingAgentService:
         prepared_context: PreparedKnowledgeContext | None = None
         if self.knowledge is not None:
             snapshot = self.knowledge.filter_snapshot(run.run_id, snapshot)
-            preparation = self.knowledge.prepare(run, snapshot, now=now, query=knowledge_query)
+            preparation = self.knowledge.prepare(
+                run,
+                snapshot,
+                now=now,
+                query=knowledge_query,
+                action_kind=(
+                    KnowledgeActionKind.TEAM_CHAT
+                    if new_input_after_brand_wait(
+                        self.repository.records(run.tenant_id, run.run_id)
+                    )
+                    else None
+                ),
+            )
             if isinstance(
                 preparation,
                 RequiredContextPreparationError | BrandUnresolvedPreparation,
@@ -1089,7 +1106,7 @@ class MarketingAgentService:
         """Observe admitted steering without replacing an in-flight runtime decision.
 
         The callback must authenticate its channel input and read its durable inbox
-        without waiting for execution_lock. This method runs under that lock at a
+        without waiting for the Run lock. This method runs under that lock at a
         boundary before planning or before a fresh invocation is admitted.
         """
         if self.boundary_signal is None:
@@ -1731,7 +1748,7 @@ class MarketingAgentService:
         self, tenant_id: str, run_id: str, *, operation_id: str, now: datetime
     ) -> AgentRun:
         """Internal worker readback boundary; elapsed time alone is not evidence of uncertainty."""
-        with self.execution_lock:
+        with self.run_locks.hold(tenant_id, run_id):
             run = self._required_run(tenant_id, run_id)
             invocation = self._execution_invocation(tenant_id, run_id)
             deferred = self._deferred_for_invocation(run, invocation)
@@ -1758,7 +1775,7 @@ class MarketingAgentService:
         now: datetime,
     ) -> AgentRun:
         """Internal owner API. Worker authentication and artifact verification precede this call."""
-        with self.execution_lock:
+        with self.run_locks.hold(tenant_id, run_id):
             run = self._required_run(tenant_id, run_id)
             result = ToolExecutionResult.model_validate_json(result.model_dump_json())
             records = self.repository.records(tenant_id, run_id)

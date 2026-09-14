@@ -156,6 +156,19 @@ version and compare record digests. This verifies a procedure, not an automatic 
 execution compatibility or production downgrade. Never restore over candidate-created work.
 See [state compatibility](../architecture/system.md#completion-state-compatibility-and-rollback).
 
+For request-based Trace post execution and result attachments, select
+`tests/marketing/channels/test_slack_trace_post.py`, `test_slack_images.py`,
+`test_slack_pending_dialogue.py`, `test_slack_github_issues.py`, `test_slack_run_notifications.py`,
+`test_slack_progress.py`, `test_slack_events.py` and `test_slack_approval_feedback.py` from that
+channel directory, plus `test_work_continuation.py`, `test_trace_post_runtime.py`,
+`test_trace_post_contract.py` and `test_skill_tools.py` in `tests/marketing/agent_service`.
+Verify first-use non-reviewer execution, failed-reasoning follow-up, interrupted dispatch exclusion,
+six named PNGs and captions, exact asynchronous Run binding, digest/link rejection, member disable,
+upload uncertainty and restart deduplication. Repeat from outside the checkout with a non-editable
+wheel and copied tests. Synthetic PNGs and captured Slack requests prove transport contracts,
+not live image quality or a real user's Slack download. See the
+[Trace post delivery record](trace-post-slack-delivery.md) for baseline/candidate evidence.
+
 For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
 and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
 ordinary output must not expose its rationale or imply tool execution, while explicit status and

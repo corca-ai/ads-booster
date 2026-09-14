@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -156,31 +157,41 @@ def slack_from_env(
     )
 
 
-def run_slack_worker(
+def run_slack_worker(  # noqa: C901 - recover once, then drain independently gated lanes.
     commands: SlackCommands,
     stop: Event,
     gate: MaintenanceGate | None = None,
     events: SlackEvents | None = None,
 ) -> None:
     gate = gate or MaintenanceGate()
-    recovered = False
+    # Recovery must finish before any lane claims durable work.
     while not stop.is_set():
-        try:
-            with gate.work() as admitted:
-                worked = False
-                if admitted:
-                    if not recovered:
-                        commands.recover()
+        with gate.work() as admitted:
+            if admitted:
+                commands.recover()
+                if events is not None:
+                    events.recover()
+                break
+        _ = stop.wait(1)
+
+    def lane() -> None:
+        while not stop.is_set():
+            try:
+                with gate.work() as admitted:
+                    worked = False
+                    if admitted:
+                        worked = commands.work_once(now=datetime.now(UTC))
                         if events is not None:
-                            events.recover()
-                        recovered = True
-                    worked = commands.work_once(now=datetime.now(UTC))
-                    if events is not None:
-                        worked = events.work_once(now=datetime.now(UTC)) or worked
-        except Exception:  # noqa: BLE001 - durable background boundary; no blind mutation retry.  # Keep failures private and leave durable state for operator inspection.
-            worked = False
-        if not worked:
-            _ = stop.wait(1)
+                            worked = events.work_once(now=datetime.now(UTC)) or worked
+            except Exception:  # noqa: BLE001 - durable claims prevent blind mutation retry.
+                worked = False
+            if not worked:
+                _ = stop.wait(0.25)
+
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="trace-slack") as pool:
+        workers = [pool.submit(lane) for _ in range(4)]
+        for worker in workers:
+            worker.result()
 
 
 def required(env: Mapping[str, str], key: str) -> str:

@@ -56,6 +56,7 @@ class Message(ContractModel):
     user_id: str
     text: str
     notification_only: bool = False
+    result_run_id: str = ""
     learning_question_intent: SlackLearningQuestionIntent | None = None
     reopens: bool = False
     attachments: tuple[SlackAttachment, ...] = ()
@@ -316,21 +317,33 @@ class SlackConversationStore:
                 user_id=original.user_id,
                 text="",
                 notification_only=True,
+                result_run_id=run_id,
+            )
+            last = _ROW.validate_python(
+                db.execute(
+                    """SELECT result,notification_state FROM slack_message_jobs
+                    WHERE conversation_id=? ORDER BY rowid DESC LIMIT 1""",
+                    (conversation.conversation_id,),
+                ).fetchone()
+            )
+            duplicate = (
+                last is not None and last[0] == result and last[1] in {"delivered", "skipped"}
             )
             cursor = db.execute(
                 """INSERT OR IGNORE INTO slack_message_jobs
-                (message_id,conversation_id,message_json,state,result,ack_state)
-                VALUES (?,?,?,'done',?,'skipped')""",
+                (message_id,conversation_id,message_json,state,result,ack_state,notification_state)
+                VALUES (?,?,?,'done',?,'skipped',?)""",
                 (
                     message.message_id,
                     conversation.conversation_id,
                     message.model_dump_json(),
                     result,
+                    "skipped" if duplicate else "pending",
                 ),
             )
             if task_result is not None:
                 bind_result(db, "message:" + message.message_id, task_result)
-            return cursor.rowcount == 1
+            return cursor.rowcount == 1 and not duplicate
 
     def enqueue_learning_question(self, question: QuestionRecord) -> bool:
         """Persist one original-thread notification for a source-bound learning question."""
@@ -405,7 +418,11 @@ class SlackConversationStore:
             row = _ROW.validate_python(
                 db.execute(
                     """SELECT message_json,plan_json FROM slack_message_jobs AS job
-                    WHERE job.state='pending' AND (
+                    WHERE job.state='pending'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM slack_message_jobs AS active
+                        WHERE active.conversation_id=job.conversation_id AND active.state='running'
+                    ) AND (
                         ?=0 OR NOT EXISTS (
                             SELECT 1 FROM knowledge_conversation_events AS event
                             JOIN knowledge_ingress_outbox AS outbox USING(event_key)
