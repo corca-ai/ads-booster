@@ -13,6 +13,38 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import Field, TypeAdapter, ValidationError
 
+from ads_booster.agent.service.application import (
+    CreateAgentRunRequest,
+    MarketingAgentService,
+)
+from ads_booster.agent.service.knowledge_ingress import (
+    CanonicalKnowledgeIngress,
+    PendingKnowledgeIngress,
+)
+from ads_booster.agent.service.knowledge_transfer import KnowledgeTransferProvider
+from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.agent.service.skills import MarketingSkillCatalog
+from ads_booster.agent.service.sqlite_repository import RepositoryAdmission
+from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.channels.http.browser_login import BrowserLogin
+from ads_booster.channels.http.creative_api import dispatch_creative
+from ads_booster.channels.http.delivery_api import dispatch_delivery
+from ads_booster.channels.http.execution_status import build_execution_summary
+from ads_booster.channels.http.image_edit_api import dispatch_image_edit
+from ads_booster.channels.http.jobs import AgentJobs, WebJob
+from ads_booster.channels.http.knowledge_ingress_api import (
+    ApiIngressRequest,
+    build_api_ingress,
+)
+from ads_booster.channels.http.memory_api import dispatch_memory
+from ads_booster.channels.http.oauth import AccessTokenAuthenticator, OAuthIdentity
+from ads_booster.channels.http.performance_api import dispatch_performance
+from ads_booster.channels.http.web_ui import AGENT_RUN_UI
+from ads_booster.channels.slack_commands import SlackCommands
+from ads_booster.channels.slack_conversations import SlackInboxFullError
+from ads_booster.channels.slack_events import SlackEvents
+from ads_booster.channels.task_result_bindings import read_deliveries
+from ads_booster.channels.task_results import result_for
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -23,36 +55,7 @@ from ads_booster.contracts.agent_run import (
 from ads_booster.contracts.knowledge_context import ContextTransferValidationRequest
 from ads_booster.contracts.models import ContractModel
 from ads_booster.knowledge.errors import KnowledgePolicyError
-from ads_booster.agent.service.application import (
-    CreateAgentRunRequest,
-    MarketingAgentService,
-)
-from ads_booster.channels.http.browser_login import BrowserLogin
-from ads_booster.channels.http.creative_api import dispatch_creative
-from ads_booster.channels.http.delivery_api import dispatch_delivery
-from ads_booster.channels.http.image_edit_api import dispatch_image_edit
-from ads_booster.channels.http.jobs import AgentJobs, WebJob
-from ads_booster.agent.service.knowledge_ingress import (
-    CanonicalKnowledgeIngress,
-    PendingKnowledgeIngress,
-)
-from ads_booster.channels.http.knowledge_ingress_api import (
-    ApiIngressRequest,
-    build_api_ingress,
-)
-from ads_booster.agent.service.knowledge_transfer import KnowledgeTransferProvider
-from ads_booster.agent.service.maintenance import MaintenanceGate
 from ads_booster.learning.memory import SQLiteMemoryStore
-from ads_booster.channels.http.memory_api import dispatch_memory
-from ads_booster.channels.http.oauth import AccessTokenAuthenticator, OAuthIdentity
-from ads_booster.channels.http.performance_api import dispatch_performance
-from ads_booster.agent.service.skills import MarketingSkillCatalog
-from ads_booster.agent.service.sqlite_repository import RepositoryAdmission
-from ads_booster.channels.http.web_ui import AGENT_RUN_UI
-from ads_booster.agent.service.work_continuation import continue_work
-from ads_booster.channels.slack_commands import SlackCommands
-from ads_booster.channels.slack_conversations import SlackInboxFullError
-from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.transport.json_types import JsonObject
 
@@ -549,13 +552,28 @@ class MarketingAgentApi:
         run = self.service.repository.get(tenant_id, run_id)
         if run is None:
             raise ValueError("agent_run_not_found")
+        records = self.service.repository.records(tenant_id, run_id)
+        steps = self.service.repository.steps(tenant_id, run_id)
+        task_result = result_for(run, records)
+        deliveries = read_deliveries(self.service.repository.database_path, tenant_id, run_id)
         return _JSON_OBJECT.validate_python(
             {
                 "schema_version": "trace.agent-run-view.v1",
+                "execution": build_execution_summary(
+                    self.service.repository.database_path, run, records
+                ).model_dump(mode="json"),
+                "task": {
+                    "disposition": task_result.task_disposition,
+                    "result": task_result.text,
+                    "accepted_identity": None
+                    if task_result.identity is None
+                    else task_result.identity.model_dump(mode="json"),
+                },
+                "delivery": deliveries,
                 "pending_invocation_sha256": next(
                     (
                         contract_sha256(ToolInvocation.model_validate(item.payload))
-                        for item in reversed(self.service.repository.records(tenant_id, run_id))
+                        for item in reversed(records)
                         if item.kind is AgentRecordKind.INVOCATION
                     ),
                     None,
@@ -563,14 +581,8 @@ class MarketingAgentApi:
                 if run.state.value == "awaiting_approval"
                 else None,
                 "run": run.model_dump(mode="json"),
-                "steps": [
-                    item.model_dump(mode="json")
-                    for item in self.service.repository.steps(tenant_id, run_id)
-                ],
-                "records": [
-                    item.model_dump(mode="json")
-                    for item in self.service.repository.records(tenant_id, run_id)
-                ],
+                "steps": [item.model_dump(mode="json") for item in steps],
+                "records": [item.model_dump(mode="json") for item in records],
             }
         )
 
