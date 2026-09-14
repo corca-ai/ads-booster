@@ -24,6 +24,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.execution_control import checkpoint
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
+from ads_booster.providers.codex_runtime_paths import runtime_read_paths
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -144,7 +145,7 @@ def image_edit_command(  # noqa: PLR0913 - explicit fixed security boundary opti
             (":root", "deny"),
             (":minimal", "read"),
             (str(workspace.resolve()), "write"),
-            (str(executable.resolve()), "read"),
+            *((str(path), "read") for path in runtime_read_paths(executable)),
             *((str(path.resolve()), "read") for path in read_paths),
         )
         entries = ",".join(
