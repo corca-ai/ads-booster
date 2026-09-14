@@ -62,7 +62,8 @@ package.json과 localization.json을 모두 저장한 다음 조립한다. 성�
 ## 4. 주문서·이미지
 
 IMAGE-RULES 전체와 T2 spec을 읽고 국가 input에서 order.md를 작성한다. 같은 일정 ID를 같은 화면 슬롯에 둔다. 대표의 슬롯 배정·숨김 수를 나머지 국가에 유지한다. 슬롯 색 제약과 일정 정렬이 동시에 만족되지 않으면 차이를 결함으로 명시하며 색을 바꾸거나 항목을 창작하지 않는다.
-공통 메타는 common-scene.json에 저장한다. motif·place는 run.json 값, 시각은 package 값. 씬 토큰·소품·몸·색 계열은 IMAGE-RULES §3에서 한 번 도출한다.
+공통 메타는 common-scene.json에 저장한다. motif·place는 run.json 값, 시각은 package 값이다. `CONCEPT-DIRECTION.md`와 선택한 카드 본문을 함께 읽고 컨셉 인상과 출처, 활동 중 순간, 유지할 취향, 상황 필수, 이번 표현, 촬영 손·보이는 손·폰 지지·시점, 최근 완료 런과의 조합 비교를 한 번 도출한다. place는 환경 앵커이며 상황의 닫힌 목록이 아니다.
+실제 공통 prompt-C.txt를 만든 뒤 CONCEPT-DIRECTION §5의 7개 호출 전 점검을 `review-scene-plan.md`에 각각 기록한다. 필수 모순이 남으면 C를 호출하지 않는다. 이 문안과 연출은 국가별로 동일하게 사용한다.
 §0-1과 §4-A/B/L/C대로 대표 A→B, 타국 L, 국가별 C를 실행한다. 먼저 prompt-A/B/L 및 단 하나의 공통 prompt-C.txt를 파일로 저장하고, 실제 도구에 전달한 문자열과 일치시킨다. 국가별 C 복사본은 공통 파일과 바이트 단위로 같아야 한다.
 이미지는 built-in image_gen으로 생성/편집한다. 입력 이미지는 먼저 view_image로 확인한다. 기본 저장 경로에서 런 폴더로 복사하고 출처 경로를 calls.jsonl에 남긴다. 도구가 없으면 대체 생성기를 사용하지 않고 실행 환경 결함으로 보고한다.
 이미지 호출은 `scripts/README.md`의 `image_call.py prepare/error|unresolved/complete/review` receipt 절차를 쓴다. prepare가 반환한 request 객체를 그대로 built-in image_gen에 전달하고 call_id를 수동으로 옮겨 적지 않는다. 호출 오류 시 receipt에 근거를 기록하고 중단한다. 출력 생성 여부가 불명한 request를 재호출하지 않고, 실제 source를 회수한 경우에만 unresolved receipt를 complete한다. CLI는 built-in 호출을 하거나 별도 API로 전환하지 않는다. receipt가 단계·국가·입력·프롬프트 해시·출력·실행자를 호출 로그에 연결한다. 알 수 없는 모델명·시간·호출 결과를 추정하지 않는다.

@@ -925,5 +925,5 @@ source path/hash set to match the frozen workflow's receipts. A durable provider
 readback after a crash; a child-written completion summary alone cannot certify success.
 
 The imported workflow originates at `corca-ai/trace-marketing-context` revision
-`6f462377d7ecf18c92ed716eb2d8dc80d10eaca9`. This provenance is not a live repository dependency.
+`57779174c8be0dde741bab436fa21a61c2933f90`. This provenance is not a live repository dependency.
 The executable product and its installed skill catalog are owned by `corca-ai/ads-booster`.
