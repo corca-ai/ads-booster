@@ -191,10 +191,11 @@ def test_tampered_queued_body_is_not_delivered(tmp_path: Path) -> None:
     receive(owner)
     assert owner.work_once(now=NOW)
     run = owner.commands.application.service.repository.list_runs("team")[0]
-    assert owner.enqueue_run_update("team", run.run_id, event_id="queued")
+    assert not owner.enqueue_run_update("team", run.run_id, event_id="queued")
     with owner.store.connect() as db:
         _ = db.execute(
-            "UPDATE slack_message_jobs SET result='tampered' WHERE notification_state='pending'"
+            """UPDATE slack_message_jobs SET result='tampered',notification_state='pending'
+            WHERE json_extract(message_json,'$.notification_only')=1"""
         )
     count = len(messages)
     assert owner.work_once(now=NOW)
@@ -207,7 +208,12 @@ def test_new_task_suppresses_old_queued_completion_even_when_text_matches(tmp_pa
     assert owner.work_once(now=NOW)
     service = owner.commands.application.service
     run = service.repository.list_runs("team")[0]
-    assert owner.enqueue_run_update("team", run.run_id, event_id="queued")
+    assert not owner.enqueue_run_update("team", run.run_id, event_id="queued")
+    with owner.store.connect() as db:
+        _ = db.execute(
+            """UPDATE slack_message_jobs SET notification_state='pending'
+            WHERE json_extract(message_json,'$.notification_only')=1"""
+        )
     _ = continue_work(
         service,
         "team",

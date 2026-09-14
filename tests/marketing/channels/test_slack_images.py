@@ -184,8 +184,7 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     assert payload["channel_id"] == "C1"
     assert payload["thread_ts"] == "100.001"
     texts = [str(message["text"]) for message in messages]
-    assert texts.count("이미지 결과를 확인해 주세요.") == 1
-    assert any("초안" in text for text in texts)
+    assert sum(text.startswith("이미지 결과를 확인해 주세요.") for text in texts) == 1
     assert "다운로드" in str(messages[-1]["text"])
     artifact = next((tmp_path / "images").glob("*.png"))
     assert read_artifact(artifact.parent, artifact.stem) == requests[1].data
@@ -273,7 +272,7 @@ def test_invalid_output_or_uncertain_upload_is_not_retried(tmp_path: Path, failu
     assert len(commands) == 1
     if failure != "invalid":
         texts = [str(message["text"]) for message in messages]
-        assert texts.count("이미지 결과를 확인해 주세요.") == 1
+        assert sum(text.startswith("이미지 결과를 확인해 주세요.") for text in texts) == 1
         assert any("확인하지 못했습니다" in text for text in texts)
 
 

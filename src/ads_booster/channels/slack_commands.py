@@ -309,7 +309,10 @@ class SlackCommands:
                             _ = self.application.service.submit_input(
                                 identity.tenant_id, run_id, {"note": text}, now=now
                             )
-                result, state = self.summary(identity.tenant_id, run_id), "done"
+                result, state = (
+                    self.summary(identity.tenant_id, run_id, include_status=False),
+                    "done",
+                )
                 current = self.application.service.repository.get(identity.tenant_id, run_id)
                 defer_notification = current is not None and current.state.value == "running"
             except Exception:  # noqa: BLE001 - record failure without repeating effects.
@@ -337,42 +340,43 @@ class SlackCommands:
         claim = self.drive_queue.claim("slack_command", now)
         if claim is None:
             return False
-        with self.application.service.run_locks.hold(claim.origin.tenant_id, claim.origin.run_id):
-            with self.drive_queue.ownership(claim=claim, now=now):
-                try:
-                    installation = self.application.store.resolve_installation(
-                        ChannelKind.SLACK, self.team_id
-                    )
-                    identity = self.application.store.resolve_identity(
-                        installation.installation_id, claim.origin.principal_id
-                    )
-                except ValueError:
-                    self.drive_queue.block(claim, "actor_revoked", now)
-                    return True
-                if (
-                    claim.origin.principal_id not in self.allowed_user_ids
-                    or identity.tenant_id != claim.origin.tenant_id
-                ):
-                    self.drive_queue.block(claim, "actor_revoked", now)
-                    return True
-                if claim.phase == "drive":
-                    _ = self.application.service.drive(
-                        identity.tenant_id, claim.origin.run_id, now=now
-                    )
-                    return True
-                run = self.application.service.repository.get(
-                    identity.tenant_id, claim.origin.run_id
+        with (
+            self.application.service.run_locks.hold(claim.origin.tenant_id, claim.origin.run_id),
+            self.drive_queue.ownership(claim=claim, now=now),
+        ):
+            try:
+                installation = self.application.store.resolve_installation(
+                    ChannelKind.SLACK, self.team_id
                 )
-                if run is not None and run.state.value != "running":
-                    with self._connect() as db:
-                        _ = db.execute(
-                            """UPDATE slack_command_jobs SET result_text=?,
+                identity = self.application.store.resolve_identity(
+                    installation.installation_id, claim.origin.principal_id
+                )
+            except ValueError:
+                self.drive_queue.block(claim, "actor_revoked", now)
+                return True
+            if (
+                claim.origin.principal_id not in self.allowed_user_ids
+                or identity.tenant_id != claim.origin.tenant_id
+            ):
+                self.drive_queue.block(claim, "actor_revoked", now)
+                return True
+            if claim.phase == "drive":
+                _ = self.application.service.drive(identity.tenant_id, claim.origin.run_id, now=now)
+                return True
+            run = self.application.service.repository.get(identity.tenant_id, claim.origin.run_id)
+            if run is not None and run.state.value != "running":
+                with self._connect() as db:
+                    _ = db.execute(
+                        """UPDATE slack_command_jobs SET result_text=?,
                             notification_state='pending' WHERE job_id=?
                             AND notification_state='deferred'""",
-                            (self.summary(identity.tenant_id, run.run_id), claim.origin.event_id),
-                        )
-                        self._bind_job_result(db, run, claim.origin.event_id)
-                _ = self.drive_queue.discard(claim, now=now)
+                        (
+                            self.summary(identity.tenant_id, run.run_id, include_status=False),
+                            claim.origin.event_id,
+                        ),
+                    )
+                    self._bind_job_result(db, run, claim.origin.event_id)
+            _ = self.drive_queue.discard(claim, now=now)
         _ = self._notify()
         return True
 
@@ -505,8 +509,14 @@ class SlackCommands:
             for page in range(1, pages + 1)
         )
 
-    def summary(self, tenant_id: str, run_id: str) -> str:
+    def summary(self, tenant_id: str, run_id: str, *, include_status: bool = True) -> str:
         with self.application.service.run_locks.hold(tenant_id, run_id):
+            run = self.application.service.repository.get(tenant_id, run_id)
+            if run is None:
+                raise ValueError("agent_run_not_found")
+            records = self.application.service.repository.records(tenant_id, run_id)
+            if not include_status and run.state is not AgentRunState.AWAITING_APPROVAL:
+                return result_for(run, records).text
             return self._summary(tenant_id, run_id)
 
     def _summary(self, tenant_id: str, run_id: str) -> str:

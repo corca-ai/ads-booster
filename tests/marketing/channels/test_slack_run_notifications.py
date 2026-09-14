@@ -50,7 +50,14 @@ def test_claimed_notification_is_not_resent_after_response_loss(tmp_path: Path) 
     assert owner.work_once(now=NOW)
     run = owner.commands.application.service.repository.list_runs("team")[0]
     assert owner.store.enqueue_run_notification(
-        "team", run.run_id, event_id="worker-operation", result="새 작업 결과"
+        "team",
+        run.run_id,
+        event_id="worker-operation",
+        result="새 작업 결과",
+        task_result=result_for(
+            run,
+            owner.commands.application.service.repository.records("team", run.run_id),
+        ),
     )
     claimed = owner.store.claim_notification()
     assert claimed is not None
