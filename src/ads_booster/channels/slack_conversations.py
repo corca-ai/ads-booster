@@ -404,7 +404,11 @@ class SlackConversationStore:
             row = _ROW.validate_python(
                 db.execute(
                     """SELECT message_json,plan_json FROM slack_message_jobs AS job
-                    WHERE job.state='pending' AND (
+                    WHERE job.state='pending'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM slack_message_jobs AS active
+                        WHERE active.conversation_id=job.conversation_id AND active.state='running'
+                    ) AND (
                         ?=0 OR NOT EXISTS (
                             SELECT 1 FROM knowledge_conversation_events AS event
                             JOIN knowledge_ingress_outbox AS outbox USING(event_key)

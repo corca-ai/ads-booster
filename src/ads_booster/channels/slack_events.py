@@ -120,9 +120,7 @@ _FAILURE_REPLIES = {
     "agent_approval_invocation_changed": (
         "실행할 내용이 변경되어 이전 요청으로 실행하지 않았습니다."
     ),
-    "slack_production_target_changed": (
-        "대상 작업이 변경되어 이전 요청으로 실행하지 않았습니다."
-    ),
+    "slack_production_target_changed": ("대상 작업이 변경되어 이전 요청으로 실행하지 않았습니다."),
     "agent_run_not_awaiting_approval": (
         "해당 작업은 이미 처리되었거나 변경되어 다시 실행하지 않았습니다."
     ),
@@ -202,7 +200,7 @@ class SlackEvents:
                 )
             ),
         )
-        self.private_service.execution_lock = self.commands.application.service.execution_lock
+        self.private_service.run_locks = self.commands.application.service.run_locks
         self.commands.application.service.boundary_signal = self._pending_steering
         self.private_service.boundary_signal = self._pending_steering
         self.commands.application.service.current_context = self._current_context
@@ -595,7 +593,9 @@ class SlackEvents:
             identity = self._authorize(conversation, message.user_id)
             service = self._service(conversation)
             # The same lock owns plan binding, Run mutation and thread progression.
-            with service.execution_lock:
+            with service.run_locks.hold(
+                conversation.tenant_id, conversation.current_run or conversation.conversation_id
+            ):
                 if plan is None:
                     plan = self._plan(conversation, message)
                     self.store.save_plan(message, plan)
@@ -1267,7 +1267,7 @@ class SlackEvents:
         if conversation is None or conversation.closed:
             return False
         service = self._service(conversation)
-        with service.execution_lock:
+        with service.run_locks.hold(tenant_id, run_id):
             run = service.repository.get(tenant_id, run_id)
             if run is None:
                 return False
@@ -1279,7 +1279,9 @@ class SlackEvents:
             )
 
     def summary(self, conversation: Conversation, *, include_status: bool = False) -> str:
-        with self._service(conversation).execution_lock:
+        with self._service(conversation).run_locks.hold(
+            conversation.tenant_id, conversation.current_run
+        ):
             return self._summary(conversation, include_status=include_status)
 
     def _summary(self, conversation: Conversation, *, include_status: bool) -> str:

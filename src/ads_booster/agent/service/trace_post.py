@@ -168,6 +168,7 @@ class TracePostTool:
     on_completed: Callable[[str, str, str], None] | None = None
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     _worker_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _active_operations: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.root.resolve().is_relative_to(self.assets.artifact_root.resolve()):
@@ -300,15 +301,7 @@ class TracePostTool:
         return workspace.resolve(strict=True)
 
     def work_once(self) -> JsonObject:
-        if not self._worker_lock.acquire(blocking=False):
-            return {"state": "busy"}
-        try:
-            return self._work_once()
-        finally:
-            self._worker_lock.release()
-
-    def _work_once(self) -> JsonObject:
-        with self.service.execution_lock, closing(self._db()) as db, db:
+        with self._worker_lock, closing(self._db()) as db:
             rows = cast(
                 "list[tuple[str,str,str | None,str | None]]",
                 db.execute(
@@ -323,6 +316,8 @@ class TracePostTool:
             uncertain = False
             for candidate in rows:
                 candidate_job = _Job.parse(candidate[0])
+                if candidate_job.operation_id in self._active_operations:
+                    continue
                 if candidate[2] is not None or candidate[1] in ("started", "generated"):
                     selected = candidate
                     break
@@ -335,8 +330,21 @@ class TracePostTool:
                 return {
                     "state": "awaiting_ack" if waiting else "uncertain" if uncertain else "idle"
                 }
-            row = selected
-            job = _Job.parse(row[0])
+            job = _Job.parse(selected[0])
+            self._active_operations.add(job.operation_id)
+        try:
+            return self._work_once(selected)
+        finally:
+            with self._worker_lock:
+                self._active_operations.remove(job.operation_id)
+
+    def _work_once(self, row: tuple[str, str, str | None, str | None]) -> JsonObject:
+        job = _Job.parse(row[0])
+        with (
+            self.service.run_locks.hold(job.invocation.tenant_id or "", job.invocation.run_id),
+            closing(self._db()) as db,
+            db,
+        ):
             if row[2] is not None:
                 return self._finish(job, ToolExecutionResult.model_validate_json(row[2]))
             if row[1] == "generated" and row[3] is not None:
@@ -642,7 +650,9 @@ class TracePostTool:
     def _legacy_review_marker(self, job: _Job) -> bool:
         if job.invocation.tenant_id is None:
             raise ValueError("trace_post_tenant_required")
-        for record in self.service.repository.records(job.invocation.tenant_id, job.invocation.run_id):
+        for record in self.service.repository.records(
+            job.invocation.tenant_id, job.invocation.run_id
+        ):
             if (
                 record.kind is not AgentRecordKind.CAPABILITY_SNAPSHOT
                 or record.payload_sha256 != job.invocation.capability_snapshot_sha256

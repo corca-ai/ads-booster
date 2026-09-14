@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -82,14 +83,20 @@ def connect_trace_post(
 
 
 def run_trace_post_worker(tool: TracePostTool, stop: Event, gate: MaintenanceGate) -> None:
-    while not stop.is_set():
-        try:
-            with gate.work() as admitted:
-                if admitted:
-                    _ = tool.work_once()
-        except Exception:  # noqa: BLE001 - durable queue state survives worker failures.
-            _LOGGER.warning("trace_post_queue_poll_failed")
-        _ = stop.wait(1)
+    def lane() -> None:
+        while not stop.is_set():
+            try:
+                with gate.work() as admitted:
+                    if admitted:
+                        _ = tool.work_once()
+            except Exception:  # noqa: BLE001 - durable queue state survives worker failures.
+                _LOGGER.warning("trace_post_queue_poll_failed")
+            _ = stop.wait(1)
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="trace-post") as pool:
+        workers = [pool.submit(lane) for _ in range(2)]
+        for worker in workers:
+            worker.result()
 
 
 __all__ = ["TracePostCatalog", "connect_trace_post", "run_trace_post_worker"]

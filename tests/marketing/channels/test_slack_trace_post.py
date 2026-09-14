@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
+from threading import Barrier
 from typing import TYPE_CHECKING, override
 
 import pytest
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from urllib.request import Request
 
     from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+    from ads_booster.providers.codex_trace_post import TracePostProviderResult
 
 
 def upload_payload(request: Request) -> dict[str, object]:
@@ -158,3 +161,58 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
     assert replace(tool).work_once()["state"] == "idle"
     assert provider.calls == 1
     assert len(uploads) == 18
+
+
+def test_two_trace_posts_generate_in_parallel_without_reclaiming_active_jobs(
+    tmp_path: Path,
+) -> None:
+
+    owner, messages, uploads, _ = configured(tmp_path)
+    service = owner.commands.application.service
+    barrier = Barrier(2)
+
+    class ParallelProvider(FakeProvider):
+        @override
+        def run(
+            self, *, workspace: Path, instruction: str, timeout_seconds: float
+        ) -> TracePostProviderResult:
+            _ = barrier.wait(timeout=8)
+            return super().run(
+                workspace=workspace, instruction=instruction, timeout_seconds=timeout_seconds
+            )
+
+    def completed(tenant: str, run: str, event: str) -> None:
+        _ = owner.enqueue_run_update(tenant, run, event_id=event)
+
+    provider = ParallelProvider()
+    root = tmp_path / "artifacts"
+    tool = TracePostTool(
+        service=service,
+        assets=SqliteCreativeAssetRepository(service.repository.database_path, root),
+        root=root / "trace-post",
+        bundle=Path(str(files("ads_booster").joinpath("trace_post_bundle"))),
+        provider=provider,
+        config=TracePostConfig(tmp_path / "codex", "fixture", 3600),
+        clock=lambda: NOW,
+        on_completed=completed,
+    )
+    service.registry = ToolRegistry((trace_post_descriptor(now=NOW),))
+    service.tools = {"creative.trace_post": tool}
+    service.reasoning = RequestedTracePost()
+    for ts in ("100.001", "200.001"):
+        receive(owner, text="<@UBOT> trace-post로 이미지 만들어줘", ts=ts)
+        assert owner.work_once(now=NOW)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        jobs = [pool.submit(tool.work_once) for _ in range(2)]
+        results = [job.result(timeout=15) for job in jobs]
+    assert [result["state"] for result in results] == ["completed", "completed"]
+    assert provider.calls == 2
+    while owner.work_once(now=NOW):
+        pass
+    assert len(uploads) == 36
+    assert all(run.state is AgentRunState.COMPLETED for run in service.repository.list_runs("team"))
+    assert not tool._active_operations
+    assert {str(message["thread_ts"]) for message in messages if "thread_ts" in message} == {
+        "100.001",
+        "200.001",
+    }

@@ -25,7 +25,7 @@ _MAX_NOTE_CHARS = 20_000
 
 
 def interrupted_reasoning(service: MarketingAgentService, run: AgentRun) -> bool:
-    """The caller holds execution_lock; no tool intent was committed after observation."""
+    """The caller holds the Run lock; no tool intent was committed after observation."""
     if run.state is not AgentRunState.RUNNING:
         return False
     steps = service.repository.steps(run.tenant_id, run.run_id)
@@ -65,7 +65,7 @@ def continue_work(  # noqa: PLR0913 - authenticated identity and idempotency are
         "inputs": inputs or {},
     }
     record_id = f"{run_id}:continuation:{contract_sha256({'event_id': event_id})[:32]}"
-    with service.execution_lock:
+    with service.run_locks.hold(tenant_id, run_id):
         run = service.repository.get(tenant_id, run_id)
         if run is None:
             raise ValueError("agent_run_not_found")

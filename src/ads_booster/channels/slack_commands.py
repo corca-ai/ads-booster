@@ -199,8 +199,13 @@ class SlackCommands:
             _ = db.execute("BEGIN IMMEDIATE")
             row = _ROW.validate_python(
                 db.execute(
-                    """SELECT job_id,user_id,command_json FROM slack_command_jobs WHERE
-                    state='pending' ORDER BY rowid LIMIT 1"""
+                    """SELECT job_id,user_id,command_json FROM slack_command_jobs AS job WHERE
+                    state='pending' AND NOT EXISTS (
+                        SELECT 1 FROM slack_command_jobs AS active
+                        WHERE active.state='running'
+                        AND json_extract(active.command_json,'$.run_id')
+                            =json_extract(job.command_json,'$.run_id')
+                    ) ORDER BY rowid LIMIT 1"""
                 ).fetchone()
             )
             if row is not None:
@@ -256,7 +261,7 @@ class SlackCommands:
                         now=now,
                     )
                 else:
-                    with self.application.service.execution_lock:
+                    with self.application.service.run_locks.hold(identity.tenant_id, run_id):
                         run = self.application.service.repository.get(identity.tenant_id, run_id)
                         if run is None or run.revision != command["revision"]:
                             raise ValueError("agent_input_revision_changed")  # noqa: TRY301
@@ -364,7 +369,7 @@ class SlackCommands:
         )
 
     def summary(self, tenant_id: str, run_id: str) -> str:
-        with self.application.service.execution_lock:
+        with self.application.service.run_locks.hold(tenant_id, run_id):
             return self._summary(tenant_id, run_id)
 
     def _summary(self, tenant_id: str, run_id: str) -> str:

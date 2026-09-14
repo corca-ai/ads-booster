@@ -207,7 +207,7 @@ class AgentJobs:
         tenant, job_id, principal, raw = row
         job = WebJob.model_validate_json(raw)
         try:
-            with self.service.execution_lock:
+            with self.service.run_locks.hold(tenant, job.run_id):
                 if job.action == "create":
                     if job.goal is None or job.budget is None:
                         raise ValueError("agent_job_goal_required")  # noqa: TRY301

@@ -373,7 +373,7 @@ AND stage='uncertain'""",
     def _repair_uncertain(self) -> int:
         """Repair local projection only; rotate failed projections and keep useful work moving."""
         failed = 0
-        with self.service.execution_lock, closing(self._db()) as db:
+        with closing(self._db()) as db:
             rows = cast(
                 "list[tuple[str, int]]",
                 db.execute(
@@ -390,10 +390,13 @@ WHERE operation=?""",
                         (job.operation_id,),
                     )
                 try:
-                    if self._terminal_readback(job):
-                        continue
-                    if not row[1]:
-                        self._project_uncertain(job)
+                    with self.service.run_locks.hold(
+                        job.source.scope.workspace_id, job.invocation.run_id
+                    ):
+                        if self._terminal_readback(job):
+                            continue
+                        if not row[1]:
+                            self._project_uncertain(job)
                 except Exception:  # noqa: BLE001 - local projection failure remains visible/retryable.
                     failed += 1
         return failed
@@ -423,8 +426,8 @@ WHERE operation=?""",
             return True
         return False
 
-    def _work_once(self) -> JsonObject:  # noqa: C901, PLR0911, PLR0912 - explicit durable boundaries.
-        with self.service.execution_lock, closing(self._db()) as db, db:
+    def _work_once(self) -> JsonObject:
+        with closing(self._db()) as db, db:
             rows = cast(
                 "list[tuple[str,str,str | None]]",
                 db.execute(
@@ -442,8 +445,15 @@ WHERE operation=?""",
                     break
             if selected is None:
                 return {"state": "awaiting_ack"}
-            row = selected
-            job = ImageEditJob.model_validate_json(row[0])
+        return self._process_job(selected)
+
+    def _process_job(self, row: tuple[str, str, str | None]) -> JsonObject:  # noqa: C901,PLR0911 - durable preflight/dispatch/recovery boundaries.
+        job = ImageEditJob.model_validate_json(row[0])
+        with (
+            self.service.run_locks.hold(job.source.scope.workspace_id, job.invocation.run_id),
+            closing(self._db()) as db,
+            db,
+        ):
             if row[2] is not None:
                 return self._finish(job, ToolExecutionResult.model_validate_json(row[2]))
             if row[1] == "started":
@@ -503,7 +513,11 @@ WHERE operation=?""",
                 timeout_seconds=job.config.timeout_seconds,
             )
         except Exception:  # noqa: BLE001 - uncertain paid generation is never repeated.
-            with self.service.execution_lock, closing(self._db()) as failed_db, failed_db:
+            with (
+                self.service.run_locks.hold(job.source.scope.workspace_id, job.invocation.run_id),
+                closing(self._db()) as failed_db,
+                failed_db,
+            ):
                 _ = failed_db.execute(
                     "UPDATE image_edit_jobs SET stage='uncertain' WHERE operation=?",
                     (job.operation_id,),
@@ -511,7 +525,7 @@ WHERE operation=?""",
                 failed_db.commit()
                 self._project_uncertain(job)
             return {"state": "uncertain", "operation_id": job.operation_id}
-        with self.service.execution_lock:
+        with self.service.run_locks.hold(job.source.scope.workspace_id, job.invocation.run_id):
             try:
                 output = self._result(job, generated, workspace, request, source)
             except ValueError, OSError, CodexCliError:
@@ -703,7 +717,7 @@ WHERE operation=?""",
         """Trusted reviewer projection: unknown effects remain unknown and consume cost."""
         if not note.strip():
             raise ValueError("image_edit_abandonment_note_required")
-        with self.service.execution_lock:
+        with self.service.run_locks.hold(tenant_id, run_id):
             job, stage, raw, _ = self._operation(tenant_id, run_id, operation_id)
             if invocation_sha256 != contract_sha256(job.invocation):
                 raise ValueError("image_edit_abandonment_target_mismatch")
