@@ -1315,6 +1315,42 @@
         "5ed879dbbfda9f03da8716e8cbf36c0082289c772f3dedefd693e8d18f391660",
         "9ecb1d4cffd1a23993884390fcf10979e2e71896980beb41d2dc7ae3e20f8650"
       ]
+    },
+    {
+      "fingerprint": "e4f37ffba8d3bda11d291794cd6dafc38298c32e5a7f62b598902e67746909ca",
+      "reason": "Independent test modules intentionally declare their production dependencies directly; a shared import wrapper would hide each test's boundary and couple fixtures.",
+      "memberHashes": [
+        "3c69ec015ee6dc25ea59ff43300b5d2015422c12e42c9b055faf3dec8175ee74",
+        "3c69ec015ee6dc25ea59ff43300b5d2015422c12e42c9b055faf3dec8175ee74",
+        "3c69ec015ee6dc25ea59ff43300b5d2015422c12e42c9b055faf3dec8175ee74",
+        "3c69ec015ee6dc25ea59ff43300b5d2015422c12e42c9b055faf3dec8175ee74"
+      ]
+    },
+    {
+      "fingerprint": "3a054a6e66ca5bc74021e448f6e030ebef657dc7dd4e4eeb4c7b4744815344c0",
+      "reason": "Slack asset intake and delivery tests intentionally own separate channel and review contracts; repeated imports preserve those independent test dependencies.",
+      "memberHashes": [
+        "5cd13a0404e9e5355c67633df8ef2b9e9bab30d5babcc14df2c2711d05485b7f",
+        "f7d6ce3fd4279b62bda0babd7ae621657ef9c10212f09812f66b33e0505919ff"
+      ]
+    },
+    {
+      "fingerprint": "c6d99ed1e934e834d0c846c44eb885e032437492f4b5a07ba443f1cb51000c27",
+      "reason": "Creative API and delivery tests intentionally import their own agent-run and reasoning contracts so test coverage stays independent of production composition.",
+      "memberHashes": [
+        "7b091dcbf8b7b4aa561d3219a93d88e206cdb6d38da1aa49126a49c8b20a4d40",
+        "e94a3e0c69c5852d081fc4dc47dfb934f6f6677452a6b5ae3e20c69f24e85337"
+      ]
+    },
+    {
+      "fingerprint": "d6286ea84093cd86f5d66c9c802d8abc68ef186dcc78d33b54ebd56ff1af45c8",
+      "reason": "These delivery tests exercise distinct request, planner, persistence, and authority-failure contracts; the structural subdag has no shared source and extracting it would hide those independent assertions.",
+      "memberHashes": [
+        "56e8c8ed8e9e51246152c731625aa6898ee1a01dfdfea3202d9b9832ce6c3437",
+        "8b09796842177dfe12ecbfe9a8d5de95ca445ad629630c61e9d8da34339b2bc0",
+        "ae0aab85d31abfbde44513785b6ff2770d97a51a1a081e04deecfd4f63626434",
+        "e8382497e1650803bb5b483b41e48bef8db4e860e1174389f4bf2830f0abe22e"
+      ]
     }
   ]
 }
