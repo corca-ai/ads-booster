@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast, override
@@ -72,19 +74,50 @@ def validate_token(token: str) -> str:
 
 
 def token_from_env(env: Mapping[str, str]) -> str | None:
+    """Resolve service-owned github.com authentication once, before tool registration."""
+    if env.get("TRACE_MARKETING_GITHUB_ENABLED", "true").lower() == "false":
+        return None
     configured = env.get("TRACE_MARKETING_GITHUB_TOKEN_FILE")
     path = (
         Path(configured).expanduser()
         if configured
         else Path.home() / ".config/trace-marketing/github.token"
     )
-    if not path.exists() and configured is None:
-        return None
+    if not path.exists() and not path.is_symlink() and configured is None:
+        for key in ("GH_TOKEN", "GITHUB_TOKEN"):
+            if env.get(key):
+                return validate_token(env[key])
+        return _cli_token(env)
     if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
         raise ValueError("github_token_file_requires_private_regular_file")
     if path.stat().st_size > MAX_TOKEN_BYTES:
         raise ValueError("github_token_invalid")
     return validate_token(path.read_text().strip())
+
+
+def _cli_token(env: Mapping[str, str]) -> str | None:
+    search_path = env.get("PATH")
+    if not search_path:
+        return None
+    executable = shutil.which("gh", path=search_path)
+    if executable is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed read-only argv, no model input or shell.
+            [executable, "auth", "token", "--hostname", "github.com"],
+            env={**env, "GH_PROMPT_DISABLED": "1"},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except OSError, subprocess.TimeoutExpired, UnicodeError:
+        # Optional login lookup must not expose captured credentials or stop Slack startup.
+        return None
+    if result.returncode != 0:
+        return None
+    return validate_token(result.stdout.strip())
 
 
 def descriptor(*, now: datetime) -> ToolDescriptor:

@@ -242,8 +242,11 @@ Corca의 기존 환경에서는 이 문서의 `agent.example.com`을 `marketing-
 
 ## 선택 기능: Slack에서 ads-booster 이슈 생성
 
-기능이 포함된 main 업데이트 적용 후, 서비스 사용자로 `trace-marketing server github-setup`을
-실행한다. GitHub fine-grained token의 resource owner는 `corca-ai`, 대상은 `ads-booster` 하나,
+main 업데이트 후 서비스는 전용 토큰 파일, 서비스 환경의 `GH_TOKEN`·`GITHUB_TOKEN`,
+서비스 사용자의 `github.com` GitHub CLI 로그인 순으로 인증을 찾는다. 기존 인증에 이슈 쓰기
+권한이 있으면 별도 토큰 파일 없이 등록 도구가 활성화된다. 다른 사용자나 개발 PC의 로그인은
+가져오지 않으며 systemd는 대화형 셸의 환경변수를 자동 상속하지 않는다.
+인증이 없다면 서비스 사용자로 `trace-marketing server github-setup`을 실행한다. GitHub fine-grained token의 resource owner는 `corca-ai`, 대상은 `ads-booster` 하나,
 권한은 Issues: Read and write로 설정한다. 조직 승인이 필요하면 승인 후 사용한다.
 토큰은 일반 터미널의 숨김 입력에만 넣는다. 명령은 저장소 접근을 확인한 뒤 0600 권한의
 `~/.config/trace-marketing/github.token`에 저장한다. 접근 확인은 이슈 쓰기 성공의 증거가 아니다.
@@ -252,6 +255,8 @@ Slack 설정·기존 백업·터널은 변경하지 않는다.
 진행 중인 작업/업데이트가 없을 때 `systemctl --user restart trace-marketing.service`를 실행한다.
 이 토큰 파일은 릴리스 바깥에 있어 이후 5분 main 업데이트에도 유지된다.
 별도 경로를 사용할 때만 서비스 환경의 `TRACE_MARKETING_GITHUB_TOKEN_FILE`을 지정한다.
+기능을 끄려면 `agent.env`에 `TRACE_MARKETING_GITHUB_ENABLED=false`를 설정하고 재시작한다.
+토큰 파일만 삭제하면 환경변수·CLI 인증 탐색으로 넘어간다.
 
 허용된 공유 채널에서 `@Trace Marketing Agent ads-booster에 다음 내용으로 이슈 올려줘: ...`를
 보낸다. `검토 1`부터 모든 페이지에서 저장소·제목·본문을 확인하고, 승인 담당자가

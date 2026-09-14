@@ -37,7 +37,9 @@ from ads_booster.agent.runtime import (
     tool_call_payload,
     tool_receipt_from_event,
 )
+from ads_booster.agent.service.completion_evidence import CompletionEvidenceReader
 from ads_booster.agent.service.drive_work import DriveAdmissionConflict
+from ads_booster.agent.service.pending_approval import pending_approval
 from ads_booster.agent.service.run_limits import (
     ProgressObservation,
     observe_progress,
@@ -54,7 +56,11 @@ from ads_booster.agent.service.sqlite_repository import (
 )
 from ads_booster.agent.service.task_admission import completion_revision_fence, task_at_boundary
 from ads_booster.agent.service.task_completion import CompletionContext, TaskCompletionService
-from ads_booster.agent.service.task_drive import plan_task, project_decision
+from ads_booster.agent.service.task_drive import (
+    DecisionProjectionContext,
+    plan_task,
+    project_decision,
+)
 from ads_booster.agent.service.task_input import current_user_message
 from ads_booster.agent.service.task_progress import (
     TaskProjection,
@@ -235,6 +241,15 @@ class MarketingAgentService:
                 ),
                 state=AgentRunState.STOPPED,
                 expected_revision=run.revision,
+                records=(
+                    _record(
+                        run,
+                        record_id=f"{run.run_id}:cancelled:{run.revision}",
+                        kind=AgentRecordKind.EVIDENCE,
+                        payload={"schema_version": "trace.work-cancelled.v1"},
+                        now=now,
+                    ),
+                ),
             )
 
     def drive(self, tenant_id: str, run_id: str, *, now: datetime) -> AgentRun:
@@ -278,7 +293,7 @@ class MarketingAgentService:
             tenant_id, run_id = run.tenant_id, run.run_id
             if run.state in {AgentRunState.AWAITING_TOOL, AgentRunState.AWAITING_RECONCILIATION}:
                 if run.state is AgentRunState.AWAITING_RECONCILIATION:
-                    invocation = self._latest_invocation(tenant_id, run_id)
+                    invocation = self._execution_invocation(tenant_id, run_id)
                     if self._deferred_for_invocation(run, invocation) is None:
                         return run
                 return self._resume_execution(run, now=now)
@@ -343,7 +358,7 @@ class MarketingAgentService:
         )
 
     def _resume_execution(self, run: AgentRun, *, now: datetime) -> AgentRun:
-        invocation = self._latest_invocation(run.tenant_id, run.run_id)
+        invocation = self._execution_invocation(run.tenant_id, run.run_id)
         descriptor = self._descriptor_for_invocation(run.tenant_id, run.run_id, invocation)
         session = self.runtime_store.load(run.run_id)
         acknowledgement = self._deferred_for_invocation(run, invocation)
@@ -408,7 +423,14 @@ class MarketingAgentService:
         return self._evaluate_tool_result(run, receipt, evidence_record.payload, now=now)
 
     def _resume_approved_invocation(self, run: AgentRun, *, now: datetime) -> AgentRun:
-        invocation = self._latest_invocation(run.tenant_id, run.run_id)
+        records = self.repository.records(run.tenant_id, run.run_id)
+        approval_record = next(r for r in reversed(records) if r.kind is AgentRecordKind.APPROVAL)
+        invocation = next(
+            ToolInvocation.model_validate(r.payload)
+            for r in records
+            if r.kind is AgentRecordKind.INVOCATION
+            and contract_sha256(r.payload) == approval_record.payload["invocation_sha256"]
+        )
         descriptor = self._descriptor_for_invocation(run.tenant_id, run.run_id, invocation)
         approval = self._approval_for_invocation(run.tenant_id, run.run_id, invocation, now=now)
         return self._dispatch_tool(
@@ -471,13 +493,17 @@ class MarketingAgentService:
         now: datetime,
         expires_at: datetime | None = None,
         expected_invocation_sha256: str | None = None,
+        request_event_id: str | None = None,
+        request_text_sha256: str | None = None,
     ) -> AgentRun:
         """Resolve one exact pending invocation and dispatch only a valid grant."""
         with self.execution_lock:
             run = self._required_run(tenant_id, run_id)
             if run.state is not AgentRunState.AWAITING_APPROVAL:
                 raise ValueError("agent_run_not_awaiting_approval")
-            invocation = self._latest_invocation(tenant_id, run_id)
+            invocation = self.pending_approval(tenant_id, run_id)
+            if invocation is None:
+                raise ValueError("pending_tool_invocation_missing")
             if (
                 expected_invocation_sha256 is not None
                 and contract_sha256(invocation) != expected_invocation_sha256
@@ -500,6 +526,8 @@ class MarketingAgentService:
                 decision="granted" if granted else "rejected",
                 expires_at=expires_at,
                 decided_at=now,
+                request_event_id=request_event_id,
+                request_text_sha256=request_text_sha256,
             )
             approval_sha256 = contract_sha256(approval)
             decided = self._append_step(
@@ -624,12 +652,23 @@ class MarketingAgentService:
         current_context = None if self.current_context is None else self.current_context(run, now)
         if current_context is not None:
             evidence = (*evidence, current_context)
+        pending = self.pending_approval(run.tenant_id, run.run_id)
         reasoning_request = ReasoningRequest(
             schema_version="trace.reasoning-request.v1",
             run_id=run.run_id,
             phase="plan" if not evidence else "replan",
             goal=run.goal,
             current_user_message=user_message,
+            pending_approval=(
+                None
+                if pending is None
+                else {
+                    "invocation": pending.model_dump(mode="json"),
+                    "capability_id": self._descriptor_for_invocation(
+                        run.tenant_id, run.run_id, pending
+                    ).capability_id,
+                }
+            ),
             capability_snapshot=snapshot,
             evidence=evidence,
             remaining_tool_calls=max(
@@ -711,7 +750,26 @@ class MarketingAgentService:
             "request_input": AgentRunState.AWAITING_INPUT,
             "invoke_tool": AgentRunState.RUNNING,
         }[decision.action]
-        task = project_decision(observed, task, decision)
+        records = self.repository.records(run.tenant_id, run.run_id)
+        selected_sha256s = {contract_sha256(item) for item in evidence}
+        reader = CompletionEvidenceReader(self.repository)
+        selected_evidence = tuple(
+            reader.read(observed, record)
+            for record in records
+            if record.payload_sha256 in selected_sha256s
+            and record.payload_schema_version == "trace.tool-output-evidence.v1"
+        )
+        task = project_decision(
+            task,
+            decision,
+            DecisionProjectionContext(observed, selected_evidence),
+        )
+        if (
+            decision.action != "invoke_tool"
+            and decision.pending_approval_action == "preserve"
+            and pending is not None
+        ):
+            next_state = AgentRunState.AWAITING_APPROVAL
         planned = self._append_step(
             observed,
             _step(
@@ -1666,7 +1724,7 @@ class MarketingAgentService:
         """Internal worker readback boundary; elapsed time alone is not evidence of uncertainty."""
         with self.execution_lock:
             run = self._required_run(tenant_id, run_id)
-            invocation = self._latest_invocation(tenant_id, run_id)
+            invocation = self._execution_invocation(tenant_id, run_id)
             deferred = self._deferred_for_invocation(run, invocation)
             if deferred is None or deferred.operation_id != operation_id:
                 raise ValueError("deferred_operation_unknown")
@@ -1810,7 +1868,7 @@ class MarketingAgentService:
             ):
                 if (
                     run.state is AgentRunState.RUNNING
-                    and self._latest_invocation(tenant_id, run_id) == invocation
+                    and self._execution_invocation(tenant_id, run_id) == invocation
                 ):
                     return run
                 return run
@@ -1900,6 +1958,26 @@ class MarketingAgentService:
             if record.kind is AgentRecordKind.INVOCATION:
                 return ToolInvocation.model_validate(record.payload)
         raise ValueError("pending_tool_invocation_missing")
+
+    def _execution_invocation(self, tenant_id: str, run_id: str) -> ToolInvocation:
+        """Recover the persisted execution target, not the last planned/read invocation."""
+        invocations = {
+            contract_sha256(r.payload): ToolInvocation.model_validate(r.payload)
+            for r in self.repository.records(tenant_id, run_id)
+            if r.kind is AgentRecordKind.INVOCATION
+        }
+        for step in reversed(self.repository.steps(tenant_id, run_id)):
+            if step.kind is AgentStepKind.EXECUTE:
+                # Dispatch binds output; deferred waits bind input to the invocation.
+                for digest in (step.output_sha256, step.input_sha256):
+                    if digest is not None and digest in invocations:
+                        return invocations[digest]
+        message = "execution_tool_invocation_missing"
+        raise ValueError(message)
+
+    def pending_approval(self, tenant_id: str, run_id: str) -> ToolInvocation | None:
+        """Return the current proposal, even after intervening read-only tool calls."""
+        return pending_approval(self.repository.records(tenant_id, run_id))
 
     def knowledge_is_current(self, tenant_id: str, run_id: str) -> bool:
         """Recheck canonical knowledge authority immediately before an optional worker effect."""

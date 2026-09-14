@@ -1,0 +1,24 @@
+{
+  "source_repository": "https://github.com/corca-ai/trace-marketing-context",
+  "source_commit": "57779174c8be0dde741bab436fa21a61c2933f90",
+  "files": {
+    "concepts/cute.md": "ba558e1715d4e628266ae79882e3cf745c3c2f8c198ece1ff2648a607705b9eb",
+    "context/POST-RUN.md": "b08b0e9c1bedce639a761a421603a29feb2a4cf1dbe3244f8ba6903304d43ccb",
+    "context/RUN-POLICY.md": "abf2e79628e6dd22d7de35efa845e82db5b2069528558f3d21be6ed23f9e6735",
+    "context/core/CAPTION-RULES.md": "19166b48b5e00e4dfb5183c19cfab760f689707e5830fed465ab112f98fed378",
+    "context/core/CONCEPT-DIRECTION.md": "1e42eebea93c3715ab723cd73ca24bbc2c0fbaab8364cc8371592da6d796658c",
+    "context/core/FACTS.md": "2cb7af07ad763ef1d5591ce43951093dc671591fba9c948c31e70b82453c4b79",
+    "context/core/IMAGE-RULES.md": "ce1b49eb7b5ffc010f185554a3421b652e507ae81059445b17deef8e1053a7cc",
+    "context/templates/T2/spec.md": "38b802fd4c533eb557c1b599adeb585ac0026b6e636338457ddce93f5e061d4e",
+    "context/templates/T2/template.png": "a886e22faf22586dd61e0bcd5990b4432c5a713336cdb51939733d199a77e51c",
+    "context/templates/geom_check.py": "23db566d473b43b996dee7e25850a1f1fc879a19f0732b152ad8498d0ed4a634",
+    "context/templates/review-stage.md": "7343a1f88cbc71a8742164c95958f3b5fece2962c89a441b9a0bf4d6e785280f",
+    "scripts/README.md": "df9360e3ee280c29e1be2308a59d0290faabebfcc0e406373324297544dcccbd",
+    "scripts/build_input.py": "83af84922a187ee6159310830f2fa6d21aa191ce56d9d2c95219f7cac552b7fe",
+    "scripts/content_review.py": "dda0664f92ddef72b5b2b360fc78a2d4ae73a05d4ae67e86e7dd11292b18e1c1",
+    "scripts/image_call.py": "58c4a9ea3f868351e9e169bd2366ca927c2c5b29f80d172d16951a13bc54ca7f",
+    "scripts/run_state.py": "48ac3cf2760f9e0967191dc648d6cb0f780b0143941a6c7650b317425b81d1d5",
+    "skills/trace-post/SKILL.md": "d002a4d87ab45deb27c5d784bfb24704b64da99a81017da074ce39190bce07b8",
+    "skills/trace-post/scripts/manage_run.py": "e91a4bce402bc409a5e610dbe670b66ce7511d55ab4c7813426b3ad2a62c94f7"
+  }
+}

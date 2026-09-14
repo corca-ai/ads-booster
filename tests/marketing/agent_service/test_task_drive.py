@@ -7,15 +7,24 @@ from typing import TYPE_CHECKING, override
 import pytest
 
 from ads_booster.agent.service.task_completion import TaskCompletionService
-from ads_booster.agent.service.task_progress import project_task
-from ads_booster.contracts.agent_run import AgentRunState
-from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
+from ads_booster.agent.service.task_drive import DecisionProjectionContext, project_decision
+from ads_booster.agent.service.task_progress import project_task, seed_task
+from ads_booster.contracts.agent_run import AgentRunState, contract_sha256
+from ads_booster.contracts.reasoning import (
+    ReasoningDecision,
+    ReasoningDecisionV2,
+    ReasoningRequest,
+    ReasoningResult,
+)
+from ads_booster.contracts.task_completion import CompletionCandidate
 from tests.marketing.agent_service import test_application as fixtures
 from tests.marketing.agent_service.completion_fixtures import ScriptedAssessor
 from tests.marketing.agent_service.test_application import (
     NOW,
     AskThenStopReasoning,
 )
+from tests.marketing.agent_service.test_completion_proof_registry import issue_evidence
+from tests.marketing.agent_service.test_task_progress import make_run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,6 +44,50 @@ def test_stop_without_verifier_is_not_completed(tmp_path: Path) -> None:
     assert result.state is AgentRunState.BLOCKED
     task = project_task(result, service.repository.records(result.tenant_id, result.run_id))
     assert task.checkpoint.wait_reason == "verification_unavailable"
+
+
+def test_legacy_stop_projects_only_selected_canonical_result_evidence() -> None:
+    run = make_run()
+    bound = issue_evidence()
+    decision = ReasoningDecision(
+        schema_version="trace.reasoning-decision.v1",
+        action="stop",
+        expected_outcome="Issue created",
+        reasoning_summary="이슈를 만들었습니다.",
+    )
+
+    projected = project_decision(
+        seed_task(run), decision, DecisionProjectionContext(run, (bound,))
+    )
+
+    candidate = projected.checkpoint.candidate
+    assert candidate is not None
+    assert candidate.result_links == (bound.output["url"],)
+    assert candidate.evidence_sha256s == (bound.evidence_sha256,)
+
+
+def test_v2_candidate_is_not_rewritten_from_host_selected_evidence() -> None:
+    run = make_run()
+    task = seed_task(run)
+    original = CompletionCandidate(
+        candidate_id="candidate",
+        task_id=task.spec.task_id,
+        task_revision=1,
+        answer="Actor-selected answer",
+        answer_sha256=contract_sha256({"answer": "Actor-selected answer"}),
+    )
+    decision = ReasoningDecisionV2(
+        action="stop",
+        expected_outcome="Answer",
+        reasoning_summary="Internal rationale",
+        completion_candidate=original,
+    )
+
+    projected = project_decision(
+        task, decision, DecisionProjectionContext(run, (issue_evidence(),))
+    )
+
+    assert projected.checkpoint.candidate == original
 
 
 class Steps(fixtures.InvokeThenStopReasoning):

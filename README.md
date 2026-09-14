@@ -145,7 +145,22 @@ customer outcome, with explicit denominators and comparison limits. It needs no 
 is available in admitted Slack channels and private conversations. Counts must be nested unique
 people from mature cohorts; spend is a decimal string such as `"300.00"`. Unknown spend and zero
 denominators remain undefined. The tool does not collect analytics or authorize budget changes.
+Currency may be omitted when spend is unknown; the result preserves it as `null`. Supplying spend,
+including `"0"`, requires a currency. Do not fill the field with a guessed currency or placeholder.
 Growth and customer-interview skills connect these observations to experiments and finished copy.
+For a campaign plan, `marketing.strategy` also connects the target behavior to measurement,
+owners, review and execution dependencies within the supplied budget. Ask for a weekly or campaign
+report to use `marketing.performance_report`: reported data, missing baselines and attribution
+limits stay explicit. It reuses available funnel arithmetic; it does not add analytics connectors.
+Copy review checks reader usefulness and supported claims, including search-oriented content.
+
+Trace는 마케팅 전문성을 가진 동료로 대화합니다. 맡길 수 있는 일을 물으면 스킬 목록을
+직접 확인하고, 필요한 절차를 읽어 초안·분석·추천으로 이어갑니다. “알아서 정해줘”라는
+초안 요청에는 합리적인 창작 방향을 정하며, 언어·길이 수정은 진행 중인 결과에 적용합니다.
+계정 조회나 예약 같은 연결되지 않은 기능은 실행했다고 말하지 않습니다.
+대화·스킬 사용의 검증 범위는 [동료형 에이전트 점검](docs/research/conversational-colleague.md)에 있습니다.
+See the [official-source review](docs/research/marketing-planning-quality.md) for the selected
+practices and before/after verification.
 See the [marketing colleague evaluation](docs/research/marketing-colleague.md) for research,
 observed weaknesses and the limits of the synthetic Slack rehearsal.
 
@@ -243,6 +258,12 @@ For a currently pending edit/localization proposal, an authorized reviewer who
 has received every `검토` page for that exact proposal can say `이대로 만들어줘` or
 `이대로 제작해줘`. This reuses the exact production review context. Changed targets, another
 member's review, publication and remote external effects retain their explicit approval path.
+
+`검토 1`은 승인할 실행 내용의 첫 페이지를 보여줍니다. `검토 1이 뭐야` 같은 질문이나
+잘못된 페이지는 사용법을 안내하며 승인안을 변경하지 않습니다. 안내문은 검토 완료로
+계산되지 않습니다. 승인 권한 부족, 승인안 변경, 도구 이용 불가는 각각 원인에 맞게
+안내합니다. 실행 여부가 불명확한 오류는 `상태`로 확인하고 운영자에게 확인을 요청하세요.
+운영 로그의 `slack_event_failed`는 메시지 식별자·동작·허용된 오류 코드만 기록합니다.
 
 For an uncertain edit, authenticated clients can inspect
 `GET /v1/runs/{run_id}/image-edits/{operation_id}`. A current reviewer may explicitly stop
@@ -516,7 +537,7 @@ for members' DMs. The signed
 `/channels/slack/events` route acknowledges durable admission before reasoning. Mentions start
 threads; ordinary replies continue them with scoped persisted context. DM runs use a derived
 workspace/member/session tenant and search-only capability policy; they cannot mutate shared
-workspace state or invoke delivery tools. `상태`, `검토 1`, `승인 해시`, `거절 해시`, `종료`,
+workspace state or invoke delivery tools. `상태`, `검토 1`, `승인`, `거절`, `종료`,
 `다시 시작` work within the conversation. File contents and Slack-wide history search are not supported.
 Use the [merge-to-Slack walkthrough](docs/operations/agent-server/slack-launch-guide.md), creating
 from the bootstrap manifest first and activating the full Events manifest after server startup.
@@ -524,13 +545,33 @@ from the bootstrap manifest first and activating the full Events manifest after 
 ### Create ads-booster issues from Slack
 
 The optional `github.issue.create` tool creates issues only in `corca-ai/ads-booster`.
-In an allowed shared Slack channel, mention the agent with the issue details. It proposes the
-repository, title and body for review; use `검토 1` (and subsequent pages), then send the exact
-`승인 <hash>` reply as a configured approver. `/trace` uses its existing review/approve commands.
+In an allowed shared Slack channel, explicitly ask the agent to create the issue with its details,
+for example `이 승인 반복 오류를 깃허브 이슈로 올려줘`. For a requester with current approval
+permission, that request authorizes the requested execution; a second review/confirmation is unnecessary.
+Requested subsequent tool steps also continue within the run budget, with current source and
+permission checked for each step. This applies to exposed workspace-member tools, not only creation.
+Questions and draft-only requests do not authorize creation. For an unrequested proposal,
+the agent shows the proposed contents; reply `승인` or `진행해줘`, or `거절` to decline.
+Long proposals retain paginated `검토 1` review. Exact `승인 <hash>` and `/trace` review/approve
+commands remain available. Questions while waiting preserve the pending work.
 After creation and GitHub readback, the reply includes the actual issue URL. Private DMs do not
 have repository write authority. Labels, assignees, PRs and other repositories are not supported.
 
-After the update reaches your server, run as the service user:
+At service startup, authentication is resolved in this order:
+
+1. `TRACE_MARKETING_GITHUB_TOKEN_FILE`, or the existing default private `github.token` file.
+2. `GH_TOKEN`, then `GITHUB_TOKEN`, from the **service environment**.
+3. The service user's existing `github.com` login through `gh auth token --hostname github.com`,
+   with `gh` available on the service PATH.
+
+With an existing service credential that can write repository issues, the next main update/restart
+makes the tool available without a second token setup. The CLI lookup is noninteractive and bounded;
+a missing CLI or login leaves the tool disabled. An explicitly configured missing/invalid token file
+fails startup rather than silently switching accounts. Tokens never enter the model context.
+See [GitHub CLI token lookup](https://cli.github.com/manual/gh_auth_token) and
+[environment precedence](https://cli.github.com/manual/gh_help_environment).
+
+If the service user has no suitable authentication, run:
 
 ```bash
 trace-marketing server github-setup
@@ -554,8 +595,12 @@ trace-marketing server status
 The service reads that private file on startup. For a custom path, set
 `TRACE_MARKETING_GITHUB_TOKEN_FILE` in the service environment; it must name a private regular file.
 The default token file is outside the release directory and survives main updates. Rotate it with
-`server github-setup` and restart the idle service. Remove the credential file and restart to disable
-the tool. GitHub authentication for automatic main updates does not grant this write capability.
+`server github-setup` and restart the idle service. Set `TRACE_MARKETING_GITHUB_ENABLED=false` in the service environment and restart to disable
+the tool regardless of available credentials. Removing only the file enables the fallback lookup.
+An interactive shell's environment is not automatically inherited by systemd; configure its
+`~/.config/trace-marketing/agent.env` or use the service user's stored GitHub CLI login. Repository
+clone/update access alone does not establish Issues: write permission, and an unauthenticated
+server still requires setup. This change does not copy credentials from a developer machine.
 
 A timeout, malformed creation response or failed readback leaves the run awaiting reconciliation;
 creation is never blindly retried. Check the repository's recent issues before making another request.
@@ -587,16 +632,43 @@ keeps verified issue links and reports uncertain effects explicitly. Cancellatio
 and a delayed old button cannot stop a newer request. `종료` still closes conversation auto-replies;
 the button stops the current execution without closing the conversation.
 
+### Create a KR/JP/TW Trace post
+
+In an allowed shared conversation, request `귀여움으로 KR·JP·TW 배경화면 게시물 만들어줘`.
+The installed `marketing.trace_post` procedure routes the request to `creative.trace_post`.
+It supports the cute card and T2 template, with optional date, motif and place selections from
+the current input schema. Review and approve the exact production proposal before execution.
+
+The service copies its packaged rules, template and helpers into one private operation workspace.
+It creates new schedules and localized captions, generates the KR text/background, localizes that
+same final wallpaper for JP/TW, and creates three phone scenes from the common scene prompt.
+The base workflow uses seven image calls; each stage permits at most one quality retry.
+A provider error with an unknown result does not authorize another generation attempt.
+
+This is a deferred server task using the configured official Codex executable/model with medium
+reasoning effort and a one-hour operation timeout. It is registered with the installed service;
+no separate image API key or trace-post configuration is required. The existing
+work's asset view receives six validated images; country captions and verification references return
+through the canonical result. Model review is not human approval or proof of actual app support.
+Image creation does not authorize Slack file delivery or external publication. Private DM execution
+is unavailable. A completed pipeline does not establish pixel-identical backgrounds across locales.
+
+The installed package is self-contained. It does not read a developer's checkout, `.agents` link or
+GitHub documents at execution time. `trace_post_bundle/provenance.json` records the imported source
+revision and file hashes. Existing operations retain their frozen bundle when the server updates;
+new operations use the newly installed version.
+
 ### Generate an image from Slack with the server's Codex login
 
 In an allowed shared channel, mention the bot with a visual brief, for example
 `@Trace Marketing Agent 파란 배경의 미니멀한 Trace 앱 광고 이미지 한 장 만들어줘`.
-Review the proposed `creative.image.generate` prompt and approve its exact hash. The installed
+For a requester with current approval permission, this direct request authorizes one generation
+with delegated creative defaults. The agent does not ask for the same permission again. The installed
 server runs one dedicated official Codex image-generation turn with its existing ChatGPT login and
 configured model; no image API key or Mac/Appium worker is required. The account/model must support
 Codex's `image_generation` feature. Authentication alone does not prove image-generation entitlement.
 
-A validated PNG draft is attached to the originating Slack thread for human visual review. Generated
+A validated PNG is attached to the originating Slack thread as the requested result. Generated
 files are private, digest-addressed artifacts under the service state's `images/` directory, outside
 release directories. Results include image/prompt/invocation digests and dimensions. This first
 tool generates one new PNG from text and is not exposed in private DMs. Existing optional
@@ -611,7 +683,8 @@ Working status includes generation and image validation. Stopping cancels the ow
 if generation was already admitted the run can require reconciliation because usage/results may be
 uncertain. It never automatically reruns an uncertain generation. Slack attachment failures preserve
 the local draft, report the unconfirmed upload and do not upload again automatically. A generated
-image requires human review; a PNG/digest check is not visual approval.
+image records `review_status=not_reviewed`; feedback is optional. A PNG/digest check does not
+claim human review or establish visual quality.
 
 Installed Slack mention access is workspace-wide: invite the bot to any internal public or private
 channel, then any member can mention it and continue in that thread. Existing configured
@@ -655,7 +728,7 @@ change canonical memory. Source messages remain provenance, but a message suppor
 preferences is excluded from common reference search, including when it also supplied a separately
 stored common fact. Existing common memory is not automatically reclassified as personal.
 
-### Package releases
+### Package releases 
 
 [GitHub Releases](https://github.com/corca-ai/ads-booster/releases) provides versioned wheels,
 source distributions, the source commit and SHA-256 checksums. A reviewed version bump is published

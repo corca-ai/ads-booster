@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.contracts.agent_run import (
     AgentRunState,
     ToolExecutionDeferred,
@@ -13,7 +14,6 @@ from ads_booster.contracts.agent_run import (
     contract_sha256,
 )
 from ads_booster.contracts.tool_capability import ToolExecutionResult
-from ads_booster.agent.core.registry import ToolRegistry
 from tests.marketing.agent_service.test_application import EffectThenStopReasoning
 from tests.marketing.channels.test_slack_commands import NOW
 from tests.marketing.channels.test_slack_events import effect_descriptor, receive, setup_events
@@ -43,9 +43,18 @@ class DeferredCapture:
         )
 
 
-@pytest.mark.parametrize("note", ["잠깐 멈춰줘", "학생 타깃으로 바꿔줘"])
-def test_signed_followup_keeps_pending_work_and_applies_after_completion(
-    tmp_path: Path, note: str
+@pytest.mark.parametrize(
+    ("note", "expected_state", "expected_reason"),
+    [
+        ("잠깐 멈춰줘", AgentRunState.AWAITING_INPUT, None),
+        ("학생 타깃으로 바꿔줘", AgentRunState.COMPLETED, None),
+    ],
+)
+def test_signed_followup_keeps_pending_work_and_applies_after_deferred_result(
+    tmp_path: Path,
+    note: str,
+    expected_state: AgentRunState,
+    expected_reason: str | None,
 ) -> None:
     owner, messages = setup_events(tmp_path)
     service = owner.commands.application.service
@@ -83,9 +92,15 @@ def test_signed_followup_keeps_pending_work_and_applies_after_completion(
         output={"fixture": "done"},
         actual_cost_units=1,
     )
-    completed = service.complete_deferred(
+    resumed = service.complete_deferred(
         "team", run.run_id, operation_id="fixture-operation", result=result, now=NOW
     )
-    expected = AgentRunState.AWAITING_INPUT if note == "잠깐 멈춰줘" else AgentRunState.COMPLETED
-    assert completed.state is expected
+    assert resumed.state is AgentRunState.RUNNING
+    assert owner.work_once(now=NOW)
+    assert owner.work_once(now=NOW)
+    assert not owner.work_once(now=NOW)
+    settled = service.repository.get("team", run.run_id)
+    assert settled is not None
+    assert settled.state is expected_state
+    assert settled.blocked_reason == expected_reason
     assert adapter.calls == 1

@@ -20,11 +20,13 @@ if TYPE_CHECKING:
 class V2Runner:
     def __init__(self, output: JsonObject) -> None:
         self.output: JsonObject = output
+        self.prompt: str = ""
 
     def run_marketing_judgment_job(
         self, prompt: str, schema: JsonObject, *, workspace: Path, timeout_seconds: float
     ) -> JsonObject:
-        _ = prompt, workspace, timeout_seconds
+        self.prompt = prompt
+        _ = workspace, timeout_seconds
         assert_strict_schema(schema)
         return self.output
 
@@ -61,6 +63,8 @@ def wire_stop(request: ReasoningRequestV2) -> JsonObject:
         "reasoning_summary": "Internal selection rationale",
         "proposed_action_kind": None,
         "proposed_brand_ref": None,
+        "authorization_message": None,
+        "pending_approval_action": "preserve",
         "task_proposal": None,
         "completion_candidate": candidate.model_dump(mode="json", exclude={"answer_sha256"}),
     }
@@ -76,6 +80,22 @@ def test_v2_candidate_is_exact_and_host_hashes_answer(tmp_path: Path) -> None:
     assert result.decision.completion_candidate == request.checkpoint.candidate
     assert result.receipt.request_sha256 == contract_sha256(request)
     assert result.receipt.decision_sha256 == contract_sha256(result.decision)
+
+
+def test_v2_request_and_decision_preserve_conversational_authority(tmp_path: Path) -> None:
+    request = v2_request(tmp_path / "state.db").model_copy(
+        update={"pending_approval": {"capability_id": "creative.image.edit"}}
+    )
+    output = wire_stop(request)
+    output["pending_approval_action"] = "cancel"
+
+    runner = V2Runner(output)
+    result = CodexReasoningProvider(runner, tmp_path, "fixture").plan_v2(request)
+
+    assert request.pending_approval == {"capability_id": "creative.image.edit"}
+    assert result.decision.pending_approval_action == "cancel"
+    assert "set authorization_message" in runner.prompt
+    assert "set pending_approval_action=preserve" in runner.prompt
 
 
 def test_v2_stop_requires_a_candidate(tmp_path: Path) -> None:

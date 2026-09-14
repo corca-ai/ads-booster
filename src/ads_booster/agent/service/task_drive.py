@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ads_booster.agent.core.ports import ReasoningProviderV2
@@ -14,9 +15,17 @@ from ads_booster.contracts.task_completion import CompletionAssessment, Completi
 
 if TYPE_CHECKING:
     from ads_booster.agent.core.ports import ReasoningProvider
+    from ads_booster.agent.service.completion_evidence import BoundCompletionEvidence
     from ads_booster.contracts.agent_run import AgentRecord, AgentRun
     from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult, ReasoningResultV2
+    from ads_booster.contracts.task_progress import TaskSpec
     from ads_booster.transport.json_types import JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionProjectionContext:
+    run: AgentRun
+    selected_evidence: tuple[BoundCompletionEvidence, ...] = ()
 
 
 def plan_task(
@@ -80,9 +89,9 @@ def evidence_with_handles(
 
 
 def project_decision(
-    run: AgentRun,
     task: TaskProjection,
     decision: ReasoningDecision | ReasoningDecisionV2,
+    context: DecisionProjectionContext,
 ) -> TaskProjection:
     spec = task.spec
     match decision:
@@ -91,15 +100,7 @@ def project_decision(
                 spec = apply_proposal(spec, decision.task_proposal)
             candidate = decision.completion_candidate
         case ReasoningDecision():
-            candidate = None
-    if decision.action == "stop" and candidate is None:
-        candidate = CompletionCandidate(
-            candidate_id=f"candidate:{run.run_id}:{run.revision}",
-            task_id=spec.task_id,
-            task_revision=spec.task_revision,
-            answer=decision.reasoning_summary,
-            answer_sha256=contract_sha256({"answer": decision.reasoning_summary}),
-        )
+            candidate = _legacy_candidate(spec, decision, context)
     return TaskProjection(
         spec,
         task.checkpoint.model_copy(
@@ -122,4 +123,46 @@ def project_decision(
                 }[decision.action],
             }
         ),
+    )
+
+
+def _legacy_candidate(
+    spec: TaskSpec,
+    decision: ReasoningDecision,
+    context: DecisionProjectionContext,
+) -> CompletionCandidate | None:
+    if decision.action != "stop":
+        return None
+    deliverables = tuple(
+        item
+        for item in context.selected_evidence
+        if item.receipt.disposition == "succeeded"
+        and (
+            isinstance(item.output.get("url"), str)
+            or isinstance(item.output.get("artifact_sha256"), str)
+        )
+    )
+    links = tuple(
+        dict.fromkeys(
+            link
+            for item in deliverables
+            if isinstance((link := item.output.get("url")), str)
+        )
+    )
+    attachments = tuple(
+        dict.fromkeys(
+            digest
+            for item in deliverables
+            if isinstance((digest := item.output.get("artifact_sha256")), str)
+        )
+    )
+    return CompletionCandidate(
+        candidate_id=f"candidate:{context.run.run_id}:{context.run.revision}",
+        task_id=spec.task_id,
+        task_revision=spec.task_revision,
+        answer=decision.reasoning_summary,
+        answer_sha256=contract_sha256({"answer": decision.reasoning_summary}),
+        result_links=links,
+        attachment_refs=attachments,
+        evidence_sha256s=tuple(dict.fromkeys(item.evidence_sha256 for item in deliverables)),
     )

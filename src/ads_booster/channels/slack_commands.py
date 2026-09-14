@@ -28,7 +28,6 @@ from ads_booster.channels.task_result_bindings import (
 )
 from ads_booster.channels.task_results import (
     BoundedCompletionRenderer,
-    latest_invocation,
     result_for,
 )
 from ads_booster.contracts.agent_run import (
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
 
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _MAX_TEXT = 8000
+_MAX_REVIEW_PAGE_DIGITS = 6
 _MAX_TRIGGER = 256
 _HELP = """/trace 조사할 목표 — 새 실행
 /trace status 실행ID — 결과 확인
@@ -134,7 +134,7 @@ class SlackCommands:
             run_id, _, page = rest.strip().partition(" ")
             return {
                 "response_type": "ephemeral",
-                "text": self.review(identity.tenant_id, run_id, int(page or "1")),
+                "text": self.review_input(identity.tenant_id, run_id, page),
             }
         if action == "status":
             return {
@@ -449,6 +449,26 @@ class SlackCommands:
             record_delivery(db, "command:" + row[0], state)
         return True
 
+    def review_input(self, tenant_id: str, run_id: str, argument: str) -> str:
+        """Handle human input without changing the pending approval or review evidence."""
+        page = argument.strip() or "1"
+        if not page.isascii() or not page.isdecimal() or len(page) > _MAX_REVIEW_PAGE_DIGITS:
+            return (
+                "검토는 승인 전에 실행할 내용을 확인하는 명령입니다. "
+                "이 작업 스레드에 '검토 1'을 보내 첫 페이지부터 확인하세요. "
+                "슬래시 명령은 '/trace review 실행ID 1'입니다."
+            )
+        try:
+            return self.review(tenant_id, run_id, int(page))
+        except ValueError as exc:
+            if exc.args == ("agent_approval_not_pending",):
+                return "현재 승인 대기 중인 작업이 없습니다. 먼저 작업 상태를 확인하세요."
+            if exc.args == ("agent_review_page_invalid",):
+                return (
+                    "검토 페이지 범위를 벗어났습니다. 첫 페이지(1)에서 전체 페이지 수를 확인하세요."
+                )
+            raise
+
     def review(self, tenant_id: str, run_id: str, page: int) -> str:
         pages = self.review_pages(tenant_id, run_id)
         if not 1 <= page <= len(pages):
@@ -460,8 +480,7 @@ class SlackCommands:
         run = self.application.service.repository.get(tenant_id, run_id)
         if run is None or run.state.value != "awaiting_approval":
             raise ValueError("agent_approval_not_pending")
-        records = self.application.service.repository.records(tenant_id, run_id)
-        invocation = latest_invocation(records)
+        invocation = self.application.service.pending_approval(tenant_id, run_id)
         if invocation is None:
             raise ValueError("agent_approval_not_pending")
         content = invocation.model_dump_json(indent=2)
@@ -492,10 +511,8 @@ class SlackCommands:
         ]
         if self.public_links:
             lines.append(str(self.application.result_url(run_id)))
-        if (
-            run.state.value == "awaiting_approval"
-            and (invocation := latest_invocation(records)) is not None
-        ):
+        invocation = self.application.service.pending_approval(tenant_id, run_id)
+        if invocation is not None:
             lines += [
                 f"승인 전 /trace review {run_id} 1 로 전체 내용을 확인하세요.",
                 f"/trace approve {run_id} {contract_sha256(invocation)}",

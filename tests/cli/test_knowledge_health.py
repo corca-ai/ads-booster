@@ -49,6 +49,7 @@ def test_service_health_degrades_when_knowledge_thread_exits(
     monkeypatch.setattr(
         marketing, "build_installed_marketing_agent_service", Mock(return_value=service)
     )
+    monkeypatch.setattr(marketing, "connect_trace_post", Mock(return_value=Mock()))
     monkeypatch.setattr(marketing, "browser_from_env", Mock(return_value=None))
     monkeypatch.setattr(marketing, "slack_from_env", Mock(return_value=None))
     monkeypatch.setattr(marketing, "events_from_env", Mock(return_value=None))

@@ -57,6 +57,21 @@ def test_v2_stop_requires_exact_bound_candidate() -> None:
         _ = CompletionCandidate.model_validate({**candidate.model_dump(), "answer": "Changed"})
 
 
+def test_v2_tool_decision_carries_current_request_authorization() -> None:
+    decision = ReasoningDecisionV2(
+        action="invoke_tool",
+        capability_id="creative.image.edit",
+        tool_input={"prompt": "blue background"},
+        expected_outcome="Create the requested image",
+        reasoning_summary="Creating the requested image",
+        authorization_message="이 이미지 만들어줘",
+    )
+
+    assert decision.authorization_message == "이 이미지 만들어줘"
+    assert decision.pending_approval_action == "preserve"
+    assert decode_reasoning_decision(decision.model_dump(mode="json")) == decision
+
+
 def test_candidate_digest_binds_links_and_attachment_references() -> None:
     original = CompletionCandidate(
         candidate_id="candidate",

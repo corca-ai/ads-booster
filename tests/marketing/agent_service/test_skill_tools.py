@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 
 
 class DiscoverThenRead(AskThenStopReasoning):
+    skill_id: str = "marketing.copy"
+
     @override
     def plan(self, request: ReasoningRequest) -> ReasoningResult:
         self.requests.append(request)
@@ -43,7 +45,7 @@ class DiscoverThenRead(AskThenStopReasoning):
             skills = index["skills"]
             assert isinstance(skills, list)
             choice = next(
-                s for s in skills if isinstance(s, dict) and s["skill_id"] == "marketing.copy"
+                s for s in skills if isinstance(s, dict) and s["skill_id"] == self.skill_id
             )
             assert isinstance(choice, dict)
             assert "procedure" not in choice
@@ -79,9 +81,15 @@ class DiscoverThenRead(AskThenStopReasoning):
         )
 
 
-def test_discovery_loads_versioned_procedure_through_real_run_receipts(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "skill_id", ["marketing.copy", "marketing.strategy", "marketing.performance_report"]
+)
+def test_discovery_loads_versioned_procedure_through_real_run_receipts(
+    tmp_path: Path, skill_id: str
+) -> None:
     configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
     reasoning = DiscoverThenRead()
+    reasoning.skill_id = skill_id
     service = _service(tmp_path / "agent.db", reasoning)
     service.registry = ToolRegistry(configured.descriptors(now=NOW))
     service.tools = configured.adapters()
@@ -142,3 +150,38 @@ def test_skill_discovery_query_is_bounded_and_does_not_load_bodies() -> None:
     assert entries[0]["skill_id"] == "marketing.copy"
     assert "procedure" not in entries[0]
     assert "next_offset" in result.output
+
+
+def test_trace_post_discovery_reads_exact_installed_procedure() -> None:
+    configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
+    descriptors = {d.capability_id: d for d in configured.descriptors(now=NOW)}
+    listing = configured.adapters()["skills.list"].execute(
+        _invocation(descriptors["skills.list"], {"query": "trace-post"}),
+        descriptors["skills.list"],
+    )
+    assert isinstance(listing, ToolExecutionResult)
+    skills = listing.output["skills"]
+    assert isinstance(skills, list)
+    choice = next(
+        s for s in skills if isinstance(s, dict) and s["skill_id"] == "marketing.trace_post"
+    )
+    assert isinstance(choice, dict)
+    assert "procedure" not in choice
+    loaded = configured.adapters()["skills.read"].execute(
+        _invocation(
+            descriptors["skills.read"],
+            {"skill_id": choice["skill_id"], "version": choice["version"]},
+        ),
+        descriptors["skills.read"],
+    )
+    assert isinstance(loaded, ToolExecutionResult)
+    assert loaded.output["status"] == "found"
+    assert loaded.output["version"] == "2"
+    assert loaded.output["required_capabilities"] == ["creative.trace_post"]
+    assert loaded.output["authority"] == "procedure_only_not_evidence_or_approval"
+    procedure = loaded.output["procedure"]
+    assert isinstance(procedure, str)
+    assert "세부 촬영 상황" in procedure
+    assert "셀프 촬영 가능한" in procedure
+    # Reading the procedure does not install an executor or confer production approval.
+    assert "creative.trace_post" not in configured.adapters()

@@ -6,6 +6,7 @@ assumed ``codex exec --json`` image event. Provider capability is not I/O proof.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -17,7 +18,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import TypeAdapter
 
@@ -40,6 +41,7 @@ _MAX_STREAM_BYTES = 20 * 1024 * 1024
 _DISABLED = (
     "apps",
     "browser_use",
+    "browser_use_external",
     "computer_use",
     "hooks",
     "multi_agent",
@@ -59,6 +61,25 @@ class ImageEditProcessRequest:
     prompt: str
     image_paths: tuple[Path, ...]
     timeout_seconds: float
+    permission_profile: str = "trace-image-edit-restricted"
+    allow_shell: bool = False
+    read_paths: tuple[Path, ...] = ()
+    base_instructions: str = "Use only image generation for this task."
+    developer_instructions: str = (
+        "Never invoke shell, network or other tools. Save exactly one PNG "
+        "inside cwd. Never modify attached source files."
+    )
+    allowed_item_types: tuple[str, ...] = (
+        "imageGeneration",
+        "agentMessage",
+        "reasoning",
+        "userMessage",
+    )
+    min_image_generations: int = 1
+    max_image_generations: int = 1
+    reasoning_effort: Literal["medium"] | None = None
+    materialize_image_results: bool = False
+    max_stream_bytes: int = _MAX_STREAM_BYTES
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +89,7 @@ class ImageEditProcessResult:
     thread_id: str
     turn_id: str
     item: JsonObject
+    items: tuple[JsonObject, ...] = ()
 
 
 class ImageEditRunner(Protocol):
@@ -91,34 +113,49 @@ def _error(code: str) -> CodexCliError:
     return CodexCliError(code)
 
 
-def image_edit_command(
+def image_edit_command(  # noqa: PLR0913 - explicit fixed security boundary options.
     executable: Path,
     disabled_mcp_servers: tuple[str, ...] = (),
     *,
     workspace: Path | None = None,
+    permission_profile: str = "trace-image-edit-restricted",
+    allow_shell: bool = False,
+    read_paths: tuple[Path, ...] = (),
+    reasoning_effort: Literal["medium"] | None = None,
 ) -> tuple[str, ...]:
     """Disable unrelated tools without modifying the user's login or config."""
     command = [str(executable), "app-server", "--stdio", "--enable", "image_generation"]
-    for feature in _DISABLED:
+    disabled = (
+        tuple(feature for feature in _DISABLED if feature not in ("shell_tool", "unified_exec"))
+        if allow_shell
+        else _DISABLED
+    )
+    for feature in disabled:
         command.extend(("--disable", feature))
     for setting in ('web_search="disabled"', "mcp_servers={}", "analytics.enabled=false"):
         command.extend(("-c", setting))
     for name in disabled_mcp_servers:
         command.extend(("-c", f"mcp_servers.{name}.enabled=false"))
+    if reasoning_effort is not None:
+        command.extend(("-c", "model_reasoning_effort=" + json.dumps(reasoning_effort)))
     if workspace is not None:
-        profile = (
-            '{filesystem={":root"="deny",":minimal"="read",'
-            + json.dumps(str(workspace.resolve()))
-            + '="write",'
-            + json.dumps(str(executable.resolve()))
-            + '="read"},network={enabled=false}}'
+        filesystem = (
+            (":root", "deny"),
+            (":minimal", "read"),
+            (str(workspace.resolve()), "write"),
+            (str(executable.resolve()), "read"),
+            *((str(path.resolve()), "read") for path in read_paths),
         )
+        entries = ",".join(
+            json.dumps(path) + "=" + json.dumps(access) for path, access in filesystem
+        )
+        profile = "{filesystem={" + entries + "},network={enabled=false}}"
         command.extend(
             (
                 "-c",
-                "permissions.trace-image-edit-restricted=" + profile,
+                "permissions." + permission_profile + "=" + profile,
                 "-c",
-                'default_permissions="trace-image-edit-restricted"',
+                "default_permissions=" + json.dumps(permission_profile),
             )
         )
     return tuple(command)
@@ -196,7 +233,13 @@ def _exchange[T](request: ImageEditProcessRequest, state: _ExchangeState[T]) -> 
     process = subprocess.Popen(  # noqa: S603 - trusted configured executable and fixed args.
         (
             *image_edit_command(
-                request.executable, state.disabled_mcp_servers, workspace=request.workspace
+                request.executable,
+                state.disabled_mcp_servers,
+                workspace=request.workspace,
+                permission_profile=request.permission_profile,
+                allow_shell=request.allow_shell,
+                read_paths=request.read_paths,
+                reasoning_effort=request.reasoning_effort,
             ),
             "-c",
             "model=" + json.dumps(request.model),
@@ -225,7 +268,7 @@ def _exchange[T](request: ImageEditProcessRequest, state: _ExchangeState[T]) -> 
                     code = "codex_image_edit_outcome_unknown"
                     raise _error(code)
                 total += len(chunk)
-                if total > _MAX_STREAM_BYTES:
+                if total > request.max_stream_bytes:
                     code = "codex_image_edit_stream_limit"
                     raise _error(code)
                 pending += chunk
@@ -315,18 +358,18 @@ class _StreamState:
                         "cwd": str(self.request.workspace),
                         "ephemeral": True,
                         "approvalPolicy": "never",
-                        "permissions": "trace-image-edit-restricted",
-                        "baseInstructions": "Use only image generation for this task.",
-                        "developerInstructions": (
-                            "Never invoke shell, network or other tools. Save exactly one PNG "
-                            "inside cwd. Never modify attached source files."
-                        ),
+                        "permissions": self.request.permission_profile,
+                        "baseInstructions": self.request.base_instructions,
+                        "developerInstructions": self.request.developer_instructions,
                     },
                 },
             )
         if message.get("id") == _THREAD_START_ID and isinstance(response, dict):
             profile = response.get("activePermissionProfile")
-            if not isinstance(profile, dict) or profile.get("id") != "trace-image-edit-restricted":
+            if (
+                not isinstance(profile, dict)
+                or profile.get("id") != self.request.permission_profile
+            ):
                 code = "codex_image_edit_permission_profile_unconfirmed"
                 raise _error(code)
             thread = response.get("thread")
@@ -351,7 +394,7 @@ class _StreamState:
                         "input": list(inputs),
                         "cwd": str(self.request.workspace),
                         "approvalPolicy": "never",
-                        "permissions": "trace-image-edit-restricted",
+                        "permissions": self.request.permission_profile,
                     },
                 },
             )
@@ -386,10 +429,16 @@ class _StreamState:
                 code = "codex_image_edit_outcome_unknown"
                 raise _error(code)
             self._bind_turn(turn.get("id"))
-            if len(self.items) != 1:
+            if (
+                not self.request.min_image_generations
+                <= len(self.items)
+                <= self.request.max_image_generations
+            ):
                 code = "codex_image_edit_generation_event_required"
                 raise _error(code)
-            self.result = ImageEditProcessResult(self.thread_id, self.turn_id, self.items[0])
+            self.result = ImageEditProcessResult(
+                self.thread_id, self.turn_id, self.items[0], tuple(self.items)
+            )
             return
         self._bind_turn(params.get("turnId"))
         item = params.get("item")
@@ -397,11 +446,66 @@ class _StreamState:
             code = "codex_image_edit_item_invalid"
             raise _error(code)
         kind = item.get("type")
-        if kind not in ("imageGeneration", "agentMessage", "reasoning", "userMessage"):
+        if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
         if method == "item/completed" and kind == "imageGeneration":
+            if self.request.materialize_image_results:
+                item = self._materialize(item)
             self.items.append(item)
+
+    def _materialize(self, item: JsonObject) -> JsonObject:
+        event_id, encoded = item.get("id"), item.get("result")
+        if (
+            not isinstance(event_id, str)
+            or re.fullmatch(r"[a-zA-Z0-9_-]{1,160}", event_id) is None
+            or not isinstance(encoded, str)
+            or len(encoded) > 4 * _MAX_IMAGE_BYTES // 3 + 8
+        ):
+            code = "codex_image_edit_generation_result_invalid"
+            raise _error(code)
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            code = "codex_image_edit_generation_result_invalid"
+            raise _error(code) from error
+        if not 0 < len(data) <= _MAX_IMAGE_BYTES:
+            code = "codex_image_edit_generation_result_invalid"
+            raise _error(code)
+        directory = self.request.workspace / "provider-images"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        if directory.is_symlink() or not directory.resolve(strict=True).is_relative_to(
+            self.request.workspace.resolve(strict=True)
+        ):
+            code = "codex_image_edit_generation_sink_invalid"
+            raise _error(code)
+        output = directory / f"{event_id}.png"
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            file_fd = os.open(
+                output.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory_fd,
+            )
+            with os.fdopen(file_fd, "wb") as stream:
+                _ = stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError as error:
+            code = "codex_image_edit_generation_result_reused"
+            raise _error(code) from error
+        finally:
+            os.close(directory_fd)
+        image = read_review_images((output,))[0]
+        if image.format != "PNG":
+            code = "codex_image_edit_output_not_png"
+            raise _error(code)
+        materialized = dict(item)
+        materialized["savedPath"] = str(output.resolve(strict=True))
+        materialized["materializedSha256"] = hashlib.sha256(data).hexdigest()
+        materialized["result"] = "materialized"
+        return materialized
 
 
 @dataclass(frozen=True, slots=True)

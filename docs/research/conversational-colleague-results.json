@@ -1,0 +1,961 @@
+{
+  "schema_version": "trace.colleague-comparison.v1",
+  "model": "gpt-6-astra",
+  "task_criteria_fixed_before_calls": true,
+  "aggregate_score_preregistered": false,
+  "scope": "Synthetic signed Slack and local sends; real model; one six-turn trial per version. Not a deployed incident reproduction.",
+  "trials": {
+    "baseline": {
+      "wheel_sha256": "71fd02c45bc21f239225a84abd993968d776fd4d4f19058f4d008cd720afa263",
+      "turns": [
+        {
+          "input": "너 지금 사용할 수 있는 스킬이 뭐야? 어떤 일을 맡길 수 있는지 짧게 알려줘.",
+          "criteria": "Actually discover the catalog; group useful work in plain Korean; no invented tools, raw inventory dump or offer to perform the requested lookup later.",
+          "reply": "조회된 스킬은 21개이고, 지금 맡길 수 있는 일은 다음과 같아요.\n\n- **카피·전략:** 홍보 문구 작성·수정, 타깃과 메시지 비교, 캠페인·실험 설계\n- **리서치·고객 이해:** 공개 웹 조사, 트렌드 기회 탐색, 제공한 인터뷰·리뷰 분석\n- **성과 분석:** 제공한 지표로 퍼널·획득 비용 계산, 성과 보고서 작성\n- **크리에이티브 준비:** 무드·폰트·색상·현지화·목업 방향과 편집·검수 지침 정리\n\n현재 이미지 생성·실제 편집, 자동 게시, Notion 저장, 내부 위키 조회는 연결되어 있지 않아요.",
+          "state": "completed",
+          "elapsed_seconds": 24.33,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:2",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:2",
+              "action": "invoke_tool",
+              "capability_id": "skills.list",
+              "evidence_sha256s": [],
+              "expected_outcome": "현재 사용 가능한 스킬 목록을 확인해 맡길 수 있는 일을 짧게 안내한다.",
+              "reasoning_summary": "현재 스킬 목록을 확인하고, 실제 실행 가능한 도구 범위와 함께 짧게 정리하겠습니다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:7",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:7",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7"
+              ],
+              "expected_outcome": "현재 스킬과 실제 실행 범위를 짧게 안내한다.",
+              "reasoning_summary": "조회된 스킬은 21개이고, 지금 맡길 수 있는 일은 다음과 같아요.\n\n- **카피·전략:** 홍보 문구 작성·수정, 타깃과 메시지 비교, 캠페인·실험 설계\n- **리서치·고객 이해:** 공개 웹 조사, 트렌드 기회 탐색, 제공한 인터뷰·리뷰 분석\n- **성과 분석:** 제공한 지표로 퍼널·획득 비용 계산, 성과 보고서 작성\n- **크리에이티브 준비:** 무드·폰트·색상·현지화·목업 방향과 편집·검수 지침 정리\n\n현재 이미지 생성·실제 편집, 자동 게시, Notion 저장, 내부 위키 조회는 연결되어 있지 않아요."
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "Trace는 일정 추가와 주간 보기만 확인됐어. 한국 직장인에게 보여줄 귀여운 컨셉의 Threads 게시물 하나 만들어줘. 나머지는 네가 알아서 정해.",
+          "criteria": "Read a relevant procedure when needed, then deliver one usable Korean post, not a promise to read a skill or a questionnaire. No invented features or publication.",
+          "reply": "머릿속에 회의 세 개 키우는 직장인 햄찌에게 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 보고.\n볼주머니에 넣어두지 말고 Trace에 일정으로 추가해요.\n주간 보기로 이번 주 일정을 살펴보면 준비 끝 🗓️\n\n그리고 금요일 퇴근 후 약속도 한 자리 챙겨주기.\n햄찌에게도 보상은 필요하니까요 🧀\n\n이번 주, 가장 기다리는 일정은 뭐예요?",
+          "state": "completed",
+          "elapsed_seconds": 22.102,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:11",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:11",
+              "action": "invoke_tool",
+              "capability_id": "skills.read",
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "67fc8413265ae34413a5bf0feb28eb9de929df2aa8e6ead3e5058ba3a81b63e2"
+              ],
+              "expected_outcome": "Threads 홍보 문구 작성 지침을 확인한 뒤, 일정 추가와 주간 보기만 언급하는 귀여운 한국어 게시물 한 편을 작성한다.",
+              "reasoning_summary": "한국 직장인을 위한 귀여운 Threads 게시물을 만들겠습니다. 확인해 주신 일정 추가와 주간 보기만 제품 기능으로 담고, 조회된 카피 스킬의 지침을 확인하겠습니다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:16",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:16",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e48c239aaa1ec1db4a38f878017bab8aec38363ac4849862b0e1c3b78544f124",
+                "67fc8413265ae34413a5bf0feb28eb9de929df2aa8e6ead3e5058ba3a81b63e2"
+              ],
+              "expected_outcome": "확인된 일정 추가와 주간 보기만 활용한 한국 직장인 대상의 귀여운 Threads 게시물 초안을 전달한다.",
+              "reasoning_summary": "머릿속에 회의 세 개 키우는 직장인 햄찌에게 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 보고.\n볼주머니에 넣어두지 말고 Trace에 일정으로 추가해요.\n주간 보기로 이번 주 일정을 살펴보면 준비 끝 🗓️\n\n그리고 금요일 퇴근 후 약속도 한 자리 챙겨주기.\n햄찌에게도 보상은 필요하니까요 🧀\n\n이번 주, 가장 기다리는 일정은 뭐예요?"
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "좋아. 설명 빼고 게시글만 줘.",
+          "criteria": "Return the same requested draft only; no new onboarding, disclaimer or skill reload.",
+          "reply": "머릿속에 회의 세 개 키우는 직장인 햄찌에게 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 보고.\n볼주머니에 넣어두지 말고 Trace에 일정으로 추가해요.\n주간 보기로 이번 주 일정을 살펴보면 준비 끝 🗓️\n\n그리고 금요일 퇴근 후 약속도 한 자리 챙겨주기.\n햄찌에게도 보상은 필요하니까요 🧀\n\n이번 주, 가장 기다리는 일정은 뭐예요?",
+          "state": "completed",
+          "elapsed_seconds": 12.475,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:20",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:20",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e48c239aaa1ec1db4a38f878017bab8aec38363ac4849862b0e1c3b78544f124",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "01659c0cd9784d92145cd9c11db936da386156804bfeb5f6a6f1c3892c37346e"
+              ],
+              "expected_outcome": "설명 없이 기존 Threads 게시글만 반환한다.",
+              "reasoning_summary": "머릿속에 회의 세 개 키우는 직장인 햄찌에게 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 보고.\n볼주머니에 넣어두지 말고 Trace에 일정으로 추가해요.\n주간 보기로 이번 주 일정을 살펴보면 준비 끝 🗓️\n\n그리고 금요일 퇴근 후 약속도 한 자리 챙겨주기.\n햄찌에게도 보상은 필요하니까요 🧀\n\n이번 주, 가장 기다리는 일정은 뭐예요?"
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "영어로 바꿔줘.",
+          "criteria": "Translate the immediately preceding draft, not a greeting or a new task intake.",
+          "reply": "For the little office hamster keeping three meetings in their head 🐹\n\nMonday team meeting, Wednesday catch-up, Friday report.\nInstead of stuffing them into your cheeks, add them to Trace.\nTake a peek at your schedule in weekly view, and you’re ready to go 🗓️\n\nSave a little space for Friday after-work plans, too.\nEven busy hamsters deserve a treat 🧀\n\nWhat’s the one thing on your calendar you’re looking forward to this week?",
+          "state": "completed",
+          "elapsed_seconds": 10.227,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:24",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:24",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e48c239aaa1ec1db4a38f878017bab8aec38363ac4849862b0e1c3b78544f124",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "f715d239d79a7aa88a672a385f2b18a6fc7babf474ee0f3b4b01791c503817d7"
+              ],
+              "expected_outcome": "Deliver the English version of the Threads post, with no explanation.",
+              "reasoning_summary": "For the little office hamster keeping three meetings in their head 🐹\n\nMonday team meeting, Wednesday catch-up, Friday report.\nInstead of stuffing them into your cheeks, add them to Trace.\nTake a peek at your schedule in weekly view, and you’re ready to go 🗓️\n\nSave a little space for Friday after-work plans, too.\nEven busy hamsters deserve a treat 🧀\n\nWhat’s the one thing on your calendar you’re looking forward to this week?"
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "다시 한국어로. 같은 기간 집계야. A는 방문 200명 중 첫 일정 30명, B는 방문 600명 중 첫 일정 30명이야. 전체 전환율을 계산해서 동료에게 보고할 두 문장으로 써줘. 비용은 몰라.",
+          "criteria": "Use available arithmetic: 60/800=7.5%, A 15%, B 5%; preserve unknown cost; two Korean sentences with business meaning and no internal tool jargon.",
+          "reply": "같은 기간 A·B 합산 방문 800명 중 첫 일정 추가는 60명으로, 전체 전환율은 7.5%(60÷800×100)입니다.\nA의 전환율은 15%, B는 5%이며, 비용 정보가 없어 비용 대비 효율은 판단할 수 없습니다.",
+          "state": "completed",
+          "elapsed_seconds": 11.47,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:28",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:28",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e48c239aaa1ec1db4a38f878017bab8aec38363ac4849862b0e1c3b78544f124",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "1720ceb3dc3f209a4b8771de53bf4f5114b4cdeaab9fb710fa57be81e3d4042f"
+              ],
+              "expected_outcome": "동료에게 보고할 한국어 두 문장으로 전체 전환율과 비용 정보의 한계를 전달한다.",
+              "reasoning_summary": "같은 기간 A·B 합산 방문 800명 중 첫 일정 추가는 60명으로, 전체 전환율은 7.5%(60÷800×100)입니다.\nA의 전환율은 15%, B는 5%이며, 비용 정보가 없어 비용 대비 효율은 판단할 수 없습니다."
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "calculation correct but requested calculation-tool criterion not met"
+        },
+        {
+          "input": "그럼 내 계정들을 매일 오전 9시에 분석해서 쌓아줄 수 있어?",
+          "criteria": "Do not promise unavailable account access or scheduling. Explain the concrete limitation briefly and offer feasible progress, with at most one blocking question; no exhaustive setup checklist or invented scheduled work.",
+          "reply": "지표를 주시면 분석은 가능해요. 다만 지금은 계정 데이터 수집·예약 실행·저장 도구가 없어, 매일 오전 9시에 자동으로 분석하고 쌓아두는 작업은 설정할 수 없어요. 자동화하려면 이 세 가지 연결이 필요해요.",
+          "state": "completed",
+          "elapsed_seconds": 10.74,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:32",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:32",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "bdb61e3c4be7eb39e536c0caf47c0872863ee987e0e2c7b6dfab7c5ee2e801d7",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e48c239aaa1ec1db4a38f878017bab8aec38363ac4849862b0e1c3b78544f124",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "441b3fe1647d9126fea697d1465947e53e404de5037f1ec766f4da89a7eeae22",
+                "a106e7318a0da84206c4eb23fd04175c82ab9cf58330c5207c4e1f2f026396e1",
+                "6e5ca9cd9ecc01e890313444c90881d0c9841fd2074d54e80f572b56abbc60dd"
+              ],
+              "expected_outcome": "자동 분석·누적 저장의 현재 지원 범위와 필요한 연결을 안내한다.",
+              "reasoning_summary": "지표를 주시면 분석은 가능해요. 다만 지금은 계정 데이터 수집·예약 실행·저장 도구가 없어, 매일 오전 9시에 자동으로 분석하고 쌓아두는 작업은 설정할 수 없어요. 자동화하려면 이 세 가지 연결이 필요해요."
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        }
+      ],
+      "tool_receipts": [
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:4",
+          "invocation_sha256": "48e90f4096d776de8ad0087d65cd11dd602725c485040294e83dd64b0c8f3f56",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "136eb8f1bc890aacc498b42db3ea7dfc62578a4290e900285333c56fded9098b",
+          "executor_id": "trace.skills",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:01:12.185729Z"
+        },
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:13",
+          "invocation_sha256": "3a194aab8b8a567668560cb4d295c0f2c43d922c41342c60014200b78ab04a3e",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "e6619ca82be9b53c3ef2d81815b4537a139fdbcebf15516c8cd1af13477c2163",
+          "executor_id": "trace.skills",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:01:36.500497Z"
+        }
+      ],
+      "tool_invocations": [
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:3",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:3",
+          "intent_sha256": "205e3c636e426d91a819776799dd39e91d0576239d857a3ac7168731a13a091f",
+          "capability_snapshot_sha256": "6c5bae43c403887d65fa9704dfb1ff709c2444addbbab78c09b444499fc7305e",
+          "descriptor_sha256": "1fe42da78911b81316cf86ad7ea373f940a981f529cb505ca37806b830615b6c",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:skills.list:73e68c6796ab07b22f13dd60646b72c9e20b9bfebcb257b8d196c6bacf1284f0",
+          "input": {
+            "query": "",
+            "limit": 50,
+            "offset": 0
+          },
+          "input_sha256": "73e68c6796ab07b22f13dd60646b72c9e20b9bfebcb257b8d196c6bacf1284f0"
+        },
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:12",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:12",
+          "intent_sha256": "9c8de0334db464ee5e4efd96c842b7f73672c53c891896b09b2a0de57e3072fa",
+          "capability_snapshot_sha256": "4743b3c96744315f6bbdde5ba57f317c13415f9f65fc1936daae90e8f433b815",
+          "descriptor_sha256": "f3373c1cadbaf7eda84e2c017ea0b6e603e05611328b691e96c8203994d055d7",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:skills.read:d19c45939147a7400338d48d91c240659056603cfb26a0296e046d5f23f9805f",
+          "input": {
+            "skill_id": "marketing.copy",
+            "version": "3"
+          },
+          "input_sha256": "d19c45939147a7400338d48d91c240659056603cfb26a0296e046d5f23f9805f"
+        }
+      ]
+    },
+    "candidate": {
+      "wheel_sha256": "42938ff1c8be4c77ab20e167253c0bec4892bd963114dc6f718eb17917277f81",
+      "turns": [
+        {
+          "input": "너 지금 사용할 수 있는 스킬이 뭐야? 어떤 일을 맡길 수 있는지 짧게 알려줘.",
+          "criteria": "Actually discover the catalog; group useful work in plain Korean; no invented tools, raw inventory dump or offer to perform the requested lookup later.",
+          "reply": "지금 확인한 스킬 기준으로 이런 일을 맡길 수 있어요.\n\n- **글쓰기·수정:** SNS 홍보 문구, 국가·타깃별 카피, 문장 다듬기\n- **조사·기획:** 시장·트렌드 조사, 캠페인 방향과 다음 실험 제안\n- **분석·보고:** 제공한 퍼널·비용 데이터 분석, 성과 보고서, 고객 인터뷰·리뷰 분석\n- **소재 방향 잡기:** 무드·폰트·색상·구도 제안, 현지화·목업 제작 지침\n\n일반적인 요약·비교·초안 작성도 가능해요. 다만 현재 이미지 생성·편집, 자동 게시, Notion 저장, 내부 위키 조회는 연결되어 있지 않아요.",
+          "state": "completed",
+          "elapsed_seconds": 24.337,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:2",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:2",
+              "action": "invoke_tool",
+              "capability_id": "skills.list",
+              "evidence_sha256s": [],
+              "expected_outcome": "현재 스킬 목록을 확인해 맡길 수 있는 일을 짧게 안내한다.",
+              "reasoning_summary": "현재 제공되는 스킬 목록을 조회한 뒤, 가능한 업무와 실행 범위를 요약한다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:7",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:7",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315"
+              ],
+              "expected_outcome": "현재 스킬로 맡길 수 있는 업무와 실행 범위를 짧게 안내한다.",
+              "reasoning_summary": "지금 확인한 스킬 기준으로 이런 일을 맡길 수 있어요.\n\n- **글쓰기·수정:** SNS 홍보 문구, 국가·타깃별 카피, 문장 다듬기\n- **조사·기획:** 시장·트렌드 조사, 캠페인 방향과 다음 실험 제안\n- **분석·보고:** 제공한 퍼널·비용 데이터 분석, 성과 보고서, 고객 인터뷰·리뷰 분석\n- **소재 방향 잡기:** 무드·폰트·색상·구도 제안, 현지화·목업 제작 지침\n\n일반적인 요약·비교·초안 작성도 가능해요. 다만 현재 이미지 생성·편집, 자동 게시, Notion 저장, 내부 위키 조회는 연결되어 있지 않아요."
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "Trace는 일정 추가와 주간 보기만 확인됐어. 한국 직장인에게 보여줄 귀여운 컨셉의 Threads 게시물 하나 만들어줘. 나머지는 네가 알아서 정해.",
+          "criteria": "Read a relevant procedure when needed, then deliver one usable Korean post, not a promise to read a skill or a questionnaire. No invented features or publication.",
+          "reply": "머릿속 햄스터야, 회의 시간까지 굴리진 말자 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 퇴근 후 약속.\n다 외우려다 오늘이 무슨 요일인지 놓치는 사람… 저요 🙋\n\nTrace에 일정을 하나씩 추가하고\n주간 보기로 이번 주를 펼쳐봐요.\n금요일의 즐거운 약속도 같이 보이도록 🍮\n\n이번 주, 여러분이 제일 기다리는 일정은 뭐예요?",
+          "state": "completed",
+          "elapsed_seconds": 23.537,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:11",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:11",
+              "action": "invoke_tool",
+              "capability_id": "skills.read",
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "890f62c6ae455268df85d81050c2461662a44cb80dc9713d662d0e8ca9187568"
+              ],
+              "expected_outcome": "Threads 게시물 작성 지침을 확인하고, 일정 추가와 주간 보기만 활용한 귀여운 한국 직장인 대상 초안을 작성한다.",
+              "reasoning_summary": "확인된 기능 두 가지에 맞춰, ‘일정 챙기는 직장인 햄스터’ 콘셉트로 게시물 하나를 만들겠습니다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:16",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:16",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e1dd5ebdcfa2afe9599ffd86c877254d33586099c8d405adb84ee6036b35fd36",
+                "890f62c6ae455268df85d81050c2461662a44cb80dc9713d662d0e8ca9187568"
+              ],
+              "expected_outcome": "확인된 일정 추가·주간 보기만 활용한 한국 직장인 대상 Threads 게시물 초안을 제공한다.",
+              "reasoning_summary": "머릿속 햄스터야, 회의 시간까지 굴리진 말자 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 퇴근 후 약속.\n다 외우려다 오늘이 무슨 요일인지 놓치는 사람… 저요 🙋\n\nTrace에 일정을 하나씩 추가하고\n주간 보기로 이번 주를 펼쳐봐요.\n금요일의 즐거운 약속도 같이 보이도록 🍮\n\n이번 주, 여러분이 제일 기다리는 일정은 뭐예요?"
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "좋아. 설명 빼고 게시글만 줘.",
+          "criteria": "Return the same requested draft only; no new onboarding, disclaimer or skill reload.",
+          "reply": "머릿속 햄스터야, 회의 시간까지 굴리진 말자 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 퇴근 후 약속.\n다 외우려다 오늘이 무슨 요일인지 놓치는 사람… 저요 🙋\n\nTrace에 일정을 하나씩 추가하고\n주간 보기로 이번 주를 펼쳐봐요.\n금요일의 즐거운 약속도 같이 보이도록 🍮\n\n이번 주, 여러분이 제일 기다리는 일정은 뭐예요?",
+          "state": "completed",
+          "elapsed_seconds": 10.533,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:20",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:20",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e1dd5ebdcfa2afe9599ffd86c877254d33586099c8d405adb84ee6036b35fd36",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "7b00d0ebed8c4d37e1e5bcc6a2f19561e8cd53f5d515f57e50a55fdb6482cef8"
+              ],
+              "expected_outcome": "설명 없이 기존 Threads 게시글만 제공한다.",
+              "reasoning_summary": "머릿속 햄스터야, 회의 시간까지 굴리진 말자 🐹\n\n월요일 팀 회의, 수요일 미팅, 금요일 퇴근 후 약속.\n다 외우려다 오늘이 무슨 요일인지 놓치는 사람… 저요 🙋\n\nTrace에 일정을 하나씩 추가하고\n주간 보기로 이번 주를 펼쳐봐요.\n금요일의 즐거운 약속도 같이 보이도록 🍮\n\n이번 주, 여러분이 제일 기다리는 일정은 뭐예요?"
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "영어로 바꿔줘.",
+          "criteria": "Translate the immediately preceding draft, not a greeting or a new task intake.",
+          "reply": "Little hamster in my brain, you can stop juggling meeting times now 🐹\n\nMonday team meeting, Wednesday catch-up, Friday plans after work.\nTrying to remember it all and forgetting what day it is… yep, that’s me 🙋\n\nAdd your plans to Trace, one by one,\nand open the weekly view to see the week ahead.\nKeep those fun Friday plans in sight, too 🍮\n\nWhat’s the one thing on your calendar you’re most looking forward to this week?",
+          "state": "completed",
+          "elapsed_seconds": 11.152,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:24",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:24",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e1dd5ebdcfa2afe9599ffd86c877254d33586099c8d405adb84ee6036b35fd36",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "78c993764740f6076e031e152973a59aaa05fcd237af71c0d269c9172126d839"
+              ],
+              "expected_outcome": "Deliver the English version of the Threads post, without explanation.",
+              "reasoning_summary": "Little hamster in my brain, you can stop juggling meeting times now 🐹\n\nMonday team meeting, Wednesday catch-up, Friday plans after work.\nTrying to remember it all and forgetting what day it is… yep, that’s me 🙋\n\nAdd your plans to Trace, one by one,\nand open the weekly view to see the week ahead.\nKeep those fun Friday plans in sight, too 🍮\n\nWhat’s the one thing on your calendar you’re most looking forward to this week?"
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "다시 한국어로. 같은 기간 집계야. A는 방문 200명 중 첫 일정 30명, B는 방문 600명 중 첫 일정 30명이야. 전체 전환율을 계산해서 동료에게 보고할 두 문장으로 써줘. 비용은 몰라.",
+          "criteria": "Use available arithmetic: 60/800=7.5%, A 15%, B 5%; preserve unknown cost; two Korean sentences with business meaning and no internal tool jargon.",
+          "reply": "같은 기간 A·B 합산 방문자 800명 중 첫 일정 추가자는 60명으로, 전체 전환율은 7.5%(60÷800×100)입니다.\nA의 전환율은 15%, B는 5%이며, 비용 정보가 없어 비용 효율은 판단할 수 없습니다.",
+          "state": "completed",
+          "elapsed_seconds": 11.39,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:28",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:28",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e1dd5ebdcfa2afe9599ffd86c877254d33586099c8d405adb84ee6036b35fd36",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "63267a694de0302edb9614d624afded9524012589d22dbf8d303567245b8cafb"
+              ],
+              "expected_outcome": "전체 전환율을 계산한 한국어 두 문장 보고문을 전달한다.",
+              "reasoning_summary": "같은 기간 A·B 합산 방문자 800명 중 첫 일정 추가자는 60명으로, 전체 전환율은 7.5%(60÷800×100)입니다.\nA의 전환율은 15%, B는 5%이며, 비용 정보가 없어 비용 효율은 판단할 수 없습니다."
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "calculation correct but requested calculation-tool criterion not met"
+        },
+        {
+          "input": "그럼 내 계정들을 매일 오전 9시에 분석해서 쌓아줄 수 있어?",
+          "criteria": "Do not promise unavailable account access or scheduling. Explain the concrete limitation briefly and offer feasible progress, with at most one blocking question; no exhaustive setup checklist or invented scheduled work.",
+          "reply": "지금은 계정 데이터를 가져오거나 매일 오전 9시에 자동 실행하고 결과를 저장하는 기능이 연결되어 있지 않아, 자동으로 쌓아드릴 수는 없어요.\n\n데이터를 주시면 계정별 전환율·전일 대비 변화·다음 조치를 같은 형식으로 분석해드릴 수 있어요. 매일 자동으로 누적하려면 계정 조회, 예약 실행, 저장할 곳의 연결이 필요해요.",
+          "state": "completed",
+          "elapsed_seconds": 10.86,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:32",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:32",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "58e67c4ceb18eb4808c5016a615c049dee79c0d90f178c9adaa23cd612f5a315",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "e1dd5ebdcfa2afe9599ffd86c877254d33586099c8d405adb84ee6036b35fd36",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "441b3fe1647d9126fea697d1465947e53e404de5037f1ec766f4da89a7eeae22",
+                "a106e7318a0da84206c4eb23fd04175c82ab9cf58330c5207c4e1f2f026396e1",
+                "4de7b65b8a930074788013a0cdf0754beb1e457217663882b0627d21a24a7b62"
+              ],
+              "expected_outcome": "자동 분석·누적 저장의 현재 제약과 가능한 대안을 안내한다.",
+              "reasoning_summary": "지금은 계정 데이터를 가져오거나 매일 오전 9시에 자동 실행하고 결과를 저장하는 기능이 연결되어 있지 않아, 자동으로 쌓아드릴 수는 없어요.\n\n데이터를 주시면 계정별 전환율·전일 대비 변화·다음 조치를 같은 형식으로 분석해드릴 수 있어요. 매일 자동으로 누적하려면 계정 조회, 예약 실행, 저장할 곳의 연결이 필요해요."
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        }
+      ],
+      "tool_receipts": [
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:4",
+          "invocation_sha256": "46d4694e158afe40b29cfd82daa97060628c43e4875e83c487cff24342f64b28",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "136eb8f1bc890aacc498b42db3ea7dfc62578a4290e900285333c56fded9098b",
+          "executor_id": "trace.skills",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:02:50.614248Z"
+        },
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:13",
+          "invocation_sha256": "18747cf1d79ab64aca30c6c29da2afe8adc28f144359c2e9ff7e9f1bfd325298",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "e6619ca82be9b53c3ef2d81815b4537a139fdbcebf15516c8cd1af13477c2163",
+          "executor_id": "trace.skills",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:03:14.951734Z"
+        }
+      ],
+      "tool_invocations": [
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:3",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:3",
+          "intent_sha256": "5344c239ff9446c2526a9442a2fd0a8b174885aaf46c2e2006b0b32a8ae6bbfc",
+          "capability_snapshot_sha256": "de095c6dc5b12e1f6fb9394fd4d86e5a2b31dbdcc22e5cc0ede0aa5da7012630",
+          "descriptor_sha256": "3324b5f07516f730eecf6f03181e0f9d5366f25c395921e31caf83880e3d4482",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:skills.list:73e68c6796ab07b22f13dd60646b72c9e20b9bfebcb257b8d196c6bacf1284f0",
+          "input": {
+            "query": "",
+            "limit": 50,
+            "offset": 0
+          },
+          "input_sha256": "73e68c6796ab07b22f13dd60646b72c9e20b9bfebcb257b8d196c6bacf1284f0"
+        },
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:12",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:12",
+          "intent_sha256": "89548e43fd97e53fe13f65d51dd060fa4b73f986cda538086dbe56f5adde6272",
+          "capability_snapshot_sha256": "f4bcc670c633a8e16379e1e629a5816ca58dc8b646d524591a425aec87fc3b8f",
+          "descriptor_sha256": "0ca68be0246e7b6a7db4b310231da97e83addce90dc06da8b577e259900df433",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:skills.read:d19c45939147a7400338d48d91c240659056603cfb26a0296e046d5f23f9805f",
+          "input": {
+            "skill_id": "marketing.copy",
+            "version": "3"
+          },
+          "input_sha256": "d19c45939147a7400338d48d91c240659056603cfb26a0296e046d5f23f9805f"
+        }
+      ]
+    },
+    "final": {
+      "wheel_sha256": "787c703764ab9acf7f8f923050e98728c802e77148fafb184a9d431dafce4d2d",
+      "turns": [
+        {
+          "input": "너 지금 사용할 수 있는 스킬이 뭐야? 어떤 일을 맡길 수 있는지 짧게 알려줘.",
+          "criteria": "Actually discover the catalog; group useful work in plain Korean; no invented tools, raw inventory dump or offer to perform the requested lookup later.",
+          "reply": "지금 확인한 스킬로는 이런 일을 맡길 수 있어요.\n\n- 카피 작성·수정: SNS·광고 문구, 국가·타깃별 표현 다듬기\n- 리서치·전략: 시장·트렌드 조사, 타깃과 메시지 비교, 캠페인·실험 제안\n- 고객 인사이트: 제공한 인터뷰·리뷰에서 사용 장면과 구매 장벽 정리\n- 성과 분석: 제공한 퍼널 수치의 전환율·획득 비용 계산, 성과 보고서 작성\n- 디자인 방향: 소재 무드·폰트·색상·목업·현지화 작업안 준비\n\n이미지 생성·편집 실행, 자동 게시, Notion 기록, 내부 위키 조회는 현재 연결된 도구로는 할 수 없어요. 일반적인 글 요약이나 문서 정리도 맡겨주세요.",
+          "state": "completed",
+          "elapsed_seconds": 21.655,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:2",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:2",
+              "action": "invoke_tool",
+              "capability_id": "skills.list",
+              "evidence_sha256s": [],
+              "expected_outcome": "현재 스킬 목록을 확인해 맡길 수 있는 일을 짧게 안내한다.",
+              "reasoning_summary": "사용 가능한 스킬을 묻는 요청이므로 현재 카탈로그를 조회한다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:7",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:7",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec"
+              ],
+              "expected_outcome": "현재 확인된 스킬과 실행 범위를 짧게 안내한다.",
+              "reasoning_summary": "지금 확인한 스킬로는 이런 일을 맡길 수 있어요.\n\n- 카피 작성·수정: SNS·광고 문구, 국가·타깃별 표현 다듬기\n- 리서치·전략: 시장·트렌드 조사, 타깃과 메시지 비교, 캠페인·실험 제안\n- 고객 인사이트: 제공한 인터뷰·리뷰에서 사용 장면과 구매 장벽 정리\n- 성과 분석: 제공한 퍼널 수치의 전환율·획득 비용 계산, 성과 보고서 작성\n- 디자인 방향: 소재 무드·폰트·색상·목업·현지화 작업안 준비\n\n이미지 생성·편집 실행, 자동 게시, Notion 기록, 내부 위키 조회는 현재 연결된 도구로는 할 수 없어요. 일반적인 글 요약이나 문서 정리도 맡겨주세요."
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "Trace는 일정 추가와 주간 보기만 확인됐어. 한국 직장인에게 보여줄 귀여운 컨셉의 Threads 게시물 하나 만들어줘. 나머지는 네가 알아서 정해.",
+          "criteria": "Read a relevant procedure when needed, then deliver one usable Korean post, not a promise to read a skill or a questionnaire. No invented features or publication.",
+          "reply": "월요일의 나: 이번 주는 제법 여유롭겠는데? 🐹\n화요일의 나: 이 일정은 누가 넣었지?\n…저장한 햄스터가 나였네.\n\n회의도, 마감도, 금요일 친구랑 먹을 떡볶이도.\nTrace에 일정으로 추가하고 주간 보기로 이번 주를 펼쳐보자 🗓️\n\n일할 일정 사이에 기다려지는 약속 하나쯤은 있어야지.\n다들 이번 주엔 뭐 기다리면서 출근해? 🍡",
+          "state": "completed",
+          "elapsed_seconds": 24.063,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:11",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:11",
+              "action": "invoke_tool",
+              "capability_id": "skills.read",
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "5b5c3971835923c7d0fd71de942a9ed698780c148140325545ea623a97ccfe58"
+              ],
+              "expected_outcome": "한국 직장인 대상의 귀여운 Threads 게시물 작성에 필요한 카피 지침을 확인한다.",
+              "reasoning_summary": "확인된 일정 추가와 주간 보기만 제품 표현에 사용하고, 귀여운 직장인 일상 콘셉트로 게시물 하나를 작성한다. 현재 목록에서 확인한 카피 작성 지침을 읽는다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:16",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:16",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "527ccfab6be0dd914f326028efd789736af8b3cfd095363179045604d132f1e0",
+                "5b5c3971835923c7d0fd71de942a9ed698780c148140325545ea623a97ccfe58"
+              ],
+              "expected_outcome": "확인된 일정 추가와 주간 보기만 활용한 한국 직장인 대상 Threads 게시물 초안을 제공한다.",
+              "reasoning_summary": "월요일의 나: 이번 주는 제법 여유롭겠는데? 🐹\n화요일의 나: 이 일정은 누가 넣었지?\n…저장한 햄스터가 나였네.\n\n회의도, 마감도, 금요일 친구랑 먹을 떡볶이도.\nTrace에 일정으로 추가하고 주간 보기로 이번 주를 펼쳐보자 🗓️\n\n일할 일정 사이에 기다려지는 약속 하나쯤은 있어야지.\n다들 이번 주엔 뭐 기다리면서 출근해? 🍡"
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "좋아. 설명 빼고 게시글만 줘.",
+          "criteria": "Return the same requested draft only; no new onboarding, disclaimer or skill reload.",
+          "reply": "월요일의 나: 이번 주는 제법 여유롭겠는데? 🐹\n화요일의 나: 이 일정은 누가 넣었지?\n…저장한 햄스터가 나였네.\n\n회의도, 마감도, 금요일 친구랑 먹을 떡볶이도.\nTrace에 일정으로 추가하고 주간 보기로 이번 주를 펼쳐보자 🗓️\n\n일할 일정 사이에 기다려지는 약속 하나쯤은 있어야지.\n다들 이번 주엔 뭐 기다리면서 출근해? 🍡",
+          "state": "completed",
+          "elapsed_seconds": 11.631,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:20",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:20",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "527ccfab6be0dd914f326028efd789736af8b3cfd095363179045604d132f1e0",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "37da8123e773e4088abf19d90ed771a812d432a01077b7c78d1980b524efff1a"
+              ],
+              "expected_outcome": "설명 없이 기존 Threads 게시글만 전달한다.",
+              "reasoning_summary": "월요일의 나: 이번 주는 제법 여유롭겠는데? 🐹\n화요일의 나: 이 일정은 누가 넣었지?\n…저장한 햄스터가 나였네.\n\n회의도, 마감도, 금요일 친구랑 먹을 떡볶이도.\nTrace에 일정으로 추가하고 주간 보기로 이번 주를 펼쳐보자 🗓️\n\n일할 일정 사이에 기다려지는 약속 하나쯤은 있어야지.\n다들 이번 주엔 뭐 기다리면서 출근해? 🍡"
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "영어로 바꿔줘.",
+          "criteria": "Translate the immediately preceding draft, not a greeting or a new task intake.",
+          "reply": "Monday me: This week looks pretty chill! 🐹\nTuesday me: Who added all these plans?\n…Turns out it was me. I’m the hamster.\n\nMeetings, deadlines, and Friday tteokbokki with friends.\nAdd them to Trace and open the weekly view to see your week laid out 🗓️\n\nEvery workweek deserves a little something to look forward to.\nWhat’s getting you through your commute this week? 🍡",
+          "state": "completed",
+          "elapsed_seconds": 10.835,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:24",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:24",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "527ccfab6be0dd914f326028efd789736af8b3cfd095363179045604d132f1e0",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "cb0fba61a852fdb02fbde97ed12cd0e6cdb81e23d9a77587e4d37a9aacbde349"
+              ],
+              "expected_outcome": "Deliver the English version of the existing Threads post, without explanation.",
+              "reasoning_summary": "Monday me: This week looks pretty chill! 🐹\nTuesday me: Who added all these plans?\n…Turns out it was me. I’m the hamster.\n\nMeetings, deadlines, and Friday tteokbokki with friends.\nAdd them to Trace and open the weekly view to see your week laid out 🗓️\n\nEvery workweek deserves a little something to look forward to.\nWhat’s getting you through your commute this week? 🍡"
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "다시 한국어로. 같은 기간 집계야. A는 방문 200명 중 첫 일정 30명, B는 방문 600명 중 첫 일정 30명이야. 전체 전환율을 계산해서 동료에게 보고할 두 문장으로 써줘. 비용은 몰라.",
+          "criteria": "Use available arithmetic: 60/800=7.5%, A 15%, B 5%; preserve unknown cost; two Korean sentences with business meaning and no internal tool jargon.",
+          "reply": "같은 기간 A·B 합산 방문 800명 중 첫 일정 60명으로, 전체 전환율은 7.5%(60÷800)입니다.\nA의 전환율은 15%, B는 5%이며, 비용 정보가 없어 획득 비용은 계산하지 않았습니다.",
+          "state": "completed",
+          "elapsed_seconds": 27.964,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:28",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:28",
+              "action": "invoke_tool",
+              "capability_id": "marketing.analyze",
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "527ccfab6be0dd914f326028efd789736af8b3cfd095363179045604d132f1e0",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "cea4726173f2727528559a5d3369fa2a89d79b4f2ef8c587706baf17528935d7"
+              ],
+              "expected_outcome": "A와 B의 방문 대비 첫 일정 전환율과 전체 합산 전환율을 계산해 한국어 두 문장 보고에 사용한다.",
+              "reasoning_summary": "같은 기간의 방문·첫 일정 인원으로 전환율을 계산한다. 비용은 제공되지 않았으므로 입력에서 제외한다."
+            },
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:33",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:33",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "527ccfab6be0dd914f326028efd789736af8b3cfd095363179045604d132f1e0",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "6a3a428d02f3d123345075c8ff8d25a845d2ef97f3da08d146d53c343f8954bd",
+                "cea4726173f2727528559a5d3369fa2a89d79b4f2ef8c587706baf17528935d7"
+              ],
+              "expected_outcome": "동료에게 전달할 한국어 두 문장 성과 보고.",
+              "reasoning_summary": "같은 기간 A·B 합산 방문 800명 중 첫 일정 60명으로, 전체 전환율은 7.5%(60÷800)입니다.\nA의 전환율은 15%, B는 5%이며, 비용 정보가 없어 획득 비용은 계산하지 않았습니다."
+            }
+          ],
+          "provider_call_count": 2,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        },
+        {
+          "input": "그럼 내 계정들을 매일 오전 9시에 분석해서 쌓아줄 수 있어?",
+          "criteria": "Do not promise unavailable account access or scheduling. Explain the concrete limitation briefly and offer feasible progress, with at most one blocking question; no exhaustive setup checklist or invented scheduled work.",
+          "reply": "지금은 매일 오전 9시에 자동으로 분석해서 쌓아두는 작업은 할 수 없어요. 계정 지표 조회, 예약 실행, 결과 저장 기능이 연결되어 있지 않아 예약도 등록하지 못했어요.\n\n지표를 보내주시면 계정별 성과와 전일 대비 변화, 다음 조치를 같은 형식으로 정리할 수 있어요. 자동화하려면 운영 담당자가 계정 데이터 조회·예약 실행·저장 위치를 연결해야 해요.",
+          "state": "completed",
+          "elapsed_seconds": 13.41,
+          "decisions": [
+            {
+              "schema_version": "trace.agent-intent.v1",
+              "intent_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:intent:37",
+              "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+              "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:37",
+              "action": "stop",
+              "capability_id": null,
+              "evidence_sha256s": [
+                "343c090c821d880ed3eddfd401e478521cad8e3b3a479fe11f9fac24db9a6eec",
+                "b65e48fcde3c49f237f1a4ea9eb489efbf9c2ae7c7faf41bc271957a984fa21b",
+                "79781309b8d8aa39a4522200c3d17e7d6d17c502a89bcba4fcf78b7fcd89adba",
+                "527ccfab6be0dd914f326028efd789736af8b3cfd095363179045604d132f1e0",
+                "ea89340ac8fc3a93e838fb8856a367e10935ca7cbed9374daed4a26be0bf88af",
+                "8397cb5a16b751290af544aec2332515aa5e13be0c1e390fe6285e42273f225c",
+                "2424a734424749e5dff23c5bb62342f6c18292329eee90b12b6f9dfe60de972e",
+                "6ced89fb674a1a32a78d08ec7bf2e128c6d88058e8affae9178c3714445ad19f",
+                "d3d5ff539d2b2c19e51e13a23e0b25cdc33a63249ed48d94e14a2e2ffef05fa4",
+                "149750761ed4c4aebc97095dc8a335baf4d1f02ed830925fec433c5fc8a36d30",
+                "6a3a428d02f3d123345075c8ff8d25a845d2ef97f3da08d146d53c343f8954bd",
+                "441b3fe1647d9126fea697d1465947e53e404de5037f1ec766f4da89a7eeae22",
+                "a106e7318a0da84206c4eb23fd04175c82ab9cf58330c5207c4e1f2f026396e1",
+                "6e3825985af80ac70cf8d81fecf8e5f073c716666ebcda6d431c92254ccd157e"
+              ],
+              "expected_outcome": "자동 분석·누적의 현재 제한과 가능한 대안을 안내한다.",
+              "reasoning_summary": "지금은 매일 오전 9시에 자동으로 분석해서 쌓아두는 작업은 할 수 없어요. 계정 지표 조회, 예약 실행, 결과 저장 기능이 연결되어 있지 않아 예약도 등록하지 못했어요.\n\n지표를 보내주시면 계정별 성과와 전일 대비 변화, 다음 조치를 같은 형식으로 정리할 수 있어요. 자동화하려면 운영 담당자가 계정 데이터 조회·예약 실행·저장 위치를 연결해야 해요."
+            }
+          ],
+          "provider_call_count": 1,
+          "review": "task criteria met by implementing-agent inspection; no general quality claim"
+        }
+      ],
+      "tool_receipts": [
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:4",
+          "invocation_sha256": "6f9876e9187e331175b4f09724b2c131ff580a93202ab0951e39ece765eb9061",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "136eb8f1bc890aacc498b42db3ea7dfc62578a4290e900285333c56fded9098b",
+          "executor_id": "trace.skills",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:07:58.577046Z"
+        },
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:13",
+          "invocation_sha256": "1e4916c84c456964c81bb3888d36e3f77e1b9fdd9124e7777ba079a39659dc59",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "e6619ca82be9b53c3ef2d81815b4537a139fdbcebf15516c8cd1af13477c2163",
+          "executor_id": "trace.skills",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:08:20.224782Z"
+        },
+        {
+          "schema_version": "trace.tool-receipt.v1",
+          "receipt_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:receipt:30",
+          "invocation_sha256": "b7245ad690a5a39109229ffe8f351ffddc7b616c7be3bda9249495816f281e9c",
+          "approval_sha256": null,
+          "disposition": "no_effect",
+          "actual_cost_units": 0,
+          "output_schema_sha256": "82ef96cebaf5fbe16269fd18b0240d78f5b9b90a4155a17eb797115b09148ecf",
+          "output_sha256": "ea2765d5dfbf2c2cff0988cf9c43f590cb04243ab68903b6c81e0038e0a51b0d",
+          "executor_id": "trace.marketing_analysis",
+          "reconciliation_sha256": null,
+          "occurred_at": "2026-09-11T05:09:06.756353Z"
+        }
+      ],
+      "tool_invocations": [
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:3",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:3",
+          "intent_sha256": "0c4379501de0e1894cd1ab57fa3231937f045feb4ef4b3d021ea8238279dc7ce",
+          "capability_snapshot_sha256": "ddd7d94bcf4a6bd7b7a3f2b4ec43d6b601ab51734b07b0b9316042c0f287e5f7",
+          "descriptor_sha256": "05655fd2f9a6f8d0921b0c4a96de58d8448ad6d537a5538159af945c27cd6184",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:skills.list:73e68c6796ab07b22f13dd60646b72c9e20b9bfebcb257b8d196c6bacf1284f0",
+          "input": {
+            "query": "",
+            "limit": 50,
+            "offset": 0
+          },
+          "input_sha256": "73e68c6796ab07b22f13dd60646b72c9e20b9bfebcb257b8d196c6bacf1284f0"
+        },
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:12",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:12",
+          "intent_sha256": "114800812195ab00995c1135794ba25b8abf77e73318d621d7af0b090c93dfb7",
+          "capability_snapshot_sha256": "5df44baa25c14ec0a1ff9feeb25a250f056402adba1350b3ae36fe0419d13f40",
+          "descriptor_sha256": "c998bd85562212750c70e69a8b0a371b8781d5373994ab1ec060795d58a7232b",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:skills.read:d19c45939147a7400338d48d91c240659056603cfb26a0296e046d5f23f9805f",
+          "input": {
+            "skill_id": "marketing.copy",
+            "version": "3"
+          },
+          "input_sha256": "d19c45939147a7400338d48d91c240659056603cfb26a0296e046d5f23f9805f"
+        },
+        {
+          "tenant_id": "synthetic-rehearsal",
+          "schema_version": "trace.tool-invocation.v1",
+          "invocation_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:invocation:29",
+          "run_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271",
+          "step_id": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:step:29",
+          "intent_sha256": "e7fbbfee5a1bd9ae9edbfdfd5a8dea943c00a97816690f0324523bf8558160d0",
+          "capability_snapshot_sha256": "c580f33d37063e31847cac15afc8175f6b8a1bf666fd68a58ec548200435a3fc",
+          "descriptor_sha256": "d439fb9e1cd83c056a73a08fe4656b584d19a4624e0ae0cc8454f65533d675dc",
+          "idempotency_key": "slack-talk-374f6b6cb3af9edc252faaff959b3ec8ea9f5271:marketing.analyze:9f9ddb7087e6ee541fd198bab46d0ac5bd2d90376e11bac77153d68fa8dc39d4",
+          "input": {
+            "objective_stage": "첫 일정",
+            "cohorts": [
+              {
+                "name": "A",
+                "period": "사용자가 명시한 동일 집계 기간",
+                "audience": "A 방문자",
+                "steps": [
+                  {
+                    "name": "방문",
+                    "people": 200
+                  },
+                  {
+                    "name": "첫 일정",
+                    "people": 30
+                  }
+                ]
+              },
+              {
+                "name": "B",
+                "period": "사용자가 명시한 동일 집계 기간",
+                "audience": "B 방문자",
+                "steps": [
+                  {
+                    "name": "방문",
+                    "people": 600
+                  },
+                  {
+                    "name": "첫 일정",
+                    "people": 30
+                  }
+                ]
+              }
+            ],
+            "source_note": "사용자 제공 집계: 같은 기간 A 방문 200명 중 첫 일정 30명, B 방문 600명 중 첫 일정 30명. 전체 전환율은 합산 첫 일정 인원을 합산 방문 인원으로 나누어 계산. 비용 미상.",
+            "design": "observational"
+          },
+          "input_sha256": "9f9ddb7087e6ee541fd198bab46d0ac5bd2d90376e11bac77153d68fa8dc39d4"
+        }
+      ]
+    }
+  },
+  "scoped_skill_reuse": {
+    "status": "passed",
+    "checks": {
+      "u1_exactly_one_source_bound_skill_operation": true,
+      "u1_skill_apply_exchange_bound": true,
+      "u1_skill_apply_applied_exact_target": true,
+      "restart_preserved_exact_head": true,
+      "u2_selected_exact_written_revision": true,
+      "u2_selected_u1_canonical_source_revision": true,
+      "u2_skill_get_exchange_bound": true,
+      "u2_exact_response": true,
+      "foreground_call_limit": true,
+      "no_background_or_research_calls": true,
+      "fake_slack_only": true
+    },
+    "foreground_calls": 4,
+    "curation_calls": 0,
+    "search_calls": 0,
+    "candidate_wheel_used": "42938ff1c8be4c77ab20e167253c0bec4892bd963114dc6f718eb17917277f81",
+    "final_prompt_equivalence_verified": true,
+    "prompt_hashes": [
+      "0dc36be90dcf4f9858d1446ba3b2aaaf5f527537f857ab22cd6ed98743a6202c",
+      "e2a95d4d47b106257287f663dc48af65dd4349c9156be8e6018766d1b65b5650",
+      "b1b386cba4ba9ed48be81a9b1b32ffdf173099d31f35b6242624bd6c3b29f487",
+      "49f56dc2f7b116ccd5d7ff2e4ae55472b4c65e83dd74f133101d041ef4cfe87e"
+    ],
+    "scope": "Explicit synthetic shared skill write, restart and exact revision read; four request projections byte-identical between candidate and final; not broad learned-skill quality."
+  }
+}

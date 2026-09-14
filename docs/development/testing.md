@@ -151,6 +151,43 @@ version and compare record digests. This verifies a procedure, not an automatic 
 execution compatibility or production downgrade. Never restore over candidate-created work.
 See [state compatibility](../architecture/system.md#completion-state-compatibility-and-rollback).
 
+For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
+and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:
+ordinary output must not expose its rationale or imply tool execution, while explicit status and
+canonical records remain available. Check asynchronous completion, deduplication, callback-loss
+recovery and membership checks. Repeat against a non-editable wheel outside the checkout.
+
+### Slack approval feedback
+
+For conversational task approval (#169), also select `test_slack_pending_dialogue.py`,
+`test_slack_github_issues.py`, `test_slack_images.py`, `test_slack_progress.py`, service
+`test_application.py`, `test_application_deferred.py`, `test_work_continuation.py`,
+`tests/providers/test_codex_reasoning.py` and `tests/marketing/test_marketing_agent_contracts.py`.
+Verify pending work after acknowledgement/read tools, cancelled/replaced targets, queued assent
+before delivery, edited/deleted assent, direct-creation source/membership binding, duplicate events
+and uncertain effects. Also verify a requested create-then-deliver sequence, an unrequested
+second step, and membership revocation between steps. Select
+`tests/marketing/agent_service/test_image_generation.py` when changing result review metadata.
+Interrupt after approval, execution and runtime-admission persistence.
+Repeat from outside the checkout against a fresh non-editable wheel.
+
+The opt-in `tests/marketing/agent_service/slack_approval_canary.py` runs six actual-model scenarios
+with `--output-root`, `--codex` and `--model` arguments. Copy the tests package outside the checkout
+and run it with the installed interpreter via `python -m tests.marketing.agent_service.slack_approval_canary`.
+It uses signed synthetic Slack events and synthetic image/GitHub adapters; inspect saved replies and
+canonical decisions as well as dispatch counts. The model must execute direct image/issue requests
+once, finish the turn, and perform no creation for capability questions, drafts, negation or quotes.
+Fixture artifact bytes and URLs are not evidence of live image generation or GitHub writes.
+
+Select `tests/marketing/channels/test_slack_approval_feedback.py`, `test_slack_production_approval.py`,
+`test_slack_commands.py` and `test_slack_events.py` from the same directory. Signed events/forms
+exercise review explanations, invalid/oversized pages, missing pending work, current permission,
+changed digests and unavailable tools. Check delivered text and unchanged canonical records;
+help text must not grant reviewed-production assent. A fault after approval persistence verifies
+redacted diagnostics and no automatic retry. Run the same selection against a fresh non-editable
+wheel outside the checkout. Fixtures replace model/tool/Slack providers; they do not establish
+the cause of a deployed incident or successful live image generation.
+
 ### Adaptive skill discovery
 
 For bounded catalog queries, learned-skill ranking, context budgets, scoped provider guidance and
@@ -188,6 +225,42 @@ these are two executions of one synthetic scenario, not a benchmark. Research an
 executable-tool boundary are recorded in [adaptive skills](../research/adaptive-skills.md).
 
 ### Marketing decisions and finished deliverables
+
+For colleague interaction guidance, select `tests/providers/test_codex_reasoning.py`,
+`tests/marketing/agent_service/test_skill_tools.py` and `tests/knowledge/test_procedural_skills.py`.
+Use the fresh-wheel Slack harness below with `--scenario colleague` for six turns covering
+actual catalog lookup, delegated drafting, narrow correction, language continuity, calculation
+and an unavailable recurring task. Grade final messages and actual tool use, not lifecycle alone.
+Use the existing minimal-skill-reuse canary for the scoped shared-skill branch. Keep comparison
+inputs and dependency versions fixed, record per-turn evidence and distinguish supplied-task
+acceptance from broad communication quality. See [colleague evidence](../research/conversational-colleague.md).
+
+For campaign planning, performance reporting and useful-content guidance, select
+`tests/marketing/agent_service/test_skill_tools.py`,
+`tests/knowledge/test_procedural_skills.py` and `tests/marketing/test_funnel_analysis.py`.
+The catalog test exercises list/read through canonical receipts for the changed procedures;
+it does not grade generated marketing text. Use a frozen dependency-complete development
+environment and scoped Ruff/BasedPyright for changed Python files.
+Funnel regressions include numeric-only canonical receipts without a currency, preservation of
+unknown financial values, and currency rejection when spend is supplied (including zero).
+
+The existing fresh-wheel command below accepts `--scenario planning` for three additional
+synthetic signed Slack turns: constrained campaign planning, an uneven-denominator report with
+missing business data, and a useful-content revision under pressure to invent product claims.
+Use identical inputs/model and a new output root for each baseline/candidate trial. Criteria
+are written before calls; results remain `quality_verdict: ungraded` until reviewed. Inspect
+the delivered replies and canonical tool intents as well as lifecycle state. Report each task's
+0/1/2 rubric dimensions, hard failures, elapsed time, actual model and trial count; a single
+passing candidate cannot establish an improvement or marketing lift. Campaign publication,
+real analytics and human brand acceptance remain separate. The source mapping and observed
+comparison live in [marketing planning quality](../research/marketing-planning-quality.md).
+
+For the funnel tool's model-facing input schema, use `--scenario funnel` on the same installed
+Slack harness. Its two new tasks use different numbers and downstream stage labels from the
+planning rehearsal. Inspect the first calculation input for exact supplied stage names, omitted
+unknown finances and zero failed receipts; expected rates are 15%/8% and 15%/10%. This diagnostic
+has an all-or-nothing input-contract check in addition to reading the two-sentence answers.
+Compare the same tasks/model across fresh wheels; one trial does not measure failure frequency.
 
 The pre-integration selection passed 78 tests; after merging current main, 87 focused tests
 passed including channel memory, requester isolation and context identity. The integrated fresh
@@ -631,9 +704,12 @@ port survive. This does not prove the live on-prem port migration or Cloudflare 
 
 ## GitHub issues from Slack
 
-Focused owners: `tests/marketing/agent_service/test_github_issues.py`,
+Focused owners: `tests/marketing/agent_service/test_github_auth.py`,
+`tests/marketing/agent_service/test_github_issues.py`,
 `tests/marketing/channels/test_slack_github_issues.py`, and `tests/cli/test_github_setup.py`.
 For composition changes include the existing service/channels/provider/CLI selections above.
+Assert file/environment/CLI precedence, explicit disable, missing login, sanitized lookup failure,
+and signed Slack creation using environment tokens and a subprocess CLI fixture.
 The server CI includes these owners. Assert fixed repository and exact approved payload, no calls
 before approval, creation plus readback, receipt-backed URL rendering, duplicate Slack delivery,
 uncertain write no-retry after restart, private-DM denial, safe credential storage and secret-free
@@ -783,3 +859,38 @@ and background rejection; procedural skill and context provenance owners retain 
 overrides and stale-source checks. Repeat affected owners against a fresh non-editable wheel
 with `python -I -m pytest` from outside the checkout. Fixture reasoning and captured Slack sends
 do not establish real-model intent handling or live workspace deployment.
+
+### Installed Trace post workflow
+
+For `creative.trace_post`, select the bundle, approval/recovery, provider and discovery boundaries:
+
+```bash
+python -m pytest -q -p no:cacheprovider \
+  tests/marketing/agent_service/test_trace_post_bundle.py \
+  tests/marketing/agent_service/test_trace_post_contract.py \
+  tests/marketing/agent_service/test_trace_post_runtime.py \
+  tests/providers/test_codex_trace_post.py \
+  tests/providers/test_codex_image_edit.py \
+  tests/marketing/agent_service/test_skill_tools.py \
+  tests/providers/test_codex_reasoning.py \
+  tests/cli/test_image_edit_lifecycle.py \
+  tests/cli/test_cli_compatibility.py
+```
+
+The bundled Python helpers are preserved standalone generation resources, not application imports.
+Their tests run them in a temporary workspace and verify source hashes, deterministic assembly and
+stale-content rejection without generating images. Runtime tests must additionally prove exact
+production approval, same-work asset binding, failed/uncertain-operation handling and no replay.
+Run scoped Ruff, formatting and BasedPyright on the changed application/test owners.
+
+Build a non-editable wheel and install it with the frozen runtime requirements into a separate
+Python 3.14 environment. From outside the checkout, verify `trace-marketing version --json`, skill
+lookup and all packaged resource digests. Test the installed execution boundary rather than
+assuming the source catalog is installed. A no-image Codex sandbox probe verifies helper execution
+only; it does not prove image generation or final artifact ingestion.
+
+A complete actual-provider run must record the exact wheel/source hashes, configured model,
+production approval, frozen bundle, terminal receipt, three captions and six final asset digests.
+Distinguish recorded image calls from independently observed provider usage. Do not infer actual
+Slack delivery, Linux service activation, pixel-identical backgrounds or human visual approval from
+source tests, an installed local wheel or a completed model workflow.

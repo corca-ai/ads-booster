@@ -177,6 +177,7 @@ def test_provider_wire_preserves_open_tool_input_without_open_schema_objects(
     ("capabilities", "discovery", "can_write"),
     [
         (("skills.list", "skills.read"), "built-in procedures", False),
+        (("skills.list", "skills.read", "marketing.analyze"), "built-in procedures", False),
         (
             ("skill_list", "skill_get", "skills.list", "skills.read"),
             "effective built-in and learned procedures",
@@ -214,3 +215,6 @@ def test_skill_guidance_matches_the_current_scoped_tool_surface(
     _ = provider.plan(request)
     assert discovery in runner.prompts[0]
     assert ("use skill_apply with a semantic draft" in runner.prompts[0]) is can_write
+    assert ("use marketing.analyze so the calculation is reproducible" in runner.prompts[0]) is (
+        "marketing.analyze" in capabilities
+    )

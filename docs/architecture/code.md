@@ -78,6 +78,16 @@ approval, receipt validation, restart recovery, and reconciliation. The service 
 not fork those guarantees. The `agent/` namespace now contains this canonical engine only; the prior
 connector-specific product is not restored, and no `trace-agent` or `trace-ads` entrypoint is introduced.
 
+`agent/service/pending_approval.py` derives the unexecuted proposal from canonical records; read
+invocations and ordinary answers do not replace it. Service planning, approval, Slack summaries and
+review pages consume that projection. Execution recovery resolves the EXECUTE step's digest rather
+than the last invocation. `channels/slack_approval.py` owns readable proposal rendering and the
+authenticated Slack requested-work delegation policy; it calls existing service approval rather
+than bypassing the runtime. `ReasoningDecision` carries semantic intent and pending-work disposition;
+the channel binds any execution permission to current source and identity. The Slack adapter
+continues requested steps within the run budget, checking current source and membership for every
+step. The Slack inbox stores the proposal known delivered at assent admission. These additions preserve historical record digests.
+
 Codex reasoning uses a strict provider projection: arbitrary tool input is encoded as
 JSON text in tool_input_json, decoded immediately back into the portable ReasoningDecision,
 and validated against the selected ToolDescriptor by the service. The receipt binds the actual
@@ -91,6 +101,9 @@ structured-output provider rejects; canonical invocation input and history remai
 receipts; `bootstrap/integrations.py` registers it. This observation-only tool imports no channel,
 provider or mutable agent state. Known semantic input errors return failed receipts without raw
 input values; successful ratios are decimal strings compatible with the portable ledger.
+`FunnelCohort` permits an unknown currency only without spend; supplied spend, including zero,
+requires a currency. The descriptor derives its schema/digest from this contract, so numeric-only
+reports need no invented currency and known invalid monetary input follows the existing failed receipt.
 `agent/service/skills.py` owns growth/customer-insight procedures and their readiness requirements.
 
 ## Web and Slack onboarding owners
@@ -404,6 +417,10 @@ IdP or repository authentication is required for the default public Slack-only s
 | `channels/task_results.py`, `task_result_bindings.py` | Pure pre-assessment rendering, accepted/incomplete projection and immutable notification identity with separate delivery state |
 | `bootstrap/completion_policy.py`, `lifecycle.py`, `channel_setup.py` | New-Run/segment defaults and configured checker/provider/proof/worker composition |
 
+Legacy v1 stop projection in `task_drive.py` carries selected canonical delivery evidence into
+the completion candidate after `application.py` binds it through `CompletionEvidenceReader`.
+The v2 candidate remains actor-selected and passes the same assessment boundary.
+
 The proof adapter's narrow read-only bridge to `completion_evidence.py` follows the existing
 tool-to-service catalog precedent. It imports image and GitHub owner verification; `agent/service/`
 does not. This adapter cannot write Run state, authorize an effect, retry it or own recovery.
@@ -518,7 +535,7 @@ for process launch and health checks; both default to 8090. Cross-boundary regre
 launch argv, update health and status to the same configured port. The standalone manager remains
 Python 3.10 compatible and does not import the Python 3.14 application to discover its port.
 
-`tools/github_issues.py` owns fixed-repository issue input validation, private token loading and GitHub
+`tools/github_issues.py` owns fixed-repository issue input validation, service credential resolution (private file, environment, fixed-host CLI login) and GitHub
 HTTP execution/readback. `tools/descriptors.py` supplies its external-effect
 approval descriptor; `ConfiguredAgentTools` registers it only with a configured credential.
 `cli/marketing.py` loads the token at service composition, while `cli/server.py` owns hidden operator
@@ -600,3 +617,19 @@ participants can use one shared Slack Run without colliding on task ownership. E
 bindings remain valid. Provider wire schemas remove default metadata beside references while
 runtime contract defaults remain intact. Batch settlement persists provider/budget failures as
 terminal receipts and job reasons; cancellation retains its separate resumable path.
+
+## Trace post ownership
+
+- `contracts/trace_post.py` owns bounded concept/date/motif/place inputs and six-asset results.
+- `agent/service/trace_post.py` owns exact admission, durable operation state, frozen-source
+  validation and same-work asset registration.
+- `providers/codex_trace_post.py` owns the isolated official Codex process and unknown-result boundary;
+  `providers/codex_image_edit.py` owns the shared app-server transport and native PNG materialization.
+- `bootstrap/trace_post_setup.py` and the CLI compose the catalog and deferred worker into the
+  existing service lifecycle.
+- `agent/service/skills.py` owns discoverable metadata; `trace_post_bundle/` holds the versioned
+  generation instructions, template and standalone helpers. Those preserved helpers execute in
+  the frozen workspace rather than as application imports.
+
+Updating a bundle changes the next operation's inputs, not already-running jobs. Record source
+hashes and verify the installed wheel when changing bundled material.

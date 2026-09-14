@@ -26,7 +26,16 @@ class FunnelCohort(ContractModel):
     name: Label
     period: Label
     audience: Label
-    currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+    currency: (
+        Annotated[
+            str,
+            Field(
+                pattern=r"^[A-Z]{3}$",
+                description="Omit if unknown; required when spend is supplied, including zero.",
+            ),
+        ]
+        | None
+    ) = None
     spend: (
         Annotated[
             str,
@@ -50,6 +59,9 @@ class FunnelCohort(ContractModel):
 
     @model_validator(mode="after")
     def require_nested_people(self) -> Self:
+        if self.spend is not None and self.currency is None:
+            msg = "funnel_currency_required_for_spend"
+            raise PydanticCustomError(msg, "reported spend requires a currency")
         if len({step.name for step in self.steps}) != len(self.steps):
             msg = "funnel_duplicate_stage"
             raise PydanticCustomError(msg, "stage names must be unique")
@@ -65,7 +77,16 @@ class FunnelCohort(ContractModel):
 class FunnelAnalysisInput(ContractModel):
     """Counts are reported observations, never verified collection or effect authority."""
 
-    objective_stage: Label
+    objective_stage: Annotated[
+        Label,
+        Field(
+            description=(
+                "Exact steps[].name of an existing downstream stage shared by every cohort. "
+                "Copy the stage name verbatim, not a rate description or a new metric name; "
+                "the first (entry) stage cannot be the objective."
+            ),
+        ),
+    ]
     cohorts: Annotated[tuple[FunnelCohort, ...], Field(min_length=1, max_length=8)]
     source_note: Annotated[str, Field(min_length=1, max_length=1000)]
     design: Literal["observational", "randomized_reported"] = "observational"
@@ -99,7 +120,7 @@ def analyze_funnels(request: FunnelAnalysisInput) -> JsonObject:
             "No winner, sample-size target or spending approval is inferred."
         ),
     ]
-    currencies = {cohort.currency for cohort in request.cohorts}
+    currencies = {cohort.currency for cohort in request.cohorts if cohort.currency is not None}
     if len(currencies) > 1:
         limits.append("Currencies differ: costs cannot be ranked or compared without conversion.")
     if len({cohort.period for cohort in request.cohorts}) > 1:

@@ -33,6 +33,20 @@ class FakeThread:
         self.joins.append(timeout)
 
 
+def _trace_connection_spy(
+    monkeypatch: pytest.MonkeyPatch, service: object
+) -> list[dict[str, object]]:
+    connections: list[dict[str, object]] = []
+
+    def connect(connected_service: object, **kwargs: object) -> Mock:
+        assert connected_service is service
+        connections.append(kwargs)
+        return Mock()
+
+    monkeypatch.setattr(marketing, "connect_trace_post", connect)
+    return connections
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_service_starts_and_stops_optional_worker_after_http_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
@@ -65,6 +79,7 @@ def test_service_starts_and_stops_optional_worker_after_http_start(
         return tool
 
     monkeypatch.setattr(marketing, "connect_image_edit", connect)
+    trace_connections = _trace_connection_spy(monkeypatch, service)
     threads: list[FakeThread] = []
 
     def thread(**kwargs: object) -> FakeThread:
@@ -89,7 +104,10 @@ def test_service_starts_and_stops_optional_worker_after_http_start(
         completion = connections[0]["on_completed"]
         assert callable(completion)
         _ = completion("team", "missing-run", "fixture-event")
-    assert len(threads) == (3 if enabled else 2)
+    assert [
+        (connection["executable"], connection["model"]) for connection in trace_connections
+    ] == [(tmp_path / "codex", "fixture")]
+    assert len(threads) == (4 if enabled else 3)
     for item in threads:
         assert item.starts == 1
         assert item.joins == [5]
