@@ -1682,6 +1682,103 @@
         "b1b8512118f95456628a4f71a37a0b9ebab6ac5092d724d16e5146adb4abc1a3",
         "b4882d6748c85e6c660d87d3cfe31a248dd42856f945f2665721aa78fb4cabf7"
       ]
+    },
+    {
+      "fingerprint": "489d22b823863c65a59e1a086f99527fa88e1eb80584f08497406a0424de1d51",
+      "reason": "Independent test doubles record their own reasoning requests across unrelated scenarios; sharing this one-line fixture behavior would couple test setup without a shared contract.",
+      "memberHashes": [
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64",
+        "9e55f782a15b68301a27569ce8dcb723433a48bb53d6b5311daf267f750f1a64"
+      ]
+    },
+    {
+      "fingerprint": "44b84feaae293a243ae5a3cfbadb1de9f1461dfd203ba3a9894559a59effb8c8",
+      "reason": "Production schema expansion and independent test and curation assertions are producer-versus-oracle contracts; sharing traversal code would make tests mirror the implementation and weaken regression detection.",
+      "memberHashes": [
+        "21723d90ee9609dbb9d95831603db3a8681a7d48ad7a47afee1d5907e5364a14",
+        "842ce8c038db611874855565e71de54b64e43eda431a00f932fd09bd19bebd83",
+        "bc77e6c36b9e6baf9ec418ba6116a6f80b899370956b8882517db0f829b6e873"
+      ]
+    },
+    {
+      "fingerprint": "5d87c3d26421d66aa16e18c19bcefb7f24d19de4b43a60515fa786fde6bb753e",
+      "reason": "Slack message planning and status rendering own routing and presentation respectively; extracting their small current-run lookup overlap would couple independently evolving responsibilities.",
+      "memberHashes": [
+        "33b52174619c95a4d4c74b9adb47786f4ea3efa46c3785cbb542f9d46a99fc59",
+        "abd406e5adf302a481605f8ba6439f534509763ef76b2150d1fa6fe9dc2c5c19"
+      ]
+    },
+    {
+      "fingerprint": "ca107f2c862afb3993a6424ab55c97e4e21db31f564b250202e6818dd3d7f1fb",
+      "reason": "TYPE_CHECKING import guards express module-local type dependencies across unrelated production and test modules; centralizing them would violate Python module ownership.",
+      "memberHashes": [
+        "0e282ff87c68ab34140858b8852579de02001ed5c26d6fa2947b055f603c7b7a",
+        "0e9c7936403f917e59050820cfd44d5f450371842111ab0fd040637f73adf121",
+        "148bc8fc9b0777bf4762d962538055872c0976289bb18b201aee115e2903d7be",
+        "1cf69281b521bd0c3aa1e57fba3daa7ee3abf893b84b04f1a8a54e38006ddf13",
+        "23a63d2044213263102b0c42a268e5f8012e57eaa4b9ea512b0204801ab10643",
+        "2ca5aef2e89b6ef963e66e000837b5c0f292552a2efc65bb9bf7c92d2a6a6ff5",
+        "3230780f6b2c39d7858befc0138f2325bcbd03d75ec3eaa0cf9acb91aa8c8ede",
+        "385e85f4172f3c4f0f8c57f9478a5307b8bc62e5879fc8948697c09f1927f9b2",
+        "39d4fd2cbbd745d455309ab73b6b16218996e1d686b8cd652f824a6243a88356",
+        "3c07f0d105dbb69ab81ee6b783a4fe3f5a7a77d27024580ac9300f7e1c15f6eb",
+        "3d36950c654cb761a463f40df792b58379eb4df89bf1701974f72645d4e06775",
+        "44c1f3133a01858d378829efe3adf1f33f4665df517098bfe3009bceff832f8d",
+        "4524d8414c4f363fc8aa1438adcbfc2889b52d447af1530ac779d33f063103f3",
+        "45e5adbffbd8a03576f4345d4804d1bcf7622af13be4c73f68051ac05f7456de",
+        "46f3966918bbbe385fc199882286e102ebb1ea6fb96f1816f21f73cb4789200b",
+        "47fb09d902612d404d10c541e202f10452a33a38788fcf5bdd37a5ae86b66aa8",
+        "4ff16e8e9a805e4257788800fff214fdaa34c071cd1a7f1d4fd6c0387f815216",
+        "55dda5f873472eef7d3ad18215cbc95d141f125350e55ce8c436aeb7ce727292",
+        "5cd51c73a1309ae5c6aa91e01ebdb56fdeeef99191c25b260a3d352cf8d1835d",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "65dba2dfec42dcb9af37a73b62733bc0a4389aef2f1ddaecfba473e6f7909487",
+        "72bc9cb554253c9dbba8aa2e4846d6c1459ce48ec3229737f3ee07bcb0b579b2",
+        "7bb0c925657031371ac42933aab32570e9f1ae9225469486f7da5329ba9fbf93",
+        "82553b8ab2cd0a62b49789c1f1d347203706fb018a7b8ca62b95238903dc4445",
+        "8c3b99957635a024f4a61fac3ffa5d4f9a15a2927a576fccedd31c4c07cd0023",
+        "8d262a363221356044efa7038a7b83d4beaddffd473bbba5e143800c1355b133",
+        "9595f6aad418f4e43f0507e8a84c2e336ef0a956396552f007a5620e3e4a441f",
+        "9ff38f6698d848050d060decba8f4312d5cc68ee1af2dca2fec39352abb85bfb",
+        "a2d29cb429600ad4ac9e969d392d9ca2172404c2465c31b60d1abb4e135952f0",
+        "a3df6dbe2dcaa3e79e0f5f97a3a0afb30fc2ba0a474530d2d20231fae54bc802",
+        "a4fbc6cc2ec7b6993a86d49fa11d826963f142411a2e0c6b70453e23d9f3715a",
+        "aa81266efc3322a91808c93751bf0ef51b727dd3e8eedc0e6f67b124415b1ae9",
+        "ae9765f2db2fb810ada71703457e9e91b3e3ab7e92caf97c0dc4c0febf24ba4a",
+        "aeb633fd6df156e6baeca193186363ea652ccb93168d440206e4ef6e82d0defc",
+        "b1a93e3ee49e58da253fbcc853206fc6743d4e48199fd4403ee6f602f8bebd72",
+        "b2c939d5773b8dc238e335f17cd758f00497c4f5e11efa19877be935d2678dd4",
+        "b7ce45f819dbbcb72e8b2db3c965a993af860eeb0d662b318c652f4ba44bb7be",
+        "b88842e1f5125e009b43538f6819e75bf9da7d72654dee3e8c5f97c56775dd5c",
+        "bf656b8f242c0c894ff6368dbb927285820f80a5aedbc162ec62678320ab5f9e",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3daec434dcf4cf537fbc20a6009038cdcd42ecb2601c7a575affa0d77b45873",
+        "e0b62b8b2a5b4f2adde275edd64dfbc2beafef3fd162f57a7561721f89a067eb",
+        "e2d1998d37c8fe108810644ae7360f8d5ecabf064175f8b681388f1d32fd3336",
+        "f731ce6b9b02662b37cd989a071c4230b5cf2a9f874cb10e66c39eeb6de47ab0",
+        "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
+        "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660"
+      ]
     }
   ]
 }

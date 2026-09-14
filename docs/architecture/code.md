@@ -582,6 +582,12 @@ named PNG attachments and country captions. It checks same-Run links and tenant-
 through the existing creative repository. `Message.result_run_id` binds asynchronous result
 notifications independently of progress-message storage. `work_continuation.interrupted_reasoning`
 is the shared admission check for new input after a failed OBSERVE boundary under the Run lock.
+`agent/service/waiting_dialogue.py` owns response-only v1/v2 reasoning over a scoped current
+message and persisted Run status during reconciliation. It uses an in-memory response task,
+an empty tool snapshot and a host rejection of tool proposals, leaving the canonical Run and
+runtime session untouched. Slack freezes its authenticated message context in a `dialogue`
+plan and saves the answer/provider receipt before notification; recovery replays that saved
+answer. Dialogue does not rebind the original Run's knowledge source or drive queue origin.
 Slack event
 composition binds the artifact directory beside the canonical service database and passes only the
 authorized conversation, never model-selected channel IDs or local filenames.
@@ -684,5 +690,5 @@ The Trace post instruction names the resolved interpreter allowed by the existin
 profiles; `codex_image_edit` owns shell-event failure classification. `agent/service/deferred_failure`
 owns the allowlisted error-code projection shared by deferred owners and Slack. Job stores own
 failure persistence; `MarketingAgentService.mark_deferred_uncertain` owns canonical diagnostic
-idempotency. Slack owns inspection admission and retained conversation binding; service planning
-and dispatch own its read-only enforcement. No alternative runtime or agent entry point is added.
+idempotency. `waiting_dialogue` projects the same bounded reason into its response-only request; Slack
+retains the original work target and existing notification binding. No alternative runtime or agent entry point is added.

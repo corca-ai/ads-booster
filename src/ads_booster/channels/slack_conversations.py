@@ -47,7 +47,6 @@ class Conversation(ContractModel):
     owner_id: str
     private: bool
     current_run: str = ""
-    inspection_source_run: str = ""
     closed: bool = False
 
 
@@ -73,6 +72,7 @@ class MessagePlan(ContractModel):
         "reject",
         "resume",
         "reply",
+        "dialogue",
         "close",
         "revise",
         "pause",
@@ -257,16 +257,11 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT data_json FROM slack_conversations
                 WHERE json_extract(data_json,'$.tenant_id')=?
-                AND (json_extract(data_json,'$.current_run')=?
-                OR json_extract(data_json,'$.inspection_source_run')=?) LIMIT 1""",
-                    (tenant_id, run_id, run_id),
+                AND json_extract(data_json,'$.current_run')=? LIMIT 1""",
+                    (tenant_id, run_id),
                 ).fetchone()
             )
-        return (
-            None
-            if row is None
-            else Conversation.model_validate_json(row[0]).model_copy(update={"current_run": run_id})
-        )
+        return None if row is None else Conversation.model_validate_json(row[0])
 
     def enqueue_run_notification(
         self,
@@ -277,7 +272,7 @@ class SlackConversationStore:
         result: str,
         task_result: TaskResult | None = None,
     ) -> bool:
-        """Atomically bind an update to current work or its retained inspection source."""
+        """Atomically bind one local notification to the still-current conversation."""
         if (
             not event_id
             or len(event_id) > _MAX_NOTIFICATION_EVENT
@@ -290,10 +285,9 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT data_json FROM slack_conversations
                 WHERE json_extract(data_json,'$.tenant_id')=?
-                AND (json_extract(data_json,'$.current_run')=?
-                OR json_extract(data_json,'$.inspection_source_run')=?)
+                AND json_extract(data_json,'$.current_run')=?
                 AND json_extract(data_json,'$.closed')=0 LIMIT 1""",
-                    (tenant_id, run_id, run_id),
+                    (tenant_id, run_id),
                 ).fetchone()
             )
             if row is None:
@@ -522,6 +516,7 @@ class SlackConversationStore:
                 replayable = plan is None or plan.action in {
                     "create",
                     "reply",
+                    "dialogue",
                     "close",
                     "revise",
                     "pause",

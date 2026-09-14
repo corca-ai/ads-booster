@@ -180,6 +180,14 @@ version and compare record digests. This verifies a procedure, not an automatic 
 execution compatibility or production downgrade. Never restore over candidate-created work.
 See [state compatibility](../architecture/system.md#completion-state-compatibility-and-rollback).
 
+For Slack dialogue while an operation awaits reconciliation, select
+`tests/marketing/channels/test_slack_uncertain_dialogue.py` together with
+`test_slack_events.py`, `test_slack_run_notifications.py`, and
+`tests/marketing/agent_service/test_application_deferred.py`. Verify current-message reasoning,
+empty tool capabilities, unchanged pending execution, cached-answer recovery, and late-result
+delivery to the original thread. Scripted replies prove routing and persistence; repeat with the
+official provider from a fresh non-editable installation before claiming actual-model behavior.
+
 For request-based Trace post execution and result attachments, select
 `tests/marketing/channels/test_slack_trace_post.py`, `test_slack_images.py`,
 `test_slack_pending_dialogue.py`, `test_slack_github_issues.py`, `test_slack_run_notifications.py`,
@@ -948,9 +956,9 @@ an unrelated home file remains unreadable. It requires no login and makes zero m
 This actual subprocess gate covers the Linux launcher boundary that macOS image calls do not prove.
 
 Select provider image-edit/Trace-post tests, deferred Trace-post/image-edit owner tests and Slack
-Trace-post, reconciliation-dialogue, notification, drive and attachment tests for this repair.
-`test_slack_reconciliation_dialogue` verifies a signed follow-up reaches reasoning and an OBSERVE
-tool while original records remain unchanged, and that a delayed source notification still arrives.
+Trace-post, uncertain-dialogue, notification, drive and attachment tests for this repair.
+`test_slack_uncertain_dialogue` verifies a signed follow-up reaches response-only reasoning with
+the persisted failure reason, unchanged original records, and retained delayed source notification.
 Rebuild a non-editable wheel and run this selection outside the checkout. These fixtures prove
 routing and persistence, not actual Slack delivery or production image generation. Verify the merged
 SHA through public health after the exact main verification succeeds; CI alone is not activation.

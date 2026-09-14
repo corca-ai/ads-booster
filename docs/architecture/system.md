@@ -142,6 +142,15 @@ an OS exit after assessment reservation preserved counters when another process 
 
 ### Completion state compatibility and rollback
 
+Ordinary Slack messages during `awaiting_reconciliation` receive a response-only model turn
+with the current authenticated message, bounded conversation transcript and persisted operation
+status. This turn has no selectable tools or execution budget, and a tool proposal is rejected.
+It does not revise or drive the uncertain Run, replace its knowledge execution source, or take
+its drive/notification claim. The response and provider receipt are saved in the Slack message
+plan before notification, so recovery can deliver a saved answer without another model call.
+The original Run remains the conversation's work target and retains its late-result binding.
+These dialogue answers are not task-completion assessments or fresh external-result checks.
+
 The candidate reads legacy Runs by deriving a task from the immutable goal when task records are
 absent. Existing records and receipt/approval digests are not rewritten. Reasoning v1 remains readable,
 and its public constructor supplies a response-only compatibility assessor so ordinary v1 stops keep
@@ -1125,12 +1134,9 @@ evidence record per operation; raw stdout/stderr, paths and exception payloads a
 Canonical uncertainty, receipts and no-replay semantics remain intact. Slack renders fixed reason
 text from this evidence after restart.
 
-An ordinary follow-up to an uncertain Run creates a separate inspection Run with the original
-objective and captured status. Planning offers only OBSERVE capabilities and dispatch independently
-rejects effects. It cannot retry or settle the source operation. Explicit `새 작업` creates separate
-normal work. Conversation JSON adds an optional `inspection_source_run` binding while inspection is
-current; source notifications resolve within the same tenant/conversation and recheck membership.
-Notification result validation and original progress lookup use the source Run, so late updates do
-not target the inspection result. New normal work clears this retained source binding.
+The existing response-only waiting dialogue receives the same allowlisted failure code and fixed
+reason from canonical evidence. It keeps the original Run and notification binding unchanged and
+has no tool budget. The channel does not create a competing inspection Run or replace operation
+ownership. The earlier response-only dialogue contract remains the sole follow-up path.
 
 The Ubuntu installer installs the system `bubblewrap` package because the pinned single-binary Codex download has no bundled bwrap resource. Installer preflight includes `bwrap`. The installed Linux gate exercises this dependency without credentials.

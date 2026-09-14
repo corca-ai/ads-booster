@@ -26,6 +26,7 @@ from ads_booster.agent.service.drive_work import (
     DriveWorkQueue,
 )
 from ads_booster.agent.service.knowledge import READ_ONLY_DM_TOOLS
+from ads_booster.agent.service.waiting_dialogue import answer_waiting_dialogue
 from ads_booster.agent.service.work_continuation import continue_work, interrupted_reasoning
 from ads_booster.channels.contracts import ChannelIdentityBinding, ChannelKind
 from ads_booster.channels.github_results import issue_results
@@ -617,7 +618,11 @@ class SlackEvents:
                 if plan is None:
                     plan = self._plan(conversation, message)
                     self.store.save_plan(message, plan)
-                if plan.run_id and (plan.action != "reply" or plan.learning_urgent):
+                if (
+                    plan.run_id
+                    and plan.action != "dialogue"
+                    and (plan.action != "reply" or plan.learning_urgent)
+                ):
                     self.store.knowledge_ingress.bind_execution(
                         message.message_id, plan.run_id, actor_id=identity.member_id
                     )
@@ -646,7 +651,7 @@ class SlackEvents:
                     result = self._execute(conversation, message, plan, identity, now=now)
                 projected_run = (
                     service.repository.get(conversation.tenant_id, plan.run_id)
-                    if plan.run_id
+                    if plan.run_id and plan.action != "dialogue"
                     else None
                 )
                 projected = (
@@ -664,7 +669,8 @@ class SlackEvents:
                     if projected is not None and projected.text == result
                     else None,
                 )
-                self._defer_running_result(conversation, plan, message)
+                if plan.action != "dialogue":
+                    self._defer_running_result(conversation, plan, message)
                 if plan.learning_urgent:
                     self._admit_urgent_learning(plan.run_id, now=now)
                 self._admit_shared_turn(conversation, plan, now=now)
@@ -1016,35 +1022,21 @@ class SlackEvents:
         context["current_attachments"] = [a.model_dump(mode="json") for a in message.attachments]
         context["attachment_verification"] = "reference_only_not_visually_inspected"
         context["privacy"] = "private_dm" if conversation.private else "shared_thread"
-        if (
-            run is not None
-            and run.state is AgentRunState.AWAITING_RECONCILIATION
-            and not text.startswith("새 작업 ")
-        ):
+        if run is not None and run.state is AgentRunState.AWAITING_RECONCILIATION:
+            context["message_id"] = message.message_id
+            context["user_id"] = message.user_id
             return MessagePlan(
-                action="create",
-                run_id="slack-inspect-"
-                + contract_sha256(
-                    {"message": message.message_id, "scope": conversation.conversation_id}
-                )[:40],
+                action="dialogue",
+                run_id=run.run_id,
                 goal=AgentGoal(
                     objective=text,
                     success_criteria=(
-                        "현재 질문에 원래 작업의 확인된 기록과 불확실성을 구분하여 답한다.",
+                        "Answer the current message in its conversation context.",
+                        "Discuss pending work only when relevant, using persisted records.",
+                        "Do not claim a fresh external lookup or an unconfirmed result.",
+                        "Do not execute, retry, approve, or revise the pending operation.",
                     ),
-                    context={
-                        "slack_conversation": context,
-                        "reconciliation_inspection": {
-                            "source_run_id": run.run_id,
-                            "source_state": run.state.value,
-                            "source_objective": run.goal.objective,
-                            "source_status": self.summary(conversation),
-                            "constraint": (
-                                "Read-only inspection. "
-                                "Do not repeat or settle the uncertain operation."
-                            ),
-                        },
-                    },
+                    context={"slack_conversation": context},
                 ),
             )
         if (
@@ -1063,20 +1055,14 @@ class SlackEvents:
             and not text.startswith("새 작업 ")
         ):
             return MessagePlan(action="revise", run_id=run.run_id)
-        explicit_new_work = text.startswith("새 작업 ")
-        if explicit_new_work:
+        if text.startswith("새 작업 "):
             text = text.removeprefix("새 작업 ").strip() or text
         correction_signal = not conversation.private and has_learning_correction_signal(text)
-        if (
-            run is not None
-            and not (explicit_new_work and run.state is AgentRunState.AWAITING_RECONCILIATION)
-            and run.state
-            not in {
-                AgentRunState.COMPLETED,
-                AgentRunState.STOPPED,
-                AgentRunState.FAILED,
-            }
-        ):
+        if run is not None and run.state not in {
+            AgentRunState.COMPLETED,
+            AgentRunState.STOPPED,
+            AgentRunState.FAILED,
+        }:
             return MessagePlan(
                 action="reply",
                 run_id=run.run_id if correction_signal else "",
@@ -1207,15 +1193,21 @@ class SlackEvents:
         if plan.action == "reply":
             self.store.update_conversation(conversation)
             return plan.reply
+        if plan.action == "dialogue":
+            if plan.reply:
+                return plan.reply
+            run = service.repository.get(conversation.tenant_id, plan.run_id)
+            if run is None or plan.goal is None:
+                reason = "slack_dialogue_context_missing"
+                raise ValueError(reason)
+            answer, evidence = answer_waiting_dialogue(service, run, plan.goal)
+            self.store.save_plan(
+                message, plan.model_copy(update={"reply": answer, "evidence": evidence})
+            )
+            return answer
         if plan.action == "learning_answer":
             return self._answer_learning_question(conversation, message, plan, now=now)
-        source_run = conversation.inspection_source_run
-        if plan.action == "create":
-            inspection = plan.goal.context.get("reconciliation_inspection") if plan.goal else None
-            source_run = conversation.current_run if isinstance(inspection, dict) else ""
-        conversation = conversation.model_copy(
-            update={"current_run": plan.run_id, "inspection_source_run": source_run}
-        )
+        conversation = conversation.model_copy(update={"current_run": plan.run_id})
         self.store.update_conversation(conversation)
         origin = DriveOrigin(
             tenant_id=conversation.tenant_id,
@@ -1675,9 +1667,7 @@ class SlackEvents:
             state = "denied"
         else:
             service = self._service(conversation)
-            current = service.repository.get(
-                conversation.tenant_id, message.result_run_id or conversation.current_run
-            )
+            current = service.repository.get(conversation.tenant_id, conversation.current_run)
             if current is not None:
                 with self.store.connect() as db:
                     valid = matches_result(
