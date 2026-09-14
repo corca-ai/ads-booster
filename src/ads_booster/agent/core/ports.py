@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
-
-from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ads_booster.contracts.agent_run import ToolExecutionDeferred, ToolInvocation
+    from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+    from ads_booster.contracts.task_completion import (
+        SemanticAssessmentRequest,
+        SemanticAssessmentResult,
+    )
     from ads_booster.contracts.tool_capability import ToolDescriptor, ToolExecutionResult
 
 
 class ReasoningProvider(Protocol):
     def plan(self, request: ReasoningRequest) -> ReasoningResult: ...
+
+
+class SemanticAssessor(Protocol):
+    def assess(self, request: SemanticAssessmentRequest) -> SemanticAssessmentResult: ...
+
+
+@runtime_checkable
+class IdentifiedSemanticAssessor(Protocol):
+    @property
+    def assessment_identity(self) -> str: ...
 
 
 class ToolAdapter(Protocol):
