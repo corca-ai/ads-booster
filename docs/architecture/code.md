@@ -456,7 +456,9 @@ candidate SHA-256, assessment ID and answer SHA-256. Slack length limits and pri
 run before assessment; channels must send those assessed bytes rather than truncate them afterward.
 `agent/core/ports.py` defines `CompletionRenderContext(run, records)`, supplied by the service on
 every production render. The renderer derives attachment references from candidate-selected canonical
-successful image outputs and replaces actor references; private rendering removes them. Notification
+successful image outputs, including the six nested `creative.trace_post` asset digests, and replaces
+actor references; private rendering removes them. The Trace-post proof registration rereads all six
+current repository assets before those evidence records become deliverable. Notification
 delivery filters through `attachment_records`; an empty accepted reference list delivers no images.
 `current_input_question` projects only a canonical request-input intent whose same-commit checkpoint
 binds the current task revision/spec. It cannot use a rejected completion draft or a stale question.

@@ -168,6 +168,8 @@ upload uncertainty and restart deduplication. Repeat from outside the checkout w
 wheel and copied tests. Synthetic PNGs and captured Slack requests prove transport contracts,
 not live image quality or a real user's Slack download. See the
 [Trace post delivery record](trace-post-slack-delivery.md) for baseline/candidate evidence.
+The source selection must also observe the deferred tool returning `running`, a subsequent bounded
+completion assessment, and attachment delivery only from the accepted six-asset evidence set.
 
 For Slack answer projection, select `test_slack_result_link.py`, `test_slack_run_notifications.py`
 and `test_slack_events.py` under `tests/marketing/channels`. Interrupt after a committed tool plan:

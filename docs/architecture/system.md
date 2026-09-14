@@ -1043,7 +1043,9 @@ A started operation with an uncertain outcome is not automatically replayed afte
 The server validates the frozen documents, content/image review bindings and six canonical outputs
 before registering same-work, tenant-scoped assets. New results report `human_review_required=False`
 and do not invent a human review record. Historical True values remain readable and do not gate
-delivery. Completion resumes the existing work and queues an outbox message bound to that exact
+delivery. Completion adopts the Trace-post receipt only after its owner verifier rereads all six
+current artifact records and bytes; those exact evidence and digest references then bind Slack
+attachments. Completion resumes the existing work and queues an outbox message bound to that exact
 Run, independently of transient progress UI. Receipt and asset-link validation resolve six images
 from the configured artifact root; Slack uploads them to the original thread as named PNG files
 with country captions. Current member permission is rechecked at delivery. Digest changes or absent

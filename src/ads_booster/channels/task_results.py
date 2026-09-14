@@ -13,6 +13,8 @@ from ads_booster.contracts.agent_run import (
 from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.task_completion import CompletionAssessment, CompletionCandidate
 from ads_booster.contracts.task_progress import TaskCheckpoint
+from ads_booster.contracts.trace_post import TracePostSuccess
+from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from ads_booster.agent.core.ports import CompletionRenderContext
@@ -79,9 +81,7 @@ class BoundedCompletionRenderer:
                     and receipt.get("disposition") == "succeeded"
                     and receipt.get("output_sha256") == contract_sha256(output)
                 ):
-                    digest = output.get("artifact_sha256")
-                    if isinstance(digest, str):
-                        references.append(digest)
+                    references.extend(_artifact_digests(output))
             attachments = tuple(dict.fromkeys(references))
         return CompletionCandidate.model_validate(
             {
@@ -192,9 +192,29 @@ def attachment_records(run: AgentRun, records: tuple[AgentRecord, ...]) -> tuple
         return ()
     selected: list[AgentRecord] = []
     for record in records:
-        output = record.payload.get("output")
         if record.kind is AgentRecordKind.RECEIPT or (
-            isinstance(output, dict) and output.get("artifact_sha256") in candidate.attachment_refs
+            record.kind is AgentRecordKind.EVIDENCE
+            and _selected_attachment_evidence(record, candidate)
         ):
             selected.append(record)
     return tuple(selected)
+
+
+def _selected_attachment_evidence(record: AgentRecord, candidate: CompletionCandidate) -> bool:
+    if record.payload_sha256 not in candidate.evidence_sha256s:
+        return False
+    output = record.payload.get("output")
+    if not isinstance(output, dict):
+        return False
+    digests = _artifact_digests(output)
+    return bool(digests) and set(digests).issubset(candidate.attachment_refs)
+
+
+def _artifact_digests(output: JsonObject) -> tuple[str, ...]:
+    digest = output.get("artifact_sha256")
+    if isinstance(digest, str):
+        return (digest,)
+    if output.get("schema_version") != "trace.trace-post-success.v1":
+        return ()
+    result = TracePostSuccess.model_validate(output)
+    return tuple(item.asset.sha256 for item in result.assets)

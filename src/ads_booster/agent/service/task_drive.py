@@ -12,6 +12,7 @@ from ads_booster.contracts.reasoning import (
     ReasoningRequestV2,
 )
 from ads_booster.contracts.task_completion import CompletionAssessment, CompletionCandidate
+from ads_booster.contracts.trace_post import TracePostSuccess
 
 if TYPE_CHECKING:
     from ads_booster.agent.core.ports import ReasoningProvider
@@ -137,24 +138,15 @@ def _legacy_candidate(
         item
         for item in context.selected_evidence
         if item.receipt.disposition == "succeeded"
-        and (
-            isinstance(item.output.get("url"), str)
-            or isinstance(item.output.get("artifact_sha256"), str)
-        )
+        and (isinstance(item.output.get("url"), str) or _artifact_digests(item))
     )
     links = tuple(
         dict.fromkeys(
-            link
-            for item in deliverables
-            if isinstance((link := item.output.get("url")), str)
+            link for item in deliverables if isinstance((link := item.output.get("url")), str)
         )
     )
     attachments = tuple(
-        dict.fromkeys(
-            digest
-            for item in deliverables
-            if isinstance((digest := item.output.get("artifact_sha256")), str)
-        )
+        dict.fromkeys(digest for item in deliverables for digest in _artifact_digests(item))
     )
     return CompletionCandidate(
         candidate_id=f"candidate:{context.run.run_id}:{context.run.revision}",
@@ -166,3 +158,16 @@ def _legacy_candidate(
         attachment_refs=attachments,
         evidence_sha256s=tuple(dict.fromkeys(item.evidence_sha256 for item in deliverables)),
     )
+
+
+def _artifact_digests(evidence: BoundCompletionEvidence) -> tuple[str, ...]:
+    digest = evidence.output.get("artifact_sha256")
+    if isinstance(digest, str):
+        return (digest,)
+    if (
+        evidence.descriptor.capability_id != "creative.trace_post"
+        or evidence.output.get("schema_version") != "trace.trace-post-success.v1"
+    ):
+        return ()
+    result = TracePostSuccess.model_validate(evidence.output)
+    return tuple(item.asset.sha256 for item in result.assets)

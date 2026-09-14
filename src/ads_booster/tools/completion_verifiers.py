@@ -7,6 +7,7 @@ from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.creative_work import CreativeAsset
 from ads_booster.contracts.marketing_delivery import ReviewAsset
 from ads_booster.contracts.tool_capability import EffectClass
+from ads_booster.contracts.trace_post import TracePostSuccess
 from ads_booster.creative.creative_asset_verifier import CreativeAssetVerifier
 from ads_booster.tools.completion_registry import (
     CompletionProofRegistry,
@@ -62,6 +63,35 @@ class ManagedImageProof:
         if current != asset:
             return False
         _ = png_dimensions((repository.artifact_root / asset.relative_path).read_bytes())
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class TracePostProof:
+    """Verify all six current Trace-post assets through their canonical owner."""
+
+    def verify(
+        self, run: AgentRun, bound: BoundCompletionEvidence, owners: CompletionArtifactOwners
+    ) -> bool:
+        repository, scope_for_run = owners.assets, owners.scope_for_run
+        if repository is None or scope_for_run is None:
+            return False
+        result = TracePostSuccess.model_validate(bound.output)
+        scope = scope_for_run(run)
+        references = tuple(
+            ReviewAsset(
+                asset_id=item.asset.asset_id,
+                revision=item.asset.revision,
+                sha256=item.asset.sha256,
+            )
+            for item in result.assets
+        )
+        CreativeAssetVerifier(repository).verify(scope, references)
+        for reference in references:
+            asset = repository.get(scope, reference.asset_id, reference.revision)
+            if asset is None or asset.origin != "worker_receipt":
+                return False
+            _ = png_dimensions((repository.artifact_root / asset.relative_path).read_bytes())
         return True
 
 
@@ -226,6 +256,16 @@ def configured_proof_registry() -> CompletionProofRegistry:
                     ManagedImageProof(),
                 )
                 for capability in ("creative.image.edit", "creative.image.localize")
+            ),
+            ProofRegistration(
+                ProofIdentity(
+                    "creative.trace_post",
+                    "ads_booster.agent.service.trace_post",
+                    "codex-trace-post",
+                    EffectClass.LOCAL_ARTIFACT,
+                ),
+                TracePostProof(),
+                installation_id="installed:trace-post",
             ),
             ProofRegistration(
                 ProofIdentity(
