@@ -1109,3 +1109,26 @@ Explicit Korean skill create/update directives may be followed by a sentence or 
 procedure details. Quoted instructions, negation and merely using a skill are not publication
 requests. Existing workspace ownership, exact revision, source-currentness and private-chat read-only
 boundaries remain unchanged.
+
+## Linux launcher dependencies and uncertain-work dialogue
+
+The shared image provider builds runtime read grants from the invoked and resolved Codex executable,
+its recognized standalone/npm runtime directories, Node where needed, and `CODEX_HOME/tmp/arg0`
+(the official dynamically generated launcher directory). It never grants the whole Codex home.
+The existing workspace, minimal system and Python runtime grants remain the execution boundary.
+A completed shell item containing a missing bwrap launcher is classified at the transport boundary
+as `codex_sandbox_launcher_unavailable`; the provider stops rather than looping on identical calls.
+
+Trace post and image-edit stores add nullable `failure_code` columns. Workers persist allowlisted
+codes before projecting uncertainty. The service appends one `trace.deferred-provider-failure.v1`
+evidence record per operation; raw stdout/stderr, paths and exception payloads are excluded.
+Canonical uncertainty, receipts and no-replay semantics remain intact. Slack renders fixed reason
+text from this evidence after restart.
+
+An ordinary follow-up to an uncertain Run creates a separate inspection Run with the original
+objective and captured status. Planning offers only OBSERVE capabilities and dispatch independently
+rejects effects. It cannot retry or settle the source operation. Explicit `새 작업` creates separate
+normal work. Conversation JSON adds an optional `inspection_source_run` binding while inspection is
+current; source notifications resolve within the same tenant/conversation and recheck membership.
+Notification result validation and original progress lookup use the source Run, so late updates do
+not target the inspection result. New normal work clears this retained source binding.

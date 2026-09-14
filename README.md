@@ -768,3 +768,17 @@ automatically after verification of that exact main commit. Maintainers follow t
 The Python package keeps the compatibility name `trace-appium-capture`; its CLI is `trace-marketing`.
 The server installer/updater continues to follow verified main. A GitHub release is a downloadable
 package snapshot; check the server's health release SHA to confirm an installed update.
+
+### Interrupted media work
+
+If a media worker cannot start its internal sandbox launcher, Slack reports that failure instead
+of implying that generation is still running. Known provider failure codes survive restart; raw
+provider output is not stored as a diagnostic. An uncertain operation is never automatically rerun.
+Ask a follow-up in the same thread to discuss the failure and use available read-only tools. The
+original operation and its result ownership remain intact. `새 작업 <request>` explicitly starts
+separate work. Inspection uses the source status captured when the question was admitted; it is
+not a live provider-result lookup. A later worker update remains bound to the original operation.
+
+The image worker's restricted profile includes the installed Codex runtime and generated launcher
+paths. It does not grant the complete Codex home or credential directory. No environment-variable
+change or repeated approval is needed for this repair.
