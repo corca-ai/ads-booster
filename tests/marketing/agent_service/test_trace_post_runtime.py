@@ -70,6 +70,8 @@ class FakeProvider:
         self, *, workspace: Path, instruction: str, timeout_seconds: float
     ) -> TracePostProviderResult:
         self.calls += 1
+        assert "Human feedback is optional" in instruction
+        assert "without waiting for another approval or human review" in instruction
         assert "헬로키티" in instruction
         assert "카페 나무 테이블" in instruction
         assert timeout_seconds == 3600

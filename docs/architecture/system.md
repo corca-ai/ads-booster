@@ -903,6 +903,8 @@ select verified main independently; release publication is not installed-server 
 `marketing.trace_post` is a discoverable installed procedure; `creative.trace_post` owns its
 requested execution. The service freezes the exact invocation, request-bound grant and packaged
 bundle in a private operation workspace before the deferred worker starts one Codex subprocess.
+The worker instruction makes user delegation and optional human feedback explicit, overriding
+conflicting review language in the frozen reference bundle without inventing human QA.
 Its shell access is limited to the operation and required runtime files; external tools/network
 are disabled. The model reads the frozen workflow, creates new content and executes A → B → L → C.
 A started operation with an uncertain outcome is not automatically replayed after restart.

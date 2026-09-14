@@ -87,6 +87,13 @@ The local proof bundle is `/private/tmp/trace-post-request-proof`: `model_check.
 
 ## Review and rollout
 
+Integrated main `26ec221` (scene diversity, PR #173) without removing its new frozen content.
+The combined installed procedure is version 3. Forty focused installed checks passed across
+Trace post transport, worker recovery, schemas, bundled sources, skill discovery and reasoning.
+The same actual-model two-message scenario also completed once with six upload flows after
+integration. The worker instruction explicitly makes human feedback optional even when frozen
+reference documents discuss human review; that instruction is covered at worker invocation.
+
 Review request admission and interrupted-reasoning recovery first, then the Trace post output
 contract, then receipt/asset projection and asynchronous Slack delivery. The tests exercise both
 source and final-consumer boundaries; passing worker validation alone was insufficient.
