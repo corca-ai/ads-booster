@@ -122,8 +122,9 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
     paths.prepare()
     repository = SqliteAgentRunRepository(paths.database)
     codex = CodexCli(executable=codex_executable, model=model_id)
+    integration_config = integrations or AgentServiceIntegrationConfig()
     configured = ConfiguredAgentTools(
-        config=integrations or AgentServiceIntegrationConfig(),
+        config=integration_config,
         images=CodexImages(codex_executable, paths.root / "images", model_id),
         delivery_tool=DeliveryPreparationTool(
             DeliveryReviewStore(
@@ -170,6 +171,8 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
                 CompletionArtifactOwners(
                     image_root=paths.root / "images",
                     assets=SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts"),
+                    slack_channel_id=integration_config.slack_channel_id,
+                    notion_parent_page_id=integration_config.notion_parent_page_id,
                     scope_for_run=lambda run: CreativeScope(
                         workspace_id=run.tenant_id, product_id="trace"
                     ),

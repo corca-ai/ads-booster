@@ -12,6 +12,7 @@ from ads_booster.agent.service.completion_evidence import BoundCompletionEvidenc
 from ads_booster.contracts.agent_run import ToolInvocation, ToolReceiptRecord, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
 from ads_booster.tools import completion_proofs as proofs
+from ads_booster.tools.descriptors import notion_daily_descriptor, slack_delivery_descriptor
 from ads_booster.tools.github_issues import REPOSITORY, descriptor
 from tests.marketing.agent_service.completion_fixtures import NOW
 from tests.marketing.agent_service.creative_fixtures import setup_assets
@@ -194,3 +195,89 @@ def test_registered_managed_image_keeps_real_asset_owner_checks(
     verified = proofs.configured_proof_registry().verify(make_run(), bound, owners)
     # Then edit and localization retain the worker-receipt requirement.
     assert verified is not human_reported
+
+
+def _delivery_evidence(
+    capability: str,
+    *,
+    target: str = "valid",
+    approval_sha256: str | None = "c" * 64,
+) -> tuple[BoundCompletionEvidence, proofs.CompletionArtifactOwners]:
+    if capability == "deliver.slack":
+        tool = slack_delivery_descriptor(
+            installation_id="configured:slack", observed_at=NOW, ready=True
+        )
+        arguments: JsonObject = {"text": "A sourced brief"}
+        output: JsonObject = {
+            "ok": True,
+            "channel": "C123" if target == "valid" else "C999",
+            "ts": "1.2",
+            "message": {
+                "channel": "C123" if target == "valid" else "C999",
+                "ts": "1.2",
+                "text": "A sourced brief",
+            },
+        }
+        owners = proofs.CompletionArtifactOwners(slack_channel_id="C123")
+        executor_id = "slack.chat_post_message"
+    else:
+        tool = notion_daily_descriptor(
+            installation_id="configured:notion", observed_at=NOW, ready=True
+        )
+        arguments = {"title": "2026-09-03", "content": "A sourced brief"}
+        output = {
+            "object": "page",
+            "id": "notion-page",
+            "url": "https://www.notion.so/notion-page",
+            "parent": {
+                "type": "page_id",
+                "page_id": "parent-page" if target == "valid" else "other-page",
+            },
+            "properties": {"title": {"title": [{"plain_text": "2026-09-03"}]}},
+        }
+        owners = proofs.CompletionArtifactOwners(notion_parent_page_id="parent-page")
+        executor_id = "notion.pages_create"
+    invocation = ToolInvocation(
+        schema_version="trace.tool-invocation.v1",
+        invocation_id=f"{capability}-invocation",
+        run_id="task-run",
+        step_id="task-step",
+        intent_sha256="a" * 64,
+        capability_snapshot_sha256="b" * 64,
+        descriptor_sha256=contract_sha256(tool),
+        idempotency_key=f"{capability}-idempotency",
+        input=arguments,
+        input_sha256=contract_sha256(arguments),
+    )
+    receipt = ToolReceiptRecord(
+        schema_version="trace.tool-receipt.v1",
+        receipt_id=f"{capability}-receipt",
+        invocation_sha256=contract_sha256(invocation),
+        approval_sha256=approval_sha256,
+        disposition="succeeded",
+        actual_cost_units=1,
+        output_schema_sha256=contract_sha256(tool.output_schema),
+        output_sha256=contract_sha256(output),
+        executor_id=executor_id,
+        occurred_at=NOW,
+    )
+    return BoundCompletionEvidence(invocation, tool, receipt, output, "e" * 64), owners
+
+
+@pytest.mark.parametrize("capability", ["deliver.slack", "store.notion.daily"])
+def test_configured_delivery_proof_requires_owner_readback_and_approval(
+    capability: str,
+) -> None:
+    bound, owners = _delivery_evidence(capability)
+
+    assert proofs.configured_proof_registry().verify(make_run(), bound, owners)
+
+    unapproved, _ = _delivery_evidence(capability, approval_sha256=None)
+    assert not proofs.configured_proof_registry().verify(make_run(), unapproved, owners)
+
+
+@pytest.mark.parametrize("capability", ["deliver.slack", "store.notion.daily"])
+def test_configured_delivery_proof_rejects_wrong_readback_target(capability: str) -> None:
+    bound, owners = _delivery_evidence(capability, target="wrong")
+
+    assert not proofs.configured_proof_registry().verify(make_run(), bound, owners)

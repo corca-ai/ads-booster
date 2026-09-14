@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from ads_booster.contracts.agent_run import contract_sha256
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -19,6 +21,8 @@ class CompletionArtifactOwners:
     image_root: Path | None = None
     assets: SqliteCreativeAssetRepository | None = None
     scope_for_run: Callable[[AgentRun], CreativeScope] | None = None
+    slack_channel_id: str | None = None
+    notion_parent_page_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +60,11 @@ class CompletionProofRegistry:
     def verify(
         self, run: AgentRun, bound: BoundCompletionEvidence, owners: CompletionArtifactOwners
     ) -> bool:
+        # Registry callers may be lower-level than CompletionEvidenceReader.  Keep
+        # the receipt bound to the exact invocation before dispatching to an owner
+        # verifier; the reader additionally validates approval and descriptor lineage.
+        if bound.receipt.invocation_sha256 != contract_sha256(bound.invocation):
+            return False
         identity = ProofIdentity(
             bound.descriptor.capability_id,
             bound.descriptor.owner,
