@@ -142,12 +142,16 @@ class SlackConversationStore:
 
     def conversation(self, conversation_id: str) -> Conversation | None:
         with self.connect() as db:
-            row = _ROW.validate_python(
-                db.execute(
-                    "SELECT data_json FROM slack_conversations WHERE conversation_id=?",
-                    (conversation_id,),
-                ).fetchone()
-            )
+            return self._conversation(db, conversation_id)
+
+    @staticmethod
+    def _conversation(db: sqlite3.Connection, conversation_id: str) -> Conversation | None:
+        row = _ROW.validate_python(
+            db.execute(
+                "SELECT data_json FROM slack_conversations WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+        )
         return None if row is None else Conversation.model_validate_json(row[0])
 
     def conversations(self) -> tuple[Conversation, ...]:
@@ -643,15 +647,9 @@ class SlackConversationStore:
                 if Message.model_validate_json(existing[0]) != message or existing[1] != result:
                     raise ValueError("scheduled_notification_idempotency_conflict")
                 return True
-            row = _ROW.validate_python(
-                db.execute(
-                    "SELECT data_json FROM slack_conversations WHERE conversation_id=?",
-                    (conversation_id,),
-                ).fetchone()
-            )
-            if row is None:
+            conversation = self._conversation(db, conversation_id)
+            if conversation is None:
                 return False
-            conversation = Conversation.model_validate_json(row[0])
             if conversation.closed:
                 return False
             cursor = db.execute(
