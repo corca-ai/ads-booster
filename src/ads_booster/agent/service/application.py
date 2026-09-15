@@ -2244,6 +2244,10 @@ def _idempotency_key(run: AgentRun, descriptor: ToolDescriptor, input_sha256: st
     match descriptor.idempotency.key_scope:
         case "run_tool_input":
             scope = run.run_id
+            if descriptor.effect_class is EffectClass.OBSERVE:
+                # A new admitted read may refresh the same input. Recovery still
+                # uses its persisted invocation/key; effects retain input deduplication.
+                scope = f"{scope}:observation:{run.revision}"
         case "tenant_tool_input":
             scope = run.tenant_id
         case _:
