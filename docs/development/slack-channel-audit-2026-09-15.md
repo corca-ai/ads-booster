@@ -17,8 +17,8 @@ access; this record deliberately omits raw private conversation text and partici
 | F6 Completion context | Reproduced in actual-model assessment: actor-visible user facts and capability limits absent from assessor, leading to rejection and repeated work. Give assessor the same scoped reference facts, never effect authority. Actual six-image generation also reproduced an unsolicited visual-review gate; ordinary generation now delivers verified artifacts, while explicit review still requires review evidence. |
 | F7 Dialogue/memory/scope | Actual eight-turn rehearsal recalled corrected facts in a new thread, excluded another fictional project, and retained Korean constraints. It exposed rejection of an already-stored memory readback; the repaired actual assessor accepts verified existing memory without claiming a new write. Scoped storage/skill-authoring baseline fixtures pass. |
 | F8 Research | Historical sources included search snippets and unverified post links. Current installed real search and real model returned two actual search-result URLs, Traditional Chinese, and explicit snippet-only/targeting uncertainty. Historical source-quality error was not reproduced. Direct Threads page access remains unverified. |
-| F9 Unsupported integrations | No arbitrary recurring account analytics/Threads posting integration was proven. Do not claim these run or require arbitrary credentials. Frozen trace-post motifs are a documented workflow limit; custom media can use a different suitable capability. |
-| F10 Repeated observation | Final live capability probe ended with `tool_idempotency_conflict`. Reproduced locally when the model refreshed identical read-only input within one Run. New observations receive distinct admission identities; persisted recovery and external/tenant-wide deduplication remain unchanged. |
+| F9 Unsupported integrations | At the probe snapshot, arbitrary recurring analytics/Threads posting was unavailable in the configured test scope. During this audit main PR #185 added Threads/scheduling owners; this branch preserves them. Availability now depends on their actual configuration and account grants; the earlier unconfigured probe does not disprove those features. Frozen trace-post motifs are a documented workflow limit; custom media can use a different suitable capability. |
+| F10 Repeated observation | Final live capability probe ended with `tool_idempotency_conflict`. Reproduced locally when the model refreshed identical read-only input within one Run. Main PR #189 independently landed the same repair during this audit. The integrated branch uses that canonical implementation and adds a repeated-read regression; persisted recovery and external/tenant-wide deduplication remain unchanged. |
 | N Non-task | Join events, unmentioned chatter, human-to-human messages: read, excluded from agent defect counts. |
 
 ## Complete initial inventory
@@ -105,6 +105,8 @@ The additional colleague cloud-motif request ended with `completion_unsatisfied`
 trace-post workflow does not support that motif. This is not counted as successful generation.
 
 ## Verification
+
+Main integration: `60c9d20` (PRs #185 and #189). A fresh integrated non-editable wheel passed **177 focused tests in 39.06 seconds** across the affected service, Slack, notification and provider boundaries. The actual-model probes below were performed before that integration in explicitly bounded tool scopes. Do not interpret their unavailable-capability answers as the latest global catalog.
 
 - Installed main baseline: 73 focused tests passed; failing-first regressions exposed gaps in those fixtures.
 - Non-editable candidate wheel, outside checkout: 146 focused tests passed in 32.95 seconds. After the final observation-identity change, a fresh final wheel passed 61 directly affected tests in 10.17 seconds; the earlier 146-test result is not counted again. Changed production owners: basedpyright reported zero errors/warnings.

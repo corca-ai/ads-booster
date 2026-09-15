@@ -33,7 +33,7 @@ wait states all lost context crossing an owner boundary. Canonical source, proof
 state now cross those seams explicitly. Tenant/effect deduplication remains a negative control.
 
 ## Verification
-Installed candidate: 146 focused passes. Actual model: five completed dialogue tasks, one honest
+Installed candidate: 146 focused passes; main-integrated fresh wheel: 177 focused passes. Actual model: five completed dialogue tasks, one honest
 integration question. Six actual PNGs passed repaired assessment and six local upload sequences.
 Memory recall and real search were inspected separately; private receipts remain local.
 
@@ -78,13 +78,13 @@ Keep falsifying revoked-member, uncertain-effect, tenant-deduplication and diges
 completion to requested work, verify installed packages and record live limits instead of claiming all green.
 
 ## Evidence Disposition
-- Report Identity: slack:channel-audit-186#sha256:9dbb40133337ecc86988510d59e2f32ceaf7f9deb52f136e1a98678708e51a41
+- Report Identity: slack:channel-audit-186#sha256:d17be4aa5a352132df105524c8ebedda0b7a2ff3ca00908f5a7d90010d74f105
 - Reported Findings: 10
 - Dispositioned Findings: F1, F2, F3, F4, F5, F6, F7, F8, F9, F10
 - Missing Findings: none
 - Evidence Digest: sha256:c8d54400f2def4a931765ca1c29051770ba968656a6aa867345c57e12c10a4b6
 - Report Source: docs/development/slack-channel-audit-2026-09-15.md
-- Report Source SHA256: 9dbb40133337ecc86988510d59e2f32ceaf7f9deb52f136e1a98678708e51a41
+- Report Source SHA256: d17be4aa5a352132df105524c8ebedda0b7a2ff3ca00908f5a7d90010d74f105
 
 ## Adversarial Verification
 - Finding: F1 | Source: channel-audit-186 | Expected: Requested work executes after yielding | Stimulus: Signed request and restarted drive | Disposition: reproduced | Observed: Approval wait disappeared after repair | Proof: executable fixture | Handoff: debug-186 | Next move: review PR | Receipt: charness-artifacts/debug/2026-09-15-trace-agent-channel-audit/F1.json | Receipt SHA256: fa2307359b4c0edf5651e8172fbd281a766a2ee92a73c8264f605a58dc14203b
