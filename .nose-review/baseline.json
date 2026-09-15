@@ -2612,6 +2612,14 @@
         "acfe555feda831ca1abfe858e7fc49c49b647abcd616c10c6c310020803f1243",
         "ce4e19a8b89ad2c87b31372691cb0c2760af51f0211234355e4f6d0224347a03"
       ]
+    },
+    {
+      "fingerprint": "42c08587e07683b763e948b595dc042766fcd6558993087091e66980f1ff4cd8",
+      "reason": "SlackCommands.receive returns a successful ephemeral command acknowledgement with response_type/text and a run ID; oauth_error_body returns an HTTP authentication failure with error/message and recovery instructions. These short dictionary literals implement different transport schemas, outcomes and callers; a shared response helper would couple unrelated Slack admission and Threads OAuth error contracts.",
+      "memberHashes": [
+        "186cbffa71929bfb5f1a5407747fb9d0c39b0a5b1a4bf30e9cb13aadcf256458",
+        "7d287fa5e61d9a7ec0bb53d0609899d8795aafbba86ddd718df57538a3c97cbd"
+      ]
     }
   ]
 }
