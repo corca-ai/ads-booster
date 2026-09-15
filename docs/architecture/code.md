@@ -27,7 +27,7 @@ an existing service-to-domain or canonical-repository bridge remains permitted.
 | `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs and owner-bound completion proofs | Run/approval/recovery ownership |
 | `bootstrap/` | composition of the configured service and concrete integrations | a second execution path |
 | `knowledge/` | team knowledge, scoped retrieval, curation, learned skills and workspace learning readiness | Agent, channel, bootstrap, tool or workload dependencies |
-| `threads/` | account metadata/token boundary, OAuth, approved drafts/media, publication ledger and metric collection | Slack identity admission or canonical Run execution |
+| `threads/` | account metadata/token boundary, OAuth, provider privacy callbacks, approved drafts/media, publication ledger and metric collection | Slack identity admission or canonical Run execution |
 | `creative/`, `delivery/`, `learning/`, `research/`, `workflows/`, `evaluation/` | their named domain policies and implementations | Agent Core or channel admission; their established service bridge remains explicit |
 | `contracts/`, `providers/`, `transport/`, `cli/` | data-only contracts, external provider clients, shared transport and installed commands | another domain's mutable runtime state |
 
@@ -44,6 +44,10 @@ HTTP belongs to `providers/threads_api.py`; `tools/threads_*.py` expose typed ca
 `bootstrap/threads_setup.py` composes them only from a complete environment configuration.
 `threads/reconciliation.py` settles only persisted uncertain publications with known provider IDs;
 it never recreates a container or repeats a publish request.
+`threads/provider_callbacks.py` verifies Meta signed requests, `threads/privacy.py` owns local
+deauthorization and deletion, and `threads/callback_urls.py` owns the public path contract.
+`channels/http/threads_privacy_api.py` translates those provider routes without owning deletion
+policy or persistence.
 
 Tool registration is one atomic configuration unit: a stable capability ID/version, descriptor
 factory and execution adapter are validated together before catalog and adapter projections become

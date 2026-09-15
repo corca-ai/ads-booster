@@ -427,9 +427,10 @@ for every effect. Automatic effects require exact capability and account/resourc
 optional occurrence/end ceiling and a source-bound owner delegation. Pause, resume, update and cancel
 use the schedule ID and current revision. `/health` includes scheduler liveness and backlog counts.
 
-On a managed Linux installation, run `trace-marketing server threads-setup`, register the printed
-redirect URI in the Meta app, then restart the service. The command updates only the Threads keys in
-the private `agent.env` and preserves the existing Slack, Knowledge and operator settings.
+On a managed Linux installation, run `trace-marketing server threads-setup`. Register the three
+printed URLs in the matching Meta app fields: OAuth redirect, deauthorization callback and data
+deletion callback. Then restart the service. The command updates only the Threads keys in the
+private `agent.env` and preserves the existing Slack, Knowledge and operator settings.
 
 Threads is enabled only when all variables below are present together. The callback and expiring
 media routes must use the same public HTTPS origin configured in the Meta app. Tokens are stored as
@@ -452,6 +453,13 @@ country's `final` and `scene` Trace assets form one ordered carousel; the origin
 generation contract remains unchanged. One approval may bind multiple stable draft item IDs; each
 item keeps its own receipt and an unknown item stops the remaining batch. Unknown POST outcomes are recorded for reconciliation and
 are never blindly retried. See [Threads API operations](docs/operations/threads-api.md).
+
+Meta sends app removal and data deletion requests as form-encoded `signed_request` callbacks. The
+service verifies their HMAC-SHA256 signature with the app secret before reading the provider user
+ID. App removal revokes every local connection for that provider account and deletes its token.
+Data deletion also removes affected draft batches, media grants, publication records and metric
+snapshots, then returns an opaque confirmation code and public status URL. The deletion receipt
+stores a keyed subject digest, never the raw provider user ID.
 
 ## Team knowledge context
 
