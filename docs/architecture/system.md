@@ -1134,6 +1134,12 @@ Production credentials are not copied into the bundle.
 
 The app-server transport copies PNG bytes from native image-generation events into the private
 operation's `provider-images` directory and binds each file to its event ID and original SHA-256.
+The frozen skill's helper guide names the outer-agent
+`functions.exec`/`tools.image_gen__imagegen` binding, which does not exist inside this dedicated
+app-server turn. The Trace-post provider therefore supplies an instruction-compatibility guard that
+directs the model to send each prepared request to the turn's native image-generation tool instead
+of looking for an outer orchestrator, plugin or MCP binding. This is a model instruction, not a
+host-forced tool call; native generation events remain the only accepted execution evidence.
 The child uses those files as receipt sources. Completion requires the official event count and
 source path/hash set to match the frozen workflow's receipts. A durable provider proof permits
 readback after a crash; a child-written completion summary alone cannot certify success.
