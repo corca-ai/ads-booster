@@ -2262,6 +2262,22 @@
         "d0626f275d64fab27a94091999ab62aa966e0a4c57ed007e86c37f77ebc52d92",
         "d36650a8d58caf9ec7c46bfd410b1d88c4ac7c3514deaa6f2bd957cb48266c4e"
       ]
+    },
+    {
+      "fingerprint": "4a4efb0c3c332864c6b4a7479e1b5225f2ba11f2edfe6be7f34dcd293745c19a",
+      "reason": "The production Knowledge service and Threads privacy test fixture independently import dataclass and datetime primitives; sharing module headers would couple test infrastructure to an unrelated production domain.",
+      "memberHashes": [
+        "565f8c0a2a6e205a479699f4006eb8b21da40aea7a33464a8c966e9b8b47740e",
+        "d3a1e66f291d80ead8c69d3ee7efc02a83e5ae337892d2c9310d9de46eeca528"
+      ]
+    },
+    {
+      "fingerprint": "da4c5a3bfb61ac4501fdf7d32dd9963fb7ab78e25243ae6c13d1691454a6da62",
+      "reason": "The publication repository initializes its full ledger schema while the effect fence removes one tombstone under its own lock; their SQLite context pattern is shared resource hygiene, not one reusable operation.",
+      "memberHashes": [
+        "483bfab32eba824502ceb20f972d0ba667aa5feb66cb9bd5a3d3c8d821bd192f",
+        "916fd661718b5ccb0476ec78dd5fd8a46b7a8d1126bbdc9487996bc1ec78889e"
+      ]
     }
   ]
 }
