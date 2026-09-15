@@ -21,8 +21,6 @@ from ads_booster.contracts.reasoning import (
     ReasoningResult,
 )
 from ads_booster.providers.codex_reasoning import CodexReasoningError
-from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
-from ads_booster.threads.privacy import ThreadsPrivacyCallbacks
 from ads_booster.tools.descriptors import (
     notion_daily_descriptor,
     research_descriptor,
@@ -31,10 +29,8 @@ from ads_booster.tools.descriptors import (
 from tests.marketing.agent_service.completion_fixtures import (
     FixtureMarketingAgentService as MarketingAgentService,
 )
-from tests.marketing.agent_service.threads_callback_fixtures import (
-    FAKE_APP_SECRET,
-    signed_request,
-)
+from tests.marketing.agent_service.threads_callback_fixtures import signed_request
+from tests.marketing.agent_service.threads_privacy_fixtures import privacy_callbacks
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -408,14 +404,7 @@ def _api(root: Path, *, reasoning: ReasoningProvider | None = None) -> Marketing
 
 def _privacy_api(root: Path) -> MarketingAgentApi:
     base = _api(root)
-    database_path = base.service.repository.database_path
-    callbacks = ThreadsPrivacyCallbacks(
-        database_path,
-        "https://agent.example.com",
-        FAKE_APP_SECRET,
-        ThreadsAccountRepository(database_path),
-        ThreadsTokenVault(root / "threads-secrets"),
-    )
+    callbacks, _, _ = privacy_callbacks(root)
     return MarketingAgentApi(
         base.service,
         tenant_id="trace",

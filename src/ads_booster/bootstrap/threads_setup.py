@@ -13,6 +13,7 @@ from ads_booster.providers.threads_api import ThreadsApiClient
 from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
 from ads_booster.threads.callback_urls import threads_callback_urls
 from ads_booster.threads.drafts import ThreadsDraftRepository
+from ads_booster.threads.effect_fence import ThreadsEffectFence
 from ads_booster.threads.media_delivery import ThreadsMediaDelivery
 from ads_booster.threads.metrics import ThreadsMetricsService
 from ads_booster.threads.oauth import ThreadsOAuthService
@@ -159,6 +160,7 @@ def connect_threads(
     api = ThreadsApiClient.create(app_id=config.app_id, app_secret=config.app_secret)
     accounts = ThreadsAccountRepository(database)
     tokens = ThreadsTokenVault(root / "secrets" / "threads")
+    effect_fence = ThreadsEffectFence(database)
     drafts = ThreadsDraftRepository(database)
     media = ThreadsMediaDelivery(
         database,
@@ -167,14 +169,16 @@ def connect_threads(
         config.media_signing_secret.encode(),
     )
     publications = ThreadsPublicationRepository(database)
-    publisher = ThreadsPublisher(api, accounts, tokens, drafts, media, publications)
+    publisher = ThreadsPublisher(
+        api, accounts, tokens, drafts, media, publications, effect_fence
+    )
     metrics = ThreadsMetricsService(api, accounts, tokens, ProviderMetricRepository(database))
     actors = SlackIntegrationActors(str(database), events.identity)
     oauth = ThreadsOAuthService(
-        str(database), config.redirect_uri, api, accounts, tokens
+        str(database), config.redirect_uri, api, accounts, tokens, effect_fence
     )
     privacy = ThreadsPrivacyCallbacks(
-        database, config.public_origin, config.app_secret, accounts, tokens
+        database, config.public_origin, config.app_secret, accounts, tokens, effect_fence
     )
     tools = ThreadsTools(accounts, tokens, metrics, publisher, actors.threads_actor)
     service.approval_authorizers = (

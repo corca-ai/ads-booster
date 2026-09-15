@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
@@ -12,38 +12,40 @@ from ads_booster.contracts.provider_metrics import (
     ProviderMetricSnapshot,
 )
 from ads_booster.contracts.threads import (
-    ThreadsAccount,
     ThreadsAccountStatus,
     ThreadsPublicationReceipt,
 )
 from ads_booster.learning.provider_metrics import ProviderMetricRepository
-from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
 from ads_booster.threads.drafts import (
-    ThreadsDraftAction,
     ThreadsDraftBatch,
-    ThreadsDraftItem,
     ThreadsDraftRepository,
 )
 from ads_booster.threads.media_delivery import ThreadsMediaDelivery
-from ads_booster.threads.privacy import ThreadsPrivacyCallbacks
 from ads_booster.threads.publications import ThreadsPublicationRepository
-from tests.marketing.agent_service.threads_callback_fixtures import (
-    FAKE_APP_SECRET,
-    signed_request,
+from tests.marketing.agent_service.threads_callback_fixtures import signed_request
+from tests.marketing.agent_service.threads_privacy_fixtures import (
+    NOW,
+    privacy_callbacks,
+    threads_account,
+    threads_draft,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-NOW = datetime(2026, 9, 15, tzinfo=UTC)
 _STRING_ROW: TypeAdapter[tuple[str]] = TypeAdapter(tuple[str])
 
 
 def test_deauthorization_revokes_every_provider_connection_and_token(tmp_path: Path) -> None:
     # Given one provider user connected in two workspaces and one unrelated account.
-    callbacks, accounts, tokens = _callbacks(tmp_path)
-    owned = (_account("connection-1", "workspace-1"), _account("connection-2", "workspace-2"))
-    unrelated = _account("connection-3", "workspace-3", provider_id="provider-user-2")
+    callbacks, accounts, tokens = privacy_callbacks(tmp_path)
+    owned = (
+        threads_account("connection-1", "workspace-1"),
+        threads_account("connection-2", "workspace-2"),
+    )
+    unrelated = threads_account(
+        "connection-3", "workspace-3", provider_id="provider-user-2"
+    )
     for account in (*owned, unrelated):
         _ = tokens.put(f"token-{account.connection_id}", token_ref=account.token_ref)
         _ = accounts.put(account)
@@ -64,11 +66,11 @@ def test_deauthorization_revokes_every_provider_connection_and_token(tmp_path: P
 
 def test_data_deletion_removes_provider_records_and_returns_stable_receipt(tmp_path: Path) -> None:
     # Given provider-derived data across every Threads persistence surface.
-    callbacks, accounts, tokens = _callbacks(tmp_path)
-    account = _account("connection-1", "workspace-1")
+    callbacks, accounts, tokens = privacy_callbacks(tmp_path)
+    account = threads_account("connection-1", "workspace-1")
     _ = tokens.put("token-connection-1", token_ref=account.token_ref)
     _ = accounts.put(account)
-    batch = _draft(account)
+    batch = threads_draft(account)
     _ = ThreadsDraftRepository(callbacks.database_path).create(batch)
     _ = ThreadsPublicationRepository(callbacks.database_path).put(
         ThreadsPublicationReceipt(
@@ -134,11 +136,11 @@ def test_data_deletion_removes_provider_records_and_returns_stable_receipt(tmp_p
 
 def test_new_deletion_request_after_reconnect_deletes_new_account(tmp_path: Path) -> None:
     # Given a completed deletion followed by fresh consent for the same provider user.
-    callbacks, accounts, tokens = _callbacks(tmp_path)
+    callbacks, accounts, tokens = privacy_callbacks(tmp_path)
     _ = ThreadsDraftRepository(callbacks.database_path)
     _ = ThreadsPublicationRepository(callbacks.database_path)
     _ = ProviderMetricRepository(callbacks.database_path)
-    account = _account("connection-1", "workspace-1")
+    account = threads_account("connection-1", "workspace-1")
     _ = tokens.put("old-token", token_ref=account.token_ref)
     _ = accounts.put(account)
     first = callbacks.delete(
@@ -157,65 +159,6 @@ def test_new_deletion_request_after_reconnect_deletes_new_account(tmp_path: Path
     assert second.confirmation_code != first.confirmation_code
     assert accounts.get(account.workspace_id, account.connection_id) is None
     assert not (tokens.root / account.token_ref).exists()
-
-
-def _callbacks(
-    root: Path,
-) -> tuple[ThreadsPrivacyCallbacks, ThreadsAccountRepository, ThreadsTokenVault]:
-    database_path = root / "agent.sqlite3"
-    accounts = ThreadsAccountRepository(database_path)
-    tokens = ThreadsTokenVault(root / "secrets")
-    return (
-        ThreadsPrivacyCallbacks(
-            database_path,
-            "https://agent.example.com",
-            FAKE_APP_SECRET,
-            accounts,
-            tokens,
-        ),
-        accounts,
-        tokens,
-    )
-
-
-def _account(
-    connection_id: str,
-    workspace_id: str,
-    *,
-    provider_id: str = "provider-user-1",
-) -> ThreadsAccount:
-    return ThreadsAccount(
-        connection_id=connection_id,
-        workspace_id=workspace_id,
-        owner_member_id=f"owner-{workspace_id}",
-        provider_account_id=provider_id,
-        username=f"user-{connection_id}",
-        granted_scopes=("threads_basic",),
-        token_ref=f"token-ref-{connection_id}",
-        connected_at=NOW,
-        updated_at=NOW,
-        expires_at=NOW + timedelta(days=60),
-    )
-
-
-def _draft(account: ThreadsAccount) -> ThreadsDraftBatch:
-    return ThreadsDraftBatch(
-        batch_id="batch-1",
-        workspace_id=account.workspace_id,
-        owner_member_id=account.owner_member_id,
-        conversation_id="conversation-1",
-        source_event_id="event-1",
-        items=(
-            ThreadsDraftItem(
-                item_id="item-1",
-                action=ThreadsDraftAction.PUBLISH,
-                connection_id=account.connection_id,
-                text="Delete this provider draft",
-            ),
-        ),
-        created_at=NOW,
-        updated_at=NOW,
-    )
 
 
 def _seed_media_grant(database_path: Path, batch: ThreadsDraftBatch) -> None:

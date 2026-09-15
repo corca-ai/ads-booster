@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
+    from ads_booster.threads.effect_fence import ThreadsEffectFence
 
 
 class ThreadsDeletionReceipt(ContractModel):
@@ -61,6 +62,7 @@ class ThreadsPrivacyCallbacks:
     app_secret: str
     accounts: ThreadsAccountRepository
     tokens: ThreadsTokenVault
+    effect_fence: ThreadsEffectFence
 
     def __post_init__(self) -> None:
         """Create the durable provider deletion receipt store."""
@@ -75,29 +77,31 @@ class ThreadsPrivacyCallbacks:
             )
 
     def deauthorize(self, signed_value: str, *, now: datetime) -> int:
-        provider = verify_meta_signed_request(signed_value, self.app_secret)
-        accounts = self.accounts.revoke_provider(provider.user_id, now=now)
-        for account in accounts:
-            self.tokens.delete(account.token_ref)
-        return len(accounts)
+        with self.effect_fence.hold():
+            provider = verify_meta_signed_request(signed_value, self.app_secret)
+            accounts = self.accounts.revoke_provider(provider.user_id, now=now)
+            for account in accounts:
+                self.tokens.delete(account.token_ref)
+            return len(accounts)
 
     def delete(self, signed_value: str, *, now: datetime) -> ThreadsDeletionReceipt:
-        provider = verify_meta_signed_request(signed_value, self.app_secret)
-        subject_hmac = hmac.new(
-            self.app_secret.encode(), f"delete-request\n{signed_value}".encode(), sha256
-        ).hexdigest()
-        receipt = self._claim(subject_hmac, now=now)
-        if receipt.status == "completed":
-            return receipt
-        self._delete_provider_data(provider.user_id)
-        completed = receipt.model_copy(update={"status": "completed", "completed_at": now})
-        with closing(sqlite3.connect(self.database_path)) as database, database:
-            _ = database.execute(
-                """UPDATE threads_data_deletions SET status='completed',receipt_json=?
-                WHERE confirmation_code=? AND status='pending'""",
-                (completed.model_dump_json(), completed.confirmation_code),
-            )
-        return completed
+        with self.effect_fence.hold():
+            provider = verify_meta_signed_request(signed_value, self.app_secret)
+            subject_hmac = hmac.new(
+                self.app_secret.encode(), f"delete-request\n{signed_value}".encode(), sha256
+            ).hexdigest()
+            receipt = self._claim(subject_hmac, now=now)
+            if receipt.status == "completed":
+                return receipt
+            self._delete_provider_data(provider.user_id, now=now)
+            completed = receipt.model_copy(update={"status": "completed", "completed_at": now})
+            with closing(sqlite3.connect(self.database_path)) as database, database:
+                _ = database.execute(
+                    """UPDATE threads_data_deletions SET status='completed',receipt_json=?
+                    WHERE confirmation_code=? AND status='pending'""",
+                    (completed.model_dump_json(), completed.confirmation_code),
+                )
+            return completed
 
     def status(self, confirmation_code: str) -> ThreadsDeletionReceipt | None:
         with closing(sqlite3.connect(self.database_path)) as database, database:
@@ -139,7 +143,7 @@ class ThreadsPrivacyCallbacks:
             raise RuntimeError(message)
         return ThreadsDeletionReceipt.model_validate_json(row[0])
 
-    def _delete_provider_data(self, provider_user_id: str) -> None:
+    def _delete_provider_data(self, provider_user_id: str, *, now: datetime) -> None:
         with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute("BEGIN EXCLUSIVE")
             rows = _ACCOUNT_ROWS.validate_python(
@@ -154,6 +158,7 @@ class ThreadsPrivacyCallbacks:
                 self.tokens.delete(account.token_ref)
             if not connection_ids:
                 return
+            self.effect_fence.block(database, connection_ids, now=now)
             batch_ids = self._batch_ids(database, connection_ids)
             operation_ids = self._operation_ids(database, connection_ids)
             for trigger_name in _DELETE_TRIGGER_NAMES:

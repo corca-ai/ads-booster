@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
 from pydantic import TypeAdapter
@@ -17,6 +18,9 @@ from ads_booster.threads.accounts import (
     ThreadsAccountRepository,
     ThreadsTokenVault,
 )
+
+if TYPE_CHECKING:
+    from ads_booster.threads.effect_fence import ThreadsEffectFence
 
 
 class ThreadsOAuthError(ValueError):
@@ -42,6 +46,7 @@ class ThreadsOAuthService:
     api: ThreadsApiClient
     accounts: ThreadsAccountRepository
     tokens: ThreadsTokenVault
+    effect_fence: ThreadsEffectFence
 
     def __post_init__(self) -> None:
         with closing(sqlite3.connect(self.database_path)) as database, database:
@@ -104,6 +109,10 @@ class ThreadsOAuthService:
         )
 
     def finish(self, *, state_id: str, code: str, now: datetime) -> ThreadsAccount:
+        with self.effect_fence.hold():
+            return self._finish(state_id=state_id, code=code, now=now)
+
+    def _finish(self, *, state_id: str, code: str, now: datetime) -> ThreadsAccount:
         workspace_id, member_id, requested = self._consume(state_id, now=now)
         short = self.api.exchange_code(code=code, redirect_uri=self.redirect_uri, now=now)
         token = self.api.exchange_long_lived(short, now=now)
@@ -126,7 +135,7 @@ class ThreadsOAuthService:
             raise ThreadsAccountConflictError("threads_provider_account_already_connected")
         if existing is not None:
             self.tokens.replace(existing.token_ref, token.access_token)
-            return self.accounts.put(
+            connected = self.accounts.put(
                 existing.model_copy(
                     update={
                         "username": user.username,
@@ -137,6 +146,8 @@ class ThreadsOAuthService:
                     }
                 )
             )
+            self.effect_fence.allow(connected.connection_id)
+            return connected
         token_ref = connection_id
         try:
             _ = self.tokens.put(token.access_token, token_ref=token_ref)
@@ -155,10 +166,12 @@ class ThreadsOAuthService:
             expires_at=token.expires_at,
         )
         try:
-            return self.accounts.put(account)
+            connected = self.accounts.put(account)
         except ThreadsAccountConflictError:
             self.tokens.delete(token_ref)
             raise
+        self.effect_fence.allow(connected.connection_id)
+        return connected
 
     def refresh_account(
         self, workspace_id: str, connection_id: str, member_id: str, *, now: datetime
