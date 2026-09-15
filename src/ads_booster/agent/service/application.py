@@ -74,6 +74,7 @@ from ads_booster.agent.service.task_progress import (
     seed_task,
     task_records,
 )
+from ads_booster.agent.service.threads_handoff import threads_connect_handoff
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -438,6 +439,35 @@ class MarketingAgentService:
         if receipt_record is None or evidence_record is None:
             raise ValueError("verified_tool_recovery_records_missing")
         receipt = ToolReceiptRecord.model_validate(receipt_record.payload)
+        handoff = threads_connect_handoff(run, evidence_record, self.completion, now=now)
+        if handoff is not None:
+            task = project_task(run, records)
+            task = TaskProjection(
+                task.spec,
+                task.checkpoint.model_copy(update={"next_action": "wait", "candidate": None}),
+            )
+            return self._append_step(
+                run,
+                _step(
+                    run,
+                    kind=AgentStepKind.EVALUATE,
+                    input_sha256=receipt_record.payload_sha256,
+                    output_sha256=contract_sha256(handoff),
+                    now=now,
+                ),
+                state=AgentRunState.AWAITING_INPUT,
+                expected_revision=run.revision,
+                records=(
+                    _record(
+                        run,
+                        record_id=handoff.intent_id,
+                        kind=AgentRecordKind.INTENT,
+                        payload=handoff.model_dump(mode="json"),
+                        now=now,
+                    ),
+                    *task_records(run, task, now),
+                ),
+            )
         return self._evaluate_tool_result(run, receipt, evidence_record.payload, now=now)
 
     def _resume_approved_invocation(self, run: AgentRun, *, now: datetime) -> AgentRun:
