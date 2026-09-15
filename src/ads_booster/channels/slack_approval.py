@@ -6,11 +6,13 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from ads_booster.contracts.agent_run import (
+    AgentIntent,
     AgentRecordKind,
     AgentRunState,
     CapabilitySnapshot,
     contract_sha256,
 )
+from ads_booster.contracts.reasoning import ReasoningDecisionV2, decode_reasoning_result
 from ads_booster.knowledge.contract_types import ConversationEventKind
 
 if TYPE_CHECKING:
@@ -78,9 +80,44 @@ def execute_requested_work(  # noqa: PLR0911,PLR0913 - explicit fail-closed chan
     pending = service.pending_approval(run.tenant_id, run.run_id)
     if pending is None:
         return False
-    reasoning = next((r for r in reversed(records) if r.kind is AgentRecordKind.REASONING), None)
-    decision = None if reasoning is None else reasoning.payload.get("decision")
-    if not isinstance(decision, dict) or decision.get("authorization_message") != message.text:
+    intent_record = next(
+        (
+            r
+            for r in records
+            if r.kind is AgentRecordKind.INTENT
+            and r.payload_sha256 == pending.intent_sha256
+        ),
+        None,
+    )
+    intent = None if intent_record is None else AgentIntent.model_validate(intent_record.payload)
+    reasoning = (
+        None
+        if intent is None
+        else next(
+            (
+                r
+                for r in records
+                if r.kind is AgentRecordKind.REASONING
+                and r.record_id == intent.intent_id.replace(":intent:", ":reasoning:")
+            ),
+            None,
+        )
+    )
+    if reasoning is None:
+        return False
+    decision = reasoning.payload.get("decision")
+    if not isinstance(decision, dict):
+        return False
+    decoded = decode_reasoning_result(reasoning.payload).decision
+    current_request_authorized = (
+        isinstance(decoded, ReasoningDecisionV2)
+        and decoded.authorization_source == "current_user_message"
+    )
+    legacy_exact_authorized = (
+        getattr(decoded, "authorization_source", None) is None
+        and decision.get("authorization_message") == message.text
+    )
+    if not current_request_authorized and not legacy_exact_authorized:
         return False
     if decision.get("action") != "invoke_tool" or decision.get("tool_input") != pending.input:
         return False

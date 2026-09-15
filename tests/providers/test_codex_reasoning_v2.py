@@ -6,7 +6,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from ads_booster.contracts.agent_run import CapabilitySnapshot, contract_sha256
-from ads_booster.contracts.reasoning import ReasoningRequestV2
+from ads_booster.contracts.reasoning import ReasoningRequestV2, decode_reasoning_result
 from ads_booster.providers.codex_reasoning import CodexReasoningError, CodexReasoningProvider
 from tests.marketing.agent_service.completion_fixtures import response_case
 from tests.marketing.agent_service.test_application import NOW
@@ -67,6 +67,7 @@ def wire_stop(request: ReasoningRequestV2) -> JsonObject:
         "proposed_action_kind": None,
         "proposed_brand_ref": None,
         "authorization_message": None,
+        "authorization_source": None,
         "pending_approval_action": "preserve",
         "task_proposal": None,
         "completion_candidate": candidate.model_dump(mode="json", exclude={"answer_sha256"}),
@@ -98,8 +99,43 @@ def test_v2_request_and_decision_preserve_conversational_authority(tmp_path: Pat
     assert request.pending_approval == {"capability_id": "creative.image.edit"}
     assert result.decision.pending_approval_action == "cancel"
     assert "set authorization_message" in runner.prompt
+    assert "authorization_source field" in runner.prompt
     assert 'Configured model identifier: "fixture"' in runner.prompt
     assert "set pending_approval_action=preserve" in runner.prompt
+
+
+def test_pre_marker_v2_decision_preserves_historical_receipt_digest() -> None:
+    decision: JsonObject = {
+        "schema_version": "trace.reasoning-decision.v2",
+        "action": "invoke_tool",
+        "capability_id": "creative.image.generate",
+        "tool_input": {"prompt": "blue"},
+        "expected_outcome": "Create image",
+        "reasoning_summary": "Requested directly",
+        "proposed_action_kind": None,
+        "proposed_brand_ref": None,
+        "authorization_message": "이미지 만들어줘",
+        "pending_approval_action": "preserve",
+        "task_proposal": None,
+        "completion_candidate": None,
+    }
+    payload: JsonObject = {
+        "schema_version": "trace.reasoning-result.v2",
+        "decision": decision,
+        "receipt": {
+            "schema_version": "trace.reasoning-provider-receipt.v1",
+            "provider_id": "codex",
+            "model_id": "historical",
+            "request_sha256": "a" * 64,
+            "output_schema_sha256": "b" * 64,
+            "decision_sha256": contract_sha256(decision),
+        },
+    }
+
+    decoded = decode_reasoning_result(payload)
+
+    assert decoded.decision.model_dump(mode="json") == decision
+    assert decoded.receipt.decision_sha256 == contract_sha256(decoded.decision)
 
 
 def test_v2_stop_requires_a_candidate(tmp_path: Path) -> None:
