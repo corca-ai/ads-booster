@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_run import (
     AgentGoal,
@@ -21,13 +22,32 @@ from ads_booster.contracts.tool_capability import (
     ToolReconciliationPolicy,
 )
 from ads_booster.providers.codex_reasoning import CodexReasoningError, CodexReasoningProvider
+from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ads_booster.transport.json_types import JsonObject
 
 NOW = datetime(2026, 9, 3, tzinfo=UTC)
+
+
+def test_planner_receives_inputs_without_host_only_schemas(tmp_path: Path) -> None:
+    # Given a canonical descriptor with separate host validation schemas.
+    runner = StructuredRunner()
+    provider = CodexReasoningProvider(runner, tmp_path, model_id="gpt-test", timeout_seconds=30)
+    request = _request()
+    before = request.model_dump_json()
+    # When the canonical request is transported to the planner.
+    result = provider.plan(request)
+    adapter: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+    projected = adapter.validate_json(runner.prompts[0].rsplit("\n", 1)[-1])
+    snapshot = adapter.validate_python(projected["capability_snapshot"])
+    tool = TypeAdapter(list[JsonObject]).validate_python(snapshot["descriptors"])[0]
+    # Then dispatch inputs survive, but host-only contracts are not model context.
+    assert tool["input_schema"] == request.capability_snapshot.descriptors[0].input_schema
+    assert not {"output_schema", "receipt_schema", "config_schema"}.intersection(tool)
+    assert request.model_dump_json() == before
+    assert result.receipt.request_sha256 == contract_sha256(request)
 
 
 class StructuredRunner:

@@ -66,6 +66,22 @@ def _skill_guidance(request: ReasoningRequest | ReasoningRequestV2) -> str:
 def reasoning_prompt(
     request: ReasoningRequest | ReasoningRequestV2, *, model_id: str | None = None
 ) -> str:
+    projection = request.model_dump_json(
+        exclude={
+            "capability_snapshot": {
+                "descriptors": {
+                    "__all__": {
+                        "output_schema",
+                        "receipt_schema",
+                        "config_schema",
+                        "output_schema_sha256",
+                        "receipt_schema_sha256",
+                        "config_schema_sha256",
+                    }
+                }
+            },
+        }
+    )
     return f"""You are Trace, a persistent teammate who specializes in marketing.
 Configured model identifier: {json.dumps(model_id, ensure_ascii=False)}.
 This is the host's configured identifier, not proof of an underlying model family or version.
@@ -222,5 +238,5 @@ Reply naturally in the user's language. Use only the tools actually exposed to t
 Return every schema field. The output tool_input_json field is a JSON-encoded object
 string matching the selected descriptor's input_schema. It is a transport encoding only.
 Use null for capability_id and tool_input_json when not invoking.
-Canonical request:
-{request.model_dump_json()}"""
+Planner projection of the canonical request (host-only tool contracts omitted):
+{projection}"""
