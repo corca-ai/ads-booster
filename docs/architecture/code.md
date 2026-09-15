@@ -18,6 +18,8 @@ an existing service-to-domain or canonical-repository bridge remains permitted.
 | `contracts/agent_run.py` | portable Run, Step, Intent, snapshot, invocation, approval, receipt, outcome, learning, and record envelopes | provider calls, storage, channel state |
 | `contracts/tool_capability.py` | complete ToolDescriptor policy/readiness/idempotency/reconciliation contract | registry selection or execution |
 | `contracts/reasoning.py` | replaceable structured reasoning request and decision | Codex process lifecycle |
+| `contracts/agent_schedule.py` | provider-neutral schedule rules, authority, limits and occurrence state | polling, SQLite or channel delivery |
+| `contracts/threads.py`, `contracts/provider_metrics.py` | Threads account/post/publication and provider snapshot contracts | tokens, HTTP or mutable storage |
 | `agent/core/` | capability selection and provider/tool ports | SQLite, HTTP, Cloudflare, Appium |
 | `agent/service/` | canonical on-prem application flow, append-only SQLite repository and bounded lease-aware task progression | channel-specific planning or effect implementation |
 | `agent/runtime.py` | write-ahead invocation, exact approval, receipt validation and recovery | channel admission or effect-specific implementation |
@@ -25,6 +27,7 @@ an existing service-to-domain or canonical-repository bridge remains permitted.
 | `tools/` | external-effect and read adapters, including descriptor/adapter registration inputs and owner-bound completion proofs | Run/approval/recovery ownership |
 | `bootstrap/` | composition of the configured service and concrete integrations | a second execution path |
 | `knowledge/` | team knowledge, scoped retrieval, curation, learned skills and workspace learning readiness | Agent, channel, bootstrap, tool or workload dependencies |
+| `threads/` | account metadata/token boundary, OAuth, approved drafts/media, publication ledger and metric collection | Slack identity admission or canonical Run execution |
 | `creative/`, `delivery/`, `learning/`, `research/`, `workflows/`, `evaluation/` | their named domain policies and implementations | Agent Core or channel admission; their established service bridge remains explicit |
 | `contracts/`, `providers/`, `transport/`, `cli/` | data-only contracts, external provider clients, shared transport and installed commands | another domain's mutable runtime state |
 
@@ -33,6 +36,14 @@ GitHub owners. It resolves secrets only inside adapters and does not move their 
 Agent Core. `agent/service/skills.py` owns versioned procedures and readiness;
 `agent/service/scheduler.py` owns date-stable daily admission and the narrow scheduled-delivery
 approval allowlist.
+
+`agent/service/schedule_repository.py` owns generic schedule and occurrence persistence;
+`agent/service/schedule_runtime.py` admits due occurrences through `DriveWorkQueue` and the canonical
+service. `bootstrap/scheduling_setup.py` binds Slack authority and notifications. Threads provider
+HTTP belongs to `providers/threads_api.py`; `tools/threads_*.py` expose typed capabilities and
+`bootstrap/threads_setup.py` composes them only from a complete environment configuration.
+`threads/reconciliation.py` settles only persisted uncertain publications with known provider IDs;
+it never recreates a container or repeats a publish request.
 
 Tool registration is one atomic configuration unit: a stable capability ID/version, descriptor
 factory and execution adapter are validated together before catalog and adapter projections become

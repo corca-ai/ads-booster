@@ -162,7 +162,7 @@ class ToolDescriptor(ContractModel):
 
 class ToolExecutionResult(ContractModel):
     schema_version: Literal["trace.tool-execution-result.v1"]
-    disposition: Literal["no_effect", "succeeded", "failed"]
+    disposition: Literal["no_effect", "succeeded", "failed", "unknown_side_effect"]
     invocation_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     output: JsonObject
     actual_cost_units: Annotated[int, Field(ge=0, le=1_000_000)]

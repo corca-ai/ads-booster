@@ -167,6 +167,9 @@ class MarketingAgentService:
     drive_admission: Callable[[AgentRun, TaskProjection, datetime], RepositoryAdmission] | None = (
         None
     )
+    approval_authorizers: tuple[
+        Callable[[ToolInvocation, ToolDescriptor, str], bool], ...
+    ] = ()
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     monotonic_clock: Callable[[], float] = monotonic
     _active_meter: float | None = field(default=None, init=False, repr=False)
@@ -528,6 +531,11 @@ class MarketingAgentService:
                 raise ValueError("approval_expiry_required")
             descriptor = self._descriptor_for_invocation(tenant_id, run_id, invocation)
             if granted:
+                if any(
+                    not authorize(invocation, descriptor, approver_id)
+                    for authorize in self.approval_authorizers
+                ):
+                    raise ValueError("tool_approval_authority_denied")
                 _ = self.registry.require_current_dispatch(
                     descriptor, policy=self.capability_policy, now=now
                 )
@@ -1493,7 +1501,7 @@ class MarketingAgentService:
             self.runtime_store, dispatched, now=now
         )
         self._fault("execution_started")
-        completed = self.runtime.finish_persisted_tool_execution(
+        _ = self.runtime.finish_persisted_tool_execution(
             self.runtime_store, started, backend, now=now
         )
         self._fault("runtime_result_persisted")
@@ -1501,7 +1509,7 @@ class MarketingAgentService:
             return self._await_deferred(
                 self._required_run(run.tenant_id, run.run_id), invocation, backend.deferred, now=now
             )
-        if completed.state.value == "awaiting_reconciliation" or backend.result is None:
+        if backend.result is None:
             return self._append_step(
                 admitted,
                 AgentStep(
@@ -1584,7 +1592,11 @@ class MarketingAgentService:
                 output_sha256=receipt_sha256,
                 now=now,
             ),
-            state=AgentRunState.RUNNING,
+            state=(
+                AgentRunState.AWAITING_RECONCILIATION
+                if result.disposition == "unknown_side_effect"
+                else AgentRunState.RUNNING
+            ),
             expected_revision=admitted.revision,
             records=(
                 _record(
@@ -1984,6 +1996,45 @@ class MarketingAgentService:
                 return run
             return self._record_tool_result(run, invocation, descriptor, approval, result, now=now)
 
+    def resolve_reconciliation(
+        self,
+        tenant_id: str,
+        run_id: str,
+        *,
+        result: ToolExecutionResult,
+        now: datetime,
+    ) -> AgentRun:
+        with self.run_locks.hold(tenant_id, run_id):
+            run = self._required_run(tenant_id, run_id)
+            if run.state is not AgentRunState.AWAITING_RECONCILIATION:
+                raise ValueError("agent_run_not_awaiting_reconciliation")
+            invocation = self._execution_invocation(tenant_id, run_id)
+            descriptor = self._descriptor_for_invocation(tenant_id, run_id, invocation)
+            _validate_terminal_result(result, invocation, descriptor)
+            if result.disposition == "unknown_side_effect":
+                raise ValueError("reconciliation_result_not_terminal")
+            session = self.runtime_store.load(run_id)
+            if session is None or session.state is not RuntimeState.AWAITING_RECONCILIATION:
+                raise ValueError("reconciliation_runtime_binding_missing")
+            bound = _runtime_bound(invocation, descriptor)
+            approval, grant_digest = self._admitted_deferred_approval(
+                run, session, bound, invocation
+            )
+            receipt = ToolReceipt(
+                call_id=bound.call.call_id,
+                call_sha256=bound.call.digest,
+                approval_grant_sha256=grant_digest,
+                disposition=EffectDisposition(result.disposition),
+                actual_cost_units=result.actual_cost_units,
+                receipt_sha256=contract_sha256(result.output),
+            )
+            _ = self.runtime.resolve_persisted_reconciliation(
+                self.runtime_store, session, receipt, now=now
+            )
+            return self._record_tool_result(
+                run, invocation, descriptor, approval, result, now=now
+            )
+
     def _admitted_deferred_approval(  # noqa: C901 - original dispatch and approval bindings.
         self,
         run: AgentRun,
@@ -2243,11 +2294,14 @@ def _receipt_cost(payload: JsonObject) -> int:
 def _idempotency_key(run: AgentRun, descriptor: ToolDescriptor, input_sha256: str) -> str:
     match descriptor.idempotency.key_scope:
         case "run_tool_input":
-            scope = run.run_id
-            if descriptor.effect_class is EffectClass.OBSERVE:
-                # A new admitted read may refresh the same input. Recovery still
-                # uses its persisted invocation/key; effects retain input deduplication.
-                scope = f"{scope}:observation:{run.revision}"
+            # A later planning boundary may deliberately refresh an observation.
+            # Keep restart replay stable for the persisted invocation while giving
+            # that new, side-effect-free invocation its own claim identity.
+            scope = (
+                f"{run.run_id}:{run.revision}"
+                if descriptor.effect_class is EffectClass.OBSERVE
+                else run.run_id
+            )
         case "tenant_tool_input":
             scope = run.tenant_id
         case _:

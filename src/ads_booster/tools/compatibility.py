@@ -24,7 +24,7 @@ class ToolDelegationError(RuntimeError):
 class DelegatedToolResult(ContractModel):
     """Small result seam implemented by an existing automation owner."""
 
-    disposition: Literal["no_effect", "succeeded", "failed"]
+    disposition: Literal["no_effect", "succeeded", "failed", "unknown_side_effect"]
     output: JsonObject
     actual_cost_units: int = Field(ge=0, le=1_000_000)
 

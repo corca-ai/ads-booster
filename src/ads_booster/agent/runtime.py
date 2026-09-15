@@ -1000,6 +1000,18 @@ class MarketingAgentRuntime:
             if receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT
             else RuntimeState.EXECUTING
         )
+        if receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT:
+            return self._append(
+                replace(
+                    session,
+                    spent_cost_units=session.spent_cost_units + receipt.actual_cost_units,
+                    reserved_cost_units=0,
+                ),
+                state,
+                f"tool_{receipt.disposition}",
+                _tool_receipt_json(receipt),
+                now,
+            )
         return self._append(
             replace(
                 session,
@@ -1572,15 +1584,14 @@ def _apply_receipt(replay: _RuntimeReplay, event: SessionEvent) -> None:
         raise MarketingRuntimeError("session_event_receipt_invalid")
     replay.spent_cost_units += receipt.actual_cost_units
     replay.reserved_cost_units = 0
+    if receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT:
+        replay.state = RuntimeState.AWAITING_RECONCILIATION
+        return
     replay.pending_invocation = None
     replay.deferred_execution = None
     replay.pending_grant_sha256 = None
     replay.execution_started = False
-    replay.state = (
-        RuntimeState.AWAITING_RECONCILIATION
-        if receipt.disposition is EffectDisposition.UNKNOWN_SIDE_EFFECT
-        else RuntimeState.EXECUTING
-    )
+    replay.state = RuntimeState.EXECUTING
 
 
 def _apply_reconciliation_required(replay: _RuntimeReplay, event: SessionEvent) -> None:

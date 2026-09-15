@@ -152,12 +152,16 @@ class SlackConversationStore:
 
     def conversation(self, conversation_id: str) -> Conversation | None:
         with self.connect() as db:
-            row = _ROW.validate_python(
-                db.execute(
-                    "SELECT data_json FROM slack_conversations WHERE conversation_id=?",
-                    (conversation_id,),
-                ).fetchone()
-            )
+            return self._conversation(db, conversation_id)
+
+    @staticmethod
+    def _conversation(db: sqlite3.Connection, conversation_id: str) -> Conversation | None:
+        row = _ROW.validate_python(
+            db.execute(
+                "SELECT data_json FROM slack_conversations WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+        )
         return None if row is None else Conversation.model_validate_json(row[0])
 
     def conversations(self) -> tuple[Conversation, ...]:
@@ -620,6 +624,60 @@ class SlackConversationStore:
                 WHERE message_id=? AND ack_state='pending'""",
                 (message.message_id,),
             )
+            return cursor.rowcount == 1
+
+    def enqueue_scheduled_notification(
+        self,
+        *,
+        conversation_id: str,
+        event_id: str,
+        external_user_id: str,
+        run_id: str,
+        result: str,
+        task_result: TaskResult,
+    ) -> bool:
+        message = Message(
+            message_id="slack-schedule-notification-"
+            + contract_sha256(
+                {
+                    "conversation_id": conversation_id,
+                    "event_id": event_id,
+                    "run_id": run_id,
+                    "result_sha256": contract_sha256({"result": result}),
+                }
+            ),
+            conversation_id=conversation_id,
+            user_id=external_user_id,
+            text="",
+            notification_only=True,
+            result_run_id=run_id,
+        )
+        with self.connect() as db:
+            _ = db.execute("BEGIN IMMEDIATE")
+            existing = _ROW.validate_python(
+                db.execute(
+                    """SELECT message_json,result FROM slack_message_jobs
+                    WHERE message_id=?""",
+                    (message.message_id,),
+                ).fetchone()
+            )
+            if existing is not None:
+                if Message.model_validate_json(existing[0]) != message or existing[1] != result:
+                    raise ValueError("scheduled_notification_idempotency_conflict")
+                return True
+            conversation = self._conversation(db, conversation_id)
+            if conversation is None:
+                return False
+            if conversation.closed:
+                return False
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO slack_message_jobs(
+                message_id,conversation_id,message_json,state,result,ack_state,notification_state
+                ) VALUES(?,?,?,'done',?,'pending','pending')""",
+                (message.message_id, conversation_id, message.model_dump_json(), result),
+            )
+            if cursor.rowcount == 1:
+                bind_result(db, "message:" + message.message_id, task_result)
             return cursor.rowcount == 1
 
     def sent(self, message: Message, state: str, *, ack: bool = False) -> None:

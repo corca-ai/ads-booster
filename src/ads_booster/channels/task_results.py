@@ -14,6 +14,7 @@ from ads_booster.contracts.models import ContractModel
 from ads_booster.contracts.task_completion import CompletionAssessment, CompletionCandidate
 from ads_booster.contracts.task_progress import TaskCheckpoint
 from ads_booster.contracts.trace_post import TracePostSuccess
+from ads_booster.threads.drafts import ThreadsDraftBatch
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -136,6 +137,37 @@ def result_for(run: AgentRun, records: tuple[AgentRecord, ...]) -> TaskResult:
         )
     if run.state.value == "awaiting_input" and (question := current_input_question(run, records)):
         return TaskResult(question, task.checkpoint.disposition)
+    if run.state.value == "awaiting_reconciliation":
+        publication = next(
+            (
+                record.payload.get("output")
+                for record in reversed(records)
+                if record.kind is AgentRecordKind.EVIDENCE
+                and record.payload.get("capability_id")
+                in {"threads.publish", "threads.reply"}
+                and isinstance(record.payload.get("output"), dict)
+            ),
+            None,
+        )
+        if isinstance(publication, dict):
+            receipts = publication.get("publications")
+            identities = (
+                []
+                if not isinstance(receipts, list)
+                else [
+                    f"{item.get('operation_id')} / {item.get('published_post_id')}"
+                    for item in receipts
+                    if isinstance(item, dict)
+                ]
+            )
+            message = (
+                "Threads 결과를 확정하지 못했습니다. 자동으로 다시 게시하지 않습니다.\n"
+                + "\n".join(identities)
+            )
+            return TaskResult(
+                message,
+                task.checkpoint.disposition,
+            )
     verified = {item.obligation_id for item in task.checkpoint.accepted_evidence}
     finished = [
         item.description for item in task.spec.obligations if item.obligation_id in verified
@@ -218,6 +250,15 @@ def _artifact_digests(output: JsonObject) -> tuple[str, ...]:
     digest = output.get("artifact_sha256")
     if isinstance(digest, str):
         return (digest,)
+    batch_payload = output.get("batch")
+    if isinstance(batch_payload, dict):
+        batch = ThreadsDraftBatch.model_validate(batch_payload)
+        return tuple(
+            asset.sha256
+            for item in batch.items
+            if not item.excluded
+            for asset in item.assets
+        )
     if output.get("schema_version") != "trace.trace-post-success.v1":
         return ()
     result = TracePostSuccess.model_validate(output)

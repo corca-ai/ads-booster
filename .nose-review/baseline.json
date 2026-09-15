@@ -1779,6 +1779,457 @@
         "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
         "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660"
       ]
+    },
+    {
+      "fingerprint": "065d6be50ebdafdba7a5681fbda8ebf7cf0e08879b9eac8826db95432e2ad15a",
+      "reason": "Meta post-list and reply-list requests have different paths, permissions, and pagination contracts; shared response parsing already lives in _request_model and _post.",
+      "memberHashes": [
+        "5206692037efd8c89627dc57901bdec5905d7c561abd3f5263ea6291ea0939da",
+        "94723f226ea5b8cdaf2845602cd2e08869272af982e6c06c95ffb1d96ae64808"
+      ]
+    },
+    {
+      "fingerprint": "10823844949d1339ea235a08dc7e45e78fe372b5830d8b0342133d1814ea106d",
+      "reason": "Schedule occurrence lookups use different indexed keys and public return contracts; a query-string helper would hide repository ownership without sharing behavior.",
+      "memberHashes": [
+        "4f8be83cb90bd8fd09f1e86f3edb483a4ceb3be504d99308816425b4968331f0",
+        "8a179147a27b61e1708d404a42c7e5b037329b1ad14deb41f4d9adb6a59fa53b",
+        "d69c4b72e9d12b2e6dc3156c51f6e278cc15296b8ce2ebd3b6d16fb4aafbebdd"
+      ]
+    },
+    {
+      "fingerprint": "10fec4b7442f3ab74a5c1f7c858e3461c6c1d9e39547e31806e1c31d1c7c256c",
+      "reason": "Each integration catalog is independently installed and evolved; the repeated descriptor projection is its explicit ToolRegistrationCatalog protocol implementation.",
+      "memberHashes": [
+        "56310b64c74ce82c3b1146e7c7e87a21dcbf5a0cd44d8451d1e513a6fd7aed59",
+        "56310b64c74ce82c3b1146e7c7e87a21dcbf5a0cd44d8451d1e513a6fd7aed59",
+        "56310b64c74ce82c3b1146e7c7e87a21dcbf5a0cd44d8451d1e513a6fd7aed59",
+        "56310b64c74ce82c3b1146e7c7e87a21dcbf5a0cd44d8451d1e513a6fd7aed59",
+        "56310b64c74ce82c3b1146e7c7e87a21dcbf5a0cd44d8451d1e513a6fd7aed59"
+      ]
+    },
+    {
+      "fingerprint": "129ef66318d924ec5d4585216ac78bdb7ee38af2e728cdb0e142ce15165effd4",
+      "reason": "Schedule update and lifecycle-state changes enforce different mutation fields and CAS invariants; keeping the command handlers separate prevents state actions from acquiring general edit authority.",
+      "memberHashes": [
+        "4c7b4b97e67bde27cc9870cb8d0090650f75ea94aae02897435f0e018f336299",
+        "b2c71e4e3db3a5c197e724877a4ddedfcb046aa6e26f04ad6af587253eb6c5b4"
+      ]
+    },
+    {
+      "fingerprint": "13c9b1ca616569ceb70e37a27545186f62496a9498539963ed4307593409dc67",
+      "reason": "Threads account and connection tools declare separate input contracts and capability dependencies; merging their import regions would couple independently registered adapters.",
+      "memberHashes": [
+        "eabdf2cafcb53f2a5479623e07fe345024e7c6e7055a39c1ea1eaeafd5d816c7",
+        "ee083b9953990b4da738fabee2b4c0dfef883a4494b5e6c45146ea670bfda378"
+      ]
+    },
+    {
+      "fingerprint": "1fbfbc07a8da3e3c9de6982be4252edf2c2b841f6c01bfef2b59155ce23a4d1a",
+      "reason": "Slack inbox work claims and notification claims transition different columns and lease meanings; their explicit queries must remain independently auditable.",
+      "memberHashes": [
+        "2a75199ef8db3f93661ee15399999857f2317f276919139efd6cd71c9f48f59d",
+        "37dc6ac25393d0234ca44e3541a6ebba1d3d020512945451e353286724a2cadd"
+      ]
+    },
+    {
+      "fingerprint": "20b0389a00b0ffb4a51c69a2d66a52a10023d97fa6e41388c79a253e8bac7a7c",
+      "reason": "The installed agent-manager asset and operator CLI are separate deployment artifacts; duplicating bounded health projection avoids a runtime dependency from the shipped manager asset back into source CLI code.",
+      "memberHashes": [
+        "1810cdbcf45b49781a4538ba66bdbbf9c721879bd08598dd8d912a2b4680eaa3",
+        "6fe6172e0d588e02923abce8198a2033b778ba20f0d6ebfaa77dd53f225b6086"
+      ]
+    },
+    {
+      "fingerprint": "25f75fc82f1c45632af2778d769e6b4ed2984cf6d374c4ea0243e155789bce0c",
+      "reason": "Meta own-post and conversation endpoints differ in URL identity and permission semantics; only their common response normalization is shared.",
+      "memberHashes": [
+        "3768b9f35b434e951e8d6bd748fcffc5e176a0f35227b4ebec5535ab928aba77",
+        "b7ca2bbeecd0e68538938a9918b674acc40ff81f7b169e1d071c2fe6ce27845f"
+      ]
+    },
+    {
+      "fingerprint": "39d52a7fa771639735ffb93b3c1bacfb9f83adca55282a3c404675b743120072",
+      "reason": "Schedule, Threads connection, and Threads draft tools own different discriminated commands and authority checks; a shared controller base would obscure capability-specific admission.",
+      "memberHashes": [
+        "1ff443626c093ed3153e15759643b80f22eac60c17e9e958b7ee3890b5c2def7",
+        "557ce2c2c67c2958665ca419d05c93cfe908fa4b1388c75deee83097e80f3e05",
+        "e749362c2913b39d3072f210ee294fc240e4ab326bf444728cc2dbd50d422a7d"
+      ]
+    },
+    {
+      "fingerprint": "3ff3e66e8914ef29c53cccd55dd4827ad26b3e8b6a5d9938e170f5ea10e09067",
+      "reason": "These contract modules independently import standard modeling primitives for unrelated memory, metric, and Threads records; import similarity has no shared runtime responsibility.",
+      "memberHashes": [
+        "53174295ba95748f3a65116c9dc92fb25ddd1f2fefcaaf3a7bf49c9722a478b8",
+        "53174295ba95748f3a65116c9dc92fb25ddd1f2fefcaaf3a7bf49c9722a478b8",
+        "dab83a820a43281226f7d420137e8ef28d82485e095922d0bbad038419c87b0c"
+      ]
+    },
+    {
+      "fingerprint": "48c8865047c91d10e801d03748e68455778b89667c68a47d8e1893d2c483d758",
+      "reason": "Each tool descriptor binds a distinct owner, installation, input schema, effect class, and cost unit; retaining explicit factories keeps security identity reviewable per capability.",
+      "memberHashes": [
+        "38dcc685d8c782b5bed66bf37725c99a5eacc3898e3f6c2d39b09032fb15f6c4",
+        "6bbb168026a89fca4985c0b4cfaa57de5909f746986a0fee369e7561825c5c8e",
+        "860279d1de80e899c6c4f0833aa095e35556ba92e668c4268a7e93ee7bbb07e7",
+        "c6cf774801fca190ed85d68f575000ed33508eb800426a35dad49ed6ade88973"
+      ]
+    },
+    {
+      "fingerprint": "5382895ef08090871f20db7500f0fc7e15d2ee8a2cef0f3be52bda57b517394c",
+      "reason": "Main Threads operations and OAuth connection are separate adapters with different provider effects; their fail-closed descriptor checks stay at each adapter boundary.",
+      "memberHashes": [
+        "126af3b24013820802eefdeb6eeab19d447ef88fbf0d269a0ccb97b3395bdcd3",
+        "41eccbb56405f0e5a097002bc16936e9cc93f8dc2356e4ca2d4699813eab9990"
+      ]
+    },
+    {
+      "fingerprint": "55f9cb7a8f5a9b9fe38799629858fd2916182c4fbdf98e62afb5619beee7d68e",
+      "reason": "Knowledge configuration and knowledge CLI operations have independent package ownership; the similar standard imports do not represent reusable behavior.",
+      "memberHashes": [
+        "48f043bb1413b3a0f3b1cc73cd9f8583d43a28f337ebc665eb61d150b8900b19",
+        "ad91becf5c40e9fee774cad0d9cc6ceb30d7f2875dde62fd0acd7829648a2907"
+      ]
+    },
+    {
+      "fingerprint": "55fe5cb95419c87d6bbfe1411a003da8440685ce841624774977885a3bdadf95",
+      "reason": "BaseHTTPRequestHandler requires separate do_GET, do_HEAD, and do_POST entrypoints; each thin method intentionally delegates to the shared dispatcher.",
+      "memberHashes": [
+        "19577ef5417e5f40d68fabfa0a9a44f39eb44ba64a884f1e9bc84ecfa856b1c0",
+        "b1d9da00bbbc87e37624a9c93d5acf9e45e4a8ed8a651f3c8ad2a16669e73cc2",
+        "cdc9211e2aca55fe2cb0ebc3d968d9ced30a6cd2aa35ccfd879e0e0b52ae548b"
+      ]
+    },
+    {
+      "fingerprint": "5a32d229d989bd2826b52d79e2261ff714cf3d18653c62182396f6807372c7b2",
+      "reason": "Schedule and Threads draft models independently validate their own created and updated timestamps; coupling these domain validators would create a cross-contract dependency.",
+      "memberHashes": [
+        "05037f260488ec1f72899d8f713989ecc6c4f9105be5ebc520d286e5c567fd44",
+        "2277de21e3e3ef73775ab32d86363651a91b362d83fb3816f0c761e8abdcd5d7"
+      ]
+    },
+    {
+      "fingerprint": "5acb3d0968736b71e429dbdcc0e6392fa7a7971c23dd10f51d701d824e568485",
+      "reason": "The installed agent-manager script and package CLI are separately shipped entrypoints; their standard-library imports must remain self-contained.",
+      "memberHashes": [
+        "62804f433f06e9cdee829de943bd922c706e90ee503877d25f87cfddbd4e4e16",
+        "e20472bf2f72050e6135499e127550feb4627142303380a96f98c07c4be61e22"
+      ]
+    },
+    {
+      "fingerprint": "6c623cb09aec5abe1f90b6b51c539f8c983b9628606a5311a5c5bc49ba909186",
+      "reason": "Schedule repository and agent runtime initialize unrelated SQLite schemas with different lifecycle owners; sharing schema setup would violate storage boundaries.",
+      "memberHashes": [
+        "35fa3507c450aa86113f4f47c15f25c9729ea5c2ef477d143f0d6546b8dc15a2",
+        "917d032bab481ff65badc82e8b437445c080b4de4c12e5f556f78709cb201e4a"
+      ]
+    },
+    {
+      "fingerprint": "8d7518fc857a8d44ffed386912bb82b365f6d09a5ae3f05ea2c0d08e22cc121c",
+      "reason": "Knowledge retrieval contracts and Threads draft item input model different domains and validation rules; field-shape similarity is incidental and should not create a dependency.",
+      "memberHashes": [
+        "35c1066e5006ddd8890e08000a592fe5dff817e2e0680879503e8588b8d7945a",
+        "4b9ca089c45a7c367be353a921d818d72fedee0052794a5fa8f8c3ae74dcface",
+        "b2164b4dc8e6194c8f50752970ae71212bea55275c18aa88e2bcfa2958fb52fa",
+        "d3a896852f4a993a169d47fb4440057908bb76dabffaffa52b3d03ef21f5b13c"
+      ]
+    },
+    {
+      "fingerprint": "90f1b5246cff5b36e6631d9fe240b2dcee3f0d30fd1a7763901aa8e438734401",
+      "reason": "Environment key inventory and one exact environment value have different parsing and error contracts; separate functions keep secret value parsing out of status inventory.",
+      "memberHashes": [
+        "1d83868cd5a78b85bb68c63d8e7e6d18a929ba18ac528beb3361a5ebd0cc575b",
+        "304b65911103e6d40cd8351688f2a92243ef81c827d4aa4978f68fee0f36c821"
+      ]
+    },
+    {
+      "fingerprint": "91f5bbf64df89cc079d4b4af31ac94b0025a184c055239f23364c5d48d0cd8d5",
+      "reason": "Each tool execute method parses a different discriminated command and applies capability-specific authority; shared failure conversion does not justify coupling the adapters.",
+      "memberHashes": [
+        "083eb16cf672670239ea8c0318764e317d13af9fc8de69d1f7ae21c711026746",
+        "089d2ace5affe447a0451b935cd79dc3663a59d595eecbaafe554fe22715b614",
+        "7ad148550d26263ec2f7c417367650c5ef2b8d32266749224a19e44d5cd09270",
+        "f56d8c7002e0f216b8283fb15145a423ae9ba1b5b5f76b4a2bb0a0990521d1b6"
+      ]
+    },
+    {
+      "fingerprint": "9cfc1cfdcccf82afeda1963859f3a1ffb2794bf3b509ad5934400deff2063f41",
+      "reason": "Threads account and draft tools import overlapping contract primitives but remain independently registered capability modules with distinct change cadence.",
+      "memberHashes": [
+        "006b8db81b9abb8e5a25c745acae7a7517d50ad6f0ede45a5b3d12e6e6bc90f2",
+        "3846c72fe48cc4d55fbd5194fc50fb8eef0d0a8f3f33010b7031c01b41278b6d"
+      ]
+    },
+    {
+      "fingerprint": "9e483acbd699c09a99e6b473f98d40fe8f9258c99f4b95cba4af257aa28f9ba0",
+      "reason": "Threads publication proof and existing completion verifiers validate different artifact owners and output contracts; verifier shape is the intentional protocol implementation.",
+      "memberHashes": [
+        "52d535a974c42f63277b607e7c11f22d692f46a3595c515a7ae1da110a0ea858",
+        "754bcdd1732b7dc12b3b1d2fd4a74ec2952a165436635e0735c2ee077862241e"
+      ]
+    },
+    {
+      "fingerprint": "9e51b4b5c847d72c609726101ae1393109c1cdb6ebc286d0633f1605657651f3",
+      "reason": "Meta replies and conversation endpoints expose different relation semantics even with the same page envelope; endpoint methods remain explicit while sharing page normalization.",
+      "memberHashes": [
+        "189758e66741777b5b8f7ce33e9560caa71c8329fe83f592b389d77fce469ea0",
+        "f9b3e03f207ae3203e2531b6f2fab4d67051c913e37654997610701acdd72f21"
+      ]
+    },
+    {
+      "fingerprint": "a325466a87041f6932955917818a7b384f6ffceb6720d364fb4c16975f4018bf",
+      "reason": "Meta endpoint parameter blocks intentionally repeat only the common fields while preserving endpoint-specific paths and reply semantics in their owners.",
+      "memberHashes": [
+        "309bb50ca68610f73f0425938c2f8f04378b5f1e5b0fc81f74c4efade5f4f9f3",
+        "c476a0d4173db33632d26264de1433d24a716db9552875d28165e03217bf3c08"
+      ]
+    },
+    {
+      "fingerprint": "b0057e085eee55d3c432f8649d47dca53944c39eb23a2d5b04aa852869087486",
+      "reason": "Schedule listing and occurrence history queries return different models, limits, and ordering guarantees; sharing SQL assembly would weaken those repository contracts.",
+      "memberHashes": [
+        "cdabdf1abf104aae763d1ac23fbbe9811f10dd59ead0cde29995882e77595f2c",
+        "f47018be65f40762916746db771e606bd7312a5ba2c1ab51f2d5f8aa7fb7bf67"
+      ]
+    },
+    {
+      "fingerprint": "b5879de45218650ae0ae41d0daacda3e6e8873258e90a2f751e63810aa062728",
+      "reason": "The repeated Meta request fields belong to distinct official endpoints; explicit parameter construction makes provider contract drift visible per operation.",
+      "memberHashes": [
+        "97a8fc28bf87c4cd4a4440ec904c5cdbf62bac7978dc4626f7eecc82d7586235",
+        "c476a0d4173db33632d26264de1433d24a716db9552875d28165e03217bf3c08"
+      ]
+    },
+    {
+      "fingerprint": "b77b912ce57288cc82223f606cbcbd59fb96792cf970f23472294f9cb0cb84a9",
+      "reason": "Post and account insights call different Meta resources and metric scopes; their parallel mapping is retained so provider changes cannot silently cross account and post contracts.",
+      "memberHashes": [
+        "7d35b00c1c417c25813be847557d5ed39403b0ae42a4f629eef1fac71e15164c",
+        "b16e10f93de4fffa2cafd5ca27a8862940eaf93707cffc5b12052a07c010377c"
+      ]
+    },
+    {
+      "fingerprint": "ba43cec5f31f33d897399d4c9aadaf22a2800b07e3d556b0e17797f609389b43",
+      "reason": "Installed lifecycle state and Threads token vault own different filesystem roots and permissions; their short setup checks must remain with their resource owners.",
+      "memberHashes": [
+        "c547278344a0bb40824116b7d97330fc9995142c2ba5807a1448162822dfcd9b",
+        "fd56e30153cee45239b6fe49899564426c68cdbc15868955831c92c693f89690"
+      ]
+    },
+    {
+      "fingerprint": "be269951e85c941ae0cfa8a2cd590b4c1b0b53ee988f06812033520fcbe0b7ac",
+      "reason": "Deferred tool completion and unknown-effect reconciliation are different persisted state-machine transitions; similar receipt binding is intentionally explicit to prevent retries crossing states.",
+      "memberHashes": [
+        "a7cde1f0648725289db60b93db45755b4feb428c22088139a1d0366f9616e2cc",
+        "cbeb1f7806b0da06ccb5ea79b4d092934a53f156094fdf0125bfd55ccfcc2b0b"
+      ]
+    },
+    {
+      "fingerprint": "c67133a5320092a38c48cbaa160d279861d4e2b4bb217266d6308054da47d430",
+      "reason": "Text and carousel container creation bind different media types, children, and reply behavior in the official API; separate methods make those write contracts auditable.",
+      "memberHashes": [
+        "37a33875eee9d5c350afb3871fc87aef6cea6e86a40fef6f7b782666e8e96e4a",
+        "578ba7c75b4b844d705a1bf2e33c3ff03729afeb0ace9ed2b693dbf44378adbf"
+      ]
+    },
+    {
+      "fingerprint": "d0714b19430e6a0dda63f5fe3871a189e08012c88564c330a073a9626e5c32bb",
+      "reason": "Threads connect, draft, and profile registrations bind different executor IDs and descriptor factories; explicit entries prevent accidental capability misregistration.",
+      "memberHashes": [
+        "00af7ad5127bd3352d8b66d79b1a377bd39dcb06a7fd99699f6c185bff201e2f",
+        "8ef26d63e76edb04849d6d0e46158b60d04f3e346d0cfd5ceeec8616df61590c"
+      ]
+    },
+    {
+      "fingerprint": "db95bfc73089b4f222c568e0308268a82c8f6f5a9ea5ab6d08a5ff24c59f984f",
+      "reason": "Scheduler and Knowledge worker liveness expose separate health keys and degrade reasons; explicit checks preserve independent operational diagnosis.",
+      "memberHashes": [
+        "572b5e3f17fa251756bcd32c064854553953cc570a8a0f6ad05fe6eb24607bc4",
+        "f8d1749dedce1a7952746cb9a70585dbeef743c9ec0c8c8ca4a1b3588dfa0f9d"
+      ]
+    },
+    {
+      "fingerprint": "e4d8d9edffa761dd7c3f0819abcc2135ba840165f463a2598a9e35253c4b072c",
+      "reason": "Threads provider operations and account control translate different provider failures and costs; adapter-local boundaries preserve their distinct error output contracts.",
+      "memberHashes": [
+        "59252fd7e31a687967f64e582793970ca84e2ab3292b03be2c130baa4e3d2477",
+        "d337998259895f09a8cc8bd696ba7d86a33c589ed61bad72819937a6cb9435ca"
+      ]
+    },
+    {
+      "fingerprint": "f70a4635509a58d444d5945c06468e9c236b732a1656c387addbe75505ed8792",
+      "reason": "Schedule runtime and Slack events independently import canonical Run records for separate orchestration boundaries; import-block overlap has no reusable executable behavior.",
+      "memberHashes": [
+        "a3c544da5df1f73ca444002352447049756f1335dae034ab9de1e5ebfb779d5b",
+        "a3c544da5df1f73ca444002352447049756f1335dae034ab9de1e5ebfb779d5b"
+      ]
+    },
+    {
+      "fingerprint": "fbea5480381679b6977a7dff69be10d8f02bb1dfc8fc1cee49f10af599626e49",
+      "reason": "TYPE_CHECKING dependency declarations intentionally remain local to each protocol and adapter module; centralizing them would create runtime coupling and erase package ownership.",
+      "memberHashes": [
+        "0e282ff87c68ab34140858b8852579de02001ed5c26d6fa2947b055f603c7b7a",
+        "0e9c7936403f917e59050820cfd44d5f450371842111ab0fd040637f73adf121",
+        "148bc8fc9b0777bf4762d962538055872c0976289bb18b201aee115e2903d7be",
+        "1cf69281b521bd0c3aa1e57fba3daa7ee3abf893b84b04f1a8a54e38006ddf13",
+        "23a63d2044213263102b0c42a268e5f8012e57eaa4b9ea512b0204801ab10643",
+        "2c563ca6eb47142369854fccf9cfa691dc200f633fd2b8eb121895fe959ff8a6",
+        "2ca5aef2e89b6ef963e66e000837b5c0f292552a2efc65bb9bf7c92d2a6a6ff5",
+        "3230780f6b2c39d7858befc0138f2325bcbd03d75ec3eaa0cf9acb91aa8c8ede",
+        "385e85f4172f3c4f0f8c57f9478a5307b8bc62e5879fc8948697c09f1927f9b2",
+        "39d4fd2cbbd745d455309ab73b6b16218996e1d686b8cd652f824a6243a88356",
+        "3c07f0d105dbb69ab81ee6b783a4fe3f5a7a77d27024580ac9300f7e1c15f6eb",
+        "3d36950c654cb761a463f40df792b58379eb4df89bf1701974f72645d4e06775",
+        "44c1f3133a01858d378829efe3adf1f33f4665df517098bfe3009bceff832f8d",
+        "4524d8414c4f363fc8aa1438adcbfc2889b52d447af1530ac779d33f063103f3",
+        "45e5adbffbd8a03576f4345d4804d1bcf7622af13be4c73f68051ac05f7456de",
+        "46f3966918bbbe385fc199882286e102ebb1ea6fb96f1816f21f73cb4789200b",
+        "47fb09d902612d404d10c541e202f10452a33a38788fcf5bdd37a5ae86b66aa8",
+        "4c54a78eadec435be9051dc9392d2c1cd68beda7d429d5b2f7a08107cfb2572e",
+        "4ff16e8e9a805e4257788800fff214fdaa34c071cd1a7f1d4fd6c0387f815216",
+        "55dda5f873472eef7d3ad18215cbc95d141f125350e55ce8c436aeb7ce727292",
+        "5cd51c73a1309ae5c6aa91e01ebdb56fdeeef99191c25b260a3d352cf8d1835d",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "65dba2dfec42dcb9af37a73b62733bc0a4389aef2f1ddaecfba473e6f7909487",
+        "72bc9cb554253c9dbba8aa2e4846d6c1459ce48ec3229737f3ee07bcb0b579b2",
+        "7bb0c925657031371ac42933aab32570e9f1ae9225469486f7da5329ba9fbf93",
+        "82553b8ab2cd0a62b49789c1f1d347203706fb018a7b8ca62b95238903dc4445",
+        "8c3b99957635a024f4a61fac3ffa5d4f9a15a2927a576fccedd31c4c07cd0023",
+        "8d262a363221356044efa7038a7b83d4beaddffd473bbba5e143800c1355b133",
+        "9595f6aad418f4e43f0507e8a84c2e336ef0a956396552f007a5620e3e4a441f",
+        "9ff38f6698d848050d060decba8f4312d5cc68ee1af2dca2fec39352abb85bfb",
+        "a11aa5fb8d4f778033856dbb5a7431d5793dee6a7c65d0e154b0f3b1bfe0aa0d",
+        "a2d29cb429600ad4ac9e969d392d9ca2172404c2465c31b60d1abb4e135952f0",
+        "a3df6dbe2dcaa3e79e0f5f97a3a0afb30fc2ba0a474530d2d20231fae54bc802",
+        "a4fbc6cc2ec7b6993a86d49fa11d826963f142411a2e0c6b70453e23d9f3715a",
+        "a553627b50b2d60da1de3dd393020bcad0c766758b35aa4548b269de25d5847b",
+        "aa81266efc3322a91808c93751bf0ef51b727dd3e8eedc0e6f67b124415b1ae9",
+        "ae9765f2db2fb810ada71703457e9e91b3e3ab7e92caf97c0dc4c0febf24ba4a",
+        "aeb633fd6df156e6baeca193186363ea652ccb93168d440206e4ef6e82d0defc",
+        "b1a93e3ee49e58da253fbcc853206fc6743d4e48199fd4403ee6f602f8bebd72",
+        "b2c939d5773b8dc238e335f17cd758f00497c4f5e11efa19877be935d2678dd4",
+        "b7ce45f819dbbcb72e8b2db3c965a993af860eeb0d662b318c652f4ba44bb7be",
+        "b88842e1f5125e009b43538f6819e75bf9da7d72654dee3e8c5f97c56775dd5c",
+        "bf656b8f242c0c894ff6368dbb927285820f80a5aedbc162ec62678320ab5f9e",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3daec434dcf4cf537fbc20a6009038cdcd42ecb2601c7a575affa0d77b45873",
+        "e0b62b8b2a5b4f2adde275edd64dfbc2beafef3fd162f57a7561721f89a067eb",
+        "f731ce6b9b02662b37cd989a071c4230b5cf2a9f874cb10e66c39eeb6de47ab0",
+        "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
+        "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660"
+      ]
+    },
+    {
+      "fingerprint": "fed8b6b2f7e3ebaf51fbcc84e99d900652620f9c68bfa3da385f40fc37aefac7",
+      "reason": "Legacy daily skill scheduling and generic task scheduling run different workloads and failure isolation loops; separate top-level workers preserve independent lifecycle control.",
+      "memberHashes": [
+        "8003f2071acffe9f990fc9a7f30de75901581e7bc131c4d374fb16cc314782cf",
+        "875a1ded05124068e5537a43443dfb59e26d3c763a9609a38d93b096246f766e"
+      ]
+    },
+    {
+      "fingerprint": "ff4cb7da5b3f07b59857397e7acf6f62e8ec6a335a4f62906e1f21e94f1ebffe",
+      "reason": "Meta conversation, replies, and own-post page methods have endpoint-specific paths and permissions; shared decoding is already centralized and request assembly remains explicit.",
+      "memberHashes": [
+        "6ab727c8365fd192a57ad54ec098cf70bc641b8b7bcfb191b632d342fbf63d44",
+        "c270010dc8e9f7f2ac96828c1d7439cb9ea70b5b4d3ada9507b3d98d26418d5a"
+      ]
+    },
+    {
+      "fingerprint": "44f8c783d92f97391e82696bc7916950c0a0f9976f784a281860e38f7bf8a188",
+      "reason": "Threads account, draft, and schedule repositories deserialize different aggregate models under different identity keys and CAS rules; their explicit get methods remain with each storage owner.",
+      "memberHashes": [
+        "0a66525a0a53b5894bde35d3703f731229c6732a637d171533e7c3591e6b9f25",
+        "dbec5b8f78dc1b96f556c8c74878c2c1424ba86ad08de028e8d5724eee338929",
+        "f099e589c18fa32197a1d9da243e6cd4470f253b788b3a00d9f841cc198e0e58"
+      ]
+    },
+    {
+      "fingerprint": "573ae3fafeca686a6885ed3fb5f7e23ad34b5c76afd57abb37ed78c24bc954f5",
+      "reason": "Account listing and publication listing return different aggregates with different filters and authorization consumers; tuple deserialization similarity does not justify a cross-repository helper.",
+      "memberHashes": [
+        "1517cfd957a508674edd38f89df4d47c55db297880cf322963c0f0457e908950",
+        "3378d34b54e968172f980b9a8783d8d3ced2b7ddbd04d7219fb6ec59b321a36e"
+      ]
+    },
+    {
+      "fingerprint": "875d3deb723b76d21f12df3fcfb15f5062144b00cd576ed16b5a58b8132ec047",
+      "reason": "Managed image review, Knowledge backup, and Threads accounts independently own SQLite connection lifetimes; the standard closing import must remain local to each resource owner.",
+      "memberHashes": [
+        "68d76859cc153420336965f2db3ed4d3a6c7188fac1ffc9c0b22b92bb1d7cef9",
+        "944a85ac44b10d7e1bc1ae5d03b5f28359618fe0b16badfb13ce9f3e22cb6853",
+        "944a85ac44b10d7e1bc1ae5d03b5f28359618fe0b16badfb13ce9f3e22cb6853"
+      ]
+    },
+    {
+      "fingerprint": "b87ca4f6a36c6ff97273861671e9d76caaaffd6e3f6b73f6c10abee345811e34",
+      "reason": "Meta text and carousel creation bind different media payloads and external side effects; separate endpoint methods keep each POST contract and uncertainty boundary auditable.",
+      "memberHashes": [
+        "6cfd11de71a189335d733e5f42009b9e67f716613a4e78313d2d91d707330f6c",
+        "6cfd11de71a189335d733e5f42009b9e67f716613a4e78313d2d91d707330f6c"
+      ]
+    },
+    {
+      "fingerprint": "c5ec575798f83283e4e8880c3cbead48c9415a924cfe5ddfca87e3508d28d5d5",
+      "reason": "The detector aligns whole unrelated schedule, Knowledge runtime, and test modules; they have separate owners, contracts, and callers, so there is no behavior-preserving shared abstraction.",
+      "memberHashes": [
+        "02aed957c211978f45ff3560aa12657b9c265b5672ba7dc278a8df3a412c793b",
+        "123b2982aad81ed7fa8ed55263d4bb5954a4dab83bebf8bdf429b94c17c276da",
+        "5b63295098b7d6732339080558906d0d819bd08e3c39c1f19db1459202917303",
+        "793463ab09e278a9a4aa4acf1fccc6faad9031c60c710d9139b790455f679b08"
+      ]
+    },
+    {
+      "fingerprint": "c5af7fb6f6456bd2edf5c5a62488c376cf298c78f7d60e06c3021263b89dd6d4",
+      "reason": "These queries target different tables and return contracts: knowledge-event provenance versus scheduled-conversation notification availability. A shared helper would mix independent Slack channel responsibilities.",
+      "memberHashes": [
+        "574fc8b914708a8ba8b0b0501ee8e8d84c648049a11d9e71502553e5731dc669",
+        "ec58e825f0d27ecb4ae6ee9b0f695fac31e6a60aafc1ed596080789903ed5d82"
+      ]
+    },
+    {
+      "fingerprint": "1643814dedb5904a7fe10beb9b5fe85fc006e4988be5a8a4c951b79061906dd1",
+      "reason": "Threads provider operations and Threads account control are separately registered tool adapters with distinct schemas, effects, and error outputs. Their controller-shaped dispatch is intentionally independent.",
+      "memberHashes": [
+        "7921c15444067dc58fff6ccd61871e587142583cfeeb8d50060dd78245ad472c",
+        "899eb2f762b9fcc2130b6420d8c5496cfb260a92a7c13cc796ff8d5965986eaa"
+      ]
+    },
+    {
+      "fingerprint": "815655be4370be0d9d52a6354f349fa702a3c7528536586a984f6b442586b42b",
+      "reason": "An interrupted pending provider POST and a provider readback mismatch are distinct recovery causes and transition points. Keeping explicit error codes at each state transition preserves causal reconciliation evidence.",
+      "memberHashes": [
+        "76bbbeac3607370cec77ef40e274771c27deaade015889f82506dddaa68d3afa",
+        "fbcfce9e3dd1a84bcf12c0dfcdbf97791d951540ef37ca48c5467852d7e8fd21"
+      ]
+    },
+    {
+      "fingerprint": "f24f52fdfddd1b38639917e190b562c2ce092bffd48758702871aca9cb23b2a6",
+      "reason": "General Slack webhook admission preserves the original message grant from message_json, while scheduled notification admission validates both message_json and the rendered result. Their selected columns and idempotency conflict contracts are intentionally distinct.",
+      "memberHashes": [
+        "29b3707b6d79c73863154f6712a19082f40a155c0ba6254845586c464e77bbe6",
+        "48259a32929b084bcbda21755b58de2feff1705460dbb7d9daf1d4fbc8e00d08"
+      ]
+    },
+    {
+      "fingerprint": "9067e62244e5302228f23070b3f9a13678c32a8ba74803a99b17cc4f33a3368a",
+      "reason": "Threads account lookup, Threads draft lookup, and schedule lookup are separate repositories with distinct tables, key scopes, returned domain models, and lifecycle rules. Only the typed SQLite read shape is shared, so a generic helper would erase repository ownership.",
+      "memberHashes": [
+        "0a66525a0a53b5894bde35d3703f731229c6732a637d171533e7c3591e6b9f25",
+        "609998b9fd19d1320d0a631b9bcd25e3466564e158dacd184564586d92d89ce6",
+        "dbec5b8f78dc1b96f556c8c74878c2c1424ba86ad08de028e8d5724eee338929"
+      ]
+    },
+    {
+      "fingerprint": "3821671c663105bdfd317674513d9d9768921472a79c4f1c9aef0066bce5c18f",
+      "reason": "Threads account listing filters by optional owner identity and orders profiles, while publication listing filters by optional draft revision and orders item receipts. Their query evolution and returned contracts are intentionally independent.",
+      "memberHashes": [
+        "1517cfd957a508674edd38f89df4d47c55db297880cf322963c0f0457e908950",
+        "52e2b70d52f6f557f29f096a9c73b810efc22e04a609830013062e5f59ceb671"
+      ]
     }
   ]
 }

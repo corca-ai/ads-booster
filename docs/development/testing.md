@@ -389,7 +389,9 @@ python -m pytest -q -p no:cacheprovider --tb=short \
 Use a dependency-complete development environment. The September 8 candidate passed 66 tests in
 an isolated `uv sync --frozen` environment. The new signed Slack regression failed before the
 dialogue fix, then passed with service restart and cross-thread exclusion. Skill tests cover
-canonical list/read receipts, exact versions, recoverable unknown IDs and unchanged action policy.
+canonical list/read receipts, repeated identical run-scoped observations, exact versions,
+recoverable unknown IDs and unchanged action policy. Keep tenant-scoped and effectful duplicate
+rejection as controls when changing observation idempotency.
 Run scoped Ruff and BasedPyright for modified Python files; no full-suite run is required.
 
 For actual model behavior, install a fresh wheel outside the checkout, confirm its import path,
@@ -574,12 +576,23 @@ delivery, a deployed server, or a marketing result.
 | Codex reasoning and direct images | corresponding tests in `tests/providers/` and `tests/marketing/agent_service/test_image_generation.py` |
 | Research collectors and evidence | `tests/marketing/test_dynamic_evidence_research.py` and the affected research contract tests |
 | Server setup, Tunnel and updater | `tests/cli/test_server_onboarding.py`, `tests/cli/test_agent_server_update.py` |
-| CLI surface | `tests/cli/test_cli_compatibility.py`; installed `trace-marketing --help`, `service --help`, `server --help`, `agent research --help` |
+| CLI surface | `tests/cli/test_cli_compatibility.py`; installed `trace-marketing --help`, `service --help`, `server --help`, `server threads-setup --help`, `agent research --help` |
+| Generic scheduling | focused schedule contract/repository/runtime and Slack authority tests; fresh installed restart with a virtual clock |
+| Threads integration | OAuth/account, official API contract, approved media, draft/publication recovery, discovery and provider-metric tests |
 
 Select test files by changed behavior. Run scoped Ruff, formatter, BasedPyright and `git diff --check`.
 Do not run the full suite or repository-wide static checks unless explicitly requested. Removed
-Cloudflare, Mac/Appium and Threads tests have no current production owner and are not verification
-requirements. Fresh installation must also show that removed CLI groups and worker routes are absent.
+Cloudflare and Mac/Appium tests have no current production owner and are not verification
+requirements. Threads tests are selected only when the optional integration or its shared scheduling
+boundary changes. Fresh installation must also show that removed CLI groups and worker routes are absent.
+
+Threads fixture tests must distinguish local contract behavior from a live provider account. Live
+read acceptance may inspect granted scopes, own posts and insights. A live publish or reply requires
+separate explicit authorization for the exact account, target and content; configuration or plan
+approval is not write authorization. Record POST timeouts as unknown and assert that restart does not
+repeat the POST. Fresh-installed scheduling acceptance uses a noneditable wheel, process restart and
+the persisted occurrence/Run IDs. Provider, Slack, Tunnel and systemd claims require their respective
+real surfaces rather than source-only tests.
 
 ## Main agent web and Slack onboarding
 

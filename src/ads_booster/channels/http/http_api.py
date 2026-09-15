@@ -57,11 +57,15 @@ from ads_booster.contracts.models import ContractModel
 from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.learning.memory import SQLiteMemoryStore
 from ads_booster.providers.codex_reasoning import CodexReasoningError
+from ads_booster.providers.threads_api import ThreadsApiError
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable
+
+    from ads_booster.threads.media_delivery import ThreadsMediaDelivery
+    from ads_booster.threads.oauth import ThreadsOAuthService
 
 _MAX_BODY_BYTES = 1024 * 1024
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -103,7 +107,7 @@ class ApiSkillRunRequest(ContractModel):
 @dataclass(frozen=True, slots=True)
 class ApiResponse:
     status: int
-    body: JsonObject | str
+    body: JsonObject | str | bytes
     content_type: str = "application/json; charset=utf-8"
     headers: tuple[tuple[str, str], ...] = ()
 
@@ -124,6 +128,10 @@ class MarketingAgentApi:
     maintenance: MaintenanceGate | None = None
     approval_authorizer: Callable[[OAuthIdentity], bool] | None = None
     drive_authorizer: Callable[[OAuthIdentity], bool] | None = None
+    threads_oauth: ThreadsOAuthService | None = None
+    threads_media: ThreadsMediaDelivery | None = None
+    schedule_health: Callable[[], JsonObject] | None = None
+    schedule_worker_alive: Callable[[], bool] | None = None
 
     knowledge_ingress: CanonicalKnowledgeIngress | None = None
     knowledge_transfers: KnowledgeTransferProvider | None = None
@@ -169,6 +177,14 @@ class MarketingAgentApi:
             health: JsonObject = {"status": "ok", "owner": "on_prem_agent"}
             if self.maintenance is not None:
                 health.update(self.maintenance.health())
+            if self.schedule_health is not None:
+                health.update(self.schedule_health())
+            if self.schedule_worker_alive is not None:
+                scheduler_alive = self.schedule_worker_alive()
+                health["schedule_worker"] = "running" if scheduler_alive else "stopped"
+                if not scheduler_alive:
+                    health["status"] = "degraded"
+                    return ApiResponse(503, health)
             if self.knowledge_worker_alive is not None:
                 alive = self.knowledge_worker_alive()
                 health["knowledge_worker"] = "running" if alive else "stopped"
@@ -204,6 +220,42 @@ class MarketingAgentApi:
     ) -> ApiResponse:
         path = urlsplit(target).path
         headers = headers or {}
+        if method == "GET" and path == "/integrations/threads/callback":
+            if self.threads_oauth is None:
+                return ApiResponse(404, {"error": "threads_integration_unavailable"})
+            query = parse_qs(urlsplit(target).query)
+            try:
+                account = self.threads_oauth.finish(
+                    state_id=query.get("state", [""])[0],
+                    code=query.get("code", [""])[0],
+                    now=now or datetime.now(UTC),
+                )
+            except (OSError, ThreadsApiError, ValueError):
+                return ApiResponse(401, {"error": "threads_connection_failed"})
+            return ApiResponse(
+                200,
+                {
+                    "connected": True,
+                    "connection_id": account.connection_id,
+                    "username": account.username,
+                },
+            )
+        media_prefix = "/integrations/threads/media/"
+        if method in {"GET", "HEAD"} and path.startswith(media_prefix):
+            if self.threads_media is None:
+                return ApiResponse(404, {"error": "threads_media_unavailable"})
+            try:
+                content = self.threads_media.read(
+                    path[len(media_prefix) :], now=now or datetime.now(UTC)
+                )
+            except (ValueError, OSError):
+                return ApiResponse(404, {"error": "threads_media_not_found"})
+            return ApiResponse(
+                200,
+                content,
+                "image/png",
+                (("content-security-policy", "default-src 'none'"),),
+            )
         if (
             method == "POST"
             and path == "/channels/slack/commands"
@@ -615,6 +667,9 @@ def serve_marketing_agent_api(
         def do_GET(self) -> None:
             self._dispatch("GET")
 
+        def do_HEAD(self) -> None:
+            self._dispatch("HEAD")
+
         def do_POST(self) -> None:
             self._dispatch("POST")
 
@@ -637,13 +692,17 @@ def serve_marketing_agent_api(
                 headers={key.lower(): value for key, value in self.headers.items()},
             )
             payload = (
-                response.body.encode()
-                if isinstance(response.body, str)
-                else json.dumps(
-                    response.body,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ).encode()
+                response.body
+                if isinstance(response.body, bytes)
+                else (
+                    response.body.encode()
+                    if isinstance(response.body, str)
+                    else json.dumps(
+                        response.body,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode()
+                )
             )
             self.send_response(response.status)
             for name, value in response.headers:
@@ -654,7 +713,8 @@ def serve_marketing_agent_api(
             self.send_header("cache-control", "no-store")
             self.send_header("content-length", str(len(payload)))
             self.end_headers()
-            _ = self.wfile.write(payload)
+            if method != "HEAD":
+                _ = self.wfile.write(payload)
 
     server = ThreadingHTTPServer((host, port), Handler)
     try:

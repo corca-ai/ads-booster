@@ -19,6 +19,7 @@ from ads_booster.agent.service.knowledge_ingress_authority import (
 )
 from ads_booster.agent.service.learning_admission import TerminalExperienceAdmission
 from ads_booster.agent.service.run_limits import remaining_budget
+from ads_booster.agent.service.schedule_repository import ScheduleRepository
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.bootstrap.completion_policy import load_completion_policy
@@ -67,6 +68,9 @@ from ads_booster.providers.codex_completion import CodexCompletionAssessor
 from ads_booster.providers.codex_knowledge import CodexKnowledgeProvider
 from ads_booster.providers.codex_reasoning import CodexReasoningProvider
 from ads_booster.research.dynamic_evidence_research import DynamicEvidenceResearchRunner
+from ads_booster.threads.accounts import ThreadsAccountRepository
+from ads_booster.threads.drafts import ThreadsDraftRepository
+from ads_booster.threads.publications import ThreadsPublicationRepository
 from ads_booster.tools.completion_proofs import (
     CanonicalCompletionProofs,
     CompletionArtifactOwners,
@@ -169,10 +173,15 @@ def build_installed_marketing_agent_service(  # noqa: PLR0913 - explicit install
             proof_reader=CanonicalCompletionProofs(
                 repository,
                 CompletionArtifactOwners(
+                    database_path=paths.database,
                     image_root=paths.root / "images",
                     assets=SqliteCreativeAssetRepository(paths.database, paths.root / "artifacts"),
                     slack_channel_id=integration_config.slack_channel_id,
                     notion_parent_page_id=integration_config.notion_parent_page_id,
+                    threads_publications=ThreadsPublicationRepository(paths.database),
+                    threads_accounts=ThreadsAccountRepository(paths.database),
+                    threads_drafts=ThreadsDraftRepository(paths.database),
+                    schedules=ScheduleRepository(paths.database),
                     scope_for_run=lambda run: CreativeScope(
                         workspace_id=run.tenant_id, product_id="trace"
                     ),
