@@ -34,6 +34,23 @@ def source() -> ReviewImage:
     return ReviewImage(buffer.getvalue(), "PNG", 12, 16)
 
 
+def test_generic_image_edit_skips_skill_discovery_and_keeps_text_input(tmp_path: Path) -> None:
+    request = ImageEditProcessRequest(
+        Path("/fixture/codex"),
+        "gpt-6-astra",
+        tmp_path,
+        "plain prompt",
+        (),
+        30,
+    )
+    state = _StreamState(request)
+
+    outgoing = state.accept({"id": 4, "result": {"data": [], "nextCursor": None}})
+
+    assert outgoing[0]["method"] == "thread/start"
+    assert all(item["method"] not in ("skills/extraRoots/set", "skills/list") for item in outgoing)
+
+
 @dataclass
 class FixtureRunner:
     mode: Literal["good", "missing_event", "outside", "changed", "timeout", "jpeg"] = "good"
@@ -165,6 +182,7 @@ for line in sys.stdin:
   assert params["model"]=="gpt-6-astra"
   assert params["permissions"]=="trace-image-edit-restricted"
   assert "sandboxPolicy" not in params
+  assert params["input"][0]=={{"type":"text","text":"Fixture only"}}
   assert params["input"][1]["type"]=="localImage"
   if {bad_request!r}:
    send({{"id":99,"method":"item/commandExecution/requestApproval","params":{{}}}})

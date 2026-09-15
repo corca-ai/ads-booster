@@ -13,6 +13,7 @@ from ads_booster.providers.codex_image_edit import (
     ImageEditProcessRequest,
     ImageEditProcessResult,
     ImageEditRunner,
+    ImageEditSkillInput,
     SubprocessAppServerImageEditRunner,
 )
 
@@ -115,6 +116,10 @@ class CodexTracePostProvider:
                 max_stream_bytes=256 * 1024 * 1024,
                 on_checkpoint=persist if on_checkpoint is not None else None,
                 persist_sanitized_diagnostic=True,
+                skill_input=ImageEditSkillInput(
+                    name="trace-post",
+                    path=root / "repo/skills/trace-post/SKILL.md",
+                ),
             )
         )
         return _provider_result(response, root, completed=True)

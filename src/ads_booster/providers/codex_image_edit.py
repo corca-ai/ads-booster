@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import selectors
+import stat
 import subprocess
 import time
 import tomllib
@@ -36,6 +37,8 @@ _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _LOGGER = logging.getLogger(__name__)
 _GLOBAL_MCP_ID = 4
 _THREAD_MCP_ID = 5
+_SKILLS_ROOTS_ID = 6
+_SKILLS_LIST_ID = 7
 _MAX_RPC_CODE = 99999
 _INITIALIZE_ID = 1
 _THREAD_START_ID = 2
@@ -70,6 +73,14 @@ _ItemsView = Literal["absent", "full", "summary", "notLoaded", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)
+class ImageEditSkillInput:
+    """One native Codex skill input bound to a canonical workspace file."""
+
+    name: str
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class ImageEditProcessRequest:
     """Immutable local inputs for one provider invocation."""
 
@@ -100,6 +111,12 @@ class ImageEditProcessRequest:
     max_stream_bytes: int = _MAX_STREAM_BYTES
     on_checkpoint: Callable[[ImageEditProcessResult, bool], None] | None = None
     persist_sanitized_diagnostic: bool = False
+    skill_input: ImageEditSkillInput | None = None
+
+    def __post_init__(self) -> None:
+        """Reject an invalid optional skill before any provider process starts."""
+        if self.skill_input is not None:
+            _ = _skill_user_input(self)
 
 
 class _ItemCounts(BaseModel):
@@ -182,6 +199,86 @@ def _check_shell_failure(item: JsonObject, *, completed: bool) -> None:
 
 def _error(code: str) -> CodexCliError:
     return CodexCliError(code)
+
+
+def _skill_user_input(request: ImageEditProcessRequest) -> JsonObject:
+    skill = request.skill_input
+    if skill is None:
+        code = "codex_image_edit_skill_input_missing"
+        raise _error(code)
+    if (
+        not isinstance(skill.name, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+        or not isinstance(skill.path, Path)  # pyright: ignore[reportUnnecessaryIsInstance]
+        or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", skill.name) is None
+    ):
+        code = "codex_image_edit_skill_input_invalid"
+        raise _error(code)
+    try:
+        _validate_skill_path(request.workspace, skill.path)
+    except (OSError, ValueError) as error:
+        code = "codex_image_edit_skill_input_invalid"
+        raise _error(code) from error
+    return {"type": "skill", "name": skill.name, "path": str(skill.path)}
+
+
+def _skill_root(request: ImageEditProcessRequest) -> Path:
+    skill = request.skill_input
+    if skill is None:
+        code = "codex_image_edit_skill_input_missing"
+        raise _error(code)
+    return skill.path.parent.parent
+
+
+def _check_skill_inventory(request: ImageEditProcessRequest, response: JsonObject) -> None:
+    skill = request.skill_input
+    if skill is None:
+        code = "codex_image_edit_skill_input_missing"
+        raise _error(code)
+    entries = response.get("data")
+    if not isinstance(entries, list):
+        code = "codex_image_edit_skill_discovery_invalid"
+        raise _error(code)
+    matches: list[JsonObject] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("cwd") != str(request.workspace):
+            continue
+        skills = entry.get("skills")
+        if not isinstance(skills, list):
+            code = "codex_image_edit_skill_discovery_invalid"
+            raise _error(code)
+        matches.extend(
+            item for item in skills if isinstance(item, dict) and item.get("name") == skill.name
+        )
+    if len(matches) != 1:
+        code = "codex_image_edit_skill_unavailable"
+        raise _error(code)
+    enabled, path = matches[0].get("enabled"), matches[0].get("path")
+    if not isinstance(enabled, bool) or not isinstance(path, str) or not Path(path).is_absolute():
+        code = "codex_image_edit_skill_discovery_invalid"
+        raise _error(code)
+    if not enabled or path != str(skill.path):
+        code = "codex_image_edit_skill_unavailable"
+        raise _error(code)
+
+
+def _validate_skill_path(workspace: Path, skill_path: Path) -> None:
+    root = workspace.resolve(strict=True)
+    if workspace.is_symlink() or not root.is_dir() or not skill_path.is_absolute():
+        raise ValueError
+    relative = skill_path.relative_to(root)
+    if (
+        not relative.parts
+        or any(part in (".", "..") for part in relative.parts)
+        or skill_path.name != "SKILL.md"
+    ):
+        raise ValueError
+    current = root
+    for part in relative.parts:
+        current /= part
+        if stat.S_ISLNK(current.lstat().st_mode):
+            raise ValueError
+    if skill_path.resolve(strict=True) != skill_path or not stat.S_ISREG(current.stat().st_mode):
+        raise ValueError
 
 
 _LENGTH_BUCKET_ORDER = (
@@ -535,7 +632,7 @@ class _StreamState:
             },
         }
 
-    def accept(  # noqa: C901 - bounded RPC phases.
+    def accept(  # noqa: C901, PLR0911, PLR0912 - bounded RPC phases.
         self, message: JsonObject
     ) -> tuple[JsonObject, ...]:
         if "error" in message:
@@ -546,6 +643,8 @@ class _StreamState:
                 3: "turn_start",
                 4: "global_mcp",
                 5: "thread_mcp",
+                6: "skills_roots",
+                7: "skills_list",
             }
             phase = (
                 phases.get(response_id, "unknown") if isinstance(response_id, int) else "unknown"
@@ -562,11 +661,35 @@ class _StreamState:
             code = "codex_image_edit_unexpected_request_or_error"
             raise _error(code)
         response = message.get("result")
+        if message.get("id") in (_SKILLS_ROOTS_ID, _SKILLS_LIST_ID) and not isinstance(
+            response, dict
+        ):
+            code = "codex_image_edit_skill_discovery_invalid"
+            raise _error(code)
         if message.get("id") == _INITIALIZE_ID and isinstance(response, dict):
             self.phase = "thread"
             return ({"method": "initialized", "params": {}}, _mcp_request(_GLOBAL_MCP_ID))
         if message.get("id") == _GLOBAL_MCP_ID and isinstance(response, dict):
             _check_mcp_inventory(response, self.disabled_mcp_servers)
+            if self.request.skill_input is not None:
+                return (
+                    {
+                        "id": _SKILLS_ROOTS_ID,
+                        "method": "skills/extraRoots/set",
+                        "params": {"extraRoots": [str(_skill_root(self.request))]},
+                    },
+                )
+            return (self._thread_request(),)
+        if message.get("id") == _SKILLS_ROOTS_ID and isinstance(response, dict):
+            return (
+                {
+                    "id": _SKILLS_LIST_ID,
+                    "method": "skills/list",
+                    "params": {"cwds": [str(self.request.workspace)], "forceReload": True},
+                },
+            )
+        if message.get("id") == _SKILLS_LIST_ID and isinstance(response, dict):
+            _check_skill_inventory(self.request, response)
             return (self._thread_request(),)
         if message.get("id") == _THREAD_START_ID and isinstance(response, dict):
             self.phase = "thread"
@@ -586,7 +709,12 @@ class _StreamState:
         if message.get("id") == _THREAD_MCP_ID and isinstance(response, dict):
             self.phase = "turn"
             _check_mcp_inventory(response, self.disabled_mcp_servers)
-            inputs: list[JsonObject] = [{"type": "text", "text": self.request.prompt}]
+            prompt = self.request.prompt
+            if self.request.skill_input is not None:
+                prompt = f"${self.request.skill_input.name}\n\n{prompt}"
+            inputs: list[JsonObject] = [{"type": "text", "text": prompt}]
+            if self.request.skill_input is not None:
+                inputs.append(_skill_user_input(self.request))
             inputs.extend(
                 {"type": "localImage", "path": str(path)} for path in self.request.image_paths
             )
