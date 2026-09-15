@@ -2772,6 +2772,14 @@
         "acfe555feda831ca1abfe858e7fc49c49b647abcd616c10c6c310020803f1243",
         "ce4e19a8b89ad2c87b31372691cb0c2760af51f0211234355e4f6d0224347a03"
       ]
+    },
+    {
+      "fingerprint": "528496e0412dc8ee94a119b30d088ae1f087d60c355c2b2f734ebd76fd50a730",
+      "reason": "These unchanged creative-procedure and daily-Slack test spans only import ToolRegistry SqliteSessionStore CreateAgentRunRequest and MarketingAgentService. The former verifies procedure behavior while the latter verifies scheduled delivery; explicit public API imports preserve independent dependency ownership. No runtime algorithm is duplicated, and neither file is modified by this PR.",
+      "memberHashes": [
+        "590bd5ad19174121c06526c858ba223a2933c00d318196d09b1e0b303f6ae124",
+        "590bd5ad19174121c06526c858ba223a2933c00d318196d09b1e0b303f6ae124"
+      ]
     }
   ]
 }
