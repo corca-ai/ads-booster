@@ -2286,6 +2286,78 @@
         "4c6347e15344ef5e3dedde7e474fc2af5ff15a6d20a4027d104f21a5f0581b65",
         "ca964aa0eeb6e6ad317aa0c967fe711993b2ae18fffeb254b563a30a79cde284"
       ]
+    },
+    {
+      "fingerprint": "64dd948f79a1a5b5085c83d9dbc1c338051a831b9b6389fdc254c4ab57c46828",
+      "reason": "Both service and Slack OAuth regressions import their actual domain owners directly. These are module dependency declarations, not shared executable logic; a re-export test facade would conceal the ownership each boundary independently configures.",
+      "memberHashes": [
+        "29be8417835c57da242b4e396386c2d63a5b4ad9b60a491b7bd854353ab3ba0b",
+        "29be8417835c57da242b4e396386c2d63a5b4ad9b60a491b7bd854353ab3ba0b"
+      ]
+    },
+    {
+      "fingerprint": "d5550fe18e1ce6b44cb8ab5b68152ea9ce0c806cf08f17137dd1d304b9a21479",
+      "reason": "Image completion repair and Threads handoff tests directly import canonical service/runtime/progress owners. The matched region is imports only; those tests exercise different effects and should not depend on a shared re-export module.",
+      "memberHashes": [
+        "529ee104445280de610fbf33b5fd2bc6345a9baa6cceb51806f385039d293da4",
+        "529ee104445280de610fbf33b5fd2bc6345a9baa6cceb51806f385039d293da4"
+      ]
+    },
+    {
+      "fingerprint": "7502068f1bf4ed38e5f6806f2ea8df5432fa0c6beb6087d54fcfaa8383327610",
+      "reason": "Production application and run-limit tests independently import task_progress symbols; the following imports differ (Threads handoff versus bootstrap completion policy). Extracting import declarations would invert production/test dependency ownership and adds no reusable behavior.",
+      "memberHashes": [
+        "1deee5abd70855be0e496b31f6a5f1cdea7649753681539b479e2d8271d22ee8",
+        "38bcd4377b245f48eb0040c645656107152e138cf5e7afc6dd0dcd16e589fa8e"
+      ]
+    },
+    {
+      "fingerprint": "fae6bd280dcbd9a0edf1e42f155997cd7683de1aa0b03cf26e59bf1d503f5821",
+      "reason": "Service recovery asserts canonical output for tenant trace after direct drive; signed Slack delivery independently reads tenant team output to compare with transport payloads. Keep these short independent observation oracles so a shared selector error cannot make both service and channel acceptance pass together.",
+      "memberHashes": [
+        "406a47c2916abf31f517b943311796ed745914e740ab4612b4cdffd275d64d67",
+        "6296ca894fbbfcd32d8502ae24e5fae92a552450076905d5a92a5861ff356206"
+      ]
+    },
+    {
+      "fingerprint": "b0e66be3fe2723e92263f3239af713c7dd8ee17803883df8c08fedd245299313",
+      "reason": "All five test bodies reuse existing setup_events/receive but guard different behavior: OAuth consent delivery/replay; correction binding while nonterminal; rejected workspace-skill writes; interrupted tool plan status; failed-followup stale-answer suppression. The modeled whole-function similarity is shared scenario structure, not a common contract; merging their assertions would couple unrelated authorization, learning and delivery oracles.",
+      "memberHashes": [
+        "80f42235c7b4b05731bad5f8c48856cff765d0b8f427acfc16b9c69a0a125b82",
+        "8df3ee0e113215d561ec0f106a38a84992323bd9b9cc5a5692fe32dfd71e4be3",
+        "9633f7c1cb2a191f6ff37eb1d56d9d448dd17e0cca1f5f0b4429484cb20bb472",
+        "a40e928d719b56230df1e4795c04b0cfebf9468c331bdafa8baca573447a4b31",
+        "c582bec5a660a64fdff0825c6f718b941c9dd243c0bf925d936ebf746513e267"
+      ]
+    },
+    {
+      "fingerprint": "78f965386f6af112320355e87ad69e0a04d2ae0a17440f2810f51445ed997234",
+      "reason": "All seven members are TYPE_CHECKING import blocks for different runtime-free dependencies: knowledge learning, procedural fixtures, multiprocessing runtime/fixtures, Slack commands, OAuth test and Trace-post test. Preserve local typing declarations and import-cycle boundaries; no executable algorithm is duplicated.",
+      "memberHashes": [
+        "144d16ada54690a9cd57c896d1e34cf6116dfae1eb9db43c198e3706ea9c2133",
+        "88bd51558ce4633ffb6ab4d9044a5287ea89e361561fd3784bf1aa5eb6f7eeb1",
+        "8afacc09c52e0e94608b0dd01703d02fb85f34e1df00c05851564a549b8a994b",
+        "a553627b50b2d60da1de3dd393020bcad0c766758b35aa4548b269de25d5847b",
+        "be8e6d6591416e3978c2f3c4fd5d2a36489f462c591e9a8c9c80983675c54c5d",
+        "eefe1930fa6fac4e8d34198d092c0008d62d92e17c34a59023ffb6d46d4057d6",
+        "f47cb6b3c5f4b423dac142585e081fb1a8aca78c592327c56a9ff68fd80841f3"
+      ]
+    },
+    {
+      "fingerprint": "adeb6ac9d72aea4de0a1e231d878370b9f80b285336588940dfa2a7db88ce9df",
+      "reason": "Service test retains an OAuth owner across service reconstruction and mutates expiry/disposition/consumed state for recovery faults. Slack test composes a separate owner inside its client closing scope with signed request authorization and its own canonical database. Keep the nine-line real-owner construction independent so shared fixture setup cannot hide misbinding across these two acceptance surfaces.",
+      "memberHashes": [
+        "f6c58dc4afe9323e8e992d2cca75be7da436182e915f13ca58ef1c8bec25f926",
+        "fa47d48ed4eb9b5a7e185ba9e4fa1731a250228b6b834a2bf587e194bec3658a"
+      ]
+    },
+    {
+      "fingerprint": "a98a7abbe5059d8b0bbd4076998802ee53cccf0a9d2557a9ded4ac1cbb5ac623",
+      "reason": "Service actor resolver binds its direct event fixture; Slack resolver binds Ev1 to the signed Slack scenario. They deliberately keep distinct source_event_id values and independently exercise tenant-to-workspace mapping. A shared actor fixture could silently erase that event-authority distinction.",
+      "memberHashes": [
+        "5afbd28c7a83c95fbbdad765db35a6d59cf6a42005200b65d253d87679f3b963",
+        "ef753e7b77697d7bc3c58a83af6487f61480365eb0deb2024c5f2dc2470f1462"
+      ]
     }
   ]
 }
