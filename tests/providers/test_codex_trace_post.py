@@ -206,6 +206,22 @@ def test_stdio_trace_post_transports_the_native_tool_compatibility_instruction(
     assert "Do not look for functions.exec" in received
 
 
+def test_completed_native_turn_is_checkpointed_before_runner_returns(tmp_path: Path) -> None:
+    executable = _native_tool_contract_server(tmp_path)
+    workspace = tmp_path / "checkpoint-work"
+    workspace.mkdir()
+    checkpoints: list[tuple[int, bool]] = []
+    provider = CodexTracePostProvider(executable, "fixture")
+    result = provider.run_checkpointed(
+        workspace=workspace,
+        instruction="fixture",
+        timeout_seconds=10,
+        on_checkpoint=lambda result, completed: checkpoints.append((len(result.images), completed)),
+    )
+    assert checkpoints == [(index, False) for index in range(1, 8)] + [(7, True)]
+    assert len(result.images) == 7
+
+
 def test_app_server_materializes_native_base64_into_the_private_workspace_sink(
     tmp_path: Path,
 ) -> None:

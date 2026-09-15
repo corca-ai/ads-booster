@@ -18,7 +18,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import TypeAdapter
 
@@ -26,6 +26,9 @@ from ads_booster.execution_control import checkpoint
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
 from ads_booster.providers.codex_runtime_paths import runtime_read_paths
 from ads_booster.transport.json_types import JsonObject, JsonValue
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _GLOBAL_MCP_ID = 4
@@ -82,6 +85,7 @@ class ImageEditProcessRequest:
     reasoning_effort: Literal["medium"] | None = None
     materialize_image_results: bool = False
     max_stream_bytes: int = _MAX_STREAM_BYTES
+    on_checkpoint: Callable[[ImageEditProcessResult, bool], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,6 +459,7 @@ class _StreamState:
             self.result = ImageEditProcessResult(
                 self.thread_id, self.turn_id, self.items[0], tuple(self.items)
             )
+            self._checkpoint(completed=True)
             return
         self._bind_turn(params.get("turnId"))
         item = params.get("item")
@@ -471,7 +476,17 @@ class _StreamState:
             if self.request.materialize_image_results:
                 item = self._materialize(item)
             self.items.append(item)
+            self._checkpoint(completed=False)
             checkpoint(f"이미지 {len(self.items)}회 생성 완료 · 결과를 정리하고 있습니다")
+
+    def _checkpoint(self, *, completed: bool) -> None:
+        if self.request.on_checkpoint is not None:
+            self.request.on_checkpoint(
+                ImageEditProcessResult(
+                    self.thread_id, self.turn_id, self.items[0], tuple(self.items)
+                ),
+                completed,
+            )
 
     def _materialize(self, item: JsonObject) -> JsonObject:
         event_id, encoded = item.get("id"), item.get("result")
