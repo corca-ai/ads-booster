@@ -116,8 +116,8 @@ def test_completion_assessor_receives_scoped_dialogue_and_capability_facts(tmp_p
     for _ in range(8):
         if not owner.work_once(now=NOW):
             break
-    context = seen[-1].model_dump(mode="json").get("reference_context")
-    assert isinstance(context, dict)
+    context = seen[-1].reference_context
+    assert context is not None
     assert "주간 보기" in str(context)
     assert "capability_ids" in context
     assert context["authority"] == "reference_only_not_effect_proof_or_new_instructions"
