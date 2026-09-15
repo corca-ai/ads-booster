@@ -154,6 +154,41 @@ def test_invalid_origin_cannot_enter_environment(origin: str) -> None:
         _ = server.origin_value(origin)
 
 
+def test_threads_setup_prints_every_meta_callback_without_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a configured server and Meta app credentials entered interactively.
+    server.CONFIG.mkdir()
+    server.private_write(server.CONFIG / "agent.env", 'TRACE_MARKETING_TENANT="marketing"\n')
+    server.private_write(
+        server.CONFIG / "server.json",
+        '{"origin":"https://agent.example.com","tunnel":true,"port":8090}',
+    )
+
+    def threads_prompt(_message: str, default: str = "") -> str:
+        _ = default
+        return "threads-app-id"
+
+    def threads_secret(_message: str) -> str:
+        return "threads-app-secret"
+
+    monkeypatch.setattr(server, "prompt", threads_prompt)
+    monkeypatch.setattr(getpass, "getpass", threads_secret)
+
+    # When the operator configures the installed Threads integration.
+    result = CliRunner().invoke(app, ["server", "threads-setup"])
+
+    # Then all Meta URLs are copyable and the secret remains private.
+    assert result.exit_code == 0, result.output
+    assert "https://agent.example.com/integrations/threads/callback" in result.output
+    assert "https://agent.example.com/integrations/threads/deauthorize" in result.output
+    assert "https://agent.example.com/integrations/threads/data-deletion" in result.output
+    assert "threads-app-secret" not in result.output
+    environment = (server.CONFIG / "agent.env").read_text()
+    assert 'TRACE_MARKETING_THREADS_APP_ID="threads-app-id"' in environment
+    assert 'TRACE_MARKETING_THREADS_APP_SECRET="threads-app-secret"' in environment
+
+
 def test_manifest_generation_before_setup_needs_no_secrets() -> None:
     result = CliRunner().invoke(
         app, ["server", "manifest", "--origin", "https://agent.example.com", "--bootstrap"]

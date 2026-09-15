@@ -25,6 +25,7 @@ from ads_booster.knowledge.configuration import (
     initialize_knowledge_store,
 )
 from ads_booster.knowledge.erase_ledger import EraseLedger
+from ads_booster.threads.callback_urls import threads_callback_urls
 from ads_booster.tools.github_issues import (
     GitHubIssues,
     GitHubRejectedError,
@@ -406,7 +407,7 @@ def threads_setup() -> None:
         app_secret = getpass.getpass("Meta Threads App Secret (화면에 표시되지 않음): ").strip()
         if not app_id or not app_secret:
             raise RuntimeError("threads_app_credentials_required")
-        redirect_uri = origin + "/integrations/threads/callback"
+        redirect_uri, deauthorize_uri, deletion_uri = threads_callback_urls(origin)
         media_secret = environment_value(
             environment_path, "TRACE_MARKETING_THREADS_MEDIA_SECRET"
         ) or token_urlsafe(48)
@@ -422,6 +423,8 @@ def threads_setup() -> None:
         )
         typer.echo("Threads 앱 설정을 저장했습니다.")
         typer.echo(f"Meta OAuth Redirect URI: {redirect_uri}")
+        typer.echo(f"Meta Deauthorize Callback URL: {deauthorize_uri}")
+        typer.echo(f"Meta Data Deletion Callback URL: {deletion_uri}")
         typer.echo("다음: trace-marketing server stop / trace-marketing server start")
     except Exception as error:  # noqa: BLE001 - secret-bearing input must never reach a traceback.
         typer.echo(
