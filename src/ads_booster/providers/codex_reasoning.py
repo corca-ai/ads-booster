@@ -58,7 +58,7 @@ class CodexReasoningProvider:
                 dir=self.workspace_root,
             ) as directory:
                 raw = self.codex.run_marketing_judgment_job(
-                    _prompt(request),
+                    _prompt(request, model_id=self.model_id),
                     schema,
                     workspace=Path(directory),
                     timeout_seconds=self.timeout_seconds,

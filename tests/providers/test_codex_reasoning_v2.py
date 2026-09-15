@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from ads_booster.contracts.agent_run import CapabilitySnapshot, contract_sha256
 from ads_booster.contracts.reasoning import ReasoningRequestV2
@@ -21,11 +22,13 @@ class V2Runner:
     def __init__(self, output: JsonObject) -> None:
         self.output: JsonObject = output
         self.prompt: str = ""
+        self.schema: JsonObject = {}
 
     def run_marketing_judgment_job(
         self, prompt: str, schema: JsonObject, *, workspace: Path, timeout_seconds: float
     ) -> JsonObject:
         self.prompt = prompt
+        self.schema = schema
         _ = workspace, timeout_seconds
         assert_strict_schema(schema)
         return self.output
@@ -95,6 +98,7 @@ def test_v2_request_and_decision_preserve_conversational_authority(tmp_path: Pat
     assert request.pending_approval == {"capability_id": "creative.image.edit"}
     assert result.decision.pending_approval_action == "cancel"
     assert "set authorization_message" in runner.prompt
+    assert 'Configured model identifier: "fixture"' in runner.prompt
     assert "set pending_approval_action=preserve" in runner.prompt
 
 
@@ -104,6 +108,23 @@ def test_v2_stop_requires_a_candidate(tmp_path: Path) -> None:
 
     with pytest.raises(CodexReasoningError):
         _ = CodexReasoningProvider(V2Runner(output), tmp_path, "fixture").plan_v2(request)
+
+
+def test_provider_schema_only_allows_supplied_completion_evidence(tmp_path: Path) -> None:
+    digest = "a" * 64
+    request = v2_request(tmp_path / "evidence.db").model_copy(
+        update={"evidence": ({"host_evidence_sha256": digest},)}
+    )
+    output = wire_stop(request)
+    runner = V2Runner(output)
+    _ = CodexReasoningProvider(runner, tmp_path, "fixture").plan_v2(request)
+    candidate = output["completion_candidate"]
+    assert isinstance(candidate, dict)
+    candidate["evidence_sha256s"] = [digest]
+    validator = Draft202012Validator(runner.schema)
+    assert validator.is_valid(output)  # pyright: ignore[reportUnknownMemberType]
+    candidate["evidence_sha256s"] = ["a" * 63 + "b"]
+    assert not validator.is_valid(output)  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_v2_candidate_for_another_task_is_rejected(tmp_path: Path) -> None:
