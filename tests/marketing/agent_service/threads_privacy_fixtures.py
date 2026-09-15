@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -7,16 +8,43 @@ from ads_booster.contracts.threads import (
     ThreadsAccount,
     ThreadsPublicationReceipt,
 )
+from ads_booster.learning.provider_metrics import ProviderMetricRepository
 from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
-from ads_booster.threads.drafts import ThreadsDraftAction, ThreadsDraftBatch, ThreadsDraftItem
+from ads_booster.threads.drafts import (
+    ThreadsDraftAction,
+    ThreadsDraftBatch,
+    ThreadsDraftItem,
+    ThreadsDraftRepository,
+)
 from ads_booster.threads.effect_fence import ThreadsEffectFence
+from ads_booster.threads.media_delivery import ThreadsMediaDelivery
 from ads_booster.threads.privacy import ThreadsPrivacyCallbacks
+from ads_booster.threads.publications import ThreadsPublicationRepository
 from tests.marketing.agent_service.threads_callback_fixtures import FAKE_APP_SECRET
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadsPrivacyPersistenceFixture:
+    callbacks: ThreadsPrivacyCallbacks
+    accounts: ThreadsAccountRepository
+    tokens: ThreadsTokenVault
+    drafts: ThreadsDraftRepository
+    media: ThreadsMediaDelivery
+    publications: ThreadsPublicationRepository
+
+    def connect_draft(self, account: ThreadsAccount) -> ThreadsDraftBatch:
+        _ = self.tokens.put(
+            f"token-{account.connection_id}", token_ref=account.token_ref
+        )
+        _ = self.accounts.put(account)
+        batch = threads_draft(account)
+        _ = self.drafts.create(batch)
+        return batch
 
 
 def privacy_callbacks(
@@ -36,6 +64,22 @@ def privacy_callbacks(
         ),
         accounts,
         tokens,
+    )
+
+
+def privacy_persistence(root: Path) -> ThreadsPrivacyPersistenceFixture:
+    callbacks, accounts, tokens = privacy_callbacks(root)
+    drafts = ThreadsDraftRepository(callbacks.database_path)
+    publications = ThreadsPublicationRepository(callbacks.database_path)
+    _ = ProviderMetricRepository(callbacks.database_path)
+    media = ThreadsMediaDelivery(
+        callbacks.database_path,
+        root / "artifacts",
+        "https://agent.example.com",
+        b"m" * 32,
+    )
+    return ThreadsPrivacyPersistenceFixture(
+        callbacks, accounts, tokens, drafts, media, publications
     )
 
 
@@ -100,7 +144,9 @@ def publication_receipt(
 
 __all__ = [
     "NOW",
+    "ThreadsPrivacyPersistenceFixture",
     "privacy_callbacks",
+    "privacy_persistence",
     "publication_receipt",
     "threads_account",
     "threads_draft",

@@ -11,10 +11,7 @@ from ads_booster.contracts.provider_metrics import (
     ProviderMetricAvailability,
     ProviderMetricSnapshot,
 )
-from ads_booster.contracts.threads import (
-    ThreadsAccountStatus,
-    ThreadsPublicationReceipt,
-)
+from ads_booster.contracts.threads import ThreadsAccountStatus
 from ads_booster.learning.provider_metrics import ProviderMetricRepository
 from ads_booster.threads.drafts import (
     ThreadsDraftBatch,
@@ -26,6 +23,7 @@ from tests.marketing.agent_service.threads_callback_fixtures import signed_reque
 from tests.marketing.agent_service.threads_privacy_fixtures import (
     NOW,
     privacy_callbacks,
+    publication_receipt,
     threads_account,
     threads_draft,
 )
@@ -73,20 +71,7 @@ def test_data_deletion_removes_provider_records_and_returns_stable_receipt(tmp_p
     batch = threads_draft(account)
     _ = ThreadsDraftRepository(callbacks.database_path).create(batch)
     _ = ThreadsPublicationRepository(callbacks.database_path).put(
-        ThreadsPublicationReceipt(
-            operation_id="operation-1",
-            workspace_id=account.workspace_id,
-            owner_member_id=account.owner_member_id,
-            run_id="run-1",
-            invocation_sha256="a" * 64,
-            connection_id=account.connection_id,
-            batch_id=batch.batch_id,
-            item_id="item-1",
-            draft_revision=1,
-            ordered_asset_sha256=(),
-            state="prepared",
-            updated_at=NOW,
-        )
+        publication_receipt(account, batch)
     )
     _ = ProviderMetricRepository(callbacks.database_path).append(
         ProviderMetricSnapshot(

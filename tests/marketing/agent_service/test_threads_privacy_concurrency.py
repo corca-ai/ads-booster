@@ -7,13 +7,10 @@ from typing import TYPE_CHECKING
 import httpx2
 import pytest
 
-from ads_booster.learning.provider_metrics import ProviderMetricRepository
 from ads_booster.providers.threads_api import ThreadsApiClient
-from ads_booster.threads.drafts import ThreadsDraftAction, ThreadsDraftRepository
-from ads_booster.threads.media_delivery import ThreadsMediaDelivery
+from ads_booster.threads.drafts import ThreadsDraftAction
 from ads_booster.threads.publications import (
     ThreadsPublicationError,
-    ThreadsPublicationRepository,
     ThreadsPublisher,
 )
 from tests.marketing.agent_service.threads_callback_fixtures import (
@@ -22,10 +19,9 @@ from tests.marketing.agent_service.threads_callback_fixtures import (
 )
 from tests.marketing.agent_service.threads_privacy_fixtures import (
     NOW,
-    privacy_callbacks,
+    privacy_persistence,
     publication_receipt,
     threads_account,
-    threads_draft,
 )
 
 if TYPE_CHECKING:
@@ -36,53 +32,29 @@ if TYPE_CHECKING:
 
 def test_completed_deletion_rejects_stale_publication_write(tmp_path: Path) -> None:
     # Given a prepared publication that belongs to a provider deletion request.
-    callbacks, accounts, tokens = privacy_callbacks(tmp_path)
-    drafts = ThreadsDraftRepository(callbacks.database_path)
-    publications = ThreadsPublicationRepository(callbacks.database_path)
-    _ = ProviderMetricRepository(callbacks.database_path)
-    _ = ThreadsMediaDelivery(
-        callbacks.database_path,
-        tmp_path / "artifacts",
-        "https://agent.example.com",
-        b"m" * 32,
-    )
+    persistence = privacy_persistence(tmp_path)
     account = threads_account("connection-1", "workspace-1")
-    _ = tokens.put("token", token_ref=account.token_ref)
-    _ = accounts.put(account)
-    batch = threads_draft(account)
-    _ = drafts.create(batch)
-    prepared = publications.put(publication_receipt(account, batch))
-    _ = callbacks.delete(signed_request(account.provider_account_id), now=NOW)
+    batch = persistence.connect_draft(account)
+    prepared = persistence.publications.put(publication_receipt(account, batch))
+    _ = persistence.callbacks.delete(signed_request(account.provider_account_id), now=NOW)
 
     # When an old worker tries to recreate the deleted publication ledger.
     with pytest.raises(ThreadsPublicationError, match="threads_connection_deleted"):
-        _ = publications.put(
+        _ = persistence.publications.put(
             prepared.model_copy(update={"state": "publishing", "updated_at": NOW})
         )
 
     # Then the completed deletion remains authoritative.
-    assert publications.get(prepared.operation_id) is None
+    assert persistence.publications.get(prepared.operation_id) is None
 
 
 def test_data_deletion_waits_for_in_flight_publication(tmp_path: Path) -> None:
     # Given a publication blocked inside the provider publish request.
-    callbacks, accounts, tokens = privacy_callbacks(tmp_path)
-    drafts = ThreadsDraftRepository(callbacks.database_path)
-    publications = ThreadsPublicationRepository(callbacks.database_path)
-    _ = ProviderMetricRepository(callbacks.database_path)
-    media = ThreadsMediaDelivery(
-        callbacks.database_path,
-        tmp_path / "artifacts",
-        "https://agent.example.com",
-        b"m" * 32,
-    )
+    persistence = privacy_persistence(tmp_path)
     account = threads_account("connection-1", "workspace-1").model_copy(
         update={"granted_scopes": ("threads_basic", "threads_content_publish")}
     )
-    _ = tokens.put("token", token_ref=account.token_ref)
-    _ = accounts.put(account)
-    batch = threads_draft(account)
-    _ = drafts.create(batch)
+    batch = persistence.connect_draft(account)
     publish_started = Event()
     publish_release = Event()
     deletion_completed = Event()
@@ -114,7 +86,9 @@ def test_data_deletion_waits_for_in_flight_publication(tmp_path: Path) -> None:
 
     def delete_provider_data() -> ThreadsDeletionReceipt:
         try:
-            return callbacks.delete(signed_request(account.provider_account_id), now=NOW)
+            return persistence.callbacks.delete(
+                signed_request(account.provider_account_id), now=NOW
+            )
         finally:
             deletion_completed.set()
 
@@ -126,12 +100,12 @@ def test_data_deletion_waits_for_in_flight_publication(tmp_path: Path) -> None:
     ):
         publisher = ThreadsPublisher(
             ThreadsApiClient("app-id", FAKE_APP_SECRET, client, sleeper=lambda _delay: None),
-            accounts,
-            tokens,
-            drafts,
-            media,
-            publications,
-            callbacks.effect_fence,
+            persistence.accounts,
+            persistence.tokens,
+            persistence.drafts,
+            persistence.media,
+            persistence.publications,
+            persistence.callbacks.effect_fence,
         )
         # When publication and deletion run concurrently.
         publish_future = executor.submit(
@@ -158,4 +132,4 @@ def test_data_deletion_waits_for_in_flight_publication(tmp_path: Path) -> None:
         assert publish_future.result(timeout=5).state == "published"
         assert deletion_future.result(timeout=5).status == "completed"
 
-    assert publications.get("operation-race") is None
+    assert persistence.publications.get("operation-race") is None
