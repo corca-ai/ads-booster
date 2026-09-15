@@ -20,6 +20,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.providers.codex_image_edit import (
+    ImageEditProcessDiagnostic,
     ImageEditProcessRequest,
     ImageEditProcessResult,
     _StreamState,
@@ -150,6 +151,7 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
     assert request.min_image_generations == 7
     assert request.max_image_generations == 14
     assert request.max_stream_bytes == 256 * 1024 * 1024
+    assert request.persist_sanitized_diagnostic is True
     assert set(request.allowed_item_types) == {
         "imageGeneration",
         "agentMessage",
@@ -180,7 +182,7 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
         assert image.sha256 == hashlib.sha256(image.path.read_bytes()).hexdigest()
 
 
-def _native_tool_contract_server(tmp_path: Path) -> Path:
+def _native_tool_contract_server(tmp_path: Path, *, empty_turn: bool = False) -> Path:
     """Model the app-server boundary without making a model or image call."""
     executable = tmp_path / "fixture-app-server"
     encoded = base64.b64encode(_png_bytes()).decode()
@@ -210,6 +212,25 @@ for line in sys.stdin:
         }}}})
     elif method == "turn/start":
         send({{"id": request["id"], "result": {{"turn": {{"id": "turn-fixture"}}}}}})
+        if {empty_turn!r}:
+            send({{"method": "turn/completed", "params": {{
+                "threadId": "thread-fixture",
+                "turn": {{"id": "turn-fixture", "status": "completed"}},
+            }}}})
+            continue
+        send({{"method": "item/started", "params": {{
+            "threadId": "thread-fixture", "turnId": "turn-fixture",
+            "item": {{"type": "commandExecution", "id": "command-started"}},
+        }}}})
+        for event_id, exit_code in (("command-ok", 0), ("command-bad", 9), ("command-none", None)):
+            send({{"method": "item/completed", "params": {{
+                "threadId": "thread-fixture", "turnId": "turn-fixture",
+                "item": {{"type": "commandExecution", "id": event_id, "exitCode": exit_code}},
+            }}}})
+        send({{"method": "item/completed", "params": {{
+            "threadId": "thread-fixture", "turnId": "turn-fixture",
+            "item": {{"type": "agentMessage", "id": "message-one", "text": "TOP SECRET MESSAGE"}},
+        }}}})
         for index in range(7):
             send({{"method": "item/completed", "params": {{
                 "threadId": "thread-fixture",
@@ -252,6 +273,61 @@ def test_stdio_trace_post_transports_the_native_tool_compatibility_instruction(
     assert "functions.exec with tools.image_gen__imagegen" in received
     assert "native image-generation tool exposed in this turn" in received
     assert "Do not look for functions.exec" in received
+    diagnostic_path = workspace / "codex-image-edit-diagnostic.json"
+    diagnostic = ImageEditProcessDiagnostic.model_validate_json(diagnostic_path.read_text())
+    assert diagnostic.completed.image_generation == 7
+    assert diagnostic.started.command_execution == 1
+    assert diagnostic.completed.command_execution == 3
+    assert diagnostic.image_count == 7
+    assert diagnostic.command_success == 1
+    assert diagnostic.command_nonzero == 1
+    assert diagnostic.command_absent == 1
+    assert diagnostic.agent_message_count == 1
+    assert diagnostic.agent_message_max_length == "1_200"
+    assert diagnostic.terminal == "completed"
+    assert len(diagnostic_path.read_bytes()) <= 4096
+    assert diagnostic_path.stat().st_mode & 0o777 == 0o600
+    assert "follow the frozen trace-post fixture" not in diagnostic_path.read_text()
+    assert "TOP SECRET MESSAGE" not in diagnostic_path.read_text()
+
+
+def test_diagnostic_write_failure_does_not_replace_a_successful_provider_result(
+    tmp_path: Path,
+) -> None:
+    executable = _native_tool_contract_server(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "codex-image-edit-diagnostic.json").mkdir()
+    temporary = workspace / ".codex-image-edit-diagnostic.tmp"
+    _ = temporary.write_text("belongs-to-another-process", encoding="utf-8")
+
+    result = CodexTracePostProvider(executable, "gpt-6-astra").run(
+        workspace=workspace,
+        instruction="fixture",
+        timeout_seconds=3,
+    )
+
+    assert len(result.images) == 7
+    assert temporary.read_text() == "belongs-to-another-process"
+
+
+def test_diagnostic_write_failure_does_not_replace_the_provider_failure(
+    tmp_path: Path,
+) -> None:
+    executable = _native_tool_contract_server(tmp_path, empty_turn=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "codex-image-edit-diagnostic.json").mkdir()
+    temporary = workspace / ".codex-image-edit-diagnostic.tmp"
+    _ = temporary.write_text("belongs-to-another-process", encoding="utf-8")
+
+    with pytest.raises(Exception, match="codex_image_edit_no_generation"):
+        _ = CodexTracePostProvider(executable, "gpt-6-astra").run(
+            workspace=workspace,
+            instruction="fixture",
+            timeout_seconds=3,
+        )
+    assert temporary.read_text() == "belongs-to-another-process"
 
 
 def test_app_server_materializes_native_base64_into_the_private_workspace_sink(
@@ -313,6 +389,53 @@ def test_app_server_materializes_native_base64_into_the_private_workspace_sink(
     assert path.read_bytes() == data
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_terminal_items_are_counted_but_do_not_replace_completion_notifications(
+    tmp_path: Path,
+) -> None:
+    data = _png_bytes()
+    request = ImageEditProcessRequest(
+        Path("/fixture/codex"),
+        "gpt-6-astra",
+        tmp_path,
+        "fixture",
+        (),
+        30,
+        permission_profile="trace-post-restricted",
+        allowed_item_types=("imageGeneration",),
+        min_image_generations=1,
+        max_image_generations=1,
+    )
+    state = _StreamState(request)
+    state.thread_id = "thread-fixture"
+    state.turn_id = "turn-fixture"
+
+    with pytest.raises(Exception, match="codex_image_edit_no_generation"):
+        _ = state.accept(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-fixture",
+                    "turn": {
+                        "id": "turn-fixture",
+                        "status": "completed",
+                        "itemsView": "full",
+                        "items": [
+                            {
+                                "type": "imageGeneration",
+                                "id": "terminal-one",
+                                "status": "completed",
+                                "failure": None,
+                                "result": base64.b64encode(data).decode(),
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+    assert state.diagnostic().terminal_items.image_generation == 1
+    assert state.items == []
 
 
 def test_trace_app_server_command_keeps_shell_and_installs_the_named_profile(

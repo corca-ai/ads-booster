@@ -988,6 +988,13 @@ prove that a model will follow the instruction.
 An incident record containing only `codex_image_edit_generation_event_required` does not retain the
 provider's final message, so the namespace mismatch is an evidenced compatibility defect and the
 historical cause remains a hypothesis until a deployed supported-motif canary observes native events.
+Provider diagnostics therefore test sanitized started/completed/terminal counts without treating
+terminal-item summaries as generation receipts or adding a provider capability prerequisite.
+Fixtures must prove the 4 KiB
+and mode-0600 boundary, DB migration, restart no-replay behavior, and that diagnostic write/read
+failure cannot mask either the original provider failure or a successful exchange. These records
+separate pre-image stops from missing notification evidence; they do not identify the root cause
+without a deployed canary.
 
 ### Linux sandbox launcher and uncertain follow-ups
 

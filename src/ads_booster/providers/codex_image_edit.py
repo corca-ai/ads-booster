@@ -20,9 +20,9 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from ads_booster.execution_control import checkpoint
 from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_review_images
@@ -46,6 +46,10 @@ _MAX_IMAGES = 4
 _MAX_PROMPT_CHARS = 20000
 _MAX_TIMEOUT_SECONDS = 3600
 _MAX_STREAM_BYTES = 20 * 1024 * 1024
+_MAX_DIAGNOSTIC_BYTES = 4096
+_SHORT_MESSAGE_CHARS = 200
+_MEDIUM_MESSAGE_CHARS = 1000
+_LONG_MESSAGE_CHARS = 4000
 _DISABLED = (
     "apps",
     "browser_use",
@@ -57,6 +61,12 @@ _DISABLED = (
     "unified_exec",
     "plugins",
 )
+_LOG = logging.getLogger(__name__)
+_LengthBucket = Literal[
+    "none", "empty", "1_200", "201_1000", "1001_4000", "over_4000", "unavailable"
+]
+_TurnStatus = Literal["absent", "completed", "failed", "interrupted", "unknown"]
+_ItemsView = Literal["absent", "full", "summary", "notLoaded", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +98,44 @@ class ImageEditProcessRequest:
     reasoning_effort: Literal["medium"] | None = None
     materialize_image_results: bool = False
     max_stream_bytes: int = _MAX_STREAM_BYTES
+    persist_sanitized_diagnostic: bool = False
+
+
+class _ItemCounts(BaseModel):
+    """Bounded counters only; never retain item payloads in diagnostics."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", populate_by_name=True)
+    image_generation: int = Field(default=0, alias="imageGeneration", ge=0, le=1000)
+    agent_message: int = Field(default=0, alias="agentMessage", ge=0, le=1000)
+    reasoning: int = Field(default=0, ge=0, le=1000)
+    user_message: int = Field(default=0, alias="userMessage", ge=0, le=1000)
+    command_execution: int = Field(default=0, alias="commandExecution", ge=0, le=1000)
+    image_view: int = Field(default=0, alias="imageView", ge=0, le=1000)
+    file_change: int = Field(default=0, alias="fileChange", ge=0, le=1000)
+    plan: int = Field(default=0, ge=0, le=1000)
+    context_compaction: int = Field(default=0, alias="contextCompaction", ge=0, le=1000)
+
+
+class ImageEditProcessDiagnostic(BaseModel):
+    """Strict, content-free evidence from one admitted provider process."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    schema_version: Literal["trace.codex-image-edit-diagnostic.v1"] = (
+        "trace.codex-image-edit-diagnostic.v1"
+    )
+    phase: Literal["initialize", "thread", "turn", "terminal"]
+    terminal: Literal["running", "completed", "failed"]
+    started: _ItemCounts = Field(default_factory=_ItemCounts)
+    completed: _ItemCounts = Field(default_factory=_ItemCounts)
+    terminal_items: _ItemCounts = Field(default_factory=_ItemCounts)
+    image_count: int = Field(default=0, ge=0, le=1000)
+    command_success: int = Field(default=0, ge=0, le=1000)
+    command_nonzero: int = Field(default=0, ge=0, le=1000)
+    command_absent: int = Field(default=0, ge=0, le=1000)
+    agent_message_count: int = Field(default=0, ge=0, le=1000)
+    agent_message_max_length: _LengthBucket = "none"
+    turn_status: _TurnStatus = "absent"
+    items_view: _ItemsView = "absent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +181,36 @@ def _check_shell_failure(item: JsonObject, *, completed: bool) -> None:
 
 def _error(code: str) -> CodexCliError:
     return CodexCliError(code)
+
+
+_LENGTH_BUCKET_ORDER = (
+    "none",
+    "empty",
+    "1_200",
+    "201_1000",
+    "1001_4000",
+    "over_4000",
+    "unavailable",
+)
+
+
+def _length_bucket(value: JsonValue) -> _LengthBucket:
+    if not isinstance(value, str):
+        return "unavailable"
+    length = len(value)
+    if length == 0:
+        return "empty"
+    if length <= _SHORT_MESSAGE_CHARS:
+        return "1_200"
+    if length <= _MEDIUM_MESSAGE_CHARS:
+        return "201_1000"
+    if length <= _LONG_MESSAGE_CHARS:
+        return "1001_4000"
+    return "over_4000"
+
+
+def _larger_length_bucket(first: _LengthBucket, second: _LengthBucket) -> _LengthBucket:
+    return max((first, second), key=_LENGTH_BUCKET_ORDER.index)
 
 
 def image_edit_command(  # noqa: PLR0913 - explicit fixed security boundary options.
@@ -246,15 +324,48 @@ class SubprocessAppServerImageEditRunner:
         try:
             result = _exchange(request, state)
         except Exception as error:
+            state.terminal = "failed"
             outcome = (
                 str(error) if isinstance(error, CodexCliError) else "provider_transport_failed"
             )
             raise
         else:
+            state.terminal = "completed"
             outcome = "completed"
             return result
         finally:
             _write_provider_diagnostic(request, state, version, outcome)
+            _persist_diagnostic(request, state)
+
+
+def _persist_diagnostic(request: ImageEditProcessRequest, state: _StreamState) -> None:
+    if not request.persist_sanitized_diagnostic:
+        return
+    temporary: Path | None = None
+    owns_temporary = False
+    try:
+        encoded = state.diagnostic().model_dump_json(by_alias=True).encode()
+        if len(encoded) > _MAX_DIAGNOSTIC_BYTES:
+            _LOG.warning("codex_image_edit_diagnostic_limit")
+            return
+        root = request.workspace.resolve(strict=True)
+        target = root / "codex-image-edit-diagnostic.json"
+        temporary = root / ".codex-image-edit-diagnostic.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        owns_temporary = True
+        with os.fdopen(fd, "wb") as stream:
+            _ = stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _ = temporary.replace(target)
+    except OSError, ValueError:
+        _LOG.warning("codex_image_edit_diagnostic_unavailable")
+    finally:
+        if temporary is not None and owns_temporary:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                _LOG.warning("codex_image_edit_diagnostic_cleanup_unavailable")
 
 
 def _cli_version(executable: Path) -> str:
@@ -389,6 +500,18 @@ class _StreamState:
     turn_id: str = ""
     items: list[JsonObject] = field(default_factory=list)
     result: ImageEditProcessResult | None = None
+    phase: Literal["initialize", "thread", "turn", "terminal"] = "initialize"
+    terminal: Literal["running", "completed", "failed"] = "running"
+    started_counts: dict[str, int] = field(default_factory=dict)
+    completed_counts: dict[str, int] = field(default_factory=dict)
+    terminal_counts: dict[str, int] = field(default_factory=dict)
+    command_success: int = 0
+    command_nonzero: int = 0
+    command_absent: int = 0
+    agent_message_count: int = 0
+    agent_message_max_length: _LengthBucket = "none"
+    turn_status: _TurnStatus = "absent"
+    items_view: _ItemsView = "absent"
     on_diagnostic: Callable[[], None] | None = None
     diagnostics: dict[str, int] = field(
         default_factory=lambda: {
@@ -411,7 +534,9 @@ class _StreamState:
             },
         }
 
-    def accept(self, message: JsonObject) -> tuple[JsonObject, ...]:  # noqa: C901 - bounded RPC phases.
+    def accept(  # noqa: C901 - bounded RPC phases.
+        self, message: JsonObject
+    ) -> tuple[JsonObject, ...]:
         if "error" in message:
             response_id = message.get("id")
             phases = {
@@ -437,25 +562,13 @@ class _StreamState:
             raise _error(code)
         response = message.get("result")
         if message.get("id") == _INITIALIZE_ID and isinstance(response, dict):
+            self.phase = "thread"
             return ({"method": "initialized", "params": {}}, _mcp_request(_GLOBAL_MCP_ID))
         if message.get("id") == _GLOBAL_MCP_ID and isinstance(response, dict):
             _check_mcp_inventory(response, self.disabled_mcp_servers)
-            return (
-                {
-                    "id": 2,
-                    "method": "thread/start",
-                    "params": {
-                        "model": self.request.model,
-                        "cwd": str(self.request.workspace),
-                        "ephemeral": True,
-                        "approvalPolicy": "never",
-                        "permissions": self.request.permission_profile,
-                        "baseInstructions": self.request.base_instructions,
-                        "developerInstructions": self.request.developer_instructions,
-                    },
-                },
-            )
+            return (self._thread_request(),)
         if message.get("id") == _THREAD_START_ID and isinstance(response, dict):
+            self.phase = "thread"
             profile = response.get("activePermissionProfile")
             if (
                 not isinstance(profile, dict)
@@ -470,6 +583,7 @@ class _StreamState:
             self.thread_id = str(thread["id"])
             return (_mcp_request(_THREAD_MCP_ID, self.thread_id),)
         if message.get("id") == _THREAD_MCP_ID and isinstance(response, dict):
+            self.phase = "turn"
             _check_mcp_inventory(response, self.disabled_mcp_servers)
             inputs: list[JsonObject] = [{"type": "text", "text": self.request.prompt}]
             inputs.extend(
@@ -496,6 +610,21 @@ class _StreamState:
             return ()
         self._notification(message)
         return ()
+
+    def _thread_request(self) -> JsonObject:
+        return {
+            "id": 2,
+            "method": "thread/start",
+            "params": {
+                "model": self.request.model,
+                "cwd": str(self.request.workspace),
+                "ephemeral": True,
+                "approvalPolicy": "never",
+                "permissions": self.request.permission_profile,
+                "baseInstructions": self.request.base_instructions,
+                "developerInstructions": self.request.developer_instructions,
+            },
+        }
 
     def _bind_turn(self, turn_id: JsonValue) -> None:
         if (
@@ -526,6 +655,10 @@ class _StreamState:
         if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
+        counts = self.completed_counts if method == "item/completed" else self.started_counts
+        counts[str(kind)] = min(1000, counts.get(str(kind), 0) + 1)
+        if method == "item/completed":
+            self._record_completed_metadata(item)
         self._observe_item(str(method), str(kind), item)
         _check_shell_failure(item, completed=method == "item/completed")
         _image_progress(str(method), str(kind), len(self.items))
@@ -550,7 +683,27 @@ class _StreamState:
 
     def _complete_turn(self, params: JsonObject) -> None:
         turn = params.get("turn")
-        if not isinstance(turn, dict) or turn.get("status") != "completed":
+        if not isinstance(turn, dict):
+            code = "codex_image_edit_outcome_unknown"
+            raise _error(code)
+        status = turn.get("status")
+        self.turn_status = (
+            cast("_TurnStatus", status)
+            if status in ("completed", "failed", "interrupted")
+            else "unknown"
+        )
+        view = turn.get("itemsView")
+        self.items_view = (
+            cast("_ItemsView", view)
+            if view in ("full", "summary", "notLoaded")
+            else "absent"
+            if view is None
+            else "unknown"
+        )
+        terminal_items = turn.get("items")
+        if isinstance(terminal_items, list):
+            self._count_terminal_items(terminal_items)
+        if status != "completed":
             code = "codex_image_edit_outcome_unknown"
             raise _error(code)
         self._bind_turn(turn.get("id"))
@@ -569,8 +722,53 @@ class _StreamState:
             else:
                 code = "codex_image_edit_generation_event_required"
             raise _error(code)
+        self.phase = "terminal"
         self.result = ImageEditProcessResult(
             self.thread_id, self.turn_id, self.items[0], tuple(self.items)
+        )
+
+    def _count_terminal_items(self, items: list[JsonValue]) -> None:
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("type") not in self.request.allowed_item_types
+            ):
+                continue
+            kind = str(item["type"])
+            self.terminal_counts[kind] = min(1000, self.terminal_counts.get(kind, 0) + 1)
+
+    def _record_completed_metadata(self, item: JsonObject) -> None:
+        kind = item.get("type")
+        if kind == "commandExecution":
+            exit_code = item.get("exitCode")
+            if exit_code == 0:
+                self.command_success = min(1000, self.command_success + 1)
+            elif isinstance(exit_code, int):
+                self.command_nonzero = min(1000, self.command_nonzero + 1)
+            else:
+                self.command_absent = min(1000, self.command_absent + 1)
+        elif kind == "agentMessage":
+            self.agent_message_count = min(1000, self.agent_message_count + 1)
+            text = item.get("text")
+            self.agent_message_max_length = _larger_length_bucket(
+                self.agent_message_max_length, _length_bucket(text)
+            )
+
+    def diagnostic(self) -> ImageEditProcessDiagnostic:
+        return ImageEditProcessDiagnostic(
+            phase=self.phase,
+            terminal=self.terminal,
+            started=_ItemCounts.model_validate(self.started_counts),
+            completed=_ItemCounts.model_validate(self.completed_counts),
+            terminal_items=_ItemCounts.model_validate(self.terminal_counts),
+            image_count=len(self.items),
+            command_success=self.command_success,
+            command_nonzero=self.command_nonzero,
+            command_absent=self.command_absent,
+            agent_message_count=self.agent_message_count,
+            agent_message_max_length=self.agent_message_max_length,
+            turn_status=self.turn_status,
+            items_view=self.items_view,
         )
 
     def _materialize(self, item: JsonObject) -> JsonObject:
