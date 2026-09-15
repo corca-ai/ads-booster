@@ -11,6 +11,7 @@ from PIL import Image
 from ads_booster.agent.service.completion_evidence import BoundCompletionEvidence
 from ads_booster.contracts.agent_run import ToolInvocation, ToolReceiptRecord, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
+from ads_booster.contracts.tool_handoff import ToolInputHandoff
 from ads_booster.tools import completion_proofs as proofs
 from ads_booster.tools.descriptors import notion_daily_descriptor, slack_delivery_descriptor
 from ads_booster.tools.github_issues import REPOSITORY, descriptor
@@ -90,6 +91,30 @@ def test_host_registration_verifies_a_new_identity_without_builtin_branch() -> N
     verified = registry.verify(make_run(), bound, proofs.CompletionArtifactOwners())
     # Then the registered verifier, rather than a built-in capability branch, determines proof.
     assert verified
+
+
+def test_owner_handoff_requires_verified_exact_execution() -> None:
+    bound = issue_evidence()
+    expected = ToolInputHandoff(question="Approve the connection", expected_outcome="Consent")
+    registration = proofs.ProofRegistration(
+        proofs.ProofIdentity(
+            bound.descriptor.capability_id,
+            bound.descriptor.owner,
+            bound.receipt.executor_id,
+            bound.descriptor.effect_class,
+        ),
+        ExactIssueVerifier(),
+        input_handoff=lambda run, evidence, owners, now: expected,
+    )
+    registry = proofs.CompletionProofRegistry((registration,))
+    assert (
+        registry.input_handoff(make_run(), bound, proofs.CompletionArtifactOwners(), NOW)
+        == expected
+    )
+    failed = replace(bound, receipt=bound.receipt.model_copy(update={"disposition": "failed"}))
+    assert (
+        registry.input_handoff(make_run(), failed, proofs.CompletionArtifactOwners(), NOW) is None
+    )
 
 
 def test_duplicate_host_identity_is_rejected_at_registry_construction() -> None:

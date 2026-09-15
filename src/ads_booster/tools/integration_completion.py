@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlsplit
 
@@ -10,6 +11,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.contracts.agent_schedule import AgentSchedule, ScheduleOccurrence
 from ads_booster.contracts.threads import ThreadsPublicationReceipt
+from ads_booster.contracts.tool_handoff import ToolInputHandoff
 from ads_booster.threads.drafts import ThreadsDraftBatch
 
 if TYPE_CHECKING:
@@ -57,8 +59,7 @@ class ScheduleControlProof:
         limit = bound.invocation.input.get("limit", 100)
         return (
             isinstance(limit, int)
-            and repository.occurrences(parsed_schedules[0].schedule_id, limit=limit)
-            == occurrences
+            and repository.occurrences(parsed_schedules[0].schedule_id, limit=limit) == occurrences
         )
 
 
@@ -116,6 +117,53 @@ class ThreadsAccountControlProof:
 
 @dataclass(frozen=True, slots=True)
 class ThreadsConnectControlProof:
+    def input_handoff(
+        self,
+        run: AgentRun,
+        bound: BoundCompletionEvidence,
+        owners: CompletionArtifactOwners,
+        now: datetime,
+    ) -> ToolInputHandoff | None:
+        if not self.verify(run, bound, owners) or owners.database_path is None:
+            return None
+        url = str(bound.output["authorization_url"])
+        expiry = str(bound.output["expires_at"])
+        try:
+            expires_at = datetime.fromisoformat(expiry)
+        except ValueError:
+            return None
+        if expires_at.tzinfo is None:
+            return None
+        state = parse_qs(urlsplit(url).query)["state"][0]
+        with closing(sqlite3.connect(owners.database_path)) as database:
+            row = _OAUTH_ROW.validate_python(
+                database.execute(
+                    """SELECT workspace_id,expires_at,redirect_uri,consumed
+                    FROM threads_oauth_states WHERE state_id=?""",
+                    (state,),
+                ).fetchone()
+            )
+        if row is None:
+            return None
+        question = (
+            "\n".join(
+                (
+                    "Threads 연결 승인이 필요합니다. 아래 링크에서 승인한 뒤 이 대화에 알려주세요.",
+                    url,
+                    f"만료 시각: {expiry}",
+                    "아직 계정 연결 완료를 확인하지 않았습니다.",
+                )
+            )
+            if expires_at > now
+            else "만료된 링크입니다. 승인했다면 알려주세요. 아니면 새 대화에서 연결을 요청하세요."
+        )
+        if row[3] == 1:
+            question = "사용된 링크입니다. 승인을 마쳤다면 알려주세요. 연결 상태 확인이 필요합니다."
+        return ToolInputHandoff(
+            question=question,
+            expected_outcome="User completes Threads OAuth consent and reports back",
+        )
+
     def verify(
         self, run: AgentRun, bound: BoundCompletionEvidence, owners: CompletionArtifactOwners
     ) -> bool:
@@ -126,7 +174,8 @@ class ThreadsConnectControlProof:
             return False
         if not isinstance(expires_at, str):
             return False
-        state = parse_qs(urlsplit(authorization_url).query).get("state", [""])[0]
+        url = urlsplit(authorization_url)
+        state = parse_qs(url.query).get("state", [""])[0]
         if not state:
             return False
         with closing(sqlite3.connect(database_path)) as database, database:
@@ -141,7 +190,10 @@ class ThreadsConnectControlProof:
             row is not None
             and row[0] == run.tenant_id
             and row[1] == expires_at
-            and urlsplit(authorization_url).hostname == "threads.net"
+            and url.scheme == "https"
+            and url.netloc == "threads.net"
+            and url.path == "/oauth/authorize"
+            and not url.fragment
             and row[2] in parse_qs(urlsplit(authorization_url).query).get("redirect_uri", [])
             and row[3] in {0, 1}
         )

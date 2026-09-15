@@ -323,6 +323,7 @@ def configured_proof_registry() -> CompletionProofRegistry:
                 ),
                 ThreadsConnectControlProof(),
                 installation_id="configured:threads",
+                input_handoff=ThreadsConnectControlProof().input_handoff,
             ),
             ProofRegistration(
                 ProofIdentity(

@@ -442,6 +442,12 @@ media routes must use the same public HTTPS origin configured in the Meta app. T
 0600 files below the service state root; account metadata, drafts, publication receipts and metric
 snapshots are kept in the service SQLite database.
 
+When you request an account connection, Trace sends a single-use authorization link and its expiry,
+then waits. Open the link and report back in the same conversation after approval so Trace can check
+the account state. Issuing the link does not mean the account is connected, and the OAuth callback
+does not automatically resume the conversation. If an unused link expires, request a new connection
+in a new conversation; the original Run's idempotency protection remains in force.
+
 ```bash
 export TRACE_MARKETING_THREADS_APP_ID='...'
 export TRACE_MARKETING_THREADS_APP_SECRET='...'
@@ -825,6 +831,9 @@ package snapshot; check the server's health release SHA to confirm an installed 
 If a media worker cannot start its internal sandbox launcher, Slack reports that failure instead
 of implying that generation is still running. Known provider failure codes survive restart; raw
 provider output is not stored as a diagnostic. An uncertain operation is never automatically rerun.
+Trace-post can recover existing files when its host has saved completed native provider proof:
+the worker revalidates the frozen workflow and image bytes, then resumes the original result delivery.
+Partial image-event checkpoints or files without completed provider proof remain uncertain.
 Ask a follow-up in the same thread to discuss the failure. The response-only dialogue uses current
 persisted operation facts and the fixed failure reason, without executing tools or retrying work.
 The original operation retains its late-result notification binding. These answers are not fresh

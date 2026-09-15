@@ -42,7 +42,13 @@ unknown external effect is not replaced with a new Run. Review-mode occurrences 
 thread with the exact Run and approval hash. Auto mode can approve only capabilities frozen in the
 schedule capability and resource allowlists and remains bounded by its Run budget, end and occurrence limits.
 
-Threads OAuth state is short-lived and single-use. Account ownership and non-secret metadata live in
+Threads OAuth state is short-lived and single-use. A verified `threads.connect` receipt becomes a
+durable `awaiting_input` intent before model replanning or completion assessment. Channels deliver
+the exact authorization URL and expiry immediately; repeated drive or restart does not invoke the
+tool again while waiting. Recovery of an expired or consumed link delivers follow-up instructions
+without the unusable URL. This handoff does not certify a connected account: the user reports back
+after consent, then the agent can check account state. The callback does not automatically resume
+this Run. Account ownership and non-secret metadata live in
 SQLite while access tokens remain in mode-0600 files. Approved draft revisions issue opaque expiring
 URLs for only their exact creative assets. Publication writes persist each pending provider step,
 returned container ID, published ID and final permalink. A restart during an unresolved POST marks
@@ -76,6 +82,13 @@ A source checkout, fake adapter or candidate wheel does not establish live provi
 Tunnel or Linux deployment acceptance. See the [server guide](../operations/agent-server/README.md).
 
 ## Evidence-based task completion (2026-09-14 candidate)
+
+Slack admission uses the user's request as its success criterion. Task seeding deduplicates identical
+objective/criteria and does not add a generic answer-quality obligation to an execution request.
+Same-task repeated effect selections may reuse an existing successful receipt only after current
+owner proof readback, exact input/key and tool-identity checks. This does not grant another effect
+or consume another tool call. Changed tasks, failed/uncertain receipts and tenant-wide deduplication
+retain their existing boundaries. Repeated reuse counts as no new progress.
 
 `AgentRun` remains the authority for execution, approval, receipts and cumulative budget. A versioned
 `TaskSpec` names the current result, response/artifact/effect obligations and their admitted sources.
@@ -1120,6 +1133,15 @@ conflicting review language in the frozen reference bundle without inventing hum
 Its shell access is limited to the operation and required runtime files; external tools/network
 are disabled. The model reads the frozen workflow, creates new content and executes A → B → L → C.
 A started operation with an uncertain outcome is not automatically replayed after restart.
+
+The native image transport checkpoints each validated image event into the host-owned
+`trace_post_jobs.provider_progress` column, outside the child workspace. A completed native turn
+also persists `provider_result` before returning from the transport. Partial events never certify
+completion. The worker selects started or uncertain jobs with completed provider proof and validates
+the frozen workflow and current bytes before settling the original deferred operation. Invalid proof
+is retained with `trace_post_recovery_proof_invalid` and excluded from repeated recovery attempts.
+Older jobs with no completed provider proof remain uncertain; a child-written summary or loose PNGs
+cannot authorize recovery. No provider call or uncertain Slack upload is replayed by this path.
 
 The server validates the frozen documents, content/image review bindings and six canonical outputs
 before registering same-work, tenant-scoped assets. New results report `human_review_required=False`

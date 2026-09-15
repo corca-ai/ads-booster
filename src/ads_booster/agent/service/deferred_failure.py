@@ -21,6 +21,9 @@ FAILURE_TEXT = {
         "이미지 도구 응답이 중단되어 제작 결과를 확인하지 못했습니다."
     ),
     "provider_outcome_unknown": "제작 도구 실행이 중단되어 결과를 확인하지 못했습니다.",
+    "trace_post_recovery_proof_invalid": (
+        "저장된 제작 증거와 결과 파일이 일치하지 않아 복구하지 못했습니다."
+    ),
 }
 
 

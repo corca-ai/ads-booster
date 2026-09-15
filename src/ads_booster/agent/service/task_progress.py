@@ -58,7 +58,7 @@ def seed_task(
 ) -> TaskProjection:
     source = source_event_id or f"initial:{contract_sha256(run.goal)[:32]}"
     task_id = f"task:{contract_sha256({'run': run.run_id, 'tenant': run.tenant_id})[:32]}"
-    criteria = (run.goal.objective, *run.goal.success_criteria)
+    criteria = tuple(dict.fromkeys((run.goal.objective, *run.goal.success_criteria)))
     spec = TaskSpec(
         task_id=task_id,
         task_revision=1,

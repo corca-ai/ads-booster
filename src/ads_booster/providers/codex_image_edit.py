@@ -98,6 +98,7 @@ class ImageEditProcessRequest:
     reasoning_effort: Literal["medium"] | None = None
     materialize_image_results: bool = False
     max_stream_bytes: int = _MAX_STREAM_BYTES
+    on_checkpoint: Callable[[ImageEditProcessResult, bool], None] | None = None
     persist_sanitized_diagnostic: bool = False
 
 
@@ -645,6 +646,7 @@ class _StreamState:
             raise _error(code)
         if method == "turn/completed":
             self._complete_turn(params)
+            self._checkpoint(completed=True)
             return
         self._bind_turn(params.get("turnId"))
         item = params.get("item")
@@ -667,6 +669,7 @@ class _StreamState:
                 item = self._materialize(item)
             self.items.append(item)
             self.diagnostics["image_completed"] += 1
+            self._checkpoint(completed=False)
             checkpoint(f"이미지 {len(self.items)}회 생성 완료 · 결과를 정리하고 있습니다")
         if self.on_diagnostic is not None:
             self.on_diagnostic()
@@ -770,6 +773,15 @@ class _StreamState:
             turn_status=self.turn_status,
             items_view=self.items_view,
         )
+
+    def _checkpoint(self, *, completed: bool) -> None:
+        if self.request.on_checkpoint is not None:
+            self.request.on_checkpoint(
+                ImageEditProcessResult(
+                    self.thread_id, self.turn_id, self.items[0], tuple(self.items)
+                ),
+                completed,
+            )
 
     def _materialize(self, item: JsonObject) -> JsonObject:
         event_id, encoded = item.get("id"), item.get("result")

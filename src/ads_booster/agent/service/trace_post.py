@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -108,6 +108,18 @@ class _TracePostFailureDiagnostic(BaseModel):
 class TracePostProvider(Protocol):
     def run(
         self, *, workspace: Path, instruction: str, timeout_seconds: float
+    ) -> TracePostProviderResult: ...
+
+
+@runtime_checkable
+class CheckpointedTracePostProvider(Protocol):
+    def run_checkpointed(
+        self,
+        *,
+        workspace: Path,
+        instruction: str,
+        timeout_seconds: float,
+        on_checkpoint: Callable[[TracePostProviderResult, bool], None] | None,
     ) -> TracePostProviderResult: ...
 
 
@@ -226,6 +238,8 @@ class TracePostTool:
 
             if "failure_code" not in {row[0] for row in columns}:
                 _ = db.execute("ALTER TABLE trace_post_jobs ADD COLUMN failure_code TEXT")
+            if "provider_progress" not in {row[0] for row in columns}:
+                _ = db.execute("ALTER TABLE trace_post_jobs ADD COLUMN provider_progress TEXT")
             if "failure_diagnostic" not in {row[0] for row in columns}:
                 _ = db.execute("ALTER TABLE trace_post_jobs ADD COLUMN failure_diagnostic TEXT")
 
@@ -344,8 +358,9 @@ class TracePostTool:
             rows = cast(
                 "list[tuple[str,str,str | None,str | None]]",
                 db.execute(
-                    "SELECT data,stage,result,provider_result FROM trace_post_jobs "  # pyright: ignore[reportImplicitStringConcatenation]
-                    "WHERE settled=0 ORDER BY rowid"
+                    """SELECT data,stage,result,provider_result FROM trace_post_jobs
+                    WHERE settled=0 AND (stage!='uncertain' OR failure_code IS NULL
+                    OR failure_code!='trace_post_recovery_proof_invalid') ORDER BY rowid"""
                 ).fetchall(),
             )
             if not rows:
@@ -357,7 +372,11 @@ class TracePostTool:
                 candidate_job = _Job.parse(candidate[0])
                 if candidate_job.operation_id in self._active_operations:
                     continue
-                if candidate[2] is not None or candidate[1] in ("started", "generated"):
+                if (
+                    candidate[2] is not None
+                    or candidate[1] in ("started", "generated")
+                    or (candidate[1] == "uncertain" and candidate[3] is not None)
+                ):
                     selected = candidate
                     break
                 if candidate[1] == "queued" and self._acknowledged(candidate_job):
@@ -392,11 +411,15 @@ class TracePostTool:
         ):
             if row[2] is not None:
                 return self._finish(job, ToolExecutionResult.model_validate_json(row[2]))
-            if row[1] == "generated" and row[3] is not None:
+            if row[1] in ("started", "generated", "uncertain") and row[3] is not None:
                 try:
                     proof = _provider_result_from_json(row[3], Path(job.workspace))
                     success, count = self._ingest(job, proof)
                 except OSError, ValueError, KeyError, json.JSONDecodeError:
+                    _ = db.execute(
+                        "UPDATE trace_post_jobs SET failure_code='trace_post_recovery_proof_invalid' WHERE operation=?",
+                        (job.operation_id,),
+                    )
                     return self._mark_uncertain(db, job)
                 return self._complete(job, "succeeded", success, count)
             if row[1] in ("started", "generated"):
@@ -430,13 +453,33 @@ class TracePostTool:
             )
         try:
             checkpoint("Trace post 제작을 시작했습니다 · 모델 응답을 기다리는 중")
-            provider_result = self.provider.run(
-                workspace=workspace,
-                instruction=_instruction(
-                    job, TracePostInput.model_validate(job.invocation.input), self.config.model
-                ),
-                timeout_seconds=self.config.timeout_seconds,
+            instruction = _instruction(
+                job, TracePostInput.model_validate(job.invocation.input), self.config.model
             )
+            if isinstance(self.provider, CheckpointedTracePostProvider):
+
+                def persist(result: TracePostProviderResult, completed: bool) -> None:
+                    raw = _provider_result_json(result, workspace, completed=completed)
+                    with closing(self._db()) as connection, connection:
+                        _ = connection.execute(
+                            """UPDATE trace_post_jobs SET provider_progress=?,
+                            provider_result=CASE WHEN ? THEN ? ELSE provider_result END
+                            WHERE operation=? AND settled=0""",
+                            (raw, completed, raw, job.operation_id),
+                        )
+
+                provider_result = self.provider.run_checkpointed(
+                    workspace=workspace,
+                    instruction=instruction,
+                    timeout_seconds=self.config.timeout_seconds,
+                    on_checkpoint=persist,
+                )
+            else:
+                provider_result = self.provider.run(
+                    workspace=workspace,
+                    instruction=instruction,
+                    timeout_seconds=self.config.timeout_seconds,
+                )
         except Exception as error:  # noqa: BLE001 - a started image workflow is never automatically replayed.
             diagnostic = _failure_diagnostic(workspace)
             with closing(self._db()) as db, db:
@@ -816,9 +859,11 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _provider_result_json(result: TracePostProviderResult, workspace: Path) -> str:
+def _provider_result_json(
+    result: TracePostProviderResult, workspace: Path, *, completed: bool = True
+) -> str:
     root = workspace.resolve(strict=True)
-    if not 7 <= len(result.images) <= 14:
+    if not (7 if completed else 1) <= len(result.images) <= 14:
         raise ValueError("trace_post_provider_call_count_invalid")
     images: list[JsonObject] = []
     event_ids: set[str] = set()

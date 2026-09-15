@@ -210,6 +210,15 @@ def test_ack_dedupe_restart_and_thread_followup_preserve_context(tmp_path: Path)
     assert reasoning.requests[0].run_id == reasoning.requests[1].run_id
 
 
+def test_slack_task_has_only_user_requested_success_criteria(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    receive(owner, text="<@UBOT> 내 Threads 계정 연결해줘")
+    assert owner.work_once(now=NOW)
+    run = owner.commands.application.service.repository.list_runs("team")[0]
+    assert run.goal.success_criteria == (run.goal.objective,)
+    assert "Threads" in run.goal.objective
+
+
 def test_reply_to_input_uses_same_canonical_run(tmp_path: Path) -> None:
     owner, messages = setup_events(tmp_path)
     owner.commands.application.service.reasoning = AskThenStopReasoning()

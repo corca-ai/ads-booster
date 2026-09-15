@@ -7,12 +7,17 @@ import hashlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ads_booster.providers.codex_image_edit import (
     ImageEditProcessRequest,
+    ImageEditProcessResult,
     ImageEditRunner,
     SubprocessAppServerImageEditRunner,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _MIN_IMAGE_GENERATIONS = 7
 _MAX_IMAGE_GENERATIONS = 14
@@ -41,9 +46,29 @@ class CodexTracePostProvider:
     def run(
         self, *, workspace: Path, instruction: str, timeout_seconds: float
     ) -> TracePostProviderResult:
+        return self.run_checkpointed(
+            workspace=workspace,
+            instruction=instruction,
+            timeout_seconds=timeout_seconds,
+            on_checkpoint=None,
+        )
+
+    def run_checkpointed(
+        self,
+        *,
+        workspace: Path,
+        instruction: str,
+        timeout_seconds: float,
+        on_checkpoint: Callable[[TracePostProviderResult, bool], None] | None,
+    ) -> TracePostProviderResult:
         executable = self.executable.resolve(strict=True)
         root = workspace.resolve(strict=True)
         python_root = Path(sys.base_prefix).resolve(strict=True)
+
+        def persist(response: ImageEditProcessResult, completed: bool) -> None:
+            if on_checkpoint is not None:
+                on_checkpoint(_provider_result(response, root, completed=completed), completed)
+
         response = self.runner.run(
             ImageEditProcessRequest(
                 executable=executable,
@@ -88,50 +113,58 @@ class CodexTracePostProvider:
                 reasoning_effort="medium",
                 materialize_image_results=True,
                 max_stream_bytes=256 * 1024 * 1024,
+                on_checkpoint=persist if on_checkpoint is not None else None,
                 persist_sanitized_diagnostic=True,
             )
         )
-        if not _MIN_IMAGE_GENERATIONS <= len(response.items) <= _MAX_IMAGE_GENERATIONS:
+        return _provider_result(response, root, completed=True)
+
+
+def _provider_result(
+    response: ImageEditProcessResult, root: Path, *, completed: bool
+) -> TracePostProviderResult:
+    minimum = _MIN_IMAGE_GENERATIONS if completed else 1
+    if not minimum <= len(response.items) <= _MAX_IMAGE_GENERATIONS:
+        raise RuntimeError("codex_trace_post_outcome_unknown")
+    images: list[TracePostGeneratedImage] = []
+    paths: set[Path] = set()
+    for item in response.items:
+        saved_path = item.get("savedPath")
+        event_id = item.get("id")
+        native_sha256 = item.get("materializedSha256")
+        if (
+            item.get("type") != "imageGeneration"
+            or item.get("status") != "completed"
+            or item.get("failure") is not None
+            or not isinstance(saved_path, str)
+            or not isinstance(event_id, str)
+            or not event_id
+            or not isinstance(native_sha256, str)
+        ):
             raise RuntimeError("codex_trace_post_outcome_unknown")
-        images: list[TracePostGeneratedImage] = []
-        paths: set[Path] = set()
-        for item in response.items:
-            saved_path = item.get("savedPath")
-            event_id = item.get("id")
-            native_sha256 = item.get("materializedSha256")
-            if (
-                item.get("type") != "imageGeneration"
-                or item.get("status") != "completed"
-                or item.get("failure") is not None
-                or not isinstance(saved_path, str)
-                or not isinstance(event_id, str)
-                or not event_id
-                or not isinstance(native_sha256, str)
-            ):
-                raise RuntimeError("codex_trace_post_outcome_unknown")
-            output = Path(saved_path)
-            expected_directory = root / "provider-images"
-            if (
-                not output.is_absolute()
-                or output.is_symlink()
-                or expected_directory.is_symlink()
-                or output.parent != expected_directory
-                or output.name != f"{event_id}.png"
-            ):
-                raise RuntimeError("codex_trace_post_outcome_unknown")
-            resolved = output.resolve(strict=True)
-            if not resolved.is_relative_to(root) or not resolved.is_file() or resolved in paths:
-                raise RuntimeError("codex_trace_post_outcome_unknown")
-            digest = _sha256(resolved)
-            if digest != native_sha256:
-                raise RuntimeError("codex_trace_post_outcome_unknown")
-            paths.add(resolved)
-            images.append(TracePostGeneratedImage(event_id, resolved, native_sha256))
-        return TracePostProviderResult(
-            thread_id=response.thread_id,
-            turn_id=response.turn_id,
-            images=tuple(images),
-        )
+        output = Path(saved_path)
+        expected_directory = root / "provider-images"
+        if (
+            not output.is_absolute()
+            or output.is_symlink()
+            or expected_directory.is_symlink()
+            or output.parent != expected_directory
+            or output.name != f"{event_id}.png"
+        ):
+            raise RuntimeError("codex_trace_post_outcome_unknown")
+        resolved = output.resolve(strict=True)
+        if not resolved.is_relative_to(root) or not resolved.is_file() or resolved in paths:
+            raise RuntimeError("codex_trace_post_outcome_unknown")
+        digest = _sha256(resolved)
+        if digest != native_sha256:
+            raise RuntimeError("codex_trace_post_outcome_unknown")
+        paths.add(resolved)
+        images.append(TracePostGeneratedImage(event_id, resolved, native_sha256))
+    return TracePostProviderResult(
+        thread_id=response.thread_id,
+        turn_id=response.turn_id,
+        images=tuple(images),
+    )
 
 
 def _sha256(path: Path) -> str:

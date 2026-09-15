@@ -12,6 +12,7 @@ from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.agent.service.task_progress import project_task
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, AgentRunState, contract_sha256
+from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.tools.completion_proofs import (
     CanonicalCompletionProofs,
     CompletionArtifactOwners,
@@ -23,7 +24,7 @@ from tests.marketing.agent_service.completion_image_fixtures import (
     ImageExistenceAssessor,
     RepairingImagePlanner,
 )
-from tests.marketing.agent_service.test_task_completion import drain_completion
+from tests.marketing.agent_service.test_task_completion import CompletionScript, drain_completion
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,6 +33,70 @@ if TYPE_CHECKING:
         SemanticAssessmentRequest,
         SemanticAssessmentResult,
     )
+
+
+@pytest.mark.parametrize("tamper", [False, True])
+def test_repeated_completed_effect_reuses_verified_result(tmp_path: Path, tamper: bool) -> None:
+    repository = SqliteAgentRunRepository(tmp_path / "state.db")
+    images = tmp_path / "images"
+    adapter = FixtureImageTool(images)
+    planner = CompletionScript(
+        (
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="invoke_tool",
+                capability_id="creative.image.generate",
+                tool_input={"prompt": "Blue square"},
+                expected_outcome="Create image",
+                reasoning_summary="Generate",
+            ),
+        )
+    )
+    service = MarketingAgentService(
+        repository=repository,
+        registry=ToolRegistry((descriptor(now=NOW),)),
+        reasoning=planner,
+        tools={"creative.image.generate": adapter},
+        runtime_store=SqliteSessionStore(repository.database_path),
+        completion=TaskCompletionService(
+            repository,
+            ImageExistenceAssessor(),
+            CanonicalCompletionProofs(repository, CompletionArtifactOwners(image_root=images)),
+        ),
+        clock=lambda: NOW,
+    )
+
+    def invalidate(point: str) -> None:
+        if tamper and point == "verify_committed":
+            _ = next(images.glob("*.png")).write_bytes(b"changed")
+
+    service.fault_hook = invalidate
+    run = service.create(
+        CreateAgentRunRequest(
+            run_id="repeat",
+            tenant_id="trace",
+            goal=AgentGoal(objective="Create image", success_criteria=("Readable PNG",)),
+            budget=AgentBudget(max_tool_calls=4, max_cost_units=10),
+        ),
+        now=NOW,
+    )
+    run = drain_completion(service, run)
+    assert run.state is AgentRunState.AWAITING_APPROVAL
+    run = service.decide_approval(
+        "trace",
+        run.run_id,
+        approver_id="member",
+        granted=True,
+        now=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    run = drain_completion(service, run)
+    assert adapter.calls == 1
+    if tamper:
+        assert run.state is AgentRunState.AWAITING_APPROVAL
+        return
+    assert run.state is AgentRunState.BLOCKED
+    assert run.blocked_reason == "no_progress"
 
 
 class InvalidatingAssessor:

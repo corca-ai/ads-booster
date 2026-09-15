@@ -2286,6 +2286,332 @@
         "4c6347e15344ef5e3dedde7e474fc2af5ff15a6d20a4027d104f21a5f0581b65",
         "ca964aa0eeb6e6ad317aa0c967fe711993b2ae18fffeb254b563a30a79cde284"
       ]
+    },
+    {
+      "fingerprint": "64dd948f79a1a5b5085c83d9dbc1c338051a831b9b6389fdc254c4ab57c46828",
+      "reason": "Both service and Slack OAuth regressions import their actual domain owners directly. These are module dependency declarations, not shared executable logic; a re-export test facade would conceal the ownership each boundary independently configures.",
+      "memberHashes": [
+        "29be8417835c57da242b4e396386c2d63a5b4ad9b60a491b7bd854353ab3ba0b",
+        "29be8417835c57da242b4e396386c2d63a5b4ad9b60a491b7bd854353ab3ba0b"
+      ]
+    },
+    {
+      "fingerprint": "d5550fe18e1ce6b44cb8ab5b68152ea9ce0c806cf08f17137dd1d304b9a21479",
+      "reason": "Image completion repair and Threads handoff tests directly import canonical service/runtime/progress owners. The matched region is imports only; those tests exercise different effects and should not depend on a shared re-export module.",
+      "memberHashes": [
+        "529ee104445280de610fbf33b5fd2bc6345a9baa6cceb51806f385039d293da4",
+        "529ee104445280de610fbf33b5fd2bc6345a9baa6cceb51806f385039d293da4"
+      ]
+    },
+    {
+      "fingerprint": "7502068f1bf4ed38e5f6806f2ea8df5432fa0c6beb6087d54fcfaa8383327610",
+      "reason": "Production application and run-limit tests independently import task_progress symbols; the following imports differ (Threads handoff versus bootstrap completion policy). Extracting import declarations would invert production/test dependency ownership and adds no reusable behavior.",
+      "memberHashes": [
+        "1deee5abd70855be0e496b31f6a5f1cdea7649753681539b479e2d8271d22ee8",
+        "38bcd4377b245f48eb0040c645656107152e138cf5e7afc6dd0dcd16e589fa8e"
+      ]
+    },
+    {
+      "fingerprint": "fae6bd280dcbd9a0edf1e42f155997cd7683de1aa0b03cf26e59bf1d503f5821",
+      "reason": "Service recovery asserts canonical output for tenant trace after direct drive; signed Slack delivery independently reads tenant team output to compare with transport payloads. Keep these short independent observation oracles so a shared selector error cannot make both service and channel acceptance pass together.",
+      "memberHashes": [
+        "406a47c2916abf31f517b943311796ed745914e740ab4612b4cdffd275d64d67",
+        "6296ca894fbbfcd32d8502ae24e5fae92a552450076905d5a92a5861ff356206"
+      ]
+    },
+    {
+      "fingerprint": "b0e66be3fe2723e92263f3239af713c7dd8ee17803883df8c08fedd245299313",
+      "reason": "All five test bodies reuse existing setup_events/receive but guard different behavior: OAuth consent delivery/replay; correction binding while nonterminal; rejected workspace-skill writes; interrupted tool plan status; failed-followup stale-answer suppression. The modeled whole-function similarity is shared scenario structure, not a common contract; merging their assertions would couple unrelated authorization, learning and delivery oracles.",
+      "memberHashes": [
+        "80f42235c7b4b05731bad5f8c48856cff765d0b8f427acfc16b9c69a0a125b82",
+        "8df3ee0e113215d561ec0f106a38a84992323bd9b9cc5a5692fe32dfd71e4be3",
+        "9633f7c1cb2a191f6ff37eb1d56d9d448dd17e0cca1f5f0b4429484cb20bb472",
+        "a40e928d719b56230df1e4795c04b0cfebf9468c331bdafa8baca573447a4b31",
+        "c582bec5a660a64fdff0825c6f718b941c9dd243c0bf925d936ebf746513e267"
+      ]
+    },
+    {
+      "fingerprint": "78f965386f6af112320355e87ad69e0a04d2ae0a17440f2810f51445ed997234",
+      "reason": "All seven members are TYPE_CHECKING import blocks for different runtime-free dependencies: knowledge learning, procedural fixtures, multiprocessing runtime/fixtures, Slack commands, OAuth test and Trace-post test. Preserve local typing declarations and import-cycle boundaries; no executable algorithm is duplicated.",
+      "memberHashes": [
+        "144d16ada54690a9cd57c896d1e34cf6116dfae1eb9db43c198e3706ea9c2133",
+        "88bd51558ce4633ffb6ab4d9044a5287ea89e361561fd3784bf1aa5eb6f7eeb1",
+        "8afacc09c52e0e94608b0dd01703d02fb85f34e1df00c05851564a549b8a994b",
+        "a553627b50b2d60da1de3dd393020bcad0c766758b35aa4548b269de25d5847b",
+        "be8e6d6591416e3978c2f3c4fd5d2a36489f462c591e9a8c9c80983675c54c5d",
+        "eefe1930fa6fac4e8d34198d092c0008d62d92e17c34a59023ffb6d46d4057d6",
+        "f47cb6b3c5f4b423dac142585e081fb1a8aca78c592327c56a9ff68fd80841f3"
+      ]
+    },
+    {
+      "fingerprint": "adeb6ac9d72aea4de0a1e231d878370b9f80b285336588940dfa2a7db88ce9df",
+      "reason": "Service test retains an OAuth owner across service reconstruction and mutates expiry/disposition/consumed state for recovery faults. Slack test composes a separate owner inside its client closing scope with signed request authorization and its own canonical database. Keep the nine-line real-owner construction independent so shared fixture setup cannot hide misbinding across these two acceptance surfaces.",
+      "memberHashes": [
+        "f6c58dc4afe9323e8e992d2cca75be7da436182e915f13ca58ef1c8bec25f926",
+        "fa47d48ed4eb9b5a7e185ba9e4fa1731a250228b6b834a2bf587e194bec3658a"
+      ]
+    },
+    {
+      "fingerprint": "a98a7abbe5059d8b0bbd4076998802ee53cccf0a9d2557a9ded4ac1cbb5ac623",
+      "reason": "Service actor resolver binds its direct event fixture; Slack resolver binds Ev1 to the signed Slack scenario. They deliberately keep distinct source_event_id values and independently exercise tenant-to-workspace mapping. A shared actor fixture could silently erase that event-authority distinction.",
+      "memberHashes": [
+        "5afbd28c7a83c95fbbdad765db35a6d59cf6a42005200b65d253d87679f3b963",
+        "ef753e7b77697d7bc3c58a83af6487f61480365eb0deb2024c5f2dc2470f1462"
+      ]
+    },
+    {
+      "fingerprint": "6d78f63678a0179275eb256b442684c1afe9a67b6312bed50803773c367a7909",
+      "reason": "Production application and test_run_limits import the same task_progress contracts. These are direct imports, not duplicated implementation. A shared re-export would couple production dependencies to test wiring and hide the canonical owner.",
+      "memberHashes": [
+        "38bcd4377b245f48eb0040c645656107152e138cf5e7afc6dd0dcd16e589fa8e",
+        "cf785f87478a6e78892aafa7f86ad1a55367901cfc2b29d5c9a25ae86b451871"
+      ]
+    },
+    {
+      "fingerprint": "39f632bfab05b3336423f7ebf184076ccabb9a2069427dbbb3cc03513ffbf7d8",
+      "reason": "test_creative_image_edit approval helper reads the canonical invocation to grant it; the private-tenant rejection test independently reads and changes tenant scope to assert rejection before approval/assets. Keep the negative oracle independent of the happy-path approval helper; both use the canonical ToolInvocation parser.",
+      "memberHashes": [
+        "1696f2e7e0c82956d3bc1f64914c96ea3498e99a92b226a4d5b876b0233daec1",
+        "1696f2e7e0c82956d3bc1f64914c96ea3498e99a92b226a4d5b876b0233daec1"
+      ]
+    },
+    {
+      "fingerprint": "8c239ca9b8e516fa0b8244a4eddc475f074c99be99447851bc63ec3459a12faa",
+      "reason": "test_completion_repair constructs independent services for repeated-effect reuse versus premature-stop artifact repair. Their planners, budgets, fault timing and completion assertions differ; shared FixtureImageTool and ImageExistenceAssessor already provide common mechanics. Retain explicit per-scenario service composition so the reuse test cannot silently inherit the repair scenario's controls.",
+      "memberHashes": [
+        "8ec6b860c39103a1edbfe0f292bf7daee62811fc1500537fd42478673a76d107",
+        "a82db8f839539bd8f9fe0b150448129094c8154e815901313efb484cc162d800"
+      ]
+    },
+    {
+      "fingerprint": "f11d193c03f3997e726e00cd2b06ec62ce9f265bd3b1b4485159f29f09643963",
+      "reason": "_CapabilityState probes provider capabilities and must stop before emitting turn/start; _StreamState executes a turn and validates/materializes generation events. CapabilityState already delegates thread preflight to StreamState. Keep separate state machines and initial client identities so readiness cannot accidentally execute generation.",
+      "memberHashes": [
+        "c01a71c7a62084ced06cbc5fa056b451209bdf487124210d6c79b5129ce9682e",
+        "f91b3fa9e73dfbe5f80850727f30b41adee160ed2a7c5ee25a8abf9c8c54c57b"
+      ]
+    },
+    {
+      "fingerprint": "93f7e980d9756860a2353b5aed6fda63dfffd94eadd6ae3f7446001384bf39fe",
+      "reason": "Channel approval execution and require_exact_pending_approval each read the tenant/run at their own public boundary. Execution supports replayed or already-settled states; the validator specifically requires awaiting_approval and an exact invocation. Retain fresh boundary reads and their distinct lifecycle checks rather than sharing stale Run state across entry points.",
+      "memberHashes": [
+        "26e9f0e59f889687a60e912a18c15a95643dd1596dbceb48b0825fadecd34107",
+        "26e9f0e59f889687a60e912a18c15a95643dd1596dbceb48b0825fadecd34107"
+      ]
+    },
+    {
+      "fingerprint": "cd90a81f1cc5cc0c4029f9b133b518e8dcdf7a76456111814cf784702a4262a7",
+      "reason": "CreativeImageEditTool owns source-bound editing/localization, 20-unit effect accounting, uncertainty readback and reviewer abandonment. TracePostTool owns frozen workflow bundles, 7-14 native events, six localized output assets, per-event provider checkpoints and its notification ledger. Both settle through MarketingAgentService.complete_deferred already; merging their job classes would couple incompatible schemas, recovery rules and proof owners.",
+      "memberHashes": [
+        "8017fabec625a4f1dab06d18e8aa3803f4079acc003dfceb3cbb508a158e96ee",
+        "b66a6f06f64266c1cc3f0b0902b94b3696649d047ba3376dc43d11e4d6999429"
+      ]
+    },
+    {
+      "fingerprint": "2a129851c65fde29e0db13c1cb2912d74cf8b6fc32f11d014d3f2e3e39f3dafd",
+      "reason": "Single-image edit validates one provider item with its edit-specific error contract. Trace-post validates each item in a bounded sequence and additionally requires materializedSha256, event-derived filenames and unique paths. Shared type/status predicates do not make the one-image readback and multi-image native-provenance validators interchangeable.",
+      "memberHashes": [
+        "738dc902d4378df48ed128d462566631f55f0cb084795785dea49f9758a0afa8",
+        "ad2392ac52c9cb38072f7f6b39555dd942ec8b5f3d273c790c75312fa34c1949"
+      ]
+    },
+    {
+      "fingerprint": "2f458e43aa19423aefe098121e4feea38a9d6ed7738b33428a6fe1705c8431bd",
+      "reason": "Slack normal input continuation and crash recovery deliberately exercise distinct admission routes. The normal test drains an ordinary reply and checks same-Run continuity; the restart test explicitly claims and persists a MessagePlan before owner.recover and checks idempotent replay. Their repeated initial conversation is an independent control, not a shared implementation.",
+      "memberHashes": [
+        "5e8dbcbd430e61bd1e89963a52a1cc07381fed952815f88b432969aab5d4a066",
+        "e322ace9bd55bc193a968dd5cbd71d8065c11dc803ab1ce5e23db8ffbfda326c"
+      ]
+    },
+    {
+      "fingerprint": "f4b719e43ce90a3d17a7d804bb69ce47412ed0a84ec830847f405831c873c029",
+      "reason": "Repeated-effect repair tests actual rooted PNG proof and no-progress accounting; work_continuation tests compaction retaining authenticated user input while excluding nested evidence. The detector spans type-checking imports and distinct test bodies. Their shared canonical request/service types are already reused; combining scenarios would conflate artifact-effect and conversation-lineage oracles.",
+      "memberHashes": [
+        "706bea6b94edad1015f3ab73e009d67b7e102def07f4662f0c1722b228b359fc",
+        "f386f5a18a5654b291ca63af7f793d3b263e8e651292c8b941814bed35f0cc3f"
+      ]
+    },
+    {
+      "fingerprint": "5b8ed53d61a1c0d12cefce8e63a87da14788e2467110243260ac4556a1baaed1",
+      "reason": "SlackEvents._plan admits authenticated actions and may create/revise work; _summary only projects persisted task state and readable approval/status text. Repeated Run-state predicates protect different command-versus-query boundaries. Keep the renderer free of admission behavior and retain existing shared pending_approval/result_for helpers.",
+      "memberHashes": [
+        "e0cabfb7cc62ef34a1a63aa850bbf4962551eed12be00c956c820f75a4ef5186",
+        "e53b9bb0de47a3ae19ee3ceab0014b204033a3cbfab75875fb3d325fdb9261e3"
+      ]
+    },
+    {
+      "fingerprint": "82b2bb2ea87a396a15150495f179418b766a6d84096a422030f324ba47e1054b",
+      "reason": "All 54 current member spans were parsed and contain only TYPE_CHECKING import statements. Each module declares its own annotation dependencies on canonical types; no runtime algorithm is copied. A common import barrel would erase dependency ownership and introduce cross-layer/test coupling rather than remove implementation duplication.",
+      "memberHashes": [
+        "0e282ff87c68ab34140858b8852579de02001ed5c26d6fa2947b055f603c7b7a",
+        "0e9c7936403f917e59050820cfd44d5f450371842111ab0fd040637f73adf121",
+        "148bc8fc9b0777bf4762d962538055872c0976289bb18b201aee115e2903d7be",
+        "163e230463905153a5663c943d497640edad3ef2ee45c460d1fc695871e37121",
+        "1b7b4ccb365113fb383e116d5eb74778fe655e169e6e312e2c52b420f0787097",
+        "1cf69281b521bd0c3aa1e57fba3daa7ee3abf893b84b04f1a8a54e38006ddf13",
+        "23a63d2044213263102b0c42a268e5f8012e57eaa4b9ea512b0204801ab10643",
+        "2c563ca6eb47142369854fccf9cfa691dc200f633fd2b8eb121895fe959ff8a6",
+        "2ca5aef2e89b6ef963e66e000837b5c0f292552a2efc65bb9bf7c92d2a6a6ff5",
+        "3230780f6b2c39d7858befc0138f2325bcbd03d75ec3eaa0cf9acb91aa8c8ede",
+        "385e85f4172f3c4f0f8c57f9478a5307b8bc62e5879fc8948697c09f1927f9b2",
+        "39d4fd2cbbd745d455309ab73b6b16218996e1d686b8cd652f824a6243a88356",
+        "3c07f0d105dbb69ab81ee6b783a4fe3f5a7a77d27024580ac9300f7e1c15f6eb",
+        "3d36950c654cb761a463f40df792b58379eb4df89bf1701974f72645d4e06775",
+        "4004ac77981c0dcf72dbe532690055de7215840eec52bfb01ec1503bae7318cc",
+        "44c1f3133a01858d378829efe3adf1f33f4665df517098bfe3009bceff832f8d",
+        "4524d8414c4f363fc8aa1438adcbfc2889b52d447af1530ac779d33f063103f3",
+        "45e5adbffbd8a03576f4345d4804d1bcf7622af13be4c73f68051ac05f7456de",
+        "47fb09d902612d404d10c541e202f10452a33a38788fcf5bdd37a5ae86b66aa8",
+        "4c54a78eadec435be9051dc9392d2c1cd68beda7d429d5b2f7a08107cfb2572e",
+        "4f659a5cf77109c46a1283f8d2e5f8dc6bc1b5cffc0359ad5f487281710ada36",
+        "4ff16e8e9a805e4257788800fff214fdaa34c071cd1a7f1d4fd6c0387f815216",
+        "55dda5f873472eef7d3ad18215cbc95d141f125350e55ce8c436aeb7ce727292",
+        "5cd51c73a1309ae5c6aa91e01ebdb56fdeeef99191c25b260a3d352cf8d1835d",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "65dba2dfec42dcb9af37a73b62733bc0a4389aef2f1ddaecfba473e6f7909487",
+        "6f567d2ef3ca63f245fb0c8c8930da33be1a4b80f3e6eec67172be3fd4904645",
+        "72bc9cb554253c9dbba8aa2e4846d6c1459ce48ec3229737f3ee07bcb0b579b2",
+        "7bb0c925657031371ac42933aab32570e9f1ae9225469486f7da5329ba9fbf93",
+        "7c4ada1bda5c98fd5986507825090de5b093a76194b71029926b3c51b59e2ed0",
+        "82553b8ab2cd0a62b49789c1f1d347203706fb018a7b8ca62b95238903dc4445",
+        "8c3b99957635a024f4a61fac3ffa5d4f9a15a2927a576fccedd31c4c07cd0023",
+        "8d262a363221356044efa7038a7b83d4beaddffd473bbba5e143800c1355b133",
+        "9595f6aad418f4e43f0507e8a84c2e336ef0a956396552f007a5620e3e4a441f",
+        "9ff38f6698d848050d060decba8f4312d5cc68ee1af2dca2fec39352abb85bfb",
+        "a2d29cb429600ad4ac9e969d392d9ca2172404c2465c31b60d1abb4e135952f0",
+        "a3df6dbe2dcaa3e79e0f5f97a3a0afb30fc2ba0a474530d2d20231fae54bc802",
+        "a4fbc6cc2ec7b6993a86d49fa11d826963f142411a2e0c6b70453e23d9f3715a",
+        "aa81266efc3322a91808c93751bf0ef51b727dd3e8eedc0e6f67b124415b1ae9",
+        "ae9765f2db2fb810ada71703457e9e91b3e3ab7e92caf97c0dc4c0febf24ba4a",
+        "aeb633fd6df156e6baeca193186363ea652ccb93168d440206e4ef6e82d0defc",
+        "b1a93e3ee49e58da253fbcc853206fc6743d4e48199fd4403ee6f602f8bebd72",
+        "b2c939d5773b8dc238e335f17cd758f00497c4f5e11efa19877be935d2678dd4",
+        "b7ce45f819dbbcb72e8b2db3c965a993af860eeb0d662b318c652f4ba44bb7be",
+        "b88842e1f5125e009b43538f6819e75bf9da7d72654dee3e8c5f97c56775dd5c",
+        "bf656b8f242c0c894ff6368dbb927285820f80a5aedbc162ec62678320ab5f9e",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3daec434dcf4cf537fbc20a6009038cdcd42ecb2601c7a575affa0d77b45873",
+        "e0b62b8b2a5b4f2adde275edd64dfbc2beafef3fd162f57a7561721f89a067eb",
+        "f731ce6b9b02662b37cd989a071c4230b5cf2a9f874cb10e66c39eeb6de47ab0",
+        "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
+        "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660"
+      ]
+    },
+    {
+      "fingerprint": "89584f463c2bfbac64fe37ad1d4bbb1174ec6b299138e9c9d9f3662d5db093fc",
+      "reason": "Delivery-review tests retain independent PaidExecutionTarget values: one verifies budget-approval revision invalidation, the other schedules two reservations and verifies capacity release on cancellation. Explicit account/content/audience fixtures make each oracle readable and prevent a fixture change from synchronizing independent approval and budget-accounting controls.",
+      "memberHashes": [
+        "4f33628b3ef55de88028e40b0491be341d539c6091afd21ae867de901f3c4115",
+        "cc2e9ee6af3648da6d8899b57e997898b53e078b3475d234fc67af661769f4de"
+      ]
+    },
+    {
+      "fingerprint": "905d38f157d83f59e21276a6ae9afa9cd092fd39c2aad425c3320392bd4c3139",
+      "reason": "Memory view _target_state is a scoped read of completion/error state; _claim_target runs BEGIN IMMEDIATE and selects pending work before CAS lease claiming. Similar parameter binding uses different SQL/result contracts and transaction ownership. Keep observation outside the claim transaction; canonical scope-key validation is already shared.",
+      "memberHashes": [
+        "0e75f518192b66e9fbd0995d566aeebca4d60234daee7ecd565c3d659e2ad9d2",
+        "46f9da7983102122496b2e353b200e05f4e5dbc196b62d5d7ad7125e2e699c39"
+      ]
+    },
+    {
+      "fingerprint": "9eefd5f4798254611afcf62297d308747bda31ee764fcb18fe567de884fa7fa4",
+      "reason": "Provider diagnostic write-failure tests independently construct a blocked diagnostic path and an unrelated temporary file. One uses seven successful native events, the other an empty turn and expects the original provider failure. Retain independent opposing oracles proving diagnostics neither mask failure nor replace success; the native server fixture is already shared.",
+      "memberHashes": [
+        "4d584c90dd7527cbdd4cd03dc2b9c5d5c1bc6800332c11378588ec5cc530cafe",
+        "4d584c90dd7527cbdd4cd03dc2b9c5d5c1bc6800332c11378588ec5cc530cafe"
+      ]
+    },
+    {
+      "fingerprint": "6f8e15a8f4c585f1295cb16f120ffb959991af24696a293acf44dab3396cb722",
+      "reason": "Slack production-approval tests explicitly compose the same effect fixture for different authority scenarios: the normal request author grants consent, while another member's review must not grant consent for that author. setup_events and the effect descriptor/adapter are already shared; keeping per-test composition makes the identity changes and negative authorization oracle visible.",
+      "memberHashes": [
+        "6eb03691384bc70272b7232dee0905bed97dfebc4157e9dfd8f7c8a8bf978fbf",
+        "e453e7ad889a1e94eb7c5a0abc4acbdb775a095074d37e229b0e7ed0148f0102"
+      ]
+    },
+    {
+      "fingerprint": "835a7e86097d41a57800636fa997d88b404156131e1714e938586771d5971c71",
+      "reason": "_reject_tool_plan writes an OBSERVE record for a model proposal that was never dispatched, with repair-budget state; _persist_deferred_ack writes an EXECUTE record binding an admitted deferred operation. Both intentionally use the existing _append_step/_step/_record primitives. Do not merge these semantically opposite pre-dispatch and post-admission ledger transitions.",
+      "memberHashes": [
+        "e6edb8c5642a3404da08310f3ef01931b7d49edff48ba430a34b850c04c7d2ce",
+        "ebbd26a3b357bbc7a2b2abd0f0fb1cc88f6c8ff167ab815849fa9feb5af0904c"
+      ]
+    },
+    {
+      "fingerprint": "2b9e30f8e02f13d72f2acb88ef3f18b243c776eed75be9e21d72ab252a38851c",
+      "reason": "The two provider test modules import shared production image-process contracts and transport test helpers directly. The edit and trace-post suites have different evidence-count and provenance requirements. Import statements are dependency declarations, not another implementation; retain their canonical module ownership.",
+      "memberHashes": [
+        "ca4321d23ee4f415be31f7de3c6adae79defc82627fe1938f4bc127271e845a0",
+        "dff9e395f97e284a6596bd626ccdd56ec841768e846e0dcd6e4d66dd5f4f049c"
+      ]
+    },
+    {
+      "fingerprint": "3f62ef1d103c0fa4c7564b2ab823a1494869c4411b755eb4c864fe3099ca7389",
+      "reason": "After the main merge, _StreamState additionally records sanitized item diagnostics and native checkpoints while executing generation; _CapabilityState returns only readiness and suppresses turn/start. CapabilityState already delegates thread preflight to StreamState. Preserve the no-generation readiness boundary rather than combining their execution state machines.",
+      "memberHashes": [
+        "2dba808a13a3c7eed102513311c1ab4d91122c534522924531469b7489f42dd0",
+        "c01a71c7a62084ced06cbc5fa056b451209bdf487124210d6c79b5129ce9682e"
+      ]
+    },
+    {
+      "fingerprint": "c44bec92337c11c896078f0986a9fccb89b13d67fafa86b325936c46ab0d457f",
+      "reason": "CreativeImageEditTool owns source-image edits/localization, fixed 20-unit accounting, review abandonment and edit readback. TracePostTool owns frozen multi-image bundles, six outputs, provider progress/completion proof and sanitized diagnostic persistence. They share canonical complete_deferred settlement but have different queue schemas, proof contracts, cost and uncertainty policies; retain those domain owners.",
+      "memberHashes": [
+        "b66a6f06f64266c1cc3f0b0902b94b3696649d047ba3376dc43d11e4d6999429",
+        "db919eca1eb0ef00ec1274c89cbd5e2c85504fd04949d42e262895b40534ef4d"
+      ]
+    },
+    {
+      "fingerprint": "1c0fc53f494156265a36ed5f98845b43ef5a4f694ee96443f2b60497b124487c",
+      "reason": "Each member is the assertion that its HTTP fixture receives timeout 30. Public unauthenticated updater pagination, updater HTTP-error redaction and authenticated GitHub issue creation are independent transport contracts. Sharing a test assertion across them would couple unrelated owners without removing runtime duplication.",
+      "memberHashes": [
+        "e736c6b4903ed585e5957234b6fe07c33c3f4371c04ce493bf55d51f1a1d5698",
+        "e736c6b4903ed585e5957234b6fe07c33c3f4371c04ce493bf55d51f1a1d5698",
+        "e736c6b4903ed585e5957234b6fe07c33c3f4371c04ce493bf55d51f1a1d5698"
+      ]
+    },
+    {
+      "fingerprint": "17834e209c5f76593617926bf361955102ae23b893120864dd62e57e77a315e9",
+      "reason": "MemoryRevisionTarget and SkillRevisionTarget are separate tagged path variants: one validates document_id and writes teams/.../revisions, the other validates skill_id and writes teams/.../skills. bounded_id already owns shared validation. Keep explicit variant field names and namespaces so malformed inputs retain correct diagnostics and paths cannot cross content owners.",
+      "memberHashes": [
+        "21da38909df2d98034bee4abb6838bd746b6c0c2740023721755ea016844c22f",
+        "4bb5fc8034af675dfba782f9b10342f0ed75f412628d076be5a9f355d5385639"
+      ]
+    },
+    {
+      "fingerprint": "689cf87f99f2b7eec12f50c3179525fee6e61cde6d37b5dfe3d9d92a1ecaf6b3",
+      "reason": "The initialized/MCP handshake occurs in generation and readiness state machines. Generation additionally advances diagnostic phase and proceeds toward a real turn; readiness first requests modelProvider/capabilities/read and must never issue a generation turn. Existing _mcp_request, _check_mcp_inventory and _exchange are shared; retain these distinct protocol branches.",
+      "memberHashes": [
+        "273adfc7b70a7e585e1fcbdb5961b9148eebb1d73be4e29cdc5ad4c290eb5a3f",
+        "cedffecb3b885387bdbeeef0182388932ed72bd967d008e839626183c9350ae2"
+      ]
+    },
+    {
+      "fingerprint": "53a95a4e6399a745a215a50ee1ad787a26a2fcc1c9cd0298f678cbf08185640d",
+      "reason": "task_results imports contracts to render a persisted delivery result; waiting_dialogue imports canonical task contracts to create a tools-disabled response-only turn. The candidate crosses import/declaration boundaries. They already import one FAILURE_TEXT owner; combining these modules would mix delivery projection with dialogue reasoning authority.",
+      "memberHashes": [
+        "2cca110a0360c31d473265cc74ce03f3f015a5246da5a917d984f1758cec6864",
+        "5d1ab51de59fc4a325cb9ecb47473356784eedc013e9307160712654966b0469"
+      ]
+    },
+    {
+      "fingerprint": "ccb29c20f11d42be99f67f71b770f8db692f8f407c766a98c88cfb4a895849eb",
+      "reason": "Application lifecycle and waiting_dialogue directly import the shared run/task contracts they consume. Application owns admission, execution and recovery; waiting_dialogue must remain response-only with no effect dispatch. The selected overlap is imports and declaration scaffolding, not a copied execution algorithm; a common barrel would obscure that authority boundary.",
+      "memberHashes": [
+        "4bacf0b054fd3120e9794e8f751e3c42714c17b30915799ddaf2fb755d1ab7f6",
+        "903cf7777faa300c140f4d6e14fd0931d6e8e82c16f219249e17c2bcef4295cb"
+      ]
+    },
+    {
+      "fingerprint": "b6dba6fbb2b5e0298a89a792a0fdb5bccbd07f9cceb481c160bfba5f1d9b53ec",
+      "reason": "The family spans application/Slack import blocks and the deferred_failure FAILURE_TEXT mapping. The failure messages have one canonical definition and both consumers import it. There is no duplicated failure mapping to extract; retain the worker/service/channel dependency direction and the shared diagnostic owner.",
+      "memberHashes": [
+        "1cb1161f23a50e441e01f576644a5db44af400ffafceff0fee9ed7155224935e",
+        "acfe555feda831ca1abfe858e7fc49c49b647abcd616c10c6c310020803f1243",
+        "ce4e19a8b89ad2c87b31372691cb0c2760af51f0211234355e4f6d0224347a03"
+      ]
     }
   ]
 }
