@@ -5,19 +5,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.runtime import SqliteSessionStore
-from ads_booster.agent.service.application import CreateAgentRunRequest, MarketingAgentService
+from ads_booster.agent.service.application import CreateAgentRunRequest
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.agent.service.task_progress import project_task
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, AgentRunState, contract_sha256
 from ads_booster.contracts.reasoning import ReasoningDecision
 from ads_booster.contracts.task_completion import ObligationAssessment, SemanticAssessmentResult
-from ads_booster.tools.completion_proofs import CanonicalCompletionProofs, CompletionArtifactOwners
-from ads_booster.tools.image_generation import descriptor, read_artifact
+from ads_booster.tools.image_generation import read_artifact
 from tests.marketing.agent_service.completion_fixtures import NOW
-from tests.marketing.agent_service.completion_image_fixtures import FixtureImageTool
+from tests.marketing.agent_service.completion_image_fixtures import (
+    FixtureImageTool,
+    image_completion_service,
+)
 from tests.marketing.agent_service.test_task_completion import (
     CompletionScript,
     drain_completion,
@@ -87,19 +86,7 @@ def test_artifact_assessment_continues_incomplete_multi_image_work(
             stop_decision("Images ready"),
         )
     )
-    service = MarketingAgentService(
-        repository=repository,
-        registry=ToolRegistry((descriptor(now=NOW),)),
-        reasoning=planner,
-        tools={"creative.image.generate": adapter},
-        runtime_store=SqliteSessionStore(repository.database_path),
-        completion=TaskCompletionService(
-            repository,
-            DistinctImagesAssessor(count),
-            CanonicalCompletionProofs(repository, CompletionArtifactOwners(image_root=images)),
-        ),
-        clock=lambda: NOW,
-    )
+    service = image_completion_service(repository, planner, adapter, DistinctImagesAssessor(count))
     run = service.create(
         CreateAgentRunRequest(
             run_id="multi",

@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING, Literal
 from PIL import Image
 from pydantic import TypeAdapter
 
+from ads_booster.agent.core.registry import ToolRegistry
+from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service.application import MarketingAgentService
+from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.contracts.agent_run import contract_sha256
 from ads_booster.contracts.reasoning import (
     ReasoningDecisionV2,
@@ -22,14 +26,46 @@ from ads_booster.contracts.task_completion import (
 )
 from ads_booster.contracts.task_progress import TaskObligation, TaskProposal
 from ads_booster.contracts.tool_capability import ToolExecutionResult
+from ads_booster.tools.completion_proofs import CanonicalCompletionProofs, CompletionArtifactOwners
+from ads_booster.tools.image_generation import descriptor
+from tests.marketing.agent_service.completion_fixtures import NOW
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ads_booster.agent.core.ports import (
+        ReasoningProvider,
+        ReasoningProviderV2,
+        SemanticAssessor,
+    )
+    from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
     from ads_booster.contracts.agent_run import ToolInvocation
     from ads_booster.contracts.tool_capability import ToolDescriptor
 
 _EVIDENCE_HANDLE = TypeAdapter(str)
+
+
+def image_completion_service(
+    repository: SqliteAgentRunRepository,
+    planner: ReasoningProvider | ReasoningProviderV2,
+    adapter: FixtureImageTool,
+    assessor: SemanticAssessor,
+) -> MarketingAgentService:
+    return MarketingAgentService(
+        repository=repository,
+        registry=ToolRegistry((descriptor(now=NOW),)),
+        reasoning=planner,
+        tools={"creative.image.generate": adapter},
+        runtime_store=SqliteSessionStore(repository.database_path),
+        completion=TaskCompletionService(
+            repository,
+            assessor,
+            CanonicalCompletionProofs(
+                repository, CompletionArtifactOwners(image_root=adapter.root)
+            ),
+        ),
+        clock=lambda: NOW,
+    )
 
 
 class FixtureImageTool:
