@@ -5,6 +5,14 @@ Last reviewed: 2026-09-14
 
 ## Focused checks
 
+For Threads OAuth handoff, select service `test_threads_connect_handoff.py`,
+`test_threads_connect_proof.py`, and channel `test_slack_threads_handoff.py`. Verify the real OAuth
+state and canonical receipt bindings, immediate waiting URL delivery, VERIFY restart, expired and
+consumed link suppression, failed/uncertain output rejection and exact provider endpoint/tenant.
+The signed Slack scenario must deliver in the original thread and remain idle after restart.
+Repeat these tests from a fresh non-editable wheel outside the checkout. Fixture Slack delivery and
+local OAuth state issuance do not prove live Meta consent, callback completion or live Slack.
+
 For the September 15 Slack channel audit, see the complete
 [thread inventory and dispositions](slack-channel-audit-2026-09-15.md). Select channel tests
 `test_slack_events.py`, `test_slack_images.py`, `test_slack_drive.py`,

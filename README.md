@@ -442,6 +442,12 @@ media routes must use the same public HTTPS origin configured in the Meta app. T
 0600 files below the service state root; account metadata, drafts, publication receipts and metric
 snapshots are kept in the service SQLite database.
 
+When you request an account connection, Trace sends a single-use authorization link and its expiry,
+then waits. Open the link and report back in the same conversation after approval so Trace can check
+the account state. Issuing the link does not mean the account is connected, and the OAuth callback
+does not automatically resume the conversation. If an unused link expires, request a new connection
+in a new conversation; the original Run's idempotency protection remains in force.
+
 ```bash
 export TRACE_MARKETING_THREADS_APP_ID='...'
 export TRACE_MARKETING_THREADS_APP_SECRET='...'

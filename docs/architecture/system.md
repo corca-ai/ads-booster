@@ -42,7 +42,13 @@ unknown external effect is not replaced with a new Run. Review-mode occurrences 
 thread with the exact Run and approval hash. Auto mode can approve only capabilities frozen in the
 schedule capability and resource allowlists and remains bounded by its Run budget, end and occurrence limits.
 
-Threads OAuth state is short-lived and single-use. Account ownership and non-secret metadata live in
+Threads OAuth state is short-lived and single-use. A verified `threads.connect` receipt becomes a
+durable `awaiting_input` intent before model replanning or completion assessment. Channels deliver
+the exact authorization URL and expiry immediately; repeated drive or restart does not invoke the
+tool again while waiting. Recovery of an expired or consumed link delivers follow-up instructions
+without the unusable URL. This handoff does not certify a connected account: the user reports back
+after consent, then the agent can check account state. The callback does not automatically resume
+this Run. Account ownership and non-secret metadata live in
 SQLite while access tokens remain in mode-0600 files. Approved draft revisions issue opaque expiring
 URLs for only their exact creative assets. Publication writes persist each pending provider step,
 returned container ID, published ID and final permalink. A restart during an unresolved POST marks
