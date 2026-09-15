@@ -40,6 +40,7 @@ from ads_booster.agent.runtime import (
     tool_call_payload,
     tool_receipt_from_event,
 )
+from ads_booster.agent.service.artifact_completion import artifact_candidate
 from ads_booster.agent.service.completion_evidence import CompletionEvidenceReader
 from ads_booster.agent.service.deferred_failure import FAILURE_TEXT
 from ads_booster.agent.service.drive_work import DriveAdmissionConflict
@@ -1798,12 +1799,20 @@ class MarketingAgentService:
                 else None,
             ),
         )
+        candidate = (
+            None
+            if paused or progress.disposition == "blocked"
+            else artifact_candidate(run, task, receipt, self.completion)
+        )
         task = TaskProjection(
             task.spec,
             progress.model_copy(
                 update={
+                    "candidate": candidate,
                     "next_action": "wait"
                     if paused or progress.disposition == "blocked"
+                    else "assess"
+                    if candidate is not None
                     else "plan",
                 }
             ),

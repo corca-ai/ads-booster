@@ -5,6 +5,17 @@ Last reviewed: 2026-09-14
 
 ## Focused checks
 
+For foreground latency repair, select service `test_sqlite_repository.py`,
+`test_artifact_completion.py`, `test_completion_repair.py`, `test_task_completion.py`,
+`test_completion_supersession.py`, `test_threads_connect_handoff.py`, and provider
+`test_codex_reasoning.py` / `test_codex_reasoning_v2.py`. Include `test_slack_images.py` and
+`test_trace_post_bundle.py` for artifact delivery. Verify single-artifact assessment before
+regeneration, incomplete two/four-image continuation, retained final assessment budget, proof
+tampering, concurrent copy isolation, cache eviction, other-writer visibility and tenant scope.
+Provider projection tests compare parsed fields and unchanged canonical receipt hashes, not prose.
+These synthetic fixtures make no image/model calls and are not live-account E2E or production
+latency measurements.
+
 For Threads callback errors select `test_threads_oauth_callback.py`, `test_http_api.py`, and
 `test_threads_privacy_concurrency.py` in `tests/marketing/agent_service`. The provider-wire fixture
 preserves the actual OAuth fence, exception propagation, callback response, account repository

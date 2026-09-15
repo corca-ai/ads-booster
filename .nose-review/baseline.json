@@ -2620,6 +2620,166 @@
         "186cbffa71929bfb5f1a5407747fb9d0c39b0a5b1a4bf30e9cb13aadcf256458",
         "7d287fa5e61d9a7ec0bb53d0609899d8795aafbba86ddd718df57538a3c97cbd"
       ]
+    },
+    {
+      "fingerprint": "d245770e62ae531334f9087f8462a304a98ddd0ad7eb08576eca262568bd1705",
+      "reason": "The single-image repair and multi-image completion tests explicitly import public run and task APIs. Their shared service construction now lives in image_completion_service; an import barrel would hide each independent test dependency.",
+      "memberHashes": [
+        "480386a1f21af0bf580bd8174f978763602e763ac5cccec9e5e6fde415b2005d",
+        "480386a1f21af0bf580bd8174f978763602e763ac5cccec9e5e6fde415b2005d"
+      ]
+    },
+    {
+      "fingerprint": "51daf7ea0dd75f5de58c6cd7f75733f32b6d9a2a57b91a3b2fca6130fb29b025",
+      "reason": "ImageExistenceAssessor checks the exact single-blue-image objective and any verified artifact. DistinctImagesAssessor independently requires the requested number of distinct attachment digests and enough verified evidence. Sharing a pass predicate would collapse the negative control that one image cannot satisfy a multi-image request.",
+      "memberHashes": [
+        "973db58cd21ca28508d6e4807f1d6e9346210b99df808d530b9489b6a8ed513e",
+        "ed0b960e33b96b9ea9e49579e52a9bd1850970f170afd16db2cfa0edff81d636"
+      ]
+    },
+    {
+      "fingerprint": "ec798f5c0ad353dc855583dbab545f7ff1db93e5d487929361e2ce5c94769781",
+      "reason": "These spans are future annotations and standard datetime typing pytest imports in knowledge channel-ingress and image-repair tests. They declare independent dependencies and no shared runtime operation; do not introduce a cross-domain import wrapper.",
+      "memberHashes": [
+        "0a919d58c3007c92b19ea46c7a3f13b13cc43593fe8c753923ffd2f6f261f8e2",
+        "98f475a1e68a9f45e5d8e1feec9bd6d241a2d30afe9a7624eb6376622787308c"
+      ]
+    },
+    {
+      "fingerprint": "94d78333aceea63127de71e118a4d9b05940de08ed88d4b7648fc84d45f75113",
+      "reason": "FixtureImageTool supports no-effect and distinct-color image tests in a caller-supplied root. Installed RehearsalTool separately supports fixture.prepare and writes numbered invocation manifests under a service image root for installed-model evidence. Preserve the standalone rehearsal boundary rather than importing unit fixtures into the installed canary.",
+      "memberHashes": [
+        "f8a681e61dd09ababd996ca023c36d333fa35c971067ac0c9d14098440e0fc15",
+        "fb56fd448e2f6a135294c21a207f5c8aa426db729b9b5a30cf412c7a3e45abda"
+      ]
+    },
+    {
+      "fingerprint": "5647dc81139e7befcf351b53410b938f794a56090f82854d9092dccfdaf4643e",
+      "reason": "The repair span injects verify-time artifact tampering and checks exact-input reuse or reapproval. Work continuation instead compacts evidence and checks authenticated revisions cannot promote nested instructions. Similar test skeletons do not share the tested state transition or oracle; common image construction has already been extracted.",
+      "memberHashes": [
+        "cf7771c17988503b188dc55c5a519b69fa63eaa633a954813bc78dc36e44a1bd",
+        "f386f5a18a5654b291ca63af7f793d3b263e8e651292c8b941814bed35f0cc3f"
+      ]
+    },
+    {
+      "fingerprint": "aa0b2de48b8a4c3ae74ddcb21b01db0cb66f940a53ec995aa2ea8474ec0ff0b4",
+      "reason": "The only repeated statement clears the shared payload_hash_calls fixture after each test-specific setup. Eviction measures three validations while repository reuse measures one after persistence. Keep the explicit measurement boundaries; the duplicated hash instrumentation itself is now one fixture.",
+      "memberHashes": [
+        "0f1eaa047b2103d6af983af0464e187595b91e1276213cf7ec3f0434ff7d56e5",
+        "0f1eaa047b2103d6af983af0464e187595b91e1276213cf7ec3f0434ff7d56e5"
+      ]
+    },
+    {
+      "fingerprint": "331b8317757106c52e952d048a765312f8900bd26f087be797a5b7ebf6d5387d",
+      "reason": "The multi-image scenario grants one approval per iteration and asserts each intermediate call count; the single-image regression grants once and asserts no second planner call. Keep explicit stimulus order and approval assertions independent, with shared service setup already centralized.",
+      "memberHashes": [
+        "a85b2fe590430aa227388b62b8509db03dd56867a82b4282f937310d0d55253f",
+        "ba0419bab7a3c503a18daba73ebd7806602f1daa845d454feed58be17ed0a7a3"
+      ]
+    },
+    {
+      "fingerprint": "b0747c3d13c7af73ae934b49b1c962acb8b809e7356abf590a99397a09cd6a1d",
+      "reason": "The tampered-receipt reuse test and multi-image test exercise the same public approval API for different outcomes: reapproval without reusing changed bytes versus successive distinct images. A shared drain-and-approve helper would hide the per-stage state and invocation-count assertions that distinguish those regressions.",
+      "memberHashes": [
+        "134619c75049e1eaa3dabf075c4826c838679a80ebddc3b6ed33067f7947fc6a",
+        "c60c1b24549e006b0ddfd6e26f8499082203c78b3cfc61c4acab7ce977e76efd"
+      ]
+    },
+    {
+      "fingerprint": "36bdf506a60b52851e038885e86f64c6d1d6119598bf2030188dfc078079cc48",
+      "reason": "All listed members are TYPE_CHECKING-only import declarations across separate contract service knowledge channel tool and test owners, including the new image-service fixture. They intentionally preserve module-local typing without runtime imports or a cross-layer barrel; no duplicated executable algorithm is present.",
+      "memberHashes": [
+        "0e282ff87c68ab34140858b8852579de02001ed5c26d6fa2947b055f603c7b7a",
+        "0e9c7936403f917e59050820cfd44d5f450371842111ab0fd040637f73adf121",
+        "148bc8fc9b0777bf4762d962538055872c0976289bb18b201aee115e2903d7be",
+        "163e230463905153a5663c943d497640edad3ef2ee45c460d1fc695871e37121",
+        "1b7b4ccb365113fb383e116d5eb74778fe655e169e6e312e2c52b420f0787097",
+        "1cf69281b521bd0c3aa1e57fba3daa7ee3abf893b84b04f1a8a54e38006ddf13",
+        "23a63d2044213263102b0c42a268e5f8012e57eaa4b9ea512b0204801ab10643",
+        "2c563ca6eb47142369854fccf9cfa691dc200f633fd2b8eb121895fe959ff8a6",
+        "2ca5aef2e89b6ef963e66e000837b5c0f292552a2efc65bb9bf7c92d2a6a6ff5",
+        "3230780f6b2c39d7858befc0138f2325bcbd03d75ec3eaa0cf9acb91aa8c8ede",
+        "385e85f4172f3c4f0f8c57f9478a5307b8bc62e5879fc8948697c09f1927f9b2",
+        "39d4fd2cbbd745d455309ab73b6b16218996e1d686b8cd652f824a6243a88356",
+        "3c07f0d105dbb69ab81ee6b783a4fe3f5a7a77d27024580ac9300f7e1c15f6eb",
+        "3d36950c654cb761a463f40df792b58379eb4df89bf1701974f72645d4e06775",
+        "4004ac77981c0dcf72dbe532690055de7215840eec52bfb01ec1503bae7318cc",
+        "44c1f3133a01858d378829efe3adf1f33f4665df517098bfe3009bceff832f8d",
+        "4524d8414c4f363fc8aa1438adcbfc2889b52d447af1530ac779d33f063103f3",
+        "45e5adbffbd8a03576f4345d4804d1bcf7622af13be4c73f68051ac05f7456de",
+        "47fb09d902612d404d10c541e202f10452a33a38788fcf5bdd37a5ae86b66aa8",
+        "4c54a78eadec435be9051dc9392d2c1cd68beda7d429d5b2f7a08107cfb2572e",
+        "4f659a5cf77109c46a1283f8d2e5f8dc6bc1b5cffc0359ad5f487281710ada36",
+        "4ff16e8e9a805e4257788800fff214fdaa34c071cd1a7f1d4fd6c0387f815216",
+        "55dda5f873472eef7d3ad18215cbc95d141f125350e55ce8c436aeb7ce727292",
+        "5cd51c73a1309ae5c6aa91e01ebdb56fdeeef99191c25b260a3d352cf8d1835d",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "5f23e4fa54e7b1387d3ce69aa50d77a8f427ffd7605aba41095fca773bb7d19e",
+        "65dba2dfec42dcb9af37a73b62733bc0a4389aef2f1ddaecfba473e6f7909487",
+        "6f567d2ef3ca63f245fb0c8c8930da33be1a4b80f3e6eec67172be3fd4904645",
+        "72bc9cb554253c9dbba8aa2e4846d6c1459ce48ec3229737f3ee07bcb0b579b2",
+        "7bb0c925657031371ac42933aab32570e9f1ae9225469486f7da5329ba9fbf93",
+        "7c4ada1bda5c98fd5986507825090de5b093a76194b71029926b3c51b59e2ed0",
+        "82553b8ab2cd0a62b49789c1f1d347203706fb018a7b8ca62b95238903dc4445",
+        "8c3b99957635a024f4a61fac3ffa5d4f9a15a2927a576fccedd31c4c07cd0023",
+        "8d262a363221356044efa7038a7b83d4beaddffd473bbba5e143800c1355b133",
+        "956294a88c7f3cf2b49202f934ae5ad969d2378bd48ed53d6508c86653b73eda",
+        "9595f6aad418f4e43f0507e8a84c2e336ef0a956396552f007a5620e3e4a441f",
+        "9ff38f6698d848050d060decba8f4312d5cc68ee1af2dca2fec39352abb85bfb",
+        "a2d29cb429600ad4ac9e969d392d9ca2172404c2465c31b60d1abb4e135952f0",
+        "a3df6dbe2dcaa3e79e0f5f97a3a0afb30fc2ba0a474530d2d20231fae54bc802",
+        "a4fbc6cc2ec7b6993a86d49fa11d826963f142411a2e0c6b70453e23d9f3715a",
+        "aa81266efc3322a91808c93751bf0ef51b727dd3e8eedc0e6f67b124415b1ae9",
+        "ae9765f2db2fb810ada71703457e9e91b3e3ab7e92caf97c0dc4c0febf24ba4a",
+        "aeb633fd6df156e6baeca193186363ea652ccb93168d440206e4ef6e82d0defc",
+        "b1a93e3ee49e58da253fbcc853206fc6743d4e48199fd4403ee6f602f8bebd72",
+        "b2c939d5773b8dc238e335f17cd758f00497c4f5e11efa19877be935d2678dd4",
+        "b7ce45f819dbbcb72e8b2db3c965a993af860eeb0d662b318c652f4ba44bb7be",
+        "b88842e1f5125e009b43538f6819e75bf9da7d72654dee3e8c5f97c56775dd5c",
+        "bf656b8f242c0c894ff6368dbb927285820f80a5aedbc162ec62678320ab5f9e",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3573f40cbf0f10ed9019480bbc02840ef90b46815cde37b4850b1e801ff78f0",
+        "c3daec434dcf4cf537fbc20a6009038cdcd42ecb2601c7a575affa0d77b45873",
+        "e0b62b8b2a5b4f2adde275edd64dfbc2beafef3fd162f57a7561721f89a067eb",
+        "f731ce6b9b02662b37cd989a071c4230b5cf2a9f874cb10e66c39eeb6de47ab0",
+        "f756d876d31d7c081028a4b5b563a73ad2944a5977f8462788fdec360db60bb3",
+        "fa93fd1602bbcf5d05da1ae3e5ed0a8c237d773344c0952b5e2222f2bfd4e660",
+        "fc5816ed24cfded916e2f203e8fd1bc431a05c9caacd99f7274c1c17dc202ac9"
+      ]
+    },
+    {
+      "fingerprint": "dba84cef8a7cb78df8efdfa4963f1f18be857d58dffe9ea8d281064ff54a490b",
+      "reason": "Slack image tests independently verify PNG upload bytes thread routing and an accepted task answer, including uncertain-upload handling. GitHub lost-create tests require awaiting_reconciliation and no invented issue URL. Preserve these external-effect-specific oracles and replay assertions rather than sharing a success or failure driver.",
+      "memberHashes": [
+        "4f3f807c00555e4387d58dc3333188da91896c71dc43fa1172cd4fd08c01ac87",
+        "84c37ee30c253b25b330b225474e57f6a63b8ec080f92d50a198af89f7bd67c0",
+        "b1b8512118f95456628a4f71a37a0b9ebab6ac5092d724d16e5146adb4abc1a3"
+      ]
+    },
+    {
+      "fingerprint": "8a0350441cab570418dfa438a82f6458806f0f619a78a174348bcbc832e8ca2b",
+      "reason": "The spans cross module imports into response-only waiting-dialogue setup. Application owns mutable canonical progression while waiting_dialogue reads unresolved work without dispatch; explicit imports and separate entrypoints preserve that effect boundary. FAILURE_TEXT and plan_task already have canonical owners.",
+      "memberHashes": [
+        "4bacf0b054fd3120e9794e8f751e3c42714c17b30915799ddaf2fb755d1ab7f6",
+        "d886076b9c9b1215c8d49fc82fb419fd37756205ab510e47d01b6881c782ebe2"
+      ]
+    },
+    {
+      "fingerprint": "7744c3aabfd5b4df9581a0b4b9dddac4a3f6c1ea485276d2ec721ad1f640a87f",
+      "reason": "The matched spans cover application and Slack imports versus the existing deferred_failure message map. Both consumers already import canonical FAILURE_TEXT; merging unrelated import declarations with provider diagnostic strings would not remove duplicated behavior and would couple channel and service owners.",
+      "memberHashes": [
+        "4d7de31d51448323e70b53e5891e4ac43f6d19fd8fdbe31adcd557f4fba8fe0b",
+        "acfe555feda831ca1abfe858e7fc49c49b647abcd616c10c6c310020803f1243",
+        "ce4e19a8b89ad2c87b31372691cb0c2760af51f0211234355e4f6d0224347a03"
+      ]
+    },
+    {
+      "fingerprint": "528496e0412dc8ee94a119b30d088ae1f087d60c355c2b2f734ebd76fd50a730",
+      "reason": "These unchanged creative-procedure and daily-Slack test spans only import ToolRegistry SqliteSessionStore CreateAgentRunRequest and MarketingAgentService. The former verifies procedure behavior while the latter verifies scheduled delivery; explicit public API imports preserve independent dependency ownership. No runtime algorithm is duplicated, and neither file is modified by this PR.",
+      "memberHashes": [
+        "590bd5ad19174121c06526c858ba223a2933c00d318196d09b1e0b303f6ae124",
+        "590bd5ad19174121c06526c858ba223a2933c00d318196d09b1e0b303f6ae124"
+      ]
     }
   ]
 }

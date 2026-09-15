@@ -94,6 +94,26 @@ owner proof readback, exact input/key and tool-identity checks. This does not gr
 or consume another tool call. Changed tasks, failed/uncertain receipts and tenant-wide deduplication
 retain their existing boundaries. Repeated reuse counts as no new progress.
 
+After a successful local artifact receipt, the service can assemble a candidate from the current
+task revision's canonical outputs before another actor call. The latest output must itself contain
+an attachment and pass current owner readback. Existing candidate text is retained when available.
+This is a completion attempt, not automatic success: the normal renderer, full-task assessor and
+post-assessment proof checks still decide completion. Unmet requirements return to planning.
+Automatic attempts leave the last assessment slot for an actor-authored candidate, so multi-artifact
+work does not exhaust verification solely because intermediate artifacts exist. Legacy response-only
+verification, unsuccessful outputs and input handoffs do not use this path.
+
+Codex receives a planner projection with each available tool's complete input schema and execution
+policy, excluding host-only output, receipt and configuration schemas and their hashes. Canonical
+snapshots and reasoning receipt digests retain the full contracts. No tool is hidden by keyword
+selection and dispatch still validates against the authoritative descriptor.
+
+Repository reads still query SQLite under the tenant/run predicate. A per-repository cache reuses
+envelope validation only for exactly matching persisted JSON, with LRU limits of 256 entries and
+8 MiB of serialized UTF-8 input (not a total heap limit). Returned models are deep copies. Changed
+JSON, new rows, eviction and process restart require validation again; no canonical history is
+deleted or replaced by the cache.
+
 `AgentRun` remains the authority for execution, approval, receipts and cumulative budget. A versioned
 `TaskSpec` names the current result, response/artifact/effect obligations and their admitted sources.
 Its revision is independent of the Run ledger revision. A `TaskCheckpoint` binds that spec digest to

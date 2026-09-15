@@ -53,6 +53,11 @@ the HTTP callback uses it for provider rejections and invalid OAuth state.
 `agent/service/tool_reuse.py` reuses only successful, currently verified same-task effect receipts
 with the same run-scoped key and tool identity. It creates no new invocation, receipt or charge.
 VERIFY recovery selects its exact receipt digest, and progress accounting retains no-progress limits.
+`agent/service/artifact_completion.py` assembles current-task artifact candidates for the existing
+completion gate; `task_drive.py` shares canonical deliverable projection with legacy stop decisions.
+`agent/service/record_cache.py` owns bounded exact-JSON validation reuse and copy isolation; the
+SQLite repository retains fresh scoped queries. `providers/codex_reasoning_prompt.py` owns the
+model-facing projection, while portable requests and host tool schemas remain complete.
 `threads/reconciliation.py` settles only persisted uncertain publications with known provider IDs;
 it never recreates a container or repeats a publish request.
 `threads/provider_callbacks.py` verifies Meta signed requests, `threads/privacy.py` owns local

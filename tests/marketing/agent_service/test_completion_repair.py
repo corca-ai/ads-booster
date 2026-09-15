@@ -5,24 +5,18 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 import pytest
 
-from ads_booster.agent.core.registry import ToolRegistry
-from ads_booster.agent.runtime import SqliteSessionStore
-from ads_booster.agent.service.application import CreateAgentRunRequest, MarketingAgentService
+from ads_booster.agent.service.application import CreateAgentRunRequest
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
-from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.agent.service.task_progress import project_task
 from ads_booster.contracts.agent_run import AgentBudget, AgentGoal, AgentRunState, contract_sha256
 from ads_booster.contracts.reasoning import ReasoningDecision
-from ads_booster.tools.completion_proofs import (
-    CanonicalCompletionProofs,
-    CompletionArtifactOwners,
-)
-from ads_booster.tools.image_generation import descriptor, read_artifact
+from ads_booster.tools.image_generation import read_artifact
 from tests.marketing.agent_service.completion_fixtures import NOW
 from tests.marketing.agent_service.completion_image_fixtures import (
     FixtureImageTool,
     ImageExistenceAssessor,
     RepairingImagePlanner,
+    image_completion_service,
 )
 from tests.marketing.agent_service.test_task_completion import CompletionScript, drain_completion
 
@@ -52,19 +46,7 @@ def test_repeated_completed_effect_reuses_verified_result(tmp_path: Path, tamper
             ),
         )
     )
-    service = MarketingAgentService(
-        repository=repository,
-        registry=ToolRegistry((descriptor(now=NOW),)),
-        reasoning=planner,
-        tools={"creative.image.generate": adapter},
-        runtime_store=SqliteSessionStore(repository.database_path),
-        completion=TaskCompletionService(
-            repository,
-            ImageExistenceAssessor(),
-            CanonicalCompletionProofs(repository, CompletionArtifactOwners(image_root=images)),
-        ),
-        clock=lambda: NOW,
-    )
+    service = image_completion_service(repository, planner, adapter, ImageExistenceAssessor())
 
     def invalidate(point: str) -> None:
         if tamper and point == "verify_committed":
@@ -99,6 +81,53 @@ def test_repeated_completed_effect_reuses_verified_result(tmp_path: Path, tamper
     assert run.blocked_reason == "no_progress"
 
 
+def test_successful_artifact_is_assessed_before_another_generation(tmp_path: Path) -> None:
+    repository = SqliteAgentRunRepository(tmp_path / "state.db")
+    images = tmp_path / "images"
+    adapter = FixtureImageTool(images)
+    planner = CompletionScript(
+        tuple(
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="invoke_tool",
+                capability_id="creative.image.generate",
+                tool_input={"prompt": prompt},
+                expected_outcome="Readable PNG image",
+                reasoning_summary="Generate",
+            )
+            for prompt in ("Blue square", "Another blue square")
+        )
+    )
+    service = image_completion_service(repository, planner, adapter, ImageExistenceAssessor())
+    run = service.create(
+        CreateAgentRunRequest(
+            run_id="artifact-first",
+            tenant_id="trace",
+            goal=AgentGoal(
+                objective="Create a blue PNG image", success_criteria=("Readable PNG image",)
+            ),
+            budget=AgentBudget(max_tool_calls=4, max_cost_units=10),
+        ),
+        now=NOW,
+    )
+    run = drain_completion(service, run)
+    run = service.decide_approval(
+        "trace",
+        run.run_id,
+        approver_id="member",
+        granted=True,
+        now=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    run = drain_completion(service, run)
+    assert run.state is AgentRunState.COMPLETED
+    assert adapter.calls == 1
+    assert len(planner.requests) == 1
+    task = project_task(run, repository.records("trace", run.run_id))
+    assert task.checkpoint.candidate is not None
+    assert task.checkpoint.candidate.attachment_refs
+
+
 class InvalidatingAssessor:
     def __init__(self, root: Path) -> None:
         self.root: Path = root
@@ -127,20 +156,13 @@ def test_premature_stop_repairs_with_approved_actual_artifact(
     planner = RepairingImagePlanner(
         "Blue square. " * 400 if failure == "long_brief" else "Blue square"
     )
-    service = MarketingAgentService(
-        repository=repository,
-        registry=ToolRegistry((descriptor(now=NOW),)),
-        reasoning=planner,
-        tools={"creative.image.generate": adapter},
-        runtime_store=SqliteSessionStore(database),
-        completion=TaskCompletionService(
-            repository,
-            InvalidatingAssessor(images)
-            if failure == "during_assessment"
-            else ImageExistenceAssessor(),
-            CanonicalCompletionProofs(repository, CompletionArtifactOwners(image_root=images)),
-        ),
-        clock=lambda: NOW,
+    service = image_completion_service(
+        repository,
+        planner,
+        adapter,
+        InvalidatingAssessor(images)
+        if failure == "during_assessment"
+        else ImageExistenceAssessor(),
     )
     changed = False
 
