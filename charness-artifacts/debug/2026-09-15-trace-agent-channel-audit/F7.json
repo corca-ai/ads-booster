@@ -1,0 +1,15 @@
+{
+  "finding": "F7",
+  "source": "channel-audit-186",
+  "expected": "Already stored memory is acknowledged",
+  "stimulus": "Actual authenticated memory readback",
+  "disposition": "reproduced",
+  "observed": "New-thread recall passed and existing-memory assessment satisfied",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "/private/tmp/trace-channel-audit/candidate3-installed/bin/python /private/tmp/trace-channel-audit/replay_memory_assessment.py",
+  "fixture": "/private/tmp/trace-channel-audit/replay_memory_assessment.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

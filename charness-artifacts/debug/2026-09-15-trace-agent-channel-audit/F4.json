@@ -1,0 +1,15 @@
+{
+  "finding": "F4",
+  "source": "channel-audit-186",
+  "expected": "Elapsed time survives slices",
+  "stimulus": "Restarted Slack progress clock",
+  "disposition": "reproduced",
+  "observed": "180 seconds displayed instead of zero",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "PYTHONPATH=src /private/tmp/trace-runtime-progress-proof/final-installed/bin/python -m pytest -q tests/marketing/channels/test_slack_progress.py",
+  "fixture": "tests/marketing/channels/test_slack_progress.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

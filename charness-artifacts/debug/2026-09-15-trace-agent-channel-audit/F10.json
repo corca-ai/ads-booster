@@ -1,0 +1,15 @@
+{
+  "finding": "F10",
+  "source": "channel-audit-186",
+  "expected": "Fresh reads can repeat identical input",
+  "stimulus": "Two admitted observations in one Run",
+  "disposition": "reproduced",
+  "observed": "Blocked before repair and completed with two reads afterward",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "PYTHONPATH=src /private/tmp/trace-runtime-progress-proof/final-installed/bin/python -m pytest -q tests/marketing/agent_service/test_application.py",
+  "fixture": "tests/marketing/agent_service/test_application.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

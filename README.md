@@ -94,7 +94,12 @@ post-merge public-URL installation require deployment acceptance.
 In an authorized Slack thread, follow-ups keep the same work and budget: ask a question,
 provide a correction, or send a human-made result. `어디까지 됐어?` reads status,
 `잠깐 멈춰줘` waits at the next safe boundary, and `계속` resumes an input wait.
-`새 작업 <request>` starts independent work. A stopped external action is never claimed
+`새 작업 <request>` starts independent work, including when a previous image result is unresolved.
+The earlier work is not retried; a later confirmed result still returns to its original thread.
+A blocked completion does not prevent a new question. Requested operations keep their execution
+authorization through processing slices and restart, without another approval request.
+The progress message shows the observed stage and elapsed time across slices.
+A stopped external action is never claimed
 undone. Existing `/trace` commands and server onboarding continue to work.
 
 ### Completion checks (candidate, hardened 2026-09-14)
