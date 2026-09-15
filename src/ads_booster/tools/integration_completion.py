@@ -126,7 +126,8 @@ class ThreadsConnectControlProof:
             return False
         if not isinstance(expires_at, str):
             return False
-        state = parse_qs(urlsplit(authorization_url).query).get("state", [""])[0]
+        url = urlsplit(authorization_url)
+        state = parse_qs(url.query).get("state", [""])[0]
         if not state:
             return False
         with closing(sqlite3.connect(database_path)) as database, database:
@@ -141,7 +142,10 @@ class ThreadsConnectControlProof:
             row is not None
             and row[0] == run.tenant_id
             and row[1] == expires_at
-            and urlsplit(authorization_url).hostname == "threads.net"
+            and url.scheme == "https"
+            and url.netloc == "threads.net"
+            and url.path == "/oauth/authorize"
+            and not url.fragment
             and row[2] in parse_qs(urlsplit(authorization_url).query).get("redirect_uri", [])
             and row[3] in {0, 1}
         )
