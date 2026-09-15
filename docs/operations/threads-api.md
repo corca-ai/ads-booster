@@ -77,9 +77,17 @@ publication receipts and events, and provider metric snapshots. A draft batch co
 for the deleted connection is removed as a whole, because its immutable revisions preserve the
 combined batch. The callback returns the receipt's confirmation code and a public status URL under
 `/integrations/threads/data-deletion/{confirmation-code}`. A completed replay returns the same
-receipt. A failed deletion remains pending so Meta can retry safely.
+receipt. Trace keys the receipt to the authenticated callback request, so a later callback after
+fresh OAuth consent creates a new receipt and deletes the new connection lifecycle. A failed
+deletion remains pending so Meta can retry safely.
 
-The receipt stores only a keyed subject digest, status and timestamps; it never stores the raw
+OAuth completion, provider publication and privacy deletion share one process fence. Deletion waits
+for a publication that already entered its provider write section, then removes its local records.
+The same transaction writes connection tombstones before removing publication ledgers. Any stale
+worker that resumes after deletion cannot recreate those ledgers. Fresh OAuth consent clears the
+tombstone only after the new account record succeeds.
+
+The receipt stores only a keyed request digest, status and timestamps; it never stores the raw
 provider user ID. Keep the status URL public because Meta and the account owner must be able to read
 it without Trace authentication. See Meta's current
 [data deletion callback](https://developers.facebook.com/docs/development/create-an-app/app-dashboard/data-deletion-callback/)

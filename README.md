@@ -459,7 +459,10 @@ service verifies their HMAC-SHA256 signature with the app secret before reading 
 ID. App removal revokes every local connection for that provider account and deletes its token.
 Data deletion also removes affected draft batches, media grants, publication records and metric
 snapshots, then returns an opaque confirmation code and public status URL. The deletion receipt
-stores a keyed subject digest, never the raw provider user ID.
+stores a keyed request digest, never the raw provider user ID. An exact callback replay returns its
+original receipt; a new callback after fresh OAuth consent deletes the new lifecycle. A shared
+effect fence lets an active publication finish before deletion starts, and a durable connection
+tombstone rejects stale ledger writes after deletion completes.
 
 ## Team knowledge context
 

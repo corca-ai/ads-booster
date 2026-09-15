@@ -46,6 +46,8 @@ HTTP belongs to `providers/threads_api.py`; `tools/threads_*.py` expose typed ca
 it never recreates a container or repeats a publish request.
 `threads/provider_callbacks.py` verifies Meta signed requests, `threads/privacy.py` owns local
 deauthorization and deletion, and `threads/callback_urls.py` owns the public path contract.
+`threads/effect_fence.py` serializes OAuth, publication and deletion inside the single service
+process and owns durable connection tombstones against stale publication writes.
 `channels/http/threads_privacy_api.py` translates those provider routes without owning deletion
 policy or persistence.
 

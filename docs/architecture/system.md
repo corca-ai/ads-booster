@@ -56,8 +56,11 @@ routes, including while the service drains for an update. The boundary accepts o
 `signed_request` and verifies its HMAC-SHA256 signature before exposing the provider user ID.
 Deauthorization revokes all matching local connections and token files. Data deletion removes the
 matching account data and dependent Threads records in one exclusive SQLite transaction after token
-removal, then exposes an opaque public receipt. The durable receipt stores a keyed subject digest,
-not the provider user ID, so a replay returns the same result without retaining the deleted identity.
+removal, then exposes an opaque public receipt. OAuth completion, publication and deletion share a
+process fence, so deletion waits for an active provider write. The deletion transaction persists a
+connection tombstone that rejects stale publication-ledger writes. Fresh OAuth consent clears that
+tombstone after it stores the new account. The durable receipt stores a keyed request digest, not the
+provider user ID: an exact replay reuses its result while a later request owns a new receipt.
 
 Threads publish and reply approvals also pass a service-level resource-owner admission check in
 every channel. A workspace approver who does not own the draft batch cannot authorize the external
