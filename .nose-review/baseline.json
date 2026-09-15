@@ -2213,6 +2213,23 @@
         "29b3707b6d79c73863154f6712a19082f40a155c0ba6254845586c464e77bbe6",
         "48259a32929b084bcbda21755b58de2feff1705460dbb7d9daf1d4fbc8e00d08"
       ]
+    },
+    {
+      "fingerprint": "9067e62244e5302228f23070b3f9a13678c32a8ba74803a99b17cc4f33a3368a",
+      "reason": "Threads account lookup, Threads draft lookup, and schedule lookup are separate repositories with distinct tables, key scopes, returned domain models, and lifecycle rules. Only the typed SQLite read shape is shared, so a generic helper would erase repository ownership.",
+      "memberHashes": [
+        "0a66525a0a53b5894bde35d3703f731229c6732a637d171533e7c3591e6b9f25",
+        "609998b9fd19d1320d0a631b9bcd25e3466564e158dacd184564586d92d89ce6",
+        "dbec5b8f78dc1b96f556c8c74878c2c1424ba86ad08de028e8d5724eee338929"
+      ]
+    },
+    {
+      "fingerprint": "3821671c663105bdfd317674513d9d9768921472a79c4f1c9aef0066bce5c18f",
+      "reason": "Threads account listing filters by optional owner identity and orders profiles, while publication listing filters by optional draft revision and orders item receipts. Their query evolution and returned contracts are intentionally independent.",
+      "memberHashes": [
+        "1517cfd957a508674edd38f89df4d47c55db297880cf322963c0f0457e908950",
+        "52e2b70d52f6f557f29f096a9c73b810efc22e04a609830013062e5f59ceb671"
+      ]
     }
   ]
 }
