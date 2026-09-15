@@ -2230,6 +2230,30 @@
         "1517cfd957a508674edd38f89df4d47c55db297880cf322963c0f0457e908950",
         "52e2b70d52f6f557f29f096a9c73b810efc22e04a609830013062e5f59ceb671"
       ]
+    },
+    {
+      "fingerprint": "ccd0bd9b5b1a7e0b3ada699390a595709648b5aaef38018dd7092892a0265df4",
+      "reason": "Independent pytest modules explicitly import the same two public callback fixture symbols; coupling their import declarations would not share behavior and would obscure each module's collection dependencies.",
+      "memberHashes": [
+        "35aeb0ff5b49f895406809c3b80257b636f14e732408987e21a5a009ab9921d2",
+        "c5685c973dd28bfc1b2d1c5d5b11e304f56bd30b3aab4fd75f36bc8aaf727ec7"
+      ]
+    },
+    {
+      "fingerprint": "b8ebbf3b28049498cc1b632d6e8ed8e681fa9355dd4c66f86c2327ce2a6f7c7c",
+      "reason": "Threads media delivery and provider privacy own unrelated domain behavior; only standard-library import lines align, so extracting them would create a dependency without a shared contract.",
+      "memberHashes": [
+        "860f7535302b6fcfa6595ff8ad8675e5a600d91f1b1e1266d876eb84567b040a",
+        "ada7790cb7f12ea70b56a72b52e837f9d2113aa3f3706fbc49039ff883fb9583"
+      ]
+    },
+    {
+      "fingerprint": "ebac706242b5e29f5322e281745cb580fffe0df860ed94da7fab1d0e783606a6",
+      "reason": "Threads HTTP privacy routing and Knowledge memory persistence belong to separate packages; their module headers share only standard-library imports and must evolve independently.",
+      "memberHashes": [
+        "520d9dfb2307112ad4f91572cf364fcd5cb70f0504373448516087259f0d901a",
+        "94cac03c88b8fa8843d4691bbeccbd84eb0eb0175818b8c326f9c25aa5789dfb"
+      ]
     }
   ]
 }
