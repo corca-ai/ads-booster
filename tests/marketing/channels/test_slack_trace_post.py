@@ -19,8 +19,14 @@ from ads_booster.agent.service.trace_post import (
     TracePostTool,
     trace_post_descriptor,
 )
-from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState
+from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState, contract_sha256
 from ads_booster.contracts.creative_work import CreativeScope
+from ads_booster.contracts.reasoning import (
+    ReasoningDecisionV2,
+    ReasoningProviderReceipt,
+    ReasoningRequestV2,
+    ReasoningResultV2,
+)
 from ads_booster.contracts.trace_post import TracePostSuccess
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.execution_control import checkpoint
@@ -65,6 +71,89 @@ class RequestedTracePost(TracePostReasoning):
                 }
             )
         return _reasoning_result(request, decision)
+
+
+class ConnectorRequestedTracePost:
+    def __init__(self, *, authority: str = "source") -> None:
+        self.authority: str = authority
+
+    def plan_v2(self, request: ReasoningRequestV2) -> ReasoningResultV2:
+        decision = ReasoningDecisionV2(
+            action="invoke_tool",
+            capability_id="creative.trace_post",
+            tool_input={
+                "schema_version": "trace.trace-post-input.v1",
+                "concept": "cute",
+                "motif": "미피",
+                "place": "카페 나무 테이블",
+            },
+            expected_outcome="Six Trace post images and three captions",
+            reasoning_summary="Use the requested installed workflow",
+            authorization_message=(
+                request.current_user_message if self.authority == "legacy_message" else None
+            ),
+            authorization_source=(
+                "current_user_message" if self.authority == "source" else None
+            ),
+        )
+        return ReasoningResultV2(
+            decision=decision,
+            receipt=ReasoningProviderReceipt(
+                schema_version="trace.reasoning-provider-receipt.v1",
+                provider_id="fixture",
+                model_id="fixture",
+                request_sha256=contract_sha256(request),
+                output_schema_sha256="a" * 64,
+                decision_sha256=contract_sha256(decision),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("authority", "authorized"),
+    [("source", True), ("none", False), ("legacy_message", True)],
+)
+def test_connector_attribution_uses_request_bound_v2_authorization(
+    tmp_path: Path, authority: str, authorized: bool
+) -> None:
+    owner, _, uploads, _ = configured(tmp_path)
+    service = owner.commands.application.service
+    provider = FakeProvider()
+    root = tmp_path / "artifacts"
+    tool = TracePostTool(
+        service=service,
+        assets=SqliteCreativeAssetRepository(service.repository.database_path, root),
+        root=root / "trace-post",
+        bundle=Path(str(files("ads_booster").joinpath("trace_post_bundle"))),
+        provider=provider,
+        config=TracePostConfig(tmp_path / "codex", "fixture", 3600),
+        clock=lambda: NOW,
+    )
+    service.registry = ToolRegistry((trace_post_descriptor(now=NOW),))
+    service.tools = {"creative.trace_post": tool}
+    service.reasoning = ConnectorRequestedTracePost(authority=authority)
+    text = (
+        "<@UBOT> trace-post로 미피 이미지를 만들어줘.\n\n"
+        "*다음을 사용하여 보냄* <@U0B8FBM9KGX|ChatGPT>"
+    )
+
+    receive(owner, text=text)
+    assert owner.work_once(now=NOW)
+
+    run = service.repository.list_runs("team")[0]
+    assert run.state is (
+        AgentRunState.AWAITING_TOOL if authorized else AgentRunState.AWAITING_APPROVAL
+    )
+    assert provider.calls == 0
+    assert uploads == []
+    approvals = [
+        record
+        for record in service.repository.records("team", run.run_id)
+        if record.kind is AgentRecordKind.APPROVAL
+    ]
+    assert len(approvals) == (1 if authorized else 0)
+    if authorized:
+        assert approvals[0].payload["request_event_id"]
 
 
 @pytest.mark.parametrize("new_member", [False, True])

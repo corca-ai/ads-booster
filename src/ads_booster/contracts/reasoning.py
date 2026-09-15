@@ -137,18 +137,31 @@ class ReasoningDecisionV2(ContractModel):
     proposed_action_kind: KnowledgeActionKind | None = None
     proposed_brand_ref: BoundedId | None = None
     authorization_message: Annotated[str, Field(min_length=1, max_length=20_000)] | None = None
+    authorization_source: Literal["current_user_message"] | None = None
     pending_approval_action: Literal["preserve", "replace", "cancel"] = "preserve"
     task_proposal: TaskProposal | None = None
     completion_candidate: CompletionCandidate | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_pre_marker_digest(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if self.authorization_source is None:
+            _ = result.pop("authorization_source", None)
+        return result
 
     @model_validator(mode="after")
     def require_action_payload(self) -> Self:
         _ = ReasoningDecision.model_validate(
             {
-                **self.model_dump(exclude={"task_proposal", "completion_candidate"}),
+                **self.model_dump(
+                    exclude={"task_proposal", "completion_candidate", "authorization_source"}
+                ),
                 "schema_version": "trace.reasoning-decision.v1",
             }
         )
+        if self.action != "invoke_tool" and self.authorization_source is not None:
+            message = "only a tool proposal may cite current request authority"
+            raise ValueError(message)
         if (self.action == "stop") != (self.completion_candidate is not None):
             message = "only stop decisions require a completion candidate"
             raise ValueError(message)

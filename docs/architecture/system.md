@@ -269,6 +269,10 @@ stable, and restart replay continues from the original persisted invocation.
 The Codex reasoning provider's conversation contract treats Trace as a teammate with marketing
 expertise. It maintains the current request through language/format changes, uses reasonable
 creative defaults for delegated drafts, and presents results rather than internal planning text.
+V2 tool decisions classify direct delegation with a `current_user_message` authorization source
+marker bound to the exact reasoning request receipt and pending intent. Slack still rechecks the
+authenticated current event, actor and exact invocation; pre-marker v1 and v2 decisions retain the
+complete-message echo rule. Slack-client attribution text does not grant broader effect authority.
 Skill inventory questions query the scoped catalog instead of treating selected context as the
 whole catalog. Procedure reads must lead to applicable work; compatible numerical reports use
 the available calculation tool. Shared skill writes still require the current explicit user request.

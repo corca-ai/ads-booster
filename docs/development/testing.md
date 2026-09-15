@@ -235,6 +235,9 @@ before delivery, edited/deleted assent, direct-creation source/membership bindin
 and uncertain effects. Also verify a requested create-then-deliver sequence, an unrequested
 second step, and membership revocation between steps. Select
 `tests/marketing/agent_service/test_image_generation.py` when changing result review metadata.
+For v2 direct-request authority, include connector-attributed current messages and controls for a
+missing marker, a different or stale source event, and a changed pending invocation. Pre-marker v1
+and v2 decisions must continue to require the exact full-message echo.
 Interrupt after approval, execution and runtime-admission persistence.
 Repeat from outside the checkout against a fresh non-editable wheel.
 
