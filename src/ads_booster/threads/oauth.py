@@ -18,6 +18,7 @@ from ads_booster.threads.accounts import (
     ThreadsAccountRepository,
     ThreadsTokenVault,
 )
+from ads_booster.threads.oauth_diagnostics import OAuthDiagnostics
 
 if TYPE_CHECKING:
     from ads_booster.threads.effect_fence import ThreadsEffectFence
@@ -109,17 +110,33 @@ class ThreadsOAuthService:
         )
 
     def finish(self, *, state_id: str, code: str, now: datetime) -> ThreadsAccount:
-        with self.effect_fence.hold():
-            return self._finish(state_id=state_id, code=code, now=now)
+        diagnostic = OAuthDiagnostics()
+        try:
+            with self.effect_fence.hold():
+                account = self._finish(state_id=state_id, code=code, now=now, diagnostic=diagnostic)
+        except (OSError, ValueError, sqlite3.Error, ThreadsApiError) as error:
+            diagnostic.finish(error)
+            raise
+        diagnostic.finish()
+        return account
 
-    def _finish(self, *, state_id: str, code: str, now: datetime) -> ThreadsAccount:
+    def _finish(
+        self, *, state_id: str, code: str, now: datetime, diagnostic: OAuthDiagnostics
+    ) -> ThreadsAccount:
+        diagnostic.advance("consume_state")
         workspace_id, member_id, requested = self._consume(state_id, now=now)
+        diagnostic.advance("exchange_code")
         short = self.api.exchange_code(code=code, redirect_uri=self.redirect_uri, now=now)
+        diagnostic.advance("exchange_long_lived")
         token = self.api.exchange_long_lived(short, now=now)
+        diagnostic.advance("user")
         user = self.api.user(token.access_token)
+        diagnostic.advance("granted_scopes")
         granted = self.api.granted_scopes(token.access_token)
+        diagnostic.advance("validate_scopes")
         if not set(requested).issubset(granted):
             raise ThreadsOAuthError("threads_requested_scope_missing")
+        diagnostic.advance("persist_account")
         connection_id = (
             "threads-" + sha256(f"{workspace_id}\n{member_id}\n{user.id}".encode()).hexdigest()[:24]
         )
