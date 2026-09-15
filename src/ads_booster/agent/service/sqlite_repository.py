@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic import TypeAdapter
 
+from ads_booster.agent.service.record_cache import RecordValidationCache
 from ads_booster.contracts.agent_run import (
     AgentRecord,
     AgentRun,
@@ -44,6 +45,9 @@ class RepositoryAfterCommit(Protocol):
 @dataclass(frozen=True, slots=True)
 class SqliteAgentRunRepository:
     database_path: Path
+    _record_cache: RecordValidationCache = field(
+        default_factory=RecordValidationCache, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         """Create the private database and apply the initial append-only schema."""
@@ -308,9 +312,7 @@ class SqliteAgentRunRepository:
                     (tenant_id, run_id),
                 ).fetchall(),
             )
-        return tuple(
-            AgentRecord.model_validate_json(_STRING.validate_python(row[0])) for row in rows
-        )
+        return tuple(self._record_cache.parse(_STRING.validate_python(row[0])) for row in rows)
 
     def append_step(  # noqa: C901,PLR0913 - append-only CAS boundary keeps authority explicit.
         self,
