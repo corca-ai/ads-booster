@@ -62,7 +62,12 @@ class CodexTracePostProvider:
                 developer_instructions=(
                     "Use the exact Python interpreter named in the prompt. Never access the "
                     "network, remote tools, user configuration, or paths outside cwd except "
-                    "that interpreter runtime. After each imageGeneration completes, ignore "
+                    "that interpreter runtime. The frozen skill describes the outer agent "
+                    "binding as functions.exec with tools.image_gen__imagegen. In this dedicated "
+                    "app-server turn, use the native image-generation tool exposed in this turn "
+                    "for each prepared request object. Do not look for functions.exec, plugins, "
+                    "MCP, or another image tool, and do not stop merely because those outer "
+                    "binding names are unavailable. After each imageGeneration completes, ignore "
                     "its savedPath and pass ./provider-images/<image item id>.png to the frozen "
                     "image_call.py complete command. Wait for that file if needed. Do not "
                     "exceed fourteen image generations."
