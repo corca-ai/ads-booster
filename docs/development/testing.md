@@ -1013,10 +1013,14 @@ source tests, an installed local wheel or a completed model workflow.
 The Trace-post provider subprocess regression must also exercise the instruction-compatibility
 boundary between the packaged skill's outer-agent `functions.exec`/`tools.image_gen__imagegen`
 directions and the dedicated app-server's native image-generation tool. The test independently
-confirms the packaged outer binding, captures the instruction actually transported through stdio,
-and emits seven synthetic native events regardless of its wording. This proves the compatibility
-guard transport and event materialization only; it makes no model or image request and does not
-prove that a model will follow the instruction.
+confirms the packaged outer binding, captures the exact `$trace-post` marker followed by the native
+skill item and canonical frozen path transported through stdio, including the preceding exact
+extra-root and forced-list RPCs, and emits seven synthetic native events regardless of its wording.
+Rejection tests cover missing, outside and symlinked skill files;
+an app-server RPC rejection must not cause a second text-only turn. Generic image-edit fixtures must
+retain their prior text/local-image input order and issue no skill-discovery RPC. This proves
+skill-binding transport and event materialization only; it makes no model or image request and does
+not prove that a model will follow the instruction.
 An incident record containing only `codex_image_edit_generation_event_required` does not retain the
 provider's final message, so the namespace mismatch is an evidenced compatibility defect and the
 historical cause remains a hypothesis until a deployed supported-motif canary observes native events.
