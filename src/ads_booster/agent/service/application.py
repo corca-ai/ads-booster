@@ -74,7 +74,7 @@ from ads_booster.agent.service.task_progress import (
     seed_task,
     task_records,
 )
-from ads_booster.agent.service.threads_handoff import threads_connect_handoff
+from ads_booster.agent.service.tool_handoff import tool_input_handoff
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -439,7 +439,7 @@ class MarketingAgentService:
         if receipt_record is None or evidence_record is None:
             raise ValueError("verified_tool_recovery_records_missing")
         receipt = ToolReceiptRecord.model_validate(receipt_record.payload)
-        handoff = threads_connect_handoff(run, evidence_record, self.completion, now=now)
+        handoff = tool_input_handoff(run, evidence_record, self.completion, now=now)
         if handoff is not None:
             task = project_task(run, records)
             task = TaskProjection(
