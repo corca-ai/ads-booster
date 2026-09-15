@@ -1186,8 +1186,18 @@ The frozen skill's helper guide names the outer-agent
 `functions.exec`/`tools.image_gen__imagegen` binding, which does not exist inside this dedicated
 app-server turn. The Trace-post provider therefore supplies an instruction-compatibility guard that
 directs the model to send each prepared request to the turn's native image-generation tool instead
-of looking for an outer orchestrator, plugin or MCP binding. This is a model instruction, not a
-host-forced tool call; native generation events remain the only accepted execution evidence.
+of looking for an outer orchestrator, plugin or MCP binding. Its turn input starts with the exact
+`$trace-post` text marker and an app-server native skill item bound to the canonical frozen
+`workspace/repo/skills/trace-post/SKILL.md`. The optional skill-input contract rejects missing,
+outside-workspace or symlinked files before subprocess dispatch and validates again immediately
+before the turn. In that same child process, the transport sets only the frozen `repo/skills` as an
+extra skill root, forces a skill scan for the operation workspace, and requires exactly one enabled
+`trace-post` result matching the canonical path before starting the thread. Same-name skills at
+other paths and unrelated scan errors do not invalidate a successfully matched target. Ordinary
+image-edit requests omit the contract and both discovery RPCs, retaining their existing input
+shape. This native binding is still a model instruction, not a host-forced image call; native
+generation events remain the only accepted execution evidence, and a deployed canary is required
+to prove adherence.
 The child uses those files as receipt sources. Completion requires the official event count and
 source path/hash set to match the frozen workflow's receipts. A durable provider proof permits
 readback after a crash; a child-written completion summary alone cannot certify success.

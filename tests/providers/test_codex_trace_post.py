@@ -23,6 +23,7 @@ from ads_booster.providers.codex_image_edit import (
     ImageEditProcessDiagnostic,
     ImageEditProcessRequest,
     ImageEditProcessResult,
+    ImageEditSkillInput,
     _StreamState,
     image_edit_command,
 )
@@ -30,6 +31,8 @@ from ads_booster.providers.codex_trace_post import CodexTracePostProvider
 from ads_booster.transport.json_types import JsonObject
 
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+_INPUTS: TypeAdapter[list[JsonObject]] = TypeAdapter(list[JsonObject])
+_METHODS: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 
 @pytest.mark.parametrize("shell_failed", [False, True])
@@ -98,6 +101,204 @@ def _item(event_id: str, path: Path, data: bytes) -> JsonObject:
     }
 
 
+def _install_skill(workspace: Path) -> Path:
+    skill = workspace / "repo/skills/trace-post/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    _ = skill.write_text("fixture skill", encoding="utf-8")
+    return skill.resolve()
+
+
+@pytest.mark.parametrize("invalid", ["missing", "outside", "symlink", "name"])
+def test_native_skill_input_rejects_an_unbound_workspace_path(
+    tmp_path: Path,
+    invalid: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside/SKILL.md"
+    outside.parent.mkdir()
+    _ = outside.write_text("outside", encoding="utf-8")
+    skill_path = workspace / "skills/trace-post/SKILL.md"
+    skill_name = "trace-post"
+    if invalid == "outside":
+        skill_path = outside
+    elif invalid == "symlink":
+        skill_path.parent.mkdir(parents=True)
+        skill_path.symlink_to(outside)
+    elif invalid == "name":
+        skill_path.parent.mkdir(parents=True)
+        _ = skill_path.write_text("fixture", encoding="utf-8")
+        skill_name = "Trace Post"
+
+    with pytest.raises(CodexCliError, match="codex_image_edit_skill_input_invalid"):
+        _ = ImageEditProcessRequest(
+            Path("/fixture/codex"),
+            "gpt-6-astra",
+            workspace,
+            "fixture",
+            (),
+            30,
+            skill_input=ImageEditSkillInput(name=skill_name, path=skill_path),
+        )
+
+
+@pytest.mark.parametrize(
+    ("variant", "reason"),
+    [
+        ("missing", "codex_image_edit_skill_unavailable"),
+        ("disabled", "codex_image_edit_skill_unavailable"),
+        ("wrong_path", "codex_image_edit_skill_unavailable"),
+        ("malformed", "codex_image_edit_skill_discovery_invalid"),
+    ],
+)
+def test_native_skill_discovery_fails_closed_for_the_target_skill(
+    tmp_path: Path,
+    variant: str,
+    reason: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill = _install_skill(workspace)
+    request = ImageEditProcessRequest(
+        Path("/fixture/codex"),
+        "gpt-6-astra",
+        workspace,
+        "fixture",
+        (),
+        30,
+        skill_input=ImageEditSkillInput("trace-post", skill),
+    )
+    state = _StreamState(request)
+    roots = state.accept({"id": 4, "result": {"data": [], "nextCursor": None}})
+    assert roots == (
+        {
+            "id": 6,
+            "method": "skills/extraRoots/set",
+            "params": {"extraRoots": [str(skill.parent.parent)]},
+        },
+    )
+    listing = state.accept({"id": 6, "result": {}})
+    assert listing == (
+        {
+            "id": 7,
+            "method": "skills/list",
+            "params": {"cwds": [str(workspace.resolve())], "forceReload": True},
+        },
+    )
+    metadata: JsonObject = {
+        "name": "trace-post",
+        "description": "fixture",
+        "enabled": True,
+        "path": str(skill),
+        "scope": "repo",
+    }
+    skills: list[JsonObject] = [] if variant == "missing" else [metadata]
+    if variant == "disabled":
+        metadata["enabled"] = False
+    elif variant == "wrong_path":
+        metadata["path"] = str(workspace / "wrong/SKILL.md")
+    elif variant == "malformed":
+        metadata["enabled"] = "yes"
+    response = _JSON.validate_python(
+        {
+            "data": [
+                {
+                    "cwd": str(workspace.resolve()),
+                    "errors": [],
+                    "skills": skills,
+                }
+            ]
+        }
+    )
+    with pytest.raises(CodexCliError, match=reason):
+        _ = state.accept({"id": 7, "result": response})
+
+
+def test_native_skill_discovery_tolerates_same_name_elsewhere_and_unrelated_errors(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill = _install_skill(workspace)
+    request = ImageEditProcessRequest(
+        Path("/fixture/codex"),
+        "gpt-6-astra",
+        workspace,
+        "fixture",
+        (),
+        30,
+        skill_input=ImageEditSkillInput("trace-post", skill),
+    )
+    state = _StreamState(request)
+    outgoing = state.accept(
+        {
+            "id": 7,
+            "result": {
+                "data": [
+                    {
+                        "cwd": str(workspace.resolve()),
+                        "errors": [{"path": str(workspace / "other"), "message": "ignored"}],
+                        "skills": [
+                            {
+                                "name": "trace-post",
+                                "description": "another installation",
+                                "enabled": True,
+                                "path": str(workspace / "elsewhere/trace-post/SKILL.md"),
+                                "scope": "user",
+                            },
+                            {
+                                "name": "trace-post",
+                                "description": "fixture",
+                                "enabled": True,
+                                "path": str(skill),
+                                "scope": "repo",
+                            },
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    assert outgoing[0]["method"] == "thread/start"
+
+
+@pytest.mark.parametrize(
+    ("request_id", "phase"),
+    [(6, "skills_roots"), (7, "skills_list")],
+)
+def test_native_skill_discovery_rpc_errors_are_sanitized(
+    tmp_path: Path,
+    request_id: int,
+    phase: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill = _install_skill(workspace)
+    state = _StreamState(
+        ImageEditProcessRequest(
+            Path("/fixture/codex"),
+            "gpt-6-astra",
+            workspace,
+            "fixture",
+            (),
+            30,
+            skill_input=ImageEditSkillInput("trace-post", skill),
+        )
+    )
+
+    with pytest.raises(CodexCliError, match=f"codex_image_edit_{phase}_rpc_error_32603") as failure:
+        _ = state.accept(
+            {
+                "id": request_id,
+                "error": {
+                    "code": -32603,
+                    "message": "TOP SECRET PROVIDER DETAIL",
+                },
+            }
+        )
+    assert "TOP SECRET" not in str(failure.value)
+
+
 @dataclass(slots=True)
 class _Runner:
     image_count: int = 7
@@ -127,6 +328,7 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
     executable.symlink_to(target)
     workspace = tmp_path / "jobs" / "one"
     workspace.mkdir(parents=True)
+    skill = _install_skill(workspace)
     runner = _Runner()
 
     result = CodexTracePostProvider(executable, "gpt-6-astra", runner).run(
@@ -152,6 +354,9 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
     assert request.max_image_generations == 14
     assert request.max_stream_bytes == 256 * 1024 * 1024
     assert request.persist_sanitized_diagnostic is True
+    assert request.skill_input is not None
+    assert request.skill_input.name == "trace-post"
+    assert request.skill_input.path == skill.resolve()
     assert set(request.allowed_item_types) == {
         "imageGeneration",
         "agentMessage",
@@ -182,7 +387,12 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
         assert image.sha256 == hashlib.sha256(image.path.read_bytes()).hexdigest()
 
 
-def _native_tool_contract_server(tmp_path: Path, *, empty_turn: bool = False) -> Path:
+def _native_tool_contract_server(
+    tmp_path: Path,
+    *,
+    empty_turn: bool = False,
+    reject_turn: bool = False,
+) -> Path:
     """Model the app-server boundary without making a model or image call."""
     executable = tmp_path / "fixture-app-server"
     encoded = base64.b64encode(_png_bytes()).decode()
@@ -195,13 +405,31 @@ from pathlib import Path
 def send(value):
     print(json.dumps(value), flush=True)
 
+extra_roots = None
+methods = []
 for line in sys.stdin:
     request = json.loads(line)
     method = request.get("method")
+    methods.append(method)
     if method == "initialize":
         send({{"id": request["id"], "result": {{}}}})
     elif method == "mcpServerStatus/list":
         send({{"id": request["id"], "result": {{"data": [], "nextCursor": None}}}})
+    elif method == "skills/extraRoots/set":
+        extra_roots = request["params"]
+        send({{"id": request["id"], "result": {{}}}})
+    elif method == "skills/list":
+        Path(request["params"]["cwds"][0], "received-skill-discovery.json").write_text(
+            json.dumps({{"extraRoots": extra_roots, "list": request["params"]}})
+        )
+        root = Path(extra_roots["extraRoots"][0])
+        skill_path = root / "trace-post/SKILL.md"
+        send({{"id": request["id"], "result": {{"data": [{{
+            "cwd": request["params"]["cwds"][0],
+            "errors": [],
+            "skills": [{{"name": "trace-post", "description": "fixture", "enabled": True,
+                        "path": str(skill_path), "scope": "repo"}}],
+        }}]}}}})
     elif method == "thread/start":
         Path(request["params"]["cwd"], "received-instructions.txt").write_text(
             request["params"]["developerInstructions"]
@@ -211,6 +439,16 @@ for line in sys.stdin:
             "activePermissionProfile": {{"id": "trace-post-restricted"}},
         }}}})
     elif method == "turn/start":
+        Path(request["params"]["cwd"], "received-rpc-methods.json").write_text(
+            json.dumps(methods)
+        )
+        Path(request["params"]["cwd"], "received-turn-input.json").write_text(
+            json.dumps(request["params"]["input"])
+        )
+        if {reject_turn!r}:
+            Path(request["params"]["cwd"], "turn-start-count.txt").write_text("1")
+            send({{"id": request["id"], "error": {{"code": -32602, "message": "rejected"}}}})
+            continue
         send({{"id": request["id"], "result": {{"turn": {{"id": "turn-fixture"}}}}}})
         if {empty_turn!r}:
             send({{"method": "turn/completed", "params": {{
@@ -260,6 +498,7 @@ def test_stdio_trace_post_transports_the_native_tool_compatibility_instruction(
     executable = _native_tool_contract_server(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    skill = _install_skill(workspace)
 
     result = CodexTracePostProvider(executable, "gpt-6-astra").run(
         workspace=workspace,
@@ -273,6 +512,31 @@ def test_stdio_trace_post_transports_the_native_tool_compatibility_instruction(
     assert "functions.exec with tools.image_gen__imagegen" in received
     assert "native image-generation tool exposed in this turn" in received
     assert "Do not look for functions.exec" in received
+    turn_input = _INPUTS.validate_json((workspace / "received-turn-input.json").read_text())
+    discovery = _JSON.validate_json((workspace / "received-skill-discovery.json").read_text())
+    assert discovery == {
+        "extraRoots": {"extraRoots": [str(skill.parent.parent)]},
+        "list": {"cwds": [str(workspace.resolve())], "forceReload": True},
+    }
+    assert _METHODS.validate_json((workspace / "received-rpc-methods.json").read_text()) == [
+        "initialize",
+        "initialized",
+        "mcpServerStatus/list",
+        "skills/extraRoots/set",
+        "skills/list",
+        "thread/start",
+        "mcpServerStatus/list",
+        "turn/start",
+    ]
+    assert turn_input[0] == {
+        "type": "text",
+        "text": "$trace-post\n\nfollow the frozen trace-post fixture",
+    }
+    assert turn_input[1] == {
+        "type": "skill",
+        "name": "trace-post",
+        "path": str(skill),
+    }
     diagnostic_path = workspace / "codex-image-edit-diagnostic.json"
     diagnostic = ImageEditProcessDiagnostic.model_validate_json(diagnostic_path.read_text())
     assert diagnostic.completed.image_generation == 7
@@ -291,12 +555,34 @@ def test_stdio_trace_post_transports_the_native_tool_compatibility_instruction(
     assert "TOP SECRET MESSAGE" not in diagnostic_path.read_text()
 
 
+def test_rejected_native_skill_turn_is_not_retried_as_text_only(tmp_path: Path) -> None:
+    executable = _native_tool_contract_server(tmp_path, reject_turn=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill = _install_skill(workspace)
+
+    with pytest.raises(CodexCliError, match="codex_image_edit_turn_start_rpc_error_32602"):
+        _ = CodexTracePostProvider(executable, "gpt-6-astra").run(
+            workspace=workspace,
+            instruction="fixture",
+            timeout_seconds=3,
+        )
+
+    assert (workspace / "turn-start-count.txt").read_text() == "1"
+    turn_input = _INPUTS.validate_json((workspace / "received-turn-input.json").read_text())
+    assert turn_input == [
+        {"type": "text", "text": "$trace-post\n\nfixture"},
+        {"type": "skill", "name": "trace-post", "path": str(skill)},
+    ]
+
+
 def test_diagnostic_write_failure_does_not_replace_a_successful_provider_result(
     tmp_path: Path,
 ) -> None:
     executable = _native_tool_contract_server(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _ = _install_skill(workspace)
     (workspace / "codex-image-edit-diagnostic.json").mkdir()
     temporary = workspace / ".codex-image-edit-diagnostic.tmp"
     _ = temporary.write_text("belongs-to-another-process", encoding="utf-8")
@@ -317,6 +603,7 @@ def test_diagnostic_write_failure_does_not_replace_the_provider_failure(
     executable = _native_tool_contract_server(tmp_path, empty_turn=True)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _ = _install_skill(workspace)
     (workspace / "codex-image-edit-diagnostic.json").mkdir()
     temporary = workspace / ".codex-image-edit-diagnostic.tmp"
     _ = temporary.write_text("belongs-to-another-process", encoding="utf-8")
@@ -334,6 +621,7 @@ def test_completed_native_turn_is_checkpointed_before_runner_returns(tmp_path: P
     executable = _native_tool_contract_server(tmp_path)
     workspace = tmp_path / "checkpoint-work"
     workspace.mkdir()
+    _ = _install_skill(workspace)
     checkpoints: list[tuple[int, bool]] = []
     provider = CodexTracePostProvider(executable, "fixture")
     result = provider.run_checkpointed(
@@ -531,6 +819,7 @@ def test_trace_post_rejects_a_runner_result_outside_the_seven_to_fourteen_image_
     _ = executable.write_text("fixture", encoding="utf-8")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _ = _install_skill(workspace)
     provider = CodexTracePostProvider(executable, "gpt-6-astra", _Runner(image_count))
 
     with pytest.raises(RuntimeError, match=r"^codex_trace_post_outcome_unknown$"):
@@ -590,6 +879,7 @@ def test_trace_post_rejects_unbound_or_reused_materialized_paths(
     _ = executable.write_text("fixture", encoding="utf-8")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _ = _install_skill(workspace)
     provider = CodexTracePostProvider(executable, "gpt-6-astra", _AlteredRunner(alteration))
 
     with pytest.raises(RuntimeError, match=r"^codex_trace_post_outcome_unknown$"):

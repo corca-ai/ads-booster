@@ -703,7 +703,9 @@ terminal receipts and job reasons; cancellation retains its separate resumable p
 - `agent/service/trace_post.py` owns exact admission, durable operation state, frozen-source
   validation and same-work asset registration.
 - `providers/codex_trace_post.py` owns the isolated official Codex process and unknown-result boundary;
-  `providers/codex_image_edit.py` owns the shared app-server transport and native PNG materialization.
+  `providers/codex_image_edit.py` owns the shared app-server transport, optional validated native
+  skill-input/discovery contract and native PNG materialization. Trace post supplies the one frozen
+  `trace-post` binding; generic image edit leaves that contract absent.
 - `bootstrap/trace_post_setup.py` and the CLI compose the catalog and deferred worker into the
   existing service lifecycle.
 - `agent/service/skills.py` owns discoverable metadata; `trace_post_bundle/` holds the versioned
