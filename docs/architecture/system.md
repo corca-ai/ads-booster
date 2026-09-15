@@ -83,6 +83,8 @@ Tunnel or Linux deployment acceptance. See the [server guide](../operations/agen
 
 ## Evidence-based task completion (2026-09-14 candidate)
 
+Slack admission uses the user's request as its success criterion. Task seeding deduplicates identical
+objective/criteria and does not add a generic answer-quality obligation to an execution request.
 Same-task repeated effect selections may reuse an existing successful receipt only after current
 owner proof readback, exact input/key and tool-identity checks. This does not grant another effect
 or consume another tool call. Changed tasks, failed/uncertain receipts and tenant-wide deduplication

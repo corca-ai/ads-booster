@@ -274,7 +274,7 @@ class SlackCommands:
                                 run_id=run_id,
                                 goal=AgentGoal(
                                     objective=text,
-                                    success_criteria=("출처와 불확실성이 명확한 답변을 만든다.",),
+                                    success_criteria=(text,),
                                     context={},
                                 ),
                                 budget=self.new_run_budget,

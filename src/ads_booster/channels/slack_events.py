@@ -1100,7 +1100,7 @@ class SlackEvents:
             )[:40],
             goal=AgentGoal(
                 objective=text,
-                success_criteria=("대화 맥락을 이어받아 출처와 불확실성이 명확한 답변을 만든다.",),
+                success_criteria=(text,),
                 context={"slack_conversation": context},
             ),
         )
