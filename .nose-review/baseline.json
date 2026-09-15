@@ -2506,6 +2506,112 @@
         "4f33628b3ef55de88028e40b0491be341d539c6091afd21ae867de901f3c4115",
         "cc2e9ee6af3648da6d8899b57e997898b53e078b3475d234fc67af661769f4de"
       ]
+    },
+    {
+      "fingerprint": "905d38f157d83f59e21276a6ae9afa9cd092fd39c2aad425c3320392bd4c3139",
+      "reason": "Memory view _target_state is a scoped read of completion/error state; _claim_target runs BEGIN IMMEDIATE and selects pending work before CAS lease claiming. Similar parameter binding uses different SQL/result contracts and transaction ownership. Keep observation outside the claim transaction; canonical scope-key validation is already shared.",
+      "memberHashes": [
+        "0e75f518192b66e9fbd0995d566aeebca4d60234daee7ecd565c3d659e2ad9d2",
+        "46f9da7983102122496b2e353b200e05f4e5dbc196b62d5d7ad7125e2e699c39"
+      ]
+    },
+    {
+      "fingerprint": "9eefd5f4798254611afcf62297d308747bda31ee764fcb18fe567de884fa7fa4",
+      "reason": "Provider diagnostic write-failure tests independently construct a blocked diagnostic path and an unrelated temporary file. One uses seven successful native events, the other an empty turn and expects the original provider failure. Retain independent opposing oracles proving diagnostics neither mask failure nor replace success; the native server fixture is already shared.",
+      "memberHashes": [
+        "4d584c90dd7527cbdd4cd03dc2b9c5d5c1bc6800332c11378588ec5cc530cafe",
+        "4d584c90dd7527cbdd4cd03dc2b9c5d5c1bc6800332c11378588ec5cc530cafe"
+      ]
+    },
+    {
+      "fingerprint": "6f8e15a8f4c585f1295cb16f120ffb959991af24696a293acf44dab3396cb722",
+      "reason": "Slack production-approval tests explicitly compose the same effect fixture for different authority scenarios: the normal request author grants consent, while another member's review must not grant consent for that author. setup_events and the effect descriptor/adapter are already shared; keeping per-test composition makes the identity changes and negative authorization oracle visible.",
+      "memberHashes": [
+        "6eb03691384bc70272b7232dee0905bed97dfebc4157e9dfd8f7c8a8bf978fbf",
+        "e453e7ad889a1e94eb7c5a0abc4acbdb775a095074d37e229b0e7ed0148f0102"
+      ]
+    },
+    {
+      "fingerprint": "835a7e86097d41a57800636fa997d88b404156131e1714e938586771d5971c71",
+      "reason": "_reject_tool_plan writes an OBSERVE record for a model proposal that was never dispatched, with repair-budget state; _persist_deferred_ack writes an EXECUTE record binding an admitted deferred operation. Both intentionally use the existing _append_step/_step/_record primitives. Do not merge these semantically opposite pre-dispatch and post-admission ledger transitions.",
+      "memberHashes": [
+        "e6edb8c5642a3404da08310f3ef01931b7d49edff48ba430a34b850c04c7d2ce",
+        "ebbd26a3b357bbc7a2b2abd0f0fb1cc88f6c8ff167ab815849fa9feb5af0904c"
+      ]
+    },
+    {
+      "fingerprint": "2b9e30f8e02f13d72f2acb88ef3f18b243c776eed75be9e21d72ab252a38851c",
+      "reason": "The two provider test modules import shared production image-process contracts and transport test helpers directly. The edit and trace-post suites have different evidence-count and provenance requirements. Import statements are dependency declarations, not another implementation; retain their canonical module ownership.",
+      "memberHashes": [
+        "ca4321d23ee4f415be31f7de3c6adae79defc82627fe1938f4bc127271e845a0",
+        "dff9e395f97e284a6596bd626ccdd56ec841768e846e0dcd6e4d66dd5f4f049c"
+      ]
+    },
+    {
+      "fingerprint": "3f62ef1d103c0fa4c7564b2ab823a1494869c4411b755eb4c864fe3099ca7389",
+      "reason": "After the main merge, _StreamState additionally records sanitized item diagnostics and native checkpoints while executing generation; _CapabilityState returns only readiness and suppresses turn/start. CapabilityState already delegates thread preflight to StreamState. Preserve the no-generation readiness boundary rather than combining their execution state machines.",
+      "memberHashes": [
+        "2dba808a13a3c7eed102513311c1ab4d91122c534522924531469b7489f42dd0",
+        "c01a71c7a62084ced06cbc5fa056b451209bdf487124210d6c79b5129ce9682e"
+      ]
+    },
+    {
+      "fingerprint": "c44bec92337c11c896078f0986a9fccb89b13d67fafa86b325936c46ab0d457f",
+      "reason": "CreativeImageEditTool owns source-image edits/localization, fixed 20-unit accounting, review abandonment and edit readback. TracePostTool owns frozen multi-image bundles, six outputs, provider progress/completion proof and sanitized diagnostic persistence. They share canonical complete_deferred settlement but have different queue schemas, proof contracts, cost and uncertainty policies; retain those domain owners.",
+      "memberHashes": [
+        "b66a6f06f64266c1cc3f0b0902b94b3696649d047ba3376dc43d11e4d6999429",
+        "db919eca1eb0ef00ec1274c89cbd5e2c85504fd04949d42e262895b40534ef4d"
+      ]
+    },
+    {
+      "fingerprint": "1c0fc53f494156265a36ed5f98845b43ef5a4f694ee96443f2b60497b124487c",
+      "reason": "Each member is the assertion that its HTTP fixture receives timeout 30. Public unauthenticated updater pagination, updater HTTP-error redaction and authenticated GitHub issue creation are independent transport contracts. Sharing a test assertion across them would couple unrelated owners without removing runtime duplication.",
+      "memberHashes": [
+        "e736c6b4903ed585e5957234b6fe07c33c3f4371c04ce493bf55d51f1a1d5698",
+        "e736c6b4903ed585e5957234b6fe07c33c3f4371c04ce493bf55d51f1a1d5698",
+        "e736c6b4903ed585e5957234b6fe07c33c3f4371c04ce493bf55d51f1a1d5698"
+      ]
+    },
+    {
+      "fingerprint": "17834e209c5f76593617926bf361955102ae23b893120864dd62e57e77a315e9",
+      "reason": "MemoryRevisionTarget and SkillRevisionTarget are separate tagged path variants: one validates document_id and writes teams/.../revisions, the other validates skill_id and writes teams/.../skills. bounded_id already owns shared validation. Keep explicit variant field names and namespaces so malformed inputs retain correct diagnostics and paths cannot cross content owners.",
+      "memberHashes": [
+        "21da38909df2d98034bee4abb6838bd746b6c0c2740023721755ea016844c22f",
+        "4bb5fc8034af675dfba782f9b10342f0ed75f412628d076be5a9f355d5385639"
+      ]
+    },
+    {
+      "fingerprint": "689cf87f99f2b7eec12f50c3179525fee6e61cde6d37b5dfe3d9d92a1ecaf6b3",
+      "reason": "The initialized/MCP handshake occurs in generation and readiness state machines. Generation additionally advances diagnostic phase and proceeds toward a real turn; readiness first requests modelProvider/capabilities/read and must never issue a generation turn. Existing _mcp_request, _check_mcp_inventory and _exchange are shared; retain these distinct protocol branches.",
+      "memberHashes": [
+        "273adfc7b70a7e585e1fcbdb5961b9148eebb1d73be4e29cdc5ad4c290eb5a3f",
+        "cedffecb3b885387bdbeeef0182388932ed72bd967d008e839626183c9350ae2"
+      ]
+    },
+    {
+      "fingerprint": "53a95a4e6399a745a215a50ee1ad787a26a2fcc1c9cd0298f678cbf08185640d",
+      "reason": "task_results imports contracts to render a persisted delivery result; waiting_dialogue imports canonical task contracts to create a tools-disabled response-only turn. The candidate crosses import/declaration boundaries. They already import one FAILURE_TEXT owner; combining these modules would mix delivery projection with dialogue reasoning authority.",
+      "memberHashes": [
+        "2cca110a0360c31d473265cc74ce03f3f015a5246da5a917d984f1758cec6864",
+        "5d1ab51de59fc4a325cb9ecb47473356784eedc013e9307160712654966b0469"
+      ]
+    },
+    {
+      "fingerprint": "ccb29c20f11d42be99f67f71b770f8db692f8f407c766a98c88cfb4a895849eb",
+      "reason": "Application lifecycle and waiting_dialogue directly import the shared run/task contracts they consume. Application owns admission, execution and recovery; waiting_dialogue must remain response-only with no effect dispatch. The selected overlap is imports and declaration scaffolding, not a copied execution algorithm; a common barrel would obscure that authority boundary.",
+      "memberHashes": [
+        "4bacf0b054fd3120e9794e8f751e3c42714c17b30915799ddaf2fb755d1ab7f6",
+        "903cf7777faa300c140f4d6e14fd0931d6e8e82c16f219249e17c2bcef4295cb"
+      ]
+    },
+    {
+      "fingerprint": "b6dba6fbb2b5e0298a89a792a0fdb5bccbd07f9cceb481c160bfba5f1d9b53ec",
+      "reason": "The family spans application/Slack import blocks and the deferred_failure FAILURE_TEXT mapping. The failure messages have one canonical definition and both consumers import it. There is no duplicated failure mapping to extract; retain the worker/service/channel dependency direction and the shared diagnostic owner.",
+      "memberHashes": [
+        "1cb1161f23a50e441e01f576644a5db44af400ffafceff0fee9ed7155224935e",
+        "acfe555feda831ca1abfe858e7fc49c49b647abcd616c10c6c310020803f1243",
+        "ce4e19a8b89ad2c87b31372691cb0c2760af51f0211234355e4f6d0224347a03"
+      ]
     }
   ]
 }
