@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -13,9 +14,10 @@ if TYPE_CHECKING:
     from ads_booster.channels.slack_conversations import SlackConversationStore
 
 _MESSAGE_ROW: TypeAdapter[tuple[str] | None] = TypeAdapter(tuple[str] | None)
+_COLUMNS = TypeAdapter(list[tuple[int, str, str, int, str | None, int]])
 
-_ROW: TypeAdapter[tuple[str, str, str, str, int] | None] = TypeAdapter(
-    tuple[str, str, str, str, int] | None
+_ROW: TypeAdapter[tuple[str, str, str, str, int, float] | None] = TypeAdapter(
+    tuple[str, str, str, str, int, float] | None
 )
 
 
@@ -28,6 +30,7 @@ class ProgressRecord:
     channel_id: str
     timestamp: str
     cancelled: bool
+    started_at: float = 0.0
 
 
 @dataclass(slots=True)
@@ -41,6 +44,16 @@ class SlackProgressStore:
                 message_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
                 channel_id TEXT NOT NULL, timestamp TEXT NOT NULL DEFAULT '',
                 cancelled INTEGER NOT NULL DEFAULT 0)""")
+            columns = {
+                row[1]
+                for row in _COLUMNS.validate_python(
+                    db.execute("PRAGMA table_info(slack_progress)").fetchall()
+                )
+            }
+            if "started_at" not in columns:
+                _ = db.execute(
+                    "ALTER TABLE slack_progress ADD COLUMN started_at REAL NOT NULL DEFAULT 0"
+                )
 
     def begin(self, message_id: str, run_id: str, channel_id: str) -> None:
         with self.inbox.connect() as db:
@@ -49,12 +62,17 @@ class SlackProgressStore:
                 VALUES (?,?,?)""",
                 (message_id, run_id, channel_id),
             )
+            _ = db.execute(
+                "UPDATE slack_progress SET started_at=? WHERE message_id=? AND started_at=0",
+                (time.time(), message_id),
+            )
 
     def locate(self, message_id: str) -> ProgressRecord | None:
         with self.inbox.connect() as db:
             row = _ROW.validate_python(
                 db.execute(
-                    """SELECT p.run_id,p.channel_id,p.timestamp,j.message_json,p.cancelled
+                    """SELECT p.run_id,p.channel_id,p.timestamp,j.message_json,
+                    p.cancelled,p.started_at
                 FROM slack_progress p JOIN slack_message_jobs j USING(message_id)
                 WHERE message_id=?""",
                     (message_id,),
@@ -71,7 +89,12 @@ class SlackProgressStore:
             row[1],
             row[2],
             bool(row[4]),
+            row[5],
         )
+
+    def elapsed_seconds(self, message_id: str) -> int:
+        record = self.locate(message_id)
+        return max(0, int(time.time() - record.started_at)) if record and record.started_at else 0
 
     def sent(self, message_id: str, timestamp: str) -> None:
         with self.inbox.connect() as db:

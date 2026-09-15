@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 from ads_booster.contracts.agent_run import BoundedId, contract_sha256
 from ads_booster.contracts.models import ContractModel, Sha256Digest
 from ads_booster.contracts.task_instruction import TaskInstruction  # noqa: TC001
+from ads_booster.transport.json_types import JsonObject  # noqa: TC001 - Pydantic field.
 
 
 class CompletionCandidate(ContractModel):
@@ -93,6 +94,7 @@ class SemanticAssessmentRequest(ContractModel):
     obligations: tuple[SemanticObligation, ...]
     evidence: tuple[CompletionEvidenceSummary, ...] = ()
     evidence_sha256s: tuple[Sha256Digest, ...] = ()
+    reference_context: JsonObject | None = None
 
 
 class SemanticAssessmentResult(ContractModel):

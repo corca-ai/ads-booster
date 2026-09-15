@@ -86,6 +86,7 @@ def test_codex_cli_is_only_one_reasoning_provider_adapter(tmp_path: Path) -> Non
     assert result.receipt.request_sha256 == contract_sha256(request)
     assert result.decision.action == "stop"
     assert "capture.appium" not in runner.prompts[0]
+    assert 'Configured model identifier: "gpt-test"' in runner.prompts[0]
 
 
 def test_codex_runtime_failure_is_sanitized_at_provider_boundary(tmp_path: Path) -> None:

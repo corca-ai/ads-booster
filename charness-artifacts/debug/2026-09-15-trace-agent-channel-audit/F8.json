@@ -1,0 +1,15 @@
+{
+  "finding": "F8",
+  "source": "channel-audit-186",
+  "expected": "Search limits and source language are explicit",
+  "stimulus": "Actual public Threads search",
+  "disposition": "disconfirmed",
+  "observed": "Two actual search-result URLs with Traditional Chinese and snippet-only caveats",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "/private/tmp/trace-channel-audit/candidate3-installed/bin/python /private/tmp/trace-channel-audit/research_replay.py --output-root /private/tmp/trace-channel-audit/candidate3-research --codex /Users/koleuka/.local/bin/codex --model gpt-6-astra --scenario colleague",
+  "fixture": "/private/tmp/trace-channel-audit/research_replay.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

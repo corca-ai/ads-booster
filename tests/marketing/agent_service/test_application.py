@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, override
 
 import pytest
 
@@ -525,6 +525,29 @@ def test_tenant_scoped_idempotency_blocks_same_tool_input_across_runs(
     assert duplicate.blocked_reason == "tool_idempotency_conflict"
 
 
+def test_new_observation_can_refresh_the_same_input_within_a_run(tmp_path: Path) -> None:
+    class RefreshReasoning(InvokeThenStopReasoning):
+        @override
+        def plan(self, request: ReasoningRequest) -> ReasoningResult:
+            if len(self.requests) < 2:
+                proposed = super().plan(request.model_copy(update={"evidence": ()}))
+                return _reasoning_result(request, proposed.decision)
+            return super().plan(request)
+
+    adapter = ResearchAdapter()
+    database = tmp_path / "service.sqlite3"
+    service = MarketingAgentService(
+        repository=SqliteAgentRunRepository(database),
+        registry=ToolRegistry((_descriptor("research.web", EffectClass.OBSERVE, ready=True),)),
+        reasoning=RefreshReasoning(),
+        tools={"research.web": adapter},
+        runtime_store=SqliteSessionStore(database),
+    )
+    run = service.create(_request(), now=NOW)
+    assert run.state is AgentRunState.COMPLETED
+    assert len(adapter.inputs) == 2
+
+
 def test_started_invocation_reconciles_even_if_tool_becomes_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -582,9 +605,7 @@ def _ready_image_effect_service(
     *,
     fault_hook: Callable[[str], None] | None = None,
 ) -> MarketingAgentService:
-    effect_descriptor = _descriptor(
-        "creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True
-    )
+    effect_descriptor = _descriptor("creative.image.edit", EffectClass.LOCAL_ARTIFACT, ready=True)
     return MarketingAgentService(
         repository=SqliteAgentRunRepository(database),
         registry=ToolRegistry((effect_descriptor,)),

@@ -43,6 +43,7 @@ jobs:
         run: >-
           uv run --no-sync pytest tests/marketing/agent_service tests/marketing/channels
           tests/providers/test_codex_reasoning.py tests/providers/test_execution_control.py
+          tests/providers/test_codex_reasoning_v2.py tests/providers/test_codex_completion.py
           tests/cli/test_cli_compatibility.py
           tests/cli/test_agent_server_update.py -q
           tests/marketing/tool_adapters/test_compatibility.py

@@ -127,6 +127,9 @@ def test_uncertain_operation_allows_current_dialogue_without_redispatch(
     assert len(reasoning.requests) == 1
     assert reasoning.requests[0].capability_snapshot.descriptors == ()
     assert reasoning.requests[0].remaining_tool_calls == 0
+    availability = reasoning.requests[0].goal.context["service_availability"]
+    assert isinstance(availability, dict)
+    assert availability["capability_ids"] == ["capture.test"]
     pending = reasoning.requests[0].goal.context["pending_work"]
     assert isinstance(pending, dict)
     assert pending["failure_code"] == "codex_sandbox_launcher_unavailable"
@@ -174,15 +177,22 @@ def test_cached_dialogue_survives_crash_before_delivery(
     assert len(adapter.calls) == 1
 
 
+@pytest.mark.parametrize("start_new_work", [False, True])
 def test_late_original_result_retains_thread_binding_after_dialogue(
     uncertain_conversation: tuple[SlackEvents, list[JsonObject], AsyncAdapter],
+    start_new_work: bool,
 ) -> None:
     owner, messages, adapter = uncertain_conversation
     service = owner.commands.application.service
     conversation = owner.store.conversations()[0]
+    text = "새 작업 배고파" if start_new_work else "배고파"
     service.reasoning = DialogueReasoning("배고파", "간단히 먹을까요?")
-    receive(owner, type="message", text="배고파", ts="100.002", thread_ts="100.001")
+    receive(owner, type="message", text=text, ts="100.002", thread_ts="100.001")
     assert owner.work_once(now=NOW)
+    for _ in range(8):
+        if not owner.work_once(now=NOW):
+            break
+    active = owner.store.conversations()[0].current_run
     invocation = adapter.calls[0]
 
     _ = service.complete_deferred(
@@ -193,7 +203,9 @@ def test_late_original_result_retains_thread_binding_after_dialogue(
         now=NOW,
     )
 
-    assert owner.store.conversation_for_run("team", conversation.current_run) == conversation
+    bound = owner.store.conversation_for_run("team", conversation.current_run)
+    assert bound is not None
+    assert bound.thread_ts == conversation.thread_ts
     assert len(adapter.calls) == 1
     session = service.runtime_store.load(conversation.current_run)
     assert session is not None
@@ -208,16 +220,13 @@ def test_late_original_result_retains_thread_binding_after_dialogue(
         if not owner.work_once(now=NOW):
             break
     delivered = next(
-        message
-        for message in reversed(messages)
-        if late_result in str(message["text"])
+        message for message in reversed(messages) if late_result in str(message["text"])
     )
-    assert (
-        delivered.get("thread_ts") == conversation.thread_ts or delivered.get("ts") == "123.456"
-    )
+    assert delivered.get("thread_ts") == conversation.thread_ts or delivered.get("ts") == "123.456"
     count = len(messages)
     assert not owner.enqueue_run_update("team", conversation.current_run, event_id="late-worker")
     assert len(messages) == count
+    assert owner.store.conversations()[0].current_run == active
 
 
 def test_delivered_dialogue_is_not_repeated_after_restart(
@@ -274,3 +283,29 @@ def test_dialogue_rejects_tool_dispatch_and_preserves_pending_operation(
     assert service.repository.get("team", run_id) == run
     assert service.runtime_store.load(run_id) == before
     assert len(adapter.calls) == 1
+
+
+def test_explicit_new_work_does_not_remain_response_only(
+    uncertain_conversation: tuple[SlackEvents, list[JsonObject], AsyncAdapter],
+) -> None:
+    owner, messages, adapter = uncertain_conversation
+    service = owner.commands.application.service
+    original = owner.store.conversations()[0].current_run
+    before = service.repository.get("team", original)
+    service.reasoning = DialogueReasoning("새 작업", "새 초안입니다.")
+    receive(
+        owner,
+        type="message",
+        text="새 작업 짧은 광고 문구를 써줘",
+        ts="100.002",
+        thread_ts="100.001",
+    )
+    for _ in range(8):
+        if not owner.work_once(now=NOW):
+            break
+    current = owner.store.conversations()[0].current_run
+    assert current != original
+    assert service.repository.get("team", original) == before
+    assert len(adapter.calls) == 1
+    assert "새 초안" in str(messages[-1]["text"])
+    assert owner.store.conversation_for_run("team", original) is not None

@@ -114,6 +114,20 @@ and validated against the selected ToolDescriptor by the service. The receipt bi
 provider output schema digest. This avoids sending recursive open-object schemas that the live
 structured-output provider rejects; canonical invocation input and history remain structured JSON.
 
+## Slack follow-up and completion boundaries
+
+The channel's `SlackEvents._execute_requested_steps` applies the same source-bound execution
+authority at ingress and resumed drive slices. `SlackConversationStore` owns retained original
+Run notification bindings; `SlackProgressStore` owns the durable elapsed-time origin. Neither
+changes canonical receipts or replays uncertain work.
+
+`CompletionContext` carries scoped reference context from `MarketingAgentService` to
+`SemanticAssessmentRequest`. Conversation facts and capability inventory remain reference data;
+the completion proof reader still exclusively verifies effect and artifact evidence. Codex actor
+and assessor schema builders constrain returned evidence/obligation identifiers to supplied values.
+The provider owns configured-model wording; it does not infer product capabilities from its own
+restricted judgment subprocess.
+
 ## Marketing analysis
 
 `learning/funnel_analysis.py` owns bounded descriptive funnel contracts and decimal arithmetic.

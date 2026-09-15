@@ -1,0 +1,15 @@
+{
+  "finding": "F6",
+  "source": "channel-audit-186",
+  "expected": "Requested output is delivered without extra review",
+  "stimulus": "Actual model and six generated PNGs",
+  "disposition": "reproduced",
+  "observed": "Five dialogue answers completed and six file-upload sequences delivered locally",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "/private/tmp/trace-channel-audit/candidate3-installed/bin/python /private/tmp/trace-channel-audit/recover_image.py /private/tmp/trace-channel-audit/candidate2-image",
+  "fixture": "/private/tmp/trace-channel-audit/recover_image.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

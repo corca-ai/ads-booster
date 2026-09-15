@@ -1,0 +1,15 @@
+{
+  "finding": "F1",
+  "source": "channel-audit-186",
+  "expected": "Requested work executes after yielding",
+  "stimulus": "Signed request and restarted drive",
+  "disposition": "reproduced",
+  "observed": "Approval wait disappeared after repair",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "PYTHONPATH=src /private/tmp/trace-runtime-progress-proof/final-installed/bin/python -m pytest -q tests/marketing/channels/test_slack_images.py",
+  "fixture": "tests/marketing/channels/test_slack_images.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

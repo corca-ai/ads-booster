@@ -1,0 +1,15 @@
+{
+  "finding": "F5",
+  "source": "channel-audit-186",
+  "expected": "Only canonical evidence handles are cited",
+  "stimulus": "Mutated and output digests",
+  "disposition": "reproduced",
+  "observed": "Invalid references rejected by both provider schemas",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "PYTHONPATH=src /private/tmp/trace-runtime-progress-proof/final-installed/bin/python -m pytest -q tests/providers/test_codex_completion.py",
+  "fixture": "tests/providers/test_codex_completion.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

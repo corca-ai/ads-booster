@@ -1,0 +1,15 @@
+{
+  "finding": "F2",
+  "source": "channel-audit-186",
+  "expected": "Follow-ups reach reasoning and retain old results",
+  "stimulus": "Blocked and uncertain Slack follow-ups",
+  "disposition": "reproduced",
+  "observed": "New task and original late notification both delivered",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "PYTHONPATH=src /private/tmp/trace-runtime-progress-proof/final-installed/bin/python -m pytest -q tests/marketing/channels/test_slack_uncertain_dialogue.py",
+  "fixture": "tests/marketing/channels/test_slack_uncertain_dialogue.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

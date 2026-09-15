@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ads_booster.agent.service.deferred_failure import FAILURE_TEXT
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def answer_waiting_dialogue(
-    service: MarketingAgentService, run: AgentRun, goal: AgentGoal
+    service: MarketingAgentService, run: AgentRun, goal: AgentGoal, *, now: datetime | None = None
 ) -> tuple[str, JsonObject]:
     """Read a scoped Run under its caller's lock without advancing or revising it."""
     records = service.repository.records(run.tenant_id, run.run_id)
@@ -55,7 +56,32 @@ def answer_waiting_dialogue(
     if isinstance(diagnostic, str) and diagnostic in FAILURE_TEXT:
         pending["failure_code"] = diagnostic
         pending["failure_reason"] = FAILURE_TEXT[diagnostic]
-    dialogue_goal = goal.model_copy(update={"context": {**goal.context, "pending_work": pending}})
+    observed_at = now or datetime.now(UTC)
+    available = service.registry.snapshot_for_plan(
+        snapshot_id=run.run_id + ":dialogue-availability",
+        run_id=run.run_id,
+        remaining_tool_calls=run.budget.max_tool_calls,
+        remaining_cost_units=run.budget.max_cost_units,
+        policy=service.capability_policy,
+        now=observed_at,
+    )
+    if service.knowledge is not None:
+        available = service.knowledge.filter_snapshot(run.run_id, available)
+    availability: JsonObject = {
+        "verification": "current_scoped_registry_only_no_skill_or_external_lookup",
+        "capability_ids": [item.capability_id for item in available.descriptors],
+        "execution": "response_only_this_turn_new_work_requires_a_separate_run",
+        "new_work_command": "새 작업 <request>",
+    }
+    dialogue_goal = goal.model_copy(
+        update={
+            "context": {
+                **goal.context,
+                "pending_work": pending,
+                "service_availability": availability,
+            }
+        }
+    )
     dialogue_id = (
         "dialogue-"
         + contract_sha256(

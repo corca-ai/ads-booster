@@ -171,8 +171,37 @@ status. This turn has no selectable tools or execution budget, and a tool propos
 It does not revise or drive the uncertain Run, replace its knowledge execution source, or take
 its drive/notification claim. The response and provider receipt are saved in the Slack message
 plan before notification, so recovery can deliver a saved answer without another model call.
-The original Run remains the conversation's work target and retains its late-result binding.
+The original Run retains its late-result binding. An explicit `새 작업 <request>` can start a
+separate Run while the original waits; the conversation retains the original Run ID. Notifications
+use that Run's result, original message actor and progress-message identity, not the newer Run's
+completion assessment. Later-task dialogue does not steer the older Run's completion. A blocked
+completion with no pending invocation also permits a fresh question in a new Run. Pending effects
+remain response-only until explicitly separated as new work; none are automatically retried.
 These dialogue answers are not task-completion assessments or fresh external-result checks.
+
+Waiting dialogue receives a current, scoped registry inventory as reference context. Its own empty
+dispatch snapshot is a turn restriction, not a claim that the service lacks tools or writable
+worker workspaces. The provider prompt identifies the configured model literally without inferring
+its underlying model family. These reference projections do not grant dispatch authority.
+
+Initial Slack handling and resumed drive slices share the same requested-work authorization loop.
+Each invocation rechecks the original authenticated message, unchanged source, current membership
+and descriptor before calling normal runtime approval. The whole request, including a `새 작업`
+prefix, remains intact for exact intent binding. A slice or process restart cannot introduce a new
+human approval checkpoint or grant an unrequested second operation.
+
+The completion assessor receives the same scoped conversation facts and the last planning tool
+inventory as reference data, plus the configured reasoning provider receipt. Only admitted task
+instructions can revise obligations; reference context cannot prove an artifact or external effect.
+Its cache binds that context. Structured provider schemas constrain actor evidence IDs and assessor
+obligation IDs to host-supplied values; canonical receipt and artifact validation still run.
+
+Slack progress adds `started_at` to its existing table and retains the initial timestamp across
+drive slices and restart. Legacy rows initialize it on first resumed observation. Stages identify
+skill lookup, image execution and automatic result checking; elapsed time is not a completion
+estimate. Conversation JSON adds `retained_run_ids` only when needed (empty values are omitted).
+Older binaries cannot read populated retained-run JSON. Drain pending work and use the established
+pre-upgrade backup procedure for rollback; do not start an old binary on newly retained conversations.
 
 The candidate reads legacy Runs by deriving a task from the immutable goal when task records are
 absent. Existing records and receipt/approval digests are not rewritten. Reasoning v1 remains readable,
@@ -1163,6 +1192,22 @@ text from this evidence after restart.
 The existing response-only waiting dialogue receives the same allowlisted failure code and fixed
 reason from canonical evidence. It keeps the original Run and notification binding unchanged and
 has no tool budget. The channel does not create a competing inspection Run or replace operation
-ownership. The earlier response-only dialogue contract remains the sole follow-up path.
+ownership. Ordinary follow-ups retain that response-only contract; explicit independent work uses
+the retained-original-Run binding described above.
 
 The Ubuntu installer installs the system `bubblewrap` package because the pinned single-binary Codex download has no bundled bwrap resource. Installer preflight includes `bwrap`. The installed Linux gate exercises this dependency without credentials.
+
+### Completion checks for generated images and remembered facts
+
+An ordinary media-generation request is deliverable after canonical artifact-owner checks.
+Appearance words in a brief do not impose a separate visual-review or human-approval stage.
+Explicit visual inspection or a claim that inspection occurred still needs review evidence.
+An authenticated scoped memory read can confirm facts already stored; it cannot prove a new
+write. Completion assessment must not demand a redundant write to confirm existing memory.
+Worker admission replaces the previous approval wait reason with `awaiting_tool`; resumed active
+planning clears stale wait reasons. Slack projects this state as execution in progress.
+
+For `run_tool_input` observation tools, each newly admitted read includes the canonical Run
+revision in its idempotency identity. An identical refresh is a new observation, not a duplicate
+effect. Recovery reuses the persisted invocation unchanged. External/artifact writes and explicit
+`tenant_tool_input` identities retain their existing deduplication semantics and budget guards.

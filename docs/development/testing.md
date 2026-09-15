@@ -5,6 +5,21 @@ Last reviewed: 2026-09-14
 
 ## Focused checks
 
+For the September 15 Slack channel audit, see the complete
+[thread inventory and dispositions](slack-channel-audit-2026-09-15.md). Select channel tests
+`test_slack_events.py`, `test_slack_images.py`, `test_slack_drive.py`,
+`test_slack_uncertain_dialogue.py`, `test_slack_progress.py`, `test_slack_run_notifications.py`,
+and provider tests `test_codex_reasoning.py`, `test_codex_reasoning_v2.py`,
+`test_codex_completion.py`. Include service `test_completion_assessment.py`,
+`test_task_completion.py`, and `test_completion_repair.py` for assessment reference changes.
+Force a one-provider-call slice and restart before dispatch; verify exact original authorization,
+revocation/question controls, retained late-result delivery and no elapsed-time reset.
+The real-model `slack_colleague_canary` now drains bounded slices to quiescence and records the
+active conversation Run even after a blocked predecessor. Its exit code alone is not a quality
+verdict: inspect every turn, unfinished state and retained failed attempt. Repeat selected tests
+from a fresh non-editable installation outside the checkout. Synthetic media/Slack adapters
+remain distinct from real image generation and live attachment delivery.
+
 For Trace post interpreter access, deferred progress and notification recovery, select
 `tests/marketing/agent_service/test_trace_post_runtime.py`, `test_creative_image_edit.py`,
 `tests/marketing/channels/test_slack_trace_post.py`, `test_slack_progress.py`,
@@ -975,3 +990,9 @@ the persisted failure reason, unchanged original records, and retained delayed s
 Rebuild a non-editable wheel and run this selection outside the checkout. These fixtures prove
 routing and persistence, not actual Slack delivery or production image generation. Verify the merged
 SHA through public health after the exact main verification succeeds; CI alone is not activation.
+
+The channel audit also targets `test_application.py::test_new_observation_can_refresh_the_same_input_within_a_run`,
+`test_application_deferred.py::test_worker_admission_replaces_approval_wait_in_task_and_user_result`,
+and `test_codex_completion.py::test_assessor_can_only_cite_host_evidence_handles`. Keep tenant-scoped
+deduplication and restart tests alongside observation refresh tests. See
+[the complete channel inventory](slack-channel-audit-2026-09-15.md) for real-provider limits.

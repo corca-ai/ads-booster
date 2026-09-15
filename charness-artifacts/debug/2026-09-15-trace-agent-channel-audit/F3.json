@@ -1,0 +1,15 @@
+{
+  "finding": "F3",
+  "source": "channel-audit-186",
+  "expected": "Scoped service capabilities remain visible",
+  "stimulus": "Captured reasoning requests",
+  "disposition": "reproduced",
+  "observed": "Configured identity and scoped inventory supplied without dispatch authority",
+  "schema": "charness.adversarial-evidence.receipt.v1",
+  "command": "PYTHONPATH=src /private/tmp/trace-runtime-progress-proof/final-installed/bin/python -m pytest -q tests/providers/test_codex_reasoning.py",
+  "fixture": "tests/providers/test_codex_reasoning.py",
+  "final_consumer": "Canonical service, captured Slack delivery or actual Codex structured output",
+  "executed": true,
+  "final_consumer_observed": true,
+  "returncode": 0
+}

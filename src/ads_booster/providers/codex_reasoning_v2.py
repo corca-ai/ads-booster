@@ -25,11 +25,11 @@ _MAX_INPUT_BYTES: Final = 65536
 
 
 def plan_v2(provider: ReasoningConfiguration, request: ReasoningRequestV2) -> ReasoningResultV2:
-    schema = _schema()
+    schema = _schema(request)
     provider.workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="reasoning-v2-", dir=provider.workspace_root) as directory:
         raw = provider.codex.run_marketing_judgment_job(
-            reasoning_prompt(request)
+            reasoning_prompt(request, model_id=provider.model_id)
             + """
 V2 completion contract: stop is a completion candidate, not task success.
 Return completion_candidate only on stop, with the exact user-facing answer separately
@@ -70,7 +70,7 @@ Task proposals must retain every required obligation and its host source_refs.
     )
 
 
-def _schema() -> JsonObject:
+def _schema(request: ReasoningRequestV2) -> JsonObject:
     schema = _JSON.validate_python(ReasoningDecisionV2.model_json_schema())
     properties = _JSON.validate_python(schema["properties"])
     del properties["tool_input"]
@@ -82,6 +82,19 @@ def _schema() -> JsonObject:
     candidate = _JSON.validate_python(definitions["CompletionCandidate"])
     candidate_properties = _JSON.validate_python(candidate["properties"])
     del candidate_properties["answer_sha256"]
+    handles = sorted(
+        {
+            digest
+            for item in request.evidence
+            if isinstance(digest := item.get("host_evidence_sha256"), str)
+        }
+    )
+    evidence_schema = _JSON.validate_python(candidate_properties["evidence_sha256s"])
+    if handles:
+        evidence_schema["items"] = _JSON.validate_python({"type": "string", "enum": handles})
+    else:
+        evidence_schema["maxItems"] = 0
+    candidate_properties["evidence_sha256s"] = evidence_schema
     candidate["properties"] = candidate_properties
     definitions["CompletionCandidate"] = candidate
     schema["$defs"] = definitions

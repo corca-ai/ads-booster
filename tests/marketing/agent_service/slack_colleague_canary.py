@@ -401,9 +401,15 @@ def main() -> None:
             now=now,
         ) == {"ok": True}
         assert owner.work_once(now=now)
-        runs = service.repository.list_runs("synthetic-rehearsal")
-        assert len(runs) == 1
-        run = runs[0]
+        for _ in range(32):
+            if not owner.work_once(now=datetime.now(UTC)):
+                break
+        else:
+            reason = "colleague_canary_did_not_quiesce"
+            raise RuntimeError(reason)
+        conversation = owner.store.conversations()[0]
+        run = service.repository.get("synthetic-rehearsal", conversation.current_run)
+        assert run is not None
         records = service.repository.records(run.tenant_id, run.run_id)
         conversation = owner.store.conversation_for_run(run.tenant_id, run.run_id)
         assert conversation is not None
