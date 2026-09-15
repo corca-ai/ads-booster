@@ -36,11 +36,6 @@ class ThreadsEffectFence:
     database_path: Path
     _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        """Initialize durable connection tombstones."""
-        with closing(sqlite3.connect(self.database_path)) as database, database:
-            initialize_threads_effect_fence(database)
-
     @contextmanager
     def hold(self) -> Generator[None]:
         with self._lock:
@@ -53,6 +48,7 @@ class ThreadsEffectFence:
         *,
         now: datetime,
     ) -> None:
+        initialize_threads_effect_fence(database)
         _ = database.executemany(
             """INSERT INTO threads_connection_tombstones(connection_id,deleted_at)
             VALUES(?,?) ON CONFLICT(connection_id) DO UPDATE SET deleted_at=excluded.deleted_at""",
@@ -61,6 +57,7 @@ class ThreadsEffectFence:
 
     def allow(self, connection_id: str) -> None:
         with self.hold(), closing(sqlite3.connect(self.database_path)) as database, database:
+            initialize_threads_effect_fence(database)
             _ = database.execute(
                 "DELETE FROM threads_connection_tombstones WHERE connection_id=?",
                 (connection_id,),
