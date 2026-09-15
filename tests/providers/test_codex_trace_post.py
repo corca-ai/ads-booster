@@ -10,6 +10,7 @@ import os
 import sys
 import tomllib
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import Literal
 
@@ -161,6 +162,14 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
         "contextCompaction",
     }
     assert "exact Python interpreter" in request.developer_instructions
+    packaged_help = (
+        files("ads_booster")
+        .joinpath("trace_post_bundle/scripts/README.md")
+        .read_text(encoding="utf-8")
+    )
+    assert "tools.image_gen__imagegen" in packaged_help
+    assert "functions.exec with tools.image_gen__imagegen" in request.developer_instructions
+    assert "native image-generation tool exposed in this turn" in request.developer_instructions
     assert "./provider-images/<image item id>.png" in request.developer_instructions
     assert result.thread_id == "thread-fixture"
     assert result.turn_id == "turn-fixture"
@@ -169,6 +178,80 @@ def test_trace_post_sends_the_restricted_app_server_request_and_returns_bound_im
         assert image.event_id == f"image-{index}"
         assert image.path.parent == workspace / "provider-images"
         assert image.sha256 == hashlib.sha256(image.path.read_bytes()).hexdigest()
+
+
+def _native_tool_contract_server(tmp_path: Path) -> Path:
+    """Model the app-server boundary without making a model or image call."""
+    executable = tmp_path / "fixture-app-server"
+    encoded = base64.b64encode(_png_bytes()).decode()
+    _ = executable.write_text(
+        f"""#!{sys.executable}
+import json
+import sys
+from pathlib import Path
+
+def send(value):
+    print(json.dumps(value), flush=True)
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get("method")
+    if method == "initialize":
+        send({{"id": request["id"], "result": {{}}}})
+    elif method == "mcpServerStatus/list":
+        send({{"id": request["id"], "result": {{"data": [], "nextCursor": None}}}})
+    elif method == "thread/start":
+        Path(request["params"]["cwd"], "received-instructions.txt").write_text(
+            request["params"]["developerInstructions"]
+        )
+        send({{"id": request["id"], "result": {{
+            "thread": {{"id": "thread-fixture"}},
+            "activePermissionProfile": {{"id": "trace-post-restricted"}},
+        }}}})
+    elif method == "turn/start":
+        send({{"id": request["id"], "result": {{"turn": {{"id": "turn-fixture"}}}}}})
+        for index in range(7):
+            send({{"method": "item/completed", "params": {{
+                "threadId": "thread-fixture",
+                "turnId": "turn-fixture",
+                "item": {{
+                    "type": "imageGeneration",
+                    "id": f"native-{{index}}",
+                    "status": "completed",
+                    "failure": None,
+                    "result": {encoded!r},
+                }},
+            }}}})
+        send({{"method": "turn/completed", "params": {{
+            "threadId": "thread-fixture",
+            "turn": {{"id": "turn-fixture", "status": "completed"}},
+        }}}})
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    return executable
+
+
+def test_stdio_trace_post_transports_the_native_tool_compatibility_instruction(
+    tmp_path: Path,
+) -> None:
+    executable = _native_tool_contract_server(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    result = CodexTracePostProvider(executable, "gpt-6-astra").run(
+        workspace=workspace,
+        instruction="follow the frozen trace-post fixture",
+        timeout_seconds=3,
+    )
+
+    assert len(result.images) == 7
+    assert all(image.path.parent == workspace / "provider-images" for image in result.images)
+    received = (workspace / "received-instructions.txt").read_text()
+    assert "functions.exec with tools.image_gen__imagegen" in received
+    assert "native image-generation tool exposed in this turn" in received
+    assert "Do not look for functions.exec" in received
 
 
 def test_app_server_materializes_native_base64_into_the_private_workspace_sink(
