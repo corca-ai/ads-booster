@@ -723,3 +723,16 @@ owns the allowlisted error-code projection shared by deferred owners and Slack. 
 failure persistence; `MarketingAgentService.mark_deferred_uncertain` owns canonical diagnostic
 idempotency. `waiting_dialogue` projects the same bounded reason into its response-only request; Slack
 retains the original work target and existing notification binding. No alternative runtime or agent entry point is added.
+
+### Production diagnostic ownership
+
+`providers/codex_reasoning_v2.py` owns the model-only additive proposal projection and binds host
+identities/source lineage during decoding. Canonical task contracts and `task_progress.apply_proposal`
+continue to reject replacement. `agent/service/application.py` owns pre-dispatch input correction,
+budgeted planning feedback and safe validation evidence. `knowledge_ingress.py` owns SQLite claim
+contention before any sink effect; runtime does not broadly suppress ingestion failures.
+
+`providers/codex_image_edit.py` owns private atomic operation diagnostics and native-event counters.
+`agent/service/deferred_failure.py` owns safe failure classification; `channels/task_results.py`
+projects it into final user results. The updater manager classifies GitHub check HTTP errors by
+phase/status without logging response bodies, headers or credentials.
