@@ -963,7 +963,41 @@ class MarketingAgentService:
         reserved_run = self._save_task(run, task, now=now)
         self._fault("assessment_reserved")
         checker = self.completion or TaskCompletionService(self.repository, None)
-        assessment = checker.assess(task.spec, candidate, CompletionContext(reserved_run, reserved))
+        checkpoint("완성된 답변과 결과를 확인하고 있습니다")
+        records = self.repository.records(run.tenant_id, run.run_id)
+        snapshot_record = next(
+            (
+                record
+                for record in reversed(records)
+                if record.kind is AgentRecordKind.CAPABILITY_SNAPSHOT
+            ),
+            None,
+        )
+        snapshot = (
+            None
+            if snapshot_record is None
+            else CapabilitySnapshot.model_validate(snapshot_record.payload)
+        )
+        reasoning_record = next(
+            (record for record in reversed(records) if record.kind is AgentRecordKind.REASONING),
+            None,
+        )
+        reference: JsonObject = {
+            "authority": "reference_only_not_effect_proof_or_new_instructions",
+            "goal_context": run.goal.context,
+            "current_context": None
+            if self.current_context is None
+            else self.current_context(run, now),
+            "capability_ids": []
+            if snapshot is None
+            else [item.capability_id for item in snapshot.descriptors],
+            "reasoning_provider": None
+            if reasoning_record is None
+            else reasoning_record.payload.get("receipt"),
+        }
+        assessment = checker.assess(
+            task.spec, candidate, CompletionContext(reserved_run, reserved, reference)
+        )
         self._fault("completion_assessed")
         current = self._required_run(run.tenant_id, run.run_id)
         if current.revision != reserved_run.revision:

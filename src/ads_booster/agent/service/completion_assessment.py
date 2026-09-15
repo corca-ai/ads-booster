@@ -19,12 +19,14 @@ if TYPE_CHECKING:
         SemanticAssessmentResult,
     )
     from ads_booster.contracts.task_progress import TaskCheckpoint, TaskObligation, TaskSpec
+    from ads_booster.transport.json_types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)
 class CompletionContext:
     run: AgentRun
     checkpoint: TaskCheckpoint
+    reference_context: JsonObject | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,7 @@ class CompletionAttempt:
             ),
             evidence=evidence,
             evidence_sha256s=self.candidate.evidence_sha256s,
+            reference_context=self.context.reference_context,
         )
 
     def resolve(

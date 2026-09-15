@@ -11,11 +11,13 @@ from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.agent.service.task_completion import TaskCompletionService
 from ads_booster.channels.http.http_api import MarketingAgentApi
 from ads_booster.channels.slack import slack_signature
 from ads_booster.channels.slack_events import SlackEvents, events_from_env
 from ads_booster.contracts.agent_run import AgentRunState, ToolInvocation, contract_sha256
 from ads_booster.contracts.tool_capability import EffectClass
+from tests.marketing.agent_service.completion_fixtures import ScriptedAssessor
 from tests.marketing.agent_service.test_application import (
     AskThenStopReasoning,
     EffectThenStopReasoning,
@@ -29,6 +31,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ads_booster.contracts.reasoning import ReasoningRequest, ReasoningResult
+    from ads_booster.contracts.task_completion import (
+        SemanticAssessmentRequest,
+        SemanticAssessmentResult,
+    )
     from ads_booster.contracts.tool_capability import ToolDescriptor
 
 from ads_booster.transport.json_types import JsonObject
@@ -64,6 +70,33 @@ def setup_events(root: Path) -> tuple[SlackEvents, list[JsonObject]]:
 
     commands.sender = send
     return SlackEvents(commands, "UBOT", frozenset({"C1"})), messages
+
+
+def test_completion_assessor_receives_scoped_dialogue_and_capability_facts(tmp_path: Path) -> None:
+    owner, _ = setup_events(tmp_path)
+    service = owner.commands.application.service
+    seen: list[SemanticAssessmentRequest] = []
+
+    class ContextAssessor(ScriptedAssessor):
+        @override
+        def assess(self, request: SemanticAssessmentRequest) -> SemanticAssessmentResult:
+            seen.append(request)
+            return super().assess(request)
+
+    service.completion = TaskCompletionService(service.repository, ContextAssessor())
+    receive(owner, text="<@UBOT> Trace는 일정 추가와 주간 보기만 지원해. 홍보글을 써줘.")
+    for _ in range(8):
+        if not owner.work_once(now=NOW):
+            break
+    receive(owner, type="message", text="설명 빼고 게시글만 줘", ts="100.002", thread_ts="100.001")
+    for _ in range(8):
+        if not owner.work_once(now=NOW):
+            break
+    context = seen[-1].model_dump(mode="json").get("reference_context")
+    assert isinstance(context, dict)
+    assert "주간 보기" in str(context)
+    assert "capability_ids" in context
+    assert context["authority"] == "reference_only_not_effect_proof_or_new_instructions"
 
 
 def revoke_approval(owner: SlackEvents, user_id: str = "U1") -> None:
