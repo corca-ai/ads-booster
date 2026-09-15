@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.service.task_completion import TaskCompletionService
+from ads_booster.agent.service.task_progress import project_task
 from ads_booster.bootstrap.integrations import (
     AgentServiceIntegrationConfig,
     ConfiguredAgentTools,
@@ -216,7 +217,7 @@ def test_image_request_approval_png_upload_thread_and_restart_deduplication(
     assert payload["channel_id"] == "C1"
     assert payload["thread_ts"] == "100.001"
     texts = [str(message["text"]) for message in messages]
-    assert sum(text.startswith("이미지 결과를 확인해 주세요.") for text in texts) == 1
+    assert sum(text.startswith(accepted_answer(owner)) for text in texts) == 1
     assert "다운로드" in str(messages[-1]["text"])
     artifact = next((tmp_path / "images").glob("*.png"))
     assert read_artifact(artifact.parent, artifact.stem) == requests[1].data
@@ -304,8 +305,20 @@ def test_invalid_output_or_uncertain_upload_is_not_retried(tmp_path: Path, failu
     assert len(commands) == 1
     if failure != "invalid":
         texts = [str(message["text"]) for message in messages]
-        assert sum(text.startswith("이미지 결과를 확인해 주세요.") for text in texts) == 1
+        assert sum(text.startswith(accepted_answer(owner)) for text in texts) == 1
         assert any("확인하지 못했습니다" in text for text in texts)
+
+
+def accepted_answer(owner: SlackEvents) -> str:
+    repository = owner.commands.application.service.repository
+    run = repository.list_runs("team")[0]
+    assert run.state is AgentRunState.COMPLETED
+    candidate = project_task(
+        run, repository.records(run.tenant_id, run.run_id)
+    ).checkpoint.candidate
+    assert candidate is not None
+    assert candidate.attachment_refs
+    return candidate.answer
 
 
 def test_private_dm_cannot_generate_or_share_images(tmp_path: Path) -> None:

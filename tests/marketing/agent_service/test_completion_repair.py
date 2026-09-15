@@ -99,6 +99,65 @@ def test_repeated_completed_effect_reuses_verified_result(tmp_path: Path, tamper
     assert run.blocked_reason == "no_progress"
 
 
+def test_successful_artifact_is_assessed_before_another_generation(tmp_path: Path) -> None:
+    repository = SqliteAgentRunRepository(tmp_path / "state.db")
+    images = tmp_path / "images"
+    adapter = FixtureImageTool(images)
+    planner = CompletionScript(
+        tuple(
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="invoke_tool",
+                capability_id="creative.image.generate",
+                tool_input={"prompt": prompt},
+                expected_outcome="Readable PNG image",
+                reasoning_summary="Generate",
+            )
+            for prompt in ("Blue square", "Another blue square")
+        )
+    )
+    service = MarketingAgentService(
+        repository=repository,
+        registry=ToolRegistry((descriptor(now=NOW),)),
+        reasoning=planner,
+        tools={"creative.image.generate": adapter},
+        runtime_store=SqliteSessionStore(repository.database_path),
+        completion=TaskCompletionService(
+            repository,
+            ImageExistenceAssessor(),
+            CanonicalCompletionProofs(repository, CompletionArtifactOwners(image_root=images)),
+        ),
+        clock=lambda: NOW,
+    )
+    run = service.create(
+        CreateAgentRunRequest(
+            run_id="artifact-first",
+            tenant_id="trace",
+            goal=AgentGoal(
+                objective="Create a blue PNG image", success_criteria=("Readable PNG image",)
+            ),
+            budget=AgentBudget(max_tool_calls=4, max_cost_units=10),
+        ),
+        now=NOW,
+    )
+    run = drain_completion(service, run)
+    run = service.decide_approval(
+        "trace",
+        run.run_id,
+        approver_id="member",
+        granted=True,
+        now=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    run = drain_completion(service, run)
+    assert run.state is AgentRunState.COMPLETED
+    assert adapter.calls == 1
+    assert len(planner.requests) == 1
+    task = project_task(run, repository.records("trace", run.run_id))
+    assert task.checkpoint.candidate is not None
+    assert task.checkpoint.candidate.attachment_refs
+
+
 class InvalidatingAssessor:
     def __init__(self, root: Path) -> None:
         self.root: Path = root

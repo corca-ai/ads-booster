@@ -34,11 +34,16 @@ _EVIDENCE_HANDLE = TypeAdapter(str)
 
 class FixtureImageTool:
     def __init__(
-        self, root: Path, disposition: Literal["succeeded", "no_effect"] = "succeeded"
+        self,
+        root: Path,
+        disposition: Literal["succeeded", "no_effect"] = "succeeded",
+        *,
+        colors: tuple[str, ...] = ("blue",),
     ) -> None:
         self.root: Path = root
         self.calls: int = 0
         self.disposition: Literal["succeeded", "no_effect"] = disposition
+        self.colors: tuple[str, ...] = colors
 
     def execute(
         self, invocation: ToolInvocation, descriptor: ToolDescriptor
@@ -56,7 +61,8 @@ class FixtureImageTool:
             )
         self.root.mkdir(parents=True, exist_ok=True)
         stream = io.BytesIO()
-        Image.new("RGB", (128, 128), "blue").save(stream, format="PNG")
+        color = self.colors[(self.calls - 1) % len(self.colors)]
+        Image.new("RGB", (128, 128), color).save(stream, format="PNG")
         data = stream.getvalue()
         digest = sha256(data).hexdigest()
         _ = (self.root / f"{digest}.png").write_bytes(data)

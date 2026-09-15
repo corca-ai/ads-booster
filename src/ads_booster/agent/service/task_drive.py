@@ -134,6 +134,12 @@ def _legacy_candidate(
 ) -> CompletionCandidate | None:
     if decision.action != "stop":
         return None
+    return candidate_from_evidence(spec, context, answer=decision.reasoning_summary)
+
+
+def candidate_from_evidence(
+    spec: TaskSpec, context: DecisionProjectionContext, *, answer: str
+) -> CompletionCandidate:
     deliverables = tuple(
         item
         for item in context.selected_evidence
@@ -152,8 +158,8 @@ def _legacy_candidate(
         candidate_id=f"candidate:{context.run.run_id}:{context.run.revision}",
         task_id=spec.task_id,
         task_revision=spec.task_revision,
-        answer=decision.reasoning_summary,
-        answer_sha256=contract_sha256({"answer": decision.reasoning_summary}),
+        answer=answer,
+        answer_sha256=contract_sha256({"answer": answer}),
         result_links=links,
         attachment_refs=attachments,
         evidence_sha256s=tuple(dict.fromkeys(item.evidence_sha256 for item in deliverables)),
