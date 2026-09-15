@@ -548,6 +548,54 @@ def test_new_observation_can_refresh_the_same_input_within_a_run(tmp_path: Path)
     assert len(adapter.inputs) == 2
 
 
+@pytest.mark.parametrize("repair", [True, False])
+def test_invalid_tool_plan_is_corrected_before_any_dispatch(tmp_path: Path, repair: bool) -> None:
+    class InvalidThenCorrectReasoning(InvokeThenStopReasoning):
+        @override
+        def plan(self, request: ReasoningRequest) -> ReasoningResult:
+            first = not self.requests
+            seen = any(item.get("capability_id") == "research.web" for item in request.evidence)
+            result = super().plan(
+                request.model_copy(update={"evidence": request.evidence if seen else ()})
+            )
+            decision = result.decision
+            if first or not repair:
+                decision = decision.model_copy(update={"tool_input": {"query": 123}})
+            return _reasoning_result(request, decision)
+
+    adapter = ResearchAdapter()
+    reasoning = InvalidThenCorrectReasoning()
+    service = _service(tmp_path / "invalid.db", reasoning, research_adapter=adapter)
+    schema: JsonObject = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+    descriptor = _descriptor("research.web", EffectClass.OBSERVE, ready=True).model_copy(
+        update={"input_schema": schema, "input_schema_sha256": contract_sha256(schema)}
+    )
+    service.registry = ToolRegistry((descriptor,))
+    run = service.create(_request(), now=NOW)
+    for _ in range(6):
+        if run.state is not AgentRunState.RUNNING:
+            break
+        run = service.drive(run.tenant_id, run.run_id, now=NOW)
+    assert run.state is (AgentRunState.COMPLETED if repair else AgentRunState.BLOCKED)
+    assert len(adapter.inputs) == int(repair)
+    task = service._task(run)  # pyright: ignore[reportPrivateUsage]
+    assert task.checkpoint.decision_calls - task.checkpoint.assessment_calls == len(
+        reasoning.requests
+    )
+    failures = [
+        r.payload
+        for r in service.repository.records(run.tenant_id, run.run_id)
+        if r.payload_schema_version == "trace.reasoning-validation-failure.v1"
+    ]
+    assert len(failures) == (1 if repair else task.checkpoint.policy.no_progress)
+    assert failures[0]["reason_code"] == "tool_input_schema_invalid"
+
+
 def test_started_invocation_reconciles_even_if_tool_becomes_unavailable(
     tmp_path: Path,
 ) -> None:
