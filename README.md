@@ -453,6 +453,8 @@ The callback returns a safe Korean `message` with its error code when authorizat
 `threads_token_rejected` asks the user to check tester access and obtain fresh authorization,
 without assuming every rejected token proves a missing tester role. Used or expired links require
 a new connection request. Provider response text, tokens and authorization codes are not echoed.
+Operators can identify the failed OAuth stage and numeric Meta error/subcode from the metadata-only
+`threads_oauth_failed` journal event. See [OAuth diagnostics](docs/operations/threads-api.md#oauth-failure-diagnostics).
 
 ```bash
 export TRACE_MARKETING_THREADS_APP_ID='...'

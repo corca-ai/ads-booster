@@ -41,6 +41,38 @@ does not issue a replacement publish request.
 
 ## Operations
 
+### OAuth failure diagnostics
+
+Failed callbacks emit one `threads_oauth_failed` JSON event at WARNING through the standard Python
+logger `ads_booster.threads.oauth_diagnostics`. With the default unconfigured logging setup it reaches
+stderr and the managed systemd journal. Successful callbacks emit `threads_oauth_completed` at INFO;
+that event requires the operator's logging configuration to enable INFO for this logger.
+Do not enable global HTTP client debug logging to diagnose OAuth: full request URLs can contain secrets.
+
+```bash
+journalctl --user -u trace-marketing.service --since "10 minutes ago" --no-pager \
+  | rg 'threads_oauth_(failed|completed)'
+```
+
+Each attempt has a random `attempt_id`, current `stage`, ordered `completed_stages`, total
+`elapsed_ms`, internal exception type, and numeric `http_status`, `meta_code`, `meta_subcode` when
+available. Stages are `fence`, `consume_state`, `exchange_code`, `exchange_long_lived`, `user`,
+`granted_scopes`, `validate_scopes`, and `persist_account`. A provider rejection in the authorization
+redirect itself uses `authorization_callback` with no completed service stages.
+
+For example, failure at `granted_scopes` means the code exchange, long-lived exchange and user read
+returned successfully before `/debug_token` failed. A numeric 190 alone must not be interpreted as
+proof of an unaccepted tester invite. Token values, authorization codes, OAuth state, usernames,
+request URLs/parameters, raw provider messages and tracebacks are excluded from these events.
+After deployment, use a fresh connection link and correlate the failed attempt by journal timestamp
+and `attempt_id`; an old consumed callback cannot reproduce the original provider stage.
+
+These diagnostics do not change authentication requests, retry behavior, account persistence or
+user-facing error classification. They cannot recover a failure stage that was never logged before
+deployment. A mid-call process termination produces no terminal OAuth event.
+
+### Setup
+
 On a managed server, run `trace-marketing server threads-setup`. It reads the existing public origin,
 stores the Meta app ID and secret in the private service environment, generates a separate media URL
 signing secret and prints three exact URLs. Register each URL in its matching Meta app field:
