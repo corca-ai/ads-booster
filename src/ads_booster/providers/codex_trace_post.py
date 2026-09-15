@@ -88,6 +88,7 @@ class CodexTracePostProvider:
                 reasoning_effort="medium",
                 materialize_image_results=True,
                 max_stream_bytes=256 * 1024 * 1024,
+                persist_sanitized_diagnostic=True,
             )
         )
         if not _MIN_IMAGE_GENERATIONS <= len(response.items) <= _MAX_IMAGE_GENERATIONS:

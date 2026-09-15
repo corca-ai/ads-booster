@@ -405,6 +405,9 @@ def test_shell_launcher_failure_is_classified_without_leaking_output(tmp_path: P
             }
         )
     assert "secret" not in str(failure.value)
+    diagnostic = state.diagnostic()
+    assert diagnostic.completed.command_execution == 1
+    assert diagnostic.command_nonzero == 1
 
 
 def test_standalone_runtime_and_arg0_grants_exclude_codex_credentials(

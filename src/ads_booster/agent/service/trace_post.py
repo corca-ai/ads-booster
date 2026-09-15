@@ -8,6 +8,7 @@ import json
 import logging
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -16,10 +17,11 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from ads_booster.agent.service.approval_binding import runtime_grant_approval
 from ads_booster.agent.service.deferred_failure import provider_failure_code
@@ -56,6 +58,7 @@ from ads_booster.contracts.trace_post import (
 from ads_booster.creative.creative_asset_links import link_asset
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.execution_control import checkpoint, progress_scope
+from ads_booster.providers.codex_image_edit import ImageEditProcessDiagnostic
 from ads_booster.providers.codex_trace_post import TracePostGeneratedImage, TracePostProviderResult
 from ads_booster.tools.descriptors import image_generation_descriptor
 from ads_booster.transport.json_types import JsonObject
@@ -72,6 +75,34 @@ _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _OUTPUT: TypeAdapter[TracePostSuccess | TracePostFailure] = TypeAdapter(
     TracePostSuccess | TracePostFailure
 )
+
+
+class _WorkspaceMilestones(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    collection: Literal["complete", "unavailable"] = "complete"
+    run_directories: int = Field(ge=0, le=100)
+    run_record: Literal["absent", "present", "invalid"]
+    package: Literal["absent", "present", "invalid"]
+    localization: Literal["absent", "present", "invalid"]
+    assembly: Literal["absent", "passed", "failed", "invalid"]
+    content_review: Literal["absent", "approved", "rejected", "invalid"]
+    receipt_prepared: int = Field(ge=0, le=1000)
+    receipt_completed: int = Field(ge=0, le=1000)
+    receipt_reviewed: int = Field(ge=0, le=1000)
+    receipt_error: int = Field(ge=0, le=1000)
+    receipt_unresolved: int = Field(ge=0, le=1000)
+    receipt_invalid: int = Field(ge=0, le=1000)
+    provider_pngs: int = Field(ge=0, le=100)
+    oversized_files: int = Field(ge=0, le=1000)
+
+
+class _TracePostFailureDiagnostic(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    schema_version: Literal["trace.trace-post-failure-diagnostic.v1"] = (
+        "trace.trace-post-failure-diagnostic.v1"
+    )
+    provider: ImageEditProcessDiagnostic | None
+    workspace: _WorkspaceMilestones
 
 
 class TracePostProvider(Protocol):
@@ -195,6 +226,8 @@ class TracePostTool:
 
             if "failure_code" not in {row[0] for row in columns}:
                 _ = db.execute("ALTER TABLE trace_post_jobs ADD COLUMN failure_code TEXT")
+            if "failure_diagnostic" not in {row[0] for row in columns}:
+                _ = db.execute("ALTER TABLE trace_post_jobs ADD COLUMN failure_diagnostic TEXT")
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(self.service.repository.database_path, timeout=5)
@@ -405,10 +438,12 @@ class TracePostTool:
                 timeout_seconds=self.config.timeout_seconds,
             )
         except Exception as error:  # noqa: BLE001 - a started image workflow is never automatically replayed.
+            diagnostic = _failure_diagnostic(workspace)
             with closing(self._db()) as db, db:
                 _ = db.execute(
-                    "UPDATE trace_post_jobs SET failure_code=? WHERE operation=?",
-                    (provider_failure_code(error), job.operation_id),
+                    "UPDATE trace_post_jobs SET failure_code=?,failure_diagnostic=? "  # pyright: ignore[reportImplicitStringConcatenation]
+                    "WHERE operation=?",
+                    (provider_failure_code(error), diagnostic, job.operation_id),
                 )
                 return self._mark_uncertain(db, job)
         try:
@@ -939,6 +974,167 @@ def _validate_frozen_run(
     )
     if completed.returncode != 0:
         raise ValueError("trace_post_finish_validation_failed")
+
+
+def _bounded_json(path: Path, *, max_bytes: int = 64 * 1024) -> JsonObject | None:
+    if not path.exists() or path.is_symlink() or not path.is_file():
+        return None
+    with path.open("rb") as stream:
+        raw = stream.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        return None
+    try:
+        return _JSON.validate_json(raw)
+    except ValueError:
+        return None
+
+
+def _presence(path: Path) -> Literal["absent", "present", "invalid"]:
+    if not path.exists():
+        return "absent"
+    return "present" if _bounded_json(path) is not None else "invalid"
+
+
+def _is_oversized(path: Path, limit: int) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(metadata.st_mode) and metadata.st_size > limit
+
+
+def _failure_diagnostic(workspace: Path) -> str:
+    provider: ImageEditProcessDiagnostic | None = None
+    try:
+        raw_provider = _bounded_json(workspace / "codex-image-edit-diagnostic.json", max_bytes=4096)
+        if raw_provider is not None:
+            provider = ImageEditProcessDiagnostic.model_validate(raw_provider)
+    except OSError, ValueError:
+        provider = None
+    try:
+        milestones = _collect_workspace_milestones(workspace)
+    except OSError, ValueError:
+        milestones = _WorkspaceMilestones(
+            collection="unavailable",
+            run_directories=0,
+            run_record="invalid",
+            package="invalid",
+            localization="invalid",
+            assembly="invalid",
+            content_review="invalid",
+            receipt_prepared=0,
+            receipt_completed=0,
+            receipt_reviewed=0,
+            receipt_error=0,
+            receipt_unresolved=0,
+            receipt_invalid=0,
+            provider_pngs=0,
+            oversized_files=0,
+        )
+    result = _TracePostFailureDiagnostic(provider=provider, workspace=milestones).model_dump_json()
+    if len(result.encode()) > 4096:
+        logging.getLogger(__name__).warning("trace_post_failure_diagnostic_limit")
+        return (
+            '{"schema_version":"trace.trace-post-failure-diagnostic.v1","provider":null,'
+            '"workspace":{"collection":"unavailable","run_directories":0,'
+            '"run_record":"invalid","package":"invalid","localization":"invalid",'
+            '"assembly":"invalid","content_review":"invalid","receipt_prepared":0,'
+            '"receipt_completed":0,"receipt_reviewed":0,"receipt_error":0,'
+            '"receipt_unresolved":0,"receipt_invalid":0,"provider_pngs":0,'
+            '"oversized_files":0}}'
+        )
+    return result
+
+
+def _collect_workspace_milestones(workspace: Path) -> _WorkspaceMilestones:
+    provider_path = workspace / "codex-image-edit-diagnostic.json"
+    posts = workspace / "repo/output/posts"
+    runs = (
+        [path for path in islice(posts.iterdir(), 101) if _safe_directory(workspace, path)]
+        if _safe_directory(workspace, posts)
+        else []
+    )
+    run = runs[0] if len(runs) == 1 else None
+    assembly: Literal["absent", "passed", "failed", "invalid"] = "absent"
+    review: Literal["absent", "approved", "rejected", "invalid"] = "absent"
+    receipt_counts = Counter[str]()
+    oversized_files = int(_is_oversized(provider_path, 4096))
+    if run is not None:
+        oversized_files += sum(
+            int(_is_oversized(run / name, 64 * 1024))
+            for name in ("run.json", "package.json", "localization.json")
+        )
+        assembly_path = run / "assembly-check.json"
+        oversized_files += int(_is_oversized(assembly_path, 64 * 1024))
+        if assembly_path.exists():
+            value = _bounded_json(assembly_path)
+            assembly = (
+                "passed"
+                if value is not None and value.get("passed") is True
+                else "failed"
+                if value is not None and value.get("passed") is False
+                else "invalid"
+            )
+        review_path = run / "content-review.json"
+        oversized_files += int(_is_oversized(review_path, 64 * 1024))
+        if review_path.exists():
+            value = _bounded_json(review_path)
+            decision = value.get("decision") if value is not None else None
+            review = decision if decision in ("approved", "rejected") else "invalid"
+        receipts = run / "receipts"
+        if _safe_directory(workspace, receipts):
+            for path in islice(receipts.iterdir(), 1001):
+                oversized_files += int(_is_oversized(path, 64 * 1024))
+                value = _bounded_json(path)
+                status = value.get("status") if value is not None else None
+                receipt_counts[
+                    str(status)
+                    if status in ("prepared", "completed", "reviewed", "error", "unresolved")
+                    else "invalid"
+                ] += 1
+    provider_images = workspace / "provider-images"
+    provider_pngs = (
+        min(
+            100,
+            sum(
+                1
+                for path in islice(provider_images.iterdir(), 101)
+                if not path.is_symlink() and path.is_file() and path.suffix == ".png"
+            ),
+        )
+        if _safe_directory(workspace, provider_images)
+        else 0
+    )
+    return _WorkspaceMilestones(
+        run_directories=min(100, len(runs)),
+        run_record=_presence(run / "run.json") if run is not None else "absent",
+        package=_presence(run / "package.json") if run is not None else "absent",
+        localization=_presence(run / "localization.json") if run is not None else "absent",
+        assembly=assembly,
+        content_review=review,
+        receipt_prepared=min(1000, receipt_counts["prepared"]),
+        receipt_completed=min(1000, receipt_counts["completed"]),
+        receipt_reviewed=min(1000, receipt_counts["reviewed"]),
+        receipt_error=min(1000, receipt_counts["error"]),
+        receipt_unresolved=min(1000, receipt_counts["unresolved"]),
+        receipt_invalid=min(1000, receipt_counts["invalid"]),
+        provider_pngs=provider_pngs,
+        oversized_files=min(1000, oversized_files),
+    )
+
+
+def _safe_directory(root: Path, path: Path) -> bool:
+    try:
+        current = root.resolve(strict=True)
+        mode = current.lstat().st_mode
+        for part in path.relative_to(root).parts:
+            current /= part
+            mode = current.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                return False
+        return stat.S_ISDIR(mode) and current.resolve(strict=True).is_relative_to(root)
+    except FileNotFoundError, ValueError:
+        return False
 
 
 __all__ = ["CAPABILITY", "TracePostConfig", "TracePostTool", "trace_post_descriptor"]
