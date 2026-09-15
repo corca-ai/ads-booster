@@ -83,6 +83,11 @@ Tunnel or Linux deployment acceptance. See the [server guide](../operations/agen
 
 ## Evidence-based task completion (2026-09-14 candidate)
 
+Same-task repeated effect selections may reuse an existing successful receipt only after current
+owner proof readback, exact input/key and tool-identity checks. This does not grant another effect
+or consume another tool call. Changed tasks, failed/uncertain receipts and tenant-wide deduplication
+retain their existing boundaries. Repeated reuse counts as no new progress.
+
 `AgentRun` remains the authority for execution, approval, receipts and cumulative budget. A versioned
 `TaskSpec` names the current result, response/artifact/effect obligations and their admitted sources.
 Its revision is independent of the Run ledger revision. A `TaskCheckpoint` binds that spec digest to

@@ -13,7 +13,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
-from ads_booster.agent.core.ports import CompletionRenderContext, ReasoningProviderV2
+from ads_booster.agent.core.ports import (
+    CompletionRenderContext,
+    ReasoningProviderV2,
+)
 from ads_booster.agent.core.registry import (
     CapabilityPolicy,
     ToolRegistrationCatalog,
@@ -75,6 +78,7 @@ from ads_booster.agent.service.task_progress import (
     task_records,
 )
 from ads_booster.agent.service.tool_handoff import tool_input_handoff
+from ads_booster.agent.service.tool_reuse import reusable_tool_receipt
 from ads_booster.contracts.agent_run import (
     AgentBudget,
     AgentGoal,
@@ -130,7 +134,6 @@ if TYPE_CHECKING:
     from ads_booster.agent.core.ports import (
         CompletionRenderer,
         ReasoningProvider,
-        ReasoningProviderV2,
         ToolAdapter,
     )
     from ads_booster.agent.service.knowledge import KnowledgeServiceAdapter
@@ -168,9 +171,7 @@ class MarketingAgentService:
     drive_admission: Callable[[AgentRun, TaskProjection, datetime], RepositoryAdmission] | None = (
         None
     )
-    approval_authorizers: tuple[
-        Callable[[ToolInvocation, ToolDescriptor, str], bool], ...
-    ] = ()
+    approval_authorizers: tuple[Callable[[ToolInvocation, ToolDescriptor, str], bool], ...] = ()
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     monotonic_clock: Callable[[], float] = monotonic
     _active_meter: float | None = field(default=None, init=False, repr=False)
@@ -423,8 +424,15 @@ class MarketingAgentService:
 
     def _resume_verified_tool(self, run: AgentRun, *, now: datetime) -> AgentRun:
         records = self.repository.records(run.tenant_id, run.run_id)
+        verified = self.repository.steps(run.tenant_id, run.run_id)[-1]
         receipt_record = next(
-            (item for item in reversed(records) if item.kind is AgentRecordKind.RECEIPT), None
+            (
+                item
+                for item in reversed(records)
+                if item.kind is AgentRecordKind.RECEIPT
+                and item.payload_sha256 == verified.output_sha256
+            ),
+            None,
         )
         evidence_record = next(
             (
@@ -1331,6 +1339,20 @@ class MarketingAgentService:
             input=tool_input,
             input_sha256=input_sha256,
         )
+        previous = reusable_tool_receipt(run, invocation, descriptor, self.completion)
+        if previous is not None:
+            return self._append_step(
+                run,
+                _step(
+                    run,
+                    kind=AgentStepKind.VERIFY,
+                    input_sha256=previous.invocation_sha256,
+                    output_sha256=contract_sha256(previous),
+                    now=now,
+                ),
+                state=AgentRunState.RUNNING,
+                expected_revision=run.revision,
+            )
         if descriptor.approval_policy.mode == "required":
             return self._append_step(
                 run,
@@ -1655,7 +1677,14 @@ class MarketingAgentService:
     ) -> AgentRun:
         paused = self._deferred_pause_requested(run, receipt.invocation_sha256)
         task = project_task(run, self.repository.records(run.tenant_id, run.run_id))
-        invocation = self._latest_invocation(run.tenant_id, run.run_id)
+        invocation = ToolInvocation.model_validate(
+            next(
+                record.payload
+                for record in self.repository.records(run.tenant_id, run.run_id)
+                if record.kind is AgentRecordKind.INVOCATION
+                and record.payload_sha256 == receipt.invocation_sha256
+            )
+        )
         capability_id = self._descriptor_for_invocation(
             run.tenant_id, run.run_id, invocation
         ).capability_id
@@ -2061,9 +2090,7 @@ class MarketingAgentService:
             _ = self.runtime.resolve_persisted_reconciliation(
                 self.runtime_store, session, receipt, now=now
             )
-            return self._record_tool_result(
-                run, invocation, descriptor, approval, result, now=now
-            )
+            return self._record_tool_result(run, invocation, descriptor, approval, result, now=now)
 
     def _admitted_deferred_approval(  # noqa: C901 - original dispatch and approval bindings.
         self,
