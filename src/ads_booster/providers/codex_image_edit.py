@@ -247,7 +247,11 @@ def _check_skill_inventory(request: ImageEditProcessRequest, response: JsonObjec
             code = "codex_image_edit_skill_discovery_invalid"
             raise _error(code)
         matches.extend(
-            item for item in skills if isinstance(item, dict) and item.get("name") == skill.name
+            item
+            for item in skills
+            if isinstance(item, dict)
+            and item.get("name") == skill.name
+            and item.get("path") == str(skill.path)
         )
     if len(matches) != 1:
         code = "codex_image_edit_skill_unavailable"
@@ -256,7 +260,7 @@ def _check_skill_inventory(request: ImageEditProcessRequest, response: JsonObjec
     if not isinstance(enabled, bool) or not isinstance(path, str) or not Path(path).is_absolute():
         code = "codex_image_edit_skill_discovery_invalid"
         raise _error(code)
-    if not enabled or path != str(skill.path):
+    if not enabled:
         code = "codex_image_edit_skill_unavailable"
         raise _error(code)
 

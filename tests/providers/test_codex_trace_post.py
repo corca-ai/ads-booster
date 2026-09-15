@@ -214,7 +214,9 @@ def test_native_skill_discovery_fails_closed_for_the_target_skill(
         _ = state.accept({"id": 7, "result": response})
 
 
-def test_native_skill_discovery_tolerates_unrelated_scan_errors(tmp_path: Path) -> None:
+def test_native_skill_discovery_tolerates_same_name_elsewhere_and_unrelated_errors(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     skill = _install_skill(workspace)
@@ -239,11 +241,18 @@ def test_native_skill_discovery_tolerates_unrelated_scan_errors(tmp_path: Path) 
                         "skills": [
                             {
                                 "name": "trace-post",
+                                "description": "another installation",
+                                "enabled": True,
+                                "path": str(workspace / "elsewhere/trace-post/SKILL.md"),
+                                "scope": "user",
+                            },
+                            {
+                                "name": "trace-post",
                                 "description": "fixture",
                                 "enabled": True,
                                 "path": str(skill),
                                 "scope": "repo",
-                            }
+                            },
                         ],
                     }
                 ]
