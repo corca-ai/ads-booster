@@ -1017,3 +1017,18 @@ The channel audit also targets `test_application.py::test_new_observation_can_re
 and `test_codex_completion.py::test_assessor_can_only_cite_host_evidence_handles`. Keep tenant-scoped
 deduplication and restart tests alongside observation refresh tests. See
 [the complete channel inventory](slack-channel-audit-2026-09-15.md) for real-provider limits.
+
+### September 15 production reconciliation regression selection
+
+Select `tests/providers/test_codex_reasoning_v2.py`, service `test_application.py`,
+`tests/knowledge/test_ingress_runtime_failures.py`, provider `test_codex_image_edit.py` and
+`test_codex_trace_post.py`, Slack `test_slack_trace_post.py`, and
+`tests/cli/test_agent_server_update.py`. Verify immutable existing obligations, host-bound additions,
+invalid-input correction before zero dispatch and bounded exhaustion, actual SQLite writer contention
+followed by exactly one claim, metadata-only image diagnostics, final saved failure text, and
+GitHub HTTP phase/status redaction. Repeat this selection from a fresh non-editable installation.
+
+A September 15 baseline macOS installed-provider comparison using Codex CLI 0.154.0 completed
+seven native image generations with both gpt-6-astra and gpt-5.6-luna. This disconfirms a general
+Luna incompatibility; it does not reproduce the Linux incident or establish live Slack delivery.
+Production image acceptance remains a separate observation after exact-SHA deployment.

@@ -19,6 +19,7 @@ from ads_booster.agent.service.trace_post import (
     TracePostTool,
     trace_post_descriptor,
 )
+from ads_booster.channels.task_results import result_for
 from ads_booster.contracts.agent_run import AgentRecordKind, AgentRunState, contract_sha256
 from ads_booster.contracts.creative_work import CreativeScope
 from ads_booster.contracts.reasoning import (
@@ -92,9 +93,7 @@ class ConnectorRequestedTracePost:
             authorization_message=(
                 request.current_user_message if self.authority == "legacy_message" else None
             ),
-            authorization_source=(
-                "current_user_message" if self.authority == "source" else None
-            ),
+            authorization_source=("current_user_message" if self.authority == "source" else None),
         )
         return ReasoningResultV2(
             decision=decision,
@@ -255,6 +254,13 @@ def test_request_worker_completion_attaches_six_named_downloadable_images(  # no
     assert not uploads
     if damage in {"provider_failure", "launcher_failure"}:
         assert tool.work_once()["state"] == "uncertain"
+        failed_run = service.repository.get("team", run.run_id)
+        assert failed_run is not None
+        rendered = result_for(failed_run, service.repository.records("team", run.run_id))
+        assert "awaiting_reconciliation" not in rendered.text
+        assert "확인" in rendered.text
+        if damage == "launcher_failure":
+            assert "내부 실행기" in rendered.text
         assert owner.work_once(now=NOW)
         assert "확인되지" in str(messages[-1]["text"])
         assert "기다리고" not in str(messages[-1]["text"])

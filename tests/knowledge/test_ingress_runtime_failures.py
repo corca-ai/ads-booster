@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from threading import Event
 from typing import TYPE_CHECKING
@@ -103,6 +105,31 @@ class FixtureJobRunner(BoundedJobRunner):
 class IdleProcessor:
     def process(self, lease: JobLease, cancellation: CancellationEvent) -> JobProcessResult:
         raise AssertionError((lease.job.job_id, cancellation.is_set()))
+
+
+def test_busy_ingress_claim_does_not_dispatch_or_kill_worker(tmp_path: Path) -> None:
+    sink = FailFirstSink(ItemFailureError())
+    ingress = CanonicalKnowledgeIngress(tmp_path / "busy.sqlite", sink=sink)
+    assert ingress.admit_standalone(
+        build_api_ingress(
+            ApiIngressRequest(
+                request_id="busy",
+                run_id="run-busy",
+                action="create",
+                text="fixture",
+                identity=OAuthIdentity(tenant_id="trace", principal_id="member-one"),
+                revision=1,
+                occurred_at=NOW,
+            )
+        )
+    )
+    with closing(sqlite3.connect(ingress.database_path)) as blocker:
+        _ = blocker.execute("BEGIN IMMEDIATE")
+        assert ingress.dispatch_once() is False
+        assert sink.calls == 0
+        blocker.rollback()
+    assert ingress.dispatch_once() is True
+    assert sink.calls == 1
 
 
 @pytest.mark.parametrize(

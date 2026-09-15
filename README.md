@@ -835,3 +835,24 @@ paths. It does not grant the complete Codex home or credential directory. No env
 change or repeated approval is needed for this repair.
 
 Fresh Ubuntu installation includes `bubblewrap` for the official Linux sandbox; `install-server.sh --check` also reports `bwrap`. Existing installations already using bwrap need no additional host change.
+
+### 이미지·업데이트 장애 진단
+
+이미지 작업 workspace의 `provider-diagnostic.json`에는 모델·CLI 버전, 요청한 shell 사용 여부,
+명령/이미지 이벤트 개수와 종료 사유만 저장됩니다. 같은 요약은 서비스 journal의
+`image_provider_diagnostic`으로 조회할 수 있습니다. 요청 설정은 당시 유효 기능 전체의
+스냅샷이 아니며, 이벤트가 없다는 사실만으로 외부 생성 미실행을 확정하지 않습니다.
+원문 프롬프트·명령 출력·인증 설정 전체를 공유할 필요는 없습니다.
+
+서버 서비스 사용자로 실행합니다:
+
+```bash
+journalctl --user -u trace-marketing.service --since '30 minutes ago' --no-pager \
+  --grep 'image_provider_diagnostic|slack_event_failed'
+journalctl --user -u trace-marketing-update.service --since '30 minutes ago' --no-pager \
+  --grep 'agent_manager_failed|agent_update_complete'
+```
+
+`github_checks_http_429`처럼 업데이트 오류에 검사 단계와 HTTP 상태가 포함됩니다.
+`agent_update_complete`는 검사 완료 기록일 수 있으므로 실제 반영은 health의 설치 SHA로
+확인합니다. 결과 불확실 작업은 진단 조회만으로 자동 재실행하지 않습니다.
