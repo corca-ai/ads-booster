@@ -164,6 +164,41 @@ class ThreadsAccountRepository:
             rows = _ROWS.validate_python(database.execute(query, values).fetchall())
         return tuple(ThreadsAccount.model_validate_json(row[0]) for row in rows)
 
+    def revoke_provider(
+        self, provider_account_id: str, *, now: datetime
+    ) -> tuple[ThreadsAccount, ...]:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            _ = database.execute("BEGIN IMMEDIATE")
+            rows = _ROWS.validate_python(
+                database.execute(
+                    """SELECT account_json FROM threads_accounts
+                    WHERE provider_account_id=? ORDER BY workspace_id,connection_id""",
+                    (provider_account_id,),
+                ).fetchall()
+            )
+            accounts = tuple(ThreadsAccount.model_validate_json(row[0]) for row in rows)
+            revoked = tuple(
+                account
+                if account.status is ThreadsAccountStatus.REVOKED
+                else account.model_copy(
+                    update={"status": ThreadsAccountStatus.REVOKED, "updated_at": now}
+                )
+                for account in accounts
+            )
+            for account in revoked:
+                _ = database.execute(
+                    """UPDATE threads_accounts SET status=?,account_json=?,updated_at=?
+                    WHERE provider_account_id=? AND connection_id=?""",
+                    (
+                        account.status,
+                        account.model_dump_json(),
+                        account.updated_at.isoformat(),
+                        provider_account_id,
+                        account.connection_id,
+                    ),
+                )
+        return revoked
+
     def require_owner(
         self, workspace_id: str, connection_id: str, member_id: str
     ) -> ThreadsAccount:
