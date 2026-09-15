@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -881,7 +880,6 @@ class SlackEvents:
         self.progress.begin(message.message_id, plan.run_id, conversation.channel_id)
         control = ExecutionControl(lambda: self.progress.cancelled(message.message_id))
         stopped = Event()
-        started = time.monotonic()
         if self.store.claim_ack(message):
             state = self._status(conversation, message, control.stage, initial=True)
             self.store.sent(message, state, ack=True)
@@ -893,7 +891,9 @@ class SlackEvents:
                         "중단 요청을 처리하고 있습니다" if control.cancelled() else control.stage
                     )
                     _ = self._status(
-                        conversation, message, f"{stage} · {int(time.monotonic() - started)}초 경과"
+                        conversation,
+                        message,
+                        f"{stage} · {self.progress.elapsed_seconds(message.message_id)}초 경과",
                     )
                 except Exception:  # noqa: BLE001,S110 - status failure cannot retry agent work.
                     pass

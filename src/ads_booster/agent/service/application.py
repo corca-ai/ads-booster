@@ -1344,6 +1344,14 @@ class MarketingAgentService:
                 "research.search": "자료를 검색하고 있습니다",
                 "research.web": "조사 자료를 확인하고 있습니다",
                 "github.issue.create": "GitHub 이슈를 등록하고 확인하고 있습니다",
+                "skills.list": "사용 가능한 스킬을 조회하고 있습니다",
+                "skill_list": "사용 가능한 스킬을 조회하고 있습니다",
+                "skills.read": "요청에 맞는 스킬을 읽고 있습니다",
+                "skill_get": "요청에 맞는 스킬을 읽고 있습니다",
+                "skill_apply": "요청한 공용 스킬을 저장하고 있습니다",
+                "creative.image.generate": "이미지를 생성하고 있습니다",
+                "creative.trace_post": "이미지 제작을 준비하고 있습니다",
+                "creative.image.edit": "이미지 편집을 준비하고 있습니다",
             }.get(descriptor.capability_id, "요청한 도구 작업을 실행하고 있습니다")
         )
         interrupted = self._pause_for_signal(run, now=now)

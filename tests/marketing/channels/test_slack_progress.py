@@ -9,15 +9,16 @@ from urllib.parse import urlencode
 
 import pytest
 
+from ads_booster.agent.service.maintenance import MaintenanceGate
+from ads_booster.bootstrap import integrations
+from ads_booster.channels import slack_events
+from ads_booster.channels.http.http_api import MarketingAgentApi
+from ads_booster.channels.slack import slack_signature
+from ads_booster.channels.slack_conversations import MessagePlan
+from ads_booster.channels.slack_events import SlackEvents
 from ads_booster.contracts.agent_run import AgentRunState
 from ads_booster.execution_control import checkpoint
-from ads_booster.bootstrap import integrations
 from ads_booster.tools.github_issues import GitHubIssues
-from ads_booster.channels.http.http_api import MarketingAgentApi
-from ads_booster.agent.service.maintenance import MaintenanceGate
-from ads_booster.channels import slack_events
-from ads_booster.channels.slack import slack_signature
-from ads_booster.channels.slack_events import SlackEvents
 from tests.marketing.agent_service.test_github_issues import PAYLOAD, URL, Response
 from tests.marketing.agent_service.test_http_api import StopReasoning
 from tests.marketing.agent_service.test_integrations import UnusedResearchRunner
@@ -55,6 +56,39 @@ def button_value(payload: JsonObject) -> str:
     assert isinstance(elements, list)
     assert isinstance(elements[0], dict)
     return str(elements[0]["value"])
+
+
+def test_elapsed_time_survives_work_slices_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, messages = setup_events(tmp_path)
+    receive(owner)
+    claimed = owner.store.claim()
+    assert claimed is not None
+    message, _ = claimed
+    conversation = owner.store.conversation(message.conversation_id)
+    assert conversation is not None
+    plan = MessagePlan(action="create", run_id="elapsed-run")
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    with owner._working(conversation, message, plan):  # pyright: ignore[reportPrivateUsage]
+        pass
+    restarted = SlackEvents(owner.commands, "UBOT", frozenset({"C1"}))
+    monkeypatch.setattr(time, "time", lambda: 280.0)
+    monkeypatch.setattr(slack_events, "_PROGRESS_INTERVAL_SECONDS", 0.01)
+    observed = Event()
+    original_sender = owner.commands.sender
+
+    def send(payload: JsonObject) -> JsonObject:
+        result = original_sender(payload)
+        if "초 경과" in str(payload.get("text")):
+            observed.set()
+        return result
+
+    owner.commands.sender = send
+    with restarted._working(conversation, message, plan):  # pyright: ignore[reportPrivateUsage]
+        assert observed.wait(2)
+    assert "180초 경과" in str(messages[-1]["text"])
+    assert messages[-1]["ts"] == "123.456"
 
 
 def interaction(
