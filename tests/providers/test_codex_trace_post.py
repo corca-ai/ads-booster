@@ -17,6 +17,7 @@ import pytest
 from PIL import Image
 from pydantic import TypeAdapter
 
+from ads_booster.providers.codex_cli import CodexCliError
 from ads_booster.providers.codex_image_edit import (
     ImageEditProcessRequest,
     ImageEditProcessResult,
@@ -27,6 +28,53 @@ from ads_booster.providers.codex_trace_post import CodexTracePostProvider
 from ads_booster.transport.json_types import JsonObject
 
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+
+
+@pytest.mark.parametrize("shell_failed", [False, True])
+def test_empty_image_turn_records_the_observed_preparation_boundary(
+    tmp_path: Path, shell_failed: bool
+) -> None:
+    request = ImageEditProcessRequest(
+        Path("/fixture/codex"),
+        "gpt-5.6-luna",
+        tmp_path,
+        "fixture",
+        (),
+        30,
+        allow_shell=True,
+        allowed_item_types=("commandExecution", "agentMessage"),
+    )
+    state = _StreamState(request, thread_id="thread", turn_id="turn")
+    _ = state.accept(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread",
+                "turnId": "turn",
+                "item": {
+                    "type": "commandExecution",
+                    "id": "command",
+                    "status": "completed",
+                    "exitCode": 1 if shell_failed else 0,
+                    "aggregatedOutput": "sensitive fixture text",
+                },
+            },
+        }
+    )
+    expected = (
+        "codex_image_edit_preparation_failed" if shell_failed else "codex_image_edit_no_generation"
+    )
+    with pytest.raises(CodexCliError, match=expected):
+        _ = state.accept(
+            {
+                "method": "turn/completed",
+                "params": {"threadId": "thread", "turn": {"id": "turn", "status": "completed"}},
+            }
+        )
+    assert state.diagnostics["command_completed"] == 1
+    assert state.diagnostics["command_failed"] == int(shell_failed)
+    assert state.diagnostics["image_completed"] == 0
+    assert "sensitive" not in str(state.diagnostics)
 
 
 def _png_bytes(color: str = "blue") -> bytes:

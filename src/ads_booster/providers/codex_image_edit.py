@@ -9,16 +9,18 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import selectors
 import subprocess
 import time
 import tomllib
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import TypeAdapter
 
@@ -27,7 +29,11 @@ from ads_booster.providers.codex_cli import CodexCliError, ReviewImage, read_rev
 from ads_booster.providers.codex_runtime_paths import runtime_read_paths
 from ads_booster.transport.json_types import JsonObject, JsonValue
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 _JSON: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+_LOGGER = logging.getLogger(__name__)
 _GLOBAL_MCP_ID = 4
 _THREAD_MCP_ID = 5
 _MAX_RPC_CODE = 99999
@@ -232,7 +238,64 @@ class SubprocessAppServerImageEditRunner:
             raise _error(code) from error
 
     def _run(self, request: ImageEditProcessRequest) -> ImageEditProcessResult:
-        return _exchange(request, _StreamState(request))
+        state = _StreamState(request)
+        version = _cli_version(request.executable)
+        state.on_diagnostic = lambda: _write_provider_diagnostic(request, state, version, "running")
+        _write_provider_diagnostic(request, state, version, "started")
+        outcome = "provider_interrupted"
+        try:
+            result = _exchange(request, state)
+            outcome = "completed"
+            return result
+        except Exception as error:
+            outcome = (
+                str(error) if isinstance(error, CodexCliError) else "provider_transport_failed"
+            )
+            raise
+        finally:
+            _write_provider_diagnostic(request, state, version, outcome)
+
+
+def _cli_version(executable: Path) -> str:
+    try:
+        result = subprocess.run(  # noqa: S603 - resolved official CLI executable.
+            [str(executable), "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return "unavailable"
+    match = re.search(r"codex-cli [0-9][0-9A-Za-z.+-]{0,60}", result.stdout[:1000])
+    return match.group() if match is not None else "unavailable"
+
+
+def _write_provider_diagnostic(
+    request: ImageEditProcessRequest, state: _StreamState, version: str, outcome: str
+) -> None:
+    release = os.environ.get("TRACE_MARKETING_RELEASE", "unmanaged")
+    payload: JsonObject = {
+        "schema_version": "trace.image-provider-diagnostic.v1",
+        "model": request.model,
+        "cli_version": version,
+        "release": release if re.fullmatch(r"[a-f0-9]{40}", release) else "unmanaged",
+        "shell_requested": request.allow_shell,
+        "allowed_item_types": list(request.allowed_item_types),
+        "minimum_images": request.min_image_generations,
+        "maximum_images": request.max_image_generations,
+        "outcome": outcome
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,120}", outcome)
+        else "provider_outcome_unknown",
+        "observed": dict(state.diagnostics),
+    }
+    temporary = request.workspace / (".provider-diagnostic-" + uuid.uuid4().hex)
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            _ = stream.write(_encode(payload))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _ = temporary.replace(request.workspace / "provider-diagnostic.json")
+    except OSError:
+        _LOGGER.warning("image_provider_diagnostic_write_failed")
+    _LOGGER.info("image_provider_diagnostic %s", json.dumps(payload, separators=(",", ":")))
 
 
 class _ExchangeState[T](Protocol):
@@ -325,6 +388,17 @@ class _StreamState:
     turn_id: str = ""
     items: list[JsonObject] = field(default_factory=list)
     result: ImageEditProcessResult | None = None
+    on_diagnostic: Callable[[], None] | None = None
+    diagnostics: dict[str, int] = field(
+        default_factory=lambda: {
+            "turn_completed": 0,
+            "command_completed": 0,
+            "command_failed": 0,
+            "image_started": 0,
+            "image_completed": 0,
+            "agent_messages": 0,
+        }
+    )
 
     def initial(self) -> JsonObject:
         return {
@@ -440,21 +514,7 @@ class _StreamState:
             code = "codex_image_edit_thread_mismatch"
             raise _error(code)
         if method == "turn/completed":
-            turn = params.get("turn")
-            if not isinstance(turn, dict) or turn.get("status") != "completed":
-                code = "codex_image_edit_outcome_unknown"
-                raise _error(code)
-            self._bind_turn(turn.get("id"))
-            if (
-                not self.request.min_image_generations
-                <= len(self.items)
-                <= self.request.max_image_generations
-            ):
-                code = "codex_image_edit_generation_event_required"
-                raise _error(code)
-            self.result = ImageEditProcessResult(
-                self.thread_id, self.turn_id, self.items[0], tuple(self.items)
-            )
+            self._complete_turn(params)
             return
         self._bind_turn(params.get("turnId"))
         item = params.get("item")
@@ -465,13 +525,52 @@ class _StreamState:
         if kind not in self.request.allowed_item_types:
             code = "codex_image_edit_unexpected_tool"
             raise _error(code)
+        self._observe_item(str(method), str(kind), item)
         _check_shell_failure(item, completed=method == "item/completed")
         _image_progress(str(method), str(kind), len(self.items))
         if method == "item/completed" and kind == "imageGeneration":
             if self.request.materialize_image_results:
                 item = self._materialize(item)
             self.items.append(item)
+            self.diagnostics["image_completed"] += 1
             checkpoint(f"이미지 {len(self.items)}회 생성 완료 · 결과를 정리하고 있습니다")
+        if self.on_diagnostic is not None:
+            self.on_diagnostic()
+
+    def _observe_item(self, method: str, kind: str, item: JsonObject) -> None:
+        if method == "item/started" and kind == "imageGeneration":
+            self.diagnostics["image_started"] += 1
+        if method == "item/completed":
+            if kind == "commandExecution":
+                self.diagnostics["command_completed"] += 1
+                self.diagnostics["command_failed"] += int(item.get("exitCode") not in (None, 0))
+            elif kind == "agentMessage":
+                self.diagnostics["agent_messages"] += 1
+
+    def _complete_turn(self, params: JsonObject) -> None:
+        turn = params.get("turn")
+        if not isinstance(turn, dict) or turn.get("status") != "completed":
+            code = "codex_image_edit_outcome_unknown"
+            raise _error(code)
+        self._bind_turn(turn.get("id"))
+        self.diagnostics["turn_completed"] += 1
+        if (
+            not self.request.min_image_generations
+            <= len(self.items)
+            <= self.request.max_image_generations
+        ):
+            if not self.items and not self.diagnostics["image_started"]:
+                code = (
+                    "codex_image_edit_preparation_failed"
+                    if self.diagnostics["command_failed"]
+                    else "codex_image_edit_no_generation"
+                )
+            else:
+                code = "codex_image_edit_generation_event_required"
+            raise _error(code)
+        self.result = ImageEditProcessResult(
+            self.thread_id, self.turn_id, self.items[0], tuple(self.items)
+        )
 
     def _materialize(self, item: JsonObject) -> JsonObject:
         event_id, encoded = item.get("id"), item.get("result")
