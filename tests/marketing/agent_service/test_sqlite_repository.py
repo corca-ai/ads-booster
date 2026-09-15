@@ -35,6 +35,19 @@ if TYPE_CHECKING:
 NOW = datetime(2026, 9, 3, tzinfo=UTC)
 
 
+@pytest.fixture
+def payload_hash_calls(monkeypatch: pytest.MonkeyPatch) -> list[JsonObject]:
+    hashes: list[JsonObject] = []
+    original = agent_run.contract_sha256
+
+    def count_hash(value: JsonObject) -> str:
+        hashes.append(value)
+        return original(value)
+
+    monkeypatch.setattr(agent_run, "contract_sha256", count_hash)
+    return hashes
+
+
 def test_cache_validates_changed_json_and_isolates_concurrent_returns() -> None:
     record = _record()
     raw = record.model_dump_json()
@@ -51,23 +64,16 @@ def test_cache_validates_changed_json_and_isolates_concurrent_returns() -> None:
 
 @pytest.mark.parametrize("max_bytes", [1, 1024 * 1024])
 def test_cache_evicts_at_byte_and_entry_limits(
-    max_bytes: int, monkeypatch: pytest.MonkeyPatch
+    max_bytes: int, payload_hash_calls: list[JsonObject]
 ) -> None:
     cache = RecordValidationCache(max_bytes=max_bytes, max_entries=1)
     first = _record()
     second = first.model_copy(update={"record_id": "second"})
-    hashes: list[JsonObject] = []
-    original = agent_run.contract_sha256
-
-    def count_hash(value: JsonObject) -> str:
-        hashes.append(value)
-        return original(value)
-
-    monkeypatch.setattr(agent_run, "contract_sha256", count_hash)
+    payload_hash_calls.clear()
     assert cache.parse(first.model_dump_json()) == first
     assert cache.parse(second.model_dump_json()) == second
     assert cache.parse(first.model_dump_json()) == first
-    assert len(hashes) == 3
+    assert len(payload_hash_calls) == 3
 
 
 def test_repository_cache_observes_another_writer_and_reopen(tmp_path: Path) -> None:
@@ -104,7 +110,7 @@ def test_repository_cache_observes_another_writer_and_reopen(tmp_path: Path) -> 
 
 
 def test_repeated_reads_validate_unchanged_records_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, payload_hash_calls: list[JsonObject]
 ) -> None:
     repository = SqliteAgentRunRepository(tmp_path / "state.db")
     created = repository.create(_run())
@@ -115,18 +121,11 @@ def test_repeated_reads_validate_unchanged_records_once(
         expected_revision=1,
         records=(_record(),),
     )
-    hashes: list[JsonObject] = []
-    original = agent_run.contract_sha256
-
-    def count_hash(value: JsonObject) -> str:
-        hashes.append(value)
-        return original(value)
-
-    monkeypatch.setattr(agent_run, "contract_sha256", count_hash)
+    payload_hash_calls.clear()
     first = repository.records("trace", "run-one")
     first[0].payload["unexpected"] = True
     second = repository.records("trace", "run-one")
-    assert len(hashes) == 1
+    assert len(payload_hash_calls) == 1
     assert second == (_record(),)
     assert repository.records("another-tenant", "run-one") == ()
 
