@@ -7,6 +7,7 @@ from ads_booster.contracts.agent_run import contract_sha256
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
     from pathlib import Path
 
     from ads_booster.agent.service.completion_evidence import BoundCompletionEvidence
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from ads_booster.contracts.agent_run import AgentRun
     from ads_booster.contracts.creative_work import CreativeScope
     from ads_booster.contracts.tool_capability import EffectClass
+    from ads_booster.contracts.tool_handoff import ToolInputHandoff
     from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
     from ads_booster.threads.accounts import ThreadsAccountRepository
     from ads_booster.threads.drafts import ThreadsDraftRepository
@@ -53,11 +55,40 @@ class ProofRegistration:
     identity: ProofIdentity
     verifier: CompletionProofVerifier
     installation_id: str | None = None
+    input_handoff: (
+        Callable[
+            [AgentRun, BoundCompletionEvidence, CompletionArtifactOwners, datetime],
+            ToolInputHandoff | None,
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True, slots=True)
 class CompletionProofRegistry:
     registrations: tuple[ProofRegistration, ...]
+
+    def input_handoff(
+        self,
+        run: AgentRun,
+        bound: BoundCompletionEvidence,
+        owners: CompletionArtifactOwners,
+        now: datetime,
+    ) -> ToolInputHandoff | None:
+        identity = ProofIdentity(
+            bound.descriptor.capability_id,
+            bound.descriptor.owner,
+            bound.receipt.executor_id,
+            bound.descriptor.effect_class,
+        )
+        registration = next(
+            (item for item in self.registrations if item.identity == identity), None
+        )
+        if registration is None or registration.input_handoff is None:
+            return None
+        if not self.verify(run, bound, owners):
+            return None
+        return registration.input_handoff(run, bound, owners, now)
 
     def __post_init__(self) -> None:
         """Reject ambiguous verifier ownership before publishing the registry."""

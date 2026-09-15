@@ -25,8 +25,11 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
     from ads_booster.contracts.agent_run import AgentRecord, AgentRun
+    from ads_booster.contracts.tool_handoff import ToolInputHandoff
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +37,12 @@ class CanonicalCompletionProofs:
     repository: SqliteAgentRunRepository
     owners: CompletionArtifactOwners = field(default_factory=CompletionArtifactOwners)
     registry: CompletionProofRegistry = field(default_factory=configured_proof_registry)
+
+    def input_handoff(
+        self, run: AgentRun, record: AgentRecord, now: datetime
+    ) -> ToolInputHandoff | None:
+        bound = CompletionEvidenceReader(self.repository).read(run, record)
+        return self.registry.input_handoff(run, bound, self.owners, now)
 
     def summarize(self, run: AgentRun, record: AgentRecord) -> CompletionEvidenceSummary:
         bound = CompletionEvidenceReader(self.repository).read(run, record)
