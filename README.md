@@ -448,6 +448,12 @@ the account state. Issuing the link does not mean the account is connected, and 
 does not automatically resume the conversation. If an unused link expires, request a new connection
 in a new conversation; the original Run's idempotency protection remains in force.
 
+The callback returns a safe Korean `message` with its error code when authorization fails.
+`threads_test_invite_required` means the Threads tester invite must be accepted;
+`threads_token_rejected` asks the user to check tester access and obtain fresh authorization,
+without assuming every rejected token proves a missing tester role. Used or expired links require
+a new connection request. Provider response text, tokens and authorization codes are not echoed.
+
 ```bash
 export TRACE_MARKETING_THREADS_APP_ID='...'
 export TRACE_MARKETING_THREADS_APP_SECRET='...'

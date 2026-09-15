@@ -5,6 +5,12 @@ Last reviewed: 2026-09-14
 
 ## Focused checks
 
+For Threads callback errors select `test_threads_oauth_callback.py`, `test_http_api.py`, and
+`test_threads_privacy_concurrency.py` in `tests/marketing/agent_service`. The provider-wire fixture
+preserves the actual OAuth fence, exception propagation, callback response, account repository
+and mode-0600 vault. It covers tester rejection, token rejection, successful persisted readback and
+single-use replay. It makes no live provider calls and is not an actual-account E2E result.
+
 For execution-boundary recovery, include `test_completion_repair.py` (repeated verified effect),
 `test_completion_proof_registry.py` (owner handoff binding), and `test_slack_events.py` (request-only
 criteria). Trace-post checks include a real fixture subprocess streaming native image events,

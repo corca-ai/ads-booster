@@ -48,6 +48,8 @@ the canonical service commits it with the waiting task checkpoint at the existin
 boundary. `tools/completion_registry.py` binds handoff readers to the same exact owner identity and
 proof checks as completion. `tools/integration_completion.py` owns Threads URL/state readback and
 consent guidance; the generic service does not query OAuth tables or render provider-specific text.
+`channels/http/threads_oauth_errors.py` owns safe callback error codes and recovery text;
+the HTTP callback uses it for provider rejections and invalid OAuth state.
 `agent/service/tool_reuse.py` reuses only successful, currently verified same-task effect receipts
 with the same run-scoped key and tool identity. It creates no new invocation, receipt or charge.
 VERIFY recovery selects its exact receipt digest, and progress accounting retains no-progress limits.

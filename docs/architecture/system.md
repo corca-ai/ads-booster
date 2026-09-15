@@ -48,8 +48,12 @@ the exact authorization URL and expiry immediately; repeated drive or restart do
 tool again while waiting. Recovery of an expired or consumed link delivers follow-up instructions
 without the unusable URL. This handoff does not certify a connected account: the user reports back
 after consent, then the agent can check account state. The callback does not automatically resume
-this Run. Account ownership and non-secret metadata live in
-SQLite while access tokens remain in mode-0600 files. Approved draft revisions issue opaque expiring
+this Run.
+The OAuth callback maps provider failures to bounded error codes and Korean recovery messages;
+it does not reflect provider messages or callback credentials. Threads API exceptions remain mutable
+so Python context managers can preserve traceback state and the HTTP boundary can handle them.
+Account ownership and non-secret metadata live in SQLite while access tokens remain in mode-0600
+files. Approved draft revisions issue opaque expiring
 URLs for only their exact creative assets. Publication writes persist each pending provider step,
 returned container ID, published ID and final permalink. A restart during an unresolved POST marks
 the operation uncertain instead of issuing another POST. The bounded Threads reconciliation worker
