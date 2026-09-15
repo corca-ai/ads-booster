@@ -75,15 +75,7 @@ class CompletionProofRegistry:
         owners: CompletionArtifactOwners,
         now: datetime,
     ) -> ToolInputHandoff | None:
-        identity = ProofIdentity(
-            bound.descriptor.capability_id,
-            bound.descriptor.owner,
-            bound.receipt.executor_id,
-            bound.descriptor.effect_class,
-        )
-        registration = next(
-            (item for item in self.registrations if item.identity == identity), None
-        )
+        registration = self._registration(bound)
         if registration is None or registration.input_handoff is None:
             return None
         if not self.verify(run, bound, owners):
@@ -105,15 +97,7 @@ class CompletionProofRegistry:
         # verifier; the reader additionally validates approval and descriptor lineage.
         if bound.receipt.invocation_sha256 != contract_sha256(bound.invocation):
             return False
-        identity = ProofIdentity(
-            bound.descriptor.capability_id,
-            bound.descriptor.owner,
-            bound.receipt.executor_id,
-            bound.descriptor.effect_class,
-        )
-        registration = next(
-            (item for item in self.registrations if item.identity == identity), None
-        )
+        registration = self._registration(bound)
         if (
             registration is None
             or bound.receipt.disposition != "succeeded"
@@ -124,3 +108,12 @@ class CompletionProofRegistry:
         ):
             return False
         return registration.verifier.verify(run, bound, owners)
+
+    def _registration(self, bound: BoundCompletionEvidence) -> ProofRegistration | None:
+        identity = ProofIdentity(
+            bound.descriptor.capability_id,
+            bound.descriptor.owner,
+            bound.receipt.executor_id,
+            bound.descriptor.effect_class,
+        )
+        return next((item for item in self.registrations if item.identity == identity), None)
