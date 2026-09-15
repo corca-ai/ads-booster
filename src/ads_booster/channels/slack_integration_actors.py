@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -89,7 +90,7 @@ class SlackIntegrationActors:
             or not identity.can_approve
         ):
             return "schedule_workspace_changed"
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _ROW.validate_python(
                 database.execute(
                     """SELECT conversation.data_json,job.message_json
@@ -208,7 +209,7 @@ class SlackIntegrationActors:
         return None if selected and selected <= allowed else "schedule_threads_account_denied"
 
     def _source(self, tenant_id: str, run_id: str) -> tuple[Conversation, Message]:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _ROW.validate_python(
                 database.execute(
                     """SELECT conversation.data_json,job.message_json

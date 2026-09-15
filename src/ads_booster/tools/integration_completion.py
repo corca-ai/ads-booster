@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlsplit
@@ -128,7 +129,7 @@ class ThreadsConnectControlProof:
         state = parse_qs(urlsplit(authorization_url).query).get("state", [""])[0]
         if not state:
             return False
-        with sqlite3.connect(database_path) as database:
+        with closing(sqlite3.connect(database_path)) as database, database:
             row = _OAUTH_ROW.validate_python(
                 database.execute(
                     """SELECT workspace_id,expires_at,redirect_uri,consumed

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -49,7 +50,7 @@ class ThreadsMediaDelivery:
     def __post_init__(self) -> None:
         if not self.public_origin.startswith("https://") or len(self.signing_secret) < 32:
             raise ThreadsMediaError("threads_media_configuration_invalid")
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute(
                 """CREATE TABLE IF NOT EXISTS threads_media_grants (
                 token_sha256 TEXT PRIMARY KEY,
@@ -91,7 +92,7 @@ class ThreadsMediaDelivery:
         if item is None or item.excluded or not item.assets:
             raise ThreadsMediaError("threads_media_draft_item_invalid")
         grants: list[ThreadsMediaGrant] = []
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute("BEGIN IMMEDIATE")
             for asset in item.assets:
                 token = token_urlsafe(32)
@@ -130,7 +131,7 @@ class ThreadsMediaDelivery:
         expected = hmac.new(self.signing_secret, token.encode(), hashlib.sha256).hexdigest()
         if not separator or not hmac.compare_digest(signature, expected):
             raise ThreadsMediaError("threads_media_grant_invalid")
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _ROW.validate_python(
                 database.execute(
                     """SELECT workspace_id,batch_id,batch_revision,item_id,asset_id,asset_revision,

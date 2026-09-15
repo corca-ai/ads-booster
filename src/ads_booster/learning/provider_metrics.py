@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -26,7 +27,7 @@ class ProviderMetricRepository:
     database_path: Path
 
     def __post_init__(self) -> None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS provider_metric_snapshots (
@@ -58,7 +59,7 @@ class ProviderMetricRepository:
 
     def append(self, snapshot: ProviderMetricSnapshot) -> ProviderMetricSnapshot:
         try:
-            with sqlite3.connect(self.database_path) as database:
+            with closing(sqlite3.connect(self.database_path)) as database, database:
                 _ = database.execute(
                     """INSERT INTO provider_metric_snapshots(
                     snapshot_id,provider,workspace_id,connection_id,subject_kind,subject_id,
@@ -85,7 +86,7 @@ class ProviderMetricRepository:
         return snapshot
 
     def get(self, snapshot_id: str) -> ProviderMetricSnapshot | None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _OPTIONAL_ROW.validate_python(
                 database.execute(
                     "SELECT snapshot_json FROM provider_metric_snapshots WHERE snapshot_id=?",
@@ -106,7 +107,7 @@ class ProviderMetricRepository:
     ) -> tuple[ProviderMetricSnapshot, ...]:
         if limit < 1 or limit > 1000:
             raise ProviderMetricConflictError("provider_metric_limit_invalid")
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             rows = _ROWS.validate_python(
                 database.execute(
                     """SELECT snapshot_json FROM provider_metric_snapshots

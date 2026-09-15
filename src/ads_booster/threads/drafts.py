@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum, unique
@@ -111,7 +112,7 @@ class ThreadsDraftRepository:
     database_path: Path
 
     def __post_init__(self) -> None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS threads_draft_batches (
@@ -143,7 +144,7 @@ class ThreadsDraftRepository:
 
     def create(self, batch: ThreadsDraftBatch) -> ThreadsDraftBatch:
         try:
-            with sqlite3.connect(self.database_path) as database:
+            with closing(sqlite3.connect(self.database_path)) as database, database:
                 _ = database.execute("BEGIN IMMEDIATE")
                 _ = database.execute(
                     """INSERT INTO threads_draft_batches(
@@ -168,7 +169,7 @@ class ThreadsDraftRepository:
         return batch
 
     def get(self, workspace_id: str, batch_id: str) -> ThreadsDraftBatch | None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _OPTIONAL_ROW.validate_python(
                 database.execute(
                     """SELECT batch_json FROM threads_draft_batches
@@ -187,7 +188,7 @@ class ThreadsDraftRepository:
         expected_revision: int,
         actor_id: str,
     ) -> ThreadsDraftBatch:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute("BEGIN IMMEDIATE")
             current = self._required(database, batch.workspace_id, batch.batch_id)
             if current.owner_member_id != actor_id:

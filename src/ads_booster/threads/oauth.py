@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -43,7 +44,7 @@ class ThreadsOAuthService:
     tokens: ThreadsTokenVault
 
     def __post_init__(self) -> None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS threads_oauth_states (
@@ -73,7 +74,7 @@ class ThreadsOAuthService:
         normalized_scopes = tuple(sorted(set(scopes)))
         if not normalized_scopes or "threads_basic" not in normalized_scopes:
             raise ThreadsOAuthError("threads_basic_scope_required")
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute(
                 """INSERT INTO threads_oauth_states(
                 state_id,workspace_id,member_id,redirect_uri,requested_scopes,expires_at
@@ -200,7 +201,7 @@ class ThreadsOAuthService:
         return updated
 
     def _consume(self, state_id: str, *, now: datetime) -> tuple[str, str, tuple[str, ...]]:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute("BEGIN IMMEDIATE")
             row = _STATE_ROW.validate_python(
                 database.execute(

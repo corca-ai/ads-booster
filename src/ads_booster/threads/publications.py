@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
@@ -41,7 +42,7 @@ class ThreadsPublicationRepository:
     database_path: Path
 
     def __post_init__(self) -> None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS threads_publications (
@@ -103,7 +104,7 @@ class ThreadsPublicationRepository:
             )
 
     def get(self, operation_id: str) -> ThreadsPublicationReceipt | None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _OPTIONAL_ROW.validate_python(
                 database.execute(
                     "SELECT receipt_json,sequence FROM threads_publications WHERE operation_id=?",
@@ -117,7 +118,7 @@ class ThreadsPublicationRepository:
     def get_for_item(
         self, batch_id: str, item_id: str, draft_revision: int
     ) -> ThreadsPublicationReceipt | None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             row = _OPTIONAL_ROW.validate_python(
                 database.execute(
                     """SELECT receipt_json,sequence FROM threads_publications
@@ -136,7 +137,7 @@ class ThreadsPublicationRepository:
             query += " AND draft_revision=?"
             values = (batch_id, draft_revision)
         query += " ORDER BY item_id,operation_id"
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             rows = _RECEIPT_ROWS.validate_python(database.execute(query, values).fetchall())
         return tuple(ThreadsPublicationReceipt.model_validate_json(row[0]) for row in rows)
 
@@ -145,7 +146,7 @@ class ThreadsPublicationRepository:
     ) -> tuple[ThreadsPublicationReceipt, ...]:
         if limit < 1 or limit > 1000:
             raise ThreadsPublicationError("threads_publication_limit_invalid")
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             rows = _RECEIPT_ROWS.validate_python(
                 database.execute(
                     """SELECT receipt_json FROM threads_publications
@@ -158,7 +159,7 @@ class ThreadsPublicationRepository:
         return tuple(ThreadsPublicationReceipt.model_validate_json(row[0]) for row in rows)
 
     def for_invocation(self, invocation_sha256: str) -> tuple[ThreadsPublicationReceipt, ...]:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             rows = _RECEIPT_ROWS.validate_python(
                 database.execute(
                     """SELECT receipt_json FROM threads_publications
@@ -170,14 +171,14 @@ class ThreadsPublicationRepository:
         return tuple(ThreadsPublicationReceipt.model_validate_json(row[0]) for row in rows)
 
     def mark_run_settled(self, operation_id: str) -> None:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute(
                 "UPDATE threads_publications SET run_settled=1 WHERE operation_id=?",
                 (operation_id,),
             )
 
     def put(self, receipt: ThreadsPublicationReceipt) -> ThreadsPublicationReceipt:
-        with sqlite3.connect(self.database_path) as database:
+        with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute("BEGIN IMMEDIATE")
             row = _OPTIONAL_ROW.validate_python(
                 database.execute(
