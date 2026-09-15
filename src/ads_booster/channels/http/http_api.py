@@ -39,6 +39,10 @@ from ads_booster.channels.http.knowledge_ingress_api import (
 from ads_booster.channels.http.memory_api import dispatch_memory
 from ads_booster.channels.http.oauth import AccessTokenAuthenticator, OAuthIdentity
 from ads_booster.channels.http.performance_api import dispatch_performance
+from ads_booster.channels.http.threads_privacy_api import (
+    dispatch_threads_privacy,
+    threads_privacy_route,
+)
 from ads_booster.channels.http.web_ui import AGENT_RUN_UI
 from ads_booster.channels.slack_commands import SlackCommands
 from ads_booster.channels.slack_conversations import SlackInboxFullError
@@ -66,6 +70,7 @@ if TYPE_CHECKING:
 
     from ads_booster.threads.media_delivery import ThreadsMediaDelivery
     from ads_booster.threads.oauth import ThreadsOAuthService
+    from ads_booster.threads.privacy import ThreadsPrivacyCallbacks
 
 _MAX_BODY_BYTES = 1024 * 1024
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -130,6 +135,7 @@ class MarketingAgentApi:
     drive_authorizer: Callable[[OAuthIdentity], bool] | None = None
     threads_oauth: ThreadsOAuthService | None = None
     threads_media: ThreadsMediaDelivery | None = None
+    threads_privacy: ThreadsPrivacyCallbacks | None = None
     schedule_health: Callable[[], JsonObject] | None = None
     schedule_worker_alive: Callable[[], bool] | None = None
 
@@ -192,8 +198,11 @@ class MarketingAgentApi:
                     health["status"] = "degraded"
                     return ApiResponse(503, health)
             return ApiResponse(200, health)
-        # Cancellation admits no new work and remains available while an update drains.
-        if method == "POST" and urlsplit(target).path == "/channels/slack/interactions":
+        path = urlsplit(target).path
+        # Provider callbacks and cancellation must remain available while an update drains.
+        if threads_privacy_route(method, path) or (
+            method == "POST" and path == "/channels/slack/interactions"
+        ):
             return self._dispatch(
                 method, target, authorization=authorization, body=body, now=now, headers=headers
             )
@@ -220,6 +229,11 @@ class MarketingAgentApi:
     ) -> ApiResponse:
         path = urlsplit(target).path
         headers = headers or {}
+        privacy_response = dispatch_threads_privacy(
+            method, path, body, now=now, callbacks=self.threads_privacy
+        )
+        if privacy_response is not None:
+            return ApiResponse(*privacy_response)
         if method == "GET" and path == "/integrations/threads/callback":
             if self.threads_oauth is None:
                 return ApiResponse(404, {"error": "threads_integration_unavailable"})
