@@ -132,6 +132,33 @@ def test_data_deletion_removes_provider_records_and_returns_stable_receipt(tmp_p
     assert account.provider_account_id not in deletion_json
 
 
+def test_new_deletion_request_after_reconnect_deletes_new_account(tmp_path: Path) -> None:
+    # Given a completed deletion followed by fresh consent for the same provider user.
+    callbacks, accounts, tokens = _callbacks(tmp_path)
+    _ = ThreadsDraftRepository(callbacks.database_path)
+    _ = ThreadsPublicationRepository(callbacks.database_path)
+    _ = ProviderMetricRepository(callbacks.database_path)
+    account = _account("connection-1", "workspace-1")
+    _ = tokens.put("old-token", token_ref=account.token_ref)
+    _ = accounts.put(account)
+    first = callbacks.delete(
+        signed_request(account.provider_account_id, issued_at=1_789_416_000), now=NOW
+    )
+    _ = tokens.put("new-token", token_ref=account.token_ref)
+    _ = accounts.put(account.model_copy(update={"updated_at": NOW + timedelta(minutes=1)}))
+
+    # When Meta sends a later authenticated deletion request after the reconnection.
+    second = callbacks.delete(
+        signed_request(account.provider_account_id, issued_at=1_789_416_060),
+        now=NOW + timedelta(minutes=2),
+    )
+
+    # Then the later request gets its own receipt and removes the new lifecycle.
+    assert second.confirmation_code != first.confirmation_code
+    assert accounts.get(account.workspace_id, account.connection_id) is None
+    assert not (tokens.root / account.token_ref).exists()
+
+
 def _callbacks(
     root: Path,
 ) -> tuple[ThreadsPrivacyCallbacks, ThreadsAccountRepository, ThreadsTokenVault]:

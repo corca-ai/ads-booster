@@ -8,9 +8,14 @@ from hashlib import sha256
 FAKE_APP_SECRET = "fixture-app-secret"  # noqa: S105 - test-only credential.
 
 
-def signed_request(user_id: str, *, algorithm: str = "HMAC-SHA256") -> str:
+def signed_request(
+    user_id: str,
+    *,
+    algorithm: str = "HMAC-SHA256",
+    issued_at: int = 1_789_416_000,
+) -> str:
     payload = json.dumps(
-        {"algorithm": algorithm, "issued_at": 1_789_416_000, "user_id": user_id},
+        {"algorithm": algorithm, "issued_at": issued_at, "user_id": user_id},
         separators=(",", ":"),
     ).encode()
     encoded_payload = _base64url(payload)

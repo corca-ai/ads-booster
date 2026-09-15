@@ -84,7 +84,7 @@ class ThreadsPrivacyCallbacks:
     def delete(self, signed_value: str, *, now: datetime) -> ThreadsDeletionReceipt:
         provider = verify_meta_signed_request(signed_value, self.app_secret)
         subject_hmac = hmac.new(
-            self.app_secret.encode(), f"delete\n{provider.user_id}".encode(), sha256
+            self.app_secret.encode(), f"delete-request\n{signed_value}".encode(), sha256
         ).hexdigest()
         receipt = self._claim(subject_hmac, now=now)
         if receipt.status == "completed":
