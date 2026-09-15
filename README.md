@@ -3,8 +3,8 @@
 `ads-booster` provides an always-on, on-premises Trace Marketing Agent Service. It owns
 canonical Agent Runs, team knowledge, research, reviewable creative work, and Slack/Web access.
 The installed command is `trace-marketing`. The service runs directly on its host through systemd;
-Cloudflare Tunnel can provide HTTPS ingress. Workers, D1/R2 campaign storage, Mac/Appium execution,
-and Threads publishing are no longer part of this repository's runtime.
+Cloudflare Tunnel can provide HTTPS ingress. Workers, D1/R2 campaign storage and Mac/Appium
+execution are not part of this runtime. An opt-in Threads integration uses Meta's official API.
 
 ## Check which CLI installation is running
 
@@ -417,6 +417,41 @@ To run `research.daily_slack` every day from the server, point
 Run ID per local date and grants only the exact scheduled Slack/Notion delivery invocations; it can
 never preapprove image production or unrelated external effects. Fake adapter tests do not count
 as live Slack or Notion evidence.
+
+## Generic scheduling and Threads
+
+Shared Slack conversations can create owner-bound one-time, interval, daily, weekly and monthly
+schedules through natural-language agent requests. The service stores the normalized IANA timezone,
+next occurrence, immutable revisions and durable occurrence-to-Run identity. The default is review
+for every effect. Automatic effects require exact capability and account/resource allowlists, per-occurrence budget,
+optional occurrence/end ceiling and a source-bound owner delegation. Pause, resume, update and cancel
+use the schedule ID and current revision. `/health` includes scheduler liveness and backlog counts.
+
+On a managed Linux installation, run `trace-marketing server threads-setup`, register the printed
+redirect URI in the Meta app, then restart the service. The command updates only the Threads keys in
+the private `agent.env` and preserves the existing Slack, Knowledge and operator settings.
+
+Threads is enabled only when all variables below are present together. The callback and expiring
+media routes must use the same public HTTPS origin configured in the Meta app. Tokens are stored as
+0600 files below the service state root; account metadata, drafts, publication receipts and metric
+snapshots are kept in the service SQLite database.
+
+```bash
+export TRACE_MARKETING_THREADS_APP_ID='...'
+export TRACE_MARKETING_THREADS_APP_SECRET='...'
+export TRACE_MARKETING_THREADS_REDIRECT_URI='https://agent.example.com/integrations/threads/callback'
+export TRACE_MARKETING_PUBLIC_ORIGIN='https://agent.example.com'
+export TRACE_MARKETING_THREADS_MEDIA_SECRET='at-least-32-bytes-of-random-secret'
+```
+
+The installed agent then exposes account connect/configure/refresh/disconnect, own-post listing,
+keyword search, post/replies/conversation reads, provider metric collection/history, versioned draft
+batches and approved publish/reply operations. Same-workspace members may read provider posts and
+metrics; only the connection owner may change an account, approve a draft or publish. A selected
+country's `final` and `scene` Trace assets form one ordered carousel; the original six-image Trace
+generation contract remains unchanged. One approval may bind multiple stable draft item IDs; each
+item keeps its own receipt and an unknown item stops the remaining batch. Unknown POST outcomes are recorded for reconciliation and
+are never blindly retried. See [Threads API operations](docs/operations/threads-api.md).
 
 ## Team knowledge context
 

@@ -16,6 +16,13 @@ from ads_booster.tools.completion_registry import (
 )
 from ads_booster.tools.github_issues import REPOSITORY, IssueInput
 from ads_booster.tools.image_generation import png_dimensions, read_artifact
+from ads_booster.tools.integration_completion import (
+    ScheduleControlProof,
+    ThreadsAccountControlProof,
+    ThreadsConnectControlProof,
+    ThreadsDraftControlProof,
+)
+from ads_booster.tools.threads_completion import ThreadsPublicationProof
 
 if TYPE_CHECKING:
     from ads_booster.agent.service.completion_evidence import BoundCompletionEvidence
@@ -296,6 +303,59 @@ def configured_proof_registry() -> CompletionProofRegistry:
                 ),
                 NotionDailyProof(),
                 installation_id="configured:notion",
+            ),
+            ProofRegistration(
+                ProofIdentity(
+                    "schedule.manage",
+                    "ads_booster.agent.service.schedule_repository",
+                    "agent-schedule",
+                    EffectClass.CONTROL_PLANE_WRITE,
+                ),
+                ScheduleControlProof(),
+                installation_id="installed:schedule",
+            ),
+            ProofRegistration(
+                ProofIdentity(
+                    "threads.connect",
+                    "ads_booster.tools.threads_connection",
+                    "threads-oauth",
+                    EffectClass.CONTROL_PLANE_WRITE,
+                ),
+                ThreadsConnectControlProof(),
+                installation_id="configured:threads",
+            ),
+            ProofRegistration(
+                ProofIdentity(
+                    "threads.draft.manage",
+                    "ads_booster.tools.threads_drafts",
+                    "threads-draft",
+                    EffectClass.CONTROL_PLANE_WRITE,
+                ),
+                ThreadsDraftControlProof(),
+                installation_id="configured:threads",
+            ),
+            ProofRegistration(
+                ProofIdentity(
+                    "threads.account.configure",
+                    "ads_booster.tools.threads_accounts",
+                    "threads-account-profile",
+                    EffectClass.CONTROL_PLANE_WRITE,
+                ),
+                ThreadsAccountControlProof(),
+                installation_id="configured:threads",
+            ),
+            *(
+                ProofRegistration(
+                    ProofIdentity(
+                        capability,
+                        "ads_booster.tools.threads_tools",
+                        "threads-api",
+                        EffectClass.EXTERNAL,
+                    ),
+                    ThreadsPublicationProof(),
+                    installation_id="configured:threads",
+                )
+                for capability in ("threads.publish", "threads.reply")
             ),
         )
     )
