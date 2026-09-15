@@ -43,14 +43,56 @@ does not issue a replacement publish request.
 
 On a managed server, run `trace-marketing server threads-setup`. It reads the existing public origin,
 stores the Meta app ID and secret in the private service environment, generates a separate media URL
-signing secret and prints the exact OAuth redirect URI. Restart the service after changing the app
-configuration. Individual members then request account connection in a shared Slack conversation;
-each completed OAuth callback creates an independent owner-bound connection.
+signing secret and prints three exact URLs. Register each URL in its matching Meta app field:
+
+| Meta app field | Trace path |
+| --- | --- |
+| OAuth redirect URI | `/integrations/threads/callback` |
+| Deauthorize callback URL | `/integrations/threads/deauthorize` |
+| Data deletion callback URL | `/integrations/threads/data-deletion` |
+
+Restart the service after changing the app configuration. Individual members then request account
+connection in a shared Slack conversation; each completed OAuth callback creates an independent
+owner-bound connection.
 
 Keep the app secret and media signing secret outside logs and database JSON. Back up the service
 SQLite database and the service `secrets/threads` directory together. Restoring only one side leaves
 account metadata or token references incomplete. Disconnect revokes the local connection and removes
-its token file; provider-side app revocation remains an operator action in Meta.
+its token file.
+
+## Provider privacy callbacks
+
+Meta posts both privacy callbacks as `application/x-www-form-urlencoded` bodies containing one
+`signed_request`. Trace accepts the request only when its HMAC-SHA256 signature matches the
+configured app secret and its payload has the expected algorithm, issue time and provider user ID.
+Invalid requests receive a generic rejection that does not reveal signature details.
+
+The deauthorization callback revokes every owner-bound connection for the provider user ID and
+deletes each token file. It returns success after local revocation, including a replay after the
+connections have already gone.
+
+The data deletion callback first creates or reuses one opaque receipt for the provider user ID. It
+then deletes the account metadata and tokens, affected draft batches and revisions, media grants,
+publication receipts and events, and provider metric snapshots. A draft batch containing any item
+for the deleted connection is removed as a whole, because its immutable revisions preserve the
+combined batch. The callback returns the receipt's confirmation code and a public status URL under
+`/integrations/threads/data-deletion/{confirmation-code}`. A completed replay returns the same
+receipt. Trace keys the receipt to the authenticated callback request, so a later callback after
+fresh OAuth consent creates a new receipt and deletes the new connection lifecycle. A failed
+deletion remains pending so Meta can retry safely.
+
+OAuth completion, provider publication and privacy deletion share one process fence. Deletion waits
+for a publication that already entered its provider write section, then removes its local records.
+The same transaction writes connection tombstones before removing publication ledgers. Any stale
+worker that resumes after deletion cannot recreate those ledgers. Fresh OAuth consent clears the
+tombstone only after the new account record succeeds.
+
+The receipt stores only a keyed request digest, status and timestamps; it never stores the raw
+provider user ID. Keep the status URL public because Meta and the account owner must be able to read
+it without Trace authentication. See Meta's current
+[data deletion callback](https://developers.facebook.com/docs/development/create-an-app/app-dashboard/data-deletion-callback/)
+and [deauthorization callback](https://developers.facebook.com/docs/facebook-login/manually-build-a-login-flow#deauth-callback)
+requirements before production registration.
 
 Before enabling production, verify the current Meta documentation, app-review requirements, supported
 metrics, media formats, rate limits and token lifetime against a read-only connected account. Run an

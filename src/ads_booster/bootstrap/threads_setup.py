@@ -11,10 +11,13 @@ from ads_booster.channels.slack_integration_actors import SlackIntegrationActors
 from ads_booster.learning.provider_metrics import ProviderMetricRepository
 from ads_booster.providers.threads_api import ThreadsApiClient
 from ads_booster.threads.accounts import ThreadsAccountRepository, ThreadsTokenVault
+from ads_booster.threads.callback_urls import threads_callback_urls
 from ads_booster.threads.drafts import ThreadsDraftRepository
+from ads_booster.threads.effect_fence import ThreadsEffectFence
 from ads_booster.threads.media_delivery import ThreadsMediaDelivery
 from ads_booster.threads.metrics import ThreadsMetricsService
 from ads_booster.threads.oauth import ThreadsOAuthService
+from ads_booster.threads.privacy import ThreadsPrivacyCallbacks
 from ads_booster.threads.publications import ThreadsPublicationRepository, ThreadsPublisher
 from ads_booster.threads.reconciliation import ThreadsReconciliationRuntime
 from ads_booster.tools.compatibility import DelegatingToolAdapter
@@ -46,6 +49,7 @@ class ThreadsConfig:
     def __post_init__(self) -> None:
         origin = urlsplit(self.public_origin)
         redirect = urlsplit(self.redirect_uri)
+        oauth_callback, _, _ = threads_callback_urls(self.public_origin)
         if (
             origin.scheme != "https"
             or not origin.hostname
@@ -54,8 +58,7 @@ class ThreadsConfig:
             or origin.path not in {"", "/"}
             or bool(origin.query)
             or bool(origin.fragment)
-            or self.redirect_uri
-            != self.public_origin.rstrip("/") + "/integrations/threads/callback"
+            or self.redirect_uri != oauth_callback
             or redirect.hostname != origin.hostname
             or len(self.media_signing_secret.encode()) < 32
         ):
@@ -67,6 +70,7 @@ class InstalledThreads:
     api: ThreadsApiClient
     oauth: ThreadsOAuthService
     media: ThreadsMediaDelivery
+    privacy: ThreadsPrivacyCallbacks
     tools: ThreadsTools
     reconciliation: ThreadsReconciliationRuntime
 
@@ -156,6 +160,7 @@ def connect_threads(
     api = ThreadsApiClient.create(app_id=config.app_id, app_secret=config.app_secret)
     accounts = ThreadsAccountRepository(database)
     tokens = ThreadsTokenVault(root / "secrets" / "threads")
+    effect_fence = ThreadsEffectFence(database)
     drafts = ThreadsDraftRepository(database)
     media = ThreadsMediaDelivery(
         database,
@@ -164,11 +169,16 @@ def connect_threads(
         config.media_signing_secret.encode(),
     )
     publications = ThreadsPublicationRepository(database)
-    publisher = ThreadsPublisher(api, accounts, tokens, drafts, media, publications)
+    publisher = ThreadsPublisher(
+        api, accounts, tokens, drafts, media, publications, effect_fence
+    )
     metrics = ThreadsMetricsService(api, accounts, tokens, ProviderMetricRepository(database))
     actors = SlackIntegrationActors(str(database), events.identity)
     oauth = ThreadsOAuthService(
-        str(database), config.redirect_uri, api, accounts, tokens
+        str(database), config.redirect_uri, api, accounts, tokens, effect_fence
+    )
+    privacy = ThreadsPrivacyCallbacks(
+        database, config.public_origin, config.app_secret, accounts, tokens, effect_fence
     )
     tools = ThreadsTools(accounts, tokens, metrics, publisher, actors.threads_actor)
     service.approval_authorizers = (
@@ -185,11 +195,12 @@ def connect_threads(
         now=now,
     )
     return InstalledThreads(
-        api,
-        oauth,
-        media,
-        tools,
-        ThreadsReconciliationRuntime(service, publisher, publications),
+        api=api,
+        oauth=oauth,
+        media=media,
+        privacy=privacy,
+        tools=tools,
+        reconciliation=ThreadsReconciliationRuntime(service, publisher, publications),
     )
 
 

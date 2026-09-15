@@ -386,6 +386,7 @@ def service_run(  # noqa: C901,PLR0912,PLR0913,PLR0915,PLR0917 - explicit option
                 else knowledge_thread.is_alive,
                 threads_oauth=None if installed_threads is None else installed_threads.oauth,
                 threads_media=None if installed_threads is None else installed_threads.media,
+                threads_privacy=None if installed_threads is None else installed_threads.privacy,
                 schedule_health=None if scheduling is None else scheduling.health,
                 schedule_worker_alive=None
                 if generic_scheduler_thread is None

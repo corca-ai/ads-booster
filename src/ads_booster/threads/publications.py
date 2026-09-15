@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
@@ -18,7 +19,14 @@ from ads_booster.threads.drafts import (
     ThreadsDraftRepository,
     ThreadsDraftState,
 )
+from ads_booster.threads.effect_fence import (
+    initialize_threads_effect_fence,
+    threads_connection_deleted,
+)
 from ads_booster.threads.media_delivery import ThreadsMediaDelivery
+
+if TYPE_CHECKING:
+    from ads_booster.threads.effect_fence import ThreadsEffectFence
 
 
 class ThreadsPublicationError(ValueError):
@@ -73,6 +81,7 @@ class ThreadsPublicationRepository:
                 END;
                 """
             )
+            initialize_threads_effect_fence(database)
             columns = {
                 row[1]
                 for row in _TABLE_INFO.validate_python(
@@ -180,6 +189,8 @@ class ThreadsPublicationRepository:
     def put(self, receipt: ThreadsPublicationReceipt) -> ThreadsPublicationReceipt:
         with closing(sqlite3.connect(self.database_path)) as database, database:
             _ = database.execute("BEGIN IMMEDIATE")
+            if threads_connection_deleted(database, receipt.connection_id):
+                raise ThreadsPublicationError("threads_connection_deleted")
             row = _OPTIONAL_ROW.validate_python(
                 database.execute(
                     "SELECT receipt_json,sequence FROM threads_publications WHERE operation_id=?",
@@ -265,6 +276,7 @@ class ThreadsPublisher:
     drafts: ThreadsDraftRepository
     media: ThreadsMediaDelivery
     publications: ThreadsPublicationRepository
+    effect_fence: ThreadsEffectFence
 
     def reconcile(
         self,
@@ -313,6 +325,34 @@ class ThreadsPublisher:
         )
 
     def publish(
+        self,
+        *,
+        operation_id: str,
+        workspace_id: str,
+        member_id: str,
+        batch_id: str,
+        batch_revision: int,
+        item_id: str,
+        expected_action: ThreadsDraftAction,
+        run_id: str,
+        invocation_sha256: str,
+        now: datetime,
+    ) -> ThreadsPublicationReceipt:
+        with self.effect_fence.hold():
+            return self._publish(
+                operation_id=operation_id,
+                workspace_id=workspace_id,
+                member_id=member_id,
+                batch_id=batch_id,
+                batch_revision=batch_revision,
+                item_id=item_id,
+                expected_action=expected_action,
+                run_id=run_id,
+                invocation_sha256=invocation_sha256,
+                now=now,
+            )
+
+    def _publish(
         self,
         *,
         operation_id: str,

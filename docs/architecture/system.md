@@ -51,6 +51,17 @@ uses only a known published ID for provider readback, then settles the original 
 zero-cost terminal receipt. Provider metrics use append-only snapshots;
 human-reported performance remains a separate evidence type.
 
+Meta deauthorization and data deletion POSTs enter through dedicated unauthenticated provider
+routes, including while the service drains for an update. The boundary accepts one form-encoded
+`signed_request` and verifies its HMAC-SHA256 signature before exposing the provider user ID.
+Deauthorization revokes all matching local connections and token files. Data deletion removes the
+matching account data and dependent Threads records in one exclusive SQLite transaction after token
+removal, then exposes an opaque public receipt. OAuth completion, publication and deletion share a
+process fence, so deletion waits for an active provider write. The deletion transaction persists a
+connection tombstone that rejects stale publication-ledger writes. Fresh OAuth consent clears that
+tombstone after it stores the new account. The durable receipt stores a keyed request digest, not the
+provider user ID: an exact replay reuses its result while a later request owns a new receipt.
+
 Threads publish and reply approvals also pass a service-level resource-owner admission check in
 every channel. A workspace approver who does not own the draft batch cannot authorize the external
 write.

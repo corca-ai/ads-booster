@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from urllib.parse import urlencode
 
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.runtime import SqliteSessionStore
@@ -28,6 +29,8 @@ from ads_booster.tools.descriptors import (
 from tests.marketing.agent_service.completion_fixtures import (
     FixtureMarketingAgentService as MarketingAgentService,
 )
+from tests.marketing.agent_service.threads_callback_fixtures import signed_request
+from tests.marketing.agent_service.threads_privacy_fixtures import privacy_callbacks
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -199,6 +202,45 @@ def test_common_api_derives_tenant_and_rejects_missing_identity(tmp_path: Path) 
     assert health.body == {"status": "ok", "owner": "on_prem_agent"}
 
 
+def test_threads_data_deletion_callback_returns_public_completion_url(tmp_path: Path) -> None:
+    # Given an unauthenticated Meta callback signed by the configured app.
+    api = _privacy_api(tmp_path)
+    body = urlencode({"signed_request": signed_request("provider-user-1")}).encode()
+
+    # When Meta requests deletion and follows the returned status URL.
+    accepted = api.dispatch(
+        "POST", "/integrations/threads/data-deletion", authorization=None, body=body, now=NOW
+    )
+    assert isinstance(accepted.body, dict)
+    status_url = accepted.body["url"]
+    assert isinstance(status_url, str)
+    status = api.dispatch("GET", status_url, authorization=None)
+
+    # Then both public responses expose only the opaque completion receipt.
+    assert accepted.status == 200
+    assert status.status == 200
+    assert isinstance(status.body, dict)
+    assert status.body["status"] == "completed"
+    assert status.body["confirmation_code"] == accepted.body["confirmation_code"]
+
+
+def test_threads_provider_callback_rejects_tampered_signature(tmp_path: Path) -> None:
+    # Given a provider callback whose signed request was modified in transit.
+    api = _privacy_api(tmp_path)
+    body = urlencode(
+        {"signed_request": signed_request("provider-user-1") + "tampered"}
+    ).encode()
+
+    # When the unauthenticated callback reaches the HTTP boundary.
+    response = api.dispatch(
+        "POST", "/integrations/threads/deauthorize", authorization=None, body=body, now=NOW
+    )
+
+    # Then no signature oracle or authenticated route fallback is exposed.
+    assert response.status == 403
+    assert response.body == {"error": "threads_callback_rejected"}
+
+
 def test_oauth_identity_scopes_repository_reads_to_introspected_workspace(tmp_path: Path) -> None:
     api = _api(tmp_path)
     oauth_api = MarketingAgentApi(
@@ -357,4 +399,16 @@ def _api(root: Path, *, reasoning: ReasoningProvider | None = None) -> Marketing
         tenant_id="trace",
         principal_id="member-one",
         bearer_token="secret",  # noqa: S106 - fake local API credential.
+    )
+
+
+def _privacy_api(root: Path) -> MarketingAgentApi:
+    base = _api(root)
+    callbacks, _, _ = privacy_callbacks(root)
+    return MarketingAgentApi(
+        base.service,
+        tenant_id="trace",
+        principal_id="member-one",
+        bearer_token="secret",  # noqa: S106 - fake local API credential.
+        threads_privacy=callbacks,
     )
