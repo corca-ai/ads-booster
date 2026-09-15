@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from jsonschema import Draft202012Validator
 
+from ads_booster.agent.service.task_progress import apply_proposal
 from ads_booster.contracts.agent_run import CapabilitySnapshot, contract_sha256
 from ads_booster.contracts.reasoning import ReasoningRequestV2, decode_reasoning_result
 from ads_booster.providers.codex_reasoning import CodexReasoningError, CodexReasoningProvider
@@ -84,6 +85,28 @@ def test_v2_candidate_is_exact_and_host_hashes_answer(tmp_path: Path) -> None:
     assert result.decision.completion_candidate == request.checkpoint.candidate
     assert result.receipt.request_sha256 == contract_sha256(request)
     assert result.receipt.decision_sha256 == contract_sha256(result.decision)
+
+
+def test_actor_additions_do_not_rewrite_host_obligations(tmp_path: Path) -> None:
+    request = v2_request(tmp_path / "additions.db")
+    output = wire_stop(request)
+    addition: JsonObject = {
+        "kind": "artifact",
+        "description": "Deliver six PNG files",
+        "required": True,
+    }
+    output["task_proposal"] = {"obligations": [addition]}
+    runner = V2Runner(output)
+    result = CodexReasoningProvider(runner, tmp_path, "fixture").plan_v2(request)
+    proposal = result.decision.task_proposal
+    assert proposal is not None
+    projected = apply_proposal(request.task, proposal)
+    assert projected.obligations[: len(request.task.obligations)] == request.task.obligations
+    assert projected.obligations[-1].source_refs == (request.task.source_event_id,)
+    assert apply_proposal(projected, proposal) == projected
+    assert Draft202012Validator(runner.schema).is_valid(output)  # pyright: ignore[reportUnknownMemberType]
+    addition["obligation_id"] = request.task.obligations[0].obligation_id
+    assert not Draft202012Validator(runner.schema).is_valid(output)  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_v2_request_and_decision_preserve_conversational_authority(tmp_path: Path) -> None:

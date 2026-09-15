@@ -410,7 +410,9 @@ canonical ingress stores the binding, conversation event, and durable outbox bef
 deleted, or correcting events create a pending fence; context preparation blocks the affected Run
 until the new source state is admitted. A dispatch that durably records a classified item failure
 returns progress without acknowledging or automatically retrying that item, so later ingress and
-maintenance continue. Unknown receipt outcomes and persistence errors still propagate.
+maintenance continue. Unknown receipt outcomes and persistence errors still propagate. Empty ingress polls do not
+acquire a write transaction. SQLite BUSY/LOCKED while acquiring the pending-item claim leaves
+the item untouched for the next worker cycle; no sink has run at this boundary.
 Source fetching admits only 2xx or 304 after redirect handling. HTTP 408/429 and server errors are
 retryable; other unsuccessful statuses fail before their body can enter extraction or curation.
 
@@ -1232,3 +1234,20 @@ For `run_tool_input` observation tools, each newly admitted read includes the ca
 revision in its idempotency identity. An identical refresh is a new observation, not a duplicate
 effect. Recovery reuses the persisted invocation unchanged. External/artifact writes and explicit
 `tenant_tool_input` identities retain their existing deduplication semantics and budget guards.
+
+### September 15 production failure boundaries
+
+The reasoning v2 wire accepts only additional semantic requirements. The host supplies their
+identities, source event and task revision; previously admitted obligations remain unchanged.
+A selected tool's invalid input is recorded as `trace.reasoning-validation-failure.v1` before
+any dispatch, with schema path and decision digest but no input values. The next bounded planning
+step receives corrective feedback. Consecutive invalid plans stop at the task's no-progress limit;
+model calls retain the existing decision budget. Denied tools and broken host schemas still fail.
+
+Image providers atomically preserve `provider-diagnostic.json` in the operation workspace and log
+safe stage counters, requested model/shell profile, CLI version, release and terminal reason.
+Counters separate observed command failures, native image starts/completions and completed turns;
+they do not prove external non-execution. Zero observed image events and partial/unknown streams
+have distinct failure codes. All retain reconciliation and the existing no-replay boundary.
+Final Slack task results use the saved allowlisted failure explanation, including when completion
+is reconstructed later. Image completion still requires native events, verified files and receipts.

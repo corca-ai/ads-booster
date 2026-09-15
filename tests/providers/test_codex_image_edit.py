@@ -137,6 +137,9 @@ def fake_server(  # noqa: PLR0913 - independent protocol fault cases.
     _ = executable.write_text(f"""#!{sys.executable}
 import base64,json,sys
 from pathlib import Path
+if '--version' in sys.argv:
+ print('codex-cli 0.154.0')
+ sys.exit(0)
 
 def send(value):
  print(json.dumps(value),flush=True)
@@ -237,6 +240,15 @@ def test_incomplete_or_rebound_generation_stream_never_succeeds(
             timeout_seconds=3,
         )
     assert (tmp_path / "codex-image-edit-started.json").is_file()
+    diagnostic = TypeAdapter[JsonObject](JsonObject).validate_json(
+        (tmp_path / "provider-diagnostic.json").read_text()
+    )
+    assert diagnostic["cli_version"] == "codex-cli 0.154.0"
+    assert diagnostic["outcome"] != "completed"
+    observed = diagnostic["observed"]
+    assert isinstance(observed, dict)
+    assert "image_completed" in observed
+    assert "result" not in diagnostic
 
 
 def test_missing_executable_is_not_ready(tmp_path: Path) -> None:
