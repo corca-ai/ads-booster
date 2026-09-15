@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 from pydantic_core import PydanticCustomError
 
-from ads_booster.contracts.agent_run import BoundedId
+from ads_booster.contracts.agent_run import BoundedId  # noqa: TC001 - Pydantic field type.
 from ads_booster.contracts.models import ContractModel, CountryCode, Identifier, Sha256Digest
 
 ThreadsProviderId = Annotated[str, Field(min_length=1, max_length=160)]
@@ -70,7 +70,7 @@ class ThreadsAccount(ContractModel):
 class ThreadsActor(ContractModel):
     workspace_id: Identifier
     member_id: Identifier
-    conversation_id: Identifier
+    conversation_id: BoundedId
     source_event_id: Identifier
     scheduled: bool = False
     allowed_connection_ids: Annotated[tuple[Identifier, ...], Field(max_length=128)] = ()
