@@ -2278,6 +2278,14 @@
         "483bfab32eba824502ceb20f972d0ba667aa5feb66cb9bd5a3d3c8d821bd192f",
         "916fd661718b5ccb0476ec78dd5fd8a46b7a8d1126bbdc9487996bc1ec78889e"
       ]
+    },
+    {
+      "fingerprint": "6ed97d450191d022e3268001b48778924fd31e8c4659d069f60e1904c6c0ff8d",
+      "reason": "The production Slack event adapter and its focused regression independently import the same public conversation contracts across the production-test boundary; extracting an import bundle would add coupling without removing duplicated behavior.",
+      "memberHashes": [
+        "4c6347e15344ef5e3dedde7e474fc2af5ff15a6d20a4027d104f21a5f0581b65",
+        "ca964aa0eeb6e6ad317aa0c967fe711993b2ae18fffeb254b563a30a79cde284"
+      ]
     }
   ]
 }
