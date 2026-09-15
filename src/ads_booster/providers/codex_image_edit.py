@@ -245,13 +245,14 @@ class SubprocessAppServerImageEditRunner:
         outcome = "provider_interrupted"
         try:
             result = _exchange(request, state)
-            outcome = "completed"
-            return result
         except Exception as error:
             outcome = (
                 str(error) if isinstance(error, CodexCliError) else "provider_transport_failed"
             )
             raise
+        else:
+            outcome = "completed"
+            return result
         finally:
             _write_provider_diagnostic(request, state, version, outcome)
 

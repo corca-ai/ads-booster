@@ -634,8 +634,9 @@ def test_github_check_http_failure_keeps_status_without_response_secrets(
 ) -> None:
     def denied(_request: Request, *, timeout: int) -> BytesIO:
         assert timeout == 30
+        url = "https://private.invalid/token-secret"
         raise HTTPError(
-            "https://private.invalid/token-secret",
+            url,
             status,
             "secret message",
             Message(),
