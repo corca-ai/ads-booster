@@ -2780,6 +2780,37 @@
         "590bd5ad19174121c06526c858ba223a2933c00d318196d09b1e0b303f6ae124",
         "590bd5ad19174121c06526c858ba223a2933c00d318196d09b1e0b303f6ae124"
       ]
+    },
+    {
+      "fingerprint": "2187d5c87b96881c3a5f8d4bf7665324cc586218f4ff9f478bcef00a446a4920",
+      "reason": "The two adjacent mock responses intentionally model different provider contracts: authorization code exchange returns user_id, while long-lived exchange returns expires_in. Keeping explicit endpoint-specific fixtures makes the OAuth stage boundary and secret-redaction inputs visible; a helper would obscure the differing response shape without removing production duplication.",
+      "memberHashes": [
+        "10fe0083889dd519cbdadf7ebf7ab7ad663937a4a827a01382b3c68655e1cee2",
+        "8c6e1a3c90e6784523a4ea3947454ed91990c6c6bc830b8a83f6da09d487d240"
+      ]
+    },
+    {
+      "fingerprint": "1fb6e6142ee487d8432b168f44cc680b132c284f36688d1748164adea98a46d2",
+      "reason": "These are independent typed record declarations in knowledge dependency wiring, adoption receipts, OAuth diagnostic events, and completion evaluation reports. Their field lists have different owners and lifecycles; sharing a base model would couple unrelated domains and would not consolidate executable behavior.",
+      "memberHashes": [
+        "37982ad8761a3d54b50ea23be184b8d3d9a338683ad496a8d42f97f8792e00a0",
+        "7476707a13d09454e834930ff899d8d5a859f03c732507eceeb6bc4f5ab43b91",
+        "bce3155e40b383f652c62b576f5d11bc5833e8d80f5723e772b5decaafcc4898",
+        "c0620a893cc91135c483613e836e50b0808ed1cc1758ff5971f12aa830127b6d"
+      ]
+    },
+    {
+      "fingerprint": "e37b7ebc72c69472a3387f633c240dabcdc8d8ba246b7fc12ab1a4625f8e0d3c",
+      "reason": "Each advance call marks a distinct externally observable OAuth state-machine boundary immediately before the corresponding provider or persistence operation. The explicit sequence is the diagnostic contract under test; wrapping heterogeneous calls would hide stage attribution and make future insertion or reordering easier to mis-log.",
+      "memberHashes": [
+        "2f7c276e60c584aa05338819adb37a5f75a973e868e4970fdaee5e472e48f7f1",
+        "560559b4c5100b3c97f40459e13f1aa4205eed7c9e762f9887e4db0386a39706",
+        "703d6bd046c6d49aef3cf4e92349536c8290cbb5befb705d80b69cc5d06f87db",
+        "94cd6c960345edbcb7310cec67127a855a379bf3d0e65ab6887e5b0da3744def",
+        "a65bc2dd167e9665643eeb519839101c3a7ce65d64c9f5ec11038e4979d2e5d6",
+        "baf66ffbdbafe9240b53f6fb98f570e601fd7eae49b8e9c596938532df0e34aa",
+        "df571772df516d3899aa4b117fb77545c745b71bba66afb37cbe213a6338abb6"
+      ]
     }
   ]
 }

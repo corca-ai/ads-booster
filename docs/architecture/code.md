@@ -50,6 +50,9 @@ proof checks as completion. `tools/integration_completion.py` owns Threads URL/s
 consent guidance; the generic service does not query OAuth tables or render provider-specific text.
 `channels/http/threads_oauth_errors.py` owns safe callback error codes and recovery text;
 the HTTP callback uses it for provider rejections and invalid OAuth state.
+`threads/oauth_diagnostics.py` owns the allowlisted terminal diagnostic fields. The OAuth service
+owns stage transitions, and the HTTP boundary emits only pre-exchange authorization rejections.
+Neither boundary logs raw OAuth inputs, provider messages or exception tracebacks.
 `agent/service/tool_reuse.py` reuses only successful, currently verified same-task effect receipts
 with the same run-scoped key and tool identity. It creates no new invocation, receipt or charge.
 VERIFY recovery selects its exact receipt digest, and progress accounting retains no-progress limits.

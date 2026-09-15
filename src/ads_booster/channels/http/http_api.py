@@ -63,6 +63,7 @@ from ads_booster.knowledge.errors import KnowledgePolicyError
 from ads_booster.learning.memory import SQLiteMemoryStore
 from ads_booster.providers.codex_reasoning import CodexReasoningError
 from ads_booster.providers.threads_api import ThreadsApiError
+from ads_booster.threads.oauth_diagnostics import OAuthDiagnostics
 from ads_booster.transport.json_types import JsonObject
 
 if TYPE_CHECKING:
@@ -246,6 +247,7 @@ class MarketingAgentApi:
                     int(code_value) if code_value.isdecimal() and len(code_value) < 10 else None,
                     query.get("error_description", query.get("error_message", [""]))[0],
                 )
+                OAuthDiagnostics(stage="authorization_callback").finish(error)
                 return ApiResponse(401, oauth_error_body(error))
             try:
                 account = self.threads_oauth.finish(

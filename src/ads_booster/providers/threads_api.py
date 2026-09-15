@@ -43,6 +43,7 @@ class ThreadsApiError(Exception):
     message: str
     retry_after_seconds: int | None = None
     uncertain_effect: bool = False
+    subcode: int | None = None
 
     @override
     def __str__(self) -> str:
@@ -426,6 +427,7 @@ class ThreadsApiClient:
                 else error_body.error.message[:500],
                 int(retry_after) if retry_after is not None and retry_after.isdigit() else None,
                 method == "POST" and response.status_code >= 500,
+                subcode=None if error_body is None else error_body.error.error_subcode,
             )
         try:
             return TypeAdapter(model).validate_json(response.content)

@@ -5,6 +5,13 @@ Last reviewed: 2026-09-14
 
 ## Focused checks
 
+For OAuth logging, select `test_threads_oauth_callback.py`, `test_threads_oauth_diagnostics.py`,
+`test_http_api.py`, and `test_threads_privacy_concurrency.py`. Inject provider errors at code exchange,
+long-lived exchange, user read and scope debug; verify ordered completed stages and numeric subcodes.
+Include callback replay, metadata-only local failures, secret-bearing provider messages, and actual
+stderr output from a subprocess with no logging configuration. These fixtures neither authenticate a
+real account nor establish that the diagnostics have been deployed.
+
 For foreground latency repair, select service `test_sqlite_repository.py`,
 `test_artifact_completion.py`, `test_completion_repair.py`, `test_task_completion.py`,
 `test_completion_supersession.py`, `test_threads_connect_handoff.py`, and provider

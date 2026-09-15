@@ -85,6 +85,13 @@ public CLI, HTTP, SQLite, approval or recovery contracts.
 A source checkout, fake adapter or candidate wheel does not establish live provider, Slack, OAuth,
 Tunnel or Linux deployment acceptance. See the [server guide](../operations/agent-server/README.md).
 
+Threads OAuth emits one metadata-only terminal diagnostic per handled callback attempt. The OAuth
+owner records the failed stage and preceding completed stages; authorization-window rejections are
+recorded at the HTTP boundary before entering that owner. The provider adapter preserves numeric
+error subcodes without logging request/response payloads. See
+[OAuth diagnostics](../operations/threads-api.md#oauth-failure-diagnostics) for journal visibility and
+the deliberate exclusion of credentials, raw errors and traceback content.
+
 ## Evidence-based task completion (2026-09-14 candidate)
 
 Slack admission uses the user's request as its success criterion. Task seeding deduplicates identical
