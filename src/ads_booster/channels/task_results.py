@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ads_booster.agent.service.deferred_failure import FAILURE_TEXT
 from ads_booster.agent.service.task_progress import project_task
 from ads_booster.contracts.agent_run import (
     AgentIntent,
@@ -138,36 +139,7 @@ def result_for(run: AgentRun, records: tuple[AgentRecord, ...]) -> TaskResult:
     if run.state.value == "awaiting_input" and (question := current_input_question(run, records)):
         return TaskResult(question, task.checkpoint.disposition)
     if run.state.value == "awaiting_reconciliation":
-        publication = next(
-            (
-                record.payload.get("output")
-                for record in reversed(records)
-                if record.kind is AgentRecordKind.EVIDENCE
-                and record.payload.get("capability_id")
-                in {"threads.publish", "threads.reply"}
-                and isinstance(record.payload.get("output"), dict)
-            ),
-            None,
-        )
-        if isinstance(publication, dict):
-            receipts = publication.get("publications")
-            identities = (
-                []
-                if not isinstance(receipts, list)
-                else [
-                    f"{item.get('operation_id')} / {item.get('published_post_id')}"
-                    for item in receipts
-                    if isinstance(item, dict)
-                ]
-            )
-            message = (
-                "Threads 결과를 확정하지 못했습니다. 자동으로 다시 게시하지 않습니다.\n"
-                + "\n".join(identities)
-            )
-            return TaskResult(
-                message,
-                task.checkpoint.disposition,
-            )
+        return _reconciliation_result(run, records, task.checkpoint.disposition)
     verified = {item.obligation_id for item in task.checkpoint.accepted_evidence}
     finished = [
         item.description for item in task.spec.obligations if item.obligation_id in verified
@@ -184,6 +156,58 @@ def result_for(run: AgentRun, records: tuple[AgentRecord, ...]) -> TaskResult:
         lines.append("남은 작업: " + "; ".join(pending)[:1600])
     lines.append("사유: " + (task.checkpoint.wait_reason or run.blocked_reason or run.state.value))
     return TaskResult("\n".join(lines), task.checkpoint.disposition)
+
+
+def _reconciliation_result(
+    run: AgentRun, records: tuple[AgentRecord, ...], disposition: str
+) -> TaskResult:
+    publication = next(
+        (
+            record.payload.get("output")
+            for record in reversed(records)
+            if record.kind is AgentRecordKind.EVIDENCE
+            and record.payload.get("capability_id") in {"threads.publish", "threads.reply"}
+            and isinstance(record.payload.get("output"), dict)
+        ),
+        None,
+    )
+    if isinstance(publication, dict):
+        receipts = publication.get("publications")
+        identities = (
+            []
+            if not isinstance(receipts, list)
+            else [
+                f"{item.get('operation_id')} / {item.get('published_post_id')}"
+                for item in receipts
+                if isinstance(item, dict)
+            ]
+        )
+        message = (
+            "Threads 결과를 확정하지 못했습니다. 자동으로 다시 게시하지 않습니다.\n"
+            + "\n".join(identities)
+        )
+        return TaskResult(
+            message,
+            disposition,
+        )
+    diagnostic = next(
+        (
+            record.payload.get("reason_code")
+            for record in reversed(records)
+            if record.run_id == run.run_id
+            and record.payload_schema_version == "trace.deferred-provider-failure.v1"
+        ),
+        None,
+    )
+    reason = (
+        FAILURE_TEXT[diagnostic]
+        if isinstance(diagnostic, str) and diagnostic in FAILURE_TEXT
+        else "요청한 작업의 실행 결과를 확인하지 못했습니다."
+    )
+    return TaskResult(
+        reason + " 결과가 확인되지 않아 자동으로 다시 실행하지 않았습니다.",
+        disposition,
+    )
 
 
 def current_input_question(run: AgentRun, records: tuple[AgentRecord, ...]) -> str | None:
@@ -254,10 +278,7 @@ def _artifact_digests(output: JsonObject) -> tuple[str, ...]:
     if isinstance(batch_payload, dict):
         batch = ThreadsDraftBatch.model_validate(batch_payload)
         return tuple(
-            asset.sha256
-            for item in batch.items
-            if not item.excluded
-            for asset in item.assets
+            asset.sha256 for item in batch.items if not item.excluded for asset in item.assets
         )
     if output.get("schema_version") != "trace.trace-post-success.v1":
         return ()

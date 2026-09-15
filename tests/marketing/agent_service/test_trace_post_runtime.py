@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.runtime import SqliteSessionStore
+from ads_booster.agent.service import trace_post as trace_post_module
 from ads_booster.agent.service.application import MarketingAgentService
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
 from ads_booster.agent.service.trace_post import (
@@ -34,6 +35,7 @@ from ads_booster.contracts.agent_run import (
 from ads_booster.contracts.reasoning import ReasoningDecision, ReasoningRequest, ReasoningResult
 from ads_booster.creative.creative_assets import SqliteCreativeAssetRepository
 from ads_booster.providers.codex_cli import CodexCliError
+from ads_booster.providers.codex_image_edit import ImageEditProcessDiagnostic
 from ads_booster.providers.codex_trace_post import (
     TracePostGeneratedImage,
     TracePostProviderResult,
@@ -428,6 +430,7 @@ def test_old_uncertain_job_gets_notification_after_upgrade_without_generation(
     assert tool.work_once()["state"] == "uncertain"
     with closing(tool._db()) as db, db:
         _ = db.execute("ALTER TABLE trace_post_jobs DROP COLUMN notified")
+        _ = db.execute("ALTER TABLE trace_post_jobs DROP COLUMN failure_diagnostic")
     events: list[str] = []
 
     def completed(_tenant: str, _run: str, event: str) -> None:
@@ -451,6 +454,33 @@ def test_provider_failure_reason_survives_restart_without_raw_output(tmp_path: P
             self, *, workspace: Path, instruction: str, timeout_seconds: float
         ) -> TracePostProviderResult:
             self.calls += 1
+            diagnostic = ImageEditProcessDiagnostic(
+                phase="terminal",
+                terminal="failed",
+                command_success=3,
+                command_nonzero=1,
+                agent_message_count=1,
+                agent_message_max_length="201_1000",
+                turn_status="completed",
+                items_view="full",
+            )
+            path = workspace / "codex-image-edit-diagnostic.json"
+            _ = path.write_text(diagnostic.model_dump_json(), encoding="utf-8")
+            path.chmod(0o600)
+            run = workspace / "repo/output/posts/diagnostic"
+            (run / "receipts").mkdir(parents=True)
+            for name, value in (
+                ("run.json", {}),
+                ("package.json", {}),
+                ("localization.json", {"padding": "x" * 12_000}),
+                ("assembly-check.json", {"passed": True}),
+                ("content-review.json", {"decision": "approved"}),
+            ):
+                _ = (run / name).write_text(json.dumps(value), encoding="utf-8")
+            _ = (run / "receipts/one.json").write_text(
+                json.dumps({"status": "completed", "prompt": "TOP SECRET RECEIPT"}),
+                encoding="utf-8",
+            )
             code = "codex_sandbox_launcher_unavailable"
             raise CodexCliError(code)
 
@@ -466,3 +496,44 @@ def test_provider_failure_reason_survives_restart_without_raw_output(tmp_path: P
     assert len(diagnostics) == 1
     assert diagnostics[0].payload["reason_code"] == "codex_sandbox_launcher_unavailable"
     assert provider.calls == 1
+    with closing(tool._db()) as db:
+        raw = cast(
+            "tuple[str]",
+            db.execute("SELECT failure_diagnostic FROM trace_post_jobs").fetchone(),
+        )[0]
+    failure_diagnostic = cast("dict[str, object]", json.loads(raw))
+    provider_record = cast("dict[str, object]", failure_diagnostic["provider"])
+    workspace_record = cast("dict[str, object]", failure_diagnostic["workspace"])
+    assert provider_record["command_success"] == 3
+    assert provider_record["command_nonzero"] == 1
+    assert workspace_record["run_directories"] == 1
+    assert workspace_record["localization"] == "present"
+    assert workspace_record["assembly"] == "passed"
+    assert workspace_record["content_review"] == "approved"
+    assert workspace_record["receipt_completed"] == 1
+    assert "instruction" not in raw
+    assert "TOP SECRET RECEIPT" not in raw
+
+
+def test_workspace_diagnostic_failure_keeps_the_sanitized_provider_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    diagnostic = ImageEditProcessDiagnostic(
+        phase="turn",
+        terminal="failed",
+        command_nonzero=1,
+    )
+    path = tmp_path / "codex-image-edit-diagnostic.json"
+    _ = path.write_text(diagnostic.model_dump_json(by_alias=True), encoding="utf-8")
+
+    def unavailable(_workspace: Path) -> object:
+        raise PermissionError
+
+    monkeypatch.setattr(trace_post_module, "_collect_workspace_milestones", unavailable)
+    raw = trace_post_module._failure_diagnostic(tmp_path)
+    value = cast("dict[str, object]", json.loads(raw))
+    provider = cast("dict[str, object]", value["provider"])
+    workspace = cast("dict[str, object]", value["workspace"])
+    assert provider["command_nonzero"] == 1
+    assert workspace["collection"] == "unavailable"

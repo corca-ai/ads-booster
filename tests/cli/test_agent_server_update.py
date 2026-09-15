@@ -628,6 +628,27 @@ def test_public_ci_lookup_paginates_without_credentials(
     assert all(request.get_header("Authorization") is None for request in requests)
 
 
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+def test_github_check_http_failure_keeps_status_without_response_secrets(
+    manager: Manager, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    def denied(_request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        url = "https://private.invalid/token-secret"
+        raise HTTPError(
+            url,
+            status,
+            "secret message",
+            Message(),
+            BytesIO(b"secret body"),
+        )
+
+    monkeypatch.setattr(manager, "urlopen", denied)
+    with pytest.raises(RuntimeError, match=f"github_checks_http_{status}$") as error:
+        _ = manager.github_checks("a" * 40)
+    assert "secret" not in str(error.value)
+
+
 def test_candidate_cannot_remove_the_installed_operator_surface(
     manager: Manager,
     monkeypatch: pytest.MonkeyPatch,

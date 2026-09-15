@@ -114,6 +114,7 @@ class CodexTracePostProvider:
                 materialize_image_results=True,
                 max_stream_bytes=256 * 1024 * 1024,
                 on_checkpoint=persist if on_checkpoint is not None else None,
+                persist_sanitized_diagnostic=True,
             )
         )
         return _provider_result(response, root, completed=True)

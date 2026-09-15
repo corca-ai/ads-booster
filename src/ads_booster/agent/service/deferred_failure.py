@@ -5,6 +5,12 @@ from __future__ import annotations
 from ads_booster.providers.codex_cli import CodexCliError
 
 FAILURE_TEXT = {
+    "codex_image_edit_no_generation": (
+        "모델 응답이 끝났지만 이미지 생성 완료 이벤트가 없어 제작 결과를 확인하지 못했습니다."
+    ),
+    "codex_image_edit_preparation_failed": (
+        "이미지 준비 명령이 실패했고 생성 완료 이벤트 없이 작업이 종료됐습니다."
+    ),
     "codex_sandbox_launcher_unavailable": (
         "실행 환경의 내부 실행기를 시작하지 못해 제작이 중단됐습니다."
     ),

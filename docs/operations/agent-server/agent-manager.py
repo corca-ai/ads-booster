@@ -282,8 +282,13 @@ def github_checks(sha: str) -> list[dict[str, Any]]:
             endpoint + f"/check-runs?per_page=100&filter=latest&page={page}",
             headers={"Accept": "application/vnd.github+json", "User-Agent": "trace-marketing"},
         )
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub origin.
-            value = json.load(response)
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub origin.
+                value = json.load(response)
+        except HTTPError as error:
+            code = error.code
+            error.close()
+            raise RuntimeError(f"github_checks_http_{code}") from error
         if not isinstance(value, dict):
             raise TypeError("github_checks_invalid_response")
         value = cast("dict[str, Any]", value)

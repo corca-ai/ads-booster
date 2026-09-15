@@ -258,7 +258,8 @@ class CanonicalKnowledgeIngress:
         if self.sink is None:
             return False
         with self.connect() as db:
-            _ = db.execute("BEGIN IMMEDIATE")
+            if not _begin_pending_claim(db):
+                return False
             row = _ROW.validate_python(
                 db.execute(
                     """SELECT binding_json,event_json,envelope_json
@@ -500,3 +501,25 @@ __all__ = [
     "TrustedLearningSource",
     "TrustedRunBinding",
 ]
+
+
+def _begin_pending_claim(db: sqlite3.Connection) -> bool:
+    # Empty polling must not compete with foreground writers. Claiming is
+    # pre-effect: a busy database leaves the durable item untouched.
+    if (
+        db.execute(
+            "SELECT 1 FROM knowledge_ingress_outbox WHERE state='pending' LIMIT 1"
+        ).fetchone()
+        is None
+    ):
+        return False
+    try:
+        _ = db.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        if (getattr(error, "sqlite_errorcode", 0) & 255) in {
+            sqlite3.SQLITE_BUSY,
+            sqlite3.SQLITE_LOCKED,
+        }:
+            return False
+        raise
+    return True

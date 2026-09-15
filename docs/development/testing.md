@@ -1003,6 +1003,13 @@ prove that a model will follow the instruction.
 An incident record containing only `codex_image_edit_generation_event_required` does not retain the
 provider's final message, so the namespace mismatch is an evidenced compatibility defect and the
 historical cause remains a hypothesis until a deployed supported-motif canary observes native events.
+Provider diagnostics therefore test sanitized started/completed/terminal counts without treating
+terminal-item summaries as generation receipts or adding a provider capability prerequisite.
+Fixtures must prove the 4 KiB
+and mode-0600 boundary, DB migration, restart no-replay behavior, and that diagnostic write/read
+failure cannot mask either the original provider failure or a successful exchange. These records
+separate pre-image stops from missing notification evidence; they do not identify the root cause
+without a deployed canary.
 
 ### Linux sandbox launcher and uncertain follow-ups
 
@@ -1025,3 +1032,18 @@ The channel audit also targets `test_application.py::test_new_observation_can_re
 and `test_codex_completion.py::test_assessor_can_only_cite_host_evidence_handles`. Keep tenant-scoped
 deduplication and restart tests alongside observation refresh tests. See
 [the complete channel inventory](slack-channel-audit-2026-09-15.md) for real-provider limits.
+
+### September 15 production reconciliation regression selection
+
+Select `tests/providers/test_codex_reasoning_v2.py`, service `test_application.py`,
+`tests/knowledge/test_ingress_runtime_failures.py`, provider `test_codex_image_edit.py` and
+`test_codex_trace_post.py`, Slack `test_slack_trace_post.py`, and
+`tests/cli/test_agent_server_update.py`. Verify immutable existing obligations, host-bound additions,
+invalid-input correction before zero dispatch and bounded exhaustion, actual SQLite writer contention
+followed by exactly one claim, metadata-only image diagnostics, final saved failure text, and
+GitHub HTTP phase/status redaction. Repeat this selection from a fresh non-editable installation.
+
+A September 15 baseline macOS installed-provider comparison using Codex CLI 0.154.0 completed
+seven native image generations with both gpt-6-astra and gpt-5.6-luna. This disconfirms a general
+Luna incompatibility; it does not reproduce the Linux incident or establish live Slack delivery.
+Production image acceptance remains a separate observation after exact-SHA deployment.

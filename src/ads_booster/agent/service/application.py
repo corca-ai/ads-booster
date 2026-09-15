@@ -617,7 +617,7 @@ class MarketingAgentService:
             self._fault("approval_committed")
             return self.drive(decided.tenant_id, decided.run_id, now=now)
 
-    def _plan(
+    def _plan(  # noqa: PLR0911 - distinct durable plan outcomes.
         self,
         run: AgentRun,
         *,
@@ -769,7 +769,8 @@ class MarketingAgentService:
             and (remaining.tool_calls == 0 or remaining.cost_units == 0)
         ):
             return self._block_task(observed, task, "tool_budget_exhausted", now=now)
-        self._validate_reasoning_decision(snapshot, decision)
+        if (error := self._tool_plan_error(snapshot, decision)) is not None:
+            return self._reject_tool_plan(observed, task, decision, error, now=now)
         if (
             self.knowledge is not None
             and prepared_context is not None
@@ -858,6 +859,90 @@ class MarketingAgentService:
         )
         self._fault("plan_committed")
         return planned
+
+    def _tool_plan_error(
+        self, snapshot: CapabilitySnapshot, decision: ReasoningDecision | ReasoningDecisionV2
+    ) -> ValueError | None:
+        try:
+            self._validate_reasoning_decision(snapshot, decision)
+        except ValueError as error:
+            if str(error) != "tool_input_schema_invalid" or isinstance(
+                error.__cause__, SchemaError
+            ):
+                raise  # Invalid host descriptors and denied tools are not repairable model inputs.
+            return error
+        return None
+
+    def _reject_tool_plan(
+        self,
+        run: AgentRun,
+        task: TaskProjection,
+        decision: ReasoningDecision | ReasoningDecisionV2,
+        error: ValueError,
+        *,
+        now: datetime,
+    ) -> AgentRun:
+        reason = str(error)
+        invalid = error.__cause__
+        # Schema paths identify the violated contract without copying user values.
+        path = (
+            list(invalid.absolute_schema_path)
+            if isinstance(invalid, JsonSchemaValidationError)
+            else []
+        )
+        feedback = (
+            "The proposed tool was NOT dispatched. Correct the tool input using the current "
+            "descriptor schema, including required fields and exact types. "
+            f"Validation: {reason}; schema path: {json.dumps(path)}. "
+            "Do not repeat the invalid input or claim that the tool ran."
+        )
+        failures = 1
+        for record in reversed(self.repository.records(run.tenant_id, run.run_id)):
+            if record.kind is AgentRecordKind.REASONING:
+                break
+            if record.payload_schema_version == "trace.reasoning-validation-failure.v1":
+                if record.payload.get("task_revision") != task.spec.task_revision:
+                    break
+                failures += 1
+        payload: JsonObject = {
+            "schema_version": "trace.reasoning-validation-failure.v1",
+            "task_revision": task.spec.task_revision,
+            "reason_code": reason,
+            "schema_path": list(path),
+            "decision_sha256": contract_sha256(decision),
+            "dispatched": False,
+        }
+        task = TaskProjection(
+            task.spec,
+            task.checkpoint.model_copy(
+                update={"strategy_feedback": feedback, "next_action": "plan"}
+            ),
+        )
+        rejected = self._append_step(
+            run,
+            _step(
+                run,
+                kind=AgentStepKind.OBSERVE,
+                input_sha256=contract_sha256(decision),
+                output_sha256=contract_sha256(payload),
+                now=now,
+            ),
+            state=AgentRunState.RUNNING,
+            expected_revision=run.revision,
+            records=(
+                _record(
+                    run,
+                    record_id=f"{run.run_id}:invalid-plan:{run.revision}",
+                    kind=AgentRecordKind.EVIDENCE,
+                    payload=payload,
+                    now=now,
+                ),
+                *task_records(run, task, now),
+            ),
+        )
+        if failures >= task.checkpoint.policy.no_progress:
+            return self._block_task(rejected, task, "reasoning_input_repair_exhausted", now=now)
+        return rejected
 
     def _task(self, run: AgentRun) -> TaskProjection:
         records = self.repository.records(run.tenant_id, run.run_id)
