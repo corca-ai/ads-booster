@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
@@ -68,19 +68,10 @@ def drive_connect(
             raise SimulatedRestartError
 
     run = current.drive("trace", run.run_id, now=NOW)
-    if restart in {"verified", "expired", "consumed"}:
+    interrupted = restart in {"verified", "expired", "consumed"}
+    if interrupted:
         current.fault_hook = interrupt
-        with pytest.raises(SimulatedRestartError):
-            _ = current.decide_approval(
-                "trace",
-                run.run_id,
-                approver_id="member",
-                granted=True,
-                now=NOW,
-                expires_at=NOW + timedelta(minutes=5),
-            )
-        current = service()
-    else:
+    with pytest.raises(SimulatedRestartError) if interrupted else nullcontext():
         run = current.decide_approval(
             "trace",
             run.run_id,
@@ -89,6 +80,8 @@ def drive_connect(
             now=NOW,
             expires_at=NOW + timedelta(minutes=5),
         )
+    if interrupted:
+        current = service()
     resume_time = datetime.now(UTC) + timedelta(minutes=11) if restart == "expired" else NOW
     if restart == "consumed":
         with closing(sqlite3.connect(current.repository.database_path)) as connection, connection:
