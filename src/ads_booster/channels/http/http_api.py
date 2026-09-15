@@ -39,6 +39,7 @@ from ads_booster.channels.http.knowledge_ingress_api import (
 from ads_booster.channels.http.memory_api import dispatch_memory
 from ads_booster.channels.http.oauth import AccessTokenAuthenticator, OAuthIdentity
 from ads_booster.channels.http.performance_api import dispatch_performance
+from ads_booster.channels.http.threads_oauth_errors import oauth_error_body
 from ads_booster.channels.http.threads_privacy_api import (
     dispatch_threads_privacy,
     threads_privacy_route,
@@ -238,14 +239,22 @@ class MarketingAgentApi:
             if self.threads_oauth is None:
                 return ApiResponse(404, {"error": "threads_integration_unavailable"})
             query = parse_qs(urlsplit(target).query)
+            if query.get("error") or query.get("error_code"):
+                code_value = query.get("error_code", [""])[0]
+                error = ThreadsApiError(
+                    401,
+                    int(code_value) if code_value.isdecimal() and len(code_value) < 10 else None,
+                    query.get("error_description", query.get("error_message", [""]))[0],
+                )
+                return ApiResponse(401, oauth_error_body(error))
             try:
                 account = self.threads_oauth.finish(
                     state_id=query.get("state", [""])[0],
                     code=query.get("code", [""])[0],
                     now=now or datetime.now(UTC),
                 )
-            except (OSError, ThreadsApiError, ValueError):
-                return ApiResponse(401, {"error": "threads_connection_failed"})
+            except (OSError, ThreadsApiError, ValueError) as error:
+                return ApiResponse(401, oauth_error_body(error))
             return ApiResponse(
                 200,
                 {

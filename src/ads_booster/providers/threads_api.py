@@ -34,8 +34,10 @@ _TIMEOUT: Final = httpx2.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0)
 _SOCKET_OPTIONS: Final = [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ThreadsApiError(Exception):
+    """Allow Python context managers to assign exception traceback state."""
+
     status: int | None
     code: int | None
     message: str
