@@ -72,6 +72,30 @@ def setup_events(root: Path) -> tuple[SlackEvents, list[JsonObject]]:
     return SlackEvents(commands, "UBOT", frozenset({"C1"})), messages
 
 
+def test_new_question_after_blocked_completion_reaches_reasoning(tmp_path: Path) -> None:
+    owner, messages = setup_events(tmp_path)
+    service = owner.commands.application.service
+    completion = service.completion
+    service.completion = None
+    receive(owner, text="<@UBOT> 첫 질문")
+    for _ in range(8):
+        if not owner.work_once(now=NOW):
+            break
+    original = service.repository.list_runs("team")[0]
+    assert original.state is AgentRunState.BLOCKED
+    service.completion = completion
+    recorder = RecordingReasoning()
+    service.reasoning = recorder
+    receive(owner, type="message", text="영어로 짧게 인사해줘", ts="100.002", thread_ts="100.001")
+    for _ in range(8):
+        if not owner.work_once(now=NOW):
+            break
+    assert len(recorder.requests) == 1
+    assert "영어로" in recorder.requests[0].model_dump_json()
+    assert service.repository.get("team", original.run_id) == original
+    assert "작업을 진행할 수 없어" not in str(messages[-1]["text"])
+
+
 def test_completion_assessor_receives_scoped_dialogue_and_capability_facts(tmp_path: Path) -> None:
     owner, _ = setup_events(tmp_path)
     service = owner.commands.application.service

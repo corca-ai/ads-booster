@@ -164,8 +164,7 @@ DM에서도 텍스트로 대화할 수 있습니다. DM은 공개 검색과 답�
 수정·사람 작업 결과는 같은 업무에서 이어받습니다.
 작업 기록 제작 12분 설명 / 작업 요약 — 사람이 들인 시간을 업무에 기록
 성과 도움말 — 게시물별 사람이 보고한 수치 기록·정정·비교·학습
-검토 1 — 승인할 전체 내용 확인 (페이지 번호 변경 가능)
-승인 승인해시 / 거절 승인해시 — 정확한 실행 승인 또는 거절
+요청한 작업은 별도 승인 없이 진행하며 결과를 이 대화에 전달합니다.
 계속 — 중단된 실행의 안전한 재개 시도
 종료 — 이 대화의 자동 응답 종료 (이미 실행 중인 작업을 강제 취소하지 않음)
 다시 시작 — 닫힌 대화 재개
@@ -231,6 +230,9 @@ class SlackEvents:
         conversation = self.store.conversation_for_run(run.tenant_id, run.run_id)
         if conversation is None:
             return None
+        active = self.store.conversation(conversation.conversation_id)
+        if active is None or active.current_run != run.run_id:
+            return None  # Later tasks must not steer an older operation's completion.
         dialogue = self.store.transcript(conversation.conversation_id)
         memory = self._current_memory(run, now)
         if not dialogue["messages"] and memory is None:
@@ -688,8 +690,8 @@ class SlackEvents:
                 message,
                 " ".join(
                     (
-                        "처리를 완료하지 못했습니다. 이 대화에 '상태'를 보내 확인하세요.",
-                        "실행 확인 전에는 승인을 반복하지 말고 운영자에게 문의하세요.",
+                        "작업의 실행 연결이 끊겨 완료 여부를 확인하지 못했습니다.",
+                        "이미 요청된 작업은 중복 실행하지 않았습니다. 대화는 이어갈 수 있습니다.",
                     )
                 ),
                 blocked=True,
@@ -776,6 +778,12 @@ class SlackEvents:
                 with self._working(conversation, message, plan) as control:
                     try:
                         _ = service.drive(claim.origin.tenant_id, claim.origin.run_id, now=now)
+                        self._execute_requested_steps(
+                            service,
+                            conversation.model_copy(update={"current_run": claim.origin.run_id}),
+                            message,
+                            now=now,
+                        )
                     except ExecutionCancelledError:
                         _ = self._cancelled_result(conversation, plan, now=now)
                     else:
@@ -1022,7 +1030,17 @@ class SlackEvents:
         context["current_attachments"] = [a.model_dump(mode="json") for a in message.attachments]
         context["attachment_verification"] = "reference_only_not_visually_inspected"
         context["privacy"] = "private_dm" if conversation.private else "shared_thread"
-        if run is not None and run.state is AgentRunState.AWAITING_RECONCILIATION:
+        new_work = text.startswith("새 작업 ")
+        session = service.runtime_store.load(run.run_id) if run is not None else None
+        pending_effect = session is not None and session.pending_invocation is not None
+        if (
+            run is not None
+            and (
+                run.state is AgentRunState.AWAITING_RECONCILIATION
+                or (run.state is AgentRunState.BLOCKED and pending_effect)
+            )
+            and not new_work
+        ):
             context["message_id"] = message.message_id
             context["user_id"] = message.user_id
             return MessagePlan(
@@ -1055,14 +1073,19 @@ class SlackEvents:
             and not text.startswith("새 작업 ")
         ):
             return MessagePlan(action="revise", run_id=run.run_id)
-        if text.startswith("새 작업 "):
-            text = text.removeprefix("새 작업 ").strip() or text
+        # Keep the entire authenticated request for exact execution-intent binding.
         correction_signal = not conversation.private and has_learning_correction_signal(text)
-        if run is not None and run.state not in {
-            AgentRunState.COMPLETED,
-            AgentRunState.STOPPED,
-            AgentRunState.FAILED,
-        }:
+        if (
+            run is not None
+            and (not new_work or run.state is AgentRunState.RUNNING)
+            and run.state
+            not in {
+                AgentRunState.COMPLETED,
+                AgentRunState.STOPPED,
+                AgentRunState.FAILED,
+                AgentRunState.BLOCKED,
+            }
+        ):
             return MessagePlan(
                 action="reply",
                 run_id=run.run_id if correction_signal else "",
@@ -1200,14 +1223,31 @@ class SlackEvents:
             if run is None or plan.goal is None:
                 reason = "slack_dialogue_context_missing"
                 raise ValueError(reason)
-            answer, evidence = answer_waiting_dialogue(service, run, plan.goal)
+            answer, evidence = answer_waiting_dialogue(service, run, plan.goal, now=now)
             self.store.save_plan(
                 message, plan.model_copy(update={"reply": answer, "evidence": evidence})
             )
             return answer
         if plan.action == "learning_answer":
             return self._answer_learning_question(conversation, message, plan, now=now)
-        conversation = conversation.model_copy(update={"current_run": plan.run_id})
+        previous = service.repository.get(conversation.tenant_id, conversation.current_run)
+        retained = conversation.retained_run_ids
+        if (
+            plan.action == "create"
+            and previous is not None
+            and previous.run_id != plan.run_id
+            and previous.state
+            in {
+                AgentRunState.AWAITING_TOOL,
+                AgentRunState.AWAITING_RECONCILIATION,
+                AgentRunState.BLOCKED,
+            }
+            and previous.run_id not in retained
+        ):
+            retained = (*retained, previous.run_id)
+        conversation = conversation.model_copy(
+            update={"current_run": plan.run_id, "retained_run_ids": retained}
+        )
         self.store.update_conversation(conversation)
         origin = DriveOrigin(
             tenant_id=conversation.tenant_id,
@@ -1295,23 +1335,32 @@ class SlackEvents:
             with self.drive_queue.ownership(origin=origin, now=now):
                 _ = service.drive(conversation.tenant_id, plan.run_id, now=now)
         if plan.action in {"create", "revise", "input"}:
-            # A request may include several operations. Recheck its source and the
-            # member for every step; service budgets and receipts bound execution.
-            run = service.repository.get(conversation.tenant_id, plan.run_id)
-            for _ in range(0 if run is None else run.budget.max_tool_calls):
-                if not execute_requested_work(
-                    service,
-                    self.store,
-                    conversation,
-                    message,
-                    self._authorize(conversation, message.user_id),
-                    now=now,
-                ):
-                    break
+            self._execute_requested_steps(service, conversation, message, now=now)
         current = service.repository.get(conversation.tenant_id, plan.run_id)
         if current is not None and current.state is AgentRunState.RUNNING:
             return "작업을 계속 진행하고 있습니다."
         return self.summary(conversation)
+
+    def _execute_requested_steps(
+        self,
+        service: MarketingAgentService,
+        conversation: Conversation,
+        message: Message,
+        *,
+        now: datetime,
+    ) -> None:
+        """Use the same source-bound authority at ingress and every resumed slice."""
+        run = service.repository.get(conversation.tenant_id, conversation.current_run)
+        for _ in range(0 if run is None else run.budget.max_tool_calls):
+            if not execute_requested_work(
+                service,
+                self.store,
+                conversation,
+                message,
+                self._authorize(conversation, message.user_id),
+                now=now,
+            ):
+                break
 
     def _answer_learning_question(
         self,
@@ -1667,7 +1716,12 @@ class SlackEvents:
             state = "denied"
         else:
             service = self._service(conversation)
-            current = service.repository.get(conversation.tenant_id, conversation.current_run)
+            target = (
+                message.result_run_id
+                if message.result_run_id in conversation.retained_run_ids
+                else conversation.current_run
+            )
+            current = service.repository.get(conversation.tenant_id, target)
             if current is not None:
                 with self.store.connect() as db:
                     valid = matches_result(

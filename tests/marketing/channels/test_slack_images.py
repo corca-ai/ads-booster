@@ -35,7 +35,7 @@ from tests.marketing.agent_service.test_application import (
 from tests.marketing.agent_service.test_github_issues import Response
 from tests.marketing.agent_service.test_integrations import UnusedResearchRunner
 from tests.marketing.channels.test_slack_commands import NOW
-from tests.marketing.channels.test_slack_events import receive, setup_events
+from tests.marketing.channels.test_slack_events import receive, setup_events, update_identity
 from tests.marketing.channels.test_slack_github_issues import approve
 
 if TYPE_CHECKING:
@@ -73,6 +73,38 @@ class ImageReasoning:
             )
         )
         return _reasoning_result(request, decision)
+
+
+@pytest.mark.parametrize(
+    ("delegated", "revoked", "prefix"),
+    [(True, False, ""), (False, False, ""), (True, True, ""), (True, False, "새 작업 ")],
+)
+def test_requested_image_authority_survives_slice_and_restart(
+    tmp_path: Path,
+    delegated: bool,
+    revoked: bool,
+    prefix: str,
+) -> None:
+    owner, messages, _, calls = configured(tmp_path)
+    service = owner.commands.application.service
+    service.reasoning = ImageReasoning(authorize=delegated)
+    service.task_policy = service.task_policy.model_copy(update={"slice_provider_calls": 1})
+    text = "이미지 만들어줘. 게시하지는 말고." if delegated else "이미지 만들 수 있어?"
+    receive(owner, text="<@UBOT> " + prefix + text)
+    assert owner.work_once(now=NOW)
+    assert service.repository.list_runs("team")[0].state is AgentRunState.RUNNING
+    assert not calls
+    if revoked:
+        update_identity(owner, "U1", can_create_runs=False)
+    restarted = SlackEvents(owner.commands, "UBOT", frozenset({"C1"}))
+    restarted.recover()
+    for _ in range(16):
+        if not restarted.work_once(now=NOW):
+            break
+    assert len(calls) == (1 if delegated and not revoked else 0)
+    if delegated and not revoked:
+        assert service.repository.list_runs("team")[0].state is AgentRunState.COMPLETED
+        assert not any("사유: awaiting_approval" in str(message["text"]) for message in messages)
 
 
 def configured(

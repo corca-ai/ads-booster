@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import TypeAdapter
+from pydantic import SerializerFunctionWrapHandler, TypeAdapter, model_serializer
 
 from ads_booster.agent.service.knowledge_ingress import (
     CanonicalKnowledgeIngress,
@@ -29,7 +29,9 @@ from ads_booster.contracts.agent_run import AgentGoal, contract_sha256
 from ads_booster.contracts.models import ContractModel
 from ads_booster.knowledge.contract_types import ConversationEventKind
 from ads_booster.knowledge.source_contracts import ConversationEvent
-from ads_booster.transport.json_types import JsonObject  # noqa: TC001 - Pydantic field.
+from ads_booster.transport.json_types import JsonObject
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -47,7 +49,15 @@ class Conversation(ContractModel):
     owner_id: str
     private: bool
     current_run: str = ""
+    retained_run_ids: tuple[str, ...] = ()
     closed: bool = False
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler: SerializerFunctionWrapHandler) -> JsonObject:
+        result = _JSON_OBJECT.validate_python(handler(self))
+        if not self.retained_run_ids:
+            _ = result.pop("retained_run_ids", None)
+        return result
 
 
 class Message(ContractModel):
@@ -257,11 +267,17 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT data_json FROM slack_conversations
                 WHERE json_extract(data_json,'$.tenant_id')=?
-                AND json_extract(data_json,'$.current_run')=? LIMIT 1""",
-                    (tenant_id, run_id),
+                AND (json_extract(data_json,'$.current_run')=? OR EXISTS
+                    (SELECT 1 FROM json_each(data_json,'$.retained_run_ids') WHERE value=?))
+                LIMIT 1""",
+                    (tenant_id, run_id, run_id),
                 ).fetchone()
             )
-        return None if row is None else Conversation.model_validate_json(row[0])
+        return (
+            None
+            if row is None
+            else Conversation.model_validate_json(row[0]).model_copy(update={"current_run": run_id})
+        )
 
     def enqueue_run_notification(
         self,
@@ -272,7 +288,7 @@ class SlackConversationStore:
         result: str,
         task_result: TaskResult | None = None,
     ) -> bool:
-        """Atomically bind one local notification to the still-current conversation."""
+        """Bind a notification to its current or explicitly retained original Run."""
         if (
             not event_id
             or len(event_id) > _MAX_NOTIFICATION_EVENT
@@ -285,9 +301,10 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT data_json FROM slack_conversations
                 WHERE json_extract(data_json,'$.tenant_id')=?
-                AND json_extract(data_json,'$.current_run')=?
+                AND (json_extract(data_json,'$.current_run')=? OR EXISTS
+                    (SELECT 1 FROM json_each(data_json,'$.retained_run_ids') WHERE value=?))
                 AND json_extract(data_json,'$.closed')=0 LIMIT 1""",
-                    (tenant_id, run_id),
+                    (tenant_id, run_id, run_id),
                 ).fetchone()
             )
             if row is None:
@@ -297,8 +314,9 @@ class SlackConversationStore:
                 db.execute(
                     """SELECT message_json FROM slack_message_jobs WHERE conversation_id=?
                 AND COALESCE(json_extract(message_json,'$.notification_only'),0)=0
+                AND (json_extract(NULLIF(plan_json,''),'$.run_id')=? OR ?=?)
                 ORDER BY rowid DESC LIMIT 1""",
-                    (conversation.conversation_id,),
+                    (conversation.conversation_id, run_id, run_id, conversation.current_run),
                 ).fetchone()
             )
             if sender is None:
