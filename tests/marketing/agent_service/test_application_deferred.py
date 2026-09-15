@@ -12,7 +12,9 @@ import pytest
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.runtime import SqliteSessionStore
 from ads_booster.agent.service.sqlite_repository import SqliteAgentRunRepository
+from ads_booster.agent.service.task_progress import project_task
 from ads_booster.agent.service.work_continuation import continue_work
+from ads_booster.channels.task_results import result_for
 from ads_booster.contracts.agent_run import (
     AgentRecordKind,
     AgentRunState,
@@ -168,6 +170,16 @@ def test_restart_preserves_reserved_budget_and_consumed_approval_can_expire(tmp_
     assert session is not None
     assert session.reserved_cost_units == 0
     assert session.spent_cost_units == 1
+
+
+def test_worker_admission_replaces_approval_wait_in_task_and_user_result(tmp_path: Path) -> None:
+    service, _, _, _ = start(tmp_path)
+    run = service.repository.get("trace", "run-one")
+    assert run is not None
+    records = service.repository.records("trace", "run-one")
+    assert project_task(run, records).checkpoint.wait_reason == "awaiting_tool"
+    assert "실행 중" in result_for(run, records).text
+    assert "awaiting_approval" not in result_for(run, records).text
 
 
 @pytest.mark.parametrize(

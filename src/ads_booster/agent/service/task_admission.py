@@ -92,6 +92,7 @@ def task_at_boundary(task: TaskProjection, state: AgentRunState, reason: str) ->
             task.checkpoint.model_copy(
                 update={
                     "disposition": "active",
+                    "wait_reason": None,
                     "next_action": "plan"
                     if task.checkpoint.next_action == "wait"
                     else task.checkpoint.next_action,
@@ -113,7 +114,14 @@ def task_at_boundary(task: TaskProjection, state: AgentRunState, reason: str) ->
             update={
                 "disposition": disposition,
                 "next_action": "wait",
-                "wait_reason": reason,
+                "wait_reason": state.value
+                if state
+                in {
+                    AgentRunState.AWAITING_TOOL,
+                    AgentRunState.AWAITING_APPROVAL,
+                    AgentRunState.AWAITING_RECONCILIATION,
+                }
+                else reason,
             }
         ),
     )

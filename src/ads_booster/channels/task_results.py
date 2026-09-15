@@ -130,6 +130,10 @@ def result_for(run: AgentRun, records: tuple[AgentRecord, ...]) -> TaskResult:
                 )
     if run.state.value in {"created", "running"}:
         return TaskResult("작업을 계속 진행하고 있습니다.", task.checkpoint.disposition)
+    if run.state.value == "awaiting_tool":
+        return TaskResult(
+            "요청한 작업을 실행 중입니다. 결과가 준비되면 이 대화에 전달합니다.", "waiting"
+        )
     if run.state.value == "awaiting_input" and (question := current_input_question(run, records)):
         return TaskResult(question, task.checkpoint.disposition)
     verified = {item.obligation_id for item in task.checkpoint.accepted_evidence}
