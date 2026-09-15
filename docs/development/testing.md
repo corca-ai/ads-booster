@@ -374,7 +374,9 @@ python -m pytest -q -p no:cacheprovider --tb=short \
 Use a dependency-complete development environment. The September 8 candidate passed 66 tests in
 an isolated `uv sync --frozen` environment. The new signed Slack regression failed before the
 dialogue fix, then passed with service restart and cross-thread exclusion. Skill tests cover
-canonical list/read receipts, exact versions, recoverable unknown IDs and unchanged action policy.
+canonical list/read receipts, repeated identical run-scoped observations, exact versions,
+recoverable unknown IDs and unchanged action policy. Keep tenant-scoped and effectful duplicate
+rejection as controls when changing observation idempotency.
 Run scoped Ruff and BasedPyright for modified Python files; no full-suite run is required.
 
 For actual model behavior, install a fresh wheel outside the checkout, confirm its import path,

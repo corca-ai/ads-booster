@@ -81,6 +81,52 @@ class DiscoverThenRead(AskThenStopReasoning):
         )
 
 
+class RepeatSkillListThenStop(AskThenStopReasoning):
+    @override
+    def plan(self, request: ReasoningRequest) -> ReasoningResult:
+        self.requests.append(request)
+        if len(request.evidence) < 2:
+            return _reasoning_result(
+                request,
+                ReasoningDecision(
+                    schema_version="trace.reasoning-decision.v1",
+                    action="invoke_tool",
+                    capability_id="skills.list",
+                    tool_input={},
+                    expected_outcome="Refresh the available skill list",
+                    reasoning_summary="Check the current catalog",
+                ),
+            )
+        return _reasoning_result(
+            request,
+            ReasoningDecision(
+                schema_version="trace.reasoning-decision.v1",
+                action="stop",
+                expected_outcome="Report the available skills",
+                reasoning_summary="The catalog was refreshed",
+            ),
+        )
+
+
+def test_repeated_identical_skill_observation_does_not_conflict(tmp_path: Path) -> None:
+    configured = ConfiguredAgentTools(AgentServiceIntegrationConfig(), UnusedResearchRunner())
+    reasoning = RepeatSkillListThenStop()
+    service = _service(tmp_path / "agent.db", reasoning)
+    service.registry = ToolRegistry(configured.descriptors(now=NOW))
+    service.tools = configured.adapters()
+    service.capability_policy = CapabilityPolicy(allowed_capability_ids=("skills.list",))
+
+    completed = service.create(_request(), now=NOW)
+
+    assert completed.state is AgentRunState.COMPLETED
+    receipts = [
+        record
+        for record in service.repository.records("trace", completed.run_id)
+        if record.kind is AgentRecordKind.RECEIPT
+    ]
+    assert len(receipts) == 2
+
+
 @pytest.mark.parametrize(
     "skill_id", ["marketing.copy", "marketing.strategy", "marketing.performance_report"]
 )

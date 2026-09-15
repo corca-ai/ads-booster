@@ -2252,7 +2252,14 @@ def _receipt_cost(payload: JsonObject) -> int:
 def _idempotency_key(run: AgentRun, descriptor: ToolDescriptor, input_sha256: str) -> str:
     match descriptor.idempotency.key_scope:
         case "run_tool_input":
-            scope = run.run_id
+            # A later planning boundary may deliberately refresh an observation.
+            # Keep restart replay stable for the persisted invocation while giving
+            # that new, side-effect-free invocation its own claim identity.
+            scope = (
+                f"{run.run_id}:{run.revision}"
+                if descriptor.effect_class is EffectClass.OBSERVE
+                else run.run_id
+            )
         case "tenant_tool_input":
             scope = run.tenant_id
         case _:

@@ -222,6 +222,9 @@ operation units but consume the existing tool-call budget. Skills cover opportun
 strategy, copy and experiments as well as creative procedures. Creative v2 guidance follows
 available execution tools after preparation; human assistance is conditional on an actual blocker.
 Existing persisted goals keep their recorded procedure; new creative skill Runs use version 2.
+Later planning boundaries may repeat a run-scoped observation to refresh read-only state. Each such
+invocation has its own claim identity; effectful and tenant-scoped idempotency identities remain
+stable, and restart replay continues from the original persisted invocation.
 
 The Codex reasoning provider's conversation contract treats Trace as a teammate with marketing
 expertise. It maintains the current request through language/format changes, uses reasonable
