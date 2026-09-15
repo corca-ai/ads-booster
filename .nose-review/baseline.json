@@ -2254,6 +2254,14 @@
         "520d9dfb2307112ad4f91572cf364fcd5cb70f0504373448516087259f0d901a",
         "94cac03c88b8fa8843d4691bbeccbd84eb0eb0175818b8c326f9c25aa5789dfb"
       ]
+    },
+    {
+      "fingerprint": "2facd8e3a50dacfac71ae769b1aca7da577ea4fc7e8f712876c4b5b4e7730aea",
+      "reason": "The OAuth production module and its independent account-state test import the same public account contracts for different responsibilities; coupling production imports to test setup would invert the dependency boundary.",
+      "memberHashes": [
+        "d0626f275d64fab27a94091999ab62aa966e0a4c57ed007e86c37f77ebc52d92",
+        "d36650a8d58caf9ec7c46bfd410b1d88c4ac7c3514deaa6f2bd957cb48266c4e"
+      ]
     }
   ]
 }
