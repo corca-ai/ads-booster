@@ -9,9 +9,10 @@ from dataclasses import replace
 from datetime import timedelta
 from importlib.resources import files
 from pathlib import Path
-from typing import Literal, cast, override
+from typing import TYPE_CHECKING, Literal, cast, override
 
 import pytest
+from pydantic import TypeAdapter
 
 from ads_booster.agent.core.registry import ToolRegistry
 from ads_booster.agent.runtime import SqliteSessionStore
@@ -40,6 +41,9 @@ from ads_booster.providers.codex_trace_post import (
 
 from .test_application import NOW, _reasoning_result, _request
 from .trace_post_test_fixture import build_completed_run
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class TracePostReasoning:
@@ -305,6 +309,64 @@ def test_restart_does_not_invent_provider_proof_from_completed_files(tmp_path: P
     assert provider.calls == 0
 
 
+@pytest.mark.parametrize("completed", [True, False])
+def test_provider_checkpoint_survives_exception_and_restart(
+    tmp_path: Path, completed: bool
+) -> None:
+    class InterruptedProvider(FakeProvider):
+        def run_checkpointed(
+            self,
+            *,
+            workspace: Path,
+            instruction: str,
+            timeout_seconds: float,
+            on_checkpoint: Callable[[TracePostProviderResult, bool], None] | None,
+        ) -> TracePostProviderResult:
+            result = self.run(
+                workspace=workspace, instruction=instruction, timeout_seconds=timeout_seconds
+            )
+            assert on_checkpoint is not None
+            on_checkpoint(result, completed)
+            message = "lost provider return"
+            raise RuntimeError(message)
+
+    provider = InterruptedProvider()
+    tool = setup(tmp_path, provider)
+    assert tool.work_once()["state"] == "uncertain"
+    with closing(tool._db()) as database:
+        row = TypeAdapter[tuple[str | None, str | None] | None](
+            tuple[str | None, str | None] | None
+        ).validate_python(
+            database.execute(
+                "SELECT provider_progress,provider_result FROM trace_post_jobs"
+            ).fetchone()
+        )
+    assert row is not None
+    assert row[0] is not None
+    assert (row[1] is not None) is completed
+    assert replace(tool).work_once()["state"] == ("running" if completed else "uncertain")
+    assert provider.calls == 1
+
+
+def test_uncertain_job_recovers_saved_provider_proof_without_replay(tmp_path: Path) -> None:
+    # Given complete owner proof but a lost completion transition.
+    provider = FakeProvider()
+    tool = setup(tmp_path, provider)
+    _ = _install_completed_provider_result(tool)
+    with closing(tool._db()) as database, database:
+        _ = database.execute("UPDATE trace_post_jobs SET stage='uncertain'")
+    # When the worker restarts.
+    outcome = replace(tool).work_once()
+    # Then existing files settle the original operation without a new generation.
+    assert outcome["state"] == "running"
+    assert provider.calls == 0
+    records = tool.service.repository.records("tenant-a", "run-one")
+    assert any(
+        item.kind is AgentRecordKind.RECEIPT and item.payload["disposition"] == "succeeded"
+        for item in records
+    )
+
+
 @pytest.mark.parametrize("damage", ["empty", "omitted"])
 def test_restart_rejects_incomplete_snapshot_manifest_before_asset_ingest(
     tmp_path: Path, damage: Literal["empty", "omitted"]
@@ -329,6 +391,8 @@ def test_restart_rejects_incomplete_snapshot_manifest_before_asset_ingest(
             database.execute("SELECT COUNT(*) FROM creative_assets").fetchone(),
         )[0]
     assert asset_count == 0
+    assert replace(tool).work_once()["state"] == "idle"
+    assert provider.calls == 0
 
 
 @pytest.mark.parametrize("fail", [False, True])

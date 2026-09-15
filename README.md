@@ -831,6 +831,9 @@ package snapshot; check the server's health release SHA to confirm an installed 
 If a media worker cannot start its internal sandbox launcher, Slack reports that failure instead
 of implying that generation is still running. Known provider failure codes survive restart; raw
 provider output is not stored as a diagnostic. An uncertain operation is never automatically rerun.
+Trace-post can recover existing files when its host has saved completed native provider proof:
+the worker revalidates the frozen workflow and image bytes, then resumes the original result delivery.
+Partial image-event checkpoints or files without completed provider proof remain uncertain.
 Ask a follow-up in the same thread to discuss the failure. The response-only dialogue uses current
 persisted operation facts and the fixed failure reason, without executing tools or retrying work.
 The original operation retains its late-result notification binding. These answers are not fresh

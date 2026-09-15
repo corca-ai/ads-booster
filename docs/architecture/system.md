@@ -1132,6 +1132,15 @@ Its shell access is limited to the operation and required runtime files; externa
 are disabled. The model reads the frozen workflow, creates new content and executes A → B → L → C.
 A started operation with an uncertain outcome is not automatically replayed after restart.
 
+The native image transport checkpoints each validated image event into the host-owned
+`trace_post_jobs.provider_progress` column, outside the child workspace. A completed native turn
+also persists `provider_result` before returning from the transport. Partial events never certify
+completion. The worker selects started or uncertain jobs with completed provider proof and validates
+the frozen workflow and current bytes before settling the original deferred operation. Invalid proof
+is retained with `trace_post_recovery_proof_invalid` and excluded from repeated recovery attempts.
+Older jobs with no completed provider proof remain uncertain; a child-written summary or loose PNGs
+cannot authorize recovery. No provider call or uncertain Slack upload is replayed by this path.
+
 The server validates the frozen documents, content/image review bindings and six canonical outputs
 before registering same-work, tenant-scoped assets. New results report `human_review_required=False`
 and do not invent a human review record. Historical True values remain readable and do not gate
